@@ -19,10 +19,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import {
   CircleSmallIcon,
-  LoaderCircleIcon,
   MarsIcon,
   MarsStrokeIcon,
   NonBinaryIcon,
@@ -457,7 +457,7 @@ export const VoiceSelectorPreview = ({
   let icon = <PlayIcon className="size-3" />;
 
   if (loading) {
-    icon = <LoaderCircleIcon className="size-3 animate-spin" />;
+    icon = <Spinner className="size-3" />;
   } else if (playing) {
     icon = <PauseIcon className="size-3" />;
   }

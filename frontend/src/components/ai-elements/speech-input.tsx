@@ -1,8 +1,9 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import { LoaderIcon, MicIcon, SquareIcon } from "lucide-react";
+import { MicIcon, SquareIcon } from "lucide-react";
 import {
   type ComponentProps,
   useCallback,
@@ -291,7 +292,7 @@ export const SpeechInput = ({
         onClick={toggleListening}
         {...props}
       >
-        {isProcessing && <LoaderIcon className="size-4 animate-spin" />}
+        {isProcessing && <Spinner />}
         {!isProcessing && isListening && <SquareIcon className="size-4" />}
         {!(isProcessing || isListening) && <MicIcon className="size-4" />}
       </Button>
