@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { SettingsIcon, PlusIcon, TrashIcon, RotateCcwIcon } from 'lucide-react';
+import { useSettingsStore, type ModelConfig } from '../stores/settings-store';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -11,33 +12,110 @@ import {
   DialogTrigger,
 } from './ui/dialog';
 import { Input } from './ui/input';
-import { Textarea } from './ui/textarea';
-import { useSettingsStore } from '../stores/settings-store';
+
+// --- Section components ---
+
+interface SettingsSectionProps {
+  label: string;
+  htmlFor?: string;
+  description?: string;
+  children: React.ReactNode;
+}
+
+function SettingsSection({ label, htmlFor, description, children }: SettingsSectionProps) {
+  return (
+    <div className="grid gap-2">
+      <label htmlFor={htmlFor} className="text-sm font-medium">
+        {label}
+      </label>
+      {children}
+      {description && <p className="text-xs text-muted-foreground">{description}</p>}
+    </div>
+  );
+}
+
+// --- Add model form ---
+
+interface AddModelFormProps {
+  onAdd: (model: ModelConfig) => void;
+  onCancel: () => void;
+}
+
+function AddModelForm({ onAdd, onCancel }: AddModelFormProps) {
+  const [name, setName] = useState('');
+  const [value, setValue] = useState('');
+
+  const handleSubmit = () => {
+    if (name.trim() && value.trim()) {
+      onAdd({ name: name.trim(), value: value.trim() });
+    }
+  };
+
+  return (
+    <div className="grid gap-2 p-3 border rounded-md bg-muted/50">
+      <Input
+        placeholder="Model name (e.g., My Custom Model)"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+      <Input
+        placeholder="Model value (e.g., provider/model-name)"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+      />
+      <div className="flex gap-2">
+        <Button size="sm" onClick={handleSubmit}>
+          Add
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// --- Model list item ---
+
+interface ModelListItemProps {
+  model: ModelConfig;
+  onRemove: () => void;
+}
+
+function ModelListItem({ model, onRemove }: ModelListItemProps) {
+  return (
+    <div className="flex items-center justify-between py-1 px-2 text-sm rounded hover:bg-muted/50">
+      <div>
+        <span className="font-medium">{model.name}</span>
+        <span className="text-muted-foreground ml-2 text-xs">{model.value}</span>
+      </div>
+      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onRemove}>
+        <TrashIcon className="h-3 w-3" />
+      </Button>
+    </div>
+  );
+}
+
+// --- Main component ---
 
 export function SettingsDialog() {
   const {
     llm,
-    systemPrompt,
+    smallModel,
     availableModels,
     setLLM,
-    setSystemPrompt,
+    setSmallModel,
     addModel,
     removeModel,
     reset,
   } = useSettingsStore();
 
   const [open, setOpen] = useState(false);
-  const [newModelName, setNewModelName] = useState('');
-  const [newModelValue, setNewModelValue] = useState('');
   const [showAddModel, setShowAddModel] = useState(false);
 
-  const handleAddModel = () => {
-    if (newModelName.trim() && newModelValue.trim()) {
-      addModel({ name: newModelName.trim(), value: newModelValue.trim() });
-      setNewModelName('');
-      setNewModelValue('');
-      setShowAddModel(false);
-    }
+  const handleAddModel = (model: ModelConfig) => {
+    addModel(model);
+    setShowAddModel(false);
   };
 
   return (
@@ -52,8 +130,7 @@ export function SettingsDialog() {
         <DialogHeader>
           <DialogTitle>LLM Settings</DialogTitle>
           <DialogDescription>
-            Configure your LLM provider settings. These settings are stored
-            locally in your browser.
+            Configure your LLM provider settings. These settings are stored locally in your browser.
           </DialogDescription>
         </DialogHeader>
 
@@ -61,72 +138,32 @@ export function SettingsDialog() {
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium">Available Models</label>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowAddModel(!showAddModel)}
-              >
+              <Button variant="ghost" size="sm" onClick={() => setShowAddModel(!showAddModel)}>
                 <PlusIcon className="h-4 w-4 mr-1" />
                 Add Model
               </Button>
             </div>
 
             {showAddModel && (
-              <div className="grid gap-2 p-3 border rounded-md bg-muted/50">
-                <Input
-                  placeholder="Model name (e.g., My Custom Model)"
-                  value={newModelName}
-                  onChange={(e) => setNewModelName(e.target.value)}
-                />
-                <Input
-                  placeholder="Model value (e.g., provider/model-name)"
-                  value={newModelValue}
-                  onChange={(e) => setNewModelValue(e.target.value)}
-                />
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={handleAddModel}>
-                    Add
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setShowAddModel(false)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
+              <AddModelForm onAdd={handleAddModel} onCancel={() => setShowAddModel(false)} />
             )}
 
             <div className="max-h-32 overflow-y-auto space-y-1">
               {availableModels.map((model) => (
-                <div
+                <ModelListItem
                   key={model.value}
-                  className="flex items-center justify-between py-1 px-2 text-sm rounded hover:bg-muted/50"
-                >
-                  <div>
-                    <span className="font-medium">{model.name}</span>
-                    <span className="text-muted-foreground ml-2 text-xs">
-                      {model.value}
-                    </span>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    onClick={() => removeModel(model.value)}
-                  >
-                    <TrashIcon className="h-3 w-3" />
-                  </Button>
-                </div>
+                  model={model}
+                  onRemove={() => removeModel(model.value)}
+                />
               ))}
             </div>
           </div>
 
-          <div className="grid gap-2">
-            <label htmlFor="api-key" className="text-sm font-medium">
-              API Key (optional)
-            </label>
+          <SettingsSection
+            label="API Key (optional)"
+            htmlFor="api-key"
+            description="Only required for providers that need authentication."
+          >
             <Input
               id="api-key"
               type="password"
@@ -134,15 +171,13 @@ export function SettingsDialog() {
               value={llm.apiKey}
               onChange={(e) => setLLM({ apiKey: e.target.value })}
             />
-            <p className="text-xs text-muted-foreground">
-              Only required for providers that need authentication.
-            </p>
-          </div>
+          </SettingsSection>
 
-          <div className="grid gap-2">
-            <label htmlFor="base-url" className="text-sm font-medium">
-              Base URL
-            </label>
+          <SettingsSection
+            label="Base URL"
+            htmlFor="base-url"
+            description="API endpoint for the LLM provider."
+          >
             <Input
               id="base-url"
               type="url"
@@ -150,26 +185,21 @@ export function SettingsDialog() {
               value={llm.baseUrl}
               onChange={(e) => setLLM({ baseUrl: e.target.value })}
             />
-            <p className="text-xs text-muted-foreground">
-              API endpoint for the LLM provider.
-            </p>
-          </div>
+          </SettingsSection>
 
-          <div className="grid gap-2">
-            <label htmlFor="system-prompt" className="text-sm font-medium">
-              System Prompt
-            </label>
-            <Textarea
-              id="system-prompt"
-              placeholder="Enter the system prompt..."
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              rows={6}
-              className="font-mono text-sm"
-            />
-            <p className="text-xs text-muted-foreground">
-              Instructions that guide the AI's behavior throughout conversations.
-            </p>
+          <div className="pt-2 border-t">
+            <SettingsSection
+              label="Small Model (optional)"
+              htmlFor="small-model"
+              description="A smaller model for lightweight tasks like title generation. Uses the same provider settings as the main model."
+            >
+              <Input
+                id="small-model"
+                placeholder="e.g., qwen/qwen3-8b"
+                value={smallModel}
+                onChange={(e) => setSmallModel(e.target.value)}
+              />
+            </SettingsSection>
           </div>
         </div>
 

@@ -14,10 +14,10 @@ export interface LLMSettings {
 
 interface SettingsState {
   llm: LLMSettings;
-  systemPrompt: string;
+  smallModel: string;
   availableModels: ModelConfig[];
   setLLM: (settings: Partial<LLMSettings>) => void;
-  setSystemPrompt: (prompt: string) => void;
+  setSmallModel: (model: string) => void;
   addModel: (model: ModelConfig) => void;
   removeModel: (value: string) => void;
   reset: () => void;
@@ -34,18 +34,11 @@ const DEFAULT_SETTINGS: LLMSettings = {
   baseUrl: 'http://localhost:1234/v1',
 };
 
-const DEFAULT_SYSTEM_PROMPT = `You are a helpful RAG (Retrieval-Augmented Generation) assistant.
-
-You have access to a collection of documents that you can search and retrieve.
-Use the available tools to find and read documents before answering questions.
-
-Be helpful, accurate, and cite which documents your information comes from.`;
-
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       llm: DEFAULT_SETTINGS,
-      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      smallModel: '',
       availableModels: DEFAULT_MODELS,
 
       setLLM: (settings) =>
@@ -53,7 +46,7 @@ export const useSettingsStore = create<SettingsState>()(
           llm: { ...state.llm, ...settings },
         })),
 
-      setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),
+      setSmallModel: (model) => set({ smallModel: model }),
 
       addModel: (model) =>
         set((state) => ({
@@ -68,7 +61,7 @@ export const useSettingsStore = create<SettingsState>()(
       reset: () =>
         set(() => ({
           llm: DEFAULT_SETTINGS,
-          systemPrompt: DEFAULT_SYSTEM_PROMPT,
+          smallModel: '',
           availableModels: DEFAULT_MODELS,
         })),
     }),
@@ -80,7 +73,7 @@ export const useSettingsStore = create<SettingsState>()(
           apiKey: state.llm.apiKey,
           baseUrl: state.llm.baseUrl,
         },
-        systemPrompt: state.systemPrompt,
+        smallModel: state.smallModel,
         availableModels: state.availableModels,
       }),
     }

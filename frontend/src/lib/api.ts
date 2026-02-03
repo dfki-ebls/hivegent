@@ -1,8 +1,27 @@
 import type { UIMessage } from '@ai-sdk/react';
-import type { CreateConversationResponse, DocumentInfo } from './types';
+import type {
+  ChatRequestConfig,
+  ConversationListResponse,
+  ConversationSummary,
+  CreateConversationResponse,
+  DocumentInfo,
+  DocumentReference,
+  GenerateTitleResponse,
+} from './types';
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
+
+/** Convert ChatRequestConfig to HTTP headers for chat requests. */
+export function chatConfigToHeaders(config: ChatRequestConfig): Record<string, string> {
+  return {
+    'x-conversation-id': config.conversationId,
+    'x-model': config.model,
+    'x-api-key': config.apiKey,
+    'x-base-url': config.baseUrl ?? '',
+    'x-personality': config.personality,
+  };
+}
 
 export async function createConversation(): Promise<string> {
   const res = await fetch(`${API_BASE_URL}/api/conversation`, {
@@ -81,4 +100,86 @@ export async function getDocumentContent(filename: string): Promise<string> {
   }
 
   return res.text();
+}
+
+export async function listConversations(): Promise<ConversationSummary[]> {
+  const res = await fetch(`${API_BASE_URL}/api/conversations`);
+  if (!res.ok) {
+    throw new Error('Failed to list conversations');
+  }
+  const data: ConversationListResponse = await res.json();
+  return data.conversations;
+}
+
+export async function getConversationDocumentReferences(
+  conversationId: string
+): Promise<DocumentReference[]> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/conversation/${conversationId}/document-references`
+  );
+  if (!res.ok) {
+    return [];
+  }
+  return res.json();
+}
+
+export async function updateConversationTitle(
+  conversationId: string,
+  title: string
+): Promise<ConversationSummary> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/conversation/${conversationId}/title`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    }
+  );
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Update failed' }));
+    throw new Error(error.detail || 'Update failed');
+  }
+
+  return res.json();
+}
+
+export async function generateConversationTitle(
+  conversationId: string,
+  model: string,
+  apiKey: string,
+  baseUrl: string
+): Promise<GenerateTitleResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/conversation/${conversationId}/generate-title`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        api_key: apiKey,
+        base_url: baseUrl || null,
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ detail: 'Title generation failed' }));
+    throw new Error(error.detail || 'Title generation failed');
+  }
+
+  return res.json();
+}
+
+export async function deleteConversation(conversationId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/conversation/${conversationId}`, {
+    method: 'DELETE',
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Delete failed' }));
+    throw new Error(error.detail || 'Delete failed');
+  }
 }

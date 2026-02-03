@@ -55,7 +55,7 @@ export function DocumentPreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[90vh] w-[90vw] !max-w-4xl flex flex-col">
+      <DialogContent className="h-[90vh] w-[90vw] max-w-4xl! flex flex-col">
         <DialogHeader>
           {editable ? (
             <Input

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import Fuse from 'fuse.js';
 import { AlertCircle, FileText, FolderOpen, MessageSquarePlus, Plus, Search, Trash2, Upload, X } from 'lucide-react';
 
@@ -16,24 +17,107 @@ import { Input } from './ui/input';
 import { ScrollArea } from './ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 
+// --- Utility functions ---
+
+const ALLOWED_EXTENSIONS = Object.values(FileExtension);
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatRelativeDate(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+  return date.toLocaleDateString();
+}
+
+function isValidFile(filename: string): boolean {
+  const ext = '.' + filename.split('.').pop()?.toLowerCase();
+  return ALLOWED_EXTENSIONS.includes(ext as FileExtension);
+}
+
+// --- Shared components ---
+
+interface EmptyStateProps {
+  icon: ReactNode;
+  title: string;
+  description?: string;
+}
+
+function EmptyState({ icon, title, description }: EmptyStateProps) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-muted-foreground">
+      {icon}
+      <p className="text-center">{title}</p>
+      {description && <p className="text-center text-sm">{description}</p>}
+    </div>
+  );
+}
+
+// --- Fetched documents components ---
+
+interface DocumentCardProps {
+  doc: StoredDocument;
+  onClick: () => void;
+}
+
+function DocumentCard({ doc, onClick }: DocumentCardProps) {
+  return (
+    <Card
+      className="flex cursor-pointer flex-col transition-colors hover:bg-muted/50"
+      onClick={onClick}
+    >
+      <CardHeader className="pb-2">
+        <div className="flex items-start justify-between gap-2">
+          <CardTitle className="line-clamp-1 text-sm">{doc.filename}</CardTitle>
+          {doc.score !== undefined && (
+            <Badge variant="secondary" className="shrink-0">
+              {(doc.score * 100).toFixed(1)}%
+            </Badge>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {doc.sources.map((source) => (
+            <Badge key={source} variant="outline" className="text-xs">
+              {source}
+            </Badge>
+          ))}
+        </div>
+      </CardHeader>
+      <CardContent className="flex-1">
+        <pre className="line-clamp-6 whitespace-pre-wrap text-xs text-muted-foreground">
+          {doc.content}
+        </pre>
+      </CardContent>
+    </Card>
+  );
+}
+
 function FetchedDocuments() {
   const documents = useFetchedDocumentsStore((state) => state.documents);
-  const [selectedDocument, setSelectedDocument] =
-    useState<StoredDocument | null>(null);
+  const [selectedDocument, setSelectedDocument] = useState<StoredDocument | null>(null);
 
-  const documentList = Array.from(documents.values()).sort(
-    (a, b) => (b.score ?? 0) - (a.score ?? 0)
+  const documentList = useMemo(
+    () => Array.from(documents.values()).sort((a, b) => (b.score ?? 0) - (a.score ?? 0)),
+    [documents]
   );
 
   if (documentList.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-muted-foreground">
-        <Search className="h-12 w-12 opacity-50" />
-        <p className="text-center">Fetched documents will appear here</p>
-        <p className="text-center text-sm">
-          Ask questions in the chat to search and fetch documents
-        </p>
-      </div>
+      <EmptyState
+        icon={<Search className="h-12 w-12 opacity-50" />}
+        title="Fetched documents will appear here"
+        description="Ask questions in the chat to search and fetch documents"
+      />
     );
   }
 
@@ -42,36 +126,11 @@ function FetchedDocuments() {
       <ScrollArea className="h-full">
         <div className="grid gap-3 p-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
           {documentList.map((doc) => (
-            <Card
+            <DocumentCard
               key={doc.filename}
-              className="flex cursor-pointer flex-col transition-colors hover:bg-muted/50"
+              doc={doc}
               onClick={() => setSelectedDocument(doc)}
-            >
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between gap-2">
-                  <CardTitle className="line-clamp-1 text-sm">
-                    {doc.filename}
-                  </CardTitle>
-                  {doc.score !== undefined && (
-                    <Badge variant="secondary" className="shrink-0">
-                      {(doc.score * 100).toFixed(1)}%
-                    </Badge>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {doc.sources.map((source) => (
-                    <Badge key={source} variant="outline" className="text-xs">
-                      {source}
-                    </Badge>
-                  ))}
-                </div>
-              </CardHeader>
-              <CardContent className="flex-1">
-                <pre className="line-clamp-6 whitespace-pre-wrap text-xs text-muted-foreground">
-                  {doc.content}
-                </pre>
-              </CardContent>
-            </Card>
+            />
           ))}
         </div>
       </ScrollArea>
@@ -86,30 +145,138 @@ function FetchedDocuments() {
   );
 }
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+// --- Manage documents components ---
+
+interface ErrorBannerProps {
+  message: string;
+  onDismiss: () => void;
 }
 
-function formatDate(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-  return date.toLocaleDateString();
+function ErrorBanner({ message, onDismiss }: ErrorBannerProps) {
+  return (
+    <Alert variant="destructive" className="m-4 mb-0">
+      <AlertCircle className="h-4 w-4" />
+      <AlertDescription className="flex items-center justify-between">
+        <span>{message}</span>
+        <Button variant="ghost" size="sm" className="h-auto p-1" onClick={onDismiss}>
+          <X className="h-4 w-4" />
+        </Button>
+      </AlertDescription>
+    </Alert>
+  );
 }
 
-const ALLOWED_EXTENSIONS = Object.values(FileExtension);
+interface UploadAreaProps {
+  isDragging: boolean;
+  isLoading: boolean;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragLeave: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent) => void;
+  onFileInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onSelectFiles: () => void;
+  onNewDocument: () => void;
+}
 
-function isValidFile(filename: string): boolean {
-  const ext = '.' + filename.split('.').pop()?.toLowerCase();
-  return ALLOWED_EXTENSIONS.includes(ext as FileExtension);
+function UploadArea({
+  isDragging,
+  isLoading,
+  fileInputRef,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onFileInputChange,
+  onSelectFiles,
+  onNewDocument,
+}: UploadAreaProps) {
+  return (
+    <div className="border-b p-4">
+      <div
+        className={`flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-6 transition-colors ${
+          isDragging
+            ? 'border-primary bg-primary/10'
+            : 'border-muted-foreground/25 bg-muted/25 hover:border-muted-foreground/50 hover:bg-muted/50'
+        }`}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
+        <Upload className="h-10 w-10 text-muted-foreground" />
+        <div className="text-center">
+          <p className="font-medium">Drop files here to upload</p>
+          <p className="text-sm text-muted-foreground">
+            or click to browse ({ALLOWED_EXTENSIONS.join(', ')})
+          </p>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ALLOWED_EXTENSIONS.join(',')}
+          multiple
+          className="hidden"
+          onChange={onFileInputChange}
+        />
+        <div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={isLoading}>
+            Select Files
+          </Button>
+          <Button variant="outline" size="sm" onClick={onNewDocument} disabled={isLoading}>
+            <Plus className="h-4 w-4 mr-1" />
+            New Document
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface DocumentListItemProps {
+  doc: DocumentInfo;
+  isLoading: boolean;
+  onEdit: () => void;
+  onSendToChat: () => void;
+  onRemove: () => void;
+}
+
+function DocumentListItem({ doc, isLoading, onEdit, onSendToChat, onRemove }: DocumentListItemProps) {
+  return (
+    <div
+      className="flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50 cursor-pointer"
+      onClick={onEdit}
+    >
+      <FileText className="h-8 w-8 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-medium text-sm">{doc.filename}</p>
+        <p className="text-xs text-muted-foreground">
+          {formatFileSize(doc.size_bytes)} · {formatRelativeDate(doc.modified_at)}
+        </p>
+      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        title="Send to chat"
+        onClick={(e) => {
+          e.stopPropagation();
+          onSendToChat();
+        }}
+        disabled={isLoading}
+      >
+        <MessageSquarePlus className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        title="Remove"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        disabled={isLoading}
+      >
+        <Trash2 className="h-4 w-4 text-destructive" />
+      </Button>
+    </div>
+  );
 }
 
 interface EditorState {
@@ -145,6 +312,8 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
     fetchDocuments();
   }, [fetchDocuments]);
 
+  // --- Editor handlers ---
+
   const handleEdit = useCallback(async (doc: DocumentInfo) => {
     setEditor({ filename: doc.filename, content: null, isNew: false, isLoading: true });
     try {
@@ -159,39 +328,34 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
     setEditor({ filename: 'new-document.md', content: '', isNew: true, isLoading: false });
   }, []);
 
-  const handleCloseEditor = useCallback(() => {
-    setEditor(null);
-  }, []);
-
   const handleSave = useCallback(async (filename: string, content: string) => {
     const file = new File([content], filename, { type: 'text/plain' });
     await uploadDocument(filename, file);
     await fetchDocuments();
   }, [fetchDocuments]);
 
+  // --- Send to chat handler ---
+
   const handleSendToChat = useCallback(async (doc: DocumentInfo) => {
     if (!onSendToChat) return;
     try {
       const content = await getDocumentContent(doc.filename);
-      const context = `Here is the content of "${doc.filename}":\n\n${content}`;
-      onSendToChat(context);
+      onSendToChat(`Here is the content of "${doc.filename}":\n\n${content}`);
     } catch {
       // Silently fail
     }
   }, [onSendToChat]);
 
-  const handleFiles = useCallback(
-    async (files: FileList | null) => {
-      if (!files || files.length === 0) return;
+  // --- File upload handlers ---
 
-      for (const file of Array.from(files)) {
-        if (isValidFile(file.name)) {
-          await upload(file);
-        }
+  const handleFiles = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    for (const file of Array.from(files)) {
+      if (isValidFile(file.name)) {
+        await upload(file);
       }
-    },
-    [upload]
-  );
+    }
+  }, [upload]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -203,99 +367,73 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
     setIsDragging(false);
   }, []);
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragging(false);
-      handleFiles(e.dataTransfer.files);
-    },
-    [handleFiles]
-  );
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    handleFiles(e.dataTransfer.files);
+  }, [handleFiles]);
 
-  const handleFileInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      handleFiles(e.target.files);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    },
-    [handleFiles]
-  );
+  const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    handleFiles(e.target.files);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, [handleFiles]);
 
-  const handleSelectFilesClick = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
+  // --- Render helpers ---
+
+  const renderDocumentList = () => {
+    if (documents.length === 0) {
+      return (
+        <EmptyState
+          icon={<FileText className="h-12 w-12 opacity-50" />}
+          title="No documents yet"
+          description="Upload .txt or .md files to get started"
+        />
+      );
+    }
+
+    if (filteredDocuments.length === 0) {
+      return (
+        <EmptyState
+          icon={<Search className="h-12 w-12 opacity-50" />}
+          title="No matching documents"
+        />
+      );
+    }
+
+    return (
+      <div className="space-y-2">
+        {filteredDocuments.map((doc) => (
+          <DocumentListItem
+            key={doc.filename}
+            doc={doc}
+            isLoading={isLoading}
+            onEdit={() => handleEdit(doc)}
+            onSendToChat={() => handleSendToChat(doc)}
+            onRemove={() => remove(doc.filename)}
+          />
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="flex h-full flex-col">
-      {/* Error banner */}
-      {error && (
-        <Alert variant="destructive" className="m-4 mb-0">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription className="flex items-center justify-between">
-            <span>{error}</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-auto p-1"
-              onClick={clearError}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </AlertDescription>
-        </Alert>
-      )}
+      {error && <ErrorBanner message={error} onDismiss={clearError} />}
 
-      {/* Upload area */}
-      <div className="border-b p-4">
-        <div
-          className={`flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-6 transition-colors ${
-            isDragging
-              ? 'border-primary bg-primary/10'
-              : 'border-muted-foreground/25 bg-muted/25 hover:border-muted-foreground/50 hover:bg-muted/50'
-          }`}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-        >
-          <Upload className="h-10 w-10 text-muted-foreground" />
-          <div className="text-center">
-            <p className="font-medium">Drop files here to upload</p>
-            <p className="text-sm text-muted-foreground">
-              or click to browse ({ALLOWED_EXTENSIONS.join(', ')})
-            </p>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={ALLOWED_EXTENSIONS.join(',')}
-            multiple
-            className="hidden"
-            onChange={handleFileInputChange}
-          />
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleSelectFilesClick}
-              disabled={isLoading}
-            >
-              Select Files
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleNew}
-              disabled={isLoading}
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              New Document
-            </Button>
-          </div>
-        </div>
-      </div>
+      <UploadArea
+        isDragging={isDragging}
+        isLoading={isLoading}
+        fileInputRef={fileInputRef}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onFileInputChange={handleFileInputChange}
+        onSelectFiles={() => fileInputRef.current?.click()}
+        onNewDocument={handleNew}
+      />
 
-      {/* Search and document list */}
       <div className="flex-1 flex flex-col min-h-0">
         <div className="p-4 pb-2">
           <div className="relative">
@@ -311,71 +449,18 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
         <ScrollArea className="flex-1">
           <div className="px-4 pb-4">
             <h3 className="mb-3 text-sm font-medium text-muted-foreground">
-              {searchQuery ? `Found ${filteredDocuments.length} of ${documents.length}` : `Your Documents (${documents.length})`}
+              {searchQuery
+                ? `Found ${filteredDocuments.length} of ${documents.length}`
+                : `Your Documents (${documents.length})`}
             </h3>
-            {documents.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-2 py-8 text-muted-foreground">
-                <FileText className="h-12 w-12 opacity-50" />
-                <p className="text-center">No documents yet</p>
-                <p className="text-center text-sm">
-                  Upload .txt or .md files to get started
-                </p>
-              </div>
-            ) : filteredDocuments.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-2 py-8 text-muted-foreground">
-                <Search className="h-12 w-12 opacity-50" />
-                <p className="text-center">No matching documents</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {filteredDocuments.map((doc) => (
-                  <div
-                    key={doc.filename}
-                    className="flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50 cursor-pointer"
-                    onClick={() => handleEdit(doc)}
-                  >
-                    <FileText className="h-8 w-8 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium text-sm">{doc.filename}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatFileSize(doc.size_bytes)} · {formatDate(doc.modified_at)}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title="Send to chat"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleSendToChat(doc);
-                      }}
-                      disabled={isLoading}
-                    >
-                      <MessageSquarePlus className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title="Remove"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        remove(doc.filename);
-                      }}
-                      disabled={isLoading}
-                    >
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
+            {renderDocumentList()}
           </div>
         </ScrollArea>
       </div>
 
       <DocumentPreviewDialog
         open={editor !== null}
-        onOpenChange={(open) => !open && handleCloseEditor()}
+        onOpenChange={(open) => !open && setEditor(null)}
         filename={editor?.filename ?? ''}
         content={editor?.content ?? null}
         isLoading={editor?.isLoading ?? false}
@@ -404,7 +489,7 @@ export function DocumentCanvas({ onSendToChat }: DocumentCanvasProps) {
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full gap-0">
-      <div className="shrink-0 border-b px-4 flex items-center h-[60px]">
+      <div className="shrink-0 border-b px-4 flex items-center h-15">
         <TabsList className="w-full sm:w-auto">
           <TabsTrigger value="fetched" className="flex-1 sm:flex-none gap-2">
             <Search className="h-4 w-4" />

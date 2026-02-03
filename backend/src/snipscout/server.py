@@ -1,13 +1,18 @@
 """FastAPI server for the RAG agent."""
 
-import json
 from datetime import datetime, timezone
-from typing import Any
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from nanoid import generate
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
+from pydantic_ai import ModelMessagesTypeAdapter
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    SystemPromptPart,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.run import AgentRunResult
@@ -16,15 +21,31 @@ from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
-from .agent import agent
+from .agent import agent, small_agent
 from .config import FileExtension, settings
 from .documents import reload_documents
-from .messages import load_messages, save_messages
+from .messages import (
+    delete_conversation,
+    list_conversations,
+    load_conversation,
+    load_messages,
+    save_messages,
+    update_conversation_title,
+)
+from .prompts import PERSONALITY_TEMPLATES
 from .types import (
+    ChatRequestConfig,
+    ConversationListResponse,
+    ConversationSummary,
     CreateConversationResponse,
+    DeleteConversationResponse,
     DeleteDocumentResponse,
     DocumentInfo,
     DocumentListResponse,
+    GenerateTitleRequest,
+    GenerateTitleResponse,
+    Personality,
+    UpdateTitleRequest,
     UploadDocumentResponse,
 )
 
@@ -46,21 +67,135 @@ async def create_conversation() -> CreateConversationResponse:
     return CreateConversationResponse(id=conversation_id)
 
 
-def _extract_config(body: dict[str, Any]) -> tuple[str, str, str, str | None, str | None]:
-    """Extract configuration from request body.
+@app.get("/api/conversations")
+async def get_conversations() -> ConversationListResponse:
+    """List all conversations with summary information."""
+    conversations = list_conversations()
+    return ConversationListResponse(
+        conversations=conversations,
+        total_count=len(conversations),
+    )
 
-    Args:
-        body: The parsed request body.
 
-    Returns:
-        A tuple of (conversation_id, model, api_key, base_url, system_prompt).
-    """
-    conversation_id: str = body.get("conversationId", "")
-    model: str = body.get("model", "")
-    api_key: str = body.get("apiKey", "")
-    base_url: str | None = body.get("baseUrl") or None
-    system_prompt: str | None = body.get("systemPrompt") or None
-    return conversation_id, model, api_key, base_url, system_prompt
+@app.get("/api/conversation/{conversation_id}")
+async def get_conversation(conversation_id: str) -> ConversationSummary:
+    """Get summary information for a specific conversation."""
+    conversation = load_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return ConversationSummary(
+        id=conversation.id,
+        title=conversation.title,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+        message_count=len(conversation.messages),
+    )
+
+
+@app.get("/api/conversation/{conversation_id}/document-references")
+async def get_conversation_document_references(conversation_id: str) -> list[dict]:
+    """Get document references for a conversation."""
+    conversation = load_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return [ref.model_dump() for ref in conversation.document_references]
+
+
+@app.put("/api/conversation/{conversation_id}/title")
+async def update_title(
+    conversation_id: str, request: UpdateTitleRequest
+) -> ConversationSummary:
+    """Update the title of a conversation."""
+    if not update_conversation_title(conversation_id, request.title):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conversation = load_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    return ConversationSummary(
+        id=conversation.id,
+        title=conversation.title,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+        message_count=len(conversation.messages),
+    )
+
+
+def _extract_message_texts(
+    messages: list[ModelMessage], max_messages: int = 4
+) -> list[str]:
+    """Extract text content from conversation messages."""
+    texts: list[str] = []
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, (UserPromptPart, TextPart)):
+                if isinstance(part.content, str) and (text := part.content.strip()):
+                    texts.append(text[:500])
+                    if len(texts) >= max_messages:
+                        return texts
+    return texts
+
+
+@app.post("/api/conversation/{conversation_id}/generate-title")
+async def generate_title(
+    conversation_id: str, request: GenerateTitleRequest
+) -> GenerateTitleResponse:
+    """Generate a title for a conversation using an LLM."""
+    conversation = load_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    messages = ModelMessagesTypeAdapter.validate_python(conversation.messages)
+    messages_text = _extract_message_texts(messages)
+    if not messages_text:
+        return GenerateTitleResponse(title=conversation.title or "Untitled")
+
+    conversation_preview = "\n---\n".join(messages_text)
+
+    instructions = """Generate a short, descriptive title (max 60 characters) for the conversation.
+The title should capture the main topic or question.
+Return ONLY the title, no quotes or extra text.
+"""
+
+    try:
+        result = await small_agent.run(
+            f"Conversation:\n{conversation_preview}",
+            model=OpenAIResponsesModel(
+                request.model,
+                provider=OpenAIProvider(
+                    api_key=request.api_key or "not-needed",
+                    base_url=request.base_url,
+                ),
+            ),
+            instructions=instructions,
+        )
+
+        generated_title = result.output.strip().strip("\"'")
+        if len(generated_title) > 100:
+            generated_title = generated_title[:97] + "..."
+
+        update_conversation_title(conversation_id, generated_title)
+
+        return GenerateTitleResponse(title=generated_title)
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to generate title: {str(e)}"
+        )
+
+
+@app.delete("/api/conversation/{conversation_id}")
+async def delete_conversation_endpoint(
+    conversation_id: str,
+) -> DeleteConversationResponse:
+    """Delete a conversation."""
+    if not delete_conversation(conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return DeleteConversationResponse(
+        id=conversation_id,
+        message="Conversation deleted successfully",
+    )
 
 
 @app.get("/api/conversation/{conversation_id}/messages")
@@ -72,53 +207,70 @@ async def get_messages(conversation_id: str) -> list[UIMessage]:
     return VercelAIAdapter.dump_messages(messages)
 
 
+def _parse_chat_config(request: Request) -> ChatRequestConfig:
+    """Parse chat configuration from request headers.
+
+    Args:
+        request: The incoming HTTP request.
+
+    Returns:
+        A ChatRequestConfig instance populated from headers.
+    """
+    personality_header = request.headers.get("x-personality", "")
+    try:
+        personality = (
+            Personality(personality_header)
+            if personality_header
+            else Personality.DEFAULT
+        )
+    except ValueError:
+        personality = Personality.DEFAULT
+
+    return ChatRequestConfig(
+        conversation_id=request.headers.get("x-conversation-id", ""),
+        model=request.headers.get("x-model", ""),
+        api_key=request.headers.get("x-api-key", ""),
+        base_url=request.headers.get("x-base-url") or None,
+        personality=personality,
+    )
+
+
 @app.post("/api/chat")
 async def chat(request: Request) -> Response:
     """Handle chat requests using the Vercel AI Data Stream Protocol.
 
-    The request body must include:
-    - conversationId: The conversation ID for persistence
-    - model: The model identifier (e.g., "openai/gpt-4o")
-    - apiKey: The API key for the LLM provider
-    - baseUrl: Optional custom base URL for the LLM provider
+    Configuration is passed via HTTP headers (see ChatRequestConfig).
     """
-    body_bytes = await request.body()
-    body: dict[str, Any] = {}
-    if body_bytes:
-        body = json.loads(body_bytes)
+    config = _parse_chat_config(request)
 
-    conversation_id, model, api_key, base_url, system_prompt = _extract_config(body)
-
-    if not conversation_id:
-        raise HTTPException(status_code=400, detail="conversationId is required")
+    if not config.conversation_id:
+        raise HTTPException(
+            status_code=400, detail="x-conversation-id header is required"
+        )
 
     # Load existing message history
-    message_history: list[ModelMessage] | None = load_messages(conversation_id)
+    message_history: list[ModelMessage] | None = load_messages(config.conversation_id)
 
-    # For new conversations with a custom system prompt, prepend it to history
-    # This ensures the custom prompt is used instead of the agent's default instructions
-    if not message_history and system_prompt:
-        message_history = [ModelRequest(parts=[SystemPromptPart(content=system_prompt)])]
+    # For new conversations, prepend the personality's system prompt to history
+    if not message_history:
+        system_prompt = PERSONALITY_TEMPLATES[config.personality]
+        message_history = [
+            ModelRequest(parts=[SystemPromptPart(content=system_prompt)])
+        ]
 
     def on_complete(result: AgentRunResult[str]) -> None:
         """Save messages after the agent run completes."""
-        save_messages(conversation_id, result.all_messages())
-
-    modified_request = Request(
-        scope=request.scope,
-        receive=request.receive,
-    )
-    modified_request._body = body_bytes
+        save_messages(config.conversation_id, result.all_messages())
 
     return await VercelAIAdapter.dispatch_request(
-        modified_request,
+        request,
         agent=agent,
         deps=None,
         model=OpenAIResponsesModel(
-            model,
+            config.model,
             provider=OpenAIProvider(
-                api_key=api_key,
-                base_url=base_url if base_url else None,
+                api_key=config.api_key,
+                base_url=config.base_url,
             ),
         ),
         message_history=message_history,

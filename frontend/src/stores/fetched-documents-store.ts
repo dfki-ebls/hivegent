@@ -5,6 +5,7 @@ interface FetchedDocumentsStore {
   documents: Map<string, StoredDocument>;
   addSearchResults: (docs: RetrievedDocument[], query: string) => void;
   addDocument: (filename: string, content: string, source: string) => void;
+  addDocumentReference: (filename: string, sources: string[], score?: number) => void;
   clearDocuments: () => void;
 }
 
@@ -47,6 +48,13 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       } else {
         newMap.set(filename, { filename, content, sources: [source] });
       }
+      return { documents: newMap };
+    }),
+  addDocumentReference: (filename, sources, score) =>
+    set((state) => {
+      const newMap = new Map(state.documents);
+      // Set the reference (content will be fetched when expanded)
+      newMap.set(filename, { filename, content: '', sources, score });
       return { documents: newMap };
     }),
   clearDocuments: () => set({ documents: new Map() }),
