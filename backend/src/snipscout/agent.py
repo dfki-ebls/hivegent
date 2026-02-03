@@ -1,26 +1,23 @@
 """RAG agent with document retrieval tools."""
 
-import re
+from fnmatch import fnmatch
+from pathlib import Path
 from textwrap import dedent
 
-import bm25s
 from pydantic_ai import Agent, RunContext
+from ripgrepy import Ripgrepy
 
+from .config import settings
 from .documents import get_cached_documents
 from .documents import search_documents as bm25_search
 from .types import (
     DocumentRange,
-    DocumentStats,
+    DocumentSummary,
     GrepMatch,
     RetrievedDocument,
 )
 
-__all__ = ["agent"]
-
-
-def _get_documents() -> tuple[dict[str, str], bm25s.BM25 | None, list[str]]:
-    """Get current documents and index from cache."""
-    return get_cached_documents()
+__all__ = ["agent", "small_agent"]
 
 
 agent: Agent[None, str] = Agent(
@@ -34,19 +31,20 @@ agent: Agent[None, str] = Agent(
     """).strip()
 )
 
-
-@agent.tool
-def get_document_count(ctx: RunContext[None]) -> int:
-    """Get the total number of documents."""
-    documents, _, _ = _get_documents()
-    return len(documents)
+small_agent: Agent[None, str] = Agent()
 
 
 @agent.tool
-def list_documents(ctx: RunContext[None]) -> list[str]:
-    """List all available document filenames."""
-    documents, _, _ = _get_documents()
-    return list(documents.keys())
+def list_documents(ctx: RunContext[None]) -> list[DocumentSummary]:
+    """List all available documents with their sizes in bytes."""
+    data_dir = settings.data_dir
+    if not data_dir.exists():
+        return []
+    return [
+        DocumentSummary(filename=f.name, size=f.stat().st_size)
+        for f in data_dir.iterdir()
+        if f.is_file()
+    ]
 
 
 @agent.tool
@@ -56,142 +54,102 @@ def get_document(ctx: RunContext[None], filename: str) -> str | None:
     Args:
         filename: The exact filename to retrieve.
     """
-    documents, _, _ = _get_documents()
+    documents, _, _ = get_cached_documents()
     return documents.get(filename)
 
 
 @agent.tool
-def get_document_stats(ctx: RunContext[None], filename: str) -> DocumentStats | None:
-    """Get statistics about a document.
-
-    Args:
-        filename: The document filename.
-    """
-    documents, _, _ = _get_documents()
-    if filename in documents:
-        content = documents[filename]
-        lines = content.splitlines()
-        return DocumentStats(
-            line_count=len(lines),
-            word_count=len(content.split()),
-            char_count=len(content),
-        )
-    return None
-
-
-@agent.tool
-def get_document_range(
+def get_document_lines(
     ctx: RunContext[None],
     filename: str,
-    start_line: int,
-    end_line: int,
+    start: int = 1,
+    end: int | None = None,
 ) -> DocumentRange | None:
     """Get a range of lines from a document.
 
     Args:
         filename: The document filename.
-        start_line: First line to include (1-indexed).
-        end_line: Last line to include (1-indexed).
+        start: First line to include (1-indexed, default: 1).
+        end: Last line to include (1-indexed, default: end of file).
     """
-    documents, _, _ = _get_documents()
-    if filename in documents:
-        lines = documents[filename].splitlines()
-        start = max(1, start_line) - 1
-        end = min(len(lines), end_line)
-        return DocumentRange(
-            start_line=start + 1,
-            end_line=end,
-            content="\n".join(lines[start:end]),
-        )
-    return None
-
-
-@agent.tool
-def get_context(
-    ctx: RunContext[None],
-    filename: str,
-    line: int,
-    context: int = 3,
-) -> DocumentRange | None:
-    """Get lines surrounding a specific line.
-
-    Args:
-        filename: The document filename.
-        line: The center line number (1-indexed).
-        context: Number of lines before and after.
-    """
-    documents, _, _ = _get_documents()
-    if filename in documents:
-        lines = documents[filename].splitlines()
-        center = max(1, min(line, len(lines)))
-        start = max(1, center - context)
-        end = min(len(lines), center + context)
-        return DocumentRange(
-            start_line=start,
-            end_line=end,
-            content="\n".join(lines[start - 1 : end]),
-        )
-    return None
-
-
-@agent.tool
-def grep_document(
-    ctx: RunContext[None],
-    filename: str,
-    pattern: str,
-) -> list[GrepMatch]:
-    """Find lines matching a pattern in a specific document.
-
-    Args:
-        filename: The document filename.
-        pattern: Regex pattern to search for (case-insensitive).
-    """
-    documents, _, _ = _get_documents()
-    matches: list[GrepMatch] = []
+    documents, _, _ = get_cached_documents()
     if filename not in documents:
-        return matches
+        return None
 
-    try:
-        regex = re.compile(pattern, re.IGNORECASE)
-    except re.error:
-        return matches
+    lines = documents[filename].splitlines()
+    total = len(lines)
+    start = max(1, start)
+    end = min(total, end) if end else total
 
-    for i, line in enumerate(documents[filename].splitlines(), start=1):
-        if regex.search(line):
-            matches.append(GrepMatch(filename=filename, line_number=i, line=line))
-
-    return matches
+    return DocumentRange(
+        start_line=start,
+        end_line=end,
+        total_lines=total,
+        content="\n".join(lines[start - 1 : end]),
+    )
 
 
 @agent.tool
-def grep_documents(
+def glob_documents(
     ctx: RunContext[None],
     pattern: str,
-    include_content: bool = False,
-) -> list[GrepMatch]:
-    """Find lines matching a pattern in document titles and content.
+) -> list[str]:
+    """Find documents matching a glob pattern.
 
     Args:
-        pattern: Regex pattern to search for (case-insensitive).
-        include_content: Also search document content, not just filenames.
+        pattern: Glob pattern to match (e.g., "*.md", "notes/*.txt", "**/*.py").
     """
-    documents, _, _ = _get_documents()
+    documents, _, _ = get_cached_documents()
+    return [name for name in documents.keys() if fnmatch(name, pattern)]
+
+
+@agent.tool
+def grep(
+    ctx: RunContext[None],
+    pattern: str,
+    glob: str | None = None,
+    context_lines: int = 0,
+    include_content: bool = True,
+) -> list[GrepMatch]:
+    """Search documents for a pattern.
+
+    Uses smart case matching: case-insensitive unless the pattern contains
+    uppercase letters.
+
+    Args:
+        pattern: Text or regex pattern to search for.
+        glob: Only search files matching this pattern (e.g., "*.md", "notes/*").
+        context_lines: Number of lines to show before and after each match.
+        include_content: Whether to include the matching line content.
+    """
+    data_dir = settings.data_dir
+    if not data_dir.exists():
+        return []
+
+    rg = Ripgrepy(pattern, str(data_dir)).smart_case()
+
+    if glob:
+        rg = rg.glob(glob)
+    if context_lines > 0:
+        rg = rg.context(context_lines)
+
     matches: list[GrepMatch] = []
     try:
-        regex = re.compile(pattern, re.IGNORECASE)
-    except re.error:
-        return matches
-
-    for filename, content in documents.items():
-        if regex.search(filename):
-            matches.append(GrepMatch(filename=filename, line_number=0, line=filename))
-
-        if include_content:
-            for i, line in enumerate(content.splitlines(), start=1):
-                if regex.search(line):
-                    matches.append(
-                        GrepMatch(filename=filename, line_number=i, line=line)
+        for item in rg.run().as_dict:
+            if item.get("type") == "match":
+                data = item["data"]
+                filepath = data["path"]["text"]
+                doc_name = str(Path(filepath).relative_to(data_dir))
+                content = data["lines"]["text"].rstrip("\n") if include_content else None
+                matches.append(
+                    GrepMatch(
+                        filename=doc_name,
+                        line=data["line_number"],
+                        content=content,
                     )
+                )
+    except Exception:
+        pass
 
     return matches
 
@@ -208,7 +166,7 @@ async def search_documents(
         query: Natural language search query.
         top_k: Maximum results to return.
     """
-    documents, index, filenames = _get_documents()
+    documents, index, filenames = get_cached_documents()
     if not documents or not index:
         return []
 
