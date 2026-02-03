@@ -1,28 +1,59 @@
 """Document loading and BM25 indexing utilities."""
 
-from pathlib import Path
-
 import bm25s
 
-__all__ = ["load_documents", "create_index", "search_documents"]
+from .config import FileExtension, settings
 
-DATA_DIR = Path("data")
+__all__ = [
+    "create_index",
+    "get_cached_documents",
+    "load_documents",
+    "reload_documents",
+    "search_documents",
+]
+
+# Module-level cache
+_documents: dict[str, str] = {}
+_index: bm25s.BM25 | None = None
+_filenames: list[str] = []
 
 
 def load_documents() -> dict[str, str]:
-    """Load all .txt files from the data directory.
+    """Load all supported files from the data directory.
 
     Returns:
         Dict mapping filename to content.
     """
     documents: dict[str, str] = {}
-    if not DATA_DIR.exists():
+    data_dir = settings.data_dir
+    if not data_dir.exists():
         return documents
 
-    for txt_file in sorted(DATA_DIR.glob("*.txt")):
-        documents[txt_file.name] = txt_file.read_text(encoding="utf-8")
+    for ext in FileExtension:
+        for file_path in sorted(data_dir.glob(f"*{ext}")):
+            documents[file_path.name] = file_path.read_text(encoding="utf-8")
 
     return documents
+
+
+def reload_documents() -> None:
+    """Reload documents from disk and rebuild the BM25 index."""
+    global _documents, _index, _filenames
+    _documents = load_documents()
+    if _documents:
+        _index, _filenames = create_index(_documents)
+    else:
+        _index = None
+        _filenames = []
+
+
+def get_cached_documents() -> tuple[dict[str, str], bm25s.BM25 | None, list[str]]:
+    """Get the cached documents and index.
+
+    Returns:
+        Tuple of (documents dict, BM25 index or None, filenames list).
+    """
+    return _documents, _index, _filenames
 
 
 def create_index(documents: dict[str, str]) -> tuple[bm25s.BM25, list[str]]:
@@ -73,3 +104,7 @@ def search_documents(
             filename = filenames[idx]
             results.append((filename, documents[filename], float(score)))
     return results
+
+
+# Initialize cache on module load
+reload_documents()

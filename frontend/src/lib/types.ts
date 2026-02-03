@@ -2,6 +2,17 @@ export interface CreateConversationResponse {
   id: string;
 }
 
+export enum FileExtension {
+  TXT = '.txt',
+  MD = '.md',
+}
+
+export interface DocumentInfo {
+  filename: string;
+  size_bytes: number;
+  modified_at: string;
+}
+
 export interface DocumentStats {
   line_count: number;
   word_count: number;

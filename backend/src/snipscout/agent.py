@@ -3,9 +3,10 @@
 import re
 from textwrap import dedent
 
+import bm25s
 from pydantic_ai import Agent, RunContext
 
-from .documents import create_index, load_documents
+from .documents import get_cached_documents
 from .documents import search_documents as bm25_search
 from .types import (
     DocumentRange,
@@ -16,33 +17,36 @@ from .types import (
 
 __all__ = ["agent"]
 
-# Load documents once at module level
-_documents = load_documents()
-_index, _filenames = create_index(_documents) if _documents else (None, [])
+
+def _get_documents() -> tuple[dict[str, str], bm25s.BM25 | None, list[str]]:
+    """Get current documents and index from cache."""
+    return get_cached_documents()
 
 
-agent = Agent(
-    system_prompt=dedent("""
-    You are a helpful RAG (Retrieval-Augmented Generation) assistant.
+agent: Agent[None, str] = Agent(
+    instructions=dedent("""
+        You are a helpful RAG (Retrieval-Augmented Generation) assistant.
 
-    You have access to a collection of documents that you can search and retrieve.
-    Use the available tools to find and read documents before answering questions.
+        You have access to a collection of documents that you can search and retrieve.
+        Use the available tools to find and read documents before answering questions.
 
-    Be helpful, accurate, and cite which documents your information comes from.
-  """).strip(),
+        Be helpful, accurate, and cite which documents your information comes from.
+    """).strip()
 )
 
 
 @agent.tool
 def get_document_count(ctx: RunContext[None]) -> int:
     """Get the total number of documents."""
-    return len(_documents)
+    documents, _, _ = _get_documents()
+    return len(documents)
 
 
 @agent.tool
 def list_documents(ctx: RunContext[None]) -> list[str]:
     """List all available document filenames."""
-    return list(_documents.keys())
+    documents, _, _ = _get_documents()
+    return list(documents.keys())
 
 
 @agent.tool
@@ -52,7 +56,8 @@ def get_document(ctx: RunContext[None], filename: str) -> str | None:
     Args:
         filename: The exact filename to retrieve.
     """
-    return _documents.get(filename)
+    documents, _, _ = _get_documents()
+    return documents.get(filename)
 
 
 @agent.tool
@@ -62,8 +67,9 @@ def get_document_stats(ctx: RunContext[None], filename: str) -> DocumentStats | 
     Args:
         filename: The document filename.
     """
-    if filename in _documents:
-        content = _documents[filename]
+    documents, _, _ = _get_documents()
+    if filename in documents:
+        content = documents[filename]
         lines = content.splitlines()
         return DocumentStats(
             line_count=len(lines),
@@ -87,8 +93,9 @@ def get_document_range(
         start_line: First line to include (1-indexed).
         end_line: Last line to include (1-indexed).
     """
-    if filename in _documents:
-        lines = _documents[filename].splitlines()
+    documents, _, _ = _get_documents()
+    if filename in documents:
+        lines = documents[filename].splitlines()
         start = max(1, start_line) - 1
         end = min(len(lines), end_line)
         return DocumentRange(
@@ -113,8 +120,9 @@ def get_context(
         line: The center line number (1-indexed).
         context: Number of lines before and after.
     """
-    if filename in _documents:
-        lines = _documents[filename].splitlines()
+    documents, _, _ = _get_documents()
+    if filename in documents:
+        lines = documents[filename].splitlines()
         center = max(1, min(line, len(lines)))
         start = max(1, center - context)
         end = min(len(lines), center + context)
@@ -138,8 +146,9 @@ def grep_document(
         filename: The document filename.
         pattern: Regex pattern to search for (case-insensitive).
     """
+    documents, _, _ = _get_documents()
     matches: list[GrepMatch] = []
-    if filename not in _documents:
+    if filename not in documents:
         return matches
 
     try:
@@ -147,7 +156,7 @@ def grep_document(
     except re.error:
         return matches
 
-    for i, line in enumerate(_documents[filename].splitlines(), start=1):
+    for i, line in enumerate(documents[filename].splitlines(), start=1):
         if regex.search(line):
             matches.append(GrepMatch(filename=filename, line_number=i, line=line))
 
@@ -166,20 +175,23 @@ def grep_documents(
         pattern: Regex pattern to search for (case-insensitive).
         include_content: Also search document content, not just filenames.
     """
+    documents, _, _ = _get_documents()
     matches: list[GrepMatch] = []
     try:
         regex = re.compile(pattern, re.IGNORECASE)
     except re.error:
         return matches
 
-    for filename, content in _documents.items():
+    for filename, content in documents.items():
         if regex.search(filename):
             matches.append(GrepMatch(filename=filename, line_number=0, line=filename))
 
         if include_content:
             for i, line in enumerate(content.splitlines(), start=1):
                 if regex.search(line):
-                    matches.append(GrepMatch(filename=filename, line_number=i, line=line))
+                    matches.append(
+                        GrepMatch(filename=filename, line_number=i, line=line)
+                    )
 
     return matches
 
@@ -196,10 +208,11 @@ async def search_documents(
         query: Natural language search query.
         top_k: Maximum results to return.
     """
-    if not _documents or not _index:
+    documents, index, filenames = _get_documents()
+    if not documents or not index:
         return []
 
-    results = bm25_search(query, _documents, _index, _filenames, top_k)
+    results = bm25_search(query, documents, index, filenames, top_k)
 
     return [
         RetrievedDocument(

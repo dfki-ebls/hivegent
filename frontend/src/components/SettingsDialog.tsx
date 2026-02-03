@@ -11,13 +11,16 @@ import {
   DialogTrigger,
 } from './ui/dialog';
 import { Input } from './ui/input';
+import { Textarea } from './ui/textarea';
 import { useSettingsStore } from '../stores/settings-store';
 
 export function SettingsDialog() {
   const {
     llm,
+    systemPrompt,
     availableModels,
     setLLM,
+    setSystemPrompt,
     addModel,
     removeModel,
     reset,
@@ -45,7 +48,7 @@ export function SettingsDialog() {
           <span className="sr-only">Settings</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>LLM Settings</DialogTitle>
           <DialogDescription>
@@ -149,6 +152,23 @@ export function SettingsDialog() {
             />
             <p className="text-xs text-muted-foreground">
               API endpoint for the LLM provider.
+            </p>
+          </div>
+
+          <div className="grid gap-2">
+            <label htmlFor="system-prompt" className="text-sm font-medium">
+              System Prompt
+            </label>
+            <Textarea
+              id="system-prompt"
+              placeholder="Enter the system prompt..."
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              rows={6}
+              className="font-mono text-sm"
+            />
+            <p className="text-xs text-muted-foreground">
+              Instructions that guide the AI's behavior throughout conversations.
             </p>
           </div>
         </div>

@@ -10,7 +10,7 @@ import type {
   RetrievedDocument,
   SearchDocumentsInput,
 } from '../lib/types';
-import { useDocumentStore } from '../stores/document-store';
+import { useFetchedDocumentsStore } from '../stores/fetched-documents-store';
 import { Button } from './ui/button';
 import { useSettingsStore } from '../stores/settings-store';
 import {
@@ -96,6 +96,8 @@ type GrepDocumentsToolUIPart = ToolUIPart<{
 
 interface ChatSidebarProps {
   id: string;
+  pendingContent?: string | null;
+  onPendingContentConsumed?: () => void;
 }
 
 const SUGGESTED_QUESTIONS = [
@@ -105,14 +107,21 @@ const SUGGESTED_QUESTIONS = [
   'What are my action items?',
 ];
 
-export function ChatSidebar({ id }: ChatSidebarProps) {
+export function ChatSidebar({ id, pendingContent, onPendingContentConsumed }: ChatSidebarProps) {
   const navigate = useNavigate();
-  const addSearchResults = useDocumentStore((state) => state.addSearchResults);
-  const addDocument = useDocumentStore((state) => state.addDocument);
-  const clearDocuments = useDocumentStore((state) => state.clearDocuments);
-  const { llm, availableModels, setLLM } = useSettingsStore();
+  const addSearchResults = useFetchedDocumentsStore((state) => state.addSearchResults);
+  const addDocument = useFetchedDocumentsStore((state) => state.addDocument);
+  const clearDocuments = useFetchedDocumentsStore((state) => state.clearDocuments);
+  const { llm, systemPrompt, availableModels, setLLM } = useSettingsStore();
   const [inputValue, setInputValue] = useState('');
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+
+  useEffect(() => {
+    if (pendingContent) {
+      setInputValue((prev) => prev ? `${prev}\n\n${pendingContent}` : pendingContent);
+      onPendingContentConsumed?.();
+    }
+  }, [pendingContent, onPendingContentConsumed]);
 
   const handleNewChat = async () => {
     const newId = await createConversation();
@@ -162,6 +171,7 @@ export function ChatSidebar({ id }: ChatSidebarProps) {
           model: llm.model,
           apiKey: llm.apiKey,
           baseUrl: llm.baseUrl,
+          systemPrompt,
         },
       }
     );

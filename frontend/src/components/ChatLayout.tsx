@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { PanelLeftOpen } from 'lucide-react';
 
 import { ChatSidebar } from './ChatSidebar';
@@ -17,12 +17,21 @@ interface ChatLayoutProps {
 
 export function ChatLayout({ id }: ChatLayoutProps) {
   const [mobileDocumentsOpen, setMobileDocumentsOpen] = useState(false);
+  const [pendingChatContent, setPendingChatContent] = useState<string | null>(null);
+
+  const handleSendToChat = useCallback((content: string) => {
+    setPendingChatContent(content);
+  }, []);
+
+  const handlePendingContentConsumed = useCallback(() => {
+    setPendingChatContent(null);
+  }, []);
 
   return (
     <div className="flex h-full overflow-hidden">
       {/* Desktop: Always show DocumentCanvas */}
       <div className="hidden md:block h-full w-2/3 overflow-hidden border-r">
-        <DocumentCanvas />
+        <DocumentCanvas onSendToChat={handleSendToChat} />
       </div>
 
       {/* Mobile: Sheet for DocumentCanvas */}
@@ -32,7 +41,7 @@ export function ChatLayout({ id }: ChatLayoutProps) {
             <SheetTitle>Documents</SheetTitle>
           </SheetHeader>
           <div className="h-[calc(100%-60px)] overflow-hidden">
-            <DocumentCanvas />
+            <DocumentCanvas onSendToChat={handleSendToChat} />
           </div>
         </SheetContent>
       </Sheet>
@@ -51,7 +60,11 @@ export function ChatLayout({ id }: ChatLayoutProps) {
           </Button>
         </div>
         <div className="flex-1 overflow-hidden">
-          <ChatSidebar id={id} />
+          <ChatSidebar
+            id={id}
+            pendingContent={pendingChatContent}
+            onPendingContentConsumed={handlePendingContentConsumed}
+          />
         </div>
       </div>
     </div>

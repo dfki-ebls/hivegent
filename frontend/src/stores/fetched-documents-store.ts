@@ -1,14 +1,14 @@
 import { create } from 'zustand';
 import type { RetrievedDocument, StoredDocument } from '../lib/types';
 
-interface DocumentStore {
+interface FetchedDocumentsStore {
   documents: Map<string, StoredDocument>;
   addSearchResults: (docs: RetrievedDocument[], query: string) => void;
   addDocument: (filename: string, content: string, source: string) => void;
   clearDocuments: () => void;
 }
 
-export const useDocumentStore = create<DocumentStore>((set) => ({
+export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => ({
   documents: new Map(),
   addSearchResults: (docs, query) =>
     set((state) => {
