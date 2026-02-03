@@ -2,17 +2,18 @@
 name = "snipscout"
 version = "0.1.0"
 description = "Add your description here"
-authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
 readme = "README.md"
 requires-python = ">=3.12,<4"
+authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
 dependencies = [
-    "bm25s[core]>=0.2,<1",
-    "fastapi[standard]>=0.120,<1",
-    "logfire>=4,<5",
-    "nanoid>=2,<3",
-    "pydantic-ai-slim[ui,openai]>=1,<2",
-    "pydantic-settings>=2,<3",
-    "uvicorn[standard]>=0.40,<1",
+  "bm25s[core]>=0.2,<1",
+  "fastapi[standard]>=0.120,<1",
+  "logfire>=4,<5",
+  "nanoid>=2,<3",
+  "pydantic-ai-slim[ui,openai]>=1,<2",
+  "pydantic-settings>=2,<3",
+  "ripgrepy>=2,<3",
+  "uvicorn[standard]>=0.40,<1",
 ]
 
 [project.scripts]
