@@ -1,5 +1,6 @@
 """RAG agent with document retrieval tools."""
 
+from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
 from textwrap import dedent
@@ -8,7 +9,7 @@ from pydantic_ai import Agent, RunContext
 from ripgrepy import Ripgrepy
 
 from .config import settings
-from .documents import get_cached_documents
+from .documents import get_user_documents
 from .documents import search_documents as bm25_search
 from .types import (
     DocumentRange,
@@ -17,10 +18,18 @@ from .types import (
     RetrievedDocument,
 )
 
-__all__ = ["agent", "small_agent"]
+__all__ = ["AgentDeps", "agent", "small_agent"]
 
 
-agent: Agent[None, str] = Agent(
+@dataclass
+class AgentDeps:
+    """Dependencies for the RAG agent."""
+
+    user_id: str
+
+
+agent = Agent(
+    deps_type=AgentDeps,
     instructions=dedent("""
         You are a helpful RAG (Retrieval-Augmented Generation) assistant.
 
@@ -28,16 +37,16 @@ agent: Agent[None, str] = Agent(
         Use the available tools to find and read documents before answering questions.
 
         Be helpful, accurate, and cite which documents your information comes from.
-    """).strip()
+    """).strip(),
 )
 
-small_agent: Agent[None, str] = Agent()
+small_agent = Agent()
 
 
 @agent.tool
-def list_documents(ctx: RunContext[None]) -> list[DocumentSummary]:
+def list_documents(ctx: RunContext[AgentDeps]) -> list[DocumentSummary]:
     """List all available documents with their sizes in bytes."""
-    data_dir = settings.data_dir
+    data_dir = settings.get_user_documents_dir(ctx.deps.user_id)
     if not data_dir.exists():
         return []
     return [
@@ -48,19 +57,19 @@ def list_documents(ctx: RunContext[None]) -> list[DocumentSummary]:
 
 
 @agent.tool
-def get_document(ctx: RunContext[None], filename: str) -> str | None:
+def get_document(ctx: RunContext[AgentDeps], filename: str) -> str | None:
     """Get the full content of a specific document.
 
     Args:
         filename: The exact filename to retrieve.
     """
-    documents, _, _ = get_cached_documents()
+    documents, _, _ = get_user_documents(ctx.deps.user_id)
     return documents.get(filename)
 
 
 @agent.tool
 def get_document_lines(
-    ctx: RunContext[None],
+    ctx: RunContext[AgentDeps],
     filename: str,
     start: int = 1,
     end: int | None = None,
@@ -72,7 +81,7 @@ def get_document_lines(
         start: First line to include (1-indexed, default: 1).
         end: Last line to include (1-indexed, default: end of file).
     """
-    documents, _, _ = get_cached_documents()
+    documents, _, _ = get_user_documents(ctx.deps.user_id)
     if filename not in documents:
         return None
 
@@ -91,7 +100,7 @@ def get_document_lines(
 
 @agent.tool
 def glob_documents(
-    ctx: RunContext[None],
+    ctx: RunContext[AgentDeps],
     pattern: str,
 ) -> list[str]:
     """Find documents matching a glob pattern.
@@ -99,13 +108,13 @@ def glob_documents(
     Args:
         pattern: Glob pattern to match (e.g., "*.md", "notes/*.txt", "**/*.py").
     """
-    documents, _, _ = get_cached_documents()
+    documents, _, _ = get_user_documents(ctx.deps.user_id)
     return [name for name in documents.keys() if fnmatch(name, pattern)]
 
 
 @agent.tool
 def grep(
-    ctx: RunContext[None],
+    ctx: RunContext[AgentDeps],
     pattern: str,
     glob: str | None = None,
     context_lines: int = 0,
@@ -122,7 +131,7 @@ def grep(
         context_lines: Number of lines to show before and after each match.
         include_content: Whether to include the matching line content.
     """
-    data_dir = settings.data_dir
+    data_dir = settings.get_user_documents_dir(ctx.deps.user_id)
     if not data_dir.exists():
         return []
 
@@ -140,7 +149,9 @@ def grep(
                 data = item["data"]
                 filepath = data["path"]["text"]
                 doc_name = str(Path(filepath).relative_to(data_dir))
-                content = data["lines"]["text"].rstrip("\n") if include_content else None
+                content = (
+                    data["lines"]["text"].rstrip("\n") if include_content else None
+                )
                 matches.append(
                     GrepMatch(
                         filename=doc_name,
@@ -156,7 +167,7 @@ def grep(
 
 @agent.tool
 async def search_documents(
-    ctx: RunContext[None],
+    ctx: RunContext[AgentDeps],
     query: str,
     top_k: int = 3,
 ) -> list[RetrievedDocument]:
@@ -166,7 +177,7 @@ async def search_documents(
         query: Natural language search query.
         top_k: Maximum results to return.
     """
-    documents, index, filenames = get_cached_documents()
+    documents, index, filenames = get_user_documents(ctx.deps.user_id)
     if not documents or not index:
         return []
 

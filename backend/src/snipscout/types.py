@@ -1,9 +1,19 @@
 """Shared types for the RAG application."""
 
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
+
+
+@dataclass
+class User:
+    """Authenticated user information."""
+
+    id: str
+    email: str | None = None
+    name: str | None = None
 
 
 class Personality(StrEnum):
@@ -16,10 +26,13 @@ class Personality(StrEnum):
 
 __all__ = [
     "ChatRequestConfig",
+    "User",
     "ConversationData",
     "ConversationListResponse",
     "ConversationSummary",
     "CreateConversationResponse",
+    "CreateTokenRequest",
+    "CreateTokenResponse",
     "DeleteConversationResponse",
     "DeleteDocumentResponse",
     "DocumentInfo",
@@ -32,6 +45,7 @@ __all__ = [
     "GrepMatch",
     "Personality",
     "RetrievedDocument",
+    "TokenInfo",
     "UpdateTitleRequest",
     "UploadDocumentResponse",
 ]
@@ -182,3 +196,38 @@ class GenerateTitleResponse(BaseModel):
     """Response from title generation."""
 
     title: str = Field(description="The generated title")
+
+
+class CreateTokenRequest(BaseModel):
+    """Request to create a personal access token."""
+
+    name: str = Field(description="A name for the token")
+    expires_in_days: int | None = Field(
+        default=None, description="Optional expiration in days"
+    )
+
+
+class CreateTokenResponse(BaseModel):
+    """Response from token creation."""
+
+    token: str = Field(description="The raw token (only shown once)")
+    id: str = Field(description="The token ID for management")
+    name: str = Field(description="The token name")
+    created_at: datetime = Field(description="When the token was created")
+    expires_at: datetime | None = Field(
+        default=None, description="When the token expires"
+    )
+
+
+class TokenInfo(BaseModel):
+    """Information about a personal access token (without the token value)."""
+
+    id: str = Field(description="The token ID")
+    name: str = Field(description="The token name")
+    created_at: datetime = Field(description="When the token was created")
+    expires_at: datetime | None = Field(
+        default=None, description="When the token expires"
+    )
+    last_used_at: datetime | None = Field(
+        default=None, description="When the token was last used"
+    )

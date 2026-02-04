@@ -7,6 +7,7 @@ import {
   API_BASE_URL,
   chatConfigToHeaders,
   createConversation,
+  getAuthHeaders,
   getConversationDocumentReferences,
   getMessages,
 } from '../lib/api';
@@ -386,18 +387,22 @@ export function ChatSidebar({ id, pendingContent, onPendingContentConsumed }: Ch
     };
   }, [id, setMessages, addDocumentReference]);
 
-  const handleSendMessage = (text: string) => {
+  const handleSendMessage = async (text: string) => {
     if (!text.trim()) return;
+    const authHeaders = await getAuthHeaders();
     sendMessage(
       { text },
       {
-        headers: chatConfigToHeaders({
-          conversationId: id,
-          model: llm.model,
-          apiKey: llm.apiKey,
-          baseUrl: llm.baseUrl,
-          personality,
-        }),
+        headers: {
+          ...authHeaders,
+          ...chatConfigToHeaders({
+            conversationId: id,
+            model: llm.model,
+            apiKey: llm.apiKey,
+            baseUrl: llm.baseUrl,
+            personality,
+          }),
+        },
       }
     );
     setInputValue('');

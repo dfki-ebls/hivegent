@@ -3,14 +3,69 @@ import type {
   ChatRequestConfig,
   ConversationListResponse,
   ConversationSummary,
+  CreateTokenRequest,
+  CreateTokenResponse,
   CreateConversationResponse,
   DocumentInfo,
   DocumentReference,
   GenerateTitleResponse,
+  TokenInfo,
 } from './types';
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
+
+// Token provider function set by AuthProvider
+let getAccessToken: (() => Promise<string>) | null = null;
+
+/**
+ * Set the auth token provider function.
+ * Called by AuthProvider when user is authenticated.
+ */
+export function setAuthTokenProvider(provider: () => Promise<string>) {
+  getAccessToken = provider;
+}
+
+/**
+ * Clear the auth token provider.
+ * Called on logout.
+ */
+export function clearAuthTokenProvider() {
+  getAccessToken = null;
+}
+
+/**
+ * Make an authenticated fetch request.
+ */
+async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(options.headers);
+
+  if (getAccessToken) {
+    try {
+      const token = await getAccessToken();
+      headers.set('Authorization', `Bearer ${token}`);
+    } catch (error) {
+      console.error('Failed to get access token:', error);
+    }
+  }
+
+  return fetch(url, { ...options, headers });
+}
+
+/**
+ * Get the current auth headers for use with external transports.
+ */
+export async function getAuthHeaders(): Promise<Record<string, string>> {
+  if (getAccessToken) {
+    try {
+      const token = await getAccessToken();
+      return { Authorization: `Bearer ${token}` };
+    } catch (error) {
+      console.error('Failed to get access token:', error);
+    }
+  }
+  return {};
+}
 
 /** Convert ChatRequestConfig to HTTP headers for chat requests. */
 export function chatConfigToHeaders(config: ChatRequestConfig): Record<string, string> {
@@ -24,7 +79,7 @@ export function chatConfigToHeaders(config: ChatRequestConfig): Record<string, s
 }
 
 export async function createConversation(): Promise<string> {
-  const res = await fetch(`${API_BASE_URL}/api/conversation`, {
+  const res = await authFetch(`${API_BASE_URL}/api/conversation`, {
     method: 'POST',
   });
   const data: CreateConversationResponse = await res.json();
@@ -32,7 +87,7 @@ export async function createConversation(): Promise<string> {
 }
 
 export async function getMessages(conversationId: string): Promise<UIMessage[]> {
-  const res = await fetch(
+  const res = await authFetch(
     `${API_BASE_URL}/api/conversation/${conversationId}/messages`
   );
   if (!res.ok) {
@@ -47,7 +102,7 @@ export interface DocumentListResponse {
 }
 
 export async function listDocuments(): Promise<DocumentInfo[]> {
-  const res = await fetch(`${API_BASE_URL}/api/documents`);
+  const res = await authFetch(`${API_BASE_URL}/api/documents`);
   if (!res.ok) {
     throw new Error('Failed to list documents');
   }
@@ -62,7 +117,7 @@ export async function uploadDocument(
   const formData = new FormData();
   formData.append('file', file);
 
-  const res = await fetch(
+  const res = await authFetch(
     `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}`,
     {
       method: 'PUT',
@@ -77,7 +132,7 @@ export async function uploadDocument(
 }
 
 export async function deleteDocument(filename: string): Promise<void> {
-  const res = await fetch(
+  const res = await authFetch(
     `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}`,
     {
       method: 'DELETE',
@@ -91,7 +146,7 @@ export async function deleteDocument(filename: string): Promise<void> {
 }
 
 export async function getDocumentContent(filename: string): Promise<string> {
-  const res = await fetch(
+  const res = await authFetch(
     `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}`
   );
 
@@ -103,7 +158,7 @@ export async function getDocumentContent(filename: string): Promise<string> {
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {
-  const res = await fetch(`${API_BASE_URL}/api/conversations`);
+  const res = await authFetch(`${API_BASE_URL}/api/conversations`);
   if (!res.ok) {
     throw new Error('Failed to list conversations');
   }
@@ -114,7 +169,7 @@ export async function listConversations(): Promise<ConversationSummary[]> {
 export async function getConversationDocumentReferences(
   conversationId: string
 ): Promise<DocumentReference[]> {
-  const res = await fetch(
+  const res = await authFetch(
     `${API_BASE_URL}/api/conversation/${conversationId}/document-references`
   );
   if (!res.ok) {
@@ -127,7 +182,7 @@ export async function updateConversationTitle(
   conversationId: string,
   title: string
 ): Promise<ConversationSummary> {
-  const res = await fetch(
+  const res = await authFetch(
     `${API_BASE_URL}/api/conversation/${conversationId}/title`,
     {
       method: 'PUT',
@@ -150,7 +205,7 @@ export async function generateConversationTitle(
   apiKey: string,
   baseUrl: string
 ): Promise<GenerateTitleResponse> {
-  const res = await fetch(
+  const res = await authFetch(
     `${API_BASE_URL}/api/conversation/${conversationId}/generate-title`,
     {
       method: 'POST',
@@ -174,12 +229,56 @@ export async function generateConversationTitle(
 }
 
 export async function deleteConversation(conversationId: string): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/api/conversation/${conversationId}`, {
+  const res = await authFetch(`${API_BASE_URL}/api/conversation/${conversationId}`, {
     method: 'DELETE',
   });
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: 'Delete failed' }));
     throw new Error(error.detail || 'Delete failed');
+  }
+}
+
+// Token management API functions
+
+export async function createToken(
+  name: string,
+  expiresInDays?: number
+): Promise<CreateTokenResponse> {
+  const res = await authFetch(`${API_BASE_URL}/api/tokens`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name,
+      expires_in_days: expiresInDays ?? null,
+    } satisfies CreateTokenRequest),
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Failed to create token' }));
+    throw new Error(error.detail || 'Failed to create token');
+  }
+
+  return res.json();
+}
+
+export async function listTokens(): Promise<TokenInfo[]> {
+  const res = await authFetch(`${API_BASE_URL}/api/tokens`);
+
+  if (!res.ok) {
+    throw new Error('Failed to list tokens');
+  }
+
+  return res.json();
+}
+
+export async function revokeToken(tokenId: string): Promise<void> {
+  const res = await authFetch(`${API_BASE_URL}/api/tokens/${tokenId}`, {
+    method: 'DELETE',
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Failed to revoke token' }));
+    throw new Error(error.detail || 'Failed to revoke token');
   }
 }

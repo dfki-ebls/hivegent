@@ -20,9 +20,18 @@ __all__ = [
 ]
 
 
-def load_conversation(conversation_id: str) -> ConversationData | None:
-    """Load a conversation with full metadata."""
-    path = settings.conversations_dir / f"{conversation_id}.json"
+def load_conversation(user_id: str, conversation_id: str) -> ConversationData | None:
+    """Load a conversation with full metadata.
+
+    Args:
+        user_id: The user ID that owns the conversation.
+        conversation_id: The conversation ID.
+
+    Returns:
+        The conversation data or None if not found.
+    """
+    user_dir = settings.get_user_conversations_dir(user_id)
+    path = user_dir / f"{conversation_id}.json"
     if not path.exists():
         return None
 
@@ -43,21 +52,37 @@ def load_conversation(conversation_id: str) -> ConversationData | None:
     return ConversationData(**data)
 
 
-def load_messages(conversation_id: str) -> list[ModelMessage]:
-    """Load messages for a conversation."""
-    conversation = load_conversation(conversation_id)
+def load_messages(user_id: str, conversation_id: str) -> list[ModelMessage]:
+    """Load messages for a conversation.
+
+    Args:
+        user_id: The user ID that owns the conversation.
+        conversation_id: The conversation ID.
+
+    Returns:
+        List of model messages.
+    """
+    conversation = load_conversation(user_id, conversation_id)
     if not conversation:
         return []
     return ModelMessagesTypeAdapter.validate_json(json.dumps(conversation.messages))
 
 
-def save_messages(conversation_id: str, messages: list[ModelMessage]) -> None:
-    """Save messages for a conversation."""
-    settings.conversations_dir.mkdir(parents=True, exist_ok=True)
-    path = settings.conversations_dir / f"{conversation_id}.json"
+def save_messages(
+    user_id: str, conversation_id: str, messages: list[ModelMessage]
+) -> None:
+    """Save messages for a conversation.
+
+    Args:
+        user_id: The user ID that owns the conversation.
+        conversation_id: The conversation ID.
+        messages: The messages to save.
+    """
+    user_dir = settings.get_user_conversations_dir(user_id)
+    path = user_dir / f"{conversation_id}.json"
     now = datetime.now(timezone.utc)
 
-    existing = load_conversation(conversation_id)
+    existing = load_conversation(user_id, conversation_id)
     messages_data = json.loads(to_json(messages))
 
     if existing:
@@ -114,15 +139,23 @@ def _extract_document_refs(messages: list[dict]) -> list[DocumentReference]:
     ]
 
 
-def list_conversations() -> list[ConversationSummary]:
-    """List all conversations, sorted by most recent first."""
-    if not settings.conversations_dir.exists():
+def list_conversations(user_id: str) -> list[ConversationSummary]:
+    """List all conversations for a user, sorted by most recent first.
+
+    Args:
+        user_id: The user ID to list conversations for.
+
+    Returns:
+        List of conversation summaries.
+    """
+    user_dir = settings.get_user_conversations_dir(user_id)
+    if not user_dir.exists():
         return []
 
     conversations = []
-    for path in settings.conversations_dir.glob("*.json"):
+    for path in user_dir.glob("*.json"):
         try:
-            conv = load_conversation(path.stem)
+            conv = load_conversation(user_id, path.stem)
             if conv:
                 conversations.append(
                     ConversationSummary(
@@ -140,18 +173,37 @@ def list_conversations() -> list[ConversationSummary]:
     return conversations
 
 
-def delete_conversation(conversation_id: str) -> bool:
-    """Delete a conversation. Returns True if deleted."""
-    path = settings.conversations_dir / f"{conversation_id}.json"
+def delete_conversation(user_id: str, conversation_id: str) -> bool:
+    """Delete a conversation.
+
+    Args:
+        user_id: The user ID that owns the conversation.
+        conversation_id: The conversation ID to delete.
+
+    Returns:
+        True if deleted, False if not found.
+    """
+    user_dir = settings.get_user_conversations_dir(user_id)
+    path = user_dir / f"{conversation_id}.json"
     if path.exists():
         path.unlink()
         return True
     return False
 
 
-def update_conversation_title(conversation_id: str, title: str) -> bool:
-    """Update conversation title. Returns True if updated."""
-    path = settings.conversations_dir / f"{conversation_id}.json"
+def update_conversation_title(user_id: str, conversation_id: str, title: str) -> bool:
+    """Update conversation title.
+
+    Args:
+        user_id: The user ID that owns the conversation.
+        conversation_id: The conversation ID to update.
+        title: The new title.
+
+    Returns:
+        True if updated, False if not found.
+    """
+    user_dir = settings.get_user_conversations_dir(user_id)
+    path = user_dir / f"{conversation_id}.json"
     if not path.exists():
         return False
 

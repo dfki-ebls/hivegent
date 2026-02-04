@@ -60,7 +60,7 @@
           backend.command = ''
             exec ${lib.getExe pkgs.uv} \
               --directory backend \
-              run snipscout
+              run snipscout serve --host 127.0.0.1 --reload
           '';
           frontend.command = ''
             exec ${lib.getExe' pkgs.nodejs "npm"} \

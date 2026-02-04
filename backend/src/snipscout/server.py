@@ -1,8 +1,9 @@
 """FastAPI server for the RAG agent."""
 
 from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from nanoid import generate
 from pydantic_ai import ModelMessagesTypeAdapter
@@ -21,9 +22,10 @@ from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
-from .agent import agent, small_agent
+from .agent import AgentDeps, agent, small_agent
+from .auth import User, get_current_user
 from .config import FileExtension, settings
-from .documents import reload_documents
+from .documents import reload_user_documents
 from .messages import (
     delete_conversation,
     list_conversations,
@@ -33,11 +35,14 @@ from .messages import (
     update_conversation_title,
 )
 from .prompts import PERSONALITY_TEMPLATES
+from .tokens import token_store
 from .types import (
     ChatRequestConfig,
     ConversationListResponse,
     ConversationSummary,
     CreateConversationResponse,
+    CreateTokenRequest,
+    CreateTokenResponse,
     DeleteConversationResponse,
     DeleteDocumentResponse,
     DocumentInfo,
@@ -45,6 +50,7 @@ from .types import (
     GenerateTitleRequest,
     GenerateTitleResponse,
     Personality,
+    TokenInfo,
     UpdateTitleRequest,
     UploadDocumentResponse,
 )
@@ -53,7 +59,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore[arg-type]
-    allow_origins=["http://localhost:3000"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,16 +67,20 @@ app.add_middleware(
 
 
 @app.post("/api/conversation")
-async def create_conversation() -> CreateConversationResponse:
+async def create_conversation(
+    user: Annotated[User, Depends(get_current_user)],
+) -> CreateConversationResponse:
     """Create a new conversation and return its ID."""
     conversation_id = generate()
     return CreateConversationResponse(id=conversation_id)
 
 
 @app.get("/api/conversations")
-async def get_conversations() -> ConversationListResponse:
+async def get_conversations(
+    user: Annotated[User, Depends(get_current_user)],
+) -> ConversationListResponse:
     """List all conversations with summary information."""
-    conversations = list_conversations()
+    conversations = list_conversations(user.id)
     return ConversationListResponse(
         conversations=conversations,
         total_count=len(conversations),
@@ -78,9 +88,12 @@ async def get_conversations() -> ConversationListResponse:
 
 
 @app.get("/api/conversation/{conversation_id}")
-async def get_conversation(conversation_id: str) -> ConversationSummary:
+async def get_conversation(
+    conversation_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> ConversationSummary:
     """Get summary information for a specific conversation."""
-    conversation = load_conversation(conversation_id)
+    conversation = load_conversation(user.id, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return ConversationSummary(
@@ -93,9 +106,12 @@ async def get_conversation(conversation_id: str) -> ConversationSummary:
 
 
 @app.get("/api/conversation/{conversation_id}/document-references")
-async def get_conversation_document_references(conversation_id: str) -> list[dict]:
+async def get_conversation_document_references(
+    conversation_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> list[dict]:
     """Get document references for a conversation."""
-    conversation = load_conversation(conversation_id)
+    conversation = load_conversation(user.id, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return [ref.model_dump() for ref in conversation.document_references]
@@ -103,13 +119,15 @@ async def get_conversation_document_references(conversation_id: str) -> list[dic
 
 @app.put("/api/conversation/{conversation_id}/title")
 async def update_title(
-    conversation_id: str, request: UpdateTitleRequest
+    conversation_id: str,
+    request: UpdateTitleRequest,
+    user: Annotated[User, Depends(get_current_user)],
 ) -> ConversationSummary:
     """Update the title of a conversation."""
-    if not update_conversation_title(conversation_id, request.title):
+    if not update_conversation_title(user.id, conversation_id, request.title):
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = load_conversation(conversation_id)
+    conversation = load_conversation(user.id, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -139,10 +157,12 @@ def _extract_message_texts(
 
 @app.post("/api/conversation/{conversation_id}/generate-title")
 async def generate_title(
-    conversation_id: str, request: GenerateTitleRequest
+    conversation_id: str,
+    request: GenerateTitleRequest,
+    user: Annotated[User, Depends(get_current_user)],
 ) -> GenerateTitleResponse:
     """Generate a title for a conversation using an LLM."""
-    conversation = load_conversation(conversation_id)
+    conversation = load_conversation(user.id, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -175,7 +195,7 @@ Return ONLY the title, no quotes or extra text.
         if len(generated_title) > 100:
             generated_title = generated_title[:97] + "..."
 
-        update_conversation_title(conversation_id, generated_title)
+        update_conversation_title(user.id, conversation_id, generated_title)
 
         return GenerateTitleResponse(title=generated_title)
 
@@ -188,9 +208,10 @@ Return ONLY the title, no quotes or extra text.
 @app.delete("/api/conversation/{conversation_id}")
 async def delete_conversation_endpoint(
     conversation_id: str,
+    user: Annotated[User, Depends(get_current_user)],
 ) -> DeleteConversationResponse:
     """Delete a conversation."""
-    if not delete_conversation(conversation_id):
+    if not delete_conversation(user.id, conversation_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
     return DeleteConversationResponse(
         id=conversation_id,
@@ -199,9 +220,12 @@ async def delete_conversation_endpoint(
 
 
 @app.get("/api/conversation/{conversation_id}/messages")
-async def get_messages(conversation_id: str) -> list[UIMessage]:
+async def get_messages(
+    conversation_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> list[UIMessage]:
     """Get messages for a conversation in Vercel AI format."""
-    messages = load_messages(conversation_id)
+    messages = load_messages(user.id, conversation_id)
     if not messages:
         return []
     return VercelAIAdapter.dump_messages(messages)
@@ -236,7 +260,10 @@ def _parse_chat_config(request: Request) -> ChatRequestConfig:
 
 
 @app.post("/api/chat")
-async def chat(request: Request) -> Response:
+async def chat(
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+) -> Response:
     """Handle chat requests using the Vercel AI Data Stream Protocol.
 
     Configuration is passed via HTTP headers (see ChatRequestConfig).
@@ -249,7 +276,9 @@ async def chat(request: Request) -> Response:
         )
 
     # Load existing message history
-    message_history: list[ModelMessage] | None = load_messages(config.conversation_id)
+    message_history: list[ModelMessage] | None = load_messages(
+        user.id, config.conversation_id
+    )
 
     # For new conversations, prepend the personality's system prompt to history
     if not message_history:
@@ -260,12 +289,12 @@ async def chat(request: Request) -> Response:
 
     def on_complete(result: AgentRunResult[str]) -> None:
         """Save messages after the agent run completes."""
-        save_messages(config.conversation_id, result.all_messages())
+        save_messages(user.id, config.conversation_id, result.all_messages())
 
     return await VercelAIAdapter.dispatch_request(
         request,
         agent=agent,
-        deps=None,
+        deps=AgentDeps(user_id=user.id),
         model=OpenAIResponsesModel(
             config.model,
             provider=OpenAIProvider(
@@ -284,9 +313,11 @@ def _get_allowed_extensions() -> set[str]:
 
 
 @app.get("/api/documents")
-async def list_documents() -> DocumentListResponse:
-    """List all documents in the data directory."""
-    data_dir = settings.data_dir
+async def list_documents(
+    user: Annotated[User, Depends(get_current_user)],
+) -> DocumentListResponse:
+    """List all documents in the user's data directory."""
+    data_dir = settings.get_user_documents_dir(user.id)
     documents: list[DocumentInfo] = []
 
     if data_dir.exists():
@@ -308,7 +339,11 @@ async def list_documents() -> DocumentListResponse:
 
 
 @app.put("/api/documents/{filename}")
-async def upload_document(filename: str, file: UploadFile) -> UploadDocumentResponse:
+async def upload_document(
+    filename: str,
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+) -> UploadDocumentResponse:
     """Upload or replace a document.
 
     Args:
@@ -331,13 +366,12 @@ async def upload_document(filename: str, file: UploadFile) -> UploadDocumentResp
             detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
         )
 
-    data_dir = settings.data_dir
-    data_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = settings.get_user_documents_dir(user.id)
 
     file_path = data_dir / filename
     file_path.write_bytes(content)
 
-    reload_documents()
+    reload_user_documents(user.id)
 
     return UploadDocumentResponse(
         filename=filename,
@@ -347,13 +381,17 @@ async def upload_document(filename: str, file: UploadFile) -> UploadDocumentResp
 
 
 @app.get("/api/documents/{filename}")
-async def get_document_content(filename: str) -> PlainTextResponse:
+async def get_document_content(
+    filename: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> PlainTextResponse:
     """Get the content of a document.
 
     Args:
         filename: The filename to read.
     """
-    file_path = settings.data_dir / filename
+    data_dir = settings.get_user_documents_dir(user.id)
+    file_path = data_dir / filename
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Document not found")
@@ -369,13 +407,17 @@ async def get_document_content(filename: str) -> PlainTextResponse:
 
 
 @app.delete("/api/documents/{filename}")
-async def delete_document(filename: str) -> DeleteDocumentResponse:
+async def delete_document(
+    filename: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> DeleteDocumentResponse:
     """Delete a document.
 
     Args:
         filename: The filename to delete.
     """
-    file_path = settings.data_dir / filename
+    data_dir = settings.get_user_documents_dir(user.id)
+    file_path = data_dir / filename
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Document not found")
@@ -389,9 +431,64 @@ async def delete_document(filename: str) -> DeleteDocumentResponse:
 
     file_path.unlink()
 
-    reload_documents()
+    reload_user_documents(user.id)
 
     return DeleteDocumentResponse(
         filename=filename,
         message="Document deleted successfully",
     )
+
+
+# Token management endpoints
+
+
+@app.post("/api/tokens")
+async def create_token(
+    request: CreateTokenRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> CreateTokenResponse:
+    """Create a new personal access token.
+
+    The raw token is only returned once and cannot be retrieved later.
+    """
+    raw_token, token_info = token_store.create_token(
+        user_id=user.id,
+        name=request.name,
+        expires_in_days=request.expires_in_days,
+    )
+
+    return CreateTokenResponse(
+        token=raw_token,
+        id=token_info.id,
+        name=token_info.name,
+        created_at=token_info.created_at,
+        expires_at=token_info.expires_at,
+    )
+
+
+@app.get("/api/tokens")
+async def list_tokens(
+    user: Annotated[User, Depends(get_current_user)],
+) -> list[TokenInfo]:
+    """List all personal access tokens for the current user."""
+    tokens = token_store.list_tokens(user.id)
+    return [
+        TokenInfo(
+            id=t.id,
+            name=t.name,
+            created_at=t.created_at,
+            expires_at=t.expires_at,
+            last_used_at=t.last_used_at,
+        )
+        for t in tokens
+    ]
+
+
+@app.delete("/api/tokens/{token_id}")
+async def revoke_token(
+    token_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    """Revoke a personal access token."""
+    if not token_store.revoke_token(user.id, token_id):
+        raise HTTPException(status_code=404, detail="Token not found")

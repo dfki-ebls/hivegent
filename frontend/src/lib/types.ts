@@ -115,3 +115,27 @@ export interface ChatRequestConfig {
   baseUrl?: string;
   personality: Personality;
 }
+
+/** Request to create a personal access token. */
+export interface CreateTokenRequest {
+  name: string;
+  expires_in_days: number | null;
+}
+
+/** Response from token creation. */
+export interface CreateTokenResponse {
+  token: string;
+  id: string;
+  name: string;
+  created_at: string;
+  expires_at: string | null;
+}
+
+/** Information about a personal access token (without the token value). */
+export interface TokenInfo {
+  id: string;
+  name: string;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+}

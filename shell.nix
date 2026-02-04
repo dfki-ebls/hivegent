@@ -14,6 +14,7 @@ mkShell {
     npm install
     uv sync --all-extras --locked
   '';
+  SNIPSCOUT_AUTH_DISABLED = "1";
   UV_PYTHON = lib.getExe python3;
   packages = [
     (writeShellScriptBin "uv" ''

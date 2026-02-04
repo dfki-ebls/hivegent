@@ -1,31 +1,44 @@
 """Document loading and BM25 indexing utilities."""
 
+from dataclasses import dataclass, field
+
 import bm25s
 
 from .config import FileExtension, settings
 
 __all__ = [
     "create_index",
-    "get_cached_documents",
+    "get_user_documents",
     "load_documents",
-    "reload_documents",
+    "reload_user_documents",
     "search_documents",
 ]
 
-# Module-level cache
-_documents: dict[str, str] = {}
-_index: bm25s.BM25 | None = None
-_filenames: list[str] = []
+
+@dataclass
+class UserDocumentCache:
+    """Cache for a user's documents and BM25 index."""
+
+    documents: dict[str, str] = field(default_factory=dict)
+    index: bm25s.BM25 | None = None
+    filenames: list[str] = field(default_factory=list)
 
 
-def load_documents() -> dict[str, str]:
-    """Load all supported files from the data directory.
+# Per-user document cache
+_user_caches: dict[str, UserDocumentCache] = {}
+
+
+def load_documents(user_id: str) -> dict[str, str]:
+    """Load all supported files from a user's data directory.
+
+    Args:
+        user_id: The user ID to load documents for.
 
     Returns:
         Dict mapping filename to content.
     """
     documents: dict[str, str] = {}
-    data_dir = settings.data_dir
+    data_dir = settings.get_user_documents_dir(user_id)
     if not data_dir.exists():
         return documents
 
@@ -36,24 +49,39 @@ def load_documents() -> dict[str, str]:
     return documents
 
 
-def reload_documents() -> None:
-    """Reload documents from disk and rebuild the BM25 index."""
-    global _documents, _index, _filenames
-    _documents = load_documents()
-    if _documents:
-        _index, _filenames = create_index(_documents)
+def reload_user_documents(user_id: str) -> None:
+    """Reload documents from disk and rebuild the BM25 index for a user.
+
+    Args:
+        user_id: The user ID to reload documents for.
+    """
+    documents = load_documents(user_id)
+    cache = UserDocumentCache(documents=documents)
+
+    if documents:
+        cache.index, cache.filenames = create_index(documents)
     else:
-        _index = None
-        _filenames = []
+        cache.index = None
+        cache.filenames = []
+
+    _user_caches[user_id] = cache
 
 
-def get_cached_documents() -> tuple[dict[str, str], bm25s.BM25 | None, list[str]]:
-    """Get the cached documents and index.
+def get_user_documents(
+    user_id: str,
+) -> tuple[dict[str, str], bm25s.BM25 | None, list[str]]:
+    """Get the cached documents and index for a user.
+
+    Args:
+        user_id: The user ID to get documents for.
 
     Returns:
         Tuple of (documents dict, BM25 index or None, filenames list).
     """
-    return _documents, _index, _filenames
+    if user_id not in _user_caches:
+        reload_user_documents(user_id)
+    cache = _user_caches[user_id]
+    return cache.documents, cache.index, cache.filenames
 
 
 def create_index(documents: dict[str, str]) -> tuple[bm25s.BM25, list[str]]:
@@ -104,7 +132,3 @@ def search_documents(
             filename = filenames[idx]
             results.append((filename, documents[filename], float(score)))
     return results
-
-
-# Initialize cache on module load
-reload_documents()
