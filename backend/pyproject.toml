@@ -10,6 +10,7 @@ dependencies = [
   "bm25s[core]>=0.2,<1",
   "chonkie>=1,<2",
   "fastapi[standard]>=0.120,<1",
+  "fastmcp>=2,<3",
   "httpx>=0.28,<1",
   "joserfc>=1,<2",
   "logfire>=4,<5",

@@ -11,6 +11,7 @@ __all__ = [
     "BINARY_EXTENSIONS",
     "FileExtension",
     "LlmSettings",
+    "McpSettings",
     "Settings",
     "TEXT_EXTENSIONS",
     "sanitize_user_id",
@@ -95,6 +96,14 @@ class LlmSettings(BaseModel):
     base_url: str = ""
 
 
+class McpSettings(BaseModel):
+    """MCP server settings for OIDC authentication."""
+
+    client_id: str = ""
+    client_secret: str = ""
+    base_url: str = "http://localhost:8000/mcp"
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -106,6 +115,7 @@ class Settings(BaseSettings):
     )
 
     llm: LlmSettings = LlmSettings()
+    mcp: McpSettings = McpSettings()
 
     data_dir: Path = Path("data")
     max_file_size_bytes: int = 10 * 1024 * 1024  # 10 MB

@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from nanoid import generate
 from pydantic import BaseModel, Field
@@ -46,6 +46,7 @@ from .converters import (
 )
 from .converters.base import LLMConvertOptions
 from .documents import reload_user_documents
+from .mcp import create_mcp_app
 from .messages import (
     delete_conversation,
     list_conversations,
@@ -97,7 +98,9 @@ class ReconvertRequest(BaseModel):
     llm: LlmConfig = Field(default_factory=LlmConfig)
 
 
-app = FastAPI()
+mcp_app = create_mcp_app()
+
+app = FastAPI(lifespan=mcp_app.lifespan)
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore[arg-type]
@@ -107,8 +110,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+api_router = APIRouter(prefix="/api", dependencies=[Depends(get_current_user)])
 
-@app.get("/api/settings")
+
+@api_router.get("/settings")
 async def get_settings(
     user: Annotated[User, Depends(get_current_user)],
 ) -> SettingsResponse:
@@ -122,7 +127,7 @@ async def get_settings(
     )
 
 
-@app.post("/api/conversation")
+@api_router.post("/conversation")
 async def create_conversation(
     user: Annotated[User, Depends(get_current_user)],
 ) -> CreateConversationResponse:
@@ -131,7 +136,7 @@ async def create_conversation(
     return CreateConversationResponse(id=conversation_id)
 
 
-@app.get("/api/conversations")
+@api_router.get("/conversations")
 async def get_conversations(
     user: Annotated[User, Depends(get_current_user)],
 ) -> ConversationListResponse:
@@ -143,7 +148,7 @@ async def get_conversations(
     )
 
 
-@app.get("/api/conversation/{conversation_id}")
+@api_router.get("/conversation/{conversation_id}")
 async def get_conversation(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -161,7 +166,7 @@ async def get_conversation(
     )
 
 
-@app.get("/api/conversation/{conversation_id}/document-references")
+@api_router.get("/conversation/{conversation_id}/document-references")
 async def get_conversation_document_references(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -173,7 +178,7 @@ async def get_conversation_document_references(
     return [ref.model_dump() for ref in conversation.document_references]
 
 
-@app.put("/api/conversation/{conversation_id}/title")
+@api_router.put("/conversation/{conversation_id}/title")
 async def update_title(
     conversation_id: str,
     request: UpdateTitleRequest,
@@ -211,7 +216,7 @@ def _extract_message_texts(
     return texts
 
 
-@app.post("/api/conversation/{conversation_id}/generate-title")
+@api_router.post("/conversation/{conversation_id}/generate-title")
 async def generate_title(
     conversation_id: str,
     request: GenerateTitleRequest,
@@ -263,7 +268,7 @@ Return ONLY the title, no quotes or extra text.
         )
 
 
-@app.delete("/api/conversation/{conversation_id}")
+@api_router.delete("/conversation/{conversation_id}")
 async def delete_conversation_endpoint(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -277,7 +282,7 @@ async def delete_conversation_endpoint(
     )
 
 
-@app.get("/api/conversation/{conversation_id}/messages")
+@api_router.get("/conversation/{conversation_id}/messages")
 async def get_messages(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -312,7 +317,7 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     )
 
 
-@app.post("/api/chat")
+@api_router.post("/chat")
 async def chat(
     request: Request,
     user: Annotated[User, Depends(get_current_user)],
@@ -369,7 +374,7 @@ def _is_text_file(suffix: str) -> bool:
     return suffix.lower() in _get_text_extensions()
 
 
-@app.get("/api/documents")
+@api_router.get("/documents")
 async def list_documents(
     user: Annotated[User, Depends(get_current_user)],
 ) -> DocumentListResponse:
@@ -409,7 +414,7 @@ async def list_documents(
     return DocumentListResponse(documents=documents, total_count=len(documents))
 
 
-@app.put("/api/documents/{filename}")
+@api_router.put("/documents/{filename}")
 async def upload_document(
     filename: str,
     file: UploadFile,
@@ -557,7 +562,7 @@ async def upload_document(
     )
 
 
-@app.get("/api/documents/{filename}")
+@api_router.get("/documents/{filename}")
 async def get_document_content(
     filename: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -585,7 +590,7 @@ async def get_document_content(
     return PlainTextResponse(file_path.read_text(encoding="utf-8"))
 
 
-@app.delete("/api/documents/{filename}")
+@api_router.delete("/documents/{filename}")
 async def delete_document(
     filename: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -619,7 +624,7 @@ async def delete_document(
     )
 
 
-@app.get("/api/conversion-pipelines")
+@api_router.get("/conversion-pipelines")
 async def list_conversion_pipelines() -> list[ConversionPipelineInfo]:
     """Get metadata for all conversion pipelines."""
     return get_pipelines_info()
@@ -628,13 +633,13 @@ async def list_conversion_pipelines() -> list[ConversionPipelineInfo]:
 # Chunking endpoints
 
 
-@app.get("/api/chunking-pipelines")
+@api_router.get("/chunking-pipelines")
 async def list_chunking_pipelines() -> list[ChunkingPipelineInfo]:
     """Get metadata for all chunking pipelines."""
     return get_chunking_pipelines_info()
 
 
-@app.get("/api/documents/{filename}/chunks")
+@api_router.get("/documents/{filename}/chunks")
 async def get_document_chunks(
     filename: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -650,7 +655,7 @@ async def get_document_chunks(
     return chunked
 
 
-@app.post("/api/documents/{filename}/rechunk")
+@api_router.post("/documents/{filename}/rechunk")
 async def rechunk_document(
     filename: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -683,7 +688,7 @@ async def rechunk_document(
         )
 
 
-@app.post("/api/documents/{filename}/reconvert")
+@api_router.post("/documents/{filename}/reconvert")
 async def reconvert_document(
     filename: str,
     request: ReconvertRequest,
@@ -795,7 +800,7 @@ async def reconvert_document(
 # Token management endpoints
 
 
-@app.post("/api/tokens")
+@api_router.post("/tokens")
 async def create_token(
     request: CreateTokenRequest,
     user: Annotated[User, Depends(get_current_user)],
@@ -819,7 +824,7 @@ async def create_token(
     )
 
 
-@app.get("/api/tokens")
+@api_router.get("/tokens")
 async def list_tokens(
     user: Annotated[User, Depends(get_current_user)],
 ) -> list[TokenInfo]:
@@ -827,7 +832,7 @@ async def list_tokens(
     return token_store.list_tokens(user.id)
 
 
-@app.delete("/api/tokens/{token_id}")
+@api_router.delete("/tokens/{token_id}")
 async def revoke_token(
     token_id: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -835,3 +840,7 @@ async def revoke_token(
     """Revoke a personal access token."""
     if not token_store.revoke_token(user.id, token_id):
         raise HTTPException(status_code=404, detail="Token not found")
+
+
+app.include_router(api_router)
+app.mount("/mcp", mcp_app)
