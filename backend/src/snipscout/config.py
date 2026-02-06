@@ -159,6 +159,24 @@ class Settings(BaseSettings):
         """
         return self.get_user_dir(user_id) / "tokens.json"
 
+    def get_user_chunks_dir(self, user_id: str) -> Path:
+        """Get the chunks directory for a specific user.
+
+        Chunk JSON files are stored here after documents are chunked.
+
+        Args:
+            user_id: The user ID.
+
+        Returns:
+            Path to the user's chunks directory.
+
+        Raises:
+            ValueError: If the user ID is invalid.
+        """
+        path = self.get_user_dir(user_id) / "chunks"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def get_user_originals_dir(self, user_id: str) -> Path:
         """Get the originals directory for a specific user.
 

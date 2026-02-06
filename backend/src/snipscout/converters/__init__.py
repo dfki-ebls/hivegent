@@ -12,12 +12,14 @@ __all__ = [
     "DocumentConverter",
     "get_converter",
     "get_pipelines_info",
+    "resolve_auto_pipeline",
 ]
 
 
 class ConversionPipeline(StrEnum):
     """Available conversion pipelines."""
 
+    AUTO = "auto"
     LLM = "llm"
     MARKER = "marker"
     DOCLING = "docling"
@@ -50,9 +52,19 @@ _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
 }
 
 _PIPELINE_INFO: dict[ConversionPipeline, ConversionPipelineInfo] = {
+    ConversionPipeline.AUTO: ConversionPipelineInfo(
+        value="auto",
+        label="Auto",
+        description="Automatically selects the best pipeline for each file",
+        extensions=[
+            ".pdf", ".docx", ".xlsx", ".pptx",
+            ".png", ".jpg", ".jpeg", ".gif", ".webp",
+            ".bmp", ".tiff", ".tif",
+        ],
+    ),
     ConversionPipeline.LLM: ConversionPipelineInfo(
         value="llm",
-        label="LLM (Default)",
+        label="LLM",
         description="Uses vision model for all files",
         extensions=[
             ".pdf", ".docx", ".xlsx", ".pptx",
@@ -80,14 +92,42 @@ _PIPELINE_INFO: dict[ConversionPipeline, ConversionPipelineInfo] = {
     ),
 }
 
+_AUTO_MAPPING: dict[str, ConversionPipeline] = {
+    ".pdf": ConversionPipeline.MARKER,
+    ".docx": ConversionPipeline.DOCLING,
+    ".xlsx": ConversionPipeline.DOCLING,
+    ".pptx": ConversionPipeline.DOCLING,
+}
+_AUTO_DEFAULT = ConversionPipeline.LLM
 
-def get_converter(pipeline: ConversionPipeline) -> DocumentConverter:
+
+def resolve_auto_pipeline(filename: str) -> ConversionPipeline:
+    """Resolve the AUTO pipeline to a concrete pipeline based on file extension.
+
+    Args:
+        filename: The document filename.
+
+    Returns:
+        The resolved conversion pipeline.
+    """
+    suffix = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ""
+    return _AUTO_MAPPING.get(suffix, _AUTO_DEFAULT)
+
+
+def get_converter(pipeline: ConversionPipeline, filename: str = "") -> DocumentConverter:
     """Get a converter instance for the specified pipeline.
+
+    Args:
+        pipeline: The conversion pipeline to use.
+        filename: The document filename (required when pipeline is AUTO).
 
     Raises:
         ImportError: If the converter's dependencies are not installed.
         ValueError: If the pipeline is not recognized.
     """
+    if pipeline == ConversionPipeline.AUTO:
+        pipeline = resolve_auto_pipeline(filename)
+
     if pipeline not in _CONVERTER_CONFIG:
         raise ValueError(f"Unknown conversion pipeline: {pipeline}")
 

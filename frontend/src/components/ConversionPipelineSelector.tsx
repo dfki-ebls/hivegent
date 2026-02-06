@@ -12,17 +12,17 @@ import {
   SelectValue,
 } from './ui/select';
 
-interface PipelineSelectorProps {
+interface ConversionPipelineSelectorProps {
   value: ConversionPipeline;
   onChange: (value: ConversionPipeline) => void;
   disabled?: boolean;
 }
 
-export function PipelineSelector({
+export function ConversionPipelineSelector({
   value,
   onChange,
   disabled,
-}: PipelineSelectorProps) {
+}: ConversionPipelineSelectorProps) {
   const [pipelines, setPipelines] = useState<ConversionPipelineInfo[]>([]);
 
   useEffect(() => {
@@ -35,22 +35,22 @@ export function PipelineSelector({
 
   return (
     <div className="flex items-center gap-2">
-      <Label htmlFor="pipeline-select" className="text-sm text-muted-foreground flex items-center gap-1.5">
+      <Label htmlFor="conversion-pipeline-select" className="text-sm text-muted-foreground flex items-center gap-1.5">
         <FileType className="h-4 w-4" />
-        Pipeline
+        Conversion
       </Label>
       <Select
         value={value}
         onValueChange={(v) => onChange(v as ConversionPipeline)}
         disabled={disabled}
       >
-        <SelectTrigger id="pipeline-select" className="w-[140px]" size="sm">
-          <SelectValue placeholder="Select pipeline" />
+        <SelectTrigger id="conversion-pipeline-select" className="w-[140px]" size="sm">
+          <SelectValue placeholder="Select conversion" />
         </SelectTrigger>
         <SelectContent>
-          {pipelines.map((pipeline) => (
-            <SelectItem key={pipeline.value} value={pipeline.value}>
-              {pipeline.label}
+          {pipelines.map((p) => (
+            <SelectItem key={p.value} value={p.value}>
+              {p.label}
             </SelectItem>
           ))}
         </SelectContent>

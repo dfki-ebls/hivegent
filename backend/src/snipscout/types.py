@@ -26,6 +26,7 @@ class Personality(StrEnum):
 
 __all__ = [
     "ChatRequestConfig",
+    "ChunkSummary",
     "ConversationData",
     "ConversationListResponse",
     "ConversationSummary",
@@ -43,6 +44,7 @@ __all__ = [
     "GenerateTitleResponse",
     "GrepMatch",
     "Personality",
+    "RetrievedChunk",
     "RetrievedDocument",
     "TokenInfo",
     "UpdateTitleRequest",
@@ -99,12 +101,33 @@ class RetrievedDocument(BaseModel):
     score: float = Field(description="The relevance score from BM25")
 
 
+class ChunkSummary(BaseModel):
+    """Summary metadata for a single chunk (used by agent tools)."""
+
+    index: int = Field(description="Chunk index within the document")
+    token_count: int = Field(description="Number of tokens in the chunk")
+    start_index: int = Field(description="Start character index in original document")
+    end_index: int = Field(description="End character index in original document")
+
+
+class RetrievedChunk(BaseModel):
+    """A chunk retrieved from search."""
+
+    filename: str = Field(description="The document filename")
+    chunk_index: int = Field(description="Chunk index within the document")
+    text: str = Field(description="The chunk text content")
+    token_count: int = Field(description="Number of tokens in the chunk")
+    score: float = Field(description="The relevance score from BM25")
+
+
 class DocumentInfo(BaseModel):
     """Metadata about a document in the data directory."""
 
     filename: str = Field(description="The filename of the document")
     size_bytes: int = Field(description="File size in bytes")
     modified_at: datetime = Field(description="Last modification timestamp")
+    chunk_count: int | None = Field(default=None, description="Number of chunks, if chunked")
+    has_original: bool = Field(default=False, description="Whether an original binary file exists for reconversion")
 
 
 class DocumentListResponse(BaseModel):
@@ -122,8 +145,14 @@ class UploadDocumentResponse(BaseModel):
         default=None, description="The converted markdown filename (for binary files)"
     )
     size_bytes: int = Field(description="File size in bytes")
-    pipeline_used: str | None = Field(
+    conversion_pipeline_used: str | None = Field(
         default=None, description="The conversion pipeline used (for binary files)"
+    )
+    chunk_count: int | None = Field(
+        default=None, description="Number of chunks created"
+    )
+    chunking_pipeline_used: str | None = Field(
+        default=None, description="The chunking pipeline used"
     )
     message: str = Field(description="Status message")
 

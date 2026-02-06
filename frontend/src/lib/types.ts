@@ -23,10 +23,19 @@ export enum FileExtension {
 
 /** Available conversion pipelines for binary documents. */
 export enum ConversionPipeline {
+  AUTO = 'auto',
   LLM = 'llm',
   MARKER = 'marker',
   DOCLING = 'docling',
   MINERU = 'mineru',
+}
+
+/** Available chunking pipelines. */
+export enum ChunkingPipeline {
+  AUTO = 'auto',
+  TOKEN = 'token',
+  SENTENCE = 'sentence',
+  RECURSIVE = 'recursive',
 }
 
 /** Metadata for a conversion pipeline, fetched from the backend. */
@@ -35,6 +44,31 @@ export interface ConversionPipelineInfo {
   label: string;
   description: string;
   extensions: string[];
+}
+
+/** Metadata for a chunking pipeline, fetched from the backend. */
+export interface ChunkingPipelineInfo {
+  value: string;
+  label: string;
+  description: string;
+}
+
+/** A single chunk within a chunked document. */
+export interface ChunkInfo {
+  text: string;
+  token_count: number;
+  start_index: number;
+  end_index: number;
+  index: number;
+}
+
+/** Response from the chunks endpoint. */
+export interface ChunkedDocumentResponse {
+  chunking_pipeline: string;
+  chunk_size: number;
+  created_at: string;
+  chunk_count: number;
+  chunks: ChunkInfo[];
 }
 
 /** Text-based extensions that don't require conversion. */
@@ -68,6 +102,8 @@ export interface DocumentInfo {
   filename: string;
   size_bytes: number;
   modified_at: string;
+  chunk_count?: number | null;
+  has_original: boolean;
 }
 
 export interface DocumentStats {

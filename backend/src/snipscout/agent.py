@@ -7,13 +7,17 @@ from pathlib import Path
 from pydantic_ai import Agent, FunctionToolset, RunContext
 from ripgrepy import Ripgrepy
 
+from .chunks import get_chunks as load_chunks
+from .chunks import search_chunks as bm25_search_chunks
 from .config import settings
 from .documents import get_user_documents
 from .documents import search_documents as bm25_search
 from .types import (
+    ChunkSummary,
     DocumentRange,
     DocumentSummary,
     GrepMatch,
+    RetrievedChunk,
     RetrievedDocument,
 )
 
@@ -180,4 +184,80 @@ async def search_documents(
             score=round(score, 4),
         )
         for filename, content, score in results
+    ]
+
+
+@rag_toolset.tool
+def list_chunks(
+    ctx: RunContext[UserDeps],
+    filename: str,
+) -> list[ChunkSummary] | None:
+    """List chunk metadata for a document.
+
+    Args:
+        filename: The document filename.
+    """
+    chunked = load_chunks(ctx.deps.user_id, filename)
+    if not chunked:
+        return None
+
+    return [
+        ChunkSummary(
+            index=c.index,
+            token_count=c.token_count,
+            start_index=c.start_index,
+            end_index=c.end_index,
+        )
+        for c in chunked.chunks
+    ]
+
+
+@rag_toolset.tool
+def get_chunk(
+    ctx: RunContext[UserDeps],
+    filename: str,
+    chunk_index: int,
+) -> str | None:
+    """Get the text content of a specific chunk.
+
+    Args:
+        filename: The document filename.
+        chunk_index: The index of the chunk to retrieve.
+    """
+    chunked = load_chunks(ctx.deps.user_id, filename)
+    if not chunked:
+        return None
+
+    for c in chunked.chunks:
+        if c.index == chunk_index:
+            return c.text
+
+    return None
+
+
+@rag_toolset.tool
+def search_chunks(
+    ctx: RunContext[UserDeps],
+    query: str,
+    top_k: int = 5,
+) -> list[RetrievedChunk]:
+    """Search across all document chunks using BM25 ranking.
+
+    Returns the most relevant chunks from all chunked documents.
+
+    Args:
+        query: Natural language search query.
+        top_k: Maximum results to return.
+    """
+    results = bm25_search_chunks(ctx.deps.user_id, query, top_k)
+
+    return [
+        RetrievedChunk(
+            filename=r["filename"],
+            chunk_index=r["chunk_index"],
+            text=r["text"],
+            token_count=r["token_count"],
+            score=r["score"],
+        )
+        for r in results
     ]

@@ -1,6 +1,9 @@
 import type { UIMessage } from '@ai-sdk/react';
 import type {
   ChatRequestConfig,
+  ChunkedDocumentResponse,
+  ChunkingPipeline,
+  ChunkingPipelineInfo,
   ConversionPipeline,
   ConversionPipelineInfo,
   ConversationListResponse,
@@ -107,7 +110,8 @@ export async function listDocuments(): Promise<DocumentInfo[]> {
 
 /** Options for document upload. */
 export interface UploadDocumentOptions {
-  pipeline?: ConversionPipeline;
+  conversionPipeline?: ConversionPipeline;
+  chunkingPipeline?: ChunkingPipeline;
   visionModel?: string;
   apiKey?: string;
   baseUrl?: string;
@@ -118,7 +122,9 @@ export interface UploadDocumentResponse {
   filename: string;
   converted_filename: string | null;
   size_bytes: number;
-  pipeline_used: string | null;
+  conversion_pipeline_used: string | null;
+  chunk_count: number | null;
+  chunking_pipeline_used: string | null;
   message: string;
 }
 
@@ -130,10 +136,18 @@ export async function uploadDocument(
   const formData = new FormData();
   formData.append('file', file);
 
-  // Build URL with pipeline query parameter if conversion is needed
+  // Build URL with query parameters
   let url = `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}`;
-  if (requiresConversion(filename) && options?.pipeline) {
-    url += `?pipeline=${encodeURIComponent(options.pipeline)}`;
+  const params = new URLSearchParams();
+  if (requiresConversion(filename) && options?.conversionPipeline) {
+    params.set('conversion_pipeline', options.conversionPipeline);
+  }
+  if (options?.chunkingPipeline) {
+    params.set('chunking_pipeline', options.chunkingPipeline);
+  }
+  const queryString = params.toString();
+  if (queryString) {
+    url += `?${queryString}`;
   }
 
   // Build headers for conversion
@@ -323,6 +337,108 @@ export async function getConversionPipelines(): Promise<ConversionPipelineInfo[]
 
   if (!res.ok) {
     throw new Error('Failed to get conversion pipelines');
+  }
+
+  return res.json();
+}
+
+// Chunking pipeline API functions
+
+export async function getChunkingPipelines(): Promise<ChunkingPipelineInfo[]> {
+  const res = await authFetch(`${API_BASE_URL}/api/chunking-pipelines`);
+
+  if (!res.ok) {
+    throw new Error('Failed to get chunking pipelines');
+  }
+
+  return res.json();
+}
+
+export async function getDocumentChunks(filename: string): Promise<ChunkedDocumentResponse> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}/chunks`
+  );
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Failed to fetch chunks' }));
+    throw new Error(error.detail || 'Failed to fetch chunks');
+  }
+
+  return res.json();
+}
+
+/** Options for document reconversion. */
+export interface ReconvertDocumentOptions {
+  conversionPipeline?: ConversionPipeline;
+  chunkingPipeline?: ChunkingPipeline;
+  visionModel?: string;
+  apiKey?: string;
+  baseUrl?: string;
+}
+
+export async function reconvertDocument(
+  filename: string,
+  options?: ReconvertDocumentOptions
+): Promise<UploadDocumentResponse> {
+  const params = new URLSearchParams();
+  if (options?.conversionPipeline) {
+    params.set('conversion_pipeline', options.conversionPipeline);
+  }
+  if (options?.chunkingPipeline) {
+    params.set('chunking_pipeline', options.chunkingPipeline);
+  }
+
+  let url = `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}/reconvert`;
+  const queryString = params.toString();
+  if (queryString) {
+    url += `?${queryString}`;
+  }
+
+  const headers: Record<string, string> = {};
+  if (options?.visionModel) {
+    headers['x-vision-model'] = options.visionModel;
+  }
+  if (options?.apiKey) {
+    headers['x-api-key'] = options.apiKey;
+  }
+  if (options?.baseUrl) {
+    headers['x-base-url'] = options.baseUrl;
+  }
+
+  const res = await authFetch(url, { method: 'POST', headers });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Reconvert failed' }));
+    throw new Error(error.detail || 'Reconvert failed');
+  }
+
+  return res.json();
+}
+
+export async function rechunkDocument(
+  filename: string,
+  chunkingPipeline?: ChunkingPipeline,
+  chunkSize?: number
+): Promise<ChunkedDocumentResponse> {
+  const params = new URLSearchParams();
+  if (chunkingPipeline) {
+    params.set('chunking_pipeline', chunkingPipeline);
+  }
+  if (chunkSize) {
+    params.set('chunk_size', chunkSize.toString());
+  }
+
+  let url = `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}/rechunk`;
+  const queryString = params.toString();
+  if (queryString) {
+    url += `?${queryString}`;
+  }
+
+  const res = await authFetch(url, { method: 'POST' });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Rechunk failed' }));
+    throw new Error(error.detail || 'Rechunk failed');
   }
 
   return res.json();

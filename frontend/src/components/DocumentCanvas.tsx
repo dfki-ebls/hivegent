@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import Fuse from 'fuse.js';
-import { AlertCircle, FileText, FolderOpen, MessageSquarePlus, Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import { AlertCircle, FileText, FolderOpen, MessageSquarePlus, Plus, RefreshCw, RotateCcw, Scissors, Search, Trash2, Upload, X } from 'lucide-react';
 
 import { getDocumentContent, uploadDocument } from '../lib/api';
 import type { DocumentInfo, StoredDocument } from '../lib/types';
-import { ConversionPipeline, FileExtension, requiresConversion } from '../lib/types';
+import { ChunkingPipeline, ConversionPipeline, FileExtension, requiresConversion } from '../lib/types';
 import { useFetchedDocumentsStore } from '../stores/fetched-documents-store';
 import { useManagedDocumentsStore } from '../stores/managed-documents-store';
 import { useSettingsStore } from '../stores/settings-store';
+import { ChunkingPipelineSelector } from './ChunkingPipelineSelector';
+import { ChunkViewerDialog } from './ChunkViewerDialog';
 import { DocumentPreviewDialog } from './DocumentPreviewDialog';
-import { PipelineSelector } from './PipelineSelector';
+import { ConversionPipelineSelector } from './ConversionPipelineSelector';
 import { Alert, AlertDescription } from './ui/alert';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -172,8 +174,6 @@ interface UploadAreaProps {
   isDragging: boolean;
   isLoading: boolean;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
-  pipeline: ConversionPipeline;
-  onPipelineChange: (pipeline: ConversionPipeline) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDragLeave: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -186,8 +186,6 @@ function UploadArea({
   isDragging,
   isLoading,
   fileInputRef,
-  pipeline,
-  onPipelineChange,
   onDragOver,
   onDragLeave,
   onDrop,
@@ -222,16 +220,9 @@ function UploadArea({
           className="hidden"
           onChange={onFileInputChange}
         />
-        <div className="flex items-center justify-center gap-8">
-          <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={isLoading}>
-            Select Files
-          </Button>
-          <PipelineSelector
-            value={pipeline}
-            onChange={onPipelineChange}
-            disabled={isLoading}
-          />
-        </div>
+        <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={isLoading}>
+          Select Files
+        </Button>
         <div className="flex flex-col items-center gap-2 pt-4 border-t border-muted-foreground/15 w-full">
           <p className="text-xs text-muted-foreground">
             Or create and edit documents directly in the browser
@@ -246,15 +237,49 @@ function UploadArea({
   );
 }
 
+interface PipelineSettingsBarProps {
+  conversionPipeline: ConversionPipeline;
+  chunkingPipeline: ChunkingPipeline;
+  isLoading: boolean;
+  onConversionPipelineChange: (pipeline: ConversionPipeline) => void;
+  onChunkingPipelineChange: (pipeline: ChunkingPipeline) => void;
+}
+
+function PipelineSettingsBar({
+  conversionPipeline,
+  chunkingPipeline,
+  isLoading,
+  onConversionPipelineChange,
+  onChunkingPipelineChange,
+}: PipelineSettingsBarProps) {
+  return (
+    <div className="flex items-center justify-center gap-8 border-b px-4 py-3">
+      <ConversionPipelineSelector
+        value={conversionPipeline}
+        onChange={onConversionPipelineChange}
+        disabled={isLoading}
+      />
+      <ChunkingPipelineSelector
+        value={chunkingPipeline}
+        onChange={onChunkingPipelineChange}
+        disabled={isLoading}
+      />
+    </div>
+  );
+}
+
 interface DocumentListItemProps {
   doc: DocumentInfo;
   isLoading: boolean;
   onEdit: () => void;
   onSendToChat: () => void;
+  onViewChunks: () => void;
+  onRechunk: () => void;
+  onReconvert: () => void;
   onRemove: () => void;
 }
 
-function DocumentListItem({ doc, isLoading, onEdit, onSendToChat, onRemove }: DocumentListItemProps) {
+function DocumentListItem({ doc, isLoading, onEdit, onSendToChat, onViewChunks, onRechunk, onReconvert, onRemove }: DocumentListItemProps) {
   return (
     <div
       className="flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50 cursor-pointer"
@@ -262,11 +287,61 @@ function DocumentListItem({ doc, isLoading, onEdit, onSendToChat, onRemove }: Do
     >
       <FileText className="h-8 w-8 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
-        <p className="truncate font-medium text-sm">{doc.filename}</p>
+        <div className="flex items-center gap-2">
+          <p className="truncate font-medium text-sm">{doc.filename}</p>
+          {doc.chunk_count != null && (
+            <Badge variant="outline" className="shrink-0 text-xs gap-1">
+              <Scissors className="h-3 w-3" />
+              {doc.chunk_count}
+            </Badge>
+          )}
+        </div>
         <p className="text-xs text-muted-foreground">
           {formatFileSize(doc.size_bytes)} · {formatRelativeDate(doc.modified_at)}
         </p>
       </div>
+      {doc.chunk_count != null && (
+        <Button
+          variant="ghost"
+          size="icon"
+          title="View chunks"
+          onClick={(e) => {
+            e.stopPropagation();
+            onViewChunks();
+          }}
+          disabled={isLoading}
+        >
+          <Scissors className="h-4 w-4" />
+        </Button>
+      )}
+      {doc.chunk_count != null && (
+        <Button
+          variant="ghost"
+          size="icon"
+          title="Rechunk"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRechunk();
+          }}
+          disabled={isLoading}
+        >
+          <RefreshCw className="h-4 w-4" />
+        </Button>
+      )}
+      {doc.has_original && (
+        <Button
+          variant="ghost"
+          size="icon"
+          title="Reconvert from original"
+          onClick={(e) => {
+            e.stopPropagation();
+            onReconvert();
+          }}
+          disabled={isLoading}
+        >
+          <RotateCcw className="h-4 w-4" />
+        </Button>
+      )}
       <Button
         variant="ghost"
         size="icon"
@@ -306,24 +381,35 @@ interface ManageDocumentsProps {
   onSendToChat?: (content: string) => void;
 }
 
-const PIPELINE_STORAGE_KEY = 'snipscout-conversion-pipeline';
+const CONVERSION_PIPELINE_STORAGE_KEY = 'snipscout-conversion-pipeline';
+const CHUNKING_PIPELINE_STORAGE_KEY = 'snipscout-chunking-pipeline';
 
 function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
-  const { documents, isLoading, error, fetchDocuments, upload, remove, clearError } =
+  const { documents, isLoading, error, fetchDocuments, upload, remove, rechunk: storeRechunk, reconvert: storeReconvert, clearError } =
     useManagedDocumentsStore();
   const llmSettings = useSettingsStore((state) => state.llm);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [editor, setEditor] = useState<EditorState | null>(null);
+  const [chunkViewerFilename, setChunkViewerFilename] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [pipeline, setPipeline] = useState<ConversionPipeline>(() => {
-    const stored = localStorage.getItem(PIPELINE_STORAGE_KEY);
-    return (stored as ConversionPipeline) || ConversionPipeline.LLM;
+  const [conversionPipeline, setConversionPipeline] = useState<ConversionPipeline>(() => {
+    const stored = localStorage.getItem(CONVERSION_PIPELINE_STORAGE_KEY);
+    return (stored as ConversionPipeline) || ConversionPipeline.AUTO;
+  });
+  const [chunkingPipeline, setChunkingPipeline] = useState<ChunkingPipeline>(() => {
+    const stored = localStorage.getItem(CHUNKING_PIPELINE_STORAGE_KEY);
+    return (stored as ChunkingPipeline) || ChunkingPipeline.AUTO;
   });
 
-  const handlePipelineChange = useCallback((newPipeline: ConversionPipeline) => {
-    setPipeline(newPipeline);
-    localStorage.setItem(PIPELINE_STORAGE_KEY, newPipeline);
+  const handleConversionPipelineChange = useCallback((newPipeline: ConversionPipeline) => {
+    setConversionPipeline(newPipeline);
+    localStorage.setItem(CONVERSION_PIPELINE_STORAGE_KEY, newPipeline);
+  }, []);
+
+  const handleChunkingPipelineChange = useCallback((newPipeline: ChunkingPipeline) => {
+    setChunkingPipeline(newPipeline);
+    localStorage.setItem(CHUNKING_PIPELINE_STORAGE_KEY, newPipeline);
   }, []);
 
   const fuse = useMemo(
@@ -358,9 +444,9 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
 
   const handleSave = useCallback(async (filename: string, content: string) => {
     const file = new File([content], filename, { type: 'text/plain' });
-    await uploadDocument(filename, file);
+    await uploadDocument(filename, file, { chunkingPipeline });
     await fetchDocuments();
-  }, [fetchDocuments]);
+  }, [fetchDocuments, chunkingPipeline]);
 
   // --- Send to chat handler ---
 
@@ -374,6 +460,22 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
     }
   }, [onSendToChat]);
 
+  // --- Rechunk / reconvert handlers ---
+
+  const handleRechunk = useCallback(async (doc: DocumentInfo) => {
+    await storeRechunk(doc.filename, chunkingPipeline);
+  }, [storeRechunk, chunkingPipeline]);
+
+  const handleReconvert = useCallback(async (doc: DocumentInfo) => {
+    await storeReconvert(doc.filename, {
+      conversionPipeline,
+      chunkingPipeline,
+      visionModel: llmSettings.model,
+      apiKey: llmSettings.apiKey,
+      baseUrl: llmSettings.baseUrl || undefined,
+    });
+  }, [storeReconvert, conversionPipeline, chunkingPipeline, llmSettings]);
+
   // --- File upload handlers ---
 
   const handleFiles = useCallback(async (files: FileList | null) => {
@@ -382,16 +484,17 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
       if (isValidFile(file.name)) {
         const options = requiresConversion(file.name)
           ? {
-              pipeline,
+              conversionPipeline,
+              chunkingPipeline,
               visionModel: llmSettings.model,
               apiKey: llmSettings.apiKey,
               baseUrl: llmSettings.baseUrl || undefined,
             }
-          : undefined;
+          : { chunkingPipeline };
         await upload(file, options);
       }
     }
-  }, [upload, pipeline, llmSettings]);
+  }, [upload, conversionPipeline, chunkingPipeline, llmSettings]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -447,6 +550,9 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
             isLoading={isLoading}
             onEdit={() => handleEdit(doc)}
             onSendToChat={() => handleSendToChat(doc)}
+            onViewChunks={() => setChunkViewerFilename(doc.filename)}
+            onRechunk={() => handleRechunk(doc)}
+            onReconvert={() => handleReconvert(doc)}
             onRemove={() => remove(doc.filename)}
           />
         ))}
@@ -462,14 +568,20 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
         isDragging={isDragging}
         isLoading={isLoading}
         fileInputRef={fileInputRef}
-        pipeline={pipeline}
-        onPipelineChange={handlePipelineChange}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onFileInputChange={handleFileInputChange}
         onSelectFiles={() => fileInputRef.current?.click()}
         onNewDocument={handleNew}
+      />
+
+      <PipelineSettingsBar
+        conversionPipeline={conversionPipeline}
+        chunkingPipeline={chunkingPipeline}
+        isLoading={isLoading}
+        onConversionPipelineChange={handleConversionPipelineChange}
+        onChunkingPipelineChange={handleChunkingPipelineChange}
       />
 
       <div className="flex-1 flex flex-col min-h-0">
@@ -504,6 +616,17 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
         isLoading={editor?.isLoading ?? false}
         editable
         onSave={handleSave}
+      />
+
+      <ChunkViewerDialog
+        open={chunkViewerFilename !== null}
+        onOpenChange={(open) => !open && setChunkViewerFilename(null)}
+        filename={chunkViewerFilename ?? ''}
+        onRechunk={async () => {
+          if (chunkViewerFilename) {
+            await storeRechunk(chunkViewerFilename, chunkingPipeline);
+          }
+        }}
       />
     </div>
   );
