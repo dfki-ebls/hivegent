@@ -3,8 +3,65 @@ export interface CreateConversationResponse {
 }
 
 export enum FileExtension {
+  // Text formats (stored as-is)
   TXT = '.txt',
   MD = '.md',
+  HTML = '.html',
+  XML = '.xml',
+  CSV = '.csv',
+  ADOC = '.adoc',
+
+  // Binary formats (require conversion)
+  DOCX = '.docx',
+  XLSX = '.xlsx',
+  PPTX = '.pptx',
+  PDF = '.pdf',
+  PNG = '.png',
+  JPG = '.jpg',
+  JPEG = '.jpeg',
+}
+
+/** Available conversion pipelines for binary documents. */
+export enum ConversionPipeline {
+  LLM = 'llm',
+  MARKER = 'marker',
+  DOCLING = 'docling',
+  MINERU = 'mineru',
+}
+
+/** Metadata for a conversion pipeline, fetched from the backend. */
+export interface ConversionPipelineInfo {
+  value: string;
+  label: string;
+  description: string;
+  extensions: string[];
+}
+
+/** Text-based extensions that don't require conversion. */
+export const TEXT_EXTENSIONS = new Set([
+  FileExtension.TXT,
+  FileExtension.MD,
+  FileExtension.HTML,
+  FileExtension.XML,
+  FileExtension.CSV,
+  FileExtension.ADOC,
+]);
+
+/** Binary extensions that require conversion. */
+export const BINARY_EXTENSIONS = new Set([
+  FileExtension.DOCX,
+  FileExtension.XLSX,
+  FileExtension.PPTX,
+  FileExtension.PDF,
+  FileExtension.PNG,
+  FileExtension.JPG,
+  FileExtension.JPEG,
+]);
+
+/** Check if a file extension requires conversion. */
+export function requiresConversion(filename: string): boolean {
+  const ext = ('.' + filename.split('.').pop()?.toLowerCase()) as FileExtension;
+  return BINARY_EXTENSIONS.has(ext);
 }
 
 export interface DocumentInfo {

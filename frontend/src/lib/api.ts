@@ -1,6 +1,8 @@
 import type { UIMessage } from '@ai-sdk/react';
 import type {
   ChatRequestConfig,
+  ConversionPipeline,
+  ConversionPipelineInfo,
   ConversationListResponse,
   ConversationSummary,
   CreateTokenRequest,
@@ -11,6 +13,7 @@ import type {
   GenerateTitleResponse,
   TokenInfo,
 } from './types';
+import { requiresConversion } from './types';
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
@@ -110,25 +113,63 @@ export async function listDocuments(): Promise<DocumentInfo[]> {
   return data.documents;
 }
 
+/** Options for document upload. */
+export interface UploadDocumentOptions {
+  pipeline?: ConversionPipeline;
+  visionModel?: string;
+  apiKey?: string;
+  baseUrl?: string;
+}
+
+/** Response from document upload. */
+export interface UploadDocumentResponse {
+  filename: string;
+  converted_filename: string | null;
+  size_bytes: number;
+  pipeline_used: string | null;
+  message: string;
+}
+
 export async function uploadDocument(
   filename: string,
-  file: File
-): Promise<void> {
+  file: File,
+  options?: UploadDocumentOptions
+): Promise<UploadDocumentResponse> {
   const formData = new FormData();
   formData.append('file', file);
 
-  const res = await authFetch(
-    `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}`,
-    {
-      method: 'PUT',
-      body: formData,
+  // Build URL with pipeline query parameter if conversion is needed
+  let url = `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}`;
+  if (requiresConversion(filename) && options?.pipeline) {
+    url += `?pipeline=${encodeURIComponent(options.pipeline)}`;
+  }
+
+  // Build headers for conversion
+  const headers: Record<string, string> = {};
+  if (requiresConversion(filename)) {
+    if (options?.visionModel) {
+      headers['x-vision-model'] = options.visionModel;
     }
-  );
+    if (options?.apiKey) {
+      headers['x-api-key'] = options.apiKey;
+    }
+    if (options?.baseUrl) {
+      headers['x-base-url'] = options.baseUrl;
+    }
+  }
+
+  const res = await authFetch(url, {
+    method: 'PUT',
+    headers,
+    body: formData,
+  });
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: 'Upload failed' }));
     throw new Error(error.detail || 'Upload failed');
   }
+
+  return res.json();
 }
 
 export async function deleteDocument(filename: string): Promise<void> {
@@ -281,4 +322,16 @@ export async function revokeToken(tokenId: string): Promise<void> {
     const error = await res.json().catch(() => ({ detail: 'Failed to revoke token' }));
     throw new Error(error.detail || 'Failed to revoke token');
   }
+}
+
+// Conversion pipeline API functions
+
+export async function getConversionPipelines(): Promise<ConversionPipelineInfo[]> {
+  const res = await authFetch(`${API_BASE_URL}/api/conversion-pipelines`);
+
+  if (!res.ok) {
+    throw new Error('Failed to get conversion pipelines');
+  }
+
+  return res.json();
 }

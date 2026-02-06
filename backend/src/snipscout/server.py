@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from nanoid import generate
 from pydantic_ai import ModelMessagesTypeAdapter
@@ -22,9 +22,11 @@ from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
-from .agent import AgentDeps, agent, small_agent
+from .agent import UserDeps, base_agent, rag_toolset, user_agent
 from .auth import User, get_current_user
-from .config import FileExtension, settings
+from .config import BINARY_EXTENSIONS, FileExtension, TEXT_EXTENSIONS, settings
+from .converters import ConversionPipeline, ConversionPipelineInfo, get_converter, get_pipelines_info
+from .converters.base import LLMConvertOptions
 from .documents import reload_user_documents
 from .messages import (
     delete_conversation,
@@ -56,6 +58,13 @@ from .types import (
 )
 
 app = FastAPI()
+
+RAG_INSTRUCTIONS = """You are a helpful RAG (Retrieval-Augmented Generation) assistant.
+
+You have access to a collection of documents that you can search and retrieve.
+Use the available tools to find and read documents before answering questions.
+
+Be helpful, accurate, and cite which documents your information comes from."""
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore[arg-type]
@@ -179,7 +188,7 @@ Return ONLY the title, no quotes or extra text.
 """
 
     try:
-        result = await small_agent.run(
+        result = await base_agent.run(
             f"Conversation:\n{conversation_preview}",
             model=OpenAIResponsesModel(
                 request.model,
@@ -293,8 +302,8 @@ async def chat(
 
     return await VercelAIAdapter.dispatch_request(
         request,
-        agent=agent,
-        deps=AgentDeps(user_id=user.id),
+        agent=user_agent,
+        deps=UserDeps(user_id=user.id),
         model=OpenAIResponsesModel(
             config.model,
             provider=OpenAIProvider(
@@ -302,6 +311,8 @@ async def chat(
                 base_url=config.base_url,
             ),
         ),
+        toolsets=[rag_toolset],
+        instructions=RAG_INSTRUCTIONS,
         message_history=message_history,
         on_complete=on_complete,
     )
@@ -312,18 +323,36 @@ def _get_allowed_extensions() -> set[str]:
     return {ext.value for ext in FileExtension}
 
 
+def _get_text_extensions() -> set[str]:
+    """Get the set of text-based file extensions (for indexing)."""
+    return {ext.value for ext in TEXT_EXTENSIONS}
+
+
+def _get_binary_extensions() -> set[str]:
+    """Get the set of binary file extensions (require conversion)."""
+    return {ext.value for ext in BINARY_EXTENSIONS}
+
+
+def _is_text_file(suffix: str) -> bool:
+    """Check if a file extension is a text-based format."""
+    return suffix.lower() in _get_text_extensions()
+
+
 @app.get("/api/documents")
 async def list_documents(
     user: Annotated[User, Depends(get_current_user)],
 ) -> DocumentListResponse:
-    """List all documents in the user's data directory."""
+    """List all documents in the user's data directory.
+
+    Returns only text-based files (including converted markdown files).
+    """
     data_dir = settings.get_user_documents_dir(user.id)
     documents: list[DocumentInfo] = []
 
     if data_dir.exists():
-        allowed_extensions = _get_allowed_extensions()
+        text_extensions = _get_text_extensions()
         for file_path in sorted(data_dir.iterdir()):
-            if file_path.is_file() and file_path.suffix.lower() in allowed_extensions:
+            if file_path.is_file() and file_path.suffix.lower() in text_extensions:
                 stat = file_path.stat()
                 documents.append(
                     DocumentInfo(
@@ -343,12 +372,23 @@ async def upload_document(
     filename: str,
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
+    pipeline: ConversionPipeline = Query(default=ConversionPipeline.LLM),
+    x_vision_model: str = Header(default="gpt-4o", alias="x-vision-model"),
+    x_api_key: str = Header(default="", alias="x-api-key"),
+    x_base_url: str | None = Header(default=None, alias="x-base-url"),
 ) -> UploadDocumentResponse:
     """Upload or replace a document.
+
+    For binary files (PDF, DOCX, etc.), the file is converted to markdown
+    using the specified pipeline. The original is stored in originals/.
 
     Args:
         filename: The target filename (must have allowed extension).
         file: The uploaded file content.
+        pipeline: The conversion pipeline to use for binary files.
+        x_vision_model: Model to use for LLM conversion (via header).
+        x_api_key: API key for the LLM provider (via header).
+        x_base_url: Base URL for the LLM provider (via header).
     """
     allowed_extensions = _get_allowed_extensions()
     suffix = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
@@ -366,17 +406,76 @@ async def upload_document(
             detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
         )
 
-    data_dir = settings.get_user_documents_dir(user.id)
+    documents_dir = settings.get_user_documents_dir(user.id)
 
-    file_path = data_dir / filename
-    file_path.write_bytes(content)
+    # Handle text files directly
+    if _is_text_file(suffix):
+        file_path = documents_dir / filename
+        file_path.write_bytes(content)
+        reload_user_documents(user.id)
+
+        return UploadDocumentResponse(
+            filename=filename,
+            size_bytes=len(content),
+            message="Document uploaded successfully",
+        )
+
+    # Handle binary files - store original and convert to markdown
+    originals_dir = settings.get_user_originals_dir(user.id)
+    original_path = originals_dir / filename
+    original_path.write_bytes(content)
+
+    # Get the converter and check extension support
+    try:
+        converter = get_converter(pipeline)
+    except (ImportError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if suffix not in converter.supported_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Pipeline '{pipeline.value}' does not support {suffix}. "
+            f"Supported: {', '.join(sorted(converter.supported_extensions))}",
+        )
+
+    # Convert the document
+    try:
+        if pipeline == ConversionPipeline.LLM:
+            from .converters.llm_converter import LLMConverter
+
+            assert isinstance(converter, LLMConverter)
+            markdown_content = await converter.convert(
+                original_path,
+                options=LLMConvertOptions(
+                    model=x_vision_model,
+                    api_key=x_api_key,
+                    base_url=x_base_url,
+                ),
+            )
+        else:
+            markdown_content = await converter.convert(original_path)
+    except ImportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Conversion failed: {e!s}",
+        )
+
+    # Save the converted markdown
+    base_name = filename.rsplit(".", 1)[0]
+    converted_filename = f"{base_name}.md"
+    converted_path = documents_dir / converted_filename
+    converted_path.write_text(markdown_content, encoding="utf-8")
 
     reload_user_documents(user.id)
 
     return UploadDocumentResponse(
         filename=filename,
+        converted_filename=converted_filename,
         size_bytes=len(content),
-        message="Document uploaded successfully",
+        pipeline_used=pipeline.value,
+        message="Document uploaded and converted successfully",
     )
 
 
@@ -386,6 +485,8 @@ async def get_document_content(
     user: Annotated[User, Depends(get_current_user)],
 ) -> PlainTextResponse:
     """Get the content of a document.
+
+    Only text-based documents can be read directly.
 
     Args:
         filename: The filename to read.
@@ -399,8 +500,8 @@ async def get_document_content(
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
-    allowed_extensions = _get_allowed_extensions()
-    if file_path.suffix.lower() not in allowed_extensions:
+    text_extensions = _get_text_extensions()
+    if file_path.suffix.lower() not in text_extensions:
         raise HTTPException(status_code=400, detail="Invalid file type")
 
     return PlainTextResponse(file_path.read_text(encoding="utf-8"))
@@ -425,8 +526,8 @@ async def delete_document(
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
-    allowed_extensions = _get_allowed_extensions()
-    if file_path.suffix.lower() not in allowed_extensions:
+    text_extensions = _get_text_extensions()
+    if file_path.suffix.lower() not in text_extensions:
         raise HTTPException(status_code=400, detail="Invalid file type")
 
     file_path.unlink()
@@ -437,6 +538,12 @@ async def delete_document(
         filename=filename,
         message="Document deleted successfully",
     )
+
+
+@app.get("/api/conversion-pipelines")
+async def list_conversion_pipelines() -> list[ConversionPipelineInfo]:
+    """Get metadata for all conversion pipelines."""
+    return get_pipelines_info()
 
 
 # Token management endpoints

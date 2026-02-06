@@ -26,7 +26,6 @@ class Personality(StrEnum):
 
 __all__ = [
     "ChatRequestConfig",
-    "User",
     "ConversationData",
     "ConversationListResponse",
     "ConversationSummary",
@@ -48,6 +47,7 @@ __all__ = [
     "TokenInfo",
     "UpdateTitleRequest",
     "UploadDocumentResponse",
+    "User",
 ]
 
 
@@ -118,7 +118,13 @@ class UploadDocumentResponse(BaseModel):
     """Response for document upload."""
 
     filename: str = Field(description="The uploaded filename")
+    converted_filename: str | None = Field(
+        default=None, description="The converted markdown filename (for binary files)"
+    )
     size_bytes: int = Field(description="File size in bytes")
+    pipeline_used: str | None = Field(
+        default=None, description="The conversion pipeline used (for binary files)"
+    )
     message: str = Field(description="Status message")
 
 
@@ -231,3 +237,5 @@ class TokenInfo(BaseModel):
     last_used_at: datetime | None = Field(
         default=None, description="When the token was last used"
     )
+
+

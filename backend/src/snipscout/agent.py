@@ -3,9 +3,8 @@
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
-from textwrap import dedent
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, FunctionToolset, RunContext
 from ripgrepy import Ripgrepy
 
 from .config import settings
@@ -18,33 +17,24 @@ from .types import (
     RetrievedDocument,
 )
 
-__all__ = ["AgentDeps", "agent", "small_agent"]
+__all__ = ["UserDeps", "base_agent", "rag_toolset", "user_agent"]
 
 
 @dataclass
-class AgentDeps:
-    """Dependencies for the RAG agent."""
+class UserDeps:
+    """Dependencies for user-specific agent operations."""
 
     user_id: str
 
 
-agent = Agent(
-    deps_type=AgentDeps,
-    instructions=dedent("""
-        You are a helpful RAG (Retrieval-Augmented Generation) assistant.
+base_agent: Agent[None, str] = Agent()
+user_agent: Agent[UserDeps, str] = Agent(deps_type=UserDeps)
 
-        You have access to a collection of documents that you can search and retrieve.
-        Use the available tools to find and read documents before answering questions.
-
-        Be helpful, accurate, and cite which documents your information comes from.
-    """).strip(),
-)
-
-small_agent = Agent()
+rag_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
-@agent.tool
-def list_documents(ctx: RunContext[AgentDeps]) -> list[DocumentSummary]:
+@rag_toolset.tool
+def list_documents(ctx: RunContext[UserDeps]) -> list[DocumentSummary]:
     """List all available documents with their sizes in bytes."""
     data_dir = settings.get_user_documents_dir(ctx.deps.user_id)
     if not data_dir.exists():
@@ -56,8 +46,8 @@ def list_documents(ctx: RunContext[AgentDeps]) -> list[DocumentSummary]:
     ]
 
 
-@agent.tool
-def get_document(ctx: RunContext[AgentDeps], filename: str) -> str | None:
+@rag_toolset.tool
+def get_document(ctx: RunContext[UserDeps], filename: str) -> str | None:
     """Get the full content of a specific document.
 
     Args:
@@ -67,9 +57,9 @@ def get_document(ctx: RunContext[AgentDeps], filename: str) -> str | None:
     return documents.get(filename)
 
 
-@agent.tool
+@rag_toolset.tool
 def get_document_lines(
-    ctx: RunContext[AgentDeps],
+    ctx: RunContext[UserDeps],
     filename: str,
     start: int = 1,
     end: int | None = None,
@@ -98,9 +88,9 @@ def get_document_lines(
     )
 
 
-@agent.tool
+@rag_toolset.tool
 def glob_documents(
-    ctx: RunContext[AgentDeps],
+    ctx: RunContext[UserDeps],
     pattern: str,
 ) -> list[str]:
     """Find documents matching a glob pattern.
@@ -112,9 +102,9 @@ def glob_documents(
     return [name for name in documents.keys() if fnmatch(name, pattern)]
 
 
-@agent.tool
+@rag_toolset.tool
 def grep(
-    ctx: RunContext[AgentDeps],
+    ctx: RunContext[UserDeps],
     pattern: str,
     glob: str | None = None,
     context_lines: int = 0,
@@ -165,9 +155,9 @@ def grep(
     return matches
 
 
-@agent.tool
+@rag_toolset.tool
 async def search_documents(
-    ctx: RunContext[AgentDeps],
+    ctx: RunContext[UserDeps],
     query: str,
     top_k: int = 3,
 ) -> list[RetrievedDocument]:

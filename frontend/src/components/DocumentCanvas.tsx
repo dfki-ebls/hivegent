@@ -5,10 +5,12 @@ import { AlertCircle, FileText, FolderOpen, MessageSquarePlus, Plus, Search, Tra
 
 import { getDocumentContent, uploadDocument } from '../lib/api';
 import type { DocumentInfo, StoredDocument } from '../lib/types';
-import { FileExtension } from '../lib/types';
+import { ConversionPipeline, FileExtension, requiresConversion } from '../lib/types';
 import { useFetchedDocumentsStore } from '../stores/fetched-documents-store';
 import { useManagedDocumentsStore } from '../stores/managed-documents-store';
+import { useSettingsStore } from '../stores/settings-store';
 import { DocumentPreviewDialog } from './DocumentPreviewDialog';
+import { PipelineSelector } from './PipelineSelector';
 import { Alert, AlertDescription } from './ui/alert';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -170,6 +172,8 @@ interface UploadAreaProps {
   isDragging: boolean;
   isLoading: boolean;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
+  pipeline: ConversionPipeline;
+  onPipelineChange: (pipeline: ConversionPipeline) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDragLeave: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -182,6 +186,8 @@ function UploadArea({
   isDragging,
   isLoading,
   fileInputRef,
+  pipeline,
+  onPipelineChange,
   onDragOver,
   onDragLeave,
   onDrop,
@@ -216,10 +222,20 @@ function UploadArea({
           className="hidden"
           onChange={onFileInputChange}
         />
-        <div className="flex gap-2">
+        <div className="flex items-center justify-center gap-8">
           <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={isLoading}>
             Select Files
           </Button>
+          <PipelineSelector
+            value={pipeline}
+            onChange={onPipelineChange}
+            disabled={isLoading}
+          />
+        </div>
+        <div className="flex flex-col items-center gap-2 pt-4 border-t border-muted-foreground/15 w-full">
+          <p className="text-xs text-muted-foreground">
+            Or create and edit documents directly in the browser
+          </p>
           <Button variant="outline" size="sm" onClick={onNewDocument} disabled={isLoading}>
             <Plus className="h-4 w-4 mr-1" />
             New Document
@@ -290,13 +306,25 @@ interface ManageDocumentsProps {
   onSendToChat?: (content: string) => void;
 }
 
+const PIPELINE_STORAGE_KEY = 'snipscout-conversion-pipeline';
+
 function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
   const { documents, isLoading, error, fetchDocuments, upload, remove, clearError } =
     useManagedDocumentsStore();
+  const llmSettings = useSettingsStore((state) => state.llm);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [pipeline, setPipeline] = useState<ConversionPipeline>(() => {
+    const stored = localStorage.getItem(PIPELINE_STORAGE_KEY);
+    return (stored as ConversionPipeline) || ConversionPipeline.LLM;
+  });
+
+  const handlePipelineChange = useCallback((newPipeline: ConversionPipeline) => {
+    setPipeline(newPipeline);
+    localStorage.setItem(PIPELINE_STORAGE_KEY, newPipeline);
+  }, []);
 
   const fuse = useMemo(
     () => new Fuse(documents, { keys: ['filename'], threshold: 0.4 }),
@@ -352,10 +380,18 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
     if (!files || files.length === 0) return;
     for (const file of Array.from(files)) {
       if (isValidFile(file.name)) {
-        await upload(file);
+        const options = requiresConversion(file.name)
+          ? {
+              pipeline,
+              visionModel: llmSettings.model,
+              apiKey: llmSettings.apiKey,
+              baseUrl: llmSettings.baseUrl || undefined,
+            }
+          : undefined;
+        await upload(file, options);
       }
     }
-  }, [upload]);
+  }, [upload, pipeline, llmSettings]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -426,6 +462,8 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
         isDragging={isDragging}
         isLoading={isLoading}
         fileInputRef={fileInputRef}
+        pipeline={pipeline}
+        onPipelineChange={handlePipelineChange}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}

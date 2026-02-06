@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { DocumentInfo } from '../lib/types';
+import type { UploadDocumentOptions } from '../lib/api';
 import { deleteDocument, listDocuments, uploadDocument } from '../lib/api';
 
 interface ManagedDocumentsStore {
@@ -7,7 +8,7 @@ interface ManagedDocumentsStore {
   isLoading: boolean;
   error: string | null;
   fetchDocuments: () => Promise<void>;
-  upload: (file: File) => Promise<void>;
+  upload: (file: File, options?: UploadDocumentOptions) => Promise<void>;
   remove: (filename: string) => Promise<void>;
   clearError: () => void;
 }
@@ -31,10 +32,10 @@ export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
       }
     },
 
-    upload: async (file: File) => {
+    upload: async (file: File, options?: UploadDocumentOptions) => {
       set({ isLoading: true, error: null });
       try {
-        await uploadDocument(file.name, file);
+        await uploadDocument(file.name, file, options);
         await get().fetchDocuments();
       } catch (err) {
         set({
