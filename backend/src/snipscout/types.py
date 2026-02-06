@@ -24,6 +24,14 @@ class Personality(StrEnum):
     DETAILED = "detailed"
 
 
+class LlmConfig(BaseModel):
+    """Client-provided LLM configuration overrides."""
+
+    model: str = ""
+    api_key: str = ""
+    base_url: str | None = None
+
+
 __all__ = [
     "ChatRequestConfig",
     "ChunkSummary",
@@ -43,9 +51,11 @@ __all__ = [
     "GenerateTitleRequest",
     "GenerateTitleResponse",
     "GrepMatch",
+    "LlmConfig",
     "Personality",
     "RetrievedChunk",
     "RetrievedDocument",
+    "SettingsResponse",
     "TokenInfo",
     "UpdateTitleRequest",
     "UploadDocumentResponse",
@@ -54,13 +64,11 @@ __all__ = [
 
 
 class ChatRequestConfig(BaseModel):
-    """Configuration for chat requests, passed via HTTP headers."""
+    """Configuration for chat requests, passed via request body."""
 
-    conversation_id: str = Field(description="The conversation ID for persistence")
-    model: str = Field(description="Model identifier (e.g., 'openai/gpt-4o')")
-    api_key: str = Field(description="API key for the LLM provider")
-    base_url: str | None = Field(default=None, description="Custom base URL for the LLM provider")
-    personality: Personality = Field(default=Personality.DEFAULT, description="Assistant personality")
+    conversation_id: str = Field(default="", description="The conversation ID")
+    personality: Personality = Field(default=Personality.DEFAULT)
+    llm: LlmConfig = Field(default_factory=LlmConfig)
 
 
 class CreateConversationResponse(BaseModel):
@@ -219,12 +227,20 @@ class UpdateTitleRequest(BaseModel):
     title: str = Field(description="The new title for the conversation")
 
 
+class SettingsResponse(BaseModel):
+    """LLM settings (API key masked as boolean)."""
+
+    model: str = Field(description="Default chat model")
+    vision_model: str = Field(description="Default vision model for conversion")
+    small_model: str = Field(description="Default model for lightweight tasks")
+    has_api_key: bool = Field(description="Whether a server-side API key is configured")
+    base_url: str = Field(description="Default base URL for the LLM provider")
+
+
 class GenerateTitleRequest(BaseModel):
     """Request to generate a title using an LLM."""
 
-    model: str = Field(description="Model identifier")
-    api_key: str = Field(default="", description="API key for the LLM provider")
-    base_url: str | None = Field(default=None, description="Base URL for the LLM API")
+    llm: LlmConfig = Field(default_factory=LlmConfig)
 
 
 class GenerateTitleResponse(BaseModel):

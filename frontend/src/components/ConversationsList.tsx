@@ -7,6 +7,7 @@ import {
   TrashIcon,
   XIcon,
 } from 'lucide-react';
+import { buildLlmConfig } from '../lib/api';
 import { useConversationsStore } from '../stores/conversations-store';
 import { useSettingsStore } from '../stores/settings-store';
 import { Button } from './ui/button';
@@ -272,9 +273,14 @@ export function ConversationsList({
   };
 
   const handleGenerateTitle = async (id: string) => {
-    // Use small model if configured, otherwise fall back to main model
-    const model = smallModel || llm.model;
-    await generateTitle(id, model, llm.apiKey, llm.baseUrl);
+    await generateTitle(
+      id,
+      buildLlmConfig({
+        model: smallModel || llm.model,
+        apiKey: llm.apiKey,
+        baseUrl: llm.baseUrl,
+      })
+    );
   };
 
   if (isLoading) return <LoadingState />;

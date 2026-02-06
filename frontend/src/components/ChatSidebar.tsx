@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import {
   API_BASE_URL,
-  chatConfigToHeaders,
+  buildLlmConfig,
   createConversation,
   getAuthHeaders,
   getConversationDocumentReferences,
@@ -393,19 +393,27 @@ export function ChatSidebar({ id, pendingContent, onPendingContentConsumed }: Ch
     sendMessage(
       { text },
       {
-        headers: {
-          ...authHeaders,
-          ...chatConfigToHeaders({
-            conversationId: id,
-            model: llm.model,
-            apiKey: llm.apiKey,
-            baseUrl: llm.baseUrl,
-            personality,
-          }),
+        headers: authHeaders,
+        body: {
+          conversation_id: id,
+          personality,
+          llm: buildLlmConfig(llm),
         },
       }
     );
     setInputValue('');
+  };
+
+  const handleRegenerate = async () => {
+    const authHeaders = await getAuthHeaders();
+    regenerate({
+      headers: authHeaders,
+      body: {
+        conversation_id: id,
+        personality,
+        llm: buildLlmConfig(llm),
+      },
+    });
   };
 
   // Sync tool outputs to the document store
@@ -488,7 +496,7 @@ export function ChatSidebar({ id, pendingContent, onPendingContentConsumed }: Ch
                           partIndex={partIndex}
                           isLastTextPart={isLastTextPart}
                           showActions={showActions}
-                          onRegenerate={regenerate}
+                          onRegenerate={handleRegenerate}
                         />
                       );
                     })}

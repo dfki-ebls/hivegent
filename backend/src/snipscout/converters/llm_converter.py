@@ -66,6 +66,12 @@ class LLMConverter(DocumentConverter):
         """
         opts = options or LLMConvertOptions()
 
+        if not opts.model:
+            raise ValueError(
+                "No vision model configured. "
+                "Set SNIPSCOUT_LLM__VISION_MODEL or provide x-vision-model header."
+            )
+
         suffix = file_path.suffix.lower()
         media_type = MEDIA_TYPES.get(suffix)
         assert media_type is not None, f"Unsupported extension: {suffix}"

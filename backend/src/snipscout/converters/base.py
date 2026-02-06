@@ -11,7 +11,7 @@ __all__ = ["DocumentConverter", "LLMConvertOptions"]
 class LLMConvertOptions:
     """Options for LLM-based document conversion."""
 
-    model: str = "gpt-4o"
+    model: str = ""
     api_key: str = ""
     base_url: str | None = None
 

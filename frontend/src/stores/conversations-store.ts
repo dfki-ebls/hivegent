@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ConversationSummary } from '../lib/types';
+import type { ConversationSummary, LlmConfig } from '../lib/types';
 import {
   deleteConversation as apiDeleteConversation,
   generateConversationTitle,
@@ -14,12 +14,7 @@ interface ConversationsState {
   fetchConversations: () => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   updateTitle: (id: string, title: string) => Promise<void>;
-  generateTitle: (
-    id: string,
-    model: string,
-    apiKey: string,
-    baseUrl: string
-  ) => Promise<string>;
+  generateTitle: (id: string, llm: LlmConfig) => Promise<string>;
   refreshConversation: (id: string, summary: Partial<ConversationSummary>) => void;
 }
 
@@ -71,14 +66,9 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
     }
   },
 
-  generateTitle: async (
-    id: string,
-    model: string,
-    apiKey: string,
-    baseUrl: string
-  ) => {
+  generateTitle: async (id: string, llm: LlmConfig) => {
     try {
-      const result = await generateConversationTitle(id, model, apiKey, baseUrl);
+      const result = await generateConversationTitle(id, llm);
       set((state) => ({
         conversations: state.conversations.map((c) =>
           c.id === id ? { ...c, title: result.title } : c

@@ -200,13 +200,11 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
   },
 ];
 
-/** Configuration for chat requests, passed via HTTP headers. */
-export interface ChatRequestConfig {
-  conversationId: string;
-  model: string;
-  apiKey: string;
-  baseUrl?: string;
-  personality: Personality;
+/** LLM provider configuration sent to the backend. */
+export interface LlmConfig {
+  model?: string;
+  api_key?: string;
+  base_url?: string | null;
 }
 
 /** Request to create a personal access token. */

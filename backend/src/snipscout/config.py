@@ -4,11 +4,13 @@ import re
 from enum import StrEnum
 from pathlib import Path
 
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = [
     "BINARY_EXTENSIONS",
     "FileExtension",
+    "LlmSettings",
     "Settings",
     "TEXT_EXTENSIONS",
     "sanitize_user_id",
@@ -83,14 +85,27 @@ def sanitize_user_id(user_id: str) -> str:
     return sanitized
 
 
+class LlmSettings(BaseModel):
+    """LLM provider defaults, configurable via environment variables."""
+
+    model: str = ""
+    vision_model: str = ""
+    small_model: str = ""
+    api_key: str = ""
+    base_url: str = ""
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
         env_prefix="SNIPSCOUT_",
+        env_nested_delimiter="__",
         env_file=".env",
         env_file_encoding="utf-8",
     )
+
+    llm: LlmSettings = LlmSettings()
 
     data_dir: Path = Path("data")
     max_file_size_bytes: int = 10 * 1024 * 1024  # 10 MB

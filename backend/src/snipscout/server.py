@@ -4,9 +4,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from nanoid import generate
+from pydantic import BaseModel, Field
 from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
     ModelMessage,
@@ -54,13 +55,33 @@ from .types import (
     DocumentListResponse,
     GenerateTitleRequest,
     GenerateTitleResponse,
+    LlmConfig,
     Personality,
+    SettingsResponse,
     TokenInfo,
     UpdateTitleRequest,
     UploadDocumentResponse,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_llm_config(llm: LlmConfig, *, default_model: str = "") -> LlmConfig:
+    """Apply server defaults to client-provided LLM config."""
+    return LlmConfig(
+        model=llm.model or default_model or settings.llm.model,
+        api_key=llm.api_key or settings.llm.api_key,
+        base_url=llm.base_url or settings.llm.base_url or None,
+    )
+
+
+class ReconvertRequest(BaseModel):
+    """Request to reconvert a document from its original binary file."""
+
+    conversion_pipeline: ConversionPipeline = ConversionPipeline.AUTO
+    chunking_pipeline: ChunkingPipeline = ChunkingPipeline.AUTO
+    llm: LlmConfig = Field(default_factory=LlmConfig)
+
 
 app = FastAPI()
 
@@ -78,6 +99,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/api/settings")
+async def get_settings(
+    user: Annotated[User, Depends(get_current_user)],
+) -> SettingsResponse:
+    """Get server-side LLM settings (API key masked as boolean)."""
+    return SettingsResponse(
+        model=settings.llm.model,
+        vision_model=settings.llm.vision_model,
+        small_model=settings.llm.small_model,
+        has_api_key=bool(settings.llm.api_key),
+        base_url=settings.llm.base_url,
+    )
 
 
 @app.post("/api/conversation")
@@ -192,14 +227,16 @@ The title should capture the main topic or question.
 Return ONLY the title, no quotes or extra text.
 """
 
+    resolved = resolve_llm_config(request.llm, default_model=settings.llm.small_model)
+
     try:
         result = await base_agent.run(
             f"Conversation:\n{conversation_preview}",
             model=OpenAIResponsesModel(
-                request.model,
+                resolved.model,
                 provider=OpenAIProvider(
-                    api_key=request.api_key or "not-needed",
-                    base_url=request.base_url,
+                    api_key=resolved.api_key or "not-needed",
+                    base_url=resolved.base_url,
                 ),
             ),
             instructions=instructions,
@@ -245,31 +282,26 @@ async def get_messages(
     return VercelAIAdapter.dump_messages(messages)
 
 
-def _parse_chat_config(request: Request) -> ChatRequestConfig:
-    """Parse chat configuration from request headers.
+async def _parse_chat_config(request: Request) -> ChatRequestConfig:
+    """Parse chat configuration from the request body.
 
     Args:
         request: The incoming HTTP request.
 
     Returns:
-        A ChatRequestConfig instance populated from headers.
+        A ChatRequestConfig instance populated from body fields.
     """
-    personality_header = request.headers.get("x-personality", "")
+    body = await request.json()
+    llm = resolve_llm_config(LlmConfig(**(body.get("llm") or {})))
     try:
-        personality = (
-            Personality(personality_header)
-            if personality_header
-            else Personality.DEFAULT
-        )
+        personality = Personality(body.get("personality", "default"))
     except ValueError:
         personality = Personality.DEFAULT
 
     return ChatRequestConfig(
-        conversation_id=request.headers.get("x-conversation-id", ""),
-        model=request.headers.get("x-model", ""),
-        api_key=request.headers.get("x-api-key", ""),
-        base_url=request.headers.get("x-base-url") or None,
+        conversation_id=body.get("conversation_id", ""),
         personality=personality,
+        llm=llm,
     )
 
 
@@ -280,13 +312,13 @@ async def chat(
 ) -> Response:
     """Handle chat requests using the Vercel AI Data Stream Protocol.
 
-    Configuration is passed via HTTP headers (see ChatRequestConfig).
+    Configuration is passed via the request body (see ChatRequestConfig).
     """
-    config = _parse_chat_config(request)
+    config = await _parse_chat_config(request)
 
     if not config.conversation_id:
         raise HTTPException(
-            status_code=400, detail="x-conversation-id header is required"
+            status_code=400, detail="conversation_id is required in the request body"
         )
 
     # Load existing message history
@@ -310,10 +342,10 @@ async def chat(
         agent=user_agent,
         deps=UserDeps(user_id=user.id),
         model=OpenAIResponsesModel(
-            config.model,
+            config.llm.model,
             provider=OpenAIProvider(
-                api_key=config.api_key,
-                base_url=config.base_url,
+                api_key=config.llm.api_key or "not-needed",
+                base_url=config.llm.base_url,
             ),
         ),
         toolsets=[rag_toolset],
@@ -390,9 +422,7 @@ async def upload_document(
     user: Annotated[User, Depends(get_current_user)],
     conversion_pipeline: ConversionPipeline = Query(default=ConversionPipeline.AUTO),
     chunking_pipeline: ChunkingPipeline = Query(default=ChunkingPipeline.AUTO),
-    x_vision_model: str = Header(default="gpt-4o", alias="x-vision-model"),
-    x_api_key: str = Header(default="", alias="x-api-key"),
-    x_base_url: str | None = Header(default=None, alias="x-base-url"),
+    llm_config: str = Form(default="{}"),
 ) -> UploadDocumentResponse:
     """Upload or replace a document.
 
@@ -405,10 +435,11 @@ async def upload_document(
         file: The uploaded file content.
         conversion_pipeline: The conversion pipeline to use for binary files.
         chunking_pipeline: The chunking pipeline to use.
-        x_vision_model: Model to use for LLM conversion (via header).
-        x_api_key: API key for the LLM provider (via header).
-        x_base_url: Base URL for the LLM provider (via header).
+        llm_config: JSON-encoded LLM configuration for conversion.
     """
+    llm = LlmConfig.model_validate_json(llm_config)
+    resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
+
     allowed_extensions = _get_allowed_extensions()
     suffix = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
@@ -484,14 +515,16 @@ async def upload_document(
             markdown_content = await converter.convert(
                 original_path,
                 options=LLMConvertOptions(
-                    model=x_vision_model,
-                    api_key=x_api_key,
-                    base_url=x_base_url,
+                    model=resolved.model,
+                    api_key=resolved.api_key,
+                    base_url=resolved.base_url,
                 ),
             )
         else:
             markdown_content = await converter.convert(original_path)
     except ImportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(
@@ -659,12 +692,8 @@ async def rechunk_document(
 @app.post("/api/documents/{filename}/reconvert")
 async def reconvert_document(
     filename: str,
+    request: ReconvertRequest,
     user: Annotated[User, Depends(get_current_user)],
-    conversion_pipeline: ConversionPipeline = Query(default=ConversionPipeline.AUTO),
-    chunking_pipeline: ChunkingPipeline = Query(default=ChunkingPipeline.AUTO),
-    x_vision_model: str = Header(default="gpt-4o", alias="x-vision-model"),
-    x_api_key: str = Header(default="", alias="x-api-key"),
-    x_base_url: str | None = Header(default=None, alias="x-base-url"),
 ) -> UploadDocumentResponse:
     """Re-convert a document from its original binary file.
 
@@ -673,12 +702,10 @@ async def reconvert_document(
 
     Args:
         filename: The text document filename (e.g. "report.md").
-        conversion_pipeline: The conversion pipeline to use.
-        chunking_pipeline: The chunking pipeline to use.
-        x_vision_model: Model to use for LLM conversion (via header).
-        x_api_key: API key for the LLM provider (via header).
-        x_base_url: Base URL for the LLM provider (via header).
+        request: Reconversion options including pipeline and LLM config.
     """
+    resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
+
     originals_dir = settings.get_user_originals_dir(user.id)
     documents_dir = settings.get_user_documents_dir(user.id)
 
@@ -697,8 +724,8 @@ async def reconvert_document(
         )
 
     # Resolve AUTO conversion pipeline
-    resolved_conversion = conversion_pipeline
-    if conversion_pipeline == ConversionPipeline.AUTO:
+    resolved_conversion = request.conversion_pipeline
+    if request.conversion_pipeline == ConversionPipeline.AUTO:
         resolved_conversion = resolve_auto_pipeline(original_path.name)
 
     # Get the converter
@@ -724,14 +751,16 @@ async def reconvert_document(
             markdown_content = await converter.convert(
                 original_path,
                 options=LLMConvertOptions(
-                    model=x_vision_model,
-                    api_key=x_api_key,
-                    base_url=x_base_url,
+                    model=resolved.model,
+                    api_key=resolved.api_key,
+                    base_url=resolved.base_url,
                 ),
             )
         else:
             markdown_content = await converter.convert(original_path)
     except ImportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(
@@ -751,7 +780,7 @@ async def reconvert_document(
     chunking_used = None
     try:
         chunked = chunk_document(
-            user.id, filename, markdown_content, chunking_pipeline
+            user.id, filename, markdown_content, request.chunking_pipeline
         )
         chunk_count = chunked.chunk_count
         chunking_used = chunked.chunking_pipeline

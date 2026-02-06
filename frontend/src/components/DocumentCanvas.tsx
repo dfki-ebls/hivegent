@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import Fuse from 'fuse.js';
 import { AlertCircle, FileText, FolderOpen, MessageSquarePlus, Plus, RefreshCw, RotateCcw, Scissors, Search, Trash2, Upload, X } from 'lucide-react';
 
-import { getDocumentContent, uploadDocument } from '../lib/api';
+import { buildLlmConfig, getDocumentContent, uploadDocument } from '../lib/api';
 import type { DocumentInfo, StoredDocument } from '../lib/types';
 import { ChunkingPipeline, ConversionPipeline, FileExtension, requiresConversion } from '../lib/types';
 import { useFetchedDocumentsStore } from '../stores/fetched-documents-store';
@@ -388,6 +388,7 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
   const { documents, isLoading, error, fetchDocuments, upload, remove, rechunk: storeRechunk, reconvert: storeReconvert, clearError } =
     useManagedDocumentsStore();
   const llmSettings = useSettingsStore((state) => state.llm);
+  const visionModel = useSettingsStore((state) => state.visionModel);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -470,11 +471,13 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
     await storeReconvert(doc.filename, {
       conversionPipeline,
       chunkingPipeline,
-      visionModel: llmSettings.model,
-      apiKey: llmSettings.apiKey,
-      baseUrl: llmSettings.baseUrl || undefined,
+      llm: buildLlmConfig({
+        model: visionModel,
+        apiKey: llmSettings.apiKey,
+        baseUrl: llmSettings.baseUrl,
+      }),
     });
-  }, [storeReconvert, conversionPipeline, chunkingPipeline, llmSettings]);
+  }, [storeReconvert, conversionPipeline, chunkingPipeline, visionModel, llmSettings]);
 
   // --- File upload handlers ---
 
@@ -486,15 +489,17 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
           ? {
               conversionPipeline,
               chunkingPipeline,
-              visionModel: llmSettings.model,
-              apiKey: llmSettings.apiKey,
-              baseUrl: llmSettings.baseUrl || undefined,
+              llm: buildLlmConfig({
+                model: visionModel,
+                apiKey: llmSettings.apiKey,
+                baseUrl: llmSettings.baseUrl,
+              }),
             }
           : { chunkingPipeline };
         await upload(file, options);
       }
     }
-  }, [upload, conversionPipeline, chunkingPipeline, llmSettings]);
+  }, [upload, conversionPipeline, chunkingPipeline, visionModel, llmSettings]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();

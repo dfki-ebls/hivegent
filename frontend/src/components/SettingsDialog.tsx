@@ -102,9 +102,12 @@ export function SettingsDialog() {
   const {
     llm,
     smallModel,
+    visionModel,
     availableModels,
+    hasServerApiKey,
     setLLM,
     setSmallModel,
+    setVisionModel,
     addModel,
     removeModel,
     reset,
@@ -162,12 +165,14 @@ export function SettingsDialog() {
           <SettingsSection
             label="API Key (optional)"
             htmlFor="api-key"
-            description="Only required for providers that need authentication."
+            description={hasServerApiKey
+              ? 'Server API key configured. Override it here or leave empty to use the server key.'
+              : 'Only required for providers that need authentication.'}
           >
             <Input
               id="api-key"
               type="password"
-              placeholder="Enter your API key (if required)"
+              placeholder={hasServerApiKey ? 'Using server API key' : 'Enter your API key (if required)'}
               value={llm.apiKey}
               onChange={(e) => setLLM({ apiKey: e.target.value })}
             />
@@ -187,7 +192,7 @@ export function SettingsDialog() {
             />
           </SettingsSection>
 
-          <div className="pt-2 border-t">
+          <div className="pt-2 border-t grid gap-4">
             <SettingsSection
               label="Small Model (optional)"
               htmlFor="small-model"
@@ -200,13 +205,26 @@ export function SettingsDialog() {
                 onChange={(e) => setSmallModel(e.target.value)}
               />
             </SettingsSection>
+
+            <SettingsSection
+              label="Vision Model (optional)"
+              htmlFor="vision-model"
+              description="A vision-capable model for document conversion (PDF, images). Uses the same provider settings as the main model."
+            >
+              <Input
+                id="vision-model"
+                placeholder="e.g., openai/gpt-4o"
+                value={visionModel}
+                onChange={(e) => setVisionModel(e.target.value)}
+              />
+            </SettingsSection>
           </div>
         </div>
 
         <DialogFooter className="sm:justify-between">
           <Button variant="outline" onClick={reset}>
             <RotateCcwIcon className="h-4 w-4 mr-2" />
-            Reset to Defaults
+            Reset to Server Defaults
           </Button>
         </DialogFooter>
       </DialogContent>

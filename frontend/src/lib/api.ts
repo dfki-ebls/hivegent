@@ -1,6 +1,5 @@
 import type { UIMessage } from '@ai-sdk/react';
 import type {
-  ChatRequestConfig,
   ChunkedDocumentResponse,
   ChunkingPipeline,
   ChunkingPipelineInfo,
@@ -14,6 +13,7 @@ import type {
   DocumentInfo,
   DocumentReference,
   GenerateTitleResponse,
+  LlmConfig,
   TokenInfo,
 } from './types';
 import { requiresConversion } from './types';
@@ -65,15 +65,35 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
   return {};
 }
 
-/** Convert ChatRequestConfig to HTTP headers for chat requests. */
-export function chatConfigToHeaders(config: ChatRequestConfig): Record<string, string> {
-  return {
-    'x-conversation-id': config.conversationId,
-    'x-model': config.model,
-    'x-api-key': config.apiKey,
-    'x-base-url': config.baseUrl ?? '',
-    'x-personality': config.personality,
-  };
+/** Settings exposed by the backend. */
+export interface BackendSettings {
+  model: string;
+  vision_model: string;
+  small_model: string;
+  has_api_key: boolean;
+  base_url: string;
+}
+
+/** Fetch server-side LLM settings. */
+export async function fetchSettings(): Promise<BackendSettings> {
+  const res = await authFetch(`${API_BASE_URL}/api/settings`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch settings');
+  }
+  return res.json();
+}
+
+/** Build a sparse LlmConfig from frontend settings. */
+export function buildLlmConfig(s: {
+  model?: string;
+  apiKey?: string;
+  baseUrl?: string;
+}): LlmConfig {
+  const config: LlmConfig = {};
+  if (s.model) config.model = s.model;
+  if (s.apiKey) config.api_key = s.apiKey;
+  if (s.baseUrl) config.base_url = s.baseUrl;
+  return config;
 }
 
 export async function createConversation(): Promise<string> {
@@ -112,9 +132,7 @@ export async function listDocuments(): Promise<DocumentInfo[]> {
 export interface UploadDocumentOptions {
   conversionPipeline?: ConversionPipeline;
   chunkingPipeline?: ChunkingPipeline;
-  visionModel?: string;
-  apiKey?: string;
-  baseUrl?: string;
+  llm?: LlmConfig;
 }
 
 /** Response from document upload. */
@@ -150,23 +168,13 @@ export async function uploadDocument(
     url += `?${queryString}`;
   }
 
-  // Build headers for conversion
-  const headers: Record<string, string> = {};
-  if (requiresConversion(filename)) {
-    if (options?.visionModel) {
-      headers['x-vision-model'] = options.visionModel;
-    }
-    if (options?.apiKey) {
-      headers['x-api-key'] = options.apiKey;
-    }
-    if (options?.baseUrl) {
-      headers['x-base-url'] = options.baseUrl;
-    }
+  // Add LLM config as form field for binary files requiring conversion
+  if (requiresConversion(filename) && options?.llm) {
+    formData.append('llm_config', JSON.stringify(options.llm));
   }
 
   const res = await authFetch(url, {
     method: 'PUT',
-    headers,
     body: formData,
   });
 
@@ -248,20 +256,14 @@ export async function updateConversationTitle(
 
 export async function generateConversationTitle(
   conversationId: string,
-  model: string,
-  apiKey: string,
-  baseUrl: string
+  llm: LlmConfig
 ): Promise<GenerateTitleResponse> {
   const res = await authFetch(
     `${API_BASE_URL}/api/conversation/${conversationId}/generate-title`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        api_key: apiKey,
-        base_url: baseUrl || null,
-      }),
+      body: JSON.stringify({ llm }),
     }
   );
 
@@ -371,41 +373,24 @@ export async function getDocumentChunks(filename: string): Promise<ChunkedDocume
 export interface ReconvertDocumentOptions {
   conversionPipeline?: ConversionPipeline;
   chunkingPipeline?: ChunkingPipeline;
-  visionModel?: string;
-  apiKey?: string;
-  baseUrl?: string;
+  llm?: LlmConfig;
 }
 
 export async function reconvertDocument(
   filename: string,
   options?: ReconvertDocumentOptions
 ): Promise<UploadDocumentResponse> {
-  const params = new URLSearchParams();
-  if (options?.conversionPipeline) {
-    params.set('conversion_pipeline', options.conversionPipeline);
-  }
-  if (options?.chunkingPipeline) {
-    params.set('chunking_pipeline', options.chunkingPipeline);
-  }
+  const url = `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}/reconvert`;
 
-  let url = `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}/reconvert`;
-  const queryString = params.toString();
-  if (queryString) {
-    url += `?${queryString}`;
-  }
-
-  const headers: Record<string, string> = {};
-  if (options?.visionModel) {
-    headers['x-vision-model'] = options.visionModel;
-  }
-  if (options?.apiKey) {
-    headers['x-api-key'] = options.apiKey;
-  }
-  if (options?.baseUrl) {
-    headers['x-base-url'] = options.baseUrl;
-  }
-
-  const res = await authFetch(url, { method: 'POST', headers });
+  const res = await authFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      conversion_pipeline: options?.conversionPipeline ?? 'auto',
+      chunking_pipeline: options?.chunkingPipeline ?? 'auto',
+      llm: options?.llm ?? {},
+    }),
+  });
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: 'Reconvert failed' }));
