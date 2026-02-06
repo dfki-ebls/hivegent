@@ -11,8 +11,6 @@ from pydantic import BaseModel, Field
 from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
     ModelMessage,
-    ModelRequest,
-    SystemPromptPart,
     TextPart,
     UserPromptPart,
 )
@@ -26,10 +24,26 @@ from starlette.responses import PlainTextResponse, Response
 
 from .agent import UserDeps, base_agent, rag_toolset, user_agent
 from .auth import User, get_current_user
-from .chunkers import ChunkingPipeline, ChunkingPipelineInfo, get_chunking_pipelines_info
-from .chunks import ChunkedDocument, chunk_document, delete_chunks, get_chunks, list_chunked_documents
-from .config import BINARY_EXTENSIONS, FileExtension, TEXT_EXTENSIONS, settings
-from .converters import ConversionPipeline, ConversionPipelineInfo, get_converter, get_pipelines_info, resolve_auto_pipeline
+from .chunkers import (
+    ChunkingPipeline,
+    ChunkingPipelineInfo,
+    get_chunking_pipelines_info,
+)
+from .chunks import (
+    ChunkedDocument,
+    chunk_document,
+    delete_chunks,
+    get_chunks,
+    list_chunked_documents,
+)
+from .config import BINARY_EXTENSIONS, TEXT_EXTENSIONS, FileExtension, settings
+from .converters import (
+    ConversionPipeline,
+    ConversionPipelineInfo,
+    get_converter,
+    get_pipelines_info,
+    resolve_auto_pipeline,
+)
 from .converters.base import LLMConvertOptions
 from .documents import reload_user_documents
 from .messages import (
@@ -84,13 +98,6 @@ class ReconvertRequest(BaseModel):
 
 
 app = FastAPI()
-
-RAG_INSTRUCTIONS = """You are a helpful RAG (Retrieval-Augmented Generation) assistant.
-
-You have access to a collection of documents that you can search and retrieve.
-Use the available tools to find and read documents before answering questions.
-
-Be helpful, accurate, and cite which documents your information comes from."""
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore[arg-type]
@@ -321,18 +328,6 @@ async def chat(
             status_code=400, detail="conversation_id is required in the request body"
         )
 
-    # Load existing message history
-    message_history: list[ModelMessage] | None = load_messages(
-        user.id, config.conversation_id
-    )
-
-    # For new conversations, prepend the personality's system prompt to history
-    if not message_history:
-        system_prompt = PERSONALITY_TEMPLATES[config.personality]
-        message_history = [
-            ModelRequest(parts=[SystemPromptPart(content=system_prompt)])
-        ]
-
     def on_complete(result: AgentRunResult[str]) -> None:
         """Save messages after the agent run completes."""
         save_messages(user.id, config.conversation_id, result.all_messages())
@@ -349,8 +344,7 @@ async def chat(
             ),
         ),
         toolsets=[rag_toolset],
-        instructions=RAG_INSTRUCTIONS,
-        message_history=message_history,
+        instructions=PERSONALITY_TEMPLATES[config.personality],
         on_complete=on_complete,
     )
 
