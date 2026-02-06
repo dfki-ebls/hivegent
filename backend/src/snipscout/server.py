@@ -578,17 +578,7 @@ async def list_tokens(
     user: Annotated[User, Depends(get_current_user)],
 ) -> list[TokenInfo]:
     """List all personal access tokens for the current user."""
-    tokens = token_store.list_tokens(user.id)
-    return [
-        TokenInfo(
-            id=t.id,
-            name=t.name,
-            created_at=t.created_at,
-            expires_at=t.expires_at,
-            last_used_at=t.last_used_at,
-        )
-        for t in tokens
-    ]
+    return token_store.list_tokens(user.id)
 
 
 @app.delete("/api/tokens/{token_id}")

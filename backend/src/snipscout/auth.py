@@ -7,8 +7,9 @@ import httpx
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from joserfc import jwt
-from joserfc.errors import JoseError
+from joserfc.errors import ExpiredTokenError, InvalidClaimError, JoseError, MissingClaimError
 from joserfc.jwk import KeySet
+from joserfc.jwt import ClaimsOption, JWTClaimsRegistry
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .tokens import token_store
@@ -45,6 +46,7 @@ class JWKSFetcher:
     def __init__(self) -> None:
         self._cache: KeySet | None = None
         self._cache_time: float = 0
+        self._client = httpx.AsyncClient()
 
     def _is_cache_valid(self) -> bool:
         """Check if the cached JWKS is still valid."""
@@ -77,10 +79,9 @@ class JWKSFetcher:
         jwks_uri = f"{auth_settings.issuer.rstrip('/')}/.well-known/jwks.json"
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(jwks_uri, timeout=10.0)
-                response.raise_for_status()
-                jwks_data = response.json()
+            response = await self._client.get(jwks_uri, timeout=10.0)
+            response.raise_for_status()
+            jwks_data = response.json()
         except httpx.HTTPError as e:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -101,6 +102,20 @@ class JWKSFetcher:
 _jwks_fetcher = JWKSFetcher()
 
 
+def _build_claims_registry() -> JWTClaimsRegistry:
+    """Build a JWT claims registry based on current auth settings.
+
+    Returns:
+        A configured JWTClaimsRegistry instance.
+    """
+    options: dict[str, ClaimsOption] = {"sub": ClaimsOption(essential=True)}
+    if auth_settings.issuer:
+        options["iss"] = ClaimsOption(value=auth_settings.issuer)
+    if auth_settings.audience:
+        options["aud"] = ClaimsOption(value=auth_settings.audience)
+    return JWTClaimsRegistry(leeway=300, **options)
+
+
 async def validate_jwt_token(token: str) -> User:
     """Validate a JWT token and extract user information.
 
@@ -113,10 +128,7 @@ async def validate_jwt_token(token: str) -> User:
     Raises:
         HTTPException: If the token is invalid.
     """
-    try:
-        key_set = await _jwks_fetcher.get_jwks()
-    except HTTPException:
-        raise
+    key_set = await _jwks_fetcher.get_jwks()
 
     try:
         decoded = jwt.decode(token, key_set)
@@ -132,71 +144,31 @@ async def validate_jwt_token(token: str) -> User:
                 headers={"WWW-Authenticate": "Bearer"},
             ) from e
 
-    claims = decoded.claims
-
-    # Validate standard claims
-    now = time.time()
-
-    # Check expiration
-    exp = claims.get("exp")
-    if exp is not None and now > exp:
+    try:
+        claims_registry = _build_claims_registry()
+        claims_registry.validate(decoded.claims)
+    except ExpiredTokenError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
             headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Check not before
-    nbf = claims.get("nbf")
-    if nbf is not None and now < nbf:
+        ) from e
+    except MissingClaimError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token is not yet valid",
+            detail=f"Token missing required claim: {e}",
             headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Check issued at (with 5 minute leeway for clock skew)
-    iat = claims.get("iat")
-    if iat is not None and now < (iat - 300):
+        ) from e
+    except InvalidClaimError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token issued in the future",
+            detail=f"Invalid token claim: {e}",
             headers={"WWW-Authenticate": "Bearer"},
-        )
+        ) from e
 
-    # Check issuer
-    if auth_settings.issuer:
-        iss = claims.get("iss")
-        if iss != auth_settings.issuer:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token issuer",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-    # Check audience if configured
-    if auth_settings.audience:
-        aud = claims.get("aud")
-        # Audience can be a string or list
-        audiences = [aud] if isinstance(aud, str) else (aud or [])
-        if auth_settings.audience not in audiences:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token audience",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-    # Extract user information
-    sub = claims.get("sub")
-    if not sub:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token missing subject claim",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
+    claims = decoded.claims
     return User(
-        id=sub,
+        id=claims["sub"],
         email=claims.get("email"),
         name=claims.get("name") or claims.get("preferred_username"),
     )
