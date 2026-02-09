@@ -46,7 +46,7 @@ from .converters import (
 )
 from .converters.base import LLMConvertOptions
 from .documents import reload_user_documents
-from .mcp import create_mcp_app
+from .mcp import mcp_app
 from .messages import (
     delete_conversation,
     list_conversations,
@@ -98,9 +98,9 @@ class ReconvertRequest(BaseModel):
     llm: LlmConfig = Field(default_factory=LlmConfig)
 
 
-mcp_app = create_mcp_app()
+mcp_http_app = mcp_app.http_app(path="/")
 
-app = FastAPI(lifespan=mcp_app.lifespan)
+app = FastAPI(lifespan=mcp_http_app.lifespan)
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore[arg-type]
@@ -843,4 +843,4 @@ async def revoke_token(
 
 
 app.include_router(api_router)
-app.mount("/mcp", mcp_app)
+app.mount("/mcp", mcp_http_app)

@@ -1,17 +1,11 @@
 """RAG agent with document retrieval tools."""
 
 from dataclasses import dataclass
-from fnmatch import fnmatch
-from pathlib import Path
 
 from pydantic_ai import Agent, FunctionToolset, RunContext
-from ripgrepy import Ripgrepy
 
-from .chunks import get_chunks as load_chunks
-from .chunks import search_chunks as bm25_search_chunks
+from . import tools
 from .config import settings
-from .documents import get_user_documents
-from .documents import search_documents as bm25_search
 from .types import (
     ChunkSummary,
     DocumentRange,
@@ -40,14 +34,9 @@ rag_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 @rag_toolset.tool
 def list_documents(ctx: RunContext[UserDeps]) -> list[DocumentSummary]:
     """List all available documents with their sizes in bytes."""
-    data_dir = settings.get_user_documents_dir(ctx.deps.user_id)
-    if not data_dir.exists():
-        return []
-    return [
-        DocumentSummary(filename=f.name, size=f.stat().st_size)
-        for f in data_dir.iterdir()
-        if f.is_file()
-    ]
+    return tools.ListDocumentsTool(
+        path=settings.get_user_documents_dir(ctx.deps.user_id)
+    )()
 
 
 @rag_toolset.tool
@@ -57,8 +46,9 @@ def get_document(ctx: RunContext[UserDeps], filename: str) -> str | None:
     Args:
         filename: The exact filename to retrieve.
     """
-    documents, _, _ = get_user_documents(ctx.deps.user_id)
-    return documents.get(filename)
+    return tools.GetDocumentTool(path=settings.get_user_documents_dir(ctx.deps.user_id))(
+        filename
+    )
 
 
 @rag_toolset.tool
@@ -75,21 +65,9 @@ def get_document_lines(
         start: First line to include (1-indexed, default: 1).
         end: Last line to include (1-indexed, default: end of file).
     """
-    documents, _, _ = get_user_documents(ctx.deps.user_id)
-    if filename not in documents:
-        return None
-
-    lines = documents[filename].splitlines()
-    total = len(lines)
-    start = max(1, start)
-    end = min(total, end) if end else total
-
-    return DocumentRange(
-        start_line=start,
-        end_line=end,
-        total_lines=total,
-        content="\n".join(lines[start - 1 : end]),
-    )
+    return tools.GetDocumentLinesTool(
+        path=settings.get_user_documents_dir(ctx.deps.user_id)
+    )(filename, start, end)
 
 
 @rag_toolset.tool
@@ -102,8 +80,9 @@ def glob_documents(
     Args:
         pattern: Glob pattern to match (e.g., "*.md", "notes/*.txt", "**/*.py").
     """
-    documents, _, _ = get_user_documents(ctx.deps.user_id)
-    return [name for name in documents.keys() if fnmatch(name, pattern)]
+    return tools.GlobDocumentsTool(
+        path=settings.get_user_documents_dir(ctx.deps.user_id)
+    )(pattern)
 
 
 @rag_toolset.tool
@@ -125,38 +104,12 @@ def grep(
         context_lines: Number of lines to show before and after each match.
         include_content: Whether to include the matching line content.
     """
-    data_dir = settings.get_user_documents_dir(ctx.deps.user_id)
-    if not data_dir.exists():
-        return []
-
-    rg = Ripgrepy(pattern, str(data_dir)).smart_case()
-
-    if glob:
-        rg = rg.glob(glob)
-    if context_lines > 0:
-        rg = rg.context(context_lines)
-
-    matches: list[GrepMatch] = []
-    try:
-        for item in rg.run().as_dict:
-            if item.get("type") == "match":
-                data = item["data"]
-                filepath = data["path"]["text"]
-                doc_name = str(Path(filepath).relative_to(data_dir))
-                content = (
-                    data["lines"]["text"].rstrip("\n") if include_content else None
-                )
-                matches.append(
-                    GrepMatch(
-                        filename=doc_name,
-                        line=data["line_number"],
-                        content=content,
-                    )
-                )
-    except Exception:
-        pass
-
-    return matches
+    return tools.GrepTool(path=settings.get_user_documents_dir(ctx.deps.user_id))(
+        pattern,
+        glob=glob,
+        context_lines=context_lines,
+        include_content=include_content,
+    )
 
 
 @rag_toolset.tool
@@ -171,20 +124,9 @@ async def search_documents(
         query: Natural language search query.
         top_k: Maximum results to return.
     """
-    documents, index, filenames = get_user_documents(ctx.deps.user_id)
-    if not documents or not index:
-        return []
-
-    results = bm25_search(query, documents, index, filenames, top_k)
-
-    return [
-        RetrievedDocument(
-            filename=filename,
-            content=content,
-            score=round(score, 4),
-        )
-        for filename, content, score in results
-    ]
+    return await tools.SearchDocumentsTool(
+        path=settings.get_user_documents_dir(ctx.deps.user_id)
+    )(query, top_k)
 
 
 @rag_toolset.tool
@@ -197,19 +139,9 @@ def list_chunks(
     Args:
         filename: The document filename.
     """
-    chunked = load_chunks(ctx.deps.user_id, filename)
-    if not chunked:
-        return None
-
-    return [
-        ChunkSummary(
-            index=c.index,
-            token_count=c.token_count,
-            start_index=c.start_index,
-            end_index=c.end_index,
-        )
-        for c in chunked.chunks
-    ]
+    return tools.ListChunksTool(path=settings.get_user_chunks_dir(ctx.deps.user_id))(
+        filename
+    )
 
 
 @rag_toolset.tool
@@ -224,15 +156,10 @@ def get_chunk(
         filename: The document filename.
         chunk_index: The index of the chunk to retrieve.
     """
-    chunked = load_chunks(ctx.deps.user_id, filename)
-    if not chunked:
-        return None
-
-    for c in chunked.chunks:
-        if c.index == chunk_index:
-            return c.text
-
-    return None
+    return tools.GetChunkTool(path=settings.get_user_chunks_dir(ctx.deps.user_id))(
+        filename,
+        chunk_index,
+    )
 
 
 @rag_toolset.tool
@@ -249,15 +176,7 @@ def search_chunks(
         query: Natural language search query.
         top_k: Maximum results to return.
     """
-    results = bm25_search_chunks(ctx.deps.user_id, query, top_k)
-
-    return [
-        RetrievedChunk(
-            filename=r["filename"],
-            chunk_index=r["chunk_index"],
-            text=r["text"],
-            token_count=r["token_count"],
-            score=r["score"],
-        )
-        for r in results
-    ]
+    return tools.SearchChunksTool(path=settings.get_user_chunks_dir(ctx.deps.user_id))(
+        query,
+        top_k,
+    )
