@@ -6,6 +6,7 @@ from pydantic_ai import Agent, FunctionToolset, RunContext
 
 from . import tools
 from .config import settings
+from .tools import DocumentFilter
 from .types import (
     ChunkSummary,
     DocumentRange,
@@ -23,6 +24,7 @@ class UserDeps:
     """Dependencies for user-specific agent operations."""
 
     user_id: str
+    document_filter: DocumentFilter | None = None
 
 
 base_agent: Agent[None, str] = Agent()
@@ -35,7 +37,8 @@ rag_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 def list_documents(ctx: RunContext[UserDeps]) -> list[DocumentSummary]:
     """List all available documents with their sizes in bytes."""
     return tools.ListDocumentsTool(
-        path=settings.get_user_documents_dir(ctx.deps.user_id)
+        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        document_filter=ctx.deps.document_filter,
     )()
 
 
@@ -46,9 +49,10 @@ def get_document(ctx: RunContext[UserDeps], filename: str) -> str | None:
     Args:
         filename: The exact filename to retrieve.
     """
-    return tools.GetDocumentTool(path=settings.get_user_documents_dir(ctx.deps.user_id))(
-        filename
-    )
+    return tools.GetDocumentTool(
+        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        document_filter=ctx.deps.document_filter,
+    )(filename)
 
 
 @rag_toolset.tool
@@ -66,7 +70,8 @@ def get_document_lines(
         end: Last line to include (1-indexed, default: end of file).
     """
     return tools.GetDocumentLinesTool(
-        path=settings.get_user_documents_dir(ctx.deps.user_id)
+        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        document_filter=ctx.deps.document_filter,
     )(filename, start, end)
 
 
@@ -81,7 +86,8 @@ def glob_documents(
         pattern: Glob pattern to match (e.g., "*.md", "notes/*.txt", "**/*.py").
     """
     return tools.GlobDocumentsTool(
-        path=settings.get_user_documents_dir(ctx.deps.user_id)
+        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        document_filter=ctx.deps.document_filter,
     )(pattern)
 
 
@@ -104,7 +110,10 @@ def grep(
         context_lines: Number of lines to show before and after each match.
         include_content: Whether to include the matching line content.
     """
-    return tools.GrepTool(path=settings.get_user_documents_dir(ctx.deps.user_id))(
+    return tools.GrepTool(
+        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        document_filter=ctx.deps.document_filter,
+    )(
         pattern,
         glob=glob,
         context_lines=context_lines,
@@ -125,7 +134,8 @@ def search_documents(
         top_k: Maximum results to return.
     """
     return tools.SearchDocumentsTool(
-        path=settings.get_user_documents_dir(ctx.deps.user_id)
+        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        document_filter=ctx.deps.document_filter,
     )(query, top_k)
 
 
@@ -139,9 +149,10 @@ def list_chunks(
     Args:
         filename: The document filename.
     """
-    return tools.ListChunksTool(path=settings.get_user_chunks_dir(ctx.deps.user_id))(
-        filename
-    )
+    return tools.ListChunksTool(
+        path=settings.get_user_chunks_dir(ctx.deps.user_id),
+        document_filter=ctx.deps.document_filter,
+    )(filename)
 
 
 @rag_toolset.tool
@@ -156,7 +167,10 @@ def get_chunk(
         filename: The document filename.
         chunk_index: The index of the chunk to retrieve.
     """
-    return tools.GetChunkTool(path=settings.get_user_chunks_dir(ctx.deps.user_id))(
+    return tools.GetChunkTool(
+        path=settings.get_user_chunks_dir(ctx.deps.user_id),
+        document_filter=ctx.deps.document_filter,
+    )(
         filename,
         chunk_index,
     )
@@ -176,7 +190,10 @@ def search_chunks(
         query: Natural language search query.
         top_k: Maximum results to return.
     """
-    return tools.SearchChunksTool(path=settings.get_user_chunks_dir(ctx.deps.user_id))(
+    return tools.SearchChunksTool(
+        path=settings.get_user_chunks_dir(ctx.deps.user_id),
+        document_filter=ctx.deps.document_filter,
+    )(
         query,
         top_k,
     )

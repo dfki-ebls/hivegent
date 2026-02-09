@@ -1,6 +1,6 @@
 import { useChat, type UIMessage } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { AlertCircle, BotIcon, CopyIcon, HistoryIcon, MessageSquareIcon, RefreshCcwIcon, SparklesIcon, SquarePen } from 'lucide-react';
+import { AlertCircle, BotIcon, CopyIcon, EyeOff, FileText, HistoryIcon, MessageSquareIcon, RefreshCcwIcon, SparklesIcon, SquarePen, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import {
@@ -42,6 +42,7 @@ import {
   PromptInput,
   PromptInputBody,
   PromptInputFooter,
+  PromptInputHeader,
   PromptInputSelect,
   PromptInputSelectContent,
   PromptInputSelectItem,
@@ -62,6 +63,7 @@ import {
   ToolSection,
 } from './ToolDisplay';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
+import { Badge } from './ui/badge';
 
 // --- Helper functions ---
 
@@ -298,8 +300,10 @@ function MessagePart({ part, partIndex, isLastTextPart, showActions, onRegenerat
 
 interface ChatSidebarProps {
   id: string;
-  pendingContent?: string | null;
-  onPendingContentConsumed?: () => void;
+  includedDocuments: string[];
+  excludedDocuments: string[];
+  onRemoveDocument: (filename: string) => void;
+  onClearDocuments: () => void;
 }
 
 const SUGGESTED_QUESTIONS = [
@@ -309,7 +313,7 @@ const SUGGESTED_QUESTIONS = [
   'What are my action items?',
 ];
 
-export function ChatSidebar({ id, pendingContent, onPendingContentConsumed }: ChatSidebarProps) {
+export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemoveDocument, onClearDocuments }: ChatSidebarProps) {
   const navigate = useNavigate();
   const addSearchResults = useFetchedDocumentsStore((state) => state.addSearchResults);
   const addDocument = useFetchedDocumentsStore((state) => state.addDocument);
@@ -322,12 +326,7 @@ export function ChatSidebar({ id, pendingContent, onPendingContentConsumed }: Ch
   const [activeTab, setActiveTab] = useState('chat');
   const [personality, setPersonality] = useState<Personality>('default');
 
-  useEffect(() => {
-    if (pendingContent) {
-      setInputValue((prev) => prev ? `${prev}\n\n${pendingContent}` : pendingContent);
-      onPendingContentConsumed?.();
-    }
-  }, [pendingContent, onPendingContentConsumed]);
+  const hasDocumentFilters = includedDocuments.length > 0 || excludedDocuments.length > 0;
 
   const handleNewChat = async () => {
     const newId = await createConversation();
@@ -398,10 +397,13 @@ export function ChatSidebar({ id, pendingContent, onPendingContentConsumed }: Ch
           conversation_id: id,
           personality,
           llm: buildLlmConfig(llm),
+          included_documents: includedDocuments,
+          excluded_documents: excludedDocuments,
         },
       }
     );
     setInputValue('');
+    onClearDocuments();
   };
 
   const handleRegenerate = async () => {
@@ -412,6 +414,8 @@ export function ChatSidebar({ id, pendingContent, onPendingContentConsumed }: Ch
         conversation_id: id,
         personality,
         llm: buildLlmConfig(llm),
+        included_documents: includedDocuments,
+        excluded_documents: excludedDocuments,
       },
     });
   };
@@ -526,6 +530,36 @@ export function ChatSidebar({ id, pendingContent, onPendingContentConsumed }: Ch
               handleSendMessage(msg.text);
             }}
           >
+            {hasDocumentFilters && (
+              <PromptInputHeader>
+                {includedDocuments.map((filename) => (
+                  <Badge key={`inc-${filename}`} variant="secondary" className="gap-1 text-xs">
+                    <FileText className="h-3 w-3" />
+                    {filename}
+                    <button
+                      type="button"
+                      className="ml-0.5 rounded-full hover:bg-muted"
+                      onClick={() => onRemoveDocument(filename)}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                ))}
+                {excludedDocuments.map((filename) => (
+                  <Badge key={`exc-${filename}`} variant="destructive" className="gap-1 text-xs">
+                    <EyeOff className="h-3 w-3" />
+                    {filename}
+                    <button
+                      type="button"
+                      className="ml-0.5 rounded-full hover:bg-muted"
+                      onClick={() => onRemoveDocument(filename)}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                ))}
+              </PromptInputHeader>
+            )}
             <PromptInputBody>
               <PromptInputTextarea
                 value={inputValue}

@@ -24,6 +24,7 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
 from .agent import UserDeps, base_agent, rag_toolset, user_agent
+from .tools import DocumentFilter
 from .auth import User, get_current_user
 from .chunkers import (
     ChunkingPipeline,
@@ -311,10 +312,15 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     except ValueError:
         personality = Personality.DEFAULT
 
+    included_documents: list[str] = body.get("included_documents") or []
+    excluded_documents: list[str] = body.get("excluded_documents") or []
+
     return ChatRequestConfig(
         conversation_id=body.get("conversation_id", ""),
         personality=personality,
         llm=llm,
+        included_documents=included_documents,
+        excluded_documents=excluded_documents,
     )
 
 
@@ -334,6 +340,13 @@ async def chat(
             status_code=400, detail="conversation_id is required in the request body"
         )
 
+    document_filter: DocumentFilter | None = None
+    if config.included_documents or config.excluded_documents:
+        document_filter = DocumentFilter(
+            included=frozenset(config.included_documents),
+            excluded=frozenset(config.excluded_documents),
+        )
+
     def on_complete(result: AgentRunResult[str]) -> None:
         """Save messages after the agent run completes."""
         save_messages(user.id, config.conversation_id, result.all_messages())
@@ -341,7 +354,7 @@ async def chat(
     return await VercelAIAdapter.dispatch_request(
         request,
         agent=user_agent,
-        deps=UserDeps(user_id=user.id),
+        deps=UserDeps(user_id=user.id, document_filter=document_filter),
         model=OpenAIResponsesModel(
             config.llm.model,
             provider=OpenAIProvider(

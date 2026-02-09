@@ -17,21 +17,41 @@ interface ChatLayoutProps {
 
 export function ChatLayout({ id }: ChatLayoutProps) {
   const [mobileDocumentsOpen, setMobileDocumentsOpen] = useState(false);
-  const [pendingChatContent, setPendingChatContent] = useState<string | null>(null);
+  const [includedDocuments, setIncludedDocuments] = useState<string[]>([]);
+  const [excludedDocuments, setExcludedDocuments] = useState<string[]>([]);
 
-  const handleSendToChat = useCallback((content: string) => {
-    setPendingChatContent(content);
+  const handleIncludeDocument = useCallback((filename: string) => {
+    setIncludedDocuments((prev) =>
+      prev.includes(filename) ? prev : [...prev, filename]
+    );
+    setExcludedDocuments((prev) => prev.filter((f) => f !== filename));
   }, []);
 
-  const handlePendingContentConsumed = useCallback(() => {
-    setPendingChatContent(null);
+  const handleExcludeDocument = useCallback((filename: string) => {
+    setExcludedDocuments((prev) =>
+      prev.includes(filename) ? prev : [...prev, filename]
+    );
+    setIncludedDocuments((prev) => prev.filter((f) => f !== filename));
+  }, []);
+
+  const handleRemoveDocument = useCallback((filename: string) => {
+    setIncludedDocuments((prev) => prev.filter((f) => f !== filename));
+    setExcludedDocuments((prev) => prev.filter((f) => f !== filename));
+  }, []);
+
+  const handleClearDocuments = useCallback(() => {
+    setIncludedDocuments([]);
+    setExcludedDocuments([]);
   }, []);
 
   return (
     <div className="flex h-full overflow-hidden">
       {/* Desktop: Always show DocumentCanvas */}
       <div className="hidden md:block h-full w-2/3 overflow-hidden border-r">
-        <DocumentCanvas onSendToChat={handleSendToChat} />
+        <DocumentCanvas
+          onIncludeDocument={handleIncludeDocument}
+          onExcludeDocument={handleExcludeDocument}
+        />
       </div>
 
       {/* Mobile: Sheet for DocumentCanvas */}
@@ -41,7 +61,10 @@ export function ChatLayout({ id }: ChatLayoutProps) {
             <SheetTitle>Documents</SheetTitle>
           </SheetHeader>
           <div className="h-[calc(100%-60px)] overflow-hidden">
-            <DocumentCanvas onSendToChat={handleSendToChat} />
+            <DocumentCanvas
+              onIncludeDocument={handleIncludeDocument}
+              onExcludeDocument={handleExcludeDocument}
+            />
           </div>
         </SheetContent>
       </Sheet>
@@ -62,8 +85,10 @@ export function ChatLayout({ id }: ChatLayoutProps) {
         <div className="flex-1 overflow-hidden">
           <ChatSidebar
             id={id}
-            pendingContent={pendingChatContent}
-            onPendingContentConsumed={handlePendingContentConsumed}
+            includedDocuments={includedDocuments}
+            excludedDocuments={excludedDocuments}
+            onRemoveDocument={handleRemoveDocument}
+            onClearDocuments={handleClearDocuments}
           />
         </div>
       </div>

@@ -69,6 +69,8 @@ class ChatRequestConfig(BaseModel):
     conversation_id: str = Field(default="", description="The conversation ID")
     personality: Personality = Field(default=Personality.DEFAULT)
     llm: LlmConfig = Field(default_factory=LlmConfig)
+    included_documents: list[str] = Field(default_factory=list)
+    excluded_documents: list[str] = Field(default_factory=list)
 
 
 class CreateConversationResponse(BaseModel):

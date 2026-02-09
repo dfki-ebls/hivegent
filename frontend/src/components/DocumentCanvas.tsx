@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import Fuse from 'fuse.js';
-import { AlertCircle, FileText, FolderOpen, MessageSquarePlus, Plus, RefreshCw, RotateCcw, Scissors, Search, Trash2, Upload, X } from 'lucide-react';
+import { AlertCircle, EyeOff, FileText, FolderOpen, MessageSquarePlus, Plus, RefreshCw, RotateCcw, Scissors, Search, Trash2, Upload, X } from 'lucide-react';
 
 import { buildLlmConfig, getDocumentContent, uploadDocument } from '../lib/api';
 import type { DocumentInfo, StoredDocument } from '../lib/types';
@@ -272,14 +272,15 @@ interface DocumentListItemProps {
   doc: DocumentInfo;
   isLoading: boolean;
   onEdit: () => void;
-  onSendToChat: () => void;
+  onIncludeDocument: () => void;
+  onExcludeDocument: () => void;
   onViewChunks: () => void;
   onRechunk: () => void;
   onReconvert: () => void;
   onRemove: () => void;
 }
 
-function DocumentListItem({ doc, isLoading, onEdit, onSendToChat, onViewChunks, onRechunk, onReconvert, onRemove }: DocumentListItemProps) {
+function DocumentListItem({ doc, isLoading, onEdit, onIncludeDocument, onExcludeDocument, onViewChunks, onRechunk, onReconvert, onRemove }: DocumentListItemProps) {
   return (
     <div
       className="flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50 cursor-pointer"
@@ -345,14 +346,26 @@ function DocumentListItem({ doc, isLoading, onEdit, onSendToChat, onViewChunks, 
       <Button
         variant="ghost"
         size="icon"
-        title="Send to chat"
+        title="Include in chat"
         onClick={(e) => {
           e.stopPropagation();
-          onSendToChat();
+          onIncludeDocument();
         }}
         disabled={isLoading}
       >
         <MessageSquarePlus className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        title="Exclude from chat"
+        onClick={(e) => {
+          e.stopPropagation();
+          onExcludeDocument();
+        }}
+        disabled={isLoading}
+      >
+        <EyeOff className="h-4 w-4" />
       </Button>
       <Button
         variant="ghost"
@@ -378,13 +391,14 @@ interface EditorState {
 }
 
 interface ManageDocumentsProps {
-  onSendToChat?: (content: string) => void;
+  onIncludeDocument?: (filename: string) => void;
+  onExcludeDocument?: (filename: string) => void;
 }
 
 const CONVERSION_PIPELINE_STORAGE_KEY = 'snipscout-conversion-pipeline';
 const CHUNKING_PIPELINE_STORAGE_KEY = 'snipscout-chunking-pipeline';
 
-function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
+function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumentsProps) {
   const { documents, isLoading, error, fetchDocuments, upload, remove, rechunk: storeRechunk, reconvert: storeReconvert, clearError } =
     useManagedDocumentsStore();
   const llmSettings = useSettingsStore((state) => state.llm);
@@ -449,17 +463,15 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
     await fetchDocuments();
   }, [fetchDocuments, chunkingPipeline]);
 
-  // --- Send to chat handler ---
+  // --- Include / exclude handlers ---
 
-  const handleSendToChat = useCallback(async (doc: DocumentInfo) => {
-    if (!onSendToChat) return;
-    try {
-      const content = await getDocumentContent(doc.filename);
-      onSendToChat(`Here is the content of "${doc.filename}":\n\n${content}`);
-    } catch {
-      // Silently fail
-    }
-  }, [onSendToChat]);
+  const handleIncludeDocument = useCallback((doc: DocumentInfo) => {
+    onIncludeDocument?.(doc.filename);
+  }, [onIncludeDocument]);
+
+  const handleExcludeDocument = useCallback((doc: DocumentInfo) => {
+    onExcludeDocument?.(doc.filename);
+  }, [onExcludeDocument]);
 
   // --- Rechunk / reconvert handlers ---
 
@@ -554,7 +566,8 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
             doc={doc}
             isLoading={isLoading}
             onEdit={() => handleEdit(doc)}
-            onSendToChat={() => handleSendToChat(doc)}
+            onIncludeDocument={() => handleIncludeDocument(doc)}
+            onExcludeDocument={() => handleExcludeDocument(doc)}
             onViewChunks={() => setChunkViewerFilename(doc.filename)}
             onRechunk={() => handleRechunk(doc)}
             onReconvert={() => handleReconvert(doc)}
@@ -640,10 +653,11 @@ function ManageDocuments({ onSendToChat }: ManageDocumentsProps) {
 const DOCUMENT_TAB_KEY = 'snipscout-document-tab';
 
 interface DocumentCanvasProps {
-  onSendToChat?: (content: string) => void;
+  onIncludeDocument?: (filename: string) => void;
+  onExcludeDocument?: (filename: string) => void;
 }
 
-export function DocumentCanvas({ onSendToChat }: DocumentCanvasProps) {
+export function DocumentCanvas({ onIncludeDocument, onExcludeDocument }: DocumentCanvasProps) {
   const [activeTab, setActiveTab] = useState(() => {
     return localStorage.getItem(DOCUMENT_TAB_KEY) ?? 'fetched';
   });
@@ -671,7 +685,7 @@ export function DocumentCanvas({ onSendToChat }: DocumentCanvasProps) {
         <FetchedDocuments />
       </TabsContent>
       <TabsContent value="manage" className="min-h-0 overflow-hidden">
-        <ManageDocuments onSendToChat={onSendToChat} />
+        <ManageDocuments onIncludeDocument={onIncludeDocument} onExcludeDocument={onExcludeDocument} />
       </TabsContent>
     </Tabs>
   );

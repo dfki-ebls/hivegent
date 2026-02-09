@@ -1,7 +1,7 @@
 """Shared path-scoped tool generators used by agent and MCP wrappers."""
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -21,6 +21,7 @@ from .types import (
 )
 
 __all__ = [
+    "DocumentFilter",
     "GetChunkTool",
     "GetDocumentLinesTool",
     "GetDocumentTool",
@@ -36,20 +37,45 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
+class DocumentFilter:
+    """Include/exclude filter applied to document-level tool operations.
+
+    If ``included`` is non-empty the filename must be present in the set.
+    If ``excluded`` is non-empty the filename must *not* be present.
+    When both are set, ``included`` is checked first.
+    """
+
+    included: frozenset[str] = field(default_factory=frozenset)
+    excluded: frozenset[str] = field(default_factory=frozenset)
+
+    def is_included(self, filename: str) -> bool:
+        """Return whether *filename* passes the filter."""
+        if self.included and filename not in self.included:
+            return False
+        if self.excluded and filename in self.excluded:
+            return False
+        return True
+
+
+@dataclass(slots=True, frozen=True)
 class ListDocumentsTool:
     """List all available documents with their sizes in bytes."""
 
     path: Path
+    document_filter: DocumentFilter | None = None
 
     def __call__(self) -> list[DocumentSummary]:
         """List all available documents with their sizes in bytes."""
         if not self.path.exists():
             return []
-        return [
+        results = [
             DocumentSummary(filename=f.name, size=f.stat().st_size)
             for f in self.path.iterdir()
             if f.is_file() and f.suffix in TEXT_EXTENSIONS
         ]
+        if self.document_filter:
+            results = [r for r in results if self.document_filter.is_included(r.filename)]
+        return results
 
 
 @dataclass(slots=True, frozen=True)
@@ -57,6 +83,7 @@ class GetDocumentTool:
     """Get the full content of a specific document."""
 
     path: Path
+    document_filter: DocumentFilter | None = None
 
     def __call__(self, filename: str) -> str | None:
         """Get the full content of a specific document.
@@ -64,6 +91,8 @@ class GetDocumentTool:
         Args:
             filename: The exact filename to retrieve.
         """
+        if self.document_filter and not self.document_filter.is_included(filename):
+            return None
         return get_cached_documents(self.path).documents.get(filename)
 
 
@@ -72,6 +101,7 @@ class GetDocumentLinesTool:
     """Get a range of lines from a document."""
 
     path: Path
+    document_filter: DocumentFilter | None = None
 
     def __call__(
         self,
@@ -86,6 +116,9 @@ class GetDocumentLinesTool:
             start: First line to include (1-indexed, default: 1).
             end: Last line to include (1-indexed, default: end of file).
         """
+        if self.document_filter and not self.document_filter.is_included(filename):
+            return None
+
         documents = get_cached_documents(self.path).documents
         if filename not in documents:
             return None
@@ -108,6 +141,7 @@ class GlobDocumentsTool:
     """Find documents matching a glob pattern."""
 
     path: Path
+    document_filter: DocumentFilter | None = None
 
     def __call__(self, pattern: str) -> list[str]:
         """Find documents matching a glob pattern.
@@ -115,11 +149,14 @@ class GlobDocumentsTool:
         Args:
             pattern: Glob pattern to match (e.g., "*.md", "notes/*.txt", "**/*.py").
         """
-        return [
+        results = [
             name
             for name in get_cached_documents(self.path).documents
             if fnmatch(name, pattern)
         ]
+        if self.document_filter:
+            results = [r for r in results if self.document_filter.is_included(r)]
+        return results
 
 
 @dataclass(slots=True, frozen=True)
@@ -127,6 +164,7 @@ class GrepTool:
     """Search documents for a pattern."""
 
     path: Path
+    document_filter: DocumentFilter | None = None
 
     def __call__(
         self,
@@ -162,6 +200,8 @@ class GrepTool:
                     data = item["data"]
                     filepath = data["path"]["text"]
                     doc_name = str(Path(filepath).relative_to(self.path))
+                    if self.document_filter and not self.document_filter.is_included(doc_name):
+                        continue
                     content = (
                         data["lines"]["text"].rstrip("\n") if include_content else None
                     )
@@ -183,6 +223,7 @@ class SearchDocumentsTool:
     """Semantic search for documents using BM25 ranking."""
 
     path: Path
+    document_filter: DocumentFilter | None = None
 
     def __call__(
         self,
@@ -195,13 +236,26 @@ class SearchDocumentsTool:
             query: Natural language search query.
             top_k: Maximum results to return.
         """
+        cache = get_cached_documents(self.path)
+        if self.document_filter:
+            all_results = search_documents(cache, query, len(cache.documents))
+            filtered = [
+                RetrievedDocument(
+                    filename=r.filename,
+                    content=r.content,
+                    score=round(r.score, 4),
+                )
+                for r in all_results
+                if self.document_filter.is_included(r.filename)
+            ]
+            return filtered[:top_k]
         return [
             RetrievedDocument(
                 filename=r.filename,
                 content=r.content,
                 score=round(r.score, 4),
             )
-            for r in search_documents(get_cached_documents(self.path), query, top_k)
+            for r in search_documents(cache, query, top_k)
         ]
 
 
@@ -210,6 +264,7 @@ class ListChunksTool:
     """List chunk metadata for a document."""
 
     path: Path
+    document_filter: DocumentFilter | None = None
 
     def __call__(self, filename: str) -> list[ChunkSummary] | None:
         """List chunk metadata for a document.
@@ -217,6 +272,8 @@ class ListChunksTool:
         Args:
             filename: The document filename.
         """
+        if self.document_filter and not self.document_filter.is_included(filename):
+            return None
         chunked = load_chunked_document(self.path, filename)
         if not chunked:
             return None
@@ -236,6 +293,7 @@ class GetChunkTool:
     """Get the text content of a specific chunk."""
 
     path: Path
+    document_filter: DocumentFilter | None = None
 
     def __call__(
         self,
@@ -248,6 +306,8 @@ class GetChunkTool:
             filename: The document filename.
             chunk_index: The index of the chunk to retrieve.
         """
+        if self.document_filter and not self.document_filter.is_included(filename):
+            return None
         chunked = load_chunked_document(self.path, filename)
         if not chunked:
             return None
@@ -262,6 +322,7 @@ class SearchChunksTool:
     """Search across all chunk files in a directory using BM25 ranking."""
 
     path: Path
+    document_filter: DocumentFilter | None = None
 
     def __call__(
         self,
@@ -281,6 +342,8 @@ class SearchChunksTool:
         all_texts: list[str] = []
         for chunk_file in sorted(self.path.glob("*.json")):
             doc_filename = chunk_file.name.removesuffix(".json")
+            if self.document_filter and not self.document_filter.is_included(doc_filename):
+                continue
             chunked = load_chunked_document(self.path, doc_filename)
             if not chunked:
                 continue
