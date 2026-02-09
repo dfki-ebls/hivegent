@@ -1,6 +1,6 @@
 """Shared path-scoped tool generators used by agent and MCP wrappers."""
 
-import json
+import logging
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
@@ -8,10 +8,9 @@ from pathlib import Path
 import bm25s
 from ripgrepy import Ripgrepy
 
-from .chunks import ChunkedDocument
+from .chunks import load_chunked_document
 from .config import TEXT_EXTENSIONS
-from .documents import create_index
-from .documents import search_documents as bm25_search_documents
+from .documents import get_cached_documents, search_documents
 from .types import (
     ChunkSummary,
     DocumentRange,
@@ -33,30 +32,7 @@ __all__ = [
     "SearchDocumentsTool",
 ]
 
-
-def _load_documents(path: Path) -> dict[str, str]:
-    """Load supported text documents from a directory."""
-    documents: dict[str, str] = {}
-    if not path.exists():
-        return documents
-
-    for ext in TEXT_EXTENSIONS:
-        for file_path in sorted(path.glob(f"*{ext}")):
-            if file_path.is_file():
-                documents[file_path.name] = file_path.read_text(encoding="utf-8")
-    return documents
-
-
-def _load_chunked_document(path: Path, filename: str) -> ChunkedDocument | None:
-    """Load a chunk JSON document by original filename."""
-    chunk_path = path / f"{filename}.json"
-    if not chunk_path.exists():
-        return None
-    try:
-        data = json.loads(chunk_path.read_text(encoding="utf-8"))
-        return ChunkedDocument.model_validate(data)
-    except Exception:
-        return None
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -72,7 +48,7 @@ class ListDocumentsTool:
         return [
             DocumentSummary(filename=f.name, size=f.stat().st_size)
             for f in self.path.iterdir()
-            if f.is_file()
+            if f.is_file() and f.suffix in TEXT_EXTENSIONS
         ]
 
 
@@ -88,8 +64,7 @@ class GetDocumentTool:
         Args:
             filename: The exact filename to retrieve.
         """
-        documents = _load_documents(self.path)
-        return documents.get(filename)
+        return get_cached_documents(self.path).documents.get(filename)
 
 
 @dataclass(slots=True, frozen=True)
@@ -111,7 +86,7 @@ class GetDocumentLinesTool:
             start: First line to include (1-indexed, default: 1).
             end: Last line to include (1-indexed, default: end of file).
         """
-        documents = _load_documents(self.path)
+        documents = get_cached_documents(self.path).documents
         if filename not in documents:
             return None
 
@@ -140,8 +115,11 @@ class GlobDocumentsTool:
         Args:
             pattern: Glob pattern to match (e.g., "*.md", "notes/*.txt", "**/*.py").
         """
-        documents = _load_documents(self.path)
-        return [name for name in documents.keys() if fnmatch(name, pattern)]
+        return [
+            name
+            for name in get_cached_documents(self.path).documents
+            if fnmatch(name, pattern)
+        ]
 
 
 @dataclass(slots=True, frozen=True)
@@ -195,7 +173,7 @@ class GrepTool:
                         )
                     )
         except Exception:
-            pass
+            logger.warning("Grep failed for pattern %r in %s", pattern, self.path)
 
         return matches
 
@@ -206,7 +184,7 @@ class SearchDocumentsTool:
 
     path: Path
 
-    async def __call__(
+    def __call__(
         self,
         query: str,
         top_k: int = 3,
@@ -217,19 +195,13 @@ class SearchDocumentsTool:
             query: Natural language search query.
             top_k: Maximum results to return.
         """
-        documents = _load_documents(self.path)
-        if not documents:
-            return []
-
-        index, filenames = create_index(documents)
-        results = bm25_search_documents(query, documents, index, filenames, top_k)
         return [
             RetrievedDocument(
-                filename=filename,
-                content=content,
-                score=round(score, 4),
+                filename=r.filename,
+                content=r.content,
+                score=round(r.score, 4),
             )
-            for filename, content, score in results
+            for r in search_documents(get_cached_documents(self.path), query, top_k)
         ]
 
 
@@ -245,7 +217,7 @@ class ListChunksTool:
         Args:
             filename: The document filename.
         """
-        chunked = _load_chunked_document(self.path, filename)
+        chunked = load_chunked_document(self.path, filename)
         if not chunked:
             return None
         return [
@@ -276,7 +248,7 @@ class GetChunkTool:
             filename: The document filename.
             chunk_index: The index of the chunk to retrieve.
         """
-        chunked = _load_chunked_document(self.path, filename)
+        chunked = load_chunked_document(self.path, filename)
         if not chunked:
             return None
         for chunk in chunked.chunks:
@@ -309,12 +281,10 @@ class SearchChunksTool:
         all_texts: list[str] = []
         for chunk_file in sorted(self.path.glob("*.json")):
             doc_filename = chunk_file.name.removesuffix(".json")
-            try:
-                data = json.loads(chunk_file.read_text(encoding="utf-8"))
-                doc = ChunkedDocument.model_validate(data)
-            except Exception:
+            chunked = load_chunked_document(self.path, doc_filename)
+            if not chunked:
                 continue
-            for chunk in doc.chunks:
+            for chunk in chunked.chunks:
                 all_chunks.append(
                     RetrievedChunk(
                         filename=doc_filename,

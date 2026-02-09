@@ -1,7 +1,9 @@
 """Message persistence utilities."""
 
 import json
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+from typing import Any
 
 from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import ModelMessage
@@ -69,7 +71,7 @@ def load_messages(user_id: str, conversation_id: str) -> list[ModelMessage]:
 
 
 def save_messages(
-    user_id: str, conversation_id: str, messages: list[ModelMessage]
+    user_id: str, conversation_id: str, messages: Sequence[ModelMessage]
 ) -> None:
     """Save messages for a conversation.
 
@@ -107,7 +109,7 @@ def save_messages(
     path.write_bytes(conversation.model_dump_json(indent=2).encode())
 
 
-def _extract_title(messages: list[dict]) -> str:
+def _extract_title(messages: Sequence[Mapping[str, Any]]) -> str:
     """Extract title from first user message content."""
     for msg in messages:
         for part in msg.get("parts", []):
@@ -118,7 +120,7 @@ def _extract_title(messages: list[dict]) -> str:
     return ""
 
 
-def _extract_document_refs(messages: list[dict]) -> list[DocumentReference]:
+def _extract_document_refs(messages: Sequence[Mapping[str, Any]]) -> list[DocumentReference]:
     """Extract document references from tool calls."""
     refs: dict[str, list[str]] = {}
 

@@ -25,7 +25,7 @@ class ChunkingPipeline(StrEnum):
     RECURSIVE = "recursive"
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, frozen=True)
 class _ChunkerEntry:
     """Internal registry entry mapping a pipeline to its implementation."""
 
@@ -33,7 +33,7 @@ class _ChunkerEntry:
     class_name: str
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, frozen=True)
 class ChunkingPipelineInfo:
     """Public metadata for a chunking pipeline."""
 

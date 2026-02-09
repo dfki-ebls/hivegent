@@ -26,7 +26,7 @@ class ConversionPipeline(StrEnum):
     MINERU = "mineru"
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, frozen=True)
 class _ConverterEntry:
     """Internal registry entry mapping a pipeline to its implementation."""
 
@@ -34,7 +34,7 @@ class _ConverterEntry:
     class_name: str
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, frozen=True)
 class ConversionPipelineInfo:
     """Public metadata for a conversion pipeline."""
 

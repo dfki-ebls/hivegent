@@ -1,6 +1,7 @@
 """FastAPI server for the RAG agent."""
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -202,7 +203,7 @@ async def update_title(
 
 
 def _extract_message_texts(
-    messages: list[ModelMessage], max_messages: int = 4
+    messages: Sequence[ModelMessage], max_messages: int = 4
 ) -> list[str]:
     """Extract text content from conversation messages."""
     texts: list[str] = []
@@ -809,18 +810,18 @@ async def create_token(
 
     The raw token is only returned once and cannot be retrieved later.
     """
-    raw_token, token_info = token_store.create_token(
+    created = token_store.create_token(
         user_id=user.id,
         name=request.name,
         expires_in_days=request.expires_in_days,
     )
 
     return CreateTokenResponse(
-        token=raw_token,
-        id=token_info.id,
-        name=token_info.name,
-        created_at=token_info.created_at,
-        expires_at=token_info.expires_at,
+        token=created.raw_token,
+        id=created.info.id,
+        name=created.info.name,
+        created_at=created.info.created_at,
+        expires_at=created.info.expires_at,
     )
 
 

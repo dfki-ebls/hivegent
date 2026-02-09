@@ -7,7 +7,7 @@ from pathlib import Path
 __all__ = ["DocumentConverter", "LLMConvertOptions"]
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, frozen=True)
 class LLMConvertOptions:
     """Options for LLM-based document conversion."""
 

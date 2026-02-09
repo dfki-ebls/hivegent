@@ -18,7 +18,7 @@ from .types import (
 __all__ = ["UserDeps", "base_agent", "rag_toolset", "user_agent"]
 
 
-@dataclass
+@dataclass(slots=True, frozen=True)
 class UserDeps:
     """Dependencies for user-specific agent operations."""
 
@@ -113,7 +113,7 @@ def grep(
 
 
 @rag_toolset.tool
-async def search_documents(
+def search_documents(
     ctx: RunContext[UserDeps],
     query: str,
     top_k: int = 3,
@@ -124,7 +124,7 @@ async def search_documents(
         query: Natural language search query.
         top_k: Maximum results to return.
     """
-    return await tools.SearchDocumentsTool(
+    return tools.SearchDocumentsTool(
         path=settings.get_user_documents_dir(ctx.deps.user_id)
     )(query, top_k)
 

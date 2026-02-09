@@ -106,13 +106,13 @@ def grep(
 
 
 @mcp_app.tool()
-async def search_documents(
+def search_documents(
     query: str,
     top_k: int = 3,
     user_id: str = Depends(_get_mcp_user_id),
 ) -> list[RetrievedDocument]:
     """Semantic search for documents using BM25 ranking."""
-    return await tools.SearchDocumentsTool(path=settings.get_user_documents_dir(user_id))(
+    return tools.SearchDocumentsTool(path=settings.get_user_documents_dir(user_id))(
         query,
         top_k,
     )

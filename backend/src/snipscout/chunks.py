@@ -18,6 +18,7 @@ __all__ = [
     "delete_chunks",
     "get_chunks",
     "list_chunked_documents",
+    "load_chunked_document",
     "search_chunks",
 ]
 
@@ -109,6 +110,30 @@ def chunk_document(
     return doc
 
 
+def load_chunked_document(
+    chunks_dir: Path, filename: str
+) -> ChunkedDocument | None:
+    """Load a chunked document from a directory by original filename.
+
+    Args:
+        chunks_dir: Directory containing chunk JSON files.
+        filename: The original document filename.
+
+    Returns:
+        The chunked document, or None if not found.
+    """
+    chunk_path = chunks_dir / f"{filename}.json"
+    if not chunk_path.exists():
+        return None
+
+    try:
+        data = json.loads(chunk_path.read_text(encoding="utf-8"))
+        return ChunkedDocument.model_validate(data)
+    except (json.JSONDecodeError, Exception) as e:
+        logger.warning("Failed to load chunks for %s: %s", filename, e)
+        return None
+
+
 def get_chunks(user_id: str, filename: str) -> ChunkedDocument | None:
     """Load chunks for a document from disk.
 
@@ -119,16 +144,7 @@ def get_chunks(user_id: str, filename: str) -> ChunkedDocument | None:
     Returns:
         The chunked document, or None if not found.
     """
-    chunk_path = _get_chunk_path(user_id, filename)
-    if not chunk_path.exists():
-        return None
-
-    try:
-        data = json.loads(chunk_path.read_text(encoding="utf-8"))
-        return ChunkedDocument.model_validate(data)
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning("Failed to load chunks for %s: %s", filename, e)
-        return None
+    return load_chunked_document(settings.get_user_chunks_dir(user_id), filename)
 
 
 def delete_chunks(user_id: str, filename: str) -> bool:

@@ -7,7 +7,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 
-@dataclass
+@dataclass(slots=True, frozen=True)
 class User:
     """Authenticated user information."""
 

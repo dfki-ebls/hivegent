@@ -1,8 +1,9 @@
 """CLI for SnipScout service account management."""
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 import typer
@@ -30,7 +31,7 @@ def _get_credentials() -> dict | None:
         return None
 
 
-def _save_credentials(credentials: dict) -> None:
+def _save_credentials(credentials: Mapping[str, Any]) -> None:
     """Save credentials securely."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CREDENTIALS_FILE.write_text(json.dumps(credentials, indent=2), encoding="utf-8")
@@ -73,8 +74,8 @@ def _make_request(
     method: str,
     path: str,
     token: str,
-    json_data: dict | None = None,
-    files: dict | None = None,
+    json_data: Mapping[str, Any] | None = None,
+    files: Mapping[str, Any] | None = None,
 ) -> httpx.Response:
     """Make an authenticated request to the API."""
     api_url = _get_api_url()

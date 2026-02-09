@@ -6,7 +6,7 @@ from dataclasses import dataclass
 __all__ = ["ChunkData", "DocumentChunker"]
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, frozen=True)
 class ChunkData:
     """A single chunk produced by a document chunker."""
 

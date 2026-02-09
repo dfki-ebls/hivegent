@@ -1,6 +1,7 @@
 """Personal Access Token storage and validation."""
 
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from argon2 import PasswordHasher
@@ -11,9 +12,22 @@ from .config import settings
 from .types import TokenInfo, User
 
 __all__ = [
+    "CreatedToken",
     "TokenStore",
     "token_store",
 ]
+
+
+@dataclass(slots=True, frozen=True)
+class CreatedToken:
+    """Result of creating a personal access token.
+
+    The raw token is only available at creation time and cannot be
+    retrieved later.
+    """
+
+    raw_token: str
+    info: TokenInfo
 
 
 class _StoredToken(BaseModel):
@@ -64,7 +78,7 @@ class TokenStore:
         user_id: str,
         name: str,
         expires_in_days: int | None = None,
-    ) -> tuple[str, TokenInfo]:
+    ) -> CreatedToken:
         """Create a new personal access token.
 
         Args:
@@ -73,8 +87,7 @@ class TokenStore:
             expires_in_days: Optional expiration in days from now.
 
         Returns:
-            A tuple of (raw_token, token_info). The raw token is only
-            available at creation time and cannot be retrieved later.
+            CreatedToken with the raw token and metadata.
         """
         token_id = secrets.token_hex(8)
         token_secret = secrets.token_urlsafe(32)
@@ -100,14 +113,15 @@ class TokenStore:
         tokens.append(stored_token)
         self._save_user_tokens(user_id, tokens)
 
-        token_info = TokenInfo(
-            id=token_id,
-            name=name,
-            created_at=now,
-            expires_at=expires_at,
+        return CreatedToken(
+            raw_token=raw_token,
+            info=TokenInfo(
+                id=token_id,
+                name=name,
+                created_at=now,
+                expires_at=expires_at,
+            ),
         )
-
-        return raw_token, token_info
 
     def validate_token(self, raw_token: str) -> User | None:
         """Validate a personal access token.
