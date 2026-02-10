@@ -56,6 +56,7 @@ from .converters import (
 from .converters.base import LLMConvertOptions
 from .documents import reload_user_documents
 from .mcp import mcp_app
+from .observability import configure_observability
 from .messages import (
     delete_conversation,
     list_conversations,
@@ -118,6 +119,7 @@ class ReconvertRequest(BaseModel):
 mcp_http_app = mcp_app.http_app(path="/")
 
 app = FastAPI(lifespan=mcp_http_app.lifespan)
+configure_observability(app)
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore[arg-type]

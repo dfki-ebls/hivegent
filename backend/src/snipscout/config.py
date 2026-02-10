@@ -11,6 +11,7 @@ __all__ = [
     "BINARY_EXTENSIONS",
     "FileExtension",
     "LlmSettings",
+    "LogfireSettings",
     "McpSettings",
     "Settings",
     "TEXT_EXTENSIONS",
@@ -133,6 +134,17 @@ class LlmSettings(BaseModel):
     base_url: str = ""
 
 
+class LogfireSettings(BaseModel):
+    """Logfire observability settings.
+
+    Configurable via ``SNIPSCOUT_LOGFIRE__ENABLED`` and
+    ``SNIPSCOUT_LOGFIRE__TRACES_DIR``.
+    """
+
+    enabled: bool = True
+    traces_dir: Path | None = None
+
+
 class McpSettings(BaseModel):
     """MCP server settings for OIDC authentication."""
 
@@ -152,11 +164,21 @@ class Settings(BaseSettings):
     )
 
     llm: LlmSettings = LlmSettings()
+    logfire: LogfireSettings = LogfireSettings()
     mcp: McpSettings = McpSettings()
 
     data_dir: Path = Path("data")
     max_file_size_bytes: int = 10 * 1024 * 1024  # 10 MB
     cors_origins: list[str] = ["http://localhost:3000"]
+
+    def get_traces_dir(self) -> Path:
+        """Get the directory for trace output files.
+
+        Returns:
+            The configured traces directory, or ``data_dir / "traces"`` by
+            default.
+        """
+        return self.logfire.traces_dir or self.data_dir / "traces"
 
     def get_user_dir(self, user_id: str) -> Path:
         """Get the root directory for a specific user.
