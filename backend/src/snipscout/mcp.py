@@ -1,11 +1,15 @@
 """FastMCP server with OIDCProxy auth and explicit typed tool wrappers."""
 
 from docket.dependencies import Depends
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.server.auth import AccessToken, OIDCProxy
 from fastmcp.server.dependencies import get_access_token
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 from . import tools
+from .agent import UserDeps, explore_agent, explore_toolset
+from .prompts import EXPLORE_INSTRUCTIONS
 from .auth import auth_settings
 from .config import settings
 from .types import (
@@ -66,7 +70,9 @@ def get_document(
     user_id: str = Depends(_get_mcp_user_id),
 ) -> str | None:
     """Get the full content of a specific document by relative path."""
-    return tools.GetDocumentTool(path=settings.get_user_documents_dir(user_id))(filename)
+    return tools.GetDocumentTool(path=settings.get_user_documents_dir(user_id))(
+        filename
+    )
 
 
 @mcp_app.tool()
@@ -90,7 +96,9 @@ def glob_documents(
     user_id: str = Depends(_get_mcp_user_id),
 ) -> list[str]:
     """Find documents matching a glob pattern."""
-    return tools.GlobDocumentsTool(path=settings.get_user_documents_dir(user_id))(pattern)
+    return tools.GlobDocumentsTool(path=settings.get_user_documents_dir(user_id))(
+        pattern
+    )
 
 
 @mcp_app.tool()
@@ -164,3 +172,54 @@ def search_chunks(
         subdir=subdir,
         max_depth=max_depth,
     )
+
+
+@mcp_app.tool()
+async def explore_documents(
+    task: str,
+    ctx: Context,
+    user_id: str = Depends(_get_mcp_user_id),
+) -> str | None:
+    """Explore documents using a subagent.
+
+    Delegates to a subagent that can list, search, and read documents.
+    Returns a summary of findings. Uses the server's LLM when configured,
+    otherwise falls back to MCP client sampling.
+
+    Args:
+        task: Natural language description of what to explore or find.
+    """
+    model_name = settings.llm.small_model or settings.llm.model
+
+    if model_name:
+        result = await explore_agent.run(
+            task,
+            model=OpenAIResponsesModel(
+                model_name,
+                provider=OpenAIProvider(
+                    api_key=settings.llm.api_key or "not-needed",
+                    base_url=settings.llm.base_url or None,
+                ),
+            ),
+            deps=UserDeps(user_id=user_id),
+            toolsets=[explore_toolset],
+            instructions=EXPLORE_INSTRUCTIONS,
+        )
+        return result.output
+
+    docs_dir = settings.get_user_documents_dir(user_id)
+    chunks_dir = settings.get_user_chunks_dir(user_id)
+
+    result = await ctx.sample(
+        task,
+        system_prompt=EXPLORE_INSTRUCTIONS,
+        tools=[
+            tools.ListDocumentsTool(path=docs_dir),
+            tools.GlobDocumentsTool(path=docs_dir),
+            tools.GrepTool(path=docs_dir),
+            tools.SearchDocumentsTool(path=docs_dir),
+            tools.SearchChunksTool(path=chunks_dir),
+            tools.GetDocumentLinesTool(path=docs_dir),
+        ],
+    )
+    return result.text

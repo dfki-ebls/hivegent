@@ -25,7 +25,7 @@ from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
-from .agent import UserDeps, base_agent, rag_toolset, user_agent
+from .agent import UserDeps, base_agent, explore_toolset, rag_toolset, user_agent
 from .auth import User, get_current_user
 from .chunkers import (
     ChunkingPipeline,
@@ -408,7 +408,7 @@ async def chat(
                 base_url=config.llm.base_url,
             ),
         ),
-        toolsets=[rag_toolset],
+        toolsets=[rag_toolset, explore_toolset],
         instructions=PERSONALITY_TEMPLATES[config.personality],
         on_complete=on_complete,
     )
