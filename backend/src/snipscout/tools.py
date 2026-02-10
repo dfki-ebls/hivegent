@@ -36,23 +36,69 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
+def _matches_subdir_and_depth(
+    filepath: str,
+    subdir: str | None,
+    max_depth: int | None,
+) -> bool:
+    """Check whether *filepath* falls within *subdir* and *max_depth*.
+
+    Args:
+        filepath: Document path relative to the document root.
+        subdir: If set, only accept paths that start with this prefix.
+            Both ``"projects"`` and ``"projects/"`` are accepted.
+        max_depth: Maximum nesting depth relative to *subdir* (or root).
+            A file directly inside the directory has depth 1.
+    """
+    if subdir is not None:
+        normalized = subdir if subdir.endswith("/") else subdir + "/"
+        if not filepath.startswith(normalized):
+            return False
+        relative = filepath[len(normalized) :]
+    else:
+        relative = filepath
+
+    if max_depth is not None:
+        depth = relative.count("/") + 1
+        if depth > max_depth:
+            return False
+
+    return True
+
+
 @dataclass(slots=True, frozen=True)
 class DocumentFilter:
     """Include/exclude filter applied to document-level tool operations.
 
-    If ``included`` is non-empty the filename must be present in the set.
-    If ``excluded`` is non-empty the filename must *not* be present.
+    If ``included`` is non-empty the filepath must match an entry.
+    If ``excluded`` is non-empty the filepath must *not* match.
     When both are set, ``included`` is checked first.
+
+    Entries ending with ``/`` are treated as directory prefixes:
+    ``"projects/"`` matches ``"projects/report.md"`` and
+    ``"projects/sub/file.txt"``.
+    Entries without a trailing ``/`` are exact file matches.
     """
 
     included: frozenset[str] = field(default_factory=frozenset)
     excluded: frozenset[str] = field(default_factory=frozenset)
 
-    def is_included(self, filename: str) -> bool:
-        """Return whether *filename* passes the filter."""
-        if self.included and filename not in self.included:
+    @staticmethod
+    def _matches(entry: str, filepath: str) -> bool:
+        """Check if a filter entry matches a filepath."""
+        if entry.endswith("/"):
+            return filepath.startswith(entry)
+        return filepath == entry
+
+    def is_included(self, filepath: str) -> bool:
+        """Return whether *filepath* passes the filter."""
+        if self.included and not any(
+            self._matches(entry, filepath) for entry in self.included
+        ):
             return False
-        if self.excluded and filename in self.excluded:
+        if self.excluded and any(
+            self._matches(entry, filepath) for entry in self.excluded
+        ):
             return False
         return True
 
@@ -64,15 +110,31 @@ class ListDocumentsTool:
     path: Path
     document_filter: DocumentFilter | None = None
 
-    def __call__(self) -> list[DocumentSummary]:
-        """List all available documents with their sizes in bytes."""
+    def __call__(
+        self,
+        subdir: str | None = None,
+        max_depth: int | None = None,
+    ) -> list[DocumentSummary]:
+        """List all available documents with their sizes in bytes.
+
+        Args:
+            subdir: Only include documents under this subdirectory.
+            max_depth: Maximum nesting depth relative to *subdir* (or root).
+        """
         if not self.path.exists():
             return []
-        results = [
-            DocumentSummary(filename=f.name, size=f.stat().st_size)
-            for f in self.path.iterdir()
-            if f.is_file() and f.suffix in TEXT_EXTENSIONS
-        ]
+        results: list[DocumentSummary] = []
+        for ext in TEXT_EXTENSIONS:
+            for f in sorted(self.path.rglob(f"*{ext}")):
+                if f.is_file():
+                    rel = str(f.relative_to(self.path).as_posix())
+                    results.append(DocumentSummary(filename=rel, size=f.stat().st_size))
+        if subdir is not None or max_depth is not None:
+            results = [
+                r
+                for r in results
+                if _matches_subdir_and_depth(r.filename, subdir, max_depth)
+            ]
         if self.document_filter:
             results = [r for r in results if self.document_filter.is_included(r.filename)]
         return results
@@ -229,15 +291,24 @@ class SearchDocumentsTool:
         self,
         query: str,
         top_k: int = 3,
+        subdir: str | None = None,
+        max_depth: int | None = None,
     ) -> list[RetrievedDocument]:
         """Search documents semantically using BM25 ranking.
 
         Args:
             query: Natural language search query.
             top_k: Maximum results to return.
+            subdir: Only include documents under this subdirectory.
+            max_depth: Maximum nesting depth relative to *subdir* (or root).
         """
         cache = get_cached_documents(self.path)
-        if self.document_filter:
+        needs_filter = (
+            self.document_filter is not None
+            or subdir is not None
+            or max_depth is not None
+        )
+        if needs_filter:
             all_results = search_documents(cache, query, len(cache.documents))
             filtered = [
                 RetrievedDocument(
@@ -246,7 +317,11 @@ class SearchDocumentsTool:
                     score=round(r.score, 4),
                 )
                 for r in all_results
-                if self.document_filter.is_included(r.filename)
+                if _matches_subdir_and_depth(r.filename, subdir, max_depth)
+                and (
+                    not self.document_filter
+                    or self.document_filter.is_included(r.filename)
+                )
             ]
             return filtered[:top_k]
         return [
@@ -328,20 +403,28 @@ class SearchChunksTool:
         self,
         query: str,
         top_k: int = 5,
+        subdir: str | None = None,
+        max_depth: int | None = None,
     ) -> list[RetrievedChunk]:
         """Search across all chunk files using BM25 ranking.
 
         Args:
             query: Natural language search query.
             top_k: Maximum results to return.
+            subdir: Only include chunks from documents under this subdirectory.
+            max_depth: Maximum nesting depth relative to *subdir* (or root).
         """
         if not self.path.exists():
             return []
 
         all_chunks: list[RetrievedChunk] = []
         all_texts: list[str] = []
-        for chunk_file in sorted(self.path.glob("*.json")):
-            doc_filename = chunk_file.name.removesuffix(".json")
+        for chunk_file in sorted(self.path.rglob("*.json")):
+            doc_filename = str(
+                chunk_file.relative_to(self.path).as_posix()
+            ).removesuffix(".json")
+            if not _matches_subdir_and_depth(doc_filename, subdir, max_depth):
+                continue
             if self.document_filter and not self.document_filter.is_included(doc_filename):
                 continue
             chunked = load_chunked_document(self.path, doc_filename)

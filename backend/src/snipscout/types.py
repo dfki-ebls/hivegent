@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -39,10 +40,15 @@ __all__ = [
     "ConversationListResponse",
     "ConversationSummary",
     "CreateConversationResponse",
+    "CreateDirectoryRequest",
+    "CreateDirectoryResponse",
     "CreateTokenRequest",
     "CreateTokenResponse",
     "DeleteConversationResponse",
+    "DeleteDirectoryResponse",
     "DeleteDocumentResponse",
+    "DirectoryEntry",
+    "DirectoryTreeResponse",
     "DocumentInfo",
     "DocumentListResponse",
     "DocumentRange",
@@ -52,6 +58,8 @@ __all__ = [
     "GenerateTitleResponse",
     "GrepMatch",
     "LlmConfig",
+    "MoveDocumentRequest",
+    "MoveDocumentResponse",
     "Personality",
     "RetrievedChunk",
     "RetrievedDocument",
@@ -284,5 +292,63 @@ class TokenInfo(BaseModel):
     last_used_at: datetime | None = Field(
         default=None, description="When the token was last used"
     )
+
+
+class DirectoryEntry(BaseModel):
+    """A file or directory entry in the document tree."""
+
+    type: Literal["file", "directory"]
+    name: str = Field(description="Basename of the entry")
+    path: str = Field(description="Relative path from documents root")
+    size_bytes: int | None = Field(default=None, description="File size in bytes")
+    modified_at: datetime | None = Field(default=None, description="Last modification timestamp")
+    chunk_count: int | None = Field(default=None, description="Number of chunks, if chunked")
+    has_original: bool = Field(default=False, description="Whether an original binary file exists")
+    children: list["DirectoryEntry"] | None = Field(
+        default=None, description="Child entries for directories"
+    )
+
+
+class DirectoryTreeResponse(BaseModel):
+    """Response for the directory tree endpoint."""
+
+    root: DirectoryEntry
+    total_files: int = Field(description="Total number of files")
+    total_directories: int = Field(description="Total number of directories")
+
+
+class CreateDirectoryRequest(BaseModel):
+    """Request to create a new directory."""
+
+    path: str = Field(description="Relative path of the directory to create")
+
+
+class CreateDirectoryResponse(BaseModel):
+    """Response for directory creation."""
+
+    path: str = Field(description="The created directory path")
+    message: str = Field(description="Status message")
+
+
+class MoveDocumentRequest(BaseModel):
+    """Request to move a document to a new location."""
+
+    destination: str = Field(description="Destination relative path")
+
+
+class MoveDocumentResponse(BaseModel):
+    """Response for document move."""
+
+    source: str = Field(description="Original relative path")
+    destination: str = Field(description="New relative path")
+    message: str = Field(description="Status message")
+
+
+class DeleteDirectoryResponse(BaseModel):
+    """Response for directory deletion."""
+
+    path: str = Field(description="The deleted directory path")
+    files_deleted: int = Field(description="Number of files deleted")
+    message: str = Field(description="Status message")
 
 

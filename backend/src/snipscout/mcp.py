@@ -49,10 +49,15 @@ def _get_mcp_user_id(
 
 @mcp_app.tool()
 def list_documents(
+    subdir: str | None = None,
+    max_depth: int | None = None,
     user_id: str = Depends(_get_mcp_user_id),
 ) -> list[DocumentSummary]:
     """List all available documents with their sizes in bytes."""
-    return tools.ListDocumentsTool(path=settings.get_user_documents_dir(user_id))()
+    return tools.ListDocumentsTool(path=settings.get_user_documents_dir(user_id))(
+        subdir=subdir,
+        max_depth=max_depth,
+    )
 
 
 @mcp_app.tool()
@@ -60,7 +65,7 @@ def get_document(
     filename: str,
     user_id: str = Depends(_get_mcp_user_id),
 ) -> str | None:
-    """Get the full content of a specific document."""
+    """Get the full content of a specific document by relative path."""
     return tools.GetDocumentTool(path=settings.get_user_documents_dir(user_id))(filename)
 
 
@@ -71,7 +76,7 @@ def get_document_lines(
     end: int | None = None,
     user_id: str = Depends(_get_mcp_user_id),
 ) -> DocumentRange | None:
-    """Get a range of lines from a document."""
+    """Get a range of lines from a document by relative path."""
     return tools.GetDocumentLinesTool(path=settings.get_user_documents_dir(user_id))(
         filename,
         start,
@@ -109,12 +114,16 @@ def grep(
 def search_documents(
     query: str,
     top_k: int = 3,
+    subdir: str | None = None,
+    max_depth: int | None = None,
     user_id: str = Depends(_get_mcp_user_id),
 ) -> list[RetrievedDocument]:
     """Semantic search for documents using BM25 ranking."""
     return tools.SearchDocumentsTool(path=settings.get_user_documents_dir(user_id))(
         query,
         top_k,
+        subdir=subdir,
+        max_depth=max_depth,
     )
 
 
@@ -123,7 +132,7 @@ def list_chunks(
     filename: str,
     user_id: str = Depends(_get_mcp_user_id),
 ) -> list[ChunkSummary] | None:
-    """List chunk metadata for a document."""
+    """List chunk metadata for a document by relative path."""
     return tools.ListChunksTool(path=settings.get_user_chunks_dir(user_id))(filename)
 
 
@@ -133,7 +142,7 @@ def get_chunk(
     chunk_index: int,
     user_id: str = Depends(_get_mcp_user_id),
 ) -> str | None:
-    """Get the text content of a specific chunk."""
+    """Get the text content of a specific chunk by relative document path."""
     return tools.GetChunkTool(path=settings.get_user_chunks_dir(user_id))(
         filename,
         chunk_index,
@@ -144,7 +153,14 @@ def get_chunk(
 def search_chunks(
     query: str,
     top_k: int = 5,
+    subdir: str | None = None,
+    max_depth: int | None = None,
     user_id: str = Depends(_get_mcp_user_id),
 ) -> list[RetrievedChunk]:
     """Search across all document chunks using BM25 ranking."""
-    return tools.SearchChunksTool(path=settings.get_user_chunks_dir(user_id))(query, top_k)
+    return tools.SearchChunksTool(path=settings.get_user_chunks_dir(user_id))(
+        query,
+        top_k,
+        subdir=subdir,
+        max_depth=max_depth,
+    )

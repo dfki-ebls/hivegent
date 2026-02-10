@@ -47,9 +47,10 @@ def _build_cache(path: Path) -> DocumentCache:
 
     documents: dict[str, str] = {}
     for ext in TEXT_EXTENSIONS:
-        for file_path in sorted(path.glob(f"*{ext}")):
+        for file_path in sorted(path.rglob(f"*{ext}")):
             if file_path.is_file():
-                documents[file_path.name] = file_path.read_text(encoding="utf-8")
+                key = str(file_path.relative_to(path).as_posix())
+                documents[key] = file_path.read_text(encoding="utf-8")
 
     if not documents:
         return _EMPTY

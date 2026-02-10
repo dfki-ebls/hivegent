@@ -2,7 +2,7 @@
 
 import re
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,6 +14,7 @@ __all__ = [
     "McpSettings",
     "Settings",
     "TEXT_EXTENSIONS",
+    "sanitize_document_path",
     "sanitize_user_id",
     "settings",
 ]
@@ -84,6 +85,42 @@ def sanitize_user_id(user_id: str) -> str:
         raise ValueError(f"Invalid user ID: {user_id!r}")
 
     return sanitized
+
+
+def sanitize_document_path(path: str) -> str:
+    """Sanitize a document path to prevent path traversal attacks.
+
+    Normalizes the path to POSIX forward slashes and rejects unsafe patterns.
+
+    Args:
+        path: The relative document path to sanitize.
+
+    Returns:
+        The sanitized POSIX-style relative path.
+
+    Raises:
+        ValueError: If the path is empty, absolute, or contains unsafe segments.
+    """
+    if not path:
+        raise ValueError("Document path cannot be empty")
+
+    if "\x00" in path:
+        raise ValueError("Document path contains null bytes")
+
+    # Normalize to POSIX forward slashes
+    normalized = str(PurePosixPath(path.replace("\\", "/")))
+
+    if normalized.startswith("/"):
+        raise ValueError("Document path must be relative")
+
+    # Reject . and .. segments
+    for segment in normalized.split("/"):
+        if segment in (".", ".."):
+            raise ValueError(f"Document path contains unsafe segment: {segment!r}")
+        if not segment:
+            raise ValueError("Document path contains empty segment")
+
+    return normalized
 
 
 class LlmSettings(BaseModel):

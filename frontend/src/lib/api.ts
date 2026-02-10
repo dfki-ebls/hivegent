@@ -7,13 +7,17 @@ import type {
   ConversionPipelineInfo,
   ConversationListResponse,
   ConversationSummary,
+  CreateDirectoryResponse,
   CreateTokenRequest,
   CreateTokenResponse,
   CreateConversationResponse,
+  DeleteDirectoryResponse,
+  DirectoryTreeResponse,
   DocumentInfo,
   DocumentReference,
   GenerateTitleResponse,
   LlmConfig,
+  MoveDocumentResponse,
   TokenInfo,
 } from './types';
 import { requiresConversion } from './types';
@@ -63,6 +67,14 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
     return { Authorization: `Bearer ${token}` };
   }
   return {};
+}
+
+/**
+ * Encode a file path for use in URLs.
+ * Encodes each segment individually so that `/` separators are preserved.
+ */
+function encodeFilePath(filepath: string): string {
+  return filepath.split('/').map(encodeURIComponent).join('/');
 }
 
 /** Settings exposed by the backend. */
@@ -133,6 +145,7 @@ export interface UploadDocumentOptions {
   conversionPipeline?: ConversionPipeline;
   chunkingPipeline?: ChunkingPipeline;
   llm?: LlmConfig;
+  targetDirectory?: string;
 }
 
 /** Response from document upload. */
@@ -154,8 +167,13 @@ export async function uploadDocument(
   const formData = new FormData();
   formData.append('file', file);
 
+  // Build the filepath, optionally prepending the target directory
+  const filepath = options?.targetDirectory
+    ? `${options.targetDirectory}/${filename}`
+    : filename;
+
   // Build URL with query parameters
-  let url = `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}`;
+  let url = `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`;
   const params = new URLSearchParams();
   if (requiresConversion(filename) && options?.conversionPipeline) {
     params.set('conversion_pipeline', options.conversionPipeline);
@@ -188,7 +206,7 @@ export async function uploadDocument(
 
 export async function deleteDocument(filename: string): Promise<void> {
   const res = await authFetch(
-    `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}`,
+    `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`,
     {
       method: 'DELETE',
     }
@@ -202,7 +220,7 @@ export async function deleteDocument(filename: string): Promise<void> {
 
 export async function getDocumentContent(filename: string): Promise<string> {
   const res = await authFetch(
-    `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}`
+    `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`
   );
 
   if (!res.ok) {
@@ -380,7 +398,7 @@ export async function reconvertDocument(
   filename: string,
   options?: ReconvertDocumentOptions
 ): Promise<UploadDocumentResponse> {
-  const url = `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}/reconvert`;
+  const url = `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}/reconvert`;
 
   const res = await authFetch(url, {
     method: 'POST',
@@ -413,7 +431,7 @@ export async function rechunkDocument(
     params.set('chunk_size', chunkSize.toString());
   }
 
-  let url = `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}/rechunk`;
+  let url = `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}/rechunk`;
   const queryString = params.toString();
   if (queryString) {
     url += `?${queryString}`;
@@ -424,6 +442,66 @@ export async function rechunkDocument(
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: 'Rechunk failed' }));
     throw new Error(error.detail || 'Rechunk failed');
+  }
+
+  return res.json();
+}
+
+// Directory management API functions
+
+export async function getDirectoryTree(): Promise<DirectoryTreeResponse> {
+  const res = await authFetch(`${API_BASE_URL}/api/directories/tree`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch directory tree');
+  }
+  return res.json();
+}
+
+export async function createDirectory(path: string): Promise<CreateDirectoryResponse> {
+  const res = await authFetch(`${API_BASE_URL}/api/directories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Failed to create directory' }));
+    throw new Error(error.detail || 'Failed to create directory');
+  }
+
+  return res.json();
+}
+
+export async function deleteDirectory(dirpath: string): Promise<DeleteDirectoryResponse> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/directories/${encodeFilePath(dirpath)}`,
+    { method: 'DELETE' }
+  );
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Failed to delete directory' }));
+    throw new Error(error.detail || 'Failed to delete directory');
+  }
+
+  return res.json();
+}
+
+export async function moveDocument(
+  filepath: string,
+  destination: string
+): Promise<MoveDocumentResponse> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}/move`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destination }),
+    }
+  );
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Move failed' }));
+    throw new Error(error.detail || 'Move failed');
   }
 
   return res.json();

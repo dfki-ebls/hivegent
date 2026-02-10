@@ -34,12 +34,21 @@ rag_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
 @rag_toolset.tool
-def list_documents(ctx: RunContext[UserDeps]) -> list[DocumentSummary]:
-    """List all available documents with their sizes in bytes."""
+def list_documents(
+    ctx: RunContext[UserDeps],
+    subdir: str | None = None,
+    max_depth: int | None = None,
+) -> list[DocumentSummary]:
+    """List all available documents with their sizes in bytes.
+
+    Args:
+        subdir: Only include documents under this subdirectory.
+        max_depth: Maximum nesting depth relative to *subdir* (or root).
+    """
     return tools.ListDocumentsTool(
         path=settings.get_user_documents_dir(ctx.deps.user_id),
         document_filter=ctx.deps.document_filter,
-    )()
+    )(subdir=subdir, max_depth=max_depth)
 
 
 @rag_toolset.tool
@@ -47,7 +56,7 @@ def get_document(ctx: RunContext[UserDeps], filename: str) -> str | None:
     """Get the full content of a specific document.
 
     Args:
-        filename: The exact filename to retrieve.
+        filename: The relative path to retrieve (e.g. "report.md" or "projects/report.md").
     """
     return tools.GetDocumentTool(
         path=settings.get_user_documents_dir(ctx.deps.user_id),
@@ -65,7 +74,7 @@ def get_document_lines(
     """Get a range of lines from a document.
 
     Args:
-        filename: The document filename.
+        filename: The relative document path (e.g. "report.md" or "projects/report.md").
         start: First line to include (1-indexed, default: 1).
         end: Last line to include (1-indexed, default: end of file).
     """
@@ -126,17 +135,21 @@ def search_documents(
     ctx: RunContext[UserDeps],
     query: str,
     top_k: int = 3,
+    subdir: str | None = None,
+    max_depth: int | None = None,
 ) -> list[RetrievedDocument]:
     """Semantic search for documents using BM25 ranking.
 
     Args:
         query: Natural language search query.
         top_k: Maximum results to return.
+        subdir: Only include documents under this subdirectory.
+        max_depth: Maximum nesting depth relative to *subdir* (or root).
     """
     return tools.SearchDocumentsTool(
         path=settings.get_user_documents_dir(ctx.deps.user_id),
         document_filter=ctx.deps.document_filter,
-    )(query, top_k)
+    )(query, top_k, subdir=subdir, max_depth=max_depth)
 
 
 @rag_toolset.tool
@@ -147,7 +160,7 @@ def list_chunks(
     """List chunk metadata for a document.
 
     Args:
-        filename: The document filename.
+        filename: The relative document path (e.g. "report.md" or "projects/report.md").
     """
     return tools.ListChunksTool(
         path=settings.get_user_chunks_dir(ctx.deps.user_id),
@@ -164,7 +177,7 @@ def get_chunk(
     """Get the text content of a specific chunk.
 
     Args:
-        filename: The document filename.
+        filename: The relative document path (e.g. "report.md" or "projects/report.md").
         chunk_index: The index of the chunk to retrieve.
     """
     return tools.GetChunkTool(
@@ -181,6 +194,8 @@ def search_chunks(
     ctx: RunContext[UserDeps],
     query: str,
     top_k: int = 5,
+    subdir: str | None = None,
+    max_depth: int | None = None,
 ) -> list[RetrievedChunk]:
     """Search across all document chunks using BM25 ranking.
 
@@ -189,11 +204,10 @@ def search_chunks(
     Args:
         query: Natural language search query.
         top_k: Maximum results to return.
+        subdir: Only include chunks from documents under this subdirectory.
+        max_depth: Maximum nesting depth relative to *subdir* (or root).
     """
     return tools.SearchChunksTool(
         path=settings.get_user_chunks_dir(ctx.deps.user_id),
         document_filter=ctx.deps.document_filter,
-    )(
-        query,
-        top_k,
-    )
+    )(query, top_k, subdir=subdir, max_depth=max_depth)

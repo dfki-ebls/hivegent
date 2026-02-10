@@ -230,3 +230,42 @@ export interface TokenInfo {
   expires_at: string | null;
   last_used_at: string | null;
 }
+
+/** A file or directory entry in the document tree. */
+export interface DirectoryEntry {
+  type: 'file' | 'directory';
+  name: string;
+  path: string;
+  size_bytes?: number | null;
+  modified_at?: string | null;
+  chunk_count?: number | null;
+  has_original?: boolean;
+  children?: DirectoryEntry[] | null;
+}
+
+/** Response from the directory tree endpoint. */
+export interface DirectoryTreeResponse {
+  root: DirectoryEntry;
+  total_files: number;
+  total_directories: number;
+}
+
+/** Response from creating a directory. */
+export interface CreateDirectoryResponse {
+  path: string;
+  message: string;
+}
+
+/** Response from moving a document. */
+export interface MoveDocumentResponse {
+  source: string;
+  destination: string;
+  message: string;
+}
+
+/** Response from deleting a directory. */
+export interface DeleteDirectoryResponse {
+  path: string;
+  files_deleted: number;
+  message: string;
+}

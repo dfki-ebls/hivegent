@@ -1,6 +1,6 @@
 import { useChat, type UIMessage } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { AlertCircle, BotIcon, CopyIcon, EyeOff, FileText, HistoryIcon, MessageSquareIcon, RefreshCcwIcon, SparklesIcon, SquarePen, X } from 'lucide-react';
+import { AlertCircle, BotIcon, CopyIcon, EyeOff, FileText, Folder, HistoryIcon, MessageSquareIcon, RefreshCcwIcon, SparklesIcon, SquarePen, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import {
@@ -532,32 +532,46 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
           >
             {hasDocumentFilters && (
               <PromptInputHeader>
-                {includedDocuments.map((filename) => (
-                  <Badge key={`inc-${filename}`} variant="secondary" className="gap-1 text-xs">
-                    <FileText className="h-3 w-3" />
-                    {filename}
-                    <button
-                      type="button"
-                      className="ml-0.5 rounded-full hover:bg-muted"
-                      onClick={() => onRemoveDocument(filename)}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))}
-                {excludedDocuments.map((filename) => (
-                  <Badge key={`exc-${filename}`} variant="destructive" className="gap-1 text-xs">
-                    <EyeOff className="h-3 w-3" />
-                    {filename}
-                    <button
-                      type="button"
-                      className="ml-0.5 rounded-full hover:bg-muted"
-                      onClick={() => onRemoveDocument(filename)}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))}
+                {includedDocuments.map((entry) => {
+                  const isDir = entry.endsWith('/');
+                  const displayName = isDir
+                    ? entry.slice(0, -1).split('/').pop() ?? entry
+                    : entry.split('/').pop() ?? entry;
+                  const Icon = isDir ? Folder : FileText;
+                  return (
+                    <Badge key={`inc-${entry}`} variant="secondary" className="gap-1 text-xs" title={entry}>
+                      <Icon className="h-3 w-3" />
+                      {displayName}
+                      <button
+                        type="button"
+                        className="ml-0.5 rounded-full hover:bg-muted"
+                        onClick={() => onRemoveDocument(entry)}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  );
+                })}
+                {excludedDocuments.map((entry) => {
+                  const isDir = entry.endsWith('/');
+                  const displayName = isDir
+                    ? entry.slice(0, -1).split('/').pop() ?? entry
+                    : entry.split('/').pop() ?? entry;
+                  const Icon = isDir ? Folder : EyeOff;
+                  return (
+                    <Badge key={`exc-${entry}`} variant="destructive" className="gap-1 text-xs" title={entry}>
+                      <Icon className="h-3 w-3" />
+                      {displayName}
+                      <button
+                        type="button"
+                        className="ml-0.5 rounded-full hover:bg-muted"
+                        onClick={() => onRemoveDocument(entry)}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  );
+                })}
               </PromptInputHeader>
             )}
             <PromptInputBody>

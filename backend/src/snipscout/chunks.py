@@ -45,18 +45,20 @@ class ChunkedDocument(BaseModel):
     chunks: list[ChunkInfo] = Field(description="The document chunks")
 
 
-def _get_chunk_path(user_id: str, filename: str) -> Path:
+def _get_chunk_path(user_id: str, filepath: str) -> Path:
     """Get the path to a chunk JSON file.
 
     Args:
         user_id: The user ID.
-        filename: The document filename.
+        filepath: The relative document path.
 
     Returns:
         Path to the chunk JSON file.
     """
     chunks_dir = settings.get_user_chunks_dir(user_id)
-    return chunks_dir / f"{filename}.json"
+    chunk_file_path = chunks_dir / f"{filepath}.json"
+    chunk_file_path.parent.mkdir(parents=True, exist_ok=True)
+    return chunk_file_path
 
 
 def chunk_document(
@@ -147,19 +149,30 @@ def get_chunks(user_id: str, filename: str) -> ChunkedDocument | None:
     return load_chunked_document(settings.get_user_chunks_dir(user_id), filename)
 
 
-def delete_chunks(user_id: str, filename: str) -> bool:
+def delete_chunks(user_id: str, filepath: str) -> bool:
     """Delete chunk file for a document.
+
+    After unlinking, cleans up empty parent directories up to the chunks root.
 
     Args:
         user_id: The user ID.
-        filename: The document filename.
+        filepath: The relative document path.
 
     Returns:
         True if the chunk file was deleted, False if it didn't exist.
     """
-    chunk_path = _get_chunk_path(user_id, filename)
+    chunks_dir = settings.get_user_chunks_dir(user_id)
+    chunk_path = chunks_dir / f"{filepath}.json"
     if chunk_path.exists():
         chunk_path.unlink()
+        # Clean up empty parent directories up to chunks_dir
+        parent = chunk_path.parent
+        while parent != chunks_dir:
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            parent = parent.parent
         return True
     return False
 
@@ -178,12 +191,11 @@ def list_chunked_documents(user_id: str) -> dict[str, int]:
         return {}
 
     result: dict[str, int] = {}
-    for path in chunks_dir.glob("*.json"):
-        # Filename is stored as "{original_filename}.json"
-        doc_filename = path.name.removesuffix(".json")
+    for path in chunks_dir.rglob("*.json"):
+        doc_filepath = str(path.relative_to(chunks_dir).as_posix()).removesuffix(".json")
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            result[doc_filename] = data.get("chunk_count", 0)
+            result[doc_filepath] = data.get("chunk_count", 0)
         except (json.JSONDecodeError, Exception):
             continue
 
@@ -216,8 +228,8 @@ def search_chunks(
     all_chunks: list[dict] = []
     all_texts: list[str] = []
 
-    for path in sorted(chunks_dir.glob("*.json")):
-        doc_filename = path.name.removesuffix(".json")
+    for path in sorted(chunks_dir.rglob("*.json")):
+        doc_filename = str(path.relative_to(chunks_dir).as_posix()).removesuffix(".json")
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             doc = ChunkedDocument.model_validate(data)

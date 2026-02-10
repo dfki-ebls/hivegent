@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import Fuse from 'fuse.js';
-import { AlertCircle, EyeOff, FileText, FolderOpen, MessageSquarePlus, Plus, RefreshCw, RotateCcw, Scissors, Search, Trash2, Upload, X } from 'lucide-react';
+import { AlertCircle, EyeOff, FileText, FolderOpen, FolderPlus, MessageSquarePlus, Plus, RefreshCw, RotateCcw, Scissors, Search, Trash2, Upload, X } from 'lucide-react';
 
 import { buildLlmConfig, getDocumentContent, uploadDocument } from '../lib/api';
 import type { DocumentInfo, StoredDocument } from '../lib/types';
@@ -11,8 +11,11 @@ import { useManagedDocumentsStore } from '../stores/managed-documents-store';
 import { useSettingsStore } from '../stores/settings-store';
 import { ChunkingPipelineSelector } from './ChunkingPipelineSelector';
 import { ChunkViewerDialog } from './ChunkViewerDialog';
+import { CreateDirectoryDialog } from './CreateDirectoryDialog';
+import { DirectoryTreeView } from './DirectoryTreeView';
 import { DocumentPreviewDialog } from './DocumentPreviewDialog';
 import { ConversionPipelineSelector } from './ConversionPipelineSelector';
+import { MoveDocumentDialog } from './MoveDocumentDialog';
 import { Alert, AlertDescription } from './ui/alert';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -180,6 +183,7 @@ interface UploadAreaProps {
   onFileInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onSelectFiles: () => void;
   onNewDocument: () => void;
+  onNewFolder: () => void;
 }
 
 function UploadArea({
@@ -192,6 +196,7 @@ function UploadArea({
   onFileInputChange,
   onSelectFiles,
   onNewDocument,
+  onNewFolder,
 }: UploadAreaProps) {
   return (
     <div className="border-b p-4">
@@ -227,10 +232,16 @@ function UploadArea({
           <p className="text-xs text-muted-foreground">
             Or create and edit documents directly in the browser
           </p>
-          <Button variant="outline" size="sm" onClick={onNewDocument} disabled={isLoading}>
-            <Plus className="h-4 w-4 mr-1" />
-            New Document
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={onNewDocument} disabled={isLoading}>
+              <Plus className="h-4 w-4 mr-1" />
+              New Document
+            </Button>
+            <Button variant="outline" size="sm" onClick={onNewFolder} disabled={isLoading}>
+              <FolderPlus className="h-4 w-4 mr-1" />
+              New Folder
+            </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -399,8 +410,22 @@ const CONVERSION_PIPELINE_STORAGE_KEY = 'snipscout-conversion-pipeline';
 const CHUNKING_PIPELINE_STORAGE_KEY = 'snipscout-chunking-pipeline';
 
 function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumentsProps) {
-  const { documents, isLoading, error, fetchDocuments, upload, remove, rechunk: storeRechunk, reconvert: storeReconvert, clearError } =
-    useManagedDocumentsStore();
+  const {
+    documents,
+    directoryTree,
+    isLoading,
+    error,
+    fetchDocuments,
+    fetchDirectoryTree,
+    upload,
+    remove,
+    rechunk: storeRechunk,
+    reconvert: storeReconvert,
+    move: storeMove,
+    createDir,
+    deleteDir,
+    clearError,
+  } = useManagedDocumentsStore();
   const llmSettings = useSettingsStore((state) => state.llm);
   const visionModel = useSettingsStore((state) => state.visionModel);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -408,6 +433,9 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [chunkViewerFilename, setChunkViewerFilename] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [moveFilePath, setMoveFilePath] = useState<string | null>(null);
+  const [createDirParent, setCreateDirParent] = useState<string | undefined>(undefined);
+  const [showCreateDir, setShowCreateDir] = useState(false);
   const [conversionPipeline, setConversionPipeline] = useState<ConversionPipeline>(() => {
     const stored = localStorage.getItem(CONVERSION_PIPELINE_STORAGE_KEY);
     return (stored as ConversionPipeline) || ConversionPipeline.AUTO;
@@ -439,17 +467,18 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
 
   useEffect(() => {
     fetchDocuments();
-  }, [fetchDocuments]);
+    fetchDirectoryTree();
+  }, [fetchDocuments, fetchDirectoryTree]);
 
   // --- Editor handlers ---
 
-  const handleEdit = useCallback(async (doc: DocumentInfo) => {
-    setEditor({ filename: doc.filename, content: null, isNew: false, isLoading: true });
+  const handleEdit = useCallback(async (filepath: string) => {
+    setEditor({ filename: filepath, content: null, isNew: false, isLoading: true });
     try {
-      const content = await getDocumentContent(doc.filename);
-      setEditor({ filename: doc.filename, content, isNew: false, isLoading: false });
+      const content = await getDocumentContent(filepath);
+      setEditor({ filename: filepath, content, isNew: false, isLoading: false });
     } catch {
-      setEditor({ filename: doc.filename, content: 'Failed to load document content', isNew: false, isLoading: false });
+      setEditor({ filename: filepath, content: 'Failed to load document content', isNew: false, isLoading: false });
     }
   }, []);
 
@@ -461,26 +490,27 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     const file = new File([content], filename, { type: 'text/plain' });
     await uploadDocument(filename, file, { chunkingPipeline });
     await fetchDocuments();
-  }, [fetchDocuments, chunkingPipeline]);
+    await fetchDirectoryTree();
+  }, [fetchDocuments, fetchDirectoryTree, chunkingPipeline]);
 
   // --- Include / exclude handlers ---
 
-  const handleIncludeDocument = useCallback((doc: DocumentInfo) => {
-    onIncludeDocument?.(doc.filename);
+  const handleInclude = useCallback((path: string) => {
+    onIncludeDocument?.(path);
   }, [onIncludeDocument]);
 
-  const handleExcludeDocument = useCallback((doc: DocumentInfo) => {
-    onExcludeDocument?.(doc.filename);
+  const handleExclude = useCallback((path: string) => {
+    onExcludeDocument?.(path);
   }, [onExcludeDocument]);
 
   // --- Rechunk / reconvert handlers ---
 
-  const handleRechunk = useCallback(async (doc: DocumentInfo) => {
-    await storeRechunk(doc.filename, chunkingPipeline);
+  const handleRechunk = useCallback(async (filepath: string) => {
+    await storeRechunk(filepath, chunkingPipeline);
   }, [storeRechunk, chunkingPipeline]);
 
-  const handleReconvert = useCallback(async (doc: DocumentInfo) => {
-    await storeReconvert(doc.filename, {
+  const handleReconvert = useCallback(async (filepath: string) => {
+    await storeReconvert(filepath, {
       conversionPipeline,
       chunkingPipeline,
       llm: buildLlmConfig({
@@ -536,19 +566,23 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     }
   }, [handleFiles]);
 
+  // --- Directory handlers ---
+
+  const handleCreateSubdir = useCallback((parentPath: string) => {
+    setCreateDirParent(parentPath || undefined);
+    setShowCreateDir(true);
+  }, []);
+
+  const handleNewFolder = useCallback(() => {
+    setCreateDirParent(undefined);
+    setShowCreateDir(true);
+  }, []);
+
   // --- Render helpers ---
 
-  const renderDocumentList = () => {
-    if (documents.length === 0) {
-      return (
-        <EmptyState
-          icon={<FileText className="h-12 w-12 opacity-50" />}
-          title="No documents yet"
-          description="Upload .txt or .md files to get started"
-        />
-      );
-    }
+  const isSearching = searchQuery.trim().length > 0;
 
+  const renderFlatList = () => {
     if (filteredDocuments.length === 0) {
       return (
         <EmptyState
@@ -565,16 +599,58 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
             key={doc.filename}
             doc={doc}
             isLoading={isLoading}
-            onEdit={() => handleEdit(doc)}
-            onIncludeDocument={() => handleIncludeDocument(doc)}
-            onExcludeDocument={() => handleExcludeDocument(doc)}
+            onEdit={() => handleEdit(doc.filename)}
+            onIncludeDocument={() => handleInclude(doc.filename)}
+            onExcludeDocument={() => handleExclude(doc.filename)}
             onViewChunks={() => setChunkViewerFilename(doc.filename)}
-            onRechunk={() => handleRechunk(doc)}
-            onReconvert={() => handleReconvert(doc)}
+            onRechunk={() => handleRechunk(doc.filename)}
+            onReconvert={() => handleReconvert(doc.filename)}
             onRemove={() => remove(doc.filename)}
           />
         ))}
       </div>
+    );
+  };
+
+  const renderTreeView = () => {
+    if (!directoryTree) {
+      if (documents.length === 0) {
+        return (
+          <EmptyState
+            icon={<FileText className="h-12 w-12 opacity-50" />}
+            title="No documents yet"
+            description="Upload .txt or .md files to get started"
+          />
+        );
+      }
+      return null;
+    }
+
+    if (directoryTree.total_files === 0 && directoryTree.total_directories === 0) {
+      return (
+        <EmptyState
+          icon={<FileText className="h-12 w-12 opacity-50" />}
+          title="No documents yet"
+          description="Upload .txt or .md files to get started"
+        />
+      );
+    }
+
+    return (
+      <DirectoryTreeView
+        entry={directoryTree.root}
+        isLoading={isLoading}
+        onEditFile={handleEdit}
+        onInclude={handleInclude}
+        onExclude={handleExclude}
+        onViewChunks={(path) => setChunkViewerFilename(path)}
+        onRechunk={handleRechunk}
+        onReconvert={handleReconvert}
+        onRemoveFile={(path) => remove(path)}
+        onMoveFile={(path) => setMoveFilePath(path)}
+        onCreateSubdir={handleCreateSubdir}
+        onDeleteDir={(path) => deleteDir(path)}
+      />
     );
   };
 
@@ -592,6 +668,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         onFileInputChange={handleFileInputChange}
         onSelectFiles={() => fileInputRef.current?.click()}
         onNewDocument={handleNew}
+        onNewFolder={handleNewFolder}
       />
 
       <PipelineSettingsBar
@@ -617,11 +694,11 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         <ScrollArea className="flex-1">
           <div className="px-4 pb-4">
             <h3 className="mb-3 text-sm font-medium text-muted-foreground">
-              {searchQuery
+              {isSearching
                 ? `Found ${filteredDocuments.length} of ${documents.length}`
                 : `Your Documents (${documents.length})`}
             </h3>
-            {renderDocumentList()}
+            {isSearching ? renderFlatList() : renderTreeView()}
           </div>
         </ScrollArea>
       </div>
@@ -645,6 +722,24 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
             await storeRechunk(chunkViewerFilename, chunkingPipeline);
           }
         }}
+      />
+
+      <MoveDocumentDialog
+        open={moveFilePath !== null}
+        onOpenChange={(open) => !open && setMoveFilePath(null)}
+        currentPath={moveFilePath ?? ''}
+        onMove={(destination) => {
+          if (moveFilePath) {
+            storeMove(moveFilePath, destination);
+          }
+        }}
+      />
+
+      <CreateDirectoryDialog
+        open={showCreateDir}
+        onOpenChange={setShowCreateDir}
+        parentPath={createDirParent}
+        onCreate={createDir}
       />
     </div>
   );
