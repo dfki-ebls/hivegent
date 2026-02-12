@@ -15,6 +15,7 @@ from .types import (
     DocumentRange,
     DocumentSummary,
     GrepMatch,
+    LlmConfig,
     RetrievedChunk,
     RetrievedDocument,
 )
@@ -34,6 +35,7 @@ class UserDeps:
 
     user_id: str
     document_filter: DocumentFilter | None = None
+    llm: LlmConfig | None = None
 
 
 base_agent: Agent[None, str] = Agent()
@@ -242,13 +244,25 @@ async def explore_documents(ctx: RunContext[UserDeps], task: str) -> str:
     Args:
         task: Natural language description of what to explore or find.
     """
+    llm = ctx.deps.llm
+    if llm:
+        # Resolved config: user overrides already merged with server defaults.
+        model = settings.llm.small_model or llm.model
+        api_key = llm.api_key
+        base_url = llm.base_url
+    else:
+        # No user config (e.g. MCP context) – use server defaults.
+        model = settings.llm.small_model or settings.llm.model
+        api_key = settings.llm.api_key
+        base_url = settings.llm.base_url or None
+
     result = await explore_agent.run(
         task,
         model=OpenAIResponsesModel(
-            settings.llm.small_model or settings.llm.model,
+            model,
             provider=OpenAIProvider(
-                api_key=settings.llm.api_key or "not-needed",
-                base_url=settings.llm.base_url or None,
+                api_key=api_key,
+                base_url=base_url,
             ),
         ),
         deps=ctx.deps,

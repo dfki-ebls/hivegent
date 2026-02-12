@@ -86,7 +86,7 @@ class LLMConverter(DocumentConverter):
             model=OpenAIResponsesModel(
                 opts.model,
                 provider=OpenAIProvider(
-                    api_key=opts.api_key or "not-needed",
+                    api_key=opts.api_key,
                     base_url=opts.base_url,
                 ),
             ),

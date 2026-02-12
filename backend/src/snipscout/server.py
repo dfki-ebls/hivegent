@@ -295,7 +295,7 @@ Return ONLY the title, no quotes or extra text.
             model=OpenAIResponsesModel(
                 resolved.model,
                 provider=OpenAIProvider(
-                    api_key=resolved.api_key or "not-needed",
+                    api_key=resolved.api_key,
                     base_url=resolved.base_url,
                 ),
             ),
@@ -400,11 +400,11 @@ async def chat(
     return await VercelAIAdapter.dispatch_request(
         request,
         agent=user_agent,
-        deps=UserDeps(user_id=user.id, document_filter=document_filter),
+        deps=UserDeps(user_id=user.id, document_filter=document_filter, llm=config.llm),
         model=OpenAIResponsesModel(
             config.llm.model,
             provider=OpenAIProvider(
-                api_key=config.llm.api_key or "not-needed",
+                api_key=config.llm.api_key,
                 base_url=config.llm.base_url,
             ),
         ),

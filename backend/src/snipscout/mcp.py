@@ -197,7 +197,7 @@ async def explore_documents(
             model=OpenAIResponsesModel(
                 model_name,
                 provider=OpenAIProvider(
-                    api_key=settings.llm.api_key or "not-needed",
+                    api_key=settings.llm.api_key,
                     base_url=settings.llm.base_url or None,
                 ),
             ),

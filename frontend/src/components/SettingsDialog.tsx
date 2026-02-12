@@ -188,7 +188,7 @@ export function SettingsDialog() {
             <Input
               id="base-url"
               type="url"
-              placeholder="http://localhost:1234/v1"
+              placeholder="e.g., http://localhost:11434/v1"
               value={llm.baseUrl}
               onChange={(e) => setLLM({ baseUrl: e.target.value })}
             />
