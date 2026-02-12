@@ -16,6 +16,7 @@ dependencies = [
   "joserfc>=1,<2",
   "logfire>=4,<5",
   "nanoid>=2,<3",
+  "opentelemetry-instrumentation-fastapi>=0.60b1",
   "pydantic-ai-slim[ui,openai]>=1,<2",
   "pydantic-settings>=2,<3",
   "ripgrepy>=2,<3",
