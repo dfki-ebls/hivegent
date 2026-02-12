@@ -2,6 +2,7 @@ import { useChat, type UIMessage } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { AlertCircle, CopyIcon, EyeOff, FileText, Folder, HistoryIcon, MessageSquareIcon, RefreshCcwIcon, SparklesIcon, SquarePen, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import type { Components } from 'streamdown';
 import { useNavigate } from '@tanstack/react-router';
 import {
   API_BASE_URL,
@@ -64,6 +65,7 @@ import {
   ToolResult,
   ToolSection,
 } from './ToolDisplay';
+import { Citation } from './Citation';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Badge } from './ui/badge';
 
@@ -253,10 +255,13 @@ interface TextPartDisplayProps {
   onRegenerate: () => void;
 }
 
+const CITATION_ALLOWED_TAGS = { cite: ['filename', 'chunk'] };
+const CITATION_COMPONENTS = { cite: Citation } as Components;
+
 function TextPartDisplay({ text, showActions, onRegenerate }: TextPartDisplayProps) {
   return (
     <div>
-      <MessageResponse>{text}</MessageResponse>
+      <MessageResponse allowedTags={CITATION_ALLOWED_TAGS} components={CITATION_COMPONENTS}>{text}</MessageResponse>
       {showActions && (
         <MessageActions>
           <MessageAction onClick={onRegenerate} label="Retry">

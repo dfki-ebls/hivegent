@@ -65,7 +65,7 @@ from .messages import (
     save_messages,
     update_conversation_title,
 )
-from .prompts import PERSONALITY_TEMPLATES
+from .prompts import CITATION_INSTRUCTIONS, PERSONALITY_TEMPLATES
 from .tokens import token_store
 from .tools import DocumentFilter
 from .types import (
@@ -409,7 +409,7 @@ async def chat(
             ),
         ),
         toolsets=[rag_toolset, explore_toolset],
-        instructions=PERSONALITY_TEMPLATES[config.personality],
+        instructions=PERSONALITY_TEMPLATES[config.personality] + CITATION_INSTRUCTIONS,
         on_complete=on_complete,
     )
 
