@@ -7,9 +7,10 @@
  */
 
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist, type StorageValue } from 'zustand/middleware';
 
 import { fetchSettings } from '../lib/api';
+import { decryptApiKey, encryptApiKey, isEncrypted } from '../lib/crypto';
 import {
   ChunkingPipeline,
   ChunkingPipelineSchema,
@@ -95,6 +96,64 @@ function computeEffective(
   };
 }
 
+/** Shape of the partialized state written to localStorage. */
+interface PersistedSettings {
+  overrides: UserOverrides;
+  documentTab: DocumentTab;
+  conversionPipeline: ConversionPipeline;
+  chunkingPipeline: ChunkingPipeline;
+  expandedDirs: string[];
+}
+
+/**
+ * Custom storage that encrypts the API key before writing to localStorage
+ * and decrypts it on read.  All other fields pass through unchanged.
+ */
+const encryptedStorage = createJSONStorage(() => ({
+  getItem: async (name: string): Promise<string | null> => {
+    const raw = localStorage.getItem(name);
+    if (!raw) return null;
+
+    let stored: StorageValue<PersistedSettings>;
+    try {
+      stored = JSON.parse(raw) as StorageValue<PersistedSettings>;
+    } catch {
+      console.warn('Corrupted settings in localStorage, resetting to defaults');
+      return null;
+    }
+
+    const apiKey = stored.state.overrides.apiKey;
+    if (typeof apiKey === 'string' && isEncrypted(apiKey)) {
+      try {
+        stored.state.overrides.apiKey = await decryptApiKey(apiKey);
+      } catch (err) {
+        console.warn('Failed to decrypt API key, clearing stored value:', err);
+        stored.state.overrides.apiKey = '';
+      }
+    }
+
+    return JSON.stringify(stored);
+  },
+
+  setItem: async (name: string, value: string): Promise<void> => {
+    const stored = JSON.parse(value) as StorageValue<PersistedSettings>;
+    const apiKey = stored.state.overrides.apiKey;
+    if (typeof apiKey === 'string' && apiKey && !isEncrypted(apiKey)) {
+      try {
+        stored.state.overrides.apiKey = await encryptApiKey(apiKey);
+      } catch (err) {
+        console.warn('Failed to encrypt API key, storing in plain text:', err);
+      }
+    }
+
+    localStorage.setItem(name, JSON.stringify(stored));
+  },
+
+  removeItem: async (name: string): Promise<void> => {
+    localStorage.removeItem(name);
+  },
+}));
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
@@ -176,6 +235,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'snipscout-settings',
+      storage: encryptedStorage,
       partialize: (state) => ({
         overrides: state.overrides,
         documentTab: state.documentTab,
