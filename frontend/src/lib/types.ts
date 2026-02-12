@@ -197,6 +197,7 @@ export const ConversationSummarySchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   message_count: z.number(),
+  compacted_from: z.string().nullable().optional(),
 });
 export type ConversationSummary = z.infer<typeof ConversationSummarySchema>;
 
@@ -206,6 +207,14 @@ export const ConversationListResponseSchema = z.object({
   total_count: z.number(),
 });
 export type ConversationListResponse = z.infer<typeof ConversationListResponseSchema>;
+
+/** Response for conversation compaction. */
+export const CompactConversationResponseSchema = z.object({
+  new_conversation_id: z.string(),
+  summary: z.string(),
+  message: z.string(),
+});
+export type CompactConversationResponse = z.infer<typeof CompactConversationResponseSchema>;
 
 /** Response for title generation. */
 export const GenerateTitleResponseSchema = z.object({

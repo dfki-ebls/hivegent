@@ -95,6 +95,7 @@ def save_messages(
             updated_at=now,
             document_references=_extract_document_refs(messages_data),
             messages=messages_data,
+            compacted_from=existing.compacted_from,
         )
     else:
         conversation = ConversationData(
@@ -166,6 +167,7 @@ def list_conversations(user_id: str) -> list[ConversationSummary]:
                         created_at=conv.created_at,
                         updated_at=conv.updated_at,
                         message_count=len(conv.messages),
+                        compacted_from=conv.compacted_from,
                     )
                 )
         except Exception:

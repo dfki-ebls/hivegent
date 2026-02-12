@@ -36,6 +36,7 @@ class LlmConfig(BaseModel):
 __all__ = [
     "ChatRequestConfig",
     "ChunkSummary",
+    "CompactConversationResponse",
     "ConversationData",
     "ConversationListResponse",
     "ConversationSummary",
@@ -203,6 +204,10 @@ class ConversationData(BaseModel):
     messages: list[dict] = Field(
         default_factory=list, description="Conversation messages"
     )
+    compacted_from: str | None = Field(
+        default=None,
+        description="ID of the conversation this was compacted from",
+    )
 
 
 class ConversationSummary(BaseModel):
@@ -213,6 +218,10 @@ class ConversationSummary(BaseModel):
     created_at: datetime = Field(description="When the conversation was created")
     updated_at: datetime = Field(description="When the conversation was last updated")
     message_count: int = Field(description="Number of messages in the conversation")
+    compacted_from: str | None = Field(
+        default=None,
+        description="ID of the conversation this was compacted from",
+    )
 
 
 class ConversationListResponse(BaseModel):
@@ -222,6 +231,14 @@ class ConversationListResponse(BaseModel):
         description="List of conversation summaries"
     )
     total_count: int = Field(description="Total number of conversations")
+
+
+class CompactConversationResponse(BaseModel):
+    """Response for conversation compaction."""
+
+    new_conversation_id: str = Field(description="ID of the new compacted conversation")
+    summary: str = Field(description="Summary of the original conversation")
+    message: str = Field(description="Status message")
 
 
 class DeleteConversationResponse(BaseModel):

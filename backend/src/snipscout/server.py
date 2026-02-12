@@ -26,6 +26,7 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
 from .agent import UserDeps, base_agent, explore_toolset, rag_toolset, user_agent
+from .compaction import compact_conversation
 from .auth import User, get_current_user
 from .chunkers import (
     ChunkingPipeline,
@@ -70,6 +71,7 @@ from .tokens import token_store
 from .tools import DocumentFilter
 from .types import (
     ChatRequestConfig,
+    CompactConversationResponse,
     ConversationListResponse,
     ConversationSummary,
     CreateConversationResponse,
@@ -211,6 +213,7 @@ async def get_conversation(
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
         message_count=len(conversation.messages),
+        compacted_from=conversation.compacted_from,
     )
 
 
@@ -246,6 +249,7 @@ async def update_title(
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
         message_count=len(conversation.messages),
+        compacted_from=conversation.compacted_from,
     )
 
 
@@ -327,6 +331,35 @@ async def delete_conversation_endpoint(
     return DeleteConversationResponse(
         id=conversation_id,
         message="Conversation deleted successfully",
+    )
+
+
+@api_router.post("/conversation/{conversation_id}/compact")
+async def compact_conversation_endpoint(
+    conversation_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> CompactConversationResponse:
+    """Compact a conversation by summarizing it into a new conversation.
+
+    Creates a new conversation with a summary of the original, linking back
+    to the original via ``compacted_from``. Uses the server's small model
+    for summarization.
+    """
+    llm_config = resolve_llm_config(LlmConfig(), default_model=settings.llm.small_model)
+
+    try:
+        result = await compact_conversation(user.id, conversation_id, llm_config)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to compact conversation: {e!s}"
+        )
+
+    return CompactConversationResponse(
+        new_conversation_id=result.new_conversation_id,
+        summary=result.summary,
+        message="Conversation compacted successfully",
     )
 
 

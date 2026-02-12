@@ -1,14 +1,16 @@
 import { useChat, type UIMessage } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { AlertCircle, CopyIcon, EyeOff, FileText, Folder, HistoryIcon, MessageSquareIcon, RefreshCcwIcon, SparklesIcon, SquarePen, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { AlertCircle, CopyIcon, EyeOff, FileText, Folder, HistoryIcon, Minimize2, MessageSquareIcon, RefreshCcwIcon, SparklesIcon, SquarePen, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Components } from 'streamdown';
 import { useNavigate } from '@tanstack/react-router';
 import {
   API_BASE_URL,
   buildLlmConfig,
+  compactConversation,
   createConversation,
   getAuthHeaders,
+  getConversation,
   getConversationDocumentReferences,
   getMessages,
 } from '../lib/api';
@@ -173,6 +175,55 @@ function processToolOutput(
   }
 }
 
+/** Typed info extracted from a tool message part. */
+interface ToolPartInfo {
+  toolName: string;
+  state: string;
+  input: Record<string, unknown> | undefined;
+  output: unknown;
+}
+
+/** Extract tool info from a message part, handling both streaming and history formats. */
+function getToolPartInfo(part: UIMessage['parts'][number]): ToolPartInfo | null {
+  const typed = part as { type: string; toolName?: string; state?: string; input?: unknown; output?: unknown };
+  const toolName = getToolName(typed);
+  if (!toolName) return null;
+  return {
+    toolName,
+    state: typed.state ?? 'output-available',
+    input: parseJson<Record<string, unknown>>(typed.input),
+    output: parseJson<unknown>(typed.output) ?? typed.output,
+  };
+}
+
+/** Extract text from the last user message. */
+function getLastUserMessageText(messages: UIMessage[]): string | undefined {
+  const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
+  if (!lastUserMessage?.parts) return undefined;
+  const texts = lastUserMessage.parts
+    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+    .map((p) => p.text);
+  return texts.length > 0 ? texts.join('\n') : undefined;
+}
+
+/** Check if an error is a context length exceeded error. */
+function isContextLengthError(error: Error | null | undefined): boolean {
+  if (!error) return false;
+  const msg = error.message || '';
+  return msg.includes('context_length_exceeded') || msg.includes('maximum context length');
+}
+
+/** Load document references for a conversation and add them to the store. */
+async function loadDocumentReferences(
+  conversationId: string,
+  addRef: (filename: string, sources: string[], score?: number) => void,
+): Promise<void> {
+  const refs = await getConversationDocumentReferences(conversationId);
+  for (const ref of refs) {
+    addRef(ref.filename, ref.sources, ref.score);
+  }
+}
+
 // --- Tool display components ---
 
 interface ToolPartDisplayProps {
@@ -298,9 +349,9 @@ function MessagePart({ part, partIndex, isLastTextPart, showActions, onRegenerat
     );
   }
 
-  const toolName = getToolName(part as { type: string; toolName?: string });
-  if (toolName) {
-    return <ToolPartDisplay key={partIndex} toolName={toolName} part={part} />;
+  const info = getToolPartInfo(part);
+  if (info) {
+    return <ToolPartDisplay key={partIndex} toolName={info.toolName} part={part} />;
   }
 
   return null;
@@ -334,6 +385,9 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [activeTab, setActiveTab] = useState('chat');
   const [personality, setPersonality] = useState<Personality>('default');
+  const [compactedFrom, setCompactedFrom] = useState<string | null>(null);
+  const [isCompacting, setIsCompacting] = useState(false);
+  const pendingRetryRef = useRef<string | null>(null);
 
   const hasDocumentFilters = includedDocuments.length > 0 || excludedDocuments.length > 0;
 
@@ -348,12 +402,7 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
     clearDocuments();
     setActiveTab('chat');
     navigate({ to: '/chat/$id', params: { id: conversationId } });
-
-    // Load document references for the selected conversation
-    const refs = await getConversationDocumentReferences(conversationId);
-    for (const ref of refs) {
-      addDocumentReference(ref.filename, ref.sources, ref.score);
-    }
+    await loadDocumentReferences(conversationId, addDocumentReference);
   };
 
   const transport = useMemo(
@@ -372,16 +421,19 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
   useEffect(() => {
     let cancelled = false;
     setIsLoadingHistory(true);
+    setCompactedFrom(null);
     getMessages(id)
       .then(async (initialMessages) => {
         if (!cancelled && initialMessages.length > 0) {
           setMessages(initialMessages);
         }
-        // Also load document references for the current conversation
         if (!cancelled) {
-          const refs = await getConversationDocumentReferences(id);
-          for (const ref of refs) {
-            addDocumentReference(ref.filename, ref.sources, ref.score);
+          await loadDocumentReferences(id, addDocumentReference);
+        }
+        if (!cancelled) {
+          const conv = await getConversation(id);
+          if (conv?.compacted_from) {
+            setCompactedFrom(conv.compacted_from);
           }
         }
       })
@@ -395,7 +447,7 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
     };
   }, [id, setMessages, addDocumentReference]);
 
-  const handleSendMessage = async (text: string) => {
+  const handleSendMessage = useCallback(async (text: string) => {
     if (!text.trim()) return;
     const authHeaders = await getAuthHeaders();
     sendMessage(
@@ -413,9 +465,17 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
     );
     setInputValue('');
     onClearDocuments();
-  };
+  }, [id, personality, llm, includedDocuments, excludedDocuments, sendMessage, onClearDocuments]);
 
-  const handleRegenerate = async () => {
+  // Re-send the pending message after navigating to a compacted conversation
+  useEffect(() => {
+    if (isLoadingHistory || !pendingRetryRef.current) return;
+    const text = pendingRetryRef.current;
+    pendingRetryRef.current = null;
+    handleSendMessage(text);
+  }, [isLoadingHistory, handleSendMessage]);
+
+  const handleRegenerate = useCallback(async () => {
     const authHeaders = await getAuthHeaders();
     regenerate({
       headers: authHeaders,
@@ -427,25 +487,38 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
         excluded_documents: excludedDocuments,
       },
     });
-  };
+  }, [id, personality, llm, includedDocuments, excludedDocuments, regenerate]);
+
+  const handleCompact = useCallback(async (retryMessageText?: string) => {
+    setIsCompacting(true);
+    try {
+      const result = await compactConversation(id);
+      clearDocuments();
+      if (retryMessageText) {
+        pendingRetryRef.current = retryMessageText;
+      }
+      navigate({ to: '/chat/$id', params: { id: result.new_conversation_id } });
+    } catch (err) {
+      console.error('Compaction failed:', err);
+    } finally {
+      setIsCompacting(false);
+    }
+  }, [id, clearDocuments, navigate]);
+
+  // Auto-compact when context window is exceeded
+  useEffect(() => {
+    if (!isContextLengthError(error)) return;
+    handleCompact(getLastUserMessageText(messages));
+  }, [error, messages, handleCompact]);
 
   // Sync tool outputs to the document store
   useEffect(() => {
     for (const message of messages) {
       if (!message.parts) continue;
       for (const part of message.parts) {
-        const state = 'state' in part ? part.state : 'output-available';
-        if (state !== 'output-available') continue;
-
-        const toolName = getToolName(part as { type: string; toolName?: string });
-        if (!toolName) continue;
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const toolPart = part as any;
-        const input = parseJson<Record<string, unknown>>(toolPart.input);
-        const output = parseJson<unknown>(toolPart.output) ?? toolPart.output;
-
-        processToolOutput(toolName, input, output, addSearchResults, addDocument);
+        const info = getToolPartInfo(part);
+        if (!info || info.state !== 'output-available') continue;
+        processToolOutput(info.toolName, info.input, info.output, addSearchResults, addDocument);
       }
     }
   }, [messages, addSearchResults, addDocument]);
@@ -471,12 +544,40 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
       <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
         <Conversation className="min-h-0 flex-1">
           <ConversationContent className="gap-4">
-            {error && (
+            {compactedFrom && (
+              <Alert>
+                <HistoryIcon className="h-4 w-4" />
+                <AlertTitle>Continued conversation</AlertTitle>
+                <AlertDescription>
+                  This conversation was compacted from a{' '}
+                  <button
+                    onClick={() => {
+                      clearDocuments();
+                      navigate({ to: '/chat/$id', params: { id: compactedFrom } });
+                    }}
+                    className="underline hover:text-primary"
+                  >
+                    previous chat
+                  </button>
+                  .
+                </AlertDescription>
+              </Alert>
+            )}
+            {error && !isContextLengthError(error) && (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Error</AlertTitle>
                 <AlertDescription>
                   {error.message || 'An error occurred while processing your request.'}
+                </AlertDescription>
+              </Alert>
+            )}
+            {isCompacting && (
+              <Alert>
+                <Minimize2 className="h-4 w-4" />
+                <AlertTitle>Compacting conversation</AlertTitle>
+                <AlertDescription>
+                  Summarizing the conversation to fit within context limits...
                 </AlertDescription>
               </Alert>
             )}
@@ -611,6 +712,24 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
                     </PromptInputSelectContent>
                   </PromptInputSelect>
                 </div>
+                {messages.length > 0 && (
+                  <div className="flex flex-col items-center gap-1">
+                    <div className="flex items-center gap-1">
+                      <Minimize2 className="h-3 w-3 text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">Compact</span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8"
+                      onClick={() => handleCompact()}
+                      disabled={status !== 'ready' || isCompacting}
+                      title="Summarize and continue in a new chat"
+                    >
+                      {isCompacting ? 'Compacting...' : 'Compact'}
+                    </Button>
+                  </div>
+                )}
               </PromptInputTools>
               <PromptInputSubmit status={status} onStop={stop} />
             </PromptInputFooter>

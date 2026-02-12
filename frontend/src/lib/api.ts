@@ -5,6 +5,7 @@ import {
   BackendSettingsSchema,
   ChunkedDocumentResponseSchema,
   ChunkingPipelineInfoSchema,
+  CompactConversationResponseSchema,
   ConversionPipelineInfoSchema,
   ConversationListResponseSchema,
   ConversationSummarySchema,
@@ -24,6 +25,7 @@ import {
   type ChunkedDocumentResponse,
   type ChunkingPipeline,
   type ChunkingPipelineInfo,
+  type CompactConversationResponse,
   type ConversionPipeline,
   type ConversionPipelineInfo,
   type ConversationSummary,
@@ -309,6 +311,34 @@ export async function generateConversationTitle(
 
   const data: unknown = await res.json();
   return GenerateTitleResponseSchema.parse(data);
+}
+
+export async function compactConversation(
+  conversationId: string
+): Promise<CompactConversationResponse> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/conversation/${conversationId}/compact`,
+    { method: 'POST' }
+  );
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Compaction failed' }));
+    throw new Error(error.detail || 'Compaction failed');
+  }
+
+  const data: unknown = await res.json();
+  return CompactConversationResponseSchema.parse(data);
+}
+
+export async function getConversation(
+  conversationId: string
+): Promise<ConversationSummary | null> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/conversation/${conversationId}`
+  );
+  if (!res.ok) return null;
+  const data: unknown = await res.json();
+  return ConversationSummarySchema.parse(data);
 }
 
 export async function deleteConversation(conversationId: string): Promise<void> {
