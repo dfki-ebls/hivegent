@@ -17,15 +17,11 @@ import {
   ConversionPipelineSchema,
   DocumentTabSchema,
   ExpandedDirsSchema,
-  ModelConfigArraySchema,
   UserOverridesSchema,
   type BackendSettings,
   type DocumentTab,
-  type ModelConfig,
   type UserOverrides,
 } from '../lib/types';
-
-export type { ModelConfig };
 
 export interface LLMSettings {
   model: string;
@@ -55,9 +51,6 @@ interface SettingsState {
   // User LLM overrides (persisted)
   overrides: UserOverrides;
 
-  // User-managed model list (persisted)
-  availableModels: ModelConfig[];
-
   // UI preferences (persisted)
   documentTab: DocumentTab;
   conversionPipeline: ConversionPipeline;
@@ -74,8 +67,6 @@ interface SettingsState {
   setLLM: (settings: Partial<LLMSettings>) => void;
   setSmallModel: (model: string) => void;
   setVisionModel: (model: string) => void;
-  addModel: (model: ModelConfig) => void;
-  removeModel: (value: string) => void;
   reset: () => void;
   initFromBackend: () => Promise<void>;
 
@@ -109,7 +100,6 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       backendDefaults: null,
       overrides: EMPTY_OVERRIDES,
-      availableModels: [],
       ...UI_DEFAULTS,
 
       // Initial computed values (no backend defaults yet)
@@ -147,20 +137,9 @@ export const useSettingsStore = create<SettingsState>()(
           };
         }),
 
-      addModel: (model) =>
-        set((state) => ({
-          availableModels: [...state.availableModels, model],
-        })),
-
-      removeModel: (value) =>
-        set((state) => ({
-          availableModels: state.availableModels.filter((m) => m.value !== value),
-        })),
-
       reset: () =>
         set((state) => ({
           overrides: EMPTY_OVERRIDES,
-          availableModels: [],
           ...computeEffective(state.backendDefaults, EMPTY_OVERRIDES),
         })),
 
@@ -199,7 +178,6 @@ export const useSettingsStore = create<SettingsState>()(
       name: 'snipscout-settings',
       partialize: (state) => ({
         overrides: state.overrides,
-        availableModels: state.availableModels,
         documentTab: state.documentTab,
         conversionPipeline: state.conversionPipeline,
         chunkingPipeline: state.chunkingPipeline,
@@ -211,13 +189,10 @@ export const useSettingsStore = create<SettingsState>()(
 
         const overrides =
           UserOverridesSchema.safeParse(data.overrides).data ?? EMPTY_OVERRIDES;
-        const availableModels =
-          ModelConfigArraySchema.safeParse(data.availableModels).data ?? [];
 
         return {
           ...current,
           overrides,
-          availableModels,
           documentTab:
             DocumentTabSchema.safeParse(data.documentTab).data ?? UI_DEFAULTS.documentTab,
           conversionPipeline:

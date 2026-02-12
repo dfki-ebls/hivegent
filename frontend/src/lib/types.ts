@@ -73,14 +73,6 @@ export const UserOverridesSchema = z.object({
 });
 export type UserOverrides = z.infer<typeof UserOverridesSchema>;
 
-export const ModelConfigSchema = z.object({
-  name: z.string(),
-  value: z.string(),
-});
-export type ModelConfig = z.infer<typeof ModelConfigSchema>;
-
-export const ModelConfigArraySchema = z.array(ModelConfigSchema);
-
 // ============================================================
 // API response schemas
 // ============================================================

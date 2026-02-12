@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { SettingsIcon, PlusIcon, TrashIcon, Trash2Icon, RotateCcwIcon } from 'lucide-react';
+import { SettingsIcon, Trash2Icon, RotateCcwIcon } from 'lucide-react';
 
 import { clearAllStorage } from '../stores/storage';
-import { useSettingsStore, type ModelConfig } from '../stores/settings-store';
+import { useSettingsStore } from '../stores/settings-store';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -36,68 +36,6 @@ function SettingsSection({ label, htmlFor, description, children }: SettingsSect
   );
 }
 
-// --- Add model form ---
-
-interface AddModelFormProps {
-  onAdd: (model: ModelConfig) => void;
-  onCancel: () => void;
-}
-
-function AddModelForm({ onAdd, onCancel }: AddModelFormProps) {
-  const [name, setName] = useState('');
-  const [value, setValue] = useState('');
-
-  const handleSubmit = () => {
-    if (name.trim() && value.trim()) {
-      onAdd({ name: name.trim(), value: value.trim() });
-    }
-  };
-
-  return (
-    <div className="grid gap-2 p-3 border rounded-md bg-muted/50">
-      <Input
-        placeholder="Model name (e.g., My Custom Model)"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-      />
-      <Input
-        placeholder="Model value (e.g., provider/model-name)"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-      />
-      <div className="flex gap-2">
-        <Button size="sm" onClick={handleSubmit}>
-          Add
-        </Button>
-        <Button size="sm" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// --- Model list item ---
-
-interface ModelListItemProps {
-  model: ModelConfig;
-  onRemove: () => void;
-}
-
-function ModelListItem({ model, onRemove }: ModelListItemProps) {
-  return (
-    <div className="flex items-center justify-between py-1 px-2 text-sm rounded hover:bg-muted/50">
-      <div>
-        <span className="font-medium">{model.name}</span>
-        <span className="text-muted-foreground ml-2 text-xs">{model.value}</span>
-      </div>
-      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onRemove}>
-        <TrashIcon className="h-3 w-3" />
-      </Button>
-    </div>
-  );
-}
-
 // --- Main component ---
 
 export function SettingsDialog() {
@@ -105,23 +43,14 @@ export function SettingsDialog() {
     llm,
     smallModel,
     visionModel,
-    availableModels,
     hasServerApiKey,
     setLLM,
     setSmallModel,
     setVisionModel,
-    addModel,
-    removeModel,
     reset,
   } = useSettingsStore();
 
   const [open, setOpen] = useState(false);
-  const [showAddModel, setShowAddModel] = useState(false);
-
-  const handleAddModel = (model: ModelConfig) => {
-    addModel(model);
-    setShowAddModel(false);
-  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -140,29 +69,18 @@ export function SettingsDialog() {
         </DialogHeader>
 
         <div className="grid gap-4 py-4">
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium">Available Models</label>
-              <Button variant="ghost" size="sm" onClick={() => setShowAddModel(!showAddModel)}>
-                <PlusIcon className="h-4 w-4 mr-1" />
-                Add Model
-              </Button>
-            </div>
-
-            {showAddModel && (
-              <AddModelForm onAdd={handleAddModel} onCancel={() => setShowAddModel(false)} />
-            )}
-
-            <div className="max-h-32 overflow-y-auto space-y-1">
-              {availableModels.map((model) => (
-                <ModelListItem
-                  key={model.value}
-                  model={model}
-                  onRemove={() => removeModel(model.value)}
-                />
-              ))}
-            </div>
-          </div>
+          <SettingsSection
+            label="Model"
+            htmlFor="model"
+            description="The main model to use for chat. Leave empty to use the server default."
+          >
+            <Input
+              id="model"
+              placeholder="e.g., openai/gpt-4o"
+              value={llm.model}
+              onChange={(e) => setLLM({ model: e.target.value })}
+            />
+          </SettingsSection>
 
           <SettingsSection
             label="API Key (optional)"

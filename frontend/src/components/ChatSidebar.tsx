@@ -1,6 +1,6 @@
 import { useChat, type UIMessage } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { AlertCircle, BotIcon, CopyIcon, EyeOff, FileText, Folder, HistoryIcon, MessageSquareIcon, RefreshCcwIcon, SparklesIcon, SquarePen, X } from 'lucide-react';
+import { AlertCircle, CopyIcon, EyeOff, FileText, Folder, HistoryIcon, MessageSquareIcon, RefreshCcwIcon, SparklesIcon, SquarePen, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import {
@@ -320,7 +320,7 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
   const addDocumentReference = useFetchedDocumentsStore((state) => state.addDocumentReference);
   const clearDocuments = useFetchedDocumentsStore((state) => state.clearDocuments);
   const fetchConversations = useConversationsStore((state) => state.fetchConversations);
-  const { llm, availableModels, setLLM } = useSettingsStore();
+  const { llm } = useSettingsStore();
   const [inputValue, setInputValue] = useState('');
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [activeTab, setActiveTab] = useState('chat');
@@ -584,24 +584,6 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
             <PromptInputFooter>
               <PromptInputTools>
                 <SettingsDialog />
-                <div className="flex flex-col items-center gap-1">
-                  <div className="flex items-center gap-1">
-                    <BotIcon className="h-3 w-3 text-muted-foreground" />
-                    <span className="text-xs text-muted-foreground">Model</span>
-                  </div>
-                  <PromptInputSelect value={llm.model} onValueChange={(model) => setLLM({ model })}>
-                    <PromptInputSelectTrigger className="h-8 w-auto min-w-30">
-                      <PromptInputSelectValue placeholder="Select model" />
-                    </PromptInputSelectTrigger>
-                    <PromptInputSelectContent>
-                      {availableModels.map((model) => (
-                        <PromptInputSelectItem key={model.value} value={model.value}>
-                          {model.name}
-                        </PromptInputSelectItem>
-                      ))}
-                    </PromptInputSelectContent>
-                  </PromptInputSelect>
-                </div>
                 <div className="flex flex-col items-center gap-1">
                   <div className="flex items-center gap-1">
                     <SparklesIcon className="h-3 w-3 text-muted-foreground" />
