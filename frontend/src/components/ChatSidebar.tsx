@@ -13,8 +13,10 @@ import {
 } from '../lib/api';
 import {
   PERSONALITY_OPTIONS,
+  type DocumentRange,
   type GrepMatch,
   type Personality,
+  type RetrievedChunk,
   type RetrievedDocument,
   type SearchDocumentsInput,
 } from '../lib/types';
@@ -104,7 +106,7 @@ function processToolOutput(
   addSearchResults: (results: RetrievedDocument[], query: string) => void,
   addDocument: (filename: string, content: string, source: string) => void
 ) {
-  if (!input || !output) return;
+  if (!input || output == null) return;
 
   switch (toolName) {
     case 'search_documents': {
@@ -115,37 +117,21 @@ function processToolOutput(
     }
     case 'get_document': {
       const filename = input.filename as string;
-      if (filename && typeof output === 'string') {
-        addDocument(filename, output, 'get_document');
+      const content = typeof output === 'string' ? output : null;
+      if (filename && content) {
+        addDocument(filename, content, 'get_document');
       }
       break;
     }
-    case 'get_document_range': {
+    case 'get_document_lines': {
       const filename = input.filename as string;
-      const result = output as { content?: string };
+      const result = output as DocumentRange;
       if (filename && result?.content) {
-        addDocument(filename, result.content, `lines ${input.start_line}-${input.end_line}`);
+        addDocument(filename, result.content, `lines ${result.start_line}-${result.end_line}`);
       }
       break;
     }
-    case 'get_context': {
-      const filename = input.filename as string;
-      const result = output as { content?: string };
-      if (filename && result?.content) {
-        addDocument(filename, result.content, `context around line ${input.line}`);
-      }
-      break;
-    }
-    case 'grep_document': {
-      const filename = input.filename as string;
-      const matches = output as GrepMatch[];
-      if (filename && matches?.length) {
-        const content = matches.map((m) => `${m.line}: ${m.content ?? ''}`).join('\n');
-        addDocument(filename, content, `grep: ${input.pattern}`);
-      }
-      break;
-    }
-    case 'grep_documents': {
+    case 'grep': {
       const matches = output as GrepMatch[];
       const pattern = input.pattern as string;
       if (matches?.length && pattern) {
@@ -161,6 +147,24 @@ function processToolOutput(
           const content = fileMatches.map((m) => `${m.line}: ${m.content ?? ''}`).join('\n');
           addDocument(filename, content, `grep: ${pattern}`);
         }
+      }
+      break;
+    }
+    case 'search_chunks': {
+      const chunks = output as RetrievedChunk[];
+      if (chunks?.length) {
+        const query = input.query as string;
+        for (const chunk of chunks) {
+          addDocument(chunk.filename, chunk.text, `chunk search${query ? `: ${query}` : ''}`);
+        }
+      }
+      break;
+    }
+    case 'get_chunk': {
+      const filename = input.filename as string;
+      const chunkIndex = input.chunk_index as number;
+      if (filename && typeof output === 'string') {
+        addDocument(filename, output, `chunk ${chunkIndex}`);
       }
       break;
     }
@@ -434,7 +438,7 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const toolPart = part as any;
         const input = parseJson<Record<string, unknown>>(toolPart.input);
-        const output = parseJson<unknown>(toolPart.output);
+        const output = parseJson<unknown>(toolPart.output) ?? toolPart.output;
 
         processToolOutput(toolName, input, output, addSearchResults, addDocument);
       }

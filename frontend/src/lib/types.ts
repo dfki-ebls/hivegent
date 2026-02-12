@@ -173,6 +173,15 @@ export const RetrievedDocumentSchema = z.object({
 });
 export type RetrievedDocument = z.infer<typeof RetrievedDocumentSchema>;
 
+export const RetrievedChunkSchema = z.object({
+  filename: z.string(),
+  chunk_index: z.number(),
+  text: z.string(),
+  token_count: z.number(),
+  score: z.number(),
+});
+export type RetrievedChunk = z.infer<typeof RetrievedChunkSchema>;
+
 /** A reference to a document accessed during a conversation. */
 export const DocumentReferenceSchema = z.object({
   filename: z.string(),
