@@ -182,7 +182,7 @@ function SearchDocumentsToolDisplay({ part }: Omit<ToolPartDisplayProps, 'toolNa
   const output = parseJson<RetrievedDocument[]>(part.output);
 
   return (
-    <Tool defaultOpen={state !== 'output-available'}>
+    <Tool defaultOpen={false}>
       <ToolHeader title="Document Search" type="tool-search_documents" state={state} />
       <ToolContent>
         {input?.query && (
@@ -216,7 +216,7 @@ function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
   const input = parseJson<Record<string, unknown>>(part.input);
 
   return (
-    <Tool defaultOpen={state !== 'output-available'}>
+    <Tool defaultOpen={false}>
       <ToolHeader type={`tool-${toolName}`} state={state} />
       <ToolContent>
         {input && <ToolParameters params={input} />}
