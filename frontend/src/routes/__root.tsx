@@ -4,6 +4,7 @@ import { Outlet, createRootRoute, useLocation } from '@tanstack/react-router';
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools';
 import { TanStackDevtools } from '@tanstack/react-devtools';
 
+import { AppErrorBoundary } from '../components/AppErrorBoundary';
 import { AuthGate } from '../components/AuthGate';
 import { AuthProvider } from '../components/AuthProvider';
 import { Header } from '../components/Header';
@@ -24,31 +25,33 @@ function RootComponent() {
 
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <div className="flex h-screen flex-col">
-          <Header />
-          <main className="flex-1 overflow-hidden">
-            {isPublicRoute ? (
-              <Outlet />
-            ) : (
-              <AuthGate>
+      <AppErrorBoundary>
+        <AuthProvider>
+          <div className="flex h-screen flex-col">
+            <Header />
+            <main className="flex-1 overflow-hidden">
+              {isPublicRoute ? (
                 <Outlet />
-              </AuthGate>
-            )}
-          </main>
-          <TanStackDevtools
-            config={{
-              position: 'bottom-left',
-            }}
-            plugins={[
-              {
-                name: 'Tanstack Router',
-                render: <TanStackRouterDevtoolsPanel />,
-              },
-            ]}
-          />
-        </div>
-      </AuthProvider>
+              ) : (
+                <AuthGate>
+                  <Outlet />
+                </AuthGate>
+              )}
+            </main>
+            <TanStackDevtools
+              config={{
+                position: 'bottom-left',
+              }}
+              plugins={[
+                {
+                  name: 'Tanstack Router',
+                  render: <TanStackRouterDevtoolsPanel />,
+                },
+              ]}
+            />
+          </div>
+        </AuthProvider>
+      </AppErrorBoundary>
     </ThemeProvider>
   );
 }

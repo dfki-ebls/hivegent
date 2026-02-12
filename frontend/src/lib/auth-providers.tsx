@@ -16,7 +16,7 @@ import {
   type AuthUser,
 } from './auth-context';
 
-const LOCAL_AUTH_KEY = 'snipscout_local_auth';
+const LOCAL_AUTH_KEY = 'snipscout-local-auth';
 
 /**
  * Provider component for local (non-OIDC) authentication.

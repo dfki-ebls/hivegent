@@ -1,26 +1,45 @@
 import type { UIMessage } from '@ai-sdk/react';
-import type {
-  ChunkedDocumentResponse,
-  ChunkingPipeline,
-  ChunkingPipelineInfo,
-  ConversionPipeline,
-  ConversionPipelineInfo,
-  ConversationListResponse,
-  ConversationSummary,
-  CreateDirectoryResponse,
-  CreateTokenRequest,
-  CreateTokenResponse,
-  CreateConversationResponse,
-  DeleteDirectoryResponse,
-  DirectoryTreeResponse,
-  DocumentInfo,
-  DocumentReference,
-  GenerateTitleResponse,
-  LlmConfig,
-  MoveDocumentResponse,
-  TokenInfo,
+import { z } from 'zod';
+
+import {
+  BackendSettingsSchema,
+  ChunkedDocumentResponseSchema,
+  ChunkingPipelineInfoSchema,
+  ConversionPipelineInfoSchema,
+  ConversationListResponseSchema,
+  ConversationSummarySchema,
+  CreateConversationResponseSchema,
+  CreateDirectoryResponseSchema,
+  CreateTokenResponseSchema,
+  DeleteDirectoryResponseSchema,
+  DirectoryTreeResponseSchema,
+  DocumentListResponseSchema,
+  DocumentReferenceSchema,
+  FileExtension,
+  GenerateTitleResponseSchema,
+  MoveDocumentResponseSchema,
+  TokenInfoSchema,
+  UploadDocumentResponseSchema,
+  type BackendSettings,
+  type ChunkedDocumentResponse,
+  type ChunkingPipeline,
+  type ChunkingPipelineInfo,
+  type ConversionPipeline,
+  type ConversionPipelineInfo,
+  type ConversationSummary,
+  type CreateDirectoryResponse,
+  type CreateTokenResponse,
+  type DeleteDirectoryResponse,
+  type DirectoryTreeResponse,
+  type DocumentInfo,
+  type DocumentReference,
+  type GenerateTitleResponse,
+  type LlmConfig,
+  type MoveDocumentResponse,
+  type TokenInfo,
+  type UploadDocumentResponse,
+  type CreateTokenRequest,
 } from './types';
-import { requiresConversion } from './types';
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
@@ -77,13 +96,21 @@ function encodeFilePath(filepath: string): string {
   return filepath.split('/').map(encodeURIComponent).join('/');
 }
 
-/** Settings exposed by the backend. */
-export interface BackendSettings {
-  model: string;
-  vision_model: string;
-  small_model: string;
-  has_api_key: boolean;
-  base_url: string;
+/** Binary extensions that require conversion. */
+const BINARY_EXTENSIONS = new Set([
+  FileExtension.DOCX,
+  FileExtension.XLSX,
+  FileExtension.PPTX,
+  FileExtension.PDF,
+  FileExtension.PNG,
+  FileExtension.JPG,
+  FileExtension.JPEG,
+]);
+
+/** Check if a file extension requires conversion. */
+export function requiresConversion(filename: string): boolean {
+  const ext = ('.' + filename.split('.').pop()?.toLowerCase()) as FileExtension;
+  return BINARY_EXTENSIONS.has(ext);
 }
 
 /** Fetch server-side LLM settings. */
@@ -92,7 +119,8 @@ export async function fetchSettings(): Promise<BackendSettings> {
   if (!res.ok) {
     throw new Error('Failed to fetch settings');
   }
-  return res.json();
+  const data: unknown = await res.json();
+  return BackendSettingsSchema.parse(data);
 }
 
 /** Build a sparse LlmConfig from frontend settings. */
@@ -112,8 +140,8 @@ export async function createConversation(): Promise<string> {
   const res = await authFetch(`${API_BASE_URL}/api/conversation`, {
     method: 'POST',
   });
-  const data: CreateConversationResponse = await res.json();
-  return data.id;
+  const data: unknown = await res.json();
+  return CreateConversationResponseSchema.parse(data).id;
 }
 
 export async function getMessages(conversationId: string): Promise<UIMessage[]> {
@@ -126,18 +154,13 @@ export async function getMessages(conversationId: string): Promise<UIMessage[]> 
   return res.json();
 }
 
-export interface DocumentListResponse {
-  documents: DocumentInfo[];
-  total_count: number;
-}
-
 export async function listDocuments(): Promise<DocumentInfo[]> {
   const res = await authFetch(`${API_BASE_URL}/api/documents`);
   if (!res.ok) {
     throw new Error('Failed to list documents');
   }
-  const data: DocumentListResponse = await res.json();
-  return data.documents;
+  const data: unknown = await res.json();
+  return DocumentListResponseSchema.parse(data).documents;
 }
 
 /** Options for document upload. */
@@ -146,17 +169,6 @@ export interface UploadDocumentOptions {
   chunkingPipeline?: ChunkingPipeline;
   llm?: LlmConfig;
   targetDirectory?: string;
-}
-
-/** Response from document upload. */
-export interface UploadDocumentResponse {
-  filename: string;
-  converted_filename: string | null;
-  size_bytes: number;
-  conversion_pipeline_used: string | null;
-  chunk_count: number | null;
-  chunking_pipeline_used: string | null;
-  message: string;
 }
 
 export async function uploadDocument(
@@ -201,7 +213,8 @@ export async function uploadDocument(
     throw new Error(error.detail || 'Upload failed');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return UploadDocumentResponseSchema.parse(data);
 }
 
 export async function deleteDocument(filename: string): Promise<void> {
@@ -235,8 +248,8 @@ export async function listConversations(): Promise<ConversationSummary[]> {
   if (!res.ok) {
     throw new Error('Failed to list conversations');
   }
-  const data: ConversationListResponse = await res.json();
-  return data.conversations;
+  const data: unknown = await res.json();
+  return ConversationListResponseSchema.parse(data).conversations;
 }
 
 export async function getConversationDocumentReferences(
@@ -248,7 +261,8 @@ export async function getConversationDocumentReferences(
   if (!res.ok) {
     return [];
   }
-  return res.json();
+  const data: unknown = await res.json();
+  return z.array(DocumentReferenceSchema).parse(data);
 }
 
 export async function updateConversationTitle(
@@ -269,7 +283,8 @@ export async function updateConversationTitle(
     throw new Error(error.detail || 'Update failed');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return ConversationSummarySchema.parse(data);
 }
 
 export async function generateConversationTitle(
@@ -292,7 +307,8 @@ export async function generateConversationTitle(
     throw new Error(error.detail || 'Title generation failed');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return GenerateTitleResponseSchema.parse(data);
 }
 
 export async function deleteConversation(conversationId: string): Promise<void> {
@@ -326,7 +342,8 @@ export async function createToken(
     throw new Error(error.detail || 'Failed to create token');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return CreateTokenResponseSchema.parse(data);
 }
 
 export async function listTokens(): Promise<TokenInfo[]> {
@@ -336,7 +353,8 @@ export async function listTokens(): Promise<TokenInfo[]> {
     throw new Error('Failed to list tokens');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return z.array(TokenInfoSchema).parse(data);
 }
 
 export async function revokeToken(tokenId: string): Promise<void> {
@@ -359,7 +377,8 @@ export async function getConversionPipelines(): Promise<ConversionPipelineInfo[]
     throw new Error('Failed to get conversion pipelines');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return z.array(ConversionPipelineInfoSchema).parse(data);
 }
 
 // Chunking pipeline API functions
@@ -371,7 +390,8 @@ export async function getChunkingPipelines(): Promise<ChunkingPipelineInfo[]> {
     throw new Error('Failed to get chunking pipelines');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return z.array(ChunkingPipelineInfoSchema).parse(data);
 }
 
 export async function getDocumentChunks(filename: string): Promise<ChunkedDocumentResponse> {
@@ -384,7 +404,8 @@ export async function getDocumentChunks(filename: string): Promise<ChunkedDocume
     throw new Error(error.detail || 'Failed to fetch chunks');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return ChunkedDocumentResponseSchema.parse(data);
 }
 
 /** Options for document reconversion. */
@@ -415,7 +436,8 @@ export async function reconvertDocument(
     throw new Error(error.detail || 'Reconvert failed');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return UploadDocumentResponseSchema.parse(data);
 }
 
 export async function rechunkDocument(
@@ -444,7 +466,8 @@ export async function rechunkDocument(
     throw new Error(error.detail || 'Rechunk failed');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return ChunkedDocumentResponseSchema.parse(data);
 }
 
 // Directory management API functions
@@ -454,7 +477,8 @@ export async function getDirectoryTree(): Promise<DirectoryTreeResponse> {
   if (!res.ok) {
     throw new Error('Failed to fetch directory tree');
   }
-  return res.json();
+  const data: unknown = await res.json();
+  return DirectoryTreeResponseSchema.parse(data);
 }
 
 export async function createDirectory(path: string): Promise<CreateDirectoryResponse> {
@@ -469,7 +493,8 @@ export async function createDirectory(path: string): Promise<CreateDirectoryResp
     throw new Error(error.detail || 'Failed to create directory');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return CreateDirectoryResponseSchema.parse(data);
 }
 
 export async function deleteDirectory(dirpath: string): Promise<DeleteDirectoryResponse> {
@@ -483,7 +508,8 @@ export async function deleteDirectory(dirpath: string): Promise<DeleteDirectoryR
     throw new Error(error.detail || 'Failed to delete directory');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return DeleteDirectoryResponseSchema.parse(data);
 }
 
 export async function moveDocument(
@@ -504,5 +530,6 @@ export async function moveDocument(
     throw new Error(error.detail || 'Move failed');
   }
 
-  return res.json();
+  const data: unknown = await res.json();
+  return MoveDocumentResponseSchema.parse(data);
 }

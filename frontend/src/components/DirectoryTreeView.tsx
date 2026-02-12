@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 
 import type { DirectoryEntry } from '../lib/types';
+import { useSettingsStore } from '../stores/settings-store';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 
@@ -41,21 +42,6 @@ interface DirectoryTreeViewProps {
   depth?: number;
 }
 
-const EXPANDED_DIRS_KEY = 'snipscout-expanded-dirs';
-
-function loadExpandedDirs(): Set<string> {
-  try {
-    const stored = localStorage.getItem(EXPANDED_DIRS_KEY);
-    if (stored) return new Set(JSON.parse(stored) as string[]);
-  } catch {
-    // ignore
-  }
-  return new Set<string>(['']);
-}
-
-function saveExpandedDirs(dirs: Set<string>) {
-  localStorage.setItem(EXPANDED_DIRS_KEY, JSON.stringify([...dirs]));
-}
 
 function FileRow({
   entry,
@@ -289,20 +275,13 @@ export function DirectoryTreeView({
   onDeleteDir,
   depth = 0,
 }: DirectoryTreeViewProps) {
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(loadExpandedDirs);
+  const expandedDirsArray = useSettingsStore((state) => state.expandedDirs);
+  const toggleExpandedDir = useSettingsStore((state) => state.toggleExpandedDir);
+  const expandedDirs = new Set(expandedDirsArray);
 
   const toggleDir = useCallback((path: string) => {
-    setExpandedDirs((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      saveExpandedDirs(next);
-      return next;
-    });
-  }, []);
+    toggleExpandedDir(path);
+  }, [toggleExpandedDir]);
 
   const renderEntry = (child: DirectoryEntry, currentDepth: number) => {
     if (child.type === 'file') {

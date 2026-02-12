@@ -3,9 +3,9 @@ import type { ReactNode } from 'react';
 import Fuse from 'fuse.js';
 import { AlertCircle, EyeOff, FileText, FolderOpen, FolderPlus, MessageSquarePlus, Plus, RefreshCw, RotateCcw, Scissors, Search, Trash2, Upload, X } from 'lucide-react';
 
-import { buildLlmConfig, getDocumentContent, uploadDocument } from '../lib/api';
-import type { DocumentInfo, StoredDocument } from '../lib/types';
-import { ChunkingPipeline, ConversionPipeline, FileExtension, requiresConversion } from '../lib/types';
+import { buildLlmConfig, getDocumentContent, requiresConversion, uploadDocument } from '../lib/api';
+import type { ChunkingPipeline, ConversionPipeline, DocumentInfo, StoredDocument } from '../lib/types';
+import { FileExtension } from '../lib/types';
 import { useFetchedDocumentsStore } from '../stores/fetched-documents-store';
 import { useManagedDocumentsStore } from '../stores/managed-documents-store';
 import { useSettingsStore } from '../stores/settings-store';
@@ -406,9 +406,6 @@ interface ManageDocumentsProps {
   onExcludeDocument?: (filename: string) => void;
 }
 
-const CONVERSION_PIPELINE_STORAGE_KEY = 'snipscout-conversion-pipeline';
-const CHUNKING_PIPELINE_STORAGE_KEY = 'snipscout-chunking-pipeline';
-
 function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumentsProps) {
   const {
     documents,
@@ -428,6 +425,10 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   } = useManagedDocumentsStore();
   const llmSettings = useSettingsStore((state) => state.llm);
   const visionModel = useSettingsStore((state) => state.visionModel);
+  const conversionPipeline = useSettingsStore((state) => state.conversionPipeline);
+  const chunkingPipeline = useSettingsStore((state) => state.chunkingPipeline);
+  const setConversionPipeline = useSettingsStore((state) => state.setConversionPipeline);
+  const setChunkingPipeline = useSettingsStore((state) => state.setChunkingPipeline);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -436,24 +437,6 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const [moveFilePath, setMoveFilePath] = useState<string | null>(null);
   const [createDirParent, setCreateDirParent] = useState<string | undefined>(undefined);
   const [showCreateDir, setShowCreateDir] = useState(false);
-  const [conversionPipeline, setConversionPipeline] = useState<ConversionPipeline>(() => {
-    const stored = localStorage.getItem(CONVERSION_PIPELINE_STORAGE_KEY);
-    return (stored as ConversionPipeline) || ConversionPipeline.AUTO;
-  });
-  const [chunkingPipeline, setChunkingPipeline] = useState<ChunkingPipeline>(() => {
-    const stored = localStorage.getItem(CHUNKING_PIPELINE_STORAGE_KEY);
-    return (stored as ChunkingPipeline) || ChunkingPipeline.AUTO;
-  });
-
-  const handleConversionPipelineChange = useCallback((newPipeline: ConversionPipeline) => {
-    setConversionPipeline(newPipeline);
-    localStorage.setItem(CONVERSION_PIPELINE_STORAGE_KEY, newPipeline);
-  }, []);
-
-  const handleChunkingPipelineChange = useCallback((newPipeline: ChunkingPipeline) => {
-    setChunkingPipeline(newPipeline);
-    localStorage.setItem(CHUNKING_PIPELINE_STORAGE_KEY, newPipeline);
-  }, []);
 
   const fuse = useMemo(
     () => new Fuse(documents, { keys: ['filename'], threshold: 0.4 }),
@@ -675,8 +658,8 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         conversionPipeline={conversionPipeline}
         chunkingPipeline={chunkingPipeline}
         isLoading={isLoading}
-        onConversionPipelineChange={handleConversionPipelineChange}
-        onChunkingPipelineChange={handleChunkingPipelineChange}
+        onConversionPipelineChange={setConversionPipeline}
+        onChunkingPipelineChange={setChunkingPipeline}
       />
 
       <div className="flex-1 flex flex-col min-h-0">
@@ -745,25 +728,17 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   );
 }
 
-const DOCUMENT_TAB_KEY = 'snipscout-document-tab';
-
 interface DocumentCanvasProps {
   onIncludeDocument?: (filename: string) => void;
   onExcludeDocument?: (filename: string) => void;
 }
 
 export function DocumentCanvas({ onIncludeDocument, onExcludeDocument }: DocumentCanvasProps) {
-  const [activeTab, setActiveTab] = useState(() => {
-    return localStorage.getItem(DOCUMENT_TAB_KEY) ?? 'fetched';
-  });
-
-  const handleTabChange = (value: string) => {
-    setActiveTab(value);
-    localStorage.setItem(DOCUMENT_TAB_KEY, value);
-  };
+  const documentTab = useSettingsStore((state) => state.documentTab);
+  const setDocumentTab = useSettingsStore((state) => state.setDocumentTab);
 
   return (
-    <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full gap-0">
+    <Tabs value={documentTab} onValueChange={(v) => setDocumentTab(v as 'fetched' | 'manage')} className="h-full gap-0">
       <div className="shrink-0 border-b px-4 flex items-center h-15">
         <TabsList className="w-full sm:w-auto">
           <TabsTrigger value="fetched" className="flex-1 sm:flex-none gap-2">

@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { SettingsIcon, PlusIcon, TrashIcon, RotateCcwIcon } from 'lucide-react';
+import { SettingsIcon, PlusIcon, TrashIcon, Trash2Icon, RotateCcwIcon } from 'lucide-react';
+
+import { clearAllStorage } from '../stores/storage';
 import { useSettingsStore, type ModelConfig } from '../stores/settings-store';
 import { Button } from './ui/button';
 import {
@@ -222,10 +224,16 @@ export function SettingsDialog() {
         </div>
 
         <DialogFooter className="sm:justify-between">
-          <Button variant="outline" onClick={reset}>
-            <RotateCcwIcon className="h-4 w-4 mr-2" />
-            Reset to Server Defaults
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={reset}>
+              <RotateCcwIcon className="h-4 w-4 mr-2" />
+              Reset to Server Defaults
+            </Button>
+            <Button variant="destructive" onClick={clearAllStorage}>
+              <Trash2Icon className="h-4 w-4 mr-2" />
+              Clear All Local Data
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

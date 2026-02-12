@@ -1,27 +1,36 @@
+/**
+ * Zustand store for all persisted user settings.
+ *
+ * Combines LLM configuration (model overrides, API keys, available models)
+ * with UI preferences (active tab, pipeline selections, expanded directories)
+ * into a single persisted store with Zod-validated rehydration.
+ */
+
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-import type { BackendSettings } from '../lib/api';
 import { fetchSettings } from '../lib/api';
+import {
+  ChunkingPipeline,
+  ChunkingPipelineSchema,
+  ConversionPipeline,
+  ConversionPipelineSchema,
+  DocumentTabSchema,
+  ExpandedDirsSchema,
+  ModelConfigArraySchema,
+  UserOverridesSchema,
+  type BackendSettings,
+  type DocumentTab,
+  type ModelConfig,
+  type UserOverrides,
+} from '../lib/types';
 
-export interface ModelConfig {
-  name: string;
-  value: string;
-}
+export type { ModelConfig };
 
 export interface LLMSettings {
   model: string;
   apiKey: string;
   baseUrl: string;
-}
-
-/** User-provided overrides stored in localStorage. Empty string = use backend default. */
-interface UserOverrides {
-  model: string;
-  apiKey: string;
-  baseUrl: string;
-  smallModel: string;
-  visionModel: string;
 }
 
 const EMPTY_OVERRIDES: UserOverrides = {
@@ -32,15 +41,28 @@ const EMPTY_OVERRIDES: UserOverrides = {
   visionModel: '',
 };
 
+const UI_DEFAULTS = {
+  documentTab: 'fetched' as DocumentTab,
+  conversionPipeline: ConversionPipeline.AUTO,
+  chunkingPipeline: ChunkingPipeline.AUTO,
+  expandedDirs: [''] as string[],
+};
+
 interface SettingsState {
   // Backend defaults (not persisted)
   backendDefaults: BackendSettings | null;
 
-  // User overrides (persisted)
+  // User LLM overrides (persisted)
   overrides: UserOverrides;
 
   // User-managed model list (persisted)
   availableModels: ModelConfig[];
+
+  // UI preferences (persisted)
+  documentTab: DocumentTab;
+  conversionPipeline: ConversionPipeline;
+  chunkingPipeline: ChunkingPipeline;
+  expandedDirs: string[];
 
   // Computed effective values (backend default + user override)
   llm: LLMSettings;
@@ -48,7 +70,7 @@ interface SettingsState {
   visionModel: string;
   hasServerApiKey: boolean;
 
-  // Actions
+  // LLM actions
   setLLM: (settings: Partial<LLMSettings>) => void;
   setSmallModel: (model: string) => void;
   setVisionModel: (model: string) => void;
@@ -56,6 +78,13 @@ interface SettingsState {
   removeModel: (value: string) => void;
   reset: () => void;
   initFromBackend: () => Promise<void>;
+
+  // UI preference actions
+  setDocumentTab: (tab: DocumentTab) => void;
+  setConversionPipeline: (pipeline: ConversionPipeline) => void;
+  setChunkingPipeline: (pipeline: ChunkingPipeline) => void;
+  toggleExpandedDir: (path: string) => void;
+  setExpandedDirs: (dirs: string[]) => void;
 }
 
 /** Recompute effective values from backend defaults and user overrides. */
@@ -81,6 +110,7 @@ export const useSettingsStore = create<SettingsState>()(
       backendDefaults: null,
       overrides: EMPTY_OVERRIDES,
       availableModels: [],
+      ...UI_DEFAULTS,
 
       // Initial computed values (no backend defaults yet)
       ...computeEffective(null, EMPTY_OVERRIDES),
@@ -145,18 +175,60 @@ export const useSettingsStore = create<SettingsState>()(
           // Silently fail — keep existing values
         }
       },
+
+      setDocumentTab: (tab) => set({ documentTab: tab }),
+
+      setConversionPipeline: (pipeline) => set({ conversionPipeline: pipeline }),
+
+      setChunkingPipeline: (pipeline) => set({ chunkingPipeline: pipeline }),
+
+      toggleExpandedDir: (path) =>
+        set((state) => {
+          const dirs = new Set(state.expandedDirs);
+          if (dirs.has(path)) {
+            dirs.delete(path);
+          } else {
+            dirs.add(path);
+          }
+          return { expandedDirs: [...dirs] };
+        }),
+
+      setExpandedDirs: (dirs) => set({ expandedDirs: dirs }),
     }),
     {
       name: 'snipscout-settings',
       partialize: (state) => ({
         overrides: state.overrides,
         availableModels: state.availableModels,
+        documentTab: state.documentTab,
+        conversionPipeline: state.conversionPipeline,
+        chunkingPipeline: state.chunkingPipeline,
+        expandedDirs: state.expandedDirs,
       }),
       merge: (persisted, current) => {
-        const merged = { ...current, ...(persisted as Partial<SettingsState>) };
+        const data = persisted as Record<string, unknown> | undefined;
+        if (!data) return current;
+
+        const overrides =
+          UserOverridesSchema.safeParse(data.overrides).data ?? EMPTY_OVERRIDES;
+        const availableModels =
+          ModelConfigArraySchema.safeParse(data.availableModels).data ?? [];
+
         return {
-          ...merged,
-          ...computeEffective(merged.backendDefaults, merged.overrides),
+          ...current,
+          overrides,
+          availableModels,
+          documentTab:
+            DocumentTabSchema.safeParse(data.documentTab).data ?? UI_DEFAULTS.documentTab,
+          conversionPipeline:
+            ConversionPipelineSchema.safeParse(data.conversionPipeline).data ??
+            UI_DEFAULTS.conversionPipeline,
+          chunkingPipeline:
+            ChunkingPipelineSchema.safeParse(data.chunkingPipeline).data ??
+            UI_DEFAULTS.chunkingPipeline,
+          expandedDirs:
+            ExpandedDirsSchema.safeParse(data.expandedDirs).data ?? UI_DEFAULTS.expandedDirs,
+          ...computeEffective(current.backendDefaults, overrides),
         };
       },
     }
