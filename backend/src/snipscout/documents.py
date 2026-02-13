@@ -1,18 +1,15 @@
-"""Document loading and BM25 indexing utilities."""
+"""Document loading and BM25 search utilities."""
 
 from dataclasses import dataclass
 from pathlib import Path
 
 import bm25s
-from frozendict import frozendict
 
-from .config import TEXT_EXTENSIONS, settings
+from .config import TEXT_EXTENSIONS
 
 __all__ = [
-    "DocumentCache",
     "SearchResult",
-    "get_cached_documents",
-    "reload_user_documents",
+    "load_documents",
     "search_documents",
 ]
 
@@ -26,24 +23,17 @@ class SearchResult:
     score: float
 
 
-@dataclass(slots=True, frozen=True)
-class DocumentCache:
-    """Cached documents and BM25 index for a directory."""
+def load_documents(path: Path) -> dict[str, str]:
+    """Load all documents from a directory.
 
-    documents: frozendict[str, str]
-    index: bm25s.BM25 | None = None
+    Args:
+        path: Directory containing text documents.
 
-
-_EMPTY = DocumentCache(documents=frozendict())
-
-# Cache keyed by directory path
-_caches: dict[Path, DocumentCache] = {}
-
-
-def _build_cache(path: Path) -> DocumentCache:
-    """Load documents from disk and build BM25 index."""
+    Returns:
+        Dict mapping relative filename to file content.
+    """
     if not path.exists():
-        return _EMPTY
+        return {}
 
     documents: dict[str, str] = {}
     for ext in TEXT_EXTENSIONS:
@@ -52,61 +42,39 @@ def _build_cache(path: Path) -> DocumentCache:
                 key = str(file_path.relative_to(path).as_posix())
                 documents[key] = file_path.read_text(encoding="utf-8")
 
-    if not documents:
-        return _EMPTY
-
-    corpus_tokens = bm25s.tokenize(list(documents.values()))
-    retriever = bm25s.BM25()
-    retriever.index(corpus_tokens)
-    return DocumentCache(documents=frozendict(documents), index=retriever)
-
-
-def get_cached_documents(path: Path) -> DocumentCache:
-    """Get cached documents for a directory, loading on first access.
-
-    Args:
-        path: Directory to get documents for.
-
-    Returns:
-        DocumentCache with documents and BM25 index.
-    """
-    if path not in _caches:
-        _caches[path] = _build_cache(path)
-    return _caches[path]
-
-
-def reload_user_documents(user_id: str) -> None:
-    """Reload documents from disk and rebuild the cache for a user.
-
-    Args:
-        user_id: The user ID to reload documents for.
-    """
-    path = settings.get_user_documents_dir(user_id)
-    _caches[path] = _build_cache(path)
+    return documents
 
 
 def search_documents(
-    cache: DocumentCache,
+    path: Path,
     query: str,
     top_k: int = 3,
 ) -> list[SearchResult]:
-    """Search documents using BM25.
+    """Search documents using a temporary BM25 index.
+
+    Loads all documents from disk, builds a BM25 index, searches, and
+    discards the index afterwards.
 
     Args:
-        cache: The document cache to search.
+        path: Directory containing text documents.
         query: Search query string.
         top_k: Number of results to return.
 
     Returns:
         List of SearchResult sorted by relevance.
     """
-    if not cache.documents or cache.index is None:
+    documents = load_documents(path)
+    if not documents:
         return []
 
-    filenames = list(cache.documents.keys())
+    filenames = list(documents.keys())
+    corpus_tokens = bm25s.tokenize(list(documents.values()))
+    retriever = bm25s.BM25()
+    retriever.index(corpus_tokens)
+
     query_tokens = bm25s.tokenize([query])
-    indices, scores = cache.index.retrieve(
-        query_tokens, k=min(top_k, len(cache.documents))
+    indices, scores = retriever.retrieve(
+        query_tokens, k=min(top_k, len(documents))
     )
 
     results: list[SearchResult] = []
@@ -116,7 +84,7 @@ def search_documents(
             results.append(
                 SearchResult(
                     filename=filename,
-                    content=cache.documents[filename],
+                    content=documents[filename],
                     score=float(score),
                 )
             )

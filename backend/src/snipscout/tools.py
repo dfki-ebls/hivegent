@@ -10,7 +10,7 @@ from ripgrepy import Ripgrepy
 
 from .chunks import load_chunked_document
 from .config import TEXT_EXTENSIONS
-from .documents import get_cached_documents, search_documents
+from .documents import load_documents
 from .types import (
     ChunkSummary,
     DocumentRange,
@@ -155,7 +155,12 @@ class GetDocumentTool:
         """
         if self.document_filter and not self.document_filter.is_included(filename):
             return None
-        return get_cached_documents(self.path).documents.get(filename)
+        file_path = (self.path / filename).resolve()
+        if not file_path.is_relative_to(self.path.resolve()):
+            return None
+        if not file_path.is_file():
+            return None
+        return file_path.read_text(encoding="utf-8")
 
 
 @dataclass(slots=True, frozen=True)
@@ -181,11 +186,13 @@ class GetDocumentLinesTool:
         if self.document_filter and not self.document_filter.is_included(filename):
             return None
 
-        documents = get_cached_documents(self.path).documents
-        if filename not in documents:
+        file_path = (self.path / filename).resolve()
+        if not file_path.is_relative_to(self.path.resolve()):
+            return None
+        if not file_path.is_file():
             return None
 
-        lines = documents[filename].splitlines()
+        lines = file_path.read_text(encoding="utf-8").splitlines()
         total = len(lines)
         start = max(1, start)
         end = min(total, end) if end else total
@@ -211,11 +218,15 @@ class GlobDocumentsTool:
         Args:
             pattern: Glob pattern to match (e.g., "*.md", "notes/*.txt", "**/*.py").
         """
-        results = [
-            name
-            for name in get_cached_documents(self.path).documents
-            if fnmatch(name, pattern)
-        ]
+        if not self.path.exists():
+            return []
+        results: list[str] = []
+        for ext in TEXT_EXTENSIONS:
+            for f in sorted(self.path.rglob(f"*{ext}")):
+                if f.is_file():
+                    rel = str(f.relative_to(self.path).as_posix())
+                    if fnmatch(rel, pattern):
+                        results.append(rel)
         if self.document_filter:
             results = [r for r in results if self.document_filter.is_included(r)]
         return results
@@ -302,36 +313,46 @@ class SearchDocumentsTool:
             subdir: Only include documents under this subdirectory.
             max_depth: Maximum nesting depth relative to *subdir* (or root).
         """
-        cache = get_cached_documents(self.path)
+        documents = load_documents(self.path)
         needs_filter = (
             self.document_filter is not None
             or subdir is not None
             or max_depth is not None
         )
         if needs_filter:
-            all_results = search_documents(cache, query, len(cache.documents))
-            filtered = [
-                RetrievedDocument(
-                    filename=r.filename,
-                    content=r.content,
-                    score=round(r.score, 4),
-                )
-                for r in all_results
-                if _matches_subdir_and_depth(r.filename, subdir, max_depth)
+            documents = {
+                name: content
+                for name, content in documents.items()
+                if _matches_subdir_and_depth(name, subdir, max_depth)
                 and (
                     not self.document_filter
-                    or self.document_filter.is_included(r.filename)
+                    or self.document_filter.is_included(name)
                 )
-            ]
-            return filtered[:top_k]
-        return [
-            RetrievedDocument(
-                filename=r.filename,
-                content=r.content,
-                score=round(r.score, 4),
-            )
-            for r in search_documents(cache, query, top_k)
-        ]
+            }
+        if not documents:
+            return []
+
+        filenames = list(documents.keys())
+        corpus_tokens = bm25s.tokenize(list(documents.values()))
+        retriever = bm25s.BM25()
+        retriever.index(corpus_tokens)
+        query_tokens = bm25s.tokenize([query])
+        indices, scores = retriever.retrieve(
+            query_tokens, k=min(top_k, len(documents))
+        )
+
+        results: list[RetrievedDocument] = []
+        for idx, score in zip(indices[0], scores[0]):
+            if idx < len(filenames):
+                filename = filenames[idx]
+                results.append(
+                    RetrievedDocument(
+                        filename=filename,
+                        content=documents[filename],
+                        score=round(float(score), 4),
+                    )
+                )
+        return results
 
 
 @dataclass(slots=True, frozen=True)

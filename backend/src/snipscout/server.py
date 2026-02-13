@@ -55,7 +55,6 @@ from .converters import (
     resolve_auto_pipeline,
 )
 from .converters.base import LLMConvertOptions
-from .documents import reload_user_documents
 from .mcp import mcp_app
 from .observability import configure_observability
 from .messages import (
@@ -566,7 +565,6 @@ async def upload_document(
         file_path = documents_dir / safe
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(content)
-        reload_user_documents(user.id)
 
         # Chunk the text file
         chunk_count = None
@@ -648,8 +646,6 @@ async def upload_document(
     converted_path = documents_dir / converted_relpath
     converted_path.parent.mkdir(parents=True, exist_ok=True)
     converted_path.write_text(markdown_content, encoding="utf-8")
-
-    reload_user_documents(user.id)
 
     # Chunk the converted document
     chunk_count = None
@@ -746,7 +742,6 @@ async def delete_document(
                 _cleanup_empty_parents(candidate, originals_dir)
                 break
 
-    reload_user_documents(user.id)
 
     return DeleteDocumentResponse(
         filename=safe,
@@ -914,7 +909,6 @@ async def reconvert_document(
     converted_path.write_text(markdown_content, encoding="utf-8")
     stat = converted_path.stat()
 
-    reload_user_documents(user.id)
 
     # Rechunk the new content
     chunk_count = None
@@ -1012,7 +1006,6 @@ async def move_document(
                 _cleanup_empty_parents(candidate, originals_dir)
                 break
 
-    reload_user_documents(user.id)
 
     return MoveDocumentResponse(
         source=src,
@@ -1197,7 +1190,6 @@ async def delete_directory(
         shutil.rmtree(originals_subdir)
         _cleanup_empty_parents(originals_subdir, originals_dir)
 
-    reload_user_documents(user.id)
 
     return DeleteDirectoryResponse(
         path=safe,
