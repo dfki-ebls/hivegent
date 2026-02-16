@@ -1,6 +1,6 @@
 """Shared types for the RAG application."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -33,6 +33,43 @@ class LlmConfig(BaseModel):
     base_url: str | None = None
 
 
+@dataclass(slots=True, frozen=True)
+class DocumentFilter:
+    """Include/exclude filter applied to document-level tool operations.
+
+    If ``included`` is non-empty the filepath must match an entry.
+    If ``excluded`` is non-empty the filepath must *not* match.
+    When both are set, ``included`` is checked first.
+
+    Entries ending with ``/`` are treated as directory prefixes:
+    ``"projects/"`` matches ``"projects/report.md"`` and
+    ``"projects/sub/file.txt"``.
+    Entries without a trailing ``/`` are exact file matches.
+    """
+
+    included: frozenset[str] = field(default_factory=frozenset)
+    excluded: frozenset[str] = field(default_factory=frozenset)
+
+    @staticmethod
+    def _matches(entry: str, filepath: str) -> bool:
+        """Check if a filter entry matches a filepath."""
+        if entry.endswith("/"):
+            return filepath.startswith(entry)
+        return filepath == entry
+
+    def is_included(self, filepath: str) -> bool:
+        """Return whether *filepath* passes the filter."""
+        if self.included and not any(
+            self._matches(entry, filepath) for entry in self.included
+        ):
+            return False
+        if self.excluded and any(
+            self._matches(entry, filepath) for entry in self.excluded
+        ):
+            return False
+        return True
+
+
 __all__ = [
     "ChatRequestConfig",
     "ChunkSummary",
@@ -50,6 +87,7 @@ __all__ = [
     "DeleteDirectoryResponse",
     "DeleteDocumentResponse",
     "DirectoryEntry",
+    "DocumentFilter",
     "DirectoryTreeResponse",
     "DocumentInfo",
     "DocumentListResponse",
@@ -64,7 +102,6 @@ __all__ = [
     "MoveDocumentResponse",
     "Personality",
     "RetrievedChunk",
-    "RetrievedDocument",
     "SettingsResponse",
     "TokenInfo",
     "UpdateTitleRequest",
@@ -111,14 +148,6 @@ class GrepMatch(BaseModel):
     filename: str = Field(description="The filename containing the match")
     line: int = Field(description="Line number of the match (1-indexed)")
     content: str | None = Field(default=None, description="The matching line content")
-
-
-class RetrievedDocument(BaseModel):
-    """A document retrieved from search."""
-
-    filename: str = Field(description="The filename of the document")
-    content: str = Field(description="The full content of the document")
-    score: float = Field(description="The relevance score from BM25")
 
 
 class ChunkSummary(BaseModel):

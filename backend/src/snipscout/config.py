@@ -3,12 +3,14 @@
 import re
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = [
     "BINARY_EXTENSIONS",
+    "EmbeddingSettings",
     "FileExtension",
     "LlmSettings",
     "LogfireSettings",
@@ -145,6 +147,19 @@ class LogfireSettings(BaseModel):
     traces_dir: Path | None = None
 
 
+class EmbeddingSettings(BaseModel):
+    """Embedding model configuration for dense retrieval.
+
+    Configurable via ``SNIPSCOUT_EMBEDDING__PROVIDER``,
+    ``SNIPSCOUT_EMBEDDING__MODEL``, etc.
+    """
+
+    provider: Literal["sentence-transformers", "openai"] = "sentence-transformers"
+    model: str = "all-MiniLM-L6-v2"
+    api_key: str = ""
+    base_url: str = ""
+
+
 class McpSettings(BaseModel):
     """MCP server settings for OIDC authentication."""
 
@@ -164,6 +179,7 @@ class Settings(BaseSettings):
     )
 
     llm: LlmSettings = LlmSettings()
+    embedding: EmbeddingSettings = EmbeddingSettings()
     logfire: LogfireSettings = LogfireSettings()
     mcp: McpSettings = McpSettings()
 
@@ -258,6 +274,22 @@ class Settings(BaseSettings):
             ValueError: If the user ID is invalid.
         """
         path = self.get_user_dir(user_id) / "chunks"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_user_lancedb_dir(self, user_id: str) -> Path:
+        """Get the LanceDB directory for a specific user.
+
+        Args:
+            user_id: The user ID.
+
+        Returns:
+            Path to the user's LanceDB directory.
+
+        Raises:
+            ValueError: If the user ID is invalid.
+        """
+        path = self.get_user_dir(user_id) / "lancedb"
         path.mkdir(parents=True, exist_ok=True)
         return path
 

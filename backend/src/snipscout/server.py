@@ -69,8 +69,8 @@ from .messages import (
     update_conversation_title,
 )
 from .prompts import CITATION_INSTRUCTIONS, PERSONALITY_TEMPLATES
+from .retrieval import sync_index
 from .tokens import token_store
-from .tools import DocumentFilter
 from .types import (
     ChatRequestConfig,
     CollectionUploadResponse,
@@ -86,6 +86,7 @@ from .types import (
     DeleteDirectoryResponse,
     DeleteDocumentResponse,
     DirectoryEntry,
+    DocumentFilter,
     DirectoryTreeResponse,
     DocumentInfo,
     DocumentListResponse,
@@ -564,6 +565,7 @@ async def _upload_file_internal(
             chunked = chunk_document(user_id, filepath, text_content, chunking_pipeline)
             chunk_count = chunked.chunk_count
             chunking_used = chunked.chunking_pipeline
+            sync_index(user_id)
         except Exception as e:
             logger.warning("Chunking failed for %s: %s", filepath, e)
 
@@ -645,6 +647,7 @@ async def _upload_file_internal(
         )
         chunk_count = chunked.chunk_count
         chunking_used = chunked.chunking_pipeline
+        sync_index(user_id)
     except Exception as e:
         logger.warning("Chunking failed for %s: %s", converted_relpath, e)
 
@@ -898,6 +901,7 @@ async def delete_document(
     file_path.unlink()
     _cleanup_empty_parents(file_path, data_dir)
     delete_chunks(user.id, safe)
+    sync_index(user.id)
 
     # Also delete the original if it exists
     originals_dir = settings.get_user_originals_dir(user.id)
@@ -977,9 +981,11 @@ async def rechunk_document(
     text_content = file_path.read_text(encoding="utf-8")
 
     try:
-        return chunk_document(
+        result = chunk_document(
             user.id, safe, text_content, chunking_pipeline, chunk_size
         )
+        sync_index(user.id)
+        return result
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -1091,6 +1097,7 @@ async def reconvert_document(
         )
         chunk_count = chunked.chunk_count
         chunking_used = chunked.chunking_pipeline
+        sync_index(user.id)
     except Exception as e:
         logger.warning("Chunking failed for %s: %s", safe, e)
 
@@ -1178,6 +1185,9 @@ async def move_document(
                 _cleanup_empty_parents(candidate, originals_dir)
                 break
 
+
+    # Update LanceDB index to reflect new filenames in metadata.
+    sync_index(user.id)
 
     return MoveDocumentResponse(
         source=src,
@@ -1362,6 +1372,8 @@ async def delete_directory(
         shutil.rmtree(originals_subdir)
         _cleanup_empty_parents(originals_subdir, originals_dir)
 
+    # Update LanceDB index to remove deleted chunks.
+    sync_index(user.id)
 
     return DeleteDirectoryResponse(
         path=safe,

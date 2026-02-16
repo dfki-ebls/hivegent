@@ -1,12 +1,10 @@
-"""Chunk persistence and search for chunked documents."""
+"""Chunk persistence for chunked documents."""
 
 import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-import bm25s
 from pydantic import BaseModel, Field
 
 from .chunkers import ChunkingPipeline, get_chunker
@@ -20,7 +18,6 @@ __all__ = [
     "get_chunks",
     "list_chunked_documents",
     "load_chunked_document",
-    "search_chunks",
 ]
 
 logger = logging.getLogger(__name__)
@@ -174,6 +171,7 @@ def delete_chunks(user_id: str, filepath: str) -> bool:
             except OSError:
                 break
             parent = parent.parent
+
         return True
     return False
 
@@ -203,65 +201,3 @@ def list_chunked_documents(user_id: str) -> dict[str, int]:
     return result
 
 
-def search_chunks(
-    user_id: str,
-    query: str,
-    top_k: int = 5,
-) -> list[dict[str, Any]]:
-    """Search across all user chunks using BM25.
-
-    Loads chunks from disk, builds a temporary BM25 index, and returns
-    the most relevant chunks.
-
-    Args:
-        user_id: The user ID.
-        query: The search query.
-        top_k: Maximum number of results to return.
-
-    Returns:
-        List of dicts with filename, chunk_index, text, token_count, score.
-    """
-    chunks_dir = settings.get_user_chunks_dir(user_id)
-    if not chunks_dir.exists():
-        return []
-
-    # Collect all chunks from all documents
-    all_chunks: list[dict[str, Any]] = []
-    all_texts: list[str] = []
-
-    for path in sorted(chunks_dir.rglob("*.json")):
-        doc_filename = str(path.relative_to(chunks_dir).as_posix()).removesuffix(".json")
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            doc = ChunkedDocument.model_validate(data)
-        except (json.JSONDecodeError, Exception):
-            continue
-
-        for chunk in doc.chunks:
-            all_chunks.append({
-                "filename": doc_filename,
-                "chunk_index": chunk.index,
-                "text": chunk.text,
-                "token_count": chunk.token_count,
-            })
-            all_texts.append(chunk.text)
-
-    if not all_chunks:
-        return []
-
-    # Build temporary BM25 index
-    corpus_tokens = bm25s.tokenize(all_texts)
-    retriever = bm25s.BM25()
-    retriever.index(corpus_tokens)
-
-    query_tokens = bm25s.tokenize([query])
-    indices, scores = retriever.retrieve(query_tokens, k=min(top_k, len(all_chunks)))
-
-    results: list[dict[str, Any]] = []
-    for idx, score in zip(indices[0], scores[0]):
-        if idx < len(all_chunks):
-            entry = all_chunks[idx].copy()
-            entry["score"] = round(float(score), 4)
-            results.append(entry)
-
-    return results

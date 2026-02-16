@@ -2,22 +2,21 @@
 
 import logging
 from dataclasses import dataclass, field
+from typing import Literal
 from fnmatch import fnmatch
 from pathlib import Path
 
-import bm25s
 from ripgrepy import Ripgrepy
 
 from .chunks import load_chunked_document
 from .config import TEXT_EXTENSIONS
-from .documents import load_documents
 from .types import (
     ChunkSummary,
+    DocumentFilter,
     DocumentRange,
     DocumentSummary,
     GrepMatch,
     RetrievedChunk,
-    RetrievedDocument,
 )
 
 __all__ = [
@@ -29,8 +28,7 @@ __all__ = [
     "GrepTool",
     "ListChunksTool",
     "ListDocumentsTool",
-    "SearchChunksTool",
-    "SearchDocumentsTool",
+    "SearchTool",
 ]
 
 logger = logging.getLogger(__name__)
@@ -51,10 +49,10 @@ def _matches_subdir_and_depth(
             A file directly inside the directory has depth 1.
     """
     if subdir is not None:
-        normalized = subdir if subdir.endswith("/") else subdir + "/"
-        if not filepath.startswith(normalized):
+        prefix = subdir if subdir.endswith("/") else subdir + "/"
+        if not filepath.startswith(prefix):
             return False
-        relative = filepath[len(normalized) :]
+        relative = filepath[len(prefix) :]
     else:
         relative = filepath
 
@@ -64,43 +62,6 @@ def _matches_subdir_and_depth(
             return False
 
     return True
-
-
-@dataclass(slots=True, frozen=True)
-class DocumentFilter:
-    """Include/exclude filter applied to document-level tool operations.
-
-    If ``included`` is non-empty the filepath must match an entry.
-    If ``excluded`` is non-empty the filepath must *not* match.
-    When both are set, ``included`` is checked first.
-
-    Entries ending with ``/`` are treated as directory prefixes:
-    ``"projects/"`` matches ``"projects/report.md"`` and
-    ``"projects/sub/file.txt"``.
-    Entries without a trailing ``/`` are exact file matches.
-    """
-
-    included: frozenset[str] = field(default_factory=frozenset)
-    excluded: frozenset[str] = field(default_factory=frozenset)
-
-    @staticmethod
-    def _matches(entry: str, filepath: str) -> bool:
-        """Check if a filter entry matches a filepath."""
-        if entry.endswith("/"):
-            return filepath.startswith(entry)
-        return filepath == entry
-
-    def is_included(self, filepath: str) -> bool:
-        """Return whether *filepath* passes the filter."""
-        if self.included and not any(
-            self._matches(entry, filepath) for entry in self.included
-        ):
-            return False
-        if self.excluded and any(
-            self._matches(entry, filepath) for entry in self.excluded
-        ):
-            return False
-        return True
 
 
 @dataclass(slots=True, frozen=True)
@@ -292,67 +253,44 @@ class GrepTool:
 
 
 @dataclass(slots=True, frozen=True)
-class SearchDocumentsTool:
-    """Semantic search for documents using BM25 ranking."""
+class SearchTool:
+    """Dense or sparse chunk search using LanceDB."""
 
-    path: Path
+    user_id: str
+    search_type: Literal["dense", "sparse"]
     document_filter: DocumentFilter | None = None
 
     def __call__(
         self,
         query: str,
-        top_k: int = 3,
-        subdir: str | None = None,
-        max_depth: int | None = None,
-    ) -> list[RetrievedDocument]:
-        """Search documents semantically using BM25 ranking.
+        top_k: int = 5,
+    ) -> list[RetrievedChunk]:
+        """Search chunks using the configured search type.
 
         Args:
             query: Natural language search query.
             top_k: Maximum results to return.
-            subdir: Only include documents under this subdirectory.
-            max_depth: Maximum nesting depth relative to *subdir* (or root).
         """
-        documents = load_documents(self.path)
-        needs_filter = (
-            self.document_filter is not None
-            or subdir is not None
-            or max_depth is not None
-        )
-        if needs_filter:
-            documents = {
-                name: content
-                for name, content in documents.items()
-                if _matches_subdir_and_depth(name, subdir, max_depth)
-                and (
-                    not self.document_filter
-                    or self.document_filter.is_included(name)
-                )
-            }
-        if not documents:
-            return []
+        from .retrieval import parse_chunk_key, search_dense, search_sparse
 
-        filenames = list(documents.keys())
-        corpus_tokens = bm25s.tokenize(list(documents.values()))
-        retriever = bm25s.BM25()
-        retriever.index(corpus_tokens)
-        query_tokens = bm25s.tokenize([query])
-        indices, scores = retriever.retrieve(
-            query_tokens, k=min(top_k, len(documents))
+        search_func = search_dense if self.search_type == "dense" else search_sparse
+        results = search_func(
+            self.user_id,
+            query,
+            top_k,
+            self.document_filter,
         )
-
-        results: list[RetrievedDocument] = []
-        for idx, score in zip(indices[0], scores[0]):
-            if idx < len(filenames):
-                filename = filenames[idx]
-                results.append(
-                    RetrievedDocument(
-                        filename=filename,
-                        content=documents[filename],
-                        score=round(float(score), 4),
-                    )
-                )
-        return results
+        return [
+            RetrievedChunk(
+                filename=filename,
+                chunk_index=chunk_index,
+                text=text,
+                token_count=len(text.split()),
+                score=round(score, 4),
+            )
+            for key, text, score in results
+            for filename, chunk_index in [parse_chunk_key(key)]
+        ]
 
 
 @dataclass(slots=True, frozen=True)
@@ -413,68 +351,3 @@ class GetChunkTool:
         return None
 
 
-@dataclass(slots=True, frozen=True)
-class SearchChunksTool:
-    """Search across all chunk files in a directory using BM25 ranking."""
-
-    path: Path
-    document_filter: DocumentFilter | None = None
-
-    def __call__(
-        self,
-        query: str,
-        top_k: int = 5,
-        subdir: str | None = None,
-        max_depth: int | None = None,
-    ) -> list[RetrievedChunk]:
-        """Search across all chunk files using BM25 ranking.
-
-        Args:
-            query: Natural language search query.
-            top_k: Maximum results to return.
-            subdir: Only include chunks from documents under this subdirectory.
-            max_depth: Maximum nesting depth relative to *subdir* (or root).
-        """
-        if not self.path.exists():
-            return []
-
-        all_chunks: list[RetrievedChunk] = []
-        all_texts: list[str] = []
-        for chunk_file in sorted(self.path.rglob("*.json")):
-            doc_filename = str(
-                chunk_file.relative_to(self.path).as_posix()
-            ).removesuffix(".json")
-            if not _matches_subdir_and_depth(doc_filename, subdir, max_depth):
-                continue
-            if self.document_filter and not self.document_filter.is_included(doc_filename):
-                continue
-            chunked = load_chunked_document(self.path, doc_filename)
-            if not chunked:
-                continue
-            for chunk in chunked.chunks:
-                all_chunks.append(
-                    RetrievedChunk(
-                        filename=doc_filename,
-                        chunk_index=chunk.index,
-                        text=chunk.text,
-                        token_count=chunk.token_count,
-                        score=0.0,
-                    )
-                )
-                all_texts.append(chunk.text)
-
-        if not all_chunks:
-            return []
-
-        corpus_tokens = bm25s.tokenize(all_texts)
-        retriever = bm25s.BM25()
-        retriever.index(corpus_tokens)
-        query_tokens = bm25s.tokenize([query])
-        indices, scores = retriever.retrieve(query_tokens, k=min(top_k, len(all_chunks)))
-
-        results: list[RetrievedChunk] = []
-        for idx, score in zip(indices[0], scores[0]):
-            if idx < len(all_chunks):
-                chunk = all_chunks[idx]
-                results.append(chunk.model_copy(update={"score": round(float(score), 4)}))
-        return results

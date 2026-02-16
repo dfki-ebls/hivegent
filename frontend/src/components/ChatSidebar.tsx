@@ -20,8 +20,6 @@ import {
   type GrepMatch,
   type Personality,
   type RetrievedChunk,
-  type RetrievedDocument,
-  type SearchDocumentsInput,
 } from '../lib/types';
 import { useConversationsStore } from '../stores/conversations-store';
 import { useFetchedDocumentsStore } from '../stores/fetched-documents-store';
@@ -107,16 +105,19 @@ function processToolOutput(
   toolName: string,
   input: Record<string, unknown> | undefined,
   output: unknown,
-  addSearchResults: (results: RetrievedDocument[], query: string) => void,
   addDocument: (filename: string, content: string, source: string) => void
 ) {
   if (!input || output == null) return;
 
   switch (toolName) {
-    case 'search_documents': {
-      const results = output as RetrievedDocument[];
-      const query = input.query as string;
-      if (results && query) addSearchResults(results, query);
+    case 'semantic_search': {
+      const chunks = output as RetrievedChunk[];
+      if (chunks?.length) {
+        const query = input.query as string;
+        for (const chunk of chunks) {
+          addDocument(chunk.filename, chunk.text, `search${query ? `: ${query}` : ''}`);
+        }
+      }
       break;
     }
     case 'get_document': {
@@ -150,16 +151,6 @@ function processToolOutput(
         for (const [filename, fileMatches] of byFile) {
           const content = fileMatches.map((m) => `${m.line}: ${m.content ?? ''}`).join('\n');
           addDocument(filename, content, `grep: ${pattern}`);
-        }
-      }
-      break;
-    }
-    case 'search_chunks': {
-      const chunks = output as RetrievedChunk[];
-      if (chunks?.length) {
-        const query = input.query as string;
-        for (const chunk of chunks) {
-          addDocument(chunk.filename, chunk.text, `chunk search${query ? `: ${query}` : ''}`);
         }
       }
       break;
@@ -232,15 +223,16 @@ interface ToolPartDisplayProps {
   part: any;
 }
 
-/** Renders search_documents tool with custom formatting. */
-function SearchDocumentsToolDisplay({ part }: Omit<ToolPartDisplayProps, 'toolName'>) {
+/** Renders semantic_search tool with custom formatting. */
+function SearchToolDisplay({ toolName, part }: ToolPartDisplayProps) {
   const state = part.state ?? 'output-available';
-  const input = parseJson<SearchDocumentsInput>(part.input);
-  const output = parseJson<RetrievedDocument[]>(part.output);
+  const input = parseJson<{ query: string; type?: string; top_k?: number }>(part.input);
+  const output = parseJson<RetrievedChunk[]>(part.output);
+  const title = input?.type === 'sparse' ? 'Keyword Search' : 'Semantic Search';
 
   return (
     <Tool defaultOpen={false}>
-      <ToolHeader title="Document Search" type="tool-search_documents" state={state} />
+      <ToolHeader title={title} type={`tool-${toolName}`} state={state} />
       <ToolContent>
         {input?.query && (
           <ToolSection title="Parameters">
@@ -250,12 +242,12 @@ function SearchDocumentsToolDisplay({ part }: Omit<ToolPartDisplayProps, 'toolNa
         )}
         {output && (
           <ToolResult>
-            <ToolKeyValue label="Found" value={`${output.length} document(s)`} />
-            {output.map((d) => (
+            <ToolKeyValue label="Found" value={`${output.length} chunk(s)`} />
+            {output.map((c) => (
               <ToolKeyValue
-                key={d.filename}
-                label={d.filename}
-                value={`${(d.score * 100).toFixed(0)}% match`}
+                key={`${c.filename}::${c.chunk_index}`}
+                label={`${c.filename} #${c.chunk_index}`}
+                value={`${(c.score * 100).toFixed(0)}% match`}
                 indent
               />
             ))}
@@ -292,8 +284,8 @@ function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
 
 /** Renders a tool part based on tool name. */
 function ToolPartDisplay({ toolName, part }: ToolPartDisplayProps) {
-  if (toolName === 'search_documents') {
-    return <SearchDocumentsToolDisplay part={part} />;
+  if (toolName === 'semantic_search') {
+    return <SearchToolDisplay toolName={toolName} part={part} />;
   }
   return <GenericToolDisplay toolName={toolName} part={part} />;
 }
@@ -375,7 +367,6 @@ const SUGGESTED_QUESTIONS = [
 
 export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemoveDocument, onClearDocuments }: ChatSidebarProps) {
   const navigate = useNavigate();
-  const addSearchResults = useFetchedDocumentsStore((state) => state.addSearchResults);
   const addDocument = useFetchedDocumentsStore((state) => state.addDocument);
   const addDocumentReference = useFetchedDocumentsStore((state) => state.addDocumentReference);
   const clearDocuments = useFetchedDocumentsStore((state) => state.clearDocuments);
@@ -518,10 +509,10 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
       for (const part of message.parts) {
         const info = getToolPartInfo(part);
         if (!info || info.state !== 'output-available') continue;
-        processToolOutput(info.toolName, info.input, info.output, addSearchResults, addDocument);
+        processToolOutput(info.toolName, info.input, info.output, addDocument);
       }
     }
-  }, [messages, addSearchResults, addDocument]);
+  }, [messages, addDocument]);
 
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col">

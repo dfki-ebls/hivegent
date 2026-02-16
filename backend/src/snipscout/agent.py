@@ -1,6 +1,7 @@
 """RAG agent with document retrieval tools."""
 
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic_ai import Agent, FunctionToolset, RunContext
 from pydantic_ai.models.openai import OpenAIResponsesModel
@@ -9,15 +10,14 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from . import tools
 from .config import settings
 from .prompts import EXPLORE_INSTRUCTIONS
-from .tools import DocumentFilter
 from .types import (
     ChunkSummary,
+    DocumentFilter,
     DocumentRange,
     DocumentSummary,
     GrepMatch,
     LlmConfig,
     RetrievedChunk,
-    RetrievedDocument,
 )
 
 __all__ = [
@@ -112,49 +112,28 @@ def grep(
 
 
 @explore_toolset.tool
-def search_documents(
+def semantic_search(
     ctx: RunContext[UserDeps],
     query: str,
-    top_k: int = 3,
-    subdir: str | None = None,
-    max_depth: int | None = None,
-) -> list[RetrievedDocument]:
-    """Semantic search for documents using BM25 ranking.
-
-    Args:
-        query: Natural language search query.
-        top_k: Maximum results to return.
-        subdir: Only include documents under this subdirectory.
-        max_depth: Maximum nesting depth relative to *subdir* (or root).
-    """
-    return tools.SearchDocumentsTool(
-        path=settings.get_user_documents_dir(ctx.deps.user_id),
-        document_filter=ctx.deps.document_filter,
-    )(query, top_k, subdir=subdir, max_depth=max_depth)
-
-
-@explore_toolset.tool
-def search_chunks(
-    ctx: RunContext[UserDeps],
-    query: str,
+    type: Literal["dense", "sparse"] = "dense",
     top_k: int = 5,
-    subdir: str | None = None,
-    max_depth: int | None = None,
 ) -> list[RetrievedChunk]:
-    """Search across all document chunks using BM25 ranking.
+    """Search chunks using semantic similarity or keyword matching.
 
-    Returns the most relevant chunks from all chunked documents.
+    Use ``"dense"`` (default) for conceptual queries where exact keywords
+    may not appear.  Use ``"sparse"`` for queries with specific terms that
+    should appear verbatim.
 
     Args:
         query: Natural language search query.
+        type: ``"dense"`` for vector embeddings, ``"sparse"`` for BM25/FTS.
         top_k: Maximum results to return.
-        subdir: Only include chunks from documents under this subdirectory.
-        max_depth: Maximum nesting depth relative to *subdir* (or root).
     """
-    return tools.SearchChunksTool(
-        path=settings.get_user_chunks_dir(ctx.deps.user_id),
+    return tools.SearchTool(
+        user_id=ctx.deps.user_id,
+        search_type=type,
         document_filter=ctx.deps.document_filter,
-    )(query, top_k, subdir=subdir, max_depth=max_depth)
+    )(query, top_k)
 
 
 @explore_toolset.tool

@@ -1,5 +1,7 @@
 """FastMCP server with OIDCProxy auth and explicit typed tool wrappers."""
 
+from typing import Literal
+
 from docket.dependencies import Depends
 from fastmcp import Context, FastMCP
 from fastmcp.server.auth import AccessToken, OIDCProxy
@@ -18,7 +20,6 @@ from .types import (
     DocumentSummary,
     GrepMatch,
     RetrievedChunk,
-    RetrievedDocument,
 )
 
 __all__ = ["mcp_app"]
@@ -119,19 +120,20 @@ def grep(
 
 
 @mcp_app.tool()
-def search_documents(
+def semantic_search(
     query: str,
-    top_k: int = 3,
-    subdir: str | None = None,
-    max_depth: int | None = None,
+    type: Literal["dense", "sparse"] = "dense",
+    top_k: int = 5,
     user_id: str = Depends(_get_mcp_user_id),
-) -> list[RetrievedDocument]:
-    """Semantic search for documents using BM25 ranking."""
-    return tools.SearchDocumentsTool(path=settings.get_user_documents_dir(user_id))(
+) -> list[RetrievedChunk]:
+    """Search chunks using semantic similarity or keyword matching.
+
+    Use "dense" for vector embeddings (conceptual queries),
+    "sparse" for BM25/FTS (keyword queries).
+    """
+    return tools.SearchTool(user_id=user_id, search_type=type)(
         query,
         top_k,
-        subdir=subdir,
-        max_depth=max_depth,
     )
 
 
@@ -154,23 +156,6 @@ def get_chunk(
     return tools.GetChunkTool(path=settings.get_user_chunks_dir(user_id))(
         filename,
         chunk_index,
-    )
-
-
-@mcp_app.tool()
-def search_chunks(
-    query: str,
-    top_k: int = 5,
-    subdir: str | None = None,
-    max_depth: int | None = None,
-    user_id: str = Depends(_get_mcp_user_id),
-) -> list[RetrievedChunk]:
-    """Search across all document chunks using BM25 ranking."""
-    return tools.SearchChunksTool(path=settings.get_user_chunks_dir(user_id))(
-        query,
-        top_k,
-        subdir=subdir,
-        max_depth=max_depth,
     )
 
 
@@ -208,7 +193,6 @@ async def explore_documents(
         return result.output
 
     docs_dir = settings.get_user_documents_dir(user_id)
-    chunks_dir = settings.get_user_chunks_dir(user_id)
 
     result = await ctx.sample(
         task,
@@ -217,8 +201,8 @@ async def explore_documents(
             tools.ListDocumentsTool(path=docs_dir),
             tools.GlobDocumentsTool(path=docs_dir),
             tools.GrepTool(path=docs_dir),
-            tools.SearchDocumentsTool(path=docs_dir),
-            tools.SearchChunksTool(path=chunks_dir),
+            tools.SearchTool(user_id=user_id, search_type="dense"),
+            tools.SearchTool(user_id=user_id, search_type="sparse"),
             tools.GetDocumentLinesTool(path=docs_dir),
         ],
     )
