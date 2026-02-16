@@ -20,8 +20,10 @@ import {
   GenerateTitleResponseSchema,
   MoveDocumentResponseSchema,
   TokenInfoSchema,
+  CollectionUploadResponseSchema,
   UploadDocumentResponseSchema,
   type BackendSettings,
+  type CollectionUploadResponse,
   type ChunkedDocumentResponse,
   type ChunkingPipeline,
   type ChunkingPipelineInfo,
@@ -217,6 +219,52 @@ export async function uploadDocument(
 
   const data: unknown = await res.json();
   return UploadDocumentResponseSchema.parse(data);
+}
+
+/** Options for collection upload (ZIP or directory). */
+export interface UploadCollectionOptions {
+  conversionPipeline?: ConversionPipeline;
+  chunkingPipeline?: ChunkingPipeline;
+  llm?: LlmConfig;
+}
+
+/** Upload a markdown collection as a ZIP archive. */
+export async function uploadCollection(
+  file: File,
+  options?: UploadCollectionOptions
+): Promise<CollectionUploadResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  let url = `${API_BASE_URL}/api/collections`;
+  const params = new URLSearchParams();
+  if (options?.conversionPipeline) {
+    params.set('conversion_pipeline', options.conversionPipeline);
+  }
+  if (options?.chunkingPipeline) {
+    params.set('chunking_pipeline', options.chunkingPipeline);
+  }
+  const queryString = params.toString();
+  if (queryString) {
+    url += `?${queryString}`;
+  }
+
+  if (options?.llm) {
+    formData.append('llm_config', JSON.stringify(options.llm));
+  }
+
+  const res = await authFetch(url, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Collection upload failed' }));
+    throw new Error(error.detail || 'Collection upload failed');
+  }
+
+  const data: unknown = await res.json();
+  return CollectionUploadResponseSchema.parse(data);
 }
 
 export async function deleteDocument(filename: string): Promise<void> {

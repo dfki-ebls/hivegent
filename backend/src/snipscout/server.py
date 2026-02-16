@@ -1,10 +1,13 @@
 """FastAPI server for the RAG agent."""
 
+import io
 import logging
 import shutil
+import tempfile
+import zipfile
 from collections.abc import Sequence
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Query, UploadFile
@@ -70,6 +73,7 @@ from .tokens import token_store
 from .tools import DocumentFilter
 from .types import (
     ChatRequestConfig,
+    CollectionUploadResponse,
     CompactConversationResponse,
     ConversationListResponse,
     ConversationSummary,
@@ -96,6 +100,7 @@ from .types import (
     UpdateTitleRequest,
     UploadDocumentResponse,
 )
+from .wikilinks import preprocess_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -514,71 +519,56 @@ async def list_documents(
     return DocumentListResponse(documents=documents, total_count=len(documents))
 
 
-@api_router.put("/documents/{filepath:path}")
-async def upload_document(
+async def _upload_file_internal(
+    user_id: str,
     filepath: str,
-    file: UploadFile,
-    user: Annotated[User, Depends(get_current_user)],
-    conversion_pipeline: ConversionPipeline = Query(default=ConversionPipeline.AUTO),
-    chunking_pipeline: ChunkingPipeline = Query(default=ChunkingPipeline.AUTO),
-    llm_config: str = Form(default="{}"),
+    content: bytes,
+    conversion_pipeline: ConversionPipeline,
+    chunking_pipeline: ChunkingPipeline,
+    llm_config: LlmConfig,
 ) -> UploadDocumentResponse:
-    """Upload or replace a document.
+    """Upload a single file, converting binary files to markdown.
 
-    For binary files (PDF, DOCX, etc.), the file is converted to markdown
-    using the specified conversion pipeline. The original is stored in originals/.
-    All documents are chunked after saving using the specified chunking pipeline.
+    This is the shared implementation used by both the single-file upload
+    endpoint and the collection upload endpoint.
 
     Args:
-        filepath: The target relative path (must have allowed extension).
-        file: The uploaded file content.
-        conversion_pipeline: The conversion pipeline to use for binary files.
-        chunking_pipeline: The chunking pipeline to use.
-        llm_config: JSON-encoded LLM configuration for conversion.
-    """
-    safe = _safe_path(filepath)
-    llm = LlmConfig.model_validate_json(llm_config)
-    resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
+        user_id: The authenticated user ID.
+        filepath: Sanitized relative POSIX path for the document.
+        content: Raw file bytes.
+        conversion_pipeline: The conversion pipeline for binary files.
+        chunking_pipeline: The chunking pipeline.
+        llm_config: Resolved LLM configuration for conversion.
 
-    # Extract the basename for extension checking
-    basename = safe.rsplit("/", 1)[-1] if "/" in safe else safe
-    allowed_extensions = _get_allowed_extensions()
+    Returns:
+        Upload response with file metadata.
+
+    Raises:
+        HTTPException: On validation or conversion errors.
+    """
+    basename = filepath.rsplit("/", 1)[-1] if "/" in filepath else filepath
     suffix = "." + basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
 
-    if suffix not in allowed_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid file extension. Allowed: {', '.join(sorted(allowed_extensions))}",
-        )
-
-    content = await file.read()
-    if len(content) > settings.max_file_size_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
-        )
-
-    documents_dir = settings.get_user_documents_dir(user.id)
+    documents_dir = settings.get_user_documents_dir(user_id)
 
     # Handle text files directly
     if _is_text_file(suffix):
-        file_path = documents_dir / safe
+        file_path = documents_dir / filepath
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(content)
 
-        # Chunk the text file
         chunk_count = None
         chunking_used = None
         try:
             text_content = content.decode("utf-8")
-            chunked = chunk_document(user.id, safe, text_content, chunking_pipeline)
+            chunked = chunk_document(user_id, filepath, text_content, chunking_pipeline)
             chunk_count = chunked.chunk_count
             chunking_used = chunked.chunking_pipeline
         except Exception as e:
-            logger.warning("Chunking failed for %s: %s", safe, e)
+            logger.warning("Chunking failed for %s: %s", filepath, e)
 
         return UploadDocumentResponse(
-            filename=safe,
+            filename=filepath,
             size_bytes=len(content),
             chunk_count=chunk_count,
             chunking_pipeline_used=chunking_used,
@@ -586,8 +576,8 @@ async def upload_document(
         )
 
     # Handle binary files - store original and convert to markdown
-    originals_dir = settings.get_user_originals_dir(user.id)
-    original_path = originals_dir / safe
+    originals_dir = settings.get_user_originals_dir(user_id)
+    original_path = originals_dir / filepath
     original_path.parent.mkdir(parents=True, exist_ok=True)
     original_path.write_bytes(content)
 
@@ -618,9 +608,9 @@ async def upload_document(
             markdown_content = await converter.convert(
                 original_path,
                 options=LLMConvertOptions(
-                    model=resolved.model,
-                    api_key=resolved.api_key,
-                    base_url=resolved.base_url,
+                    model=llm_config.model,
+                    api_key=llm_config.api_key,
+                    base_url=llm_config.base_url,
                 ),
             )
         else:
@@ -637,9 +627,8 @@ async def upload_document(
 
     # Save the converted markdown
     base_name = basename.rsplit(".", 1)[0]
-    # Preserve directory structure for the converted file
-    if "/" in safe:
-        parent_dir = safe.rsplit("/", 1)[0]
+    if "/" in filepath:
+        parent_dir = filepath.rsplit("/", 1)[0]
         converted_relpath = f"{parent_dir}/{base_name}.md"
     else:
         converted_relpath = f"{base_name}.md"
@@ -652,7 +641,7 @@ async def upload_document(
     chunking_used = None
     try:
         chunked = chunk_document(
-            user.id, converted_relpath, markdown_content, chunking_pipeline
+            user_id, converted_relpath, markdown_content, chunking_pipeline
         )
         chunk_count = chunked.chunk_count
         chunking_used = chunked.chunking_pipeline
@@ -660,13 +649,196 @@ async def upload_document(
         logger.warning("Chunking failed for %s: %s", converted_relpath, e)
 
     return UploadDocumentResponse(
-        filename=safe,
+        filename=filepath,
         converted_filename=converted_relpath,
         size_bytes=len(content),
         conversion_pipeline_used=resolved_conversion.value,
         chunk_count=chunk_count,
         chunking_pipeline_used=chunking_used,
         message="Document uploaded and converted successfully",
+    )
+
+
+@api_router.put("/documents/{filepath:path}")
+async def upload_document(
+    filepath: str,
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+    conversion_pipeline: ConversionPipeline = Query(default=ConversionPipeline.AUTO),
+    chunking_pipeline: ChunkingPipeline = Query(default=ChunkingPipeline.AUTO),
+    llm_config: str = Form(default="{}"),
+) -> UploadDocumentResponse:
+    """Upload or replace a document.
+
+    For binary files (PDF, DOCX, etc.), the file is converted to markdown
+    using the specified conversion pipeline. The original is stored in originals/.
+    All documents are chunked after saving using the specified chunking pipeline.
+
+    Args:
+        filepath: The target relative path (must have allowed extension).
+        file: The uploaded file content.
+        conversion_pipeline: The conversion pipeline to use for binary files.
+        chunking_pipeline: The chunking pipeline to use.
+        llm_config: JSON-encoded LLM configuration for conversion.
+    """
+    safe = _safe_path(filepath)
+    llm = LlmConfig.model_validate_json(llm_config)
+    resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
+
+    basename = safe.rsplit("/", 1)[-1] if "/" in safe else safe
+    allowed_extensions = _get_allowed_extensions()
+    suffix = "." + basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
+
+    if suffix not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file extension. Allowed: {', '.join(sorted(allowed_extensions))}",
+        )
+
+    content = await file.read()
+    if len(content) > settings.max_file_size_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
+        )
+
+    return await _upload_file_internal(
+        user_id=user.id,
+        filepath=safe,
+        content=content,
+        conversion_pipeline=conversion_pipeline,
+        chunking_pipeline=chunking_pipeline,
+        llm_config=resolved,
+    )
+
+
+# Maximum size for collection ZIP uploads (100 MB)
+_MAX_COLLECTION_SIZE_BYTES = 100 * 1024 * 1024
+# Maximum number of files in a collection
+_MAX_COLLECTION_FILES = 1000
+
+
+@api_router.post("/collections")
+async def upload_collection(
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+    conversion_pipeline: ConversionPipeline = Query(default=ConversionPipeline.AUTO),
+    chunking_pipeline: ChunkingPipeline = Query(default=ChunkingPipeline.AUTO),
+    llm_config: str = Form(default="{}"),
+) -> CollectionUploadResponse:
+    """Upload a markdown collection as a ZIP archive.
+
+    Extracts the archive, normalizes Obsidian wikilinks to standard markdown
+    links, detects and converts binary attachments via the conversion
+    pipeline, then stores all files.
+    """
+    llm = LlmConfig.model_validate_json(llm_config)
+    resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
+
+    raw = await file.read()
+    if len(raw) > _MAX_COLLECTION_SIZE_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Collection too large. Maximum size: {_MAX_COLLECTION_SIZE_BYTES} bytes",
+        )
+
+    failed: list[str] = []
+    markdown_count = 0
+    converted_count = 0
+
+    async def _try_upload(rel_path: str, content_bytes: bytes) -> bool:
+        """Upload a single file, appending to *failed* on error."""
+        try:
+            safe = sanitize_document_path(rel_path)
+            await _upload_file_internal(
+                user.id, safe, content_bytes,
+                conversion_pipeline, chunking_pipeline, resolved,
+            )
+            return True
+        except Exception as e:
+            logger.warning("Failed to process %s: %s", rel_path, e)
+            failed.append(rel_path)
+            return False
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        extract_root = Path(tmp_dir)
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                for info in zf.infolist():
+                    norm = str(PurePosixPath(info.filename))
+                    if norm.startswith("/") or norm.startswith("..") or "/.." in norm:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"ZIP contains unsafe path: {info.filename}",
+                        )
+                zf.extractall(extract_root)
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=400, detail="Invalid ZIP file")
+
+        # Strip single top-level directory wrapper
+        top_items = list(extract_root.iterdir())
+        if len(top_items) == 1 and top_items[0].is_dir():
+            extract_root = top_items[0]
+
+        collection_files = {
+            str(p.relative_to(extract_root).as_posix())
+            for p in extract_root.rglob("*") if p.is_file()
+        }
+        if len(collection_files) > _MAX_COLLECTION_FILES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Collection has too many files ({len(collection_files)}). "
+                f"Maximum: {_MAX_COLLECTION_FILES}",
+            )
+
+        # Preprocess markdown files to discover binary attachments
+        all_binaries: set[str] = set()
+        preprocessed: dict[str, str] = {}
+        for rel_path in sorted(collection_files):
+            if PurePosixPath(rel_path).suffix.lower() != ".md":
+                continue
+            try:
+                text = (extract_root / rel_path).read_text(encoding="utf-8")
+            except Exception as e:
+                logger.warning("Failed to read %s: %s", rel_path, e)
+                failed.append(rel_path)
+                continue
+            result = preprocess_markdown(text, rel_path, collection_files)
+            preprocessed[rel_path] = result.content
+            all_binaries.update(result.binary_attachments)
+
+        # Convert binary attachments
+        allowed = _get_allowed_extensions()
+        for path in sorted(all_binaries):
+            source = extract_root / path
+            if PurePosixPath(path).suffix.lower() not in allowed or not source.exists():
+                failed.append(path)
+                continue
+            if await _try_upload(path, source.read_bytes()):
+                converted_count += 1
+
+        # Upload text files (preprocessed markdown or raw)
+        text_exts = _get_text_extensions()
+        for rel_path in sorted(collection_files):
+            if rel_path in all_binaries:
+                continue
+            suffix = PurePosixPath(rel_path).suffix.lower()
+            if suffix == ".md" and rel_path in preprocessed:
+                if await _try_upload(rel_path, preprocessed[rel_path].encode("utf-8")):
+                    markdown_count += 1
+            elif suffix in text_exts:
+                await _try_upload(rel_path, (extract_root / rel_path).read_bytes())
+
+    total = markdown_count + converted_count
+    return CollectionUploadResponse(
+        total_files=total,
+        markdown_files=markdown_count,
+        converted_attachments=converted_count,
+        failed_files=failed,
+        message=f"Collection uploaded: {markdown_count} markdown, "
+        f"{converted_count} attachments converted"
+        + (f", {len(failed)} failed" if failed else ""),
     )
 
 

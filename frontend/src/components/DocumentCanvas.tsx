@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import Fuse from 'fuse.js';
-import { AlertCircle, EyeOff, FileText, FolderOpen, FolderPlus, MessageSquarePlus, Plus, RefreshCw, RotateCcw, Scissors, Search, Trash2, Upload, X } from 'lucide-react';
+import JSZip from 'jszip';
+import { AlertCircle, Archive, EyeOff, FileText, FolderOpen, FolderPlus, MessageSquarePlus, Plus, RefreshCw, RotateCcw, Scissors, Search, Trash2, Upload, X } from 'lucide-react';
 
 import { buildLlmConfig, getDocumentContent, requiresConversion, uploadDocument } from '../lib/api';
 import type { ChunkingPipeline, ConversionPipeline, DocumentInfo, StoredDocument } from '../lib/types';
@@ -177,11 +178,17 @@ interface UploadAreaProps {
   isDragging: boolean;
   isLoading: boolean;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
+  directoryInputRef: React.RefObject<HTMLInputElement | null>;
+  zipInputRef: React.RefObject<HTMLInputElement | null>;
   onDragOver: (e: React.DragEvent) => void;
   onDragLeave: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
   onFileInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onDirectoryInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onZipInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onSelectFiles: () => void;
+  onSelectDirectory: () => void;
+  onSelectZip: () => void;
   onNewDocument: () => void;
   onNewFolder: () => void;
 }
@@ -190,11 +197,17 @@ function UploadArea({
   isDragging,
   isLoading,
   fileInputRef,
+  directoryInputRef,
+  zipInputRef,
   onDragOver,
   onDragLeave,
   onDrop,
   onFileInputChange,
+  onDirectoryInputChange,
+  onZipInputChange,
   onSelectFiles,
+  onSelectDirectory,
+  onSelectZip,
   onNewDocument,
   onNewFolder,
 }: UploadAreaProps) {
@@ -225,9 +238,36 @@ function UploadArea({
           className="hidden"
           onChange={onFileInputChange}
         />
-        <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={isLoading}>
-          Select Files
-        </Button>
+        {/* biome-ignore lint/a11y/useMediaCaption: directory input */}
+        <input
+          ref={directoryInputRef}
+          type="file"
+          // @ts-expect-error webkitdirectory is not in React's type definitions
+          webkitdirectory=""
+          multiple
+          className="hidden"
+          onChange={onDirectoryInputChange}
+        />
+        <input
+          ref={zipInputRef}
+          type="file"
+          accept=".zip"
+          className="hidden"
+          onChange={onZipInputChange}
+        />
+        <div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={isLoading}>
+            Select Files
+          </Button>
+          <Button variant="secondary" size="sm" onClick={onSelectDirectory} disabled={isLoading}>
+            <FolderOpen className="h-4 w-4 mr-1" />
+            Upload Folder
+          </Button>
+          <Button variant="secondary" size="sm" onClick={onSelectZip} disabled={isLoading}>
+            <Archive className="h-4 w-4 mr-1" />
+            Upload ZIP
+          </Button>
+        </div>
         <div className="flex flex-col items-center gap-2 pt-4 border-t border-muted-foreground/15 w-full">
           <p className="text-xs text-muted-foreground">
             Or create and edit documents directly in the browser
@@ -415,6 +455,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     fetchDocuments,
     fetchDirectoryTree,
     upload,
+    uploadCol,
     remove,
     rechunk: storeRechunk,
     reconvert: storeReconvert,
@@ -430,6 +471,8 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const setConversionPipeline = useSettingsStore((state) => state.setConversionPipeline);
   const setChunkingPipeline = useSettingsStore((state) => state.setChunkingPipeline);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const directoryInputRef = useRef<HTMLInputElement>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [chunkViewerFilename, setChunkViewerFilename] = useState<string | null>(null);
@@ -549,6 +592,60 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     }
   }, [handleFiles]);
 
+  const handleDirectoryInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const options = {
+      conversionPipeline,
+      chunkingPipeline,
+      llm: buildLlmConfig({
+        model: visionModel,
+        apiKey: llmSettings.apiKey,
+        baseUrl: llmSettings.baseUrl,
+      }),
+    };
+
+    // Bundle directory files into a ZIP using JSZip
+    const zip = new JSZip();
+    for (const file of Array.from(files)) {
+      const relativePath = file.webkitRelativePath || file.name;
+      zip.file(relativePath, file);
+    }
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const zipFile = new File([blob], 'collection.zip', { type: 'application/zip' });
+
+    await uploadCol(zipFile, options);
+
+    if (directoryInputRef.current) {
+      directoryInputRef.current.value = '';
+    }
+  }, [uploadCol, conversionPipeline, chunkingPipeline, visionModel, llmSettings]);
+
+  const handleZipInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    if (!file.name.toLowerCase().endsWith('.zip')) return;
+
+    const options = {
+      conversionPipeline,
+      chunkingPipeline,
+      llm: buildLlmConfig({
+        model: visionModel,
+        apiKey: llmSettings.apiKey,
+        baseUrl: llmSettings.baseUrl,
+      }),
+    };
+
+    await uploadCol(file, options);
+
+    if (zipInputRef.current) {
+      zipInputRef.current.value = '';
+    }
+  }, [uploadCol, conversionPipeline, chunkingPipeline, visionModel, llmSettings]);
+
   // --- Directory handlers ---
 
   const handleCreateSubdir = useCallback((parentPath: string) => {
@@ -645,11 +742,17 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         isDragging={isDragging}
         isLoading={isLoading}
         fileInputRef={fileInputRef}
+        directoryInputRef={directoryInputRef}
+        zipInputRef={zipInputRef}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onFileInputChange={handleFileInputChange}
+        onDirectoryInputChange={handleDirectoryInputChange}
+        onZipInputChange={handleZipInputChange}
         onSelectFiles={() => fileInputRef.current?.click()}
+        onSelectDirectory={() => directoryInputRef.current?.click()}
+        onSelectZip={() => zipInputRef.current?.click()}
         onNewDocument={handleNew}
         onNewFolder={handleNewFolder}
       />

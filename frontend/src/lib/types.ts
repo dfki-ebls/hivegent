@@ -308,6 +308,16 @@ export const UploadDocumentResponseSchema = z.object({
 });
 export type UploadDocumentResponse = z.infer<typeof UploadDocumentResponseSchema>;
 
+/** Response from collection (directory/ZIP) upload. */
+export const CollectionUploadResponseSchema = z.object({
+  total_files: z.number(),
+  markdown_files: z.number(),
+  converted_attachments: z.number(),
+  failed_files: z.array(z.string()),
+  message: z.string(),
+});
+export type CollectionUploadResponse = z.infer<typeof CollectionUploadResponseSchema>;
+
 // ============================================================
 // Frontend-only types (no runtime validation needed)
 // ============================================================

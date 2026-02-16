@@ -36,6 +36,7 @@ class LlmConfig(BaseModel):
 __all__ = [
     "ChatRequestConfig",
     "ChunkSummary",
+    "CollectionUploadResponse",
     "CompactConversationResponse",
     "ConversationData",
     "ConversationListResponse",
@@ -366,6 +367,18 @@ class DeleteDirectoryResponse(BaseModel):
 
     path: str = Field(description="The deleted directory path")
     files_deleted: int = Field(description="Number of files deleted")
+    message: str = Field(description="Status message")
+
+
+class CollectionUploadResponse(BaseModel):
+    """Response for collection (directory/ZIP) upload."""
+
+    total_files: int = Field(description="Total files processed")
+    markdown_files: int = Field(description="Number of markdown files uploaded")
+    converted_attachments: int = Field(description="Number of binary attachments converted")
+    failed_files: list[str] = Field(
+        default_factory=list, description="Files that failed to process"
+    )
     message: str = Field(description="Status message")
 
 

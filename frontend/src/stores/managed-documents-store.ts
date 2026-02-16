@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import type { ChunkingPipeline, DirectoryTreeResponse, DocumentInfo } from '../lib/types';
-import type { ReconvertDocumentOptions, UploadDocumentOptions } from '../lib/api';
+import type { ChunkingPipeline, CollectionUploadResponse, DirectoryTreeResponse, DocumentInfo } from '../lib/types';
+import type { ReconvertDocumentOptions, UploadCollectionOptions, UploadDocumentOptions } from '../lib/api';
 import {
   createDirectory,
   deleteDirectory,
@@ -10,6 +10,7 @@ import {
   moveDocument,
   rechunkDocument,
   reconvertDocument,
+  uploadCollection,
   uploadDocument,
 } from '../lib/api';
 
@@ -21,6 +22,7 @@ interface ManagedDocumentsStore {
   fetchDocuments: () => Promise<void>;
   fetchDirectoryTree: () => Promise<void>;
   upload: (file: File, options?: UploadDocumentOptions) => Promise<void>;
+  uploadCol: (file: File, options?: UploadCollectionOptions) => Promise<CollectionUploadResponse>;
   remove: (filename: string) => Promise<void>;
   rechunk: (filename: string, chunkingPipeline?: ChunkingPipeline) => Promise<void>;
   reconvert: (filename: string, options?: ReconvertDocumentOptions) => Promise<void>;
@@ -72,6 +74,23 @@ export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
           error: err instanceof Error ? err.message : 'Upload failed',
           isLoading: false,
         });
+      }
+    },
+
+    uploadCol: async (file: File, options?: UploadCollectionOptions) => {
+      set({ isLoading: true, error: null });
+      try {
+        const result = await uploadCollection(file, options);
+        await get().fetchDocuments();
+        await get().fetchDirectoryTree();
+        set({ isLoading: false });
+        return result;
+      } catch (err) {
+        set({
+          error: err instanceof Error ? err.message : 'Collection upload failed',
+          isLoading: false,
+        });
+        throw err;
       }
     },
 
