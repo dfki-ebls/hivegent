@@ -39,8 +39,8 @@ class MarkerConverter(DocumentConverter):
         """
         if self._converter is None:
             try:
-                from marker.converters.pdf import PdfConverter
-                from marker.models import create_model_dict
+                from marker.converters.pdf import PdfConverter  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
+                from marker.models import create_model_dict  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
 
                 self._converter = PdfConverter(artifact_dict=create_model_dict())
             except ImportError as e:

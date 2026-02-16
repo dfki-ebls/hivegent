@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -202,7 +202,7 @@ class ConversationData(BaseModel):
     document_references: list[DocumentReference] = Field(
         default_factory=list, description="Documents accessed during the conversation"
     )
-    messages: list[dict] = Field(
+    messages: list[dict[str, Any]] = Field(
         default_factory=list, description="Conversation messages"
     )
     compacted_from: str | None = Field(

@@ -49,7 +49,7 @@ class DoclingConverter(DocumentConverter):
         """
         if self._converter is None:
             try:
-                from docling.document_converter import DocumentConverter
+                from docling.document_converter import DocumentConverter  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
 
                 self._converter = DocumentConverter()
             except ImportError as e:

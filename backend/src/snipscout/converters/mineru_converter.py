@@ -50,8 +50,8 @@ class MinerUConverter(DocumentConverter):
         """
         if self._pipe_class is None:
             try:
-                from magic_pdf.data.data_reader_writer import FileBasedDataWriter
-                from magic_pdf.pipe.UNIPipe import UNIPipe
+                from magic_pdf.data.data_reader_writer import FileBasedDataWriter  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
+                from magic_pdf.pipe.UNIPipe import UNIPipe  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
 
                 self._pipe_class = UNIPipe
                 self._writer_class = FileBasedDataWriter

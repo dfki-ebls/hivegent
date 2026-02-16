@@ -113,7 +113,7 @@ def _build_claims_registry() -> JWTClaimsRegistry:
         options["iss"] = ClaimsOption(value=auth_settings.issuer)
     if auth_settings.audience:
         options["aud"] = ClaimsOption(value=auth_settings.audience)
-    return JWTClaimsRegistry(leeway=300, **options)
+    return JWTClaimsRegistry(leeway=300, **options)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
 
 
 async def validate_jwt_token(token: str) -> User:

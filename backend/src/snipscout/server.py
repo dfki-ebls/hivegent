@@ -8,7 +8,7 @@ import zipfile
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -225,7 +225,7 @@ async def get_conversation(
 async def get_conversation_document_references(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Get document references for a conversation."""
     conversation = load_conversation(user.id, conversation_id)
     if not conversation:

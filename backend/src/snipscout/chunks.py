@@ -4,6 +4,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import bm25s
 from pydantic import BaseModel, Field
@@ -206,7 +207,7 @@ def search_chunks(
     user_id: str,
     query: str,
     top_k: int = 5,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Search across all user chunks using BM25.
 
     Loads chunks from disk, builds a temporary BM25 index, and returns
@@ -225,7 +226,7 @@ def search_chunks(
         return []
 
     # Collect all chunks from all documents
-    all_chunks: list[dict] = []
+    all_chunks: list[dict[str, Any]] = []
     all_texts: list[str] = []
 
     for path in sorted(chunks_dir.rglob("*.json")):
@@ -256,7 +257,7 @@ def search_chunks(
     query_tokens = bm25s.tokenize([query])
     indices, scores = retriever.retrieve(query_tokens, k=min(top_k, len(all_chunks)))
 
-    results: list[dict] = []
+    results: list[dict[str, Any]] = []
     for idx, score in zip(indices[0], scores[0]):
         if idx < len(all_chunks):
             entry = all_chunks[idx].copy()

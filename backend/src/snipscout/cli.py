@@ -21,7 +21,7 @@ CREDENTIALS_FILE = CONFIG_DIR / "credentials.json"
 DEFAULT_API_URL = "http://localhost:8000"
 
 
-def _get_credentials() -> dict | None:
+def _get_credentials() -> dict[str, Any] | None:
     """Load stored credentials."""
     if not CREDENTIALS_FILE.exists():
         return None
