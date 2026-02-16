@@ -2,9 +2,11 @@
 
 import json
 import logging
+import shutil
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 import cbrkit
@@ -22,6 +24,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 CHUNK_KEY_SEPARATOR = "::"
+EMBEDDING_FINGERPRINT_FILE = "embedding_config.json"
 LANCEDB_TABLE = "chunks"
 METADATA_FILENAME_COLUMN = "filename"
 
@@ -46,7 +49,8 @@ class _RetrievalState:
         default_factory=dict
     )
     _embedding_func: cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray] | None = field(default=None)
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _lock: threading.RLock = field(default_factory=threading.RLock)
+    _pending_reindex: set[str] = field(default_factory=set)
 
     def get_embedding_func(self) -> cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray]:
         """Get or create the shared embedding function based on settings.
@@ -79,8 +83,47 @@ class _RetrievalState:
 
             return self._embedding_func
 
+    def _validate_fingerprint(self, user_id: str, lancedb_dir: Path) -> None:
+        """Check the embedding fingerprint and wipe stale vector data.
+
+        Reads the stored fingerprint from the LanceDB directory.
+        If it exists and differs from the current config, the directory
+        is wiped and the user is scheduled for re-indexing.
+        The current fingerprint is always written back afterwards.
+
+        Args:
+            user_id: The user ID (for logging and reindex tracking).
+            lancedb_dir: Path to the user's LanceDB directory.
+        """
+        fp_path = lancedb_dir / EMBEDDING_FINGERPRINT_FILE
+        current = settings.embedding.fingerprint()
+
+        try:
+            stored = json.loads(fp_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            stored = None
+
+        if stored is not None and stored != current:
+            logger.warning(
+                "Embedding config changed for user %s "
+                "(was %s, now %s) — wiping LanceDB directory",
+                user_id,
+                stored,
+                current,
+            )
+            self._storage_cache.pop(user_id, None)
+            self._embedding_func = None
+            shutil.rmtree(lancedb_dir)
+            lancedb_dir.mkdir(parents=True, exist_ok=True)
+            self._pending_reindex.add(user_id)
+
+        fp_path.write_text(json.dumps(current), encoding="utf-8")
+
     def get_user_storage(self, user_id: str) -> cbrkit.indexable.lancedb[str]:
         """Get or create the LanceDB storage for a user.
+
+        Validates the embedding fingerprint on first access and
+        invalidates stale vector data when the model config changes.
 
         Args:
             user_id: The user ID.
@@ -95,14 +138,14 @@ class _RetrievalState:
             if user_id in self._storage_cache:
                 return self._storage_cache[user_id]
 
-            uri = str(settings.get_user_lancedb_dir(user_id))
-            embed_func = self.get_embedding_func()
+            lancedb_dir = settings.get_user_lancedb_dir(user_id)
+            self._validate_fingerprint(user_id, lancedb_dir)
 
             storage: cbrkit.indexable.lancedb[str] = cbrkit.indexable.lancedb(
-                uri=uri,
+                uri=str(lancedb_dir),
                 table=LANCEDB_TABLE,
                 index_type="hybrid",
-                conversion_func=embed_func,
+                conversion_func=self.get_embedding_func(),
                 metadata_func=_metadata_func,
             )
             self._storage_cache[user_id] = storage
@@ -204,6 +247,7 @@ def sync_index(user_id: str) -> None:
     Args:
         user_id: The user ID.
     """
+    _state._pending_reindex.discard(user_id)
     storage = _state.get_user_storage(user_id)
     casebase = _load_all_chunks(user_id)
     logger.info(
@@ -279,6 +323,9 @@ def _search(
     Returns:
         List of ``(chunk_key, text, score)`` tuples sorted by score.
     """
+    if user_id in _state._pending_reindex:
+        sync_index(user_id)
+
     storage = _state.get_user_storage(user_id)
     if not storage.has_index():
         return []

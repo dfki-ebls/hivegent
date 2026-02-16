@@ -159,6 +159,17 @@ class EmbeddingSettings(BaseModel):
     api_key: str = ""
     base_url: str = ""
 
+    def fingerprint(self) -> dict[str, str]:
+        """Return fields that define the vector space.
+
+        Only includes provider and model — not api_key or base_url —
+        because those don't affect the embedding dimensions or space.
+
+        Returns:
+            Dict with ``provider`` and ``model`` keys.
+        """
+        return {"provider": self.provider, "model": self.model}
+
 
 class McpSettings(BaseModel):
     """MCP server settings for OIDC authentication."""
