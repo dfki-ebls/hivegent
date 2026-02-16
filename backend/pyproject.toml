@@ -3,11 +3,12 @@ name = "snipscout"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12,<4"
+requires-python = ">=3.13,<4"
 authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
 dependencies = [
   "argon2-cffi>=25,<26",
   "bm25s[core]>=0.2,<1",
+  "cbrkit>=1,<2",
   "chonkie>=1,<2",
   "fastapi[standard]>=0.120,<1",
   "fastmcp>=2,<3",
@@ -32,8 +33,11 @@ snipscout = "snipscout.cli:app"
 # marker = ["marker-pdf[full]>=1"]
 # docling = ["docling>=2"]
 # mineru = ["mineru[all]>=2"]
-# all-converters = ["snipscout[marker,docling,mineru]"]
+# converters = ["snipscout[marker,docling,mineru]"]
 
 [build-system]
 requires = ["uv-build>=0.9,<1"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }
