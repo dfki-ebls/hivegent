@@ -80,6 +80,7 @@ import {
   usePromptInputAttachments,
 } from "./ai-elements/prompt-input";
 import { Suggestion, Suggestions } from "./ai-elements/suggestion";
+import { CodeBlock } from "./ai-elements/code-block";
 import { Tool, ToolContent, ToolHeader } from "./ai-elements/tool";
 import { Citation } from "./Citation";
 import { ConversationsList } from "./ConversationsList";
@@ -161,6 +162,22 @@ function parseJson<T>(value: unknown): T | undefined {
     }
   }
   return value as T;
+}
+
+/** Pretty-print any value as indented JSON. Strings are parsed first if possible. */
+function prettyPrint(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value, null, 2);
+  }
+  return String(value);
 }
 
 /** Process tool output and add to document store. */
@@ -424,8 +441,8 @@ function EditDocumentToolDisplay({
         </Confirmation>
         {part.output !== undefined && (
           <ToolResult>
-            <pre className="whitespace-pre-wrap text-xs">
-              {String(part.output)}
+            <pre className="whitespace-pre-wrap text-xs font-mono">
+              {prettyPrint(part.output)}
             </pre>
           </ToolResult>
         )}
@@ -501,8 +518,8 @@ function WriteDocumentToolDisplay({
         </Confirmation>
         {part.output !== undefined && (
           <ToolResult>
-            <pre className="whitespace-pre-wrap text-xs">
-              {String(part.output)}
+            <pre className="whitespace-pre-wrap text-xs font-mono">
+              {prettyPrint(part.output)}
             </pre>
           </ToolResult>
         )}
@@ -524,11 +541,7 @@ function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
         {input && <ToolParameters params={input} />}
         {part.output !== undefined && (
           <ToolResult>
-            <pre className="whitespace-pre-wrap">
-              {typeof part.output === "string"
-                ? part.output
-                : JSON.stringify(part.output, null, 2)}
-            </pre>
+            <CodeBlock code={prettyPrint(part.output)} language="json" />
           </ToolResult>
         )}
         {state === "output-error" && part.errorText && (

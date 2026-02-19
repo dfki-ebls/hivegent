@@ -59,6 +59,33 @@ interface ToolParametersProps {
   params: Record<string, unknown>;
 }
 
+function formatValue(value: unknown): ReactNode {
+  if (typeof value === "string") {
+    // Try parsing as JSON for pretty-printing
+    try {
+      const parsed = JSON.parse(value);
+      if (typeof parsed === "object" && parsed !== null) {
+        return (
+          <pre className="mt-1 whitespace-pre-wrap text-xs font-mono">
+            {JSON.stringify(parsed, null, 2)}
+          </pre>
+        );
+      }
+    } catch {
+      // Not JSON, display as quoted string
+    }
+    return `"${value}"`;
+  }
+  if (typeof value === "object" && value !== null) {
+    return (
+      <pre className="mt-1 whitespace-pre-wrap text-xs font-mono">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    );
+  }
+  return String(value);
+}
+
 export function ToolParameters({ params }: ToolParametersProps) {
   if (!params || Object.keys(params).length === 0) {
     return null;
@@ -67,11 +94,7 @@ export function ToolParameters({ params }: ToolParametersProps) {
   return (
     <ToolSection title="Parameters">
       {Object.entries(params).map(([key, value]) => (
-        <ToolKeyValue
-          key={key}
-          label={key}
-          value={typeof value === "string" ? `"${value}"` : String(value)}
-        />
+        <ToolKeyValue key={key} label={key} value={formatValue(value)} />
       ))}
     </ToolSection>
   );
