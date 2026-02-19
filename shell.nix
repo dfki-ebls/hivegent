@@ -7,29 +7,20 @@
   uv,
   git,
   lib,
-  writeShellScriptBin,
 }:
 mkShell {
   shellHook = ''
-    npm install
-    uv sync --all-extras --locked
+    ROOT_DIR="$(${lib.getExe git} rev-parse --show-toplevel)"
+    npm --prefix "$ROOT_DIR/frontend" install
+    uv --directory "$ROOT_DIR/backend" sync --all-extras --locked
   '';
   SNIPSCOUT_AUTH_DISABLED = "1";
   UV_PYTHON = lib.getExe python3;
   packages = [
-    (writeShellScriptBin "uv" ''
-      exec ${lib.getExe uv} \
-        --directory "$(${lib.getExe git} rev-parse --show-toplevel)/backend" \
-        "$@"
-    '')
-    (writeShellScriptBin "npm" ''
-      exec ${lib.getExe' nodejs "npm"} \
-        --prefix "$(${lib.getExe git} rev-parse --show-toplevel)/frontend" \
-        "$@"
-    '')
     nodejs
     python3
     treefmt
+    uv
     watch-dev
   ];
 }
