@@ -231,7 +231,7 @@ class GrepTool:
 
         matches: list[GrepMatch] = []
         try:
-            for item in rg.run().as_dict:
+            for item in rg.json().run().as_dict:
                 if item.get("type") == "match":
                     data = item["data"]
                     filepath = data["path"]["text"]
