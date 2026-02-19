@@ -61,8 +61,25 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>(
     addDocumentReference: (filename, sources, score) =>
       set((state) => {
         const newMap = new Map(state.documents);
-        // Set the reference (content will be fetched when expanded)
-        newMap.set(filename, { filename, content: "", sources, score });
+        const existing = newMap.get(filename);
+        if (existing) {
+          // Merge sources, keep existing content
+          const mergedSources = [
+            ...new Set([...existing.sources, ...sources]),
+          ];
+          const newScore =
+            score != null
+              ? Math.max(score, existing.score ?? 0)
+              : existing.score;
+          newMap.set(filename, {
+            ...existing,
+            sources: mergedSources,
+            score: newScore,
+          });
+        } else {
+          // Set reference without content (will be fetched when expanded)
+          newMap.set(filename, { filename, content: "", sources, score });
+        }
         return { documents: newMap };
       }),
     clearDocuments: () => set({ documents: new Map() }),

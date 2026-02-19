@@ -1,13 +1,14 @@
 "use client";
 
 import { FileTextIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
+import { getDocumentContent } from "@/lib/api";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { DocumentPreviewDialog } from "./DocumentPreviewDialog";
 
@@ -26,9 +27,30 @@ export function Citation(props: Record<string, unknown>) {
   const chunk = props.chunk as string | undefined;
   const children = props.children as ReactNode;
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [fetchError, setFetchError] = useState(false);
   const doc = useFetchedDocumentsStore((state) =>
     filename ? state.documents.get(filename) : undefined,
   );
+  const addDocument = useFetchedDocumentsStore((state) => state.addDocument);
+
+  // Fetch document content when the dialog is opened and content is missing
+  useEffect(() => {
+    if (!dialogOpen || !filename || fetchError) return;
+    if (doc?.content) return;
+    let cancelled = false;
+    getDocumentContent(filename)
+      .then((content) => {
+        if (!cancelled) {
+          addDocument(filename, content, "preview");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setFetchError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dialogOpen, filename, doc?.content, addDocument, fetchError]);
 
   if (!filename) {
     return <span>{children}</span>;
@@ -83,8 +105,8 @@ export function Citation(props: Record<string, unknown>) {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         filename={filename}
-        content={doc?.content ?? null}
-        isLoading={dialogOpen && !doc}
+        content={doc?.content || null}
+        isLoading={dialogOpen && !doc?.content && !fetchError}
       />
     </span>
   );
