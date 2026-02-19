@@ -7,11 +7,11 @@ requires-python = ">=3.13,<4"
 authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
 dependencies = [
   "argon2-cffi>=25,<26",
-  "bm25s[core]>=0.2,<1",
+  "bm25s[core,stem,indexing]>=0.3,<1",
   "cbrkit>=1,<2",
   "chonkie>=1,<2",
   "fastapi[standard]>=0.120,<1",
-  "fastmcp>=2,<3",
+  "fastmcp>=3,<4",
   "frozendict>=2.4.7",
   "httpx>=0.28,<1",
   "joserfc>=1,<2",
@@ -20,20 +20,22 @@ dependencies = [
   "opentelemetry-instrumentation-fastapi>=0.60b1",
   "pydantic-ai-slim[ui,openai]>=1,<2",
   "pydantic-settings>=2,<3",
+  "pypandoc>=1,<2",
   "ripgrepy>=2,<3",
+  "sentence_transformers>=5,<6",
   "typer>=0.21,<1",
   "uvicorn[standard]>=0.40,<1",
+  "zvec>=0.2,<1",
 ]
 
 [project.scripts]
 snipscout = "snipscout.cli:app"
 
 [project.optional-dependencies]
-# currently there is a conflict for mineru with python 3.14, leave this out for now
-# marker = ["marker-pdf[full]>=1"]
-# docling = ["docling>=2"]
+marker = ["marker-pdf[full]>=1"]
+docling = ["docling>=2"]
 # mineru = ["mineru[all]>=2"]
-# converters = ["snipscout[marker,docling,mineru]"]
+all = ["snipscout[marker,docling]"]
 
 [build-system]
 requires = ["uv-build>=0.9,<1"]
@@ -41,3 +43,4 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }
+zvec = { git = "https://github.com/alibaba/zvec", tag = "v0.2.0" }
