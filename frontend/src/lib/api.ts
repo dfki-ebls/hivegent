@@ -182,7 +182,7 @@ export async function uploadDocument(
     : filename;
 
   // Build URL with query parameters
-  let url = `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`;
+  let url = `${API_BASE_URL}/api/documents/content/${encodeFilePath(filepath)}`;
   const params = new URLSearchParams();
   if (requiresConversion(filename) && options?.conversionPipeline) {
     params.set("conversion_pipeline", options.conversionPipeline);
@@ -264,7 +264,7 @@ export async function uploadCollection(
 
 export async function deleteDocument(filename: string): Promise<void> {
   const res = await authFetch(
-    `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`,
+    `${API_BASE_URL}/api/documents/content/${encodeFilePath(filename)}`,
     {
       method: "DELETE",
     },
@@ -278,7 +278,7 @@ export async function deleteDocument(filename: string): Promise<void> {
 
 export async function getDocumentContent(filename: string): Promise<string> {
   const res = await authFetch(
-    `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`,
+    `${API_BASE_URL}/api/documents/content/${encodeFilePath(filename)}`,
   );
 
   if (!res.ok) {
@@ -484,7 +484,7 @@ export async function getDocumentChunks(
   filename: string,
 ): Promise<ChunkedDocumentResponse> {
   const res = await authFetch(
-    `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}/chunks`,
+    `${API_BASE_URL}/api/documents/chunks/${encodeFilePath(filename)}`,
   );
 
   if (!res.ok) {
@@ -509,7 +509,7 @@ export async function reconvertDocument(
   filename: string,
   options?: ReconvertDocumentOptions,
 ): Promise<UploadDocumentResponse> {
-  const url = `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}/reconvert`;
+  const url = `${API_BASE_URL}/api/documents/reconvert/${encodeFilePath(filename)}`;
 
   const res = await authFetch(url, {
     method: "POST",
@@ -545,7 +545,7 @@ export async function rechunkDocument(
     params.set("chunk_size", chunkSize.toString());
   }
 
-  let url = `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}/rechunk`;
+  let url = `${API_BASE_URL}/api/documents/rechunk/${encodeFilePath(filename)}`;
   const queryString = params.toString();
   if (queryString) {
     url += `?${queryString}`;
@@ -596,10 +596,11 @@ export async function createDirectory(
 export async function deleteDirectory(
   dirpath: string,
 ): Promise<DeleteDirectoryResponse> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/directories/${encodeFilePath(dirpath)}`,
-    { method: "DELETE" },
-  );
+  const res = await authFetch(`${API_BASE_URL}/api/directories`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: dirpath }),
+  });
 
   if (!res.ok) {
     const error = await res
@@ -617,7 +618,7 @@ export async function moveDocument(
   destination: string,
 ): Promise<MoveDocumentResponse> {
   const res = await authFetch(
-    `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}/move`,
+    `${API_BASE_URL}/api/documents/move/${encodeFilePath(filepath)}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -90,6 +90,7 @@ from .types import (
     CreateTokenRequest,
     CreateTokenResponse,
     DeleteConversationResponse,
+    DeleteDirectoryRequest,
     DeleteDirectoryResponse,
     DeleteDocumentResponse,
     DirectoryEntry,
@@ -655,7 +656,7 @@ async def _upload_file_internal(
     )
 
 
-@api_router.put("/documents/{filepath:path}")
+@api_router.put("/documents/content/{filepath:path}")
 async def upload_document(
     filepath: str,
     file: UploadFile,
@@ -832,7 +833,7 @@ async def upload_collection(
     )
 
 
-@api_router.get("/documents/{filepath:path}")
+@api_router.get("/documents/content/{filepath:path}")
 async def get_document_content(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -857,7 +858,7 @@ async def get_document_content(
     return PlainTextResponse(file_path.read_text(encoding="utf-8"))
 
 
-@api_router.delete("/documents/{filepath:path}")
+@api_router.delete("/documents/content/{filepath:path}")
 async def delete_document(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -918,7 +919,7 @@ async def list_chunking_pipelines() -> list[ChunkingPipelineInfo]:
     return get_chunking_pipelines_info()
 
 
-@api_router.get("/documents/{filepath:path}/chunks")
+@api_router.get("/documents/chunks/{filepath:path}")
 async def get_document_chunks(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -935,7 +936,7 @@ async def get_document_chunks(
     return chunked
 
 
-@api_router.post("/documents/{filepath:path}/rechunk")
+@api_router.post("/documents/rechunk/{filepath:path}")
 async def rechunk_document(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -971,7 +972,7 @@ async def rechunk_document(
         )
 
 
-@api_router.post("/documents/{filepath:path}/reconvert")
+@api_router.post("/documents/reconvert/{filepath:path}")
 async def reconvert_document(
     filepath: str,
     request: ReconvertRequest,
@@ -1085,7 +1086,7 @@ async def reconvert_document(
 # --- Document move endpoint ---
 
 
-@api_router.post("/documents/{filepath:path}/move")
+@api_router.post("/documents/move/{filepath:path}")
 async def move_document(
     filepath: str,
     request: MoveDocumentRequest,
@@ -1295,9 +1296,9 @@ async def create_directory(
     )
 
 
-@api_router.delete("/directories/{dirpath:path}")
+@api_router.delete("/directories")
 async def delete_directory(
-    dirpath: str,
+    request: DeleteDirectoryRequest,
     user: Annotated[User, Depends(get_current_user)],
 ) -> DeleteDirectoryResponse:
     """Delete a directory and all its contents.
@@ -1305,9 +1306,9 @@ async def delete_directory(
     Also deletes matching subdirectories in chunks/ and originals/.
 
     Args:
-        dirpath: The relative directory path to delete.
+        request: The directory path to delete.
     """
-    safe = _safe_path(dirpath)
+    safe = _safe_path(request.path)
     documents_dir = settings.get_user_documents_dir(user.id)
     chunks_dir = settings.get_user_chunks_dir(user.id)
     originals_dir = settings.get_user_originals_dir(user.id)

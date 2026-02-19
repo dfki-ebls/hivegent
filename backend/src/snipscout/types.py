@@ -86,6 +86,7 @@ __all__ = [
     "CreateTokenRequest",
     "CreateTokenResponse",
     "DeleteConversationResponse",
+    "DeleteDirectoryRequest",
     "DeleteDirectoryResponse",
     "DeleteDocumentResponse",
     "DirectoryEntry",
@@ -422,6 +423,12 @@ class MoveDocumentResponse(BaseModel):
     source: str = Field(description="Original relative path")
     destination: str = Field(description="New relative path")
     message: str = Field(description="Status message")
+
+
+class DeleteDirectoryRequest(BaseModel):
+    """Request to delete a directory."""
+
+    path: str = Field(description="Relative path of the directory to delete")
 
 
 class DeleteDirectoryResponse(BaseModel):
