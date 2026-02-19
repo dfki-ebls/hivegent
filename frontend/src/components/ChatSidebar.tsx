@@ -1,6 +1,7 @@
 import { type UIMessage, useChat } from "@ai-sdk/react";
 import { useNavigate } from "@tanstack/react-router";
 import {
+  type FileUIPart,
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithApprovalResponses,
 } from "ai";
@@ -13,6 +14,7 @@ import {
   HistoryIcon,
   MessageSquareIcon,
   Minimize2,
+  Paperclip,
   RefreshCcwIcon,
   SparklesIcon,
   SquarePen,
@@ -75,6 +77,7 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
+  usePromptInputAttachments,
 } from "./ai-elements/prompt-input";
 import { Suggestion, Suggestions } from "./ai-elements/suggestion";
 import { Tool, ToolContent, ToolHeader } from "./ai-elements/tool";
@@ -92,6 +95,42 @@ import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+
+// --- Prompt input toolbar components ---
+
+/** Must be rendered inside <PromptInput> to access attachment context. */
+function FileSelectButton() {
+  const { openFileDialog } = usePromptInputAttachments();
+  return (
+    <Button variant="ghost" size="icon" onClick={openFileDialog}>
+      <Paperclip className="h-4 w-4" />
+      <span className="sr-only">Attach file</span>
+    </Button>
+  );
+}
+
+/** Renders badges for attached files. Must be inside <PromptInput>. */
+function AttachedFiles() {
+  const { files, remove } = usePromptInputAttachments();
+  if (files.length === 0) return null;
+  return (
+    <PromptInputHeader>
+      {files.map((file) => (
+        <Badge key={file.id} variant="outline" className="gap-1 text-xs">
+          <Paperclip className="h-3 w-3" />
+          {file.filename}
+          <button
+            type="button"
+            className="ml-0.5 rounded-full hover:bg-muted"
+            onClick={() => remove(file.id)}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </Badge>
+      ))}
+    </PromptInputHeader>
+  );
+}
 
 // --- Helper functions ---
 
@@ -736,11 +775,11 @@ export function ChatSidebar({
   }, [id, setMessages, addDocumentReference]);
 
   const handleSendMessage = useCallback(
-    async (text: string) => {
-      if (!text.trim()) return;
+    async (text: string, files?: FileUIPart[]) => {
+      if (!text.trim() && (!files || files.length === 0)) return;
       const authHeaders = await getAuthHeaders();
       sendMessage(
-        { text },
+        { text, files },
         {
           headers: authHeaders,
           body: {
@@ -971,7 +1010,7 @@ export function ChatSidebar({
           )}
           <PromptInput
             onSubmit={(msg) => {
-              handleSendMessage(msg.text);
+              handleSendMessage(msg.text, msg.files);
             }}
           >
             {hasDocumentFilters && (
@@ -1028,6 +1067,7 @@ export function ChatSidebar({
                 })}
               </PromptInputHeader>
             )}
+            <AttachedFiles />
             <PromptInputBody>
               <PromptInputTextarea
                 value={inputValue}
@@ -1037,6 +1077,7 @@ export function ChatSidebar({
             </PromptInputBody>
             <PromptInputFooter>
               <PromptInputTools>
+                <FileSelectButton />
                 <SettingsDialog />
                 <div className="flex flex-col items-center gap-1">
                   <div className="flex items-center gap-1">
