@@ -5,7 +5,7 @@
  * Provider components are in auth-providers.tsx.
  */
 
-import { createContext, useContext } from 'react';
+import { createContext, useContext } from "react";
 
 export interface AuthUser {
   id: string;
@@ -30,14 +30,14 @@ export const AuthContext = createContext<AuthContextValue | null>(null);
 export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
 }
 
 // Hardcoded local development user
 export const LOCAL_USER: AuthUser = {
-  id: 'localhost',
-  email: 'dev@localhost',
-  name: 'Localhost User',
+  id: "localhost",
+  email: "dev@localhost",
+  name: "Localhost User",
 };

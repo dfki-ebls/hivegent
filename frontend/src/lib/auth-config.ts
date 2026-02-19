@@ -6,15 +6,15 @@
  * - VITE_OIDC_CLIENT_ID: The client ID for this application
  */
 
-import type { UserManagerSettings } from 'oidc-client-ts';
+import type { UserManagerSettings } from "oidc-client-ts";
 
 export const oidcConfig: UserManagerSettings = {
-  authority: import.meta.env.VITE_OIDC_AUTHORITY ?? '',
-  client_id: import.meta.env.VITE_OIDC_CLIENT_ID ?? '',
+  authority: import.meta.env.VITE_OIDC_AUTHORITY ?? "",
+  client_id: import.meta.env.VITE_OIDC_CLIENT_ID ?? "",
   redirect_uri: `${window.location.origin}/auth/callback`,
   post_logout_redirect_uri: window.location.origin,
-  scope: 'openid profile email',
-  response_type: 'code',
+  scope: "openid profile email",
+  response_type: "code",
   automaticSilentRenew: true,
   // Disable silent renew iframe to avoid issues
   silentRequestTimeoutInSeconds: 30,

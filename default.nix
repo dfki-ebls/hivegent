@@ -72,11 +72,22 @@
       treefmt = {
         projectRootFile = "flake.nix";
         programs = {
-          biome.enable = true;
+          biome = {
+            enable = true;
+            validate.enable = false;
+            settings = {
+              formatter.indentStyle = "space";
+              css.formatter.enabled = true;
+              css.parser.tailwindDirectives = true;
+            };
+          };
           nixfmt.enable = true;
           ruff-check.enable = true;
           ruff-format.enable = true;
         };
+        settings.formatter.biome.excludes = [
+          "frontend/src/components/*/*.tsx"
+        ];
       };
     };
 }

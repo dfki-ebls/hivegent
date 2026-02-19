@@ -6,23 +6,27 @@
  * into a single persisted store with Zod-validated rehydration.
  */
 
-import { create } from 'zustand';
-import { createJSONStorage, persist, type StorageValue } from 'zustand/middleware';
-
-import { fetchSettings } from '../lib/api';
-import { decryptApiKey, encryptApiKey, isEncrypted } from '../lib/crypto';
+import { create } from "zustand";
 import {
+  createJSONStorage,
+  persist,
+  type StorageValue,
+} from "zustand/middleware";
+
+import { fetchSettings } from "../lib/api";
+import { decryptApiKey, encryptApiKey, isEncrypted } from "../lib/crypto";
+import {
+  type BackendSettings,
   ChunkingPipeline,
   ChunkingPipelineSchema,
   ConversionPipeline,
   ConversionPipelineSchema,
+  type DocumentTab,
   DocumentTabSchema,
   ExpandedDirsSchema,
-  UserOverridesSchema,
-  type BackendSettings,
-  type DocumentTab,
   type UserOverrides,
-} from '../lib/types';
+  UserOverridesSchema,
+} from "../lib/types";
 
 export interface LLMSettings {
   model: string;
@@ -31,18 +35,18 @@ export interface LLMSettings {
 }
 
 const EMPTY_OVERRIDES: UserOverrides = {
-  model: '',
-  apiKey: '',
-  baseUrl: '',
-  smallModel: '',
-  visionModel: '',
+  model: "",
+  apiKey: "",
+  baseUrl: "",
+  smallModel: "",
+  visionModel: "",
 };
 
 const UI_DEFAULTS = {
-  documentTab: 'fetched' as DocumentTab,
+  documentTab: "fetched" as DocumentTab,
   conversionPipeline: ConversionPipeline.AUTO,
   chunkingPipeline: ChunkingPipeline.AUTO,
-  expandedDirs: [''] as string[],
+  expandedDirs: [""] as string[],
 };
 
 interface SettingsState {
@@ -82,16 +86,19 @@ interface SettingsState {
 /** Recompute effective values from backend defaults and user overrides. */
 function computeEffective(
   defaults: BackendSettings | null,
-  overrides: UserOverrides
-): Pick<SettingsState, 'llm' | 'smallModel' | 'visionModel' | 'hasServerApiKey'> {
+  overrides: UserOverrides,
+): Pick<
+  SettingsState,
+  "llm" | "smallModel" | "visionModel" | "hasServerApiKey"
+> {
   return {
     llm: {
-      model: overrides.model || defaults?.model || '',
+      model: overrides.model || defaults?.model || "",
       apiKey: overrides.apiKey,
-      baseUrl: overrides.baseUrl || defaults?.base_url || '',
+      baseUrl: overrides.baseUrl || defaults?.base_url || "",
     },
-    smallModel: overrides.smallModel || defaults?.small_model || '',
-    visionModel: overrides.visionModel || defaults?.vision_model || '',
+    smallModel: overrides.smallModel || defaults?.small_model || "",
+    visionModel: overrides.visionModel || defaults?.vision_model || "",
     hasServerApiKey: defaults?.has_api_key ?? false,
   };
 }
@@ -118,17 +125,17 @@ const encryptedStorage = createJSONStorage(() => ({
     try {
       stored = JSON.parse(raw) as StorageValue<PersistedSettings>;
     } catch {
-      console.warn('Corrupted settings in localStorage, resetting to defaults');
+      console.warn("Corrupted settings in localStorage, resetting to defaults");
       return null;
     }
 
     const apiKey = stored.state.overrides.apiKey;
-    if (typeof apiKey === 'string' && isEncrypted(apiKey)) {
+    if (typeof apiKey === "string" && isEncrypted(apiKey)) {
       try {
         stored.state.overrides.apiKey = await decryptApiKey(apiKey);
       } catch (err) {
-        console.warn('Failed to decrypt API key, clearing stored value:', err);
-        stored.state.overrides.apiKey = '';
+        console.warn("Failed to decrypt API key, clearing stored value:", err);
+        stored.state.overrides.apiKey = "";
       }
     }
 
@@ -138,11 +145,11 @@ const encryptedStorage = createJSONStorage(() => ({
   setItem: async (name: string, value: string): Promise<void> => {
     const stored = JSON.parse(value) as StorageValue<PersistedSettings>;
     const apiKey = stored.state.overrides.apiKey;
-    if (typeof apiKey === 'string' && apiKey && !isEncrypted(apiKey)) {
+    if (typeof apiKey === "string" && apiKey && !isEncrypted(apiKey)) {
       try {
         stored.state.overrides.apiKey = await encryptApiKey(apiKey);
       } catch (err) {
-        console.warn('Failed to encrypt API key, storing in plain text:', err);
+        console.warn("Failed to encrypt API key, storing in plain text:", err);
       }
     }
 
@@ -169,8 +176,12 @@ export const useSettingsStore = create<SettingsState>()(
           const newOverrides = {
             ...state.overrides,
             ...(settings.model !== undefined ? { model: settings.model } : {}),
-            ...(settings.apiKey !== undefined ? { apiKey: settings.apiKey } : {}),
-            ...(settings.baseUrl !== undefined ? { baseUrl: settings.baseUrl } : {}),
+            ...(settings.apiKey !== undefined
+              ? { apiKey: settings.apiKey }
+              : {}),
+            ...(settings.baseUrl !== undefined
+              ? { baseUrl: settings.baseUrl }
+              : {}),
           };
           return {
             overrides: newOverrides,
@@ -216,7 +227,8 @@ export const useSettingsStore = create<SettingsState>()(
 
       setDocumentTab: (tab) => set({ documentTab: tab }),
 
-      setConversionPipeline: (pipeline) => set({ conversionPipeline: pipeline }),
+      setConversionPipeline: (pipeline) =>
+        set({ conversionPipeline: pipeline }),
 
       setChunkingPipeline: (pipeline) => set({ chunkingPipeline: pipeline }),
 
@@ -234,7 +246,7 @@ export const useSettingsStore = create<SettingsState>()(
       setExpandedDirs: (dirs) => set({ expandedDirs: dirs }),
     }),
     {
-      name: 'snipscout-settings',
+      name: "snipscout-settings",
       storage: encryptedStorage,
       partialize: (state) => ({
         overrides: state.overrides,
@@ -254,7 +266,8 @@ export const useSettingsStore = create<SettingsState>()(
           ...current,
           overrides,
           documentTab:
-            DocumentTabSchema.safeParse(data.documentTab).data ?? UI_DEFAULTS.documentTab,
+            DocumentTabSchema.safeParse(data.documentTab).data ??
+            UI_DEFAULTS.documentTab,
           conversionPipeline:
             ConversionPipelineSchema.safeParse(data.conversionPipeline).data ??
             UI_DEFAULTS.conversionPipeline,
@@ -262,10 +275,11 @@ export const useSettingsStore = create<SettingsState>()(
             ChunkingPipelineSchema.safeParse(data.chunkingPipeline).data ??
             UI_DEFAULTS.chunkingPipeline,
           expandedDirs:
-            ExpandedDirsSchema.safeParse(data.expandedDirs).data ?? UI_DEFAULTS.expandedDirs,
+            ExpandedDirsSchema.safeParse(data.expandedDirs).data ??
+            UI_DEFAULTS.expandedDirs,
           ...computeEffective(current.backendDefaults, overrides),
         };
       },
-    }
-  )
+    },
+  ),
 );

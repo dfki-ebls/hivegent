@@ -718,8 +718,12 @@ async def upload_collection(
         try:
             safe = sanitize_document_path(rel_path)
             await _upload_file_internal(
-                user.id, safe, content_bytes,
-                conversion_pipeline, chunking_pipeline, resolved,
+                user.id,
+                safe,
+                content_bytes,
+                conversion_pipeline,
+                chunking_pipeline,
+                resolved,
             )
             return True
         except Exception as e:
@@ -750,7 +754,8 @@ async def upload_collection(
 
         collection_files = {
             str(p.relative_to(extract_root).as_posix())
-            for p in extract_root.rglob("*") if p.is_file()
+            for p in extract_root.rglob("*")
+            if p.is_file()
         }
         if len(collection_files) > _MAX_COLLECTION_FILES:
             raise HTTPException(
@@ -872,7 +877,6 @@ async def delete_document(
                 candidate.unlink()
                 _cleanup_empty_parents(candidate, originals_dir)
                 break
-
 
     return DeleteDocumentResponse(
         filename=safe,
@@ -1035,7 +1039,6 @@ async def reconvert_document(
     converted_path.write_text(markdown_content, encoding="utf-8")
     stat = converted_path.stat()
 
-
     # Rechunk the new content
     chunk_count = None
     chunking_used = None
@@ -1082,7 +1085,9 @@ async def move_document(
     dst = _safe_path(request.destination)
 
     if src == dst:
-        raise HTTPException(status_code=400, detail="Source and destination are the same")
+        raise HTTPException(
+            status_code=400, detail="Source and destination are the same"
+        )
 
     documents_dir = settings.get_user_documents_dir(user.id)
     chunks_dir = settings.get_user_chunks_dir(user.id)
@@ -1133,7 +1138,6 @@ async def move_document(
                 _cleanup_empty_parents(candidate, originals_dir)
                 break
 
-
     # Update LanceDB index to reflect new filenames in metadata.
     sync_index(user.id)
 
@@ -1174,9 +1178,7 @@ def _build_directory_tree(
         for item in sorted(dir_path.iterdir()):
             if item.is_dir():
                 children.append(
-                    _build_directory_tree(
-                        item, root_path, chunk_counts, original_stems
-                    )
+                    _build_directory_tree(item, root_path, chunk_counts, original_stems)
                 )
             elif item.is_file() and item.suffix.lower() == DOCUMENT_EXTENSION:
                 file_rel = str(item.relative_to(root_path).as_posix())

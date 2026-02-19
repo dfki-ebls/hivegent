@@ -1,4 +1,3 @@
-import { useCallback } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -13,12 +12,13 @@ import {
   RotateCcw,
   Scissors,
   Trash2,
-} from 'lucide-react';
+} from "lucide-react";
+import { useCallback } from "react";
 
-import type { DirectoryEntry } from '../lib/types';
-import { useSettingsStore } from '../stores/settings-store';
-import { Badge } from './ui/badge';
-import { Button } from './ui/button';
+import type { DirectoryEntry } from "../lib/types";
+import { useSettingsStore } from "../stores/settings-store";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -41,7 +41,6 @@ interface DirectoryTreeViewProps {
   onDeleteDir: (path: string) => void;
   depth?: number;
 }
-
 
 function FileRow({
   entry,
@@ -94,7 +93,10 @@ function FileRow({
             size="icon"
             className="h-6 w-6"
             title="View chunks"
-            onClick={(e) => { e.stopPropagation(); onViewChunks(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onViewChunks();
+            }}
             disabled={isLoading}
           >
             <Scissors className="h-3 w-3" />
@@ -106,7 +108,10 @@ function FileRow({
             size="icon"
             className="h-6 w-6"
             title="Rechunk"
-            onClick={(e) => { e.stopPropagation(); onRechunk(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRechunk();
+            }}
             disabled={isLoading}
           >
             <RefreshCw className="h-3 w-3" />
@@ -118,7 +123,10 @@ function FileRow({
             size="icon"
             className="h-6 w-6"
             title="Reconvert from original"
-            onClick={(e) => { e.stopPropagation(); onReconvert(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onReconvert();
+            }}
             disabled={isLoading}
           >
             <RotateCcw className="h-3 w-3" />
@@ -129,7 +137,10 @@ function FileRow({
           size="icon"
           className="h-6 w-6"
           title="Include in chat"
-          onClick={(e) => { e.stopPropagation(); onInclude(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onInclude();
+          }}
           disabled={isLoading}
         >
           <MessageSquarePlus className="h-3 w-3" />
@@ -139,7 +150,10 @@ function FileRow({
           size="icon"
           className="h-6 w-6"
           title="Exclude from chat"
-          onClick={(e) => { e.stopPropagation(); onExclude(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onExclude();
+          }}
           disabled={isLoading}
         >
           <EyeOff className="h-3 w-3" />
@@ -149,7 +163,10 @@ function FileRow({
           size="icon"
           className="h-6 w-6"
           title="Move"
-          onClick={(e) => { e.stopPropagation(); onMove(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onMove();
+          }}
           disabled={isLoading}
         >
           <Move className="h-3 w-3" />
@@ -159,7 +176,10 @@ function FileRow({
           size="icon"
           className="h-6 w-6"
           title="Delete"
-          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
           disabled={isLoading}
         >
           <Trash2 className="h-3 w-3 text-destructive" />
@@ -203,7 +223,9 @@ function DirectoryRow({
     >
       <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
       <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">{entry.name}</span>
+      <span className="min-w-0 flex-1 truncate text-sm font-medium">
+        {entry.name}
+      </span>
       {fileCount > 0 && (
         <Badge variant="secondary" className="shrink-0 text-xs">
           {fileCount}
@@ -215,7 +237,10 @@ function DirectoryRow({
           size="icon"
           className="h-6 w-6"
           title="Include directory in chat"
-          onClick={(e) => { e.stopPropagation(); onIncludeDir(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onIncludeDir();
+          }}
           disabled={isLoading}
         >
           <MessageSquarePlus className="h-3 w-3" />
@@ -225,7 +250,10 @@ function DirectoryRow({
           size="icon"
           className="h-6 w-6"
           title="Exclude directory from chat"
-          onClick={(e) => { e.stopPropagation(); onExcludeDir(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onExcludeDir();
+          }}
           disabled={isLoading}
         >
           <EyeOff className="h-3 w-3" />
@@ -235,7 +263,10 @@ function DirectoryRow({
           size="icon"
           className="h-6 w-6"
           title="Create subdirectory"
-          onClick={(e) => { e.stopPropagation(); onCreateSubdir(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onCreateSubdir();
+          }}
           disabled={isLoading}
         >
           <FolderPlus className="h-3 w-3" />
@@ -245,7 +276,10 @@ function DirectoryRow({
           size="icon"
           className="h-6 w-6"
           title="Delete directory"
-          onClick={(e) => { e.stopPropagation(); onDeleteDir(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDeleteDir();
+          }}
           disabled={isLoading}
         >
           <Trash2 className="h-3 w-3 text-destructive" />
@@ -256,8 +290,11 @@ function DirectoryRow({
 }
 
 function countFiles(entry: DirectoryEntry): number {
-  if (entry.type === 'file') return 1;
-  return (entry.children ?? []).reduce((sum, child) => sum + countFiles(child), 0);
+  if (entry.type === "file") return 1;
+  return (entry.children ?? []).reduce(
+    (sum, child) => sum + countFiles(child),
+    0,
+  );
 }
 
 export function DirectoryTreeView({
@@ -276,15 +313,20 @@ export function DirectoryTreeView({
   depth = 0,
 }: DirectoryTreeViewProps) {
   const expandedDirsArray = useSettingsStore((state) => state.expandedDirs);
-  const toggleExpandedDir = useSettingsStore((state) => state.toggleExpandedDir);
+  const toggleExpandedDir = useSettingsStore(
+    (state) => state.toggleExpandedDir,
+  );
   const expandedDirs = new Set(expandedDirsArray);
 
-  const toggleDir = useCallback((path: string) => {
-    toggleExpandedDir(path);
-  }, [toggleExpandedDir]);
+  const toggleDir = useCallback(
+    (path: string) => {
+      toggleExpandedDir(path);
+    },
+    [toggleExpandedDir],
+  );
 
   const renderEntry = (child: DirectoryEntry, currentDepth: number) => {
-    if (child.type === 'file') {
+    if (child.type === "file") {
       return (
         <FileRow
           key={child.path}
@@ -304,7 +346,7 @@ export function DirectoryTreeView({
     }
 
     const isExpanded = expandedDirs.has(child.path);
-    const dirPath = child.path ? `${child.path}/` : '';
+    const dirPath = child.path ? `${child.path}/` : "";
 
     return (
       <div key={child.path}>
@@ -322,14 +364,14 @@ export function DirectoryTreeView({
         />
         {isExpanded &&
           (child.children ?? []).map((grandchild) =>
-            renderEntry(grandchild, currentDepth + 1)
+            renderEntry(grandchild, currentDepth + 1),
           )}
       </div>
     );
   };
 
   // For the root entry, render its children directly
-  if (entry.type === 'directory') {
+  if (entry.type === "directory") {
     return (
       <div className="space-y-0.5">
         {(entry.children ?? []).map((child) => renderEntry(child, depth))}

@@ -8,97 +8,97 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as SettingsTokensRouteImport } from './routes/settings.tokens'
-import { Route as ChatIdRouteImport } from './routes/chat.$id'
-import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
+import { Route as rootRouteImport } from "./routes/__root";
+import { Route as AuthCallbackRouteImport } from "./routes/auth/callback";
+import { Route as ChatIdRouteImport } from "./routes/chat.$id";
+import { Route as IndexRouteImport } from "./routes/index";
+import { Route as SettingsTokensRouteImport } from "./routes/settings.tokens";
 
 const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+  id: "/",
+  path: "/",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const SettingsTokensRoute = SettingsTokensRouteImport.update({
-  id: '/settings/tokens',
-  path: '/settings/tokens',
+  id: "/settings/tokens",
+  path: "/settings/tokens",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const ChatIdRoute = ChatIdRouteImport.update({
-  id: '/chat/$id',
-  path: '/chat/$id',
+  id: "/chat/$id",
+  path: "/chat/$id",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const AuthCallbackRoute = AuthCallbackRouteImport.update({
-  id: '/auth/callback',
-  path: '/auth/callback',
+  id: "/auth/callback",
+  path: "/auth/callback",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/auth/callback': typeof AuthCallbackRoute
-  '/chat/$id': typeof ChatIdRoute
-  '/settings/tokens': typeof SettingsTokensRoute
+  "/": typeof IndexRoute;
+  "/auth/callback": typeof AuthCallbackRoute;
+  "/chat/$id": typeof ChatIdRoute;
+  "/settings/tokens": typeof SettingsTokensRoute;
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/auth/callback': typeof AuthCallbackRoute
-  '/chat/$id': typeof ChatIdRoute
-  '/settings/tokens': typeof SettingsTokensRoute
+  "/": typeof IndexRoute;
+  "/auth/callback": typeof AuthCallbackRoute;
+  "/chat/$id": typeof ChatIdRoute;
+  "/settings/tokens": typeof SettingsTokensRoute;
 }
 export interface FileRoutesById {
-  __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/auth/callback': typeof AuthCallbackRoute
-  '/chat/$id': typeof ChatIdRoute
-  '/settings/tokens': typeof SettingsTokensRoute
+  __root__: typeof rootRouteImport;
+  "/": typeof IndexRoute;
+  "/auth/callback": typeof AuthCallbackRoute;
+  "/chat/$id": typeof ChatIdRoute;
+  "/settings/tokens": typeof SettingsTokensRoute;
 }
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth/callback' | '/chat/$id' | '/settings/tokens'
-  fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth/callback' | '/chat/$id' | '/settings/tokens'
-  id: '__root__' | '/' | '/auth/callback' | '/chat/$id' | '/settings/tokens'
-  fileRoutesById: FileRoutesById
+  fileRoutesByFullPath: FileRoutesByFullPath;
+  fullPaths: "/" | "/auth/callback" | "/chat/$id" | "/settings/tokens";
+  fileRoutesByTo: FileRoutesByTo;
+  to: "/" | "/auth/callback" | "/chat/$id" | "/settings/tokens";
+  id: "__root__" | "/" | "/auth/callback" | "/chat/$id" | "/settings/tokens";
+  fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  AuthCallbackRoute: typeof AuthCallbackRoute
-  ChatIdRoute: typeof ChatIdRoute
-  SettingsTokensRoute: typeof SettingsTokensRoute
+  IndexRoute: typeof IndexRoute;
+  AuthCallbackRoute: typeof AuthCallbackRoute;
+  ChatIdRoute: typeof ChatIdRoute;
+  SettingsTokensRoute: typeof SettingsTokensRoute;
 }
 
-declare module '@tanstack/react-router' {
+declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/tokens': {
-      id: '/settings/tokens'
-      path: '/settings/tokens'
-      fullPath: '/settings/tokens'
-      preLoaderRoute: typeof SettingsTokensRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/chat/$id': {
-      id: '/chat/$id'
-      path: '/chat/$id'
-      fullPath: '/chat/$id'
-      preLoaderRoute: typeof ChatIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/auth/callback': {
-      id: '/auth/callback'
-      path: '/auth/callback'
-      fullPath: '/auth/callback'
-      preLoaderRoute: typeof AuthCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
+    "/": {
+      id: "/";
+      path: "/";
+      fullPath: "/";
+      preLoaderRoute: typeof IndexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/settings/tokens": {
+      id: "/settings/tokens";
+      path: "/settings/tokens";
+      fullPath: "/settings/tokens";
+      preLoaderRoute: typeof SettingsTokensRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/chat/$id": {
+      id: "/chat/$id";
+      path: "/chat/$id";
+      fullPath: "/chat/$id";
+      preLoaderRoute: typeof ChatIdRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/auth/callback": {
+      id: "/auth/callback";
+      path: "/auth/callback";
+      fullPath: "/auth/callback";
+      preLoaderRoute: typeof AuthCallbackRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
   }
 }
 
@@ -107,7 +107,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthCallbackRoute: AuthCallbackRoute,
   ChatIdRoute: ChatIdRoute,
   SettingsTokensRoute: SettingsTokensRoute,
-}
+};
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>()
+  ._addFileTypes<FileRouteTypes>();

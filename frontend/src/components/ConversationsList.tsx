@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import {
   CheckIcon,
   MessageSquare,
@@ -6,13 +5,14 @@ import {
   SparklesIcon,
   TrashIcon,
   XIcon,
-} from 'lucide-react';
-import { buildLlmConfig } from '../lib/api';
-import { useConversationsStore } from '../stores/conversations-store';
-import { useSettingsStore } from '../stores/settings-store';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { ScrollArea } from './ui/scroll-area';
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import { buildLlmConfig } from "../lib/api";
+import { useConversationsStore } from "../stores/conversations-store";
+import { useSettingsStore } from "../stores/settings-store";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { ScrollArea } from "./ui/scroll-area";
 
 // --- Utility functions ---
 
@@ -25,7 +25,7 @@ function formatRelativeTime(dateString: string): string {
   const diffHours = Math.floor(diffMins / 60);
   const diffDays = Math.floor(diffHours / 24);
 
-  if (diffSecs < 60) return 'Just now';
+  if (diffSecs < 60) return "Just now";
   if (diffMins < 60) return `${diffMins}m ago`;
   if (diffHours < 24) return `${diffHours}h ago`;
   if (diffDays < 7) return `${diffDays}d ago`;
@@ -79,12 +79,15 @@ interface TitleEditorProps {
 
 function TitleEditor({ value, onChange, onSave, onCancel }: TitleEditorProps) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') onSave();
-    else if (e.key === 'Escape') onCancel();
+    if (e.key === "Enter") onSave();
+    else if (e.key === "Escape") onCancel();
   };
 
   return (
-    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="flex items-center gap-1"
+      onClick={(e) => e.stopPropagation()}
+    >
       <Input
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -95,7 +98,12 @@ function TitleEditor({ value, onChange, onSave, onCancel }: TitleEditorProps) {
       <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onSave}>
         <CheckIcon className="h-3 w-3" />
       </Button>
-      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onCancel}>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6"
+        onClick={onCancel}
+      >
         <XIcon className="h-3 w-3" />
       </Button>
     </div>
@@ -111,13 +119,24 @@ interface ConversationActionsProps {
   onDelete: () => void;
 }
 
-function ConversationActions({ isGenerating, onEdit, onGenerate, onDelete }: ConversationActionsProps) {
+function ConversationActions({
+  isGenerating,
+  onEdit,
+  onGenerate,
+  onDelete,
+}: ConversationActionsProps) {
   return (
     <div
       className="absolute right-2 top-2 flex items-center gap-1 rounded bg-background/90 p-0.5"
       onClick={(e) => e.stopPropagation()}
     >
-      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onEdit} title="Edit title">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6"
+        onClick={onEdit}
+        title="Edit title"
+      >
         <PencilIcon className="h-3 w-3" />
       </Button>
       <Button
@@ -128,7 +147,9 @@ function ConversationActions({ isGenerating, onEdit, onGenerate, onDelete }: Con
         disabled={isGenerating}
         title="Generate title with AI"
       >
-        <SparklesIcon className={`h-3 w-3 ${isGenerating ? 'animate-pulse' : ''}`} />
+        <SparklesIcon
+          className={`h-3 w-3 ${isGenerating ? "animate-pulse" : ""}`}
+        />
       </Button>
       <Button
         variant="ghost"
@@ -201,8 +222,8 @@ function ConversationItem({
     <div
       className={`group relative rounded-lg border p-3 transition-colors cursor-pointer ${
         isActive
-          ? 'border-primary bg-primary/5'
-          : 'border-transparent hover:border-border hover:bg-muted/50'
+          ? "border-primary bg-primary/5"
+          : "border-transparent hover:border-border hover:bg-muted/50"
       }`}
       onClick={() => !isEditing && onSelect()}
       onMouseEnter={() => setIsHovered(true)}
@@ -219,7 +240,9 @@ function ConversationItem({
               onCancel={handleCancelEdit}
             />
           ) : (
-            <p className="truncate text-sm font-medium">{title || 'Untitled'}</p>
+            <p className="truncate text-sm font-medium">
+              {title || "Untitled"}
+            </p>
           )}
           <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
             <span>{formatRelativeTime(updatedAt)}</span>
@@ -267,7 +290,7 @@ export function ConversationsList({
   }, [fetchConversations]);
 
   const handleDelete = async (id: string) => {
-    if (confirm('Are you sure you want to delete this conversation?')) {
+    if (confirm("Are you sure you want to delete this conversation?")) {
       await deleteConversation(id);
     }
   };
@@ -279,7 +302,7 @@ export function ConversationsList({
         model: smallModel || llm.model,
         apiKey: llm.apiKey,
         baseUrl: llm.baseUrl,
-      })
+      }),
     );
   };
 

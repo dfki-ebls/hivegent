@@ -7,7 +7,7 @@
  * frontend-only structures and outgoing request payloads.
  */
 
-import { z } from 'zod';
+import { z } from "zod";
 
 // ============================================================
 // Enums
@@ -15,20 +15,20 @@ import { z } from 'zod';
 
 /** Available conversion pipelines for document conversion. */
 export enum ConversionPipeline {
-  AUTO = 'auto',
-  LLM = 'llm',
-  MARKER = 'marker',
-  DOCLING = 'docling',
-  MINERU = 'mineru',
-  PANDOC = 'pandoc',
+  AUTO = "auto",
+  LLM = "llm",
+  MARKER = "marker",
+  DOCLING = "docling",
+  MINERU = "mineru",
+  PANDOC = "pandoc",
 }
 
 /** Available chunking pipelines. */
 export enum ChunkingPipeline {
-  AUTO = 'auto',
-  TOKEN = 'token',
-  SENTENCE = 'sentence',
-  RECURSIVE = 'recursive',
+  AUTO = "auto",
+  TOKEN = "token",
+  SENTENCE = "sentence",
+  RECURSIVE = "recursive",
 }
 
 // Zod v4: z.enum() accepts TS enums directly (replaces deprecated nativeEnum)
@@ -39,7 +39,7 @@ export const ChunkingPipelineSchema = z.enum(ChunkingPipeline);
 // Persisted data schemas (localStorage)
 // ============================================================
 
-export const DocumentTabSchema = z.enum(['fetched', 'manage']);
+export const DocumentTabSchema = z.enum(["fetched", "manage"]);
 export type DocumentTab = z.infer<typeof DocumentTabSchema>;
 
 export const ExpandedDirsSchema = z.array(z.string());
@@ -71,7 +71,9 @@ export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
 export const CreateConversationResponseSchema = z.object({
   id: z.string(),
 });
-export type CreateConversationResponse = z.infer<typeof CreateConversationResponseSchema>;
+export type CreateConversationResponse = z.infer<
+  typeof CreateConversationResponseSchema
+>;
 
 /** Metadata for a conversion pipeline, fetched from the backend. */
 export const ConversionPipelineInfoSchema = z.object({
@@ -80,7 +82,9 @@ export const ConversionPipelineInfoSchema = z.object({
   description: z.string(),
   extensions: z.array(z.string()),
 });
-export type ConversionPipelineInfo = z.infer<typeof ConversionPipelineInfoSchema>;
+export type ConversionPipelineInfo = z.infer<
+  typeof ConversionPipelineInfoSchema
+>;
 
 /** Metadata for a chunking pipeline, fetched from the backend. */
 export const ChunkingPipelineInfoSchema = z.object({
@@ -108,7 +112,9 @@ export const ChunkedDocumentResponseSchema = z.object({
   chunk_count: z.number(),
   chunks: z.array(ChunkInfoSchema),
 });
-export type ChunkedDocumentResponse = z.infer<typeof ChunkedDocumentResponseSchema>;
+export type ChunkedDocumentResponse = z.infer<
+  typeof ChunkedDocumentResponseSchema
+>;
 
 export const DocumentInfoSchema = z.object({
   filename: z.string(),
@@ -187,7 +193,9 @@ export const ConversationListResponseSchema = z.object({
   conversations: z.array(ConversationSummarySchema),
   total_count: z.number(),
 });
-export type ConversationListResponse = z.infer<typeof ConversationListResponseSchema>;
+export type ConversationListResponse = z.infer<
+  typeof ConversationListResponseSchema
+>;
 
 /** Response for conversation compaction. */
 export const CompactConversationResponseSchema = z.object({
@@ -195,7 +203,9 @@ export const CompactConversationResponseSchema = z.object({
   summary: z.string(),
   message: z.string(),
 });
-export type CompactConversationResponse = z.infer<typeof CompactConversationResponseSchema>;
+export type CompactConversationResponse = z.infer<
+  typeof CompactConversationResponseSchema
+>;
 
 /** Response for title generation. */
 export const GenerateTitleResponseSchema = z.object({
@@ -225,7 +235,7 @@ export type TokenInfo = z.infer<typeof TokenInfoSchema>;
 
 /** A file or directory entry in the document tree (recursive). */
 export interface DirectoryEntry {
-  type: 'file' | 'directory';
+  type: "file" | "directory";
   name: string;
   path: string;
   size_bytes?: number | null;
@@ -236,14 +246,17 @@ export interface DirectoryEntry {
 }
 
 export const DirectoryEntrySchema: z.ZodType<DirectoryEntry> = z.object({
-  type: z.enum(['file', 'directory']),
+  type: z.enum(["file", "directory"]),
   name: z.string(),
   path: z.string(),
   size_bytes: z.number().nullable().optional(),
   modified_at: z.string().nullable().optional(),
   chunk_count: z.number().nullable().optional(),
   has_original: z.boolean().optional(),
-  children: z.lazy(() => z.array(DirectoryEntrySchema)).nullable().optional(),
+  children: z
+    .lazy(() => z.array(DirectoryEntrySchema))
+    .nullable()
+    .optional(),
 });
 
 /** Response from the directory tree endpoint. */
@@ -259,7 +272,9 @@ export const CreateDirectoryResponseSchema = z.object({
   path: z.string(),
   message: z.string(),
 });
-export type CreateDirectoryResponse = z.infer<typeof CreateDirectoryResponseSchema>;
+export type CreateDirectoryResponse = z.infer<
+  typeof CreateDirectoryResponseSchema
+>;
 
 /** Response from moving a document. */
 export const MoveDocumentResponseSchema = z.object({
@@ -275,7 +290,9 @@ export const DeleteDirectoryResponseSchema = z.object({
   files_deleted: z.number(),
   message: z.string(),
 });
-export type DeleteDirectoryResponse = z.infer<typeof DeleteDirectoryResponseSchema>;
+export type DeleteDirectoryResponse = z.infer<
+  typeof DeleteDirectoryResponseSchema
+>;
 
 /** Response from document upload. */
 export const UploadDocumentResponseSchema = z.object({
@@ -287,7 +304,9 @@ export const UploadDocumentResponseSchema = z.object({
   chunking_pipeline_used: z.string().nullable(),
   message: z.string(),
 });
-export type UploadDocumentResponse = z.infer<typeof UploadDocumentResponseSchema>;
+export type UploadDocumentResponse = z.infer<
+  typeof UploadDocumentResponseSchema
+>;
 
 /** Response from collection (directory/ZIP) upload. */
 export const CollectionUploadResponseSchema = z.object({
@@ -297,7 +316,9 @@ export const CollectionUploadResponseSchema = z.object({
   failed_files: z.array(z.string()),
   message: z.string(),
 });
-export type CollectionUploadResponse = z.infer<typeof CollectionUploadResponseSchema>;
+export type CollectionUploadResponse = z.infer<
+  typeof CollectionUploadResponseSchema
+>;
 
 // ============================================================
 // Frontend-only types (no runtime validation needed)
@@ -338,7 +359,7 @@ export interface CreateTokenRequest {
 // ============================================================
 
 /** Available assistant personalities. */
-export type Personality = 'default' | 'concise' | 'detailed';
+export type Personality = "default" | "concise" | "detailed";
 
 /** Personality option for display in UI. */
 export interface PersonalityOption {
@@ -350,18 +371,18 @@ export interface PersonalityOption {
 /** Available personality options. */
 export const PERSONALITY_OPTIONS: PersonalityOption[] = [
   {
-    value: 'default',
-    label: 'Default',
-    description: 'Helpful and accurate with source citations',
+    value: "default",
+    label: "Default",
+    description: "Helpful and accurate with source citations",
   },
   {
-    value: 'concise',
-    label: 'Concise',
-    description: 'Brief, to-the-point responses',
+    value: "concise",
+    label: "Concise",
+    description: "Brief, to-the-point responses",
   },
   {
-    value: 'detailed',
-    label: 'Detailed',
-    description: 'Thorough explanations with comprehensive context',
+    value: "detailed",
+    label: "Detailed",
+    description: "Thorough explanations with comprehensive context",
   },
 ];

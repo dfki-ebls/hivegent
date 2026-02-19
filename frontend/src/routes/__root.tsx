@@ -1,18 +1,18 @@
-import { useEffect } from 'react';
+import { TanStackDevtools } from "@tanstack/react-devtools";
 
-import { Outlet, createRootRoute, useLocation } from '@tanstack/react-router';
-import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools';
-import { TanStackDevtools } from '@tanstack/react-devtools';
+import { createRootRoute, Outlet, useLocation } from "@tanstack/react-router";
+import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { useEffect } from "react";
 
-import { AppErrorBoundary } from '../components/AppErrorBoundary';
-import { AuthGate } from '../components/AuthGate';
-import { AuthProvider } from '../components/AuthProvider';
-import { Header } from '../components/Header';
-import { ThemeProvider } from '../components/ThemeProvider';
-import { useSettingsStore } from '../stores/settings-store';
+import { AppErrorBoundary } from "../components/AppErrorBoundary";
+import { AuthGate } from "../components/AuthGate";
+import { AuthProvider } from "../components/AuthProvider";
+import { Header } from "../components/Header";
+import { ThemeProvider } from "../components/ThemeProvider";
+import { useSettingsStore } from "../stores/settings-store";
 
 // Routes that don't require authentication
-const PUBLIC_ROUTES = ['/', '/auth/callback'];
+const PUBLIC_ROUTES = ["/", "/auth/callback"];
 
 function RootComponent() {
   const location = useLocation();
@@ -40,11 +40,11 @@ function RootComponent() {
             </main>
             <TanStackDevtools
               config={{
-                position: 'bottom-left',
+                position: "bottom-left",
               }}
               plugins={[
                 {
-                  name: 'Tanstack Router',
+                  name: "Tanstack Router",
                   render: <TanStackRouterDevtoolsPanel />,
                 },
               ]}

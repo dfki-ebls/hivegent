@@ -1,8 +1,8 @@
-import { formatDistanceToNow } from 'date-fns';
-import { Trash2 } from 'lucide-react';
+import { formatDistanceToNow } from "date-fns";
+import { Trash2 } from "lucide-react";
 
-import type { TokenInfo } from '../lib/types';
-import { Button } from './ui/button';
+import type { TokenInfo } from "../lib/types";
+import { Button } from "./ui/button";
 import {
   Table,
   TableBody,
@@ -10,7 +10,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from './ui/table';
+} from "./ui/table";
 
 interface TokenListProps {
   tokens: TokenInfo[];
@@ -54,14 +54,14 @@ export function TokenList({ tokens, onRevoke }: TokenListProps) {
                 ? formatDistanceToNow(new Date(token.expires_at), {
                     addSuffix: true,
                   })
-                : 'Never'}
+                : "Never"}
             </TableCell>
             <TableCell className="text-muted-foreground">
               {token.last_used_at
                 ? formatDistanceToNow(new Date(token.last_used_at), {
                     addSuffix: true,
                   })
-                : 'Never'}
+                : "Never"}
             </TableCell>
             <TableCell>
               <Button

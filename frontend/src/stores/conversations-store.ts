@@ -1,11 +1,11 @@
-import { create } from 'zustand';
-import type { ConversationSummary, LlmConfig } from '../lib/types';
+import { create } from "zustand";
 import {
   deleteConversation as apiDeleteConversation,
   generateConversationTitle,
   listConversations,
   updateConversationTitle,
-} from '../lib/api';
+} from "../lib/api";
+import type { ConversationSummary, LlmConfig } from "../lib/types";
 
 interface ConversationsState {
   conversations: ConversationSummary[];
@@ -15,7 +15,10 @@ interface ConversationsState {
   deleteConversation: (id: string) => Promise<void>;
   updateTitle: (id: string, title: string) => Promise<void>;
   generateTitle: (id: string, llm: LlmConfig) => Promise<string>;
-  refreshConversation: (id: string, summary: Partial<ConversationSummary>) => void;
+  refreshConversation: (
+    id: string,
+    summary: Partial<ConversationSummary>,
+  ) => void;
 }
 
 export const useConversationsStore = create<ConversationsState>((set) => ({
@@ -30,7 +33,7 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
       set({ conversations, isLoading: false });
     } catch (e) {
       set({
-        error: e instanceof Error ? e.message : 'Failed to fetch conversations',
+        error: e instanceof Error ? e.message : "Failed to fetch conversations",
         isLoading: false,
       });
     }
@@ -44,7 +47,7 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
       }));
     } catch (e) {
       set({
-        error: e instanceof Error ? e.message : 'Failed to delete conversation',
+        error: e instanceof Error ? e.message : "Failed to delete conversation",
       });
       throw e;
     }
@@ -55,12 +58,12 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
       const updated = await updateConversationTitle(id, title);
       set((state) => ({
         conversations: state.conversations.map((c) =>
-          c.id === id ? { ...c, title: updated.title } : c
+          c.id === id ? { ...c, title: updated.title } : c,
         ),
       }));
     } catch (e) {
       set({
-        error: e instanceof Error ? e.message : 'Failed to update title',
+        error: e instanceof Error ? e.message : "Failed to update title",
       });
       throw e;
     }
@@ -71,13 +74,13 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
       const result = await generateConversationTitle(id, llm);
       set((state) => ({
         conversations: state.conversations.map((c) =>
-          c.id === id ? { ...c, title: result.title } : c
+          c.id === id ? { ...c, title: result.title } : c,
         ),
       }));
       return result.title;
     } catch (e) {
       set({
-        error: e instanceof Error ? e.message : 'Failed to generate title',
+        error: e instanceof Error ? e.message : "Failed to generate title",
       });
       throw e;
     }
@@ -89,7 +92,7 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
       if (existing) {
         return {
           conversations: state.conversations.map((c) =>
-            c.id === id ? { ...c, ...summary } : c
+            c.id === id ? { ...c, ...summary } : c,
           ),
         };
       }

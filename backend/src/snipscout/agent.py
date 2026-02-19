@@ -29,6 +29,7 @@ __all__ = [
     "user_agent",
 ]
 
+
 @dataclass(slots=True, frozen=True)
 class UserDeps:
     """Dependencies for user-specific agent operations."""

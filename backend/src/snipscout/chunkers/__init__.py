@@ -44,8 +44,12 @@ class ChunkingPipelineInfo:
 
 _CHUNKER_CONFIG: dict[ChunkingPipeline, _ChunkerEntry] = {
     ChunkingPipeline.TOKEN: _ChunkerEntry("token_chunker", "TokenDocumentChunker"),
-    ChunkingPipeline.SENTENCE: _ChunkerEntry("sentence_chunker", "SentenceDocumentChunker"),
-    ChunkingPipeline.RECURSIVE: _ChunkerEntry("recursive_chunker", "RecursiveDocumentChunker"),
+    ChunkingPipeline.SENTENCE: _ChunkerEntry(
+        "sentence_chunker", "SentenceDocumentChunker"
+    ),
+    ChunkingPipeline.RECURSIVE: _ChunkerEntry(
+        "recursive_chunker", "RecursiveDocumentChunker"
+    ),
 }
 
 _PIPELINE_INFO: dict[ChunkingPipeline, ChunkingPipelineInfo] = {

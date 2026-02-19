@@ -48,11 +48,15 @@ class _RetrievalState:
     _storage_cache: dict[str, cbrkit.indexable.lancedb[str]] = field(
         default_factory=dict
     )
-    _embedding_func: cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray] | None = field(default=None)
+    _embedding_func: (
+        cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray] | None
+    ) = field(default=None)
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _pending_reindex: set[str] = field(default_factory=set)
 
-    def get_embedding_func(self) -> cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray]:
+    def get_embedding_func(
+        self,
+    ) -> cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray]:
         """Get or create the shared embedding function based on settings.
 
         Returns:
@@ -221,9 +225,9 @@ def _load_all_chunks(user_id: str) -> dict[str, str]:
     casebase: dict[str, str] = {}
 
     for chunk_file in sorted(chunks_dir.rglob("*.json")):
-        doc_filename = str(
-            chunk_file.relative_to(chunks_dir).as_posix()
-        ).removesuffix(".json")
+        doc_filename = str(chunk_file.relative_to(chunks_dir).as_posix()).removesuffix(
+            ".json"
+        )
         try:
             data = json.loads(chunk_file.read_text(encoding="utf-8"))
             doc = ChunkedDocument.model_validate(data)
@@ -250,9 +254,7 @@ def sync_index(user_id: str) -> None:
     _state._pending_reindex.discard(user_id)
     storage = _state.get_user_storage(user_id)
     casebase = _load_all_chunks(user_id)
-    logger.info(
-        "Syncing LanceDB index for user %s (%d chunks)", user_id, len(casebase)
-    )
+    logger.info("Syncing LanceDB index for user %s (%d chunks)", user_id, len(casebase))
     storage.create_index(casebase)
 
 
@@ -277,26 +279,18 @@ def _build_where_clause(
         for entry in sorted(document_filter.included):
             escaped = _escape_sql(entry)
             if entry.endswith("/"):
-                include_parts.append(
-                    f"{METADATA_FILENAME_COLUMN} LIKE '{escaped}%'"
-                )
+                include_parts.append(f"{METADATA_FILENAME_COLUMN} LIKE '{escaped}%'")
             else:
-                include_parts.append(
-                    f"{METADATA_FILENAME_COLUMN} = '{escaped}'"
-                )
+                include_parts.append(f"{METADATA_FILENAME_COLUMN} = '{escaped}'")
         conditions.append(f"({' OR '.join(include_parts)})")
 
     if document_filter.excluded:
         for entry in sorted(document_filter.excluded):
             escaped = _escape_sql(entry)
             if entry.endswith("/"):
-                conditions.append(
-                    f"{METADATA_FILENAME_COLUMN} NOT LIKE '{escaped}%'"
-                )
+                conditions.append(f"{METADATA_FILENAME_COLUMN} NOT LIKE '{escaped}%'")
             else:
-                conditions.append(
-                    f"{METADATA_FILENAME_COLUMN} != '{escaped}'"
-                )
+                conditions.append(f"{METADATA_FILENAME_COLUMN} != '{escaped}'")
 
     if not conditions:
         return None
@@ -346,8 +340,7 @@ def _search(
     step = result.final_step.queries["default"]
 
     return [
-        (key, step.casebase[key], float(step.similarities[key]))
-        for key in step.ranking
+        (key, step.casebase[key], float(step.similarities[key])) for key in step.ranking
     ]
 
 

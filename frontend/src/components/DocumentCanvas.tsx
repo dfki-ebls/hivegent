@@ -1,28 +1,54 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
-import Fuse from 'fuse.js';
-import JSZip from 'jszip';
-import { AlertCircle, Archive, EyeOff, FileText, FolderOpen, FolderPlus, MessageSquarePlus, Plus, RefreshCw, RotateCcw, Scissors, Search, Trash2, Upload, X } from 'lucide-react';
+import Fuse from "fuse.js";
+import JSZip from "jszip";
+import {
+  AlertCircle,
+  Archive,
+  EyeOff,
+  FileText,
+  FolderOpen,
+  FolderPlus,
+  MessageSquarePlus,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Scissors,
+  Search,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
+import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { buildLlmConfig, getDocumentContent, requiresConversion, uploadDocument } from '../lib/api';
-import type { ChunkingPipeline, ConversionPipeline, DocumentInfo, StoredDocument } from '../lib/types';
-import { useFetchedDocumentsStore } from '../stores/fetched-documents-store';
-import { useManagedDocumentsStore } from '../stores/managed-documents-store';
-import { useSettingsStore } from '../stores/settings-store';
-import { ChunkingPipelineSelector } from './ChunkingPipelineSelector';
-import { ChunkViewerDialog } from './ChunkViewerDialog';
-import { CreateDirectoryDialog } from './CreateDirectoryDialog';
-import { DirectoryTreeView } from './DirectoryTreeView';
-import { DocumentPreviewDialog } from './DocumentPreviewDialog';
-import { ConversionPipelineSelector } from './ConversionPipelineSelector';
-import { MoveDocumentDialog } from './MoveDocumentDialog';
-import { Alert, AlertDescription } from './ui/alert';
-import { Badge } from './ui/badge';
-import { Button } from './ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Input } from './ui/input';
-import { ScrollArea } from './ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import {
+  buildLlmConfig,
+  getDocumentContent,
+  requiresConversion,
+  uploadDocument,
+} from "../lib/api";
+import type {
+  ChunkingPipeline,
+  ConversionPipeline,
+  DocumentInfo,
+  StoredDocument,
+} from "../lib/types";
+import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
+import { useManagedDocumentsStore } from "../stores/managed-documents-store";
+import { useSettingsStore } from "../stores/settings-store";
+import { ChunkingPipelineSelector } from "./ChunkingPipelineSelector";
+import { ChunkViewerDialog } from "./ChunkViewerDialog";
+import { ConversionPipelineSelector } from "./ConversionPipelineSelector";
+import { CreateDirectoryDialog } from "./CreateDirectoryDialog";
+import { DirectoryTreeView } from "./DirectoryTreeView";
+import { DocumentPreviewDialog } from "./DocumentPreviewDialog";
+import { MoveDocumentDialog } from "./MoveDocumentDialog";
+import { Alert, AlertDescription } from "./ui/alert";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { Input } from "./ui/input";
+import { ScrollArea } from "./ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 // --- Utility functions ---
 
@@ -38,8 +64,8 @@ function formatRelativeDate(dateString: string): string {
   const diffMs = now.getTime() - date.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
   if (diffDays < 7) return `${diffDays} days ago`;
   if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
   return date.toLocaleDateString();
@@ -104,11 +130,15 @@ function DocumentCard({ doc, onClick }: DocumentCardProps) {
 
 function FetchedDocuments() {
   const documents = useFetchedDocumentsStore((state) => state.documents);
-  const [selectedDocument, setSelectedDocument] = useState<StoredDocument | null>(null);
+  const [selectedDocument, setSelectedDocument] =
+    useState<StoredDocument | null>(null);
 
   const documentList = useMemo(
-    () => Array.from(documents.values()).sort((a, b) => (b.score ?? 0) - (a.score ?? 0)),
-    [documents]
+    () =>
+      Array.from(documents.values()).sort(
+        (a, b) => (b.score ?? 0) - (a.score ?? 0),
+      ),
+    [documents],
   );
 
   if (documentList.length === 0) {
@@ -138,7 +168,7 @@ function FetchedDocuments() {
       <DocumentPreviewDialog
         open={selectedDocument !== null}
         onOpenChange={(open) => !open && setSelectedDocument(null)}
-        filename={selectedDocument?.filename ?? ''}
+        filename={selectedDocument?.filename ?? ""}
         content={selectedDocument?.content ?? null}
       />
     </>
@@ -158,7 +188,12 @@ function ErrorBanner({ message, onDismiss }: ErrorBannerProps) {
       <AlertCircle className="h-4 w-4" />
       <AlertDescription className="flex items-center justify-between">
         <span>{message}</span>
-        <Button variant="ghost" size="sm" className="h-auto p-1" onClick={onDismiss}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-auto p-1"
+          onClick={onDismiss}
+        >
           <X className="h-4 w-4" />
         </Button>
       </AlertDescription>
@@ -208,8 +243,8 @@ function UploadArea({
       <div
         className={`flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-6 transition-colors ${
           isDragging
-            ? 'border-primary bg-primary/10'
-            : 'border-muted-foreground/25 bg-muted/25 hover:border-muted-foreground/50 hover:bg-muted/50'
+            ? "border-primary bg-primary/10"
+            : "border-muted-foreground/25 bg-muted/25 hover:border-muted-foreground/50 hover:bg-muted/50"
         }`}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
@@ -218,9 +253,7 @@ function UploadArea({
         <Upload className="h-10 w-10 text-muted-foreground" />
         <div className="text-center">
           <p className="font-medium">Drop files here to upload</p>
-          <p className="text-sm text-muted-foreground">
-            or click to browse
-          </p>
+          <p className="text-sm text-muted-foreground">or click to browse</p>
         </div>
         <input
           ref={fileInputRef}
@@ -247,14 +280,29 @@ function UploadArea({
           onChange={onZipInputChange}
         />
         <div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={isLoading}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onSelectFiles}
+            disabled={isLoading}
+          >
             Select Files
           </Button>
-          <Button variant="secondary" size="sm" onClick={onSelectDirectory} disabled={isLoading}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onSelectDirectory}
+            disabled={isLoading}
+          >
             <FolderOpen className="h-4 w-4 mr-1" />
             Upload Folder
           </Button>
-          <Button variant="secondary" size="sm" onClick={onSelectZip} disabled={isLoading}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onSelectZip}
+            disabled={isLoading}
+          >
             <Archive className="h-4 w-4 mr-1" />
             Upload ZIP
           </Button>
@@ -264,11 +312,21 @@ function UploadArea({
             Or create and edit documents directly in the browser
           </p>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={onNewDocument} disabled={isLoading}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onNewDocument}
+              disabled={isLoading}
+            >
               <Plus className="h-4 w-4 mr-1" />
               New Document
             </Button>
-            <Button variant="outline" size="sm" onClick={onNewFolder} disabled={isLoading}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onNewFolder}
+              disabled={isLoading}
+            >
               <FolderPlus className="h-4 w-4 mr-1" />
               New Folder
             </Button>
@@ -322,7 +380,17 @@ interface DocumentListItemProps {
   onRemove: () => void;
 }
 
-function DocumentListItem({ doc, isLoading, onEdit, onIncludeDocument, onExcludeDocument, onViewChunks, onRechunk, onReconvert, onRemove }: DocumentListItemProps) {
+function DocumentListItem({
+  doc,
+  isLoading,
+  onEdit,
+  onIncludeDocument,
+  onExcludeDocument,
+  onViewChunks,
+  onRechunk,
+  onReconvert,
+  onRemove,
+}: DocumentListItemProps) {
   return (
     <div
       className="flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50 cursor-pointer"
@@ -340,7 +408,8 @@ function DocumentListItem({ doc, isLoading, onEdit, onIncludeDocument, onExclude
           )}
         </div>
         <p className="text-xs text-muted-foreground">
-          {formatFileSize(doc.size_bytes)} · {formatRelativeDate(doc.modified_at)}
+          {formatFileSize(doc.size_bytes)} ·{" "}
+          {formatRelativeDate(doc.modified_at)}
         </p>
       </div>
       {doc.chunk_count != null && (
@@ -437,7 +506,10 @@ interface ManageDocumentsProps {
   onExcludeDocument?: (filename: string) => void;
 }
 
-function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumentsProps) {
+function ManageDocuments({
+  onIncludeDocument,
+  onExcludeDocument,
+}: ManageDocumentsProps) {
   const {
     documents,
     directoryTree,
@@ -457,24 +529,34 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   } = useManagedDocumentsStore();
   const llmSettings = useSettingsStore((state) => state.llm);
   const visionModel = useSettingsStore((state) => state.visionModel);
-  const conversionPipeline = useSettingsStore((state) => state.conversionPipeline);
+  const conversionPipeline = useSettingsStore(
+    (state) => state.conversionPipeline,
+  );
   const chunkingPipeline = useSettingsStore((state) => state.chunkingPipeline);
-  const setConversionPipeline = useSettingsStore((state) => state.setConversionPipeline);
-  const setChunkingPipeline = useSettingsStore((state) => state.setChunkingPipeline);
+  const setConversionPipeline = useSettingsStore(
+    (state) => state.setConversionPipeline,
+  );
+  const setChunkingPipeline = useSettingsStore(
+    (state) => state.setChunkingPipeline,
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const directoryInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [editor, setEditor] = useState<EditorState | null>(null);
-  const [chunkViewerFilename, setChunkViewerFilename] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [chunkViewerFilename, setChunkViewerFilename] = useState<string | null>(
+    null,
+  );
+  const [searchQuery, setSearchQuery] = useState("");
   const [moveFilePath, setMoveFilePath] = useState<string | null>(null);
-  const [createDirParent, setCreateDirParent] = useState<string | undefined>(undefined);
+  const [createDirParent, setCreateDirParent] = useState<string | undefined>(
+    undefined,
+  );
   const [showCreateDir, setShowCreateDir] = useState(false);
 
   const fuse = useMemo(
-    () => new Fuse(documents, { keys: ['filename'], threshold: 0.4 }),
-    [documents]
+    () => new Fuse(documents, { keys: ["filename"], threshold: 0.4 }),
+    [documents],
   );
 
   const filteredDocuments = useMemo(() => {
@@ -490,73 +572,117 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   // --- Editor handlers ---
 
   const handleEdit = useCallback(async (filepath: string) => {
-    setEditor({ filename: filepath, content: null, isNew: false, isLoading: true });
+    setEditor({
+      filename: filepath,
+      content: null,
+      isNew: false,
+      isLoading: true,
+    });
     try {
       const content = await getDocumentContent(filepath);
-      setEditor({ filename: filepath, content, isNew: false, isLoading: false });
+      setEditor({
+        filename: filepath,
+        content,
+        isNew: false,
+        isLoading: false,
+      });
     } catch {
-      setEditor({ filename: filepath, content: 'Failed to load document content', isNew: false, isLoading: false });
+      setEditor({
+        filename: filepath,
+        content: "Failed to load document content",
+        isNew: false,
+        isLoading: false,
+      });
     }
   }, []);
 
   const handleNew = useCallback(() => {
-    setEditor({ filename: 'new-document.md', content: '', isNew: true, isLoading: false });
+    setEditor({
+      filename: "new-document.md",
+      content: "",
+      isNew: true,
+      isLoading: false,
+    });
   }, []);
 
-  const handleSave = useCallback(async (filename: string, content: string) => {
-    const file = new File([content], filename, { type: 'text/plain' });
-    await uploadDocument(filename, file, { chunkingPipeline });
-    await fetchDocuments();
-    await fetchDirectoryTree();
-  }, [fetchDocuments, fetchDirectoryTree, chunkingPipeline]);
+  const handleSave = useCallback(
+    async (filename: string, content: string) => {
+      const file = new File([content], filename, { type: "text/plain" });
+      await uploadDocument(filename, file, { chunkingPipeline });
+      await fetchDocuments();
+      await fetchDirectoryTree();
+    },
+    [fetchDocuments, fetchDirectoryTree, chunkingPipeline],
+  );
 
   // --- Include / exclude handlers ---
 
-  const handleInclude = useCallback((path: string) => {
-    onIncludeDocument?.(path);
-  }, [onIncludeDocument]);
+  const handleInclude = useCallback(
+    (path: string) => {
+      onIncludeDocument?.(path);
+    },
+    [onIncludeDocument],
+  );
 
-  const handleExclude = useCallback((path: string) => {
-    onExcludeDocument?.(path);
-  }, [onExcludeDocument]);
+  const handleExclude = useCallback(
+    (path: string) => {
+      onExcludeDocument?.(path);
+    },
+    [onExcludeDocument],
+  );
 
   // --- Rechunk / reconvert handlers ---
 
-  const handleRechunk = useCallback(async (filepath: string) => {
-    await storeRechunk(filepath, chunkingPipeline);
-  }, [storeRechunk, chunkingPipeline]);
+  const handleRechunk = useCallback(
+    async (filepath: string) => {
+      await storeRechunk(filepath, chunkingPipeline);
+    },
+    [storeRechunk, chunkingPipeline],
+  );
 
-  const handleReconvert = useCallback(async (filepath: string) => {
-    await storeReconvert(filepath, {
+  const handleReconvert = useCallback(
+    async (filepath: string) => {
+      await storeReconvert(filepath, {
+        conversionPipeline,
+        chunkingPipeline,
+        llm: buildLlmConfig({
+          model: visionModel,
+          apiKey: llmSettings.apiKey,
+          baseUrl: llmSettings.baseUrl,
+        }),
+      });
+    },
+    [
+      storeReconvert,
       conversionPipeline,
       chunkingPipeline,
-      llm: buildLlmConfig({
-        model: visionModel,
-        apiKey: llmSettings.apiKey,
-        baseUrl: llmSettings.baseUrl,
-      }),
-    });
-  }, [storeReconvert, conversionPipeline, chunkingPipeline, visionModel, llmSettings]);
+      visionModel,
+      llmSettings,
+    ],
+  );
 
   // --- File upload handlers ---
 
-  const handleFiles = useCallback(async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    for (const file of Array.from(files)) {
-      const options = requiresConversion(file.name)
-        ? {
-            conversionPipeline,
-            chunkingPipeline,
-            llm: buildLlmConfig({
-              model: visionModel,
-              apiKey: llmSettings.apiKey,
-              baseUrl: llmSettings.baseUrl,
-            }),
-          }
-        : { chunkingPipeline };
-      await upload(file, options);
-    }
-  }, [upload, conversionPipeline, chunkingPipeline, visionModel, llmSettings]);
+  const handleFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      for (const file of Array.from(files)) {
+        const options = requiresConversion(file.name)
+          ? {
+              conversionPipeline,
+              chunkingPipeline,
+              llm: buildLlmConfig({
+                model: visionModel,
+                apiKey: llmSettings.apiKey,
+                baseUrl: llmSettings.baseUrl,
+              }),
+            }
+          : { chunkingPipeline };
+        await upload(file, options);
+      }
+    },
+    [upload, conversionPipeline, chunkingPipeline, visionModel, llmSettings],
+  );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -568,72 +694,86 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     setIsDragging(false);
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    handleFiles(e.dataTransfer.files);
-  }, [handleFiles]);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+      handleFiles(e.dataTransfer.files);
+    },
+    [handleFiles],
+  );
 
-  const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    handleFiles(e.target.files);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  }, [handleFiles]);
+  const handleFileInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      handleFiles(e.target.files);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    },
+    [handleFiles],
+  );
 
-  const handleDirectoryInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+  const handleDirectoryInputChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
 
-    const options = {
-      conversionPipeline,
-      chunkingPipeline,
-      llm: buildLlmConfig({
-        model: visionModel,
-        apiKey: llmSettings.apiKey,
-        baseUrl: llmSettings.baseUrl,
-      }),
-    };
+      const options = {
+        conversionPipeline,
+        chunkingPipeline,
+        llm: buildLlmConfig({
+          model: visionModel,
+          apiKey: llmSettings.apiKey,
+          baseUrl: llmSettings.baseUrl,
+        }),
+      };
 
-    // Bundle directory files into a ZIP using JSZip
-    const zip = new JSZip();
-    for (const file of Array.from(files)) {
-      const relativePath = file.webkitRelativePath || file.name;
-      zip.file(relativePath, file);
-    }
-    const blob = await zip.generateAsync({ type: 'blob' });
-    const zipFile = new File([blob], 'collection.zip', { type: 'application/zip' });
+      // Bundle directory files into a ZIP using JSZip
+      const zip = new JSZip();
+      for (const file of Array.from(files)) {
+        const relativePath = file.webkitRelativePath || file.name;
+        zip.file(relativePath, file);
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      const zipFile = new File([blob], "collection.zip", {
+        type: "application/zip",
+      });
 
-    await uploadCol(zipFile, options);
+      await uploadCol(zipFile, options);
 
-    if (directoryInputRef.current) {
-      directoryInputRef.current.value = '';
-    }
-  }, [uploadCol, conversionPipeline, chunkingPipeline, visionModel, llmSettings]);
+      if (directoryInputRef.current) {
+        directoryInputRef.current.value = "";
+      }
+    },
+    [uploadCol, conversionPipeline, chunkingPipeline, visionModel, llmSettings],
+  );
 
-  const handleZipInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+  const handleZipInputChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
 
-    const file = files[0];
-    if (!file.name.toLowerCase().endsWith('.zip')) return;
+      const file = files[0];
+      if (!file.name.toLowerCase().endsWith(".zip")) return;
 
-    const options = {
-      conversionPipeline,
-      chunkingPipeline,
-      llm: buildLlmConfig({
-        model: visionModel,
-        apiKey: llmSettings.apiKey,
-        baseUrl: llmSettings.baseUrl,
-      }),
-    };
+      const options = {
+        conversionPipeline,
+        chunkingPipeline,
+        llm: buildLlmConfig({
+          model: visionModel,
+          apiKey: llmSettings.apiKey,
+          baseUrl: llmSettings.baseUrl,
+        }),
+      };
 
-    await uploadCol(file, options);
+      await uploadCol(file, options);
 
-    if (zipInputRef.current) {
-      zipInputRef.current.value = '';
-    }
-  }, [uploadCol, conversionPipeline, chunkingPipeline, visionModel, llmSettings]);
+      if (zipInputRef.current) {
+        zipInputRef.current.value = "";
+      }
+    },
+    [uploadCol, conversionPipeline, chunkingPipeline, visionModel, llmSettings],
+  );
 
   // --- Directory handlers ---
 
@@ -695,7 +835,10 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       return null;
     }
 
-    if (directoryTree.total_files === 0 && directoryTree.total_directories === 0) {
+    if (
+      directoryTree.total_files === 0 &&
+      directoryTree.total_directories === 0
+    ) {
       return (
         <EmptyState
           icon={<FileText className="h-12 w-12 opacity-50" />}
@@ -781,7 +924,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       <DocumentPreviewDialog
         open={editor !== null}
         onOpenChange={(open) => !open && setEditor(null)}
-        filename={editor?.filename ?? ''}
+        filename={editor?.filename ?? ""}
         content={editor?.content ?? null}
         isLoading={editor?.isLoading ?? false}
         editable
@@ -791,7 +934,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       <ChunkViewerDialog
         open={chunkViewerFilename !== null}
         onOpenChange={(open) => !open && setChunkViewerFilename(null)}
-        filename={chunkViewerFilename ?? ''}
+        filename={chunkViewerFilename ?? ""}
         onRechunk={async () => {
           if (chunkViewerFilename) {
             await storeRechunk(chunkViewerFilename, chunkingPipeline);
@@ -802,7 +945,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       <MoveDocumentDialog
         open={moveFilePath !== null}
         onOpenChange={(open) => !open && setMoveFilePath(null)}
-        currentPath={moveFilePath ?? ''}
+        currentPath={moveFilePath ?? ""}
         onMove={(destination) => {
           if (moveFilePath) {
             storeMove(moveFilePath, destination);
@@ -825,12 +968,19 @@ interface DocumentCanvasProps {
   onExcludeDocument?: (filename: string) => void;
 }
 
-export function DocumentCanvas({ onIncludeDocument, onExcludeDocument }: DocumentCanvasProps) {
+export function DocumentCanvas({
+  onIncludeDocument,
+  onExcludeDocument,
+}: DocumentCanvasProps) {
   const documentTab = useSettingsStore((state) => state.documentTab);
   const setDocumentTab = useSettingsStore((state) => state.setDocumentTab);
 
   return (
-    <Tabs value={documentTab} onValueChange={(v) => setDocumentTab(v as 'fetched' | 'manage')} className="h-full gap-0">
+    <Tabs
+      value={documentTab}
+      onValueChange={(v) => setDocumentTab(v as "fetched" | "manage")}
+      className="h-full gap-0"
+    >
       <div className="shrink-0 border-b px-4 flex items-center h-15">
         <TabsList className="w-full sm:w-auto">
           <TabsTrigger value="fetched" className="flex-1 sm:flex-none gap-2">
@@ -847,7 +997,10 @@ export function DocumentCanvas({ onIncludeDocument, onExcludeDocument }: Documen
         <FetchedDocuments />
       </TabsContent>
       <TabsContent value="manage" className="min-h-0 overflow-hidden">
-        <ManageDocuments onIncludeDocument={onIncludeDocument} onExcludeDocument={onExcludeDocument} />
+        <ManageDocuments
+          onIncludeDocument={onIncludeDocument}
+          onExcludeDocument={onExcludeDocument}
+        />
       </TabsContent>
     </Tabs>
   );

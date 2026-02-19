@@ -1,7 +1,7 @@
-import type { ReactNode } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
 
-import { useAuth } from '../lib/auth-context';
+import { useAuth } from "../lib/auth-context";
 
 interface AuthGateProps {
   children: ReactNode;

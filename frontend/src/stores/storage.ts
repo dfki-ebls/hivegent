@@ -2,13 +2,10 @@
  * Centralized localStorage utilities for all zustand persist stores.
  */
 
-import { deleteCryptoDatabase } from '../lib/crypto';
+import { deleteCryptoDatabase } from "../lib/crypto";
 
 /** All localStorage keys used by the application. */
-const STORAGE_KEYS = [
-  'snipscout-settings',
-  'snipscout-local-auth',
-] as const;
+const STORAGE_KEYS = ["snipscout-settings", "snipscout-local-auth"] as const;
 
 /**
  * Remove all snipscout-related localStorage entries and reload the page.

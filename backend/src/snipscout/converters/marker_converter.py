@@ -40,8 +40,7 @@ class MarkerConverter(DocumentConverter):
                 self._converter = PdfConverter(artifact_dict=create_model_dict())
             except ImportError as e:
                 raise ImportError(
-                    "marker-pdf is not installed. "
-                    "Install with: pip install marker-pdf"
+                    "marker-pdf is not installed. Install with: pip install marker-pdf"
                 ) from e
 
         result = self._converter(str(file_path))

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Button } from './ui/button';
+import { useState } from "react";
+import { Button } from "./ui/button";
 import {
   Dialog,
   DialogContent,
@@ -7,8 +7,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from './ui/dialog';
-import { Input } from './ui/input';
+} from "./ui/dialog";
+import { Input } from "./ui/input";
 
 interface MoveDocumentDialogProps {
   open: boolean;
@@ -52,8 +52,12 @@ export function MoveDocumentDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <label className="text-sm text-muted-foreground">Current path</label>
-            <p className="text-sm font-mono bg-muted rounded px-2 py-1">{currentPath}</p>
+            <label className="text-sm text-muted-foreground">
+              Current path
+            </label>
+            <p className="text-sm font-mono bg-muted rounded px-2 py-1">
+              {currentPath}
+            </p>
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium">New path</label>
@@ -65,10 +69,19 @@ export function MoveDocumentDialog({
             />
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
               Cancel
             </Button>
-            <Button type="submit" disabled={!destination.trim() || destination.trim() === currentPath}>
+            <Button
+              type="submit"
+              disabled={
+                !destination.trim() || destination.trim() === currentPath
+              }
+            >
               Move
             </Button>
           </DialogFooter>

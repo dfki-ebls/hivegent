@@ -1,12 +1,12 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { FileSearch, LogIn, Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { FileSearch, Loader2, LogIn } from "lucide-react";
+import { useState } from "react";
 
-import { Button } from '../components/ui/button';
-import { createConversation } from '../lib/api';
-import { useAuth } from '../lib/auth-context';
+import { Button } from "../components/ui/button";
+import { createConversation } from "../lib/api";
+import { useAuth } from "../lib/auth-context";
 
-export const Route = createFileRoute('/')({
+export const Route = createFileRoute("/")({
   component: IndexPage,
 });
 
@@ -22,9 +22,9 @@ function IndexPage() {
       // For local auth, we're now authenticated, start a new chat
       // For OIDC, this triggers a redirect, so we won't reach here
       const id = await createConversation();
-      navigate({ to: '/chat/$id', params: { id } });
+      navigate({ to: "/chat/$id", params: { id } });
     } catch (error) {
-      console.error('Sign in failed:', error);
+      console.error("Sign in failed:", error);
       setIsLoading(false);
     }
   };
@@ -33,9 +33,9 @@ function IndexPage() {
     setIsLoading(true);
     try {
       const id = await createConversation();
-      navigate({ to: '/chat/$id', params: { id } });
+      navigate({ to: "/chat/$id", params: { id } });
     } catch (error) {
-      console.error('Failed to create conversation:', error);
+      console.error("Failed to create conversation:", error);
       setIsLoading(false);
     }
   };
@@ -81,8 +81,8 @@ function IndexPage() {
           <h1 className="text-4xl font-bold">SnipScout</h1>
         </div>
         <p className="text-lg text-muted-foreground max-w-md">
-          Your intelligent document assistant powered by RAG.
-          Upload documents and chat with your knowledge base.
+          Your intelligent document assistant powered by RAG. Upload documents
+          and chat with your knowledge base.
         </p>
         <Button onClick={handleSignIn} size="lg" disabled={isLoading}>
           {isLoading ? (

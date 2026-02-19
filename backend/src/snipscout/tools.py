@@ -1,7 +1,7 @@
 """Shared path-scoped tool generators used by agent and MCP wrappers."""
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 from fnmatch import fnmatch
 from pathlib import Path
@@ -96,7 +96,9 @@ class ListDocumentsTool:
                 if _matches_subdir_and_depth(r.filename, subdir, max_depth)
             ]
         if self.document_filter:
-            results = [r for r in results if self.document_filter.is_included(r.filename)]
+            results = [
+                r for r in results if self.document_filter.is_included(r.filename)
+            ]
         return results
 
 
@@ -232,7 +234,9 @@ class GrepTool:
                     data = item["data"]
                     filepath = data["path"]["text"]
                     doc_name = str(Path(filepath).relative_to(self.path))
-                    if self.document_filter and not self.document_filter.is_included(doc_name):
+                    if self.document_filter and not self.document_filter.is_included(
+                        doc_name
+                    ):
                         continue
                     content = (
                         data["lines"]["text"].rstrip("\n") if include_content else None
@@ -347,5 +351,3 @@ class GetChunkTool:
             if chunk.index == chunk_index:
                 return chunk.text
         return None
-
-

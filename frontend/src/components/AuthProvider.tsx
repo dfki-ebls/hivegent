@@ -1,8 +1,8 @@
-import type { ReactNode } from 'react';
-import { AuthProvider as OidcAuthProvider } from 'react-oidc-context';
+import type { ReactNode } from "react";
+import { AuthProvider as OidcAuthProvider } from "react-oidc-context";
 
-import { isOidcConfigured, oidcConfig } from '../lib/auth-config';
-import { UnifiedAuthProvider } from '../lib/auth-providers';
+import { isOidcConfigured, oidcConfig } from "../lib/auth-config";
+import { UnifiedAuthProvider } from "../lib/auth-providers";
 
 interface AuthProviderProps {
   children: ReactNode;

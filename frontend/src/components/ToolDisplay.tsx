@@ -1,33 +1,33 @@
-import type { ReactNode } from 'react';
-import { cn } from '@/lib/utils';
+import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 interface ToolSectionProps {
   title: string;
-  variant?: 'default' | 'error';
+  variant?: "default" | "error";
   border?: boolean;
   children: ReactNode;
 }
 
 export function ToolSection({
   title,
-  variant = 'default',
+  variant = "default",
   border = false,
   children,
 }: ToolSectionProps) {
   return (
-    <div className={cn('space-y-2 p-4', border && 'border-t')}>
+    <div className={cn("space-y-2 p-4", border && "border-t")}>
       <h4
         className={cn(
-          'font-medium text-xs uppercase tracking-wide',
-          variant === 'error' ? 'text-destructive' : 'text-muted-foreground'
+          "font-medium text-xs uppercase tracking-wide",
+          variant === "error" ? "text-destructive" : "text-muted-foreground",
         )}
       >
         {title}
       </h4>
       <div
         className={cn(
-          'text-sm space-y-1',
-          variant === 'error' && 'text-destructive'
+          "text-sm space-y-1",
+          variant === "error" && "text-destructive",
         )}
       >
         {children}
@@ -42,10 +42,14 @@ interface ToolKeyValueProps {
   indent?: boolean;
 }
 
-export function ToolKeyValue({ label, value, indent = false }: ToolKeyValueProps) {
+export function ToolKeyValue({
+  label,
+  value,
+  indent = false,
+}: ToolKeyValueProps) {
   return (
-    <div className={cn(indent && 'pl-4')}>
-      <span className="text-muted-foreground">{label}:</span>{' '}
+    <div className={cn(indent && "pl-4")}>
+      <span className="text-muted-foreground">{label}:</span>{" "}
       <span className="font-medium">{value}</span>
     </div>
   );
@@ -66,7 +70,7 @@ export function ToolParameters({ params }: ToolParametersProps) {
         <ToolKeyValue
           key={key}
           label={key}
-          value={typeof value === 'string' ? `"${value}"` : String(value)}
+          value={typeof value === "string" ? `"${value}"` : String(value)}
         />
       ))}
     </ToolSection>

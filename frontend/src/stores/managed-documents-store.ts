@@ -1,6 +1,9 @@
-import { create } from 'zustand';
-import type { ChunkingPipeline, CollectionUploadResponse, DirectoryTreeResponse, DocumentInfo } from '../lib/types';
-import type { ReconvertDocumentOptions, UploadCollectionOptions, UploadDocumentOptions } from '../lib/api';
+import { create } from "zustand";
+import type {
+  ReconvertDocumentOptions,
+  UploadCollectionOptions,
+  UploadDocumentOptions,
+} from "../lib/api";
 import {
   createDirectory,
   deleteDirectory,
@@ -12,7 +15,13 @@ import {
   reconvertDocument,
   uploadCollection,
   uploadDocument,
-} from '../lib/api';
+} from "../lib/api";
+import type {
+  ChunkingPipeline,
+  CollectionUploadResponse,
+  DirectoryTreeResponse,
+  DocumentInfo,
+} from "../lib/types";
 
 interface ManagedDocumentsStore {
   documents: DocumentInfo[];
@@ -22,10 +31,19 @@ interface ManagedDocumentsStore {
   fetchDocuments: () => Promise<void>;
   fetchDirectoryTree: () => Promise<void>;
   upload: (file: File, options?: UploadDocumentOptions) => Promise<void>;
-  uploadCol: (file: File, options?: UploadCollectionOptions) => Promise<CollectionUploadResponse>;
+  uploadCol: (
+    file: File,
+    options?: UploadCollectionOptions,
+  ) => Promise<CollectionUploadResponse>;
   remove: (filename: string) => Promise<void>;
-  rechunk: (filename: string, chunkingPipeline?: ChunkingPipeline) => Promise<void>;
-  reconvert: (filename: string, options?: ReconvertDocumentOptions) => Promise<void>;
+  rechunk: (
+    filename: string,
+    chunkingPipeline?: ChunkingPipeline,
+  ) => Promise<void>;
+  reconvert: (
+    filename: string,
+    options?: ReconvertDocumentOptions,
+  ) => Promise<void>;
   move: (filepath: string, destination: string) => Promise<void>;
   createDir: (path: string) => Promise<void>;
   deleteDir: (path: string) => Promise<void>;
@@ -46,7 +64,8 @@ export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
         set({ documents, isLoading: false });
       } catch (err) {
         set({
-          error: err instanceof Error ? err.message : 'Failed to fetch documents',
+          error:
+            err instanceof Error ? err.message : "Failed to fetch documents",
           isLoading: false,
         });
       }
@@ -58,7 +77,10 @@ export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
         set({ directoryTree });
       } catch (err) {
         set({
-          error: err instanceof Error ? err.message : 'Failed to fetch directory tree',
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to fetch directory tree",
         });
       }
     },
@@ -71,7 +93,7 @@ export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
         await get().fetchDirectoryTree();
       } catch (err) {
         set({
-          error: err instanceof Error ? err.message : 'Upload failed',
+          error: err instanceof Error ? err.message : "Upload failed",
           isLoading: false,
         });
       }
@@ -87,7 +109,8 @@ export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
         return result;
       } catch (err) {
         set({
-          error: err instanceof Error ? err.message : 'Collection upload failed',
+          error:
+            err instanceof Error ? err.message : "Collection upload failed",
           isLoading: false,
         });
         throw err;
@@ -102,7 +125,7 @@ export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
         await get().fetchDirectoryTree();
       } catch (err) {
         set({
-          error: err instanceof Error ? err.message : 'Delete failed',
+          error: err instanceof Error ? err.message : "Delete failed",
           isLoading: false,
         });
       }
@@ -116,7 +139,7 @@ export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
         await get().fetchDirectoryTree();
       } catch (err) {
         set({
-          error: err instanceof Error ? err.message : 'Rechunk failed',
+          error: err instanceof Error ? err.message : "Rechunk failed",
           isLoading: false,
         });
       }
@@ -130,7 +153,7 @@ export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
         await get().fetchDirectoryTree();
       } catch (err) {
         set({
-          error: err instanceof Error ? err.message : 'Reconvert failed',
+          error: err instanceof Error ? err.message : "Reconvert failed",
           isLoading: false,
         });
       }
@@ -144,7 +167,7 @@ export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
         await get().fetchDirectoryTree();
       } catch (err) {
         set({
-          error: err instanceof Error ? err.message : 'Move failed',
+          error: err instanceof Error ? err.message : "Move failed",
           isLoading: false,
         });
       }
@@ -158,7 +181,8 @@ export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
         set({ isLoading: false });
       } catch (err) {
         set({
-          error: err instanceof Error ? err.message : 'Failed to create directory',
+          error:
+            err instanceof Error ? err.message : "Failed to create directory",
           isLoading: false,
         });
       }
@@ -172,12 +196,13 @@ export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
         await get().fetchDirectoryTree();
       } catch (err) {
         set({
-          error: err instanceof Error ? err.message : 'Failed to delete directory',
+          error:
+            err instanceof Error ? err.message : "Failed to delete directory",
           isLoading: false,
         });
       }
     },
 
     clearError: () => set({ error: null }),
-  })
+  }),
 );

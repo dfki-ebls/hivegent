@@ -4,19 +4,18 @@
  * Provides the appropriate auth provider based on configuration.
  */
 
-import { useState, useEffect, useCallback, type ReactNode } from 'react';
-import { useAuth as useOidcAuth } from 'react-oidc-context';
-
-import { isOidcConfigured } from './auth-config';
-import { setAuthTokenProvider, clearAuthTokenProvider } from './api';
+import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { useAuth as useOidcAuth } from "react-oidc-context";
+import { clearAuthTokenProvider, setAuthTokenProvider } from "./api";
+import { isOidcConfigured } from "./auth-config";
 import {
   AuthContext,
-  LOCAL_USER,
   type AuthContextValue,
   type AuthUser,
-} from './auth-context';
+  LOCAL_USER,
+} from "./auth-context";
 
-const LOCAL_AUTH_KEY = 'snipscout-local-auth';
+const LOCAL_AUTH_KEY = "snipscout-local-auth";
 
 /**
  * Provider component for local (non-OIDC) authentication.
@@ -76,7 +75,7 @@ function OidcAuthProviderWrapper({ children }: { children: ReactNode }) {
         if (oidcAuth.user?.access_token) {
           return oidcAuth.user.access_token;
         }
-        throw new Error('No access token available');
+        throw new Error("No access token available");
       });
     }
   }, [oidcAuth.isAuthenticated, oidcAuth.user?.access_token]);
@@ -96,7 +95,7 @@ function OidcAuthProviderWrapper({ children }: { children: ReactNode }) {
         name:
           oidcAuth.user.profile.name ||
           oidcAuth.user.profile.preferred_username ||
-          'User',
+          "User",
         email: oidcAuth.user.profile.email,
       }
     : null;

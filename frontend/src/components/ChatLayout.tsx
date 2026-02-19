@@ -1,15 +1,10 @@
-import { useCallback, useState } from 'react';
-import { PanelLeftOpen } from 'lucide-react';
+import { PanelLeftOpen } from "lucide-react";
+import { useCallback, useState } from "react";
 
-import { ChatSidebar } from './ChatSidebar';
-import { DocumentCanvas } from './DocumentCanvas';
-import { Button } from './ui/button';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from './ui/sheet';
+import { ChatSidebar } from "./ChatSidebar";
+import { DocumentCanvas } from "./DocumentCanvas";
+import { Button } from "./ui/button";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "./ui/sheet";
 
 interface ChatLayoutProps {
   id: string;
@@ -22,14 +17,14 @@ export function ChatLayout({ id }: ChatLayoutProps) {
 
   const handleIncludeDocument = useCallback((filename: string) => {
     setIncludedDocuments((prev) =>
-      prev.includes(filename) ? prev : [...prev, filename]
+      prev.includes(filename) ? prev : [...prev, filename],
     );
     setExcludedDocuments((prev) => prev.filter((f) => f !== filename));
   }, []);
 
   const handleExcludeDocument = useCallback((filename: string) => {
     setExcludedDocuments((prev) =>
-      prev.includes(filename) ? prev : [...prev, filename]
+      prev.includes(filename) ? prev : [...prev, filename],
     );
     setIncludedDocuments((prev) => prev.filter((f) => f !== filename));
   }, []);

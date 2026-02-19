@@ -117,11 +117,17 @@ def _extract_title(messages: Sequence[Mapping[str, Any]]) -> str:
             content = part.get("content")
             if isinstance(content, str) and content.strip():
                 first_line = content.strip().split("\n")[0]
-                return first_line[:100] if len(first_line) <= 100 else first_line[:97] + "..."
+                return (
+                    first_line[:100]
+                    if len(first_line) <= 100
+                    else first_line[:97] + "..."
+                )
     return ""
 
 
-def _extract_document_refs(messages: Sequence[Mapping[str, Any]]) -> list[DocumentReference]:
+def _extract_document_refs(
+    messages: Sequence[Mapping[str, Any]],
+) -> list[DocumentReference]:
     """Extract document references from tool calls."""
     refs: dict[str, list[str]] = {}
 

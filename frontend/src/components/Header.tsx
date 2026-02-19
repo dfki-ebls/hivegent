@@ -1,16 +1,15 @@
-import { Link, useNavigate } from '@tanstack/react-router';
-import { FileSearch, Key, LogOut, User } from 'lucide-react';
-
-import { useAuth } from '../lib/auth-context';
-import { isOidcConfigured } from '../lib/auth-config';
-import { Button } from './ui/button';
+import { Link, useNavigate } from "@tanstack/react-router";
+import { FileSearch, Key, LogOut, User } from "lucide-react";
+import { isOidcConfigured } from "../lib/auth-config";
+import { useAuth } from "../lib/auth-context";
+import { Button } from "./ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from './ui/dropdown-menu';
+} from "./ui/dropdown-menu";
 
 function UserMenu() {
   const auth = useAuth();
@@ -20,14 +19,14 @@ function UserMenu() {
     return null;
   }
 
-  const userName = auth.user?.name || auth.user?.email || 'User';
+  const userName = auth.user?.name || auth.user?.email || "User";
 
   const handleLogout = async () => {
     await auth.signOut();
     // For local auth, navigate to home after sign out
     // For OIDC, signOut triggers a redirect
     if (!isOidcConfigured()) {
-      navigate({ to: '/' });
+      navigate({ to: "/" });
     }
   };
 
@@ -47,7 +46,10 @@ function UserMenu() {
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleLogout} className="flex items-center gap-2">
+        <DropdownMenuItem
+          onClick={handleLogout}
+          className="flex items-center gap-2"
+        >
           <LogOut className="h-4 w-4" />
           Sign out
         </DropdownMenuItem>
@@ -59,7 +61,10 @@ function UserMenu() {
 export function Header() {
   return (
     <header className="flex items-center justify-between border-b bg-background px-4 py-3">
-      <Link to="/" className="flex items-center gap-2 text-foreground hover:opacity-80 transition-opacity">
+      <Link
+        to="/"
+        className="flex items-center gap-2 text-foreground hover:opacity-80 transition-opacity"
+      >
         <FileSearch className="h-6 w-6" />
         <h1 className="text-xl font-semibold">SnipScout</h1>
       </Link>

@@ -1,16 +1,16 @@
-import { useEffect, useState } from 'react';
-import { FileType } from 'lucide-react';
+import { FileType } from "lucide-react";
+import { useEffect, useState } from "react";
 
-import { getConversionPipelines } from '../lib/api';
-import type { ConversionPipeline, ConversionPipelineInfo } from '../lib/types';
-import { Label } from './ui/label';
+import { getConversionPipelines } from "../lib/api";
+import type { ConversionPipeline, ConversionPipelineInfo } from "../lib/types";
+import { Label } from "./ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from './ui/select';
+} from "./ui/select";
 
 interface ConversionPipelineSelectorProps {
   value: ConversionPipeline;
@@ -35,7 +35,10 @@ export function ConversionPipelineSelector({
 
   return (
     <div className="flex items-center gap-2">
-      <Label htmlFor="conversion-pipeline-select" className="text-sm text-muted-foreground flex items-center gap-1.5">
+      <Label
+        htmlFor="conversion-pipeline-select"
+        className="text-sm text-muted-foreground flex items-center gap-1.5"
+      >
         <FileType className="h-4 w-4" />
         Conversion
       </Label>
@@ -44,7 +47,11 @@ export function ConversionPipelineSelector({
         onValueChange={(v) => onChange(v as ConversionPipeline)}
         disabled={disabled}
       >
-        <SelectTrigger id="conversion-pipeline-select" className="w-[140px]" size="sm">
+        <SelectTrigger
+          id="conversion-pipeline-select"
+          className="w-[140px]"
+          size="sm"
+        >
           <SelectValue placeholder="Select conversion" />
         </SelectTrigger>
         <SelectContent>

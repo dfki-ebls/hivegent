@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Button } from './ui/button';
+import { useState } from "react";
+import { Button } from "./ui/button";
 import {
   Dialog,
   DialogContent,
@@ -7,8 +7,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from './ui/dialog';
-import { Input } from './ui/input';
+} from "./ui/dialog";
+import { Input } from "./ui/input";
 
 interface CreateDirectoryDialogProps {
   open: boolean;
@@ -23,11 +23,11 @@ export function CreateDirectoryDialog({
   parentPath,
   onCreate,
 }: CreateDirectoryDialogProps) {
-  const [dirName, setDirName] = useState('');
+  const [dirName, setDirName] = useState("");
 
   const handleOpen = (isOpen: boolean) => {
     if (isOpen) {
-      setDirName('');
+      setDirName("");
     }
     onOpenChange(isOpen);
   };
@@ -50,7 +50,7 @@ export function CreateDirectoryDialog({
           <DialogDescription>
             {parentPath
               ? `Create a new directory inside "${parentPath}".`
-              : 'Create a new directory in the documents root.'}
+              : "Create a new directory in the documents root."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -64,7 +64,11 @@ export function CreateDirectoryDialog({
             />
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={!dirName.trim()}>

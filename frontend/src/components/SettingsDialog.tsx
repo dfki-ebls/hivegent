@@ -1,9 +1,8 @@
-import { useState } from 'react';
-import { SettingsIcon, Trash2Icon, RotateCcwIcon } from 'lucide-react';
-
-import { clearAllStorage } from '../stores/storage';
-import { useSettingsStore } from '../stores/settings-store';
-import { Button } from './ui/button';
+import { RotateCcwIcon, SettingsIcon, Trash2Icon } from "lucide-react";
+import { useState } from "react";
+import { useSettingsStore } from "../stores/settings-store";
+import { clearAllStorage } from "../stores/storage";
+import { Button } from "./ui/button";
 import {
   Dialog,
   DialogContent,
@@ -12,8 +11,8 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from './ui/dialog';
-import { Input } from './ui/input';
+} from "./ui/dialog";
+import { Input } from "./ui/input";
 
 // --- Section components ---
 
@@ -24,14 +23,21 @@ interface SettingsSectionProps {
   children: React.ReactNode;
 }
 
-function SettingsSection({ label, htmlFor, description, children }: SettingsSectionProps) {
+function SettingsSection({
+  label,
+  htmlFor,
+  description,
+  children,
+}: SettingsSectionProps) {
   return (
     <div className="grid gap-2">
       <label htmlFor={htmlFor} className="text-sm font-medium">
         {label}
       </label>
       {children}
-      {description && <p className="text-xs text-muted-foreground">{description}</p>}
+      {description && (
+        <p className="text-xs text-muted-foreground">{description}</p>
+      )}
     </div>
   );
 }
@@ -64,7 +70,8 @@ export function SettingsDialog() {
         <DialogHeader>
           <DialogTitle>LLM Settings</DialogTitle>
           <DialogDescription>
-            Configure your LLM provider settings. These settings are stored locally in your browser.
+            Configure your LLM provider settings. These settings are stored
+            locally in your browser.
           </DialogDescription>
         </DialogHeader>
 
@@ -85,14 +92,20 @@ export function SettingsDialog() {
           <SettingsSection
             label="API Key (optional)"
             htmlFor="api-key"
-            description={hasServerApiKey
-              ? 'Server API key configured. Override it here or leave empty to use the server key.'
-              : 'Only required for providers that need authentication.'}
+            description={
+              hasServerApiKey
+                ? "Server API key configured. Override it here or leave empty to use the server key."
+                : "Only required for providers that need authentication."
+            }
           >
             <Input
               id="api-key"
               type="password"
-              placeholder={hasServerApiKey ? 'Using server API key' : 'Enter your API key (if required)'}
+              placeholder={
+                hasServerApiKey
+                  ? "Using server API key"
+                  : "Enter your API key (if required)"
+              }
               value={llm.apiKey}
               onChange={(e) => setLLM({ apiKey: e.target.value })}
             />

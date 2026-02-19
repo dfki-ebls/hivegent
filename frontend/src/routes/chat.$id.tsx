@@ -1,8 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute } from "@tanstack/react-router";
 
-import { ChatLayout } from '../components/ChatLayout';
+import { ChatLayout } from "../components/ChatLayout";
 
-export const Route = createFileRoute('/chat/$id')({
+export const Route = createFileRoute("/chat/$id")({
   component: ChatPage,
 });
 

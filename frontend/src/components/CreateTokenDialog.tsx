@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus } from "lucide-react";
+import { useState } from "react";
 
-import { Button } from './ui/button';
+import { Button } from "./ui/button";
 import {
   Dialog,
   DialogContent,
@@ -10,16 +10,16 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from './ui/dialog';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
+} from "./ui/dialog";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from './ui/select';
+} from "./ui/select";
 
 interface CreateTokenDialogProps {
   onCreate: (name: string, expiresInDays?: number) => Promise<void>;
@@ -27,11 +27,11 @@ interface CreateTokenDialogProps {
 }
 
 const EXPIRATION_OPTIONS = [
-  { value: '7', label: '7 days' },
-  { value: '30', label: '30 days' },
-  { value: '90', label: '90 days' },
-  { value: '365', label: '1 year' },
-  { value: 'never', label: 'No expiration' },
+  { value: "7", label: "7 days" },
+  { value: "30", label: "30 days" },
+  { value: "90", label: "90 days" },
+  { value: "365", label: "1 year" },
+  { value: "never", label: "No expiration" },
 ];
 
 export function CreateTokenDialog({
@@ -39,18 +39,18 @@ export function CreateTokenDialog({
   isCreating,
 }: CreateTokenDialogProps) {
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [expiration, setExpiration] = useState('90');
+  const [name, setName] = useState("");
+  const [expiration, setExpiration] = useState("90");
 
   const handleSubmit = async (e: { preventDefault: () => void }) => {
     e.preventDefault();
     if (!name.trim()) return;
 
     const expiresInDays =
-      expiration === 'never' ? undefined : parseInt(expiration, 10);
+      expiration === "never" ? undefined : parseInt(expiration, 10);
     await onCreate(name.trim(), expiresInDays);
-    setName('');
-    setExpiration('90');
+    setName("");
+    setExpiration("90");
     setOpen(false);
   };
 
@@ -99,11 +99,15 @@ export function CreateTokenDialog({
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={!name.trim() || isCreating}>
-              {isCreating ? 'Creating...' : 'Create Token'}
+              {isCreating ? "Creating..." : "Create Token"}
             </Button>
           </DialogFooter>
         </form>

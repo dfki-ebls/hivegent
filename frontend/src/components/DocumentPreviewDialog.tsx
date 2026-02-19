@@ -1,18 +1,18 @@
-import { useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
-import { Streamdown } from 'streamdown';
+import { Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Streamdown } from "streamdown";
 
-import { Button } from './ui/button';
+import { Button } from "./ui/button";
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from './ui/dialog';
-import { Input } from './ui/input';
-import { ScrollArea } from './ui/scroll-area';
-import { Textarea } from './ui/textarea';
+} from "./ui/dialog";
+import { Input } from "./ui/input";
+import { ScrollArea } from "./ui/scroll-area";
+import { Textarea } from "./ui/textarea";
 
 interface DocumentPreviewDialogProps {
   open: boolean;
@@ -34,12 +34,12 @@ export function DocumentPreviewDialog({
   onSave,
 }: DocumentPreviewDialogProps) {
   const [filename, setFilename] = useState(initialFilename);
-  const [content, setContent] = useState(initialContent ?? '');
+  const [content, setContent] = useState(initialContent ?? "");
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     setFilename(initialFilename);
-    setContent(initialContent ?? '');
+    setContent(initialContent ?? "");
   }, [initialFilename, initialContent]);
 
   const handleSave = async () => {
@@ -91,8 +91,11 @@ export function DocumentPreviewDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSave} disabled={isSaving || !filename.trim()}>
-              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
+            <Button
+              onClick={handleSave}
+              disabled={isSaving || !filename.trim()}
+            >
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
             </Button>
           </DialogFooter>
         )}

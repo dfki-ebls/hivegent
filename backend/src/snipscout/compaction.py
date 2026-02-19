@@ -80,9 +80,7 @@ async def compact_conversation(
     if not conversation or not conversation.messages:
         raise ValueError(f"Conversation {conversation_id} not found or empty")
 
-    messages = ModelMessagesTypeAdapter.validate_json(
-        json.dumps(conversation.messages)
-    )
+    messages = ModelMessagesTypeAdapter.validate_json(json.dumps(conversation.messages))
 
     summary = await _summarize_conversation(messages, llm_config)
 

@@ -97,7 +97,9 @@ def _rewrite_link(
     return f"[{alias}]({_relative_link(resolved, source_dir)})"
 
 
-def _parse_pipe(raw: str, default_alias: Callable[[str], str]) -> tuple[str, str] | None:
+def _parse_pipe(
+    raw: str, default_alias: Callable[[str], str]
+) -> tuple[str, str] | None:
     """Parse ``target|alias`` syntax, returning ``None`` if target is empty."""
     if "|" in raw:
         target, alias = raw.split("|", 1)

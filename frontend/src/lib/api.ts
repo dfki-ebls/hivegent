@@ -1,51 +1,51 @@
-import type { UIMessage } from '@ai-sdk/react';
-import { z } from 'zod';
+import type { UIMessage } from "@ai-sdk/react";
+import { z } from "zod";
 
 import {
-  BackendSettingsSchema,
-  ChunkedDocumentResponseSchema,
-  ChunkingPipelineInfoSchema,
-  CompactConversationResponseSchema,
-  ConversionPipelineInfoSchema,
-  ConversationListResponseSchema,
-  ConversationSummarySchema,
-  CreateConversationResponseSchema,
-  CreateDirectoryResponseSchema,
-  CreateTokenResponseSchema,
-  DeleteDirectoryResponseSchema,
-  DirectoryTreeResponseSchema,
-  DocumentListResponseSchema,
-  DocumentReferenceSchema,
-  GenerateTitleResponseSchema,
-  MoveDocumentResponseSchema,
-  TokenInfoSchema,
-  CollectionUploadResponseSchema,
-  UploadDocumentResponseSchema,
   type BackendSettings,
-  type CollectionUploadResponse,
+  BackendSettingsSchema,
   type ChunkedDocumentResponse,
+  ChunkedDocumentResponseSchema,
   type ChunkingPipeline,
   type ChunkingPipelineInfo,
+  ChunkingPipelineInfoSchema,
+  type CollectionUploadResponse,
+  CollectionUploadResponseSchema,
   type CompactConversationResponse,
+  CompactConversationResponseSchema,
+  ConversationListResponseSchema,
+  type ConversationSummary,
+  ConversationSummarySchema,
   type ConversionPipeline,
   type ConversionPipelineInfo,
-  type ConversationSummary,
+  ConversionPipelineInfoSchema,
+  CreateConversationResponseSchema,
   type CreateDirectoryResponse,
+  CreateDirectoryResponseSchema,
+  type CreateTokenRequest,
   type CreateTokenResponse,
+  CreateTokenResponseSchema,
   type DeleteDirectoryResponse,
+  DeleteDirectoryResponseSchema,
   type DirectoryTreeResponse,
+  DirectoryTreeResponseSchema,
   type DocumentInfo,
+  DocumentListResponseSchema,
   type DocumentReference,
+  DocumentReferenceSchema,
   type GenerateTitleResponse,
+  GenerateTitleResponseSchema,
   type LlmConfig,
   type MoveDocumentResponse,
+  MoveDocumentResponseSchema,
   type TokenInfo,
+  TokenInfoSchema,
   type UploadDocumentResponse,
-  type CreateTokenRequest,
-} from './types';
+  UploadDocumentResponseSchema,
+} from "./types";
 
 export const API_BASE_URL =
-  import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
+  import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 // Token provider function set by AuthProvider
 let getAccessToken: (() => Promise<string>) | null = null;
@@ -69,12 +69,15 @@ export function clearAuthTokenProvider() {
 /**
  * Make an authenticated fetch request.
  */
-async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
+async function authFetch(
+  url: string,
+  options: RequestInit = {},
+): Promise<Response> {
   const headers = new Headers(options.headers);
 
   if (getAccessToken) {
     const token = await getAccessToken();
-    headers.set('Authorization', `Bearer ${token}`);
+    headers.set("Authorization", `Bearer ${token}`);
   }
 
   return fetch(url, { ...options, headers });
@@ -96,20 +99,20 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
  * Encodes each segment individually so that `/` separators are preserved.
  */
 function encodeFilePath(filepath: string): string {
-  return filepath.split('/').map(encodeURIComponent).join('/');
+  return filepath.split("/").map(encodeURIComponent).join("/");
 }
 
 /** Check if a file requires conversion (anything that is not already markdown). */
 export function requiresConversion(filename: string): boolean {
-  const ext = '.' + (filename.split('.').pop()?.toLowerCase() ?? '');
-  return ext !== '.md';
+  const ext = "." + (filename.split(".").pop()?.toLowerCase() ?? "");
+  return ext !== ".md";
 }
 
 /** Fetch server-side LLM settings. */
 export async function fetchSettings(): Promise<BackendSettings> {
   const res = await authFetch(`${API_BASE_URL}/api/settings`);
   if (!res.ok) {
-    throw new Error('Failed to fetch settings');
+    throw new Error("Failed to fetch settings");
   }
   const data: unknown = await res.json();
   return BackendSettingsSchema.parse(data);
@@ -130,15 +133,17 @@ export function buildLlmConfig(s: {
 
 export async function createConversation(): Promise<string> {
   const res = await authFetch(`${API_BASE_URL}/api/conversation`, {
-    method: 'POST',
+    method: "POST",
   });
   const data: unknown = await res.json();
   return CreateConversationResponseSchema.parse(data).id;
 }
 
-export async function getMessages(conversationId: string): Promise<UIMessage[]> {
+export async function getMessages(
+  conversationId: string,
+): Promise<UIMessage[]> {
   const res = await authFetch(
-    `${API_BASE_URL}/api/conversation/${conversationId}/messages`
+    `${API_BASE_URL}/api/conversation/${conversationId}/messages`,
   );
   if (!res.ok) {
     return [];
@@ -149,7 +154,7 @@ export async function getMessages(conversationId: string): Promise<UIMessage[]> 
 export async function listDocuments(): Promise<DocumentInfo[]> {
   const res = await authFetch(`${API_BASE_URL}/api/documents`);
   if (!res.ok) {
-    throw new Error('Failed to list documents');
+    throw new Error("Failed to list documents");
   }
   const data: unknown = await res.json();
   return DocumentListResponseSchema.parse(data).documents;
@@ -166,10 +171,10 @@ export interface UploadDocumentOptions {
 export async function uploadDocument(
   filename: string,
   file: File,
-  options?: UploadDocumentOptions
+  options?: UploadDocumentOptions,
 ): Promise<UploadDocumentResponse> {
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append("file", file);
 
   // Build the filepath, optionally prepending the target directory
   const filepath = options?.targetDirectory
@@ -180,10 +185,10 @@ export async function uploadDocument(
   let url = `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`;
   const params = new URLSearchParams();
   if (requiresConversion(filename) && options?.conversionPipeline) {
-    params.set('conversion_pipeline', options.conversionPipeline);
+    params.set("conversion_pipeline", options.conversionPipeline);
   }
   if (options?.chunkingPipeline) {
-    params.set('chunking_pipeline', options.chunkingPipeline);
+    params.set("chunking_pipeline", options.chunkingPipeline);
   }
   const queryString = params.toString();
   if (queryString) {
@@ -192,17 +197,17 @@ export async function uploadDocument(
 
   // Add LLM config as form field for binary files requiring conversion
   if (requiresConversion(filename) && options?.llm) {
-    formData.append('llm_config', JSON.stringify(options.llm));
+    formData.append("llm_config", JSON.stringify(options.llm));
   }
 
   const res = await authFetch(url, {
-    method: 'PUT',
+    method: "PUT",
     body: formData,
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Upload failed' }));
-    throw new Error(error.detail || 'Upload failed');
+    const error = await res.json().catch(() => ({ detail: "Upload failed" }));
+    throw new Error(error.detail || "Upload failed");
   }
 
   const data: unknown = await res.json();
@@ -219,18 +224,18 @@ export interface UploadCollectionOptions {
 /** Upload a markdown collection as a ZIP archive. */
 export async function uploadCollection(
   file: File,
-  options?: UploadCollectionOptions
+  options?: UploadCollectionOptions,
 ): Promise<CollectionUploadResponse> {
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append("file", file);
 
   let url = `${API_BASE_URL}/api/collections`;
   const params = new URLSearchParams();
   if (options?.conversionPipeline) {
-    params.set('conversion_pipeline', options.conversionPipeline);
+    params.set("conversion_pipeline", options.conversionPipeline);
   }
   if (options?.chunkingPipeline) {
-    params.set('chunking_pipeline', options.chunkingPipeline);
+    params.set("chunking_pipeline", options.chunkingPipeline);
   }
   const queryString = params.toString();
   if (queryString) {
@@ -238,17 +243,19 @@ export async function uploadCollection(
   }
 
   if (options?.llm) {
-    formData.append('llm_config', JSON.stringify(options.llm));
+    formData.append("llm_config", JSON.stringify(options.llm));
   }
 
   const res = await authFetch(url, {
-    method: 'POST',
+    method: "POST",
     body: formData,
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Collection upload failed' }));
-    throw new Error(error.detail || 'Collection upload failed');
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Collection upload failed" }));
+    throw new Error(error.detail || "Collection upload failed");
   }
 
   const data: unknown = await res.json();
@@ -259,23 +266,23 @@ export async function deleteDocument(filename: string): Promise<void> {
   const res = await authFetch(
     `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`,
     {
-      method: 'DELETE',
-    }
+      method: "DELETE",
+    },
   );
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Delete failed' }));
-    throw new Error(error.detail || 'Delete failed');
+    const error = await res.json().catch(() => ({ detail: "Delete failed" }));
+    throw new Error(error.detail || "Delete failed");
   }
 }
 
 export async function getDocumentContent(filename: string): Promise<string> {
   const res = await authFetch(
-    `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`
+    `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`,
   );
 
   if (!res.ok) {
-    throw new Error('Failed to fetch document content');
+    throw new Error("Failed to fetch document content");
   }
 
   return res.text();
@@ -284,17 +291,17 @@ export async function getDocumentContent(filename: string): Promise<string> {
 export async function listConversations(): Promise<ConversationSummary[]> {
   const res = await authFetch(`${API_BASE_URL}/api/conversations`);
   if (!res.ok) {
-    throw new Error('Failed to list conversations');
+    throw new Error("Failed to list conversations");
   }
   const data: unknown = await res.json();
   return ConversationListResponseSchema.parse(data).conversations;
 }
 
 export async function getConversationDocumentReferences(
-  conversationId: string
+  conversationId: string,
 ): Promise<DocumentReference[]> {
   const res = await authFetch(
-    `${API_BASE_URL}/api/conversation/${conversationId}/document-references`
+    `${API_BASE_URL}/api/conversation/${conversationId}/document-references`,
   );
   if (!res.ok) {
     return [];
@@ -305,20 +312,20 @@ export async function getConversationDocumentReferences(
 
 export async function updateConversationTitle(
   conversationId: string,
-  title: string
+  title: string,
 ): Promise<ConversationSummary> {
   const res = await authFetch(
     `${API_BASE_URL}/api/conversation/${conversationId}/title`,
     {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title }),
-    }
+    },
   );
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Update failed' }));
-    throw new Error(error.detail || 'Update failed');
+    const error = await res.json().catch(() => ({ detail: "Update failed" }));
+    throw new Error(error.detail || "Update failed");
   }
 
   const data: unknown = await res.json();
@@ -327,22 +334,22 @@ export async function updateConversationTitle(
 
 export async function generateConversationTitle(
   conversationId: string,
-  llm: LlmConfig
+  llm: LlmConfig,
 ): Promise<GenerateTitleResponse> {
   const res = await authFetch(
     `${API_BASE_URL}/api/conversation/${conversationId}/generate-title`,
     {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ llm }),
-    }
+    },
   );
 
   if (!res.ok) {
     const error = await res
       .json()
-      .catch(() => ({ detail: 'Title generation failed' }));
-    throw new Error(error.detail || 'Title generation failed');
+      .catch(() => ({ detail: "Title generation failed" }));
+    throw new Error(error.detail || "Title generation failed");
   }
 
   const data: unknown = await res.json();
@@ -350,16 +357,18 @@ export async function generateConversationTitle(
 }
 
 export async function compactConversation(
-  conversationId: string
+  conversationId: string,
 ): Promise<CompactConversationResponse> {
   const res = await authFetch(
     `${API_BASE_URL}/api/conversation/${conversationId}/compact`,
-    { method: 'POST' }
+    { method: "POST" },
   );
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Compaction failed' }));
-    throw new Error(error.detail || 'Compaction failed');
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Compaction failed" }));
+    throw new Error(error.detail || "Compaction failed");
   }
 
   const data: unknown = await res.json();
@@ -367,24 +376,29 @@ export async function compactConversation(
 }
 
 export async function getConversation(
-  conversationId: string
+  conversationId: string,
 ): Promise<ConversationSummary | null> {
   const res = await authFetch(
-    `${API_BASE_URL}/api/conversation/${conversationId}`
+    `${API_BASE_URL}/api/conversation/${conversationId}`,
   );
   if (!res.ok) return null;
   const data: unknown = await res.json();
   return ConversationSummarySchema.parse(data);
 }
 
-export async function deleteConversation(conversationId: string): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/conversation/${conversationId}`, {
-    method: 'DELETE',
-  });
+export async function deleteConversation(
+  conversationId: string,
+): Promise<void> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/conversation/${conversationId}`,
+    {
+      method: "DELETE",
+    },
+  );
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Delete failed' }));
-    throw new Error(error.detail || 'Delete failed');
+    const error = await res.json().catch(() => ({ detail: "Delete failed" }));
+    throw new Error(error.detail || "Delete failed");
   }
 }
 
@@ -392,11 +406,11 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 
 export async function createToken(
   name: string,
-  expiresInDays?: number
+  expiresInDays?: number,
 ): Promise<CreateTokenResponse> {
   const res = await authFetch(`${API_BASE_URL}/api/tokens`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       name,
       expires_in_days: expiresInDays ?? null,
@@ -404,8 +418,10 @@ export async function createToken(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Failed to create token' }));
-    throw new Error(error.detail || 'Failed to create token');
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Failed to create token" }));
+    throw new Error(error.detail || "Failed to create token");
   }
 
   const data: unknown = await res.json();
@@ -416,7 +432,7 @@ export async function listTokens(): Promise<TokenInfo[]> {
   const res = await authFetch(`${API_BASE_URL}/api/tokens`);
 
   if (!res.ok) {
-    throw new Error('Failed to list tokens');
+    throw new Error("Failed to list tokens");
   }
 
   const data: unknown = await res.json();
@@ -425,22 +441,26 @@ export async function listTokens(): Promise<TokenInfo[]> {
 
 export async function revokeToken(tokenId: string): Promise<void> {
   const res = await authFetch(`${API_BASE_URL}/api/tokens/${tokenId}`, {
-    method: 'DELETE',
+    method: "DELETE",
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Failed to revoke token' }));
-    throw new Error(error.detail || 'Failed to revoke token');
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Failed to revoke token" }));
+    throw new Error(error.detail || "Failed to revoke token");
   }
 }
 
 // Conversion pipeline API functions
 
-export async function getConversionPipelines(): Promise<ConversionPipelineInfo[]> {
+export async function getConversionPipelines(): Promise<
+  ConversionPipelineInfo[]
+> {
   const res = await authFetch(`${API_BASE_URL}/api/conversion-pipelines`);
 
   if (!res.ok) {
-    throw new Error('Failed to get conversion pipelines');
+    throw new Error("Failed to get conversion pipelines");
   }
 
   const data: unknown = await res.json();
@@ -453,21 +473,25 @@ export async function getChunkingPipelines(): Promise<ChunkingPipelineInfo[]> {
   const res = await authFetch(`${API_BASE_URL}/api/chunking-pipelines`);
 
   if (!res.ok) {
-    throw new Error('Failed to get chunking pipelines');
+    throw new Error("Failed to get chunking pipelines");
   }
 
   const data: unknown = await res.json();
   return z.array(ChunkingPipelineInfoSchema).parse(data);
 }
 
-export async function getDocumentChunks(filename: string): Promise<ChunkedDocumentResponse> {
+export async function getDocumentChunks(
+  filename: string,
+): Promise<ChunkedDocumentResponse> {
   const res = await authFetch(
-    `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}/chunks`
+    `${API_BASE_URL}/api/documents/${encodeURIComponent(filename)}/chunks`,
   );
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Failed to fetch chunks' }));
-    throw new Error(error.detail || 'Failed to fetch chunks');
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Failed to fetch chunks" }));
+    throw new Error(error.detail || "Failed to fetch chunks");
   }
 
   const data: unknown = await res.json();
@@ -483,23 +507,25 @@ export interface ReconvertDocumentOptions {
 
 export async function reconvertDocument(
   filename: string,
-  options?: ReconvertDocumentOptions
+  options?: ReconvertDocumentOptions,
 ): Promise<UploadDocumentResponse> {
   const url = `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}/reconvert`;
 
   const res = await authFetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      conversion_pipeline: options?.conversionPipeline ?? 'auto',
-      chunking_pipeline: options?.chunkingPipeline ?? 'auto',
+      conversion_pipeline: options?.conversionPipeline ?? "auto",
+      chunking_pipeline: options?.chunkingPipeline ?? "auto",
       llm: options?.llm ?? {},
     }),
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Reconvert failed' }));
-    throw new Error(error.detail || 'Reconvert failed');
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Reconvert failed" }));
+    throw new Error(error.detail || "Reconvert failed");
   }
 
   const data: unknown = await res.json();
@@ -509,14 +535,14 @@ export async function reconvertDocument(
 export async function rechunkDocument(
   filename: string,
   chunkingPipeline?: ChunkingPipeline,
-  chunkSize?: number
+  chunkSize?: number,
 ): Promise<ChunkedDocumentResponse> {
   const params = new URLSearchParams();
   if (chunkingPipeline) {
-    params.set('chunking_pipeline', chunkingPipeline);
+    params.set("chunking_pipeline", chunkingPipeline);
   }
   if (chunkSize) {
-    params.set('chunk_size', chunkSize.toString());
+    params.set("chunk_size", chunkSize.toString());
   }
 
   let url = `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}/rechunk`;
@@ -525,11 +551,11 @@ export async function rechunkDocument(
     url += `?${queryString}`;
   }
 
-  const res = await authFetch(url, { method: 'POST' });
+  const res = await authFetch(url, { method: "POST" });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Rechunk failed' }));
-    throw new Error(error.detail || 'Rechunk failed');
+    const error = await res.json().catch(() => ({ detail: "Rechunk failed" }));
+    throw new Error(error.detail || "Rechunk failed");
   }
 
   const data: unknown = await res.json();
@@ -541,37 +567,45 @@ export async function rechunkDocument(
 export async function getDirectoryTree(): Promise<DirectoryTreeResponse> {
   const res = await authFetch(`${API_BASE_URL}/api/directories/tree`);
   if (!res.ok) {
-    throw new Error('Failed to fetch directory tree');
+    throw new Error("Failed to fetch directory tree");
   }
   const data: unknown = await res.json();
   return DirectoryTreeResponseSchema.parse(data);
 }
 
-export async function createDirectory(path: string): Promise<CreateDirectoryResponse> {
+export async function createDirectory(
+  path: string,
+): Promise<CreateDirectoryResponse> {
   const res = await authFetch(`${API_BASE_URL}/api/directories`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Failed to create directory' }));
-    throw new Error(error.detail || 'Failed to create directory');
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Failed to create directory" }));
+    throw new Error(error.detail || "Failed to create directory");
   }
 
   const data: unknown = await res.json();
   return CreateDirectoryResponseSchema.parse(data);
 }
 
-export async function deleteDirectory(dirpath: string): Promise<DeleteDirectoryResponse> {
+export async function deleteDirectory(
+  dirpath: string,
+): Promise<DeleteDirectoryResponse> {
   const res = await authFetch(
     `${API_BASE_URL}/api/directories/${encodeFilePath(dirpath)}`,
-    { method: 'DELETE' }
+    { method: "DELETE" },
   );
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Failed to delete directory' }));
-    throw new Error(error.detail || 'Failed to delete directory');
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Failed to delete directory" }));
+    throw new Error(error.detail || "Failed to delete directory");
   }
 
   const data: unknown = await res.json();
@@ -580,20 +614,20 @@ export async function deleteDirectory(dirpath: string): Promise<DeleteDirectoryR
 
 export async function moveDocument(
   filepath: string,
-  destination: string
+  destination: string,
 ): Promise<MoveDocumentResponse> {
   const res = await authFetch(
     `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}/move`,
     {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ destination }),
-    }
+    },
   );
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: 'Move failed' }));
-    throw new Error(error.detail || 'Move failed');
+    const error = await res.json().catch(() => ({ detail: "Move failed" }));
+    throw new Error(error.detail || "Move failed");
   }
 
   const data: unknown = await res.json();

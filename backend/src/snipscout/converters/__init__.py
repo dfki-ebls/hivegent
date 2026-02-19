@@ -54,11 +54,22 @@ _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
         class_name="LLMConverter",
         label="LLM",
         description="Uses vision model for all files",
-        extensions=frozenset({
-            ".pdf", ".docx", ".xlsx", ".pptx",
-            ".png", ".jpg", ".jpeg", ".gif", ".webp",
-            ".bmp", ".tiff", ".tif",
-        }),
+        extensions=frozenset(
+            {
+                ".pdf",
+                ".docx",
+                ".xlsx",
+                ".pptx",
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".gif",
+                ".webp",
+                ".bmp",
+                ".tiff",
+                ".tif",
+            }
+        ),
     ),
     ConversionPipeline.MARKER: _ConverterEntry(
         module_name="marker_converter",
@@ -72,18 +83,33 @@ _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
         class_name="DoclingConverter",
         label="Docling",
         description="Best for Office documents",
-        extensions=frozenset({
-            ".pdf", ".docx", ".pptx", ".xlsx", ".png", ".jpg", ".jpeg",
-        }),
+        extensions=frozenset(
+            {
+                ".pdf",
+                ".docx",
+                ".pptx",
+                ".xlsx",
+                ".png",
+                ".jpg",
+                ".jpeg",
+            }
+        ),
     ),
     ConversionPipeline.MINERU: _ConverterEntry(
         module_name="mineru_converter",
         class_name="MinerUConverter",
         label="MinerU",
         description="High-quality PDF parsing (no XLSX)",
-        extensions=frozenset({
-            ".pdf", ".docx", ".pptx", ".png", ".jpg", ".jpeg",
-        }),
+        extensions=frozenset(
+            {
+                ".pdf",
+                ".docx",
+                ".pptx",
+                ".png",
+                ".jpg",
+                ".jpeg",
+            }
+        ),
     ),
     ConversionPipeline.PANDOC: _ConverterEntry(
         module_name="pandoc_converter",
@@ -91,15 +117,46 @@ _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
         label="Pandoc",
         description="Universal converter for ODT, RST, RTF, EPUB, LaTeX, Org, "
         "DocBook, Typst, and more",
-        extensions=frozenset({
-            ".txt", ".html", ".xml", ".csv", ".adoc",
-            ".odt", ".rst", ".rtf", ".epub", ".tex", ".org", ".docbook", ".typst",
-            ".docx", ".pptx", ".xlsx",
-            ".fb2", ".opml", ".bib", ".ris", ".tsv", ".ipynb",
-            ".textile", ".creole", ".djot", ".dokuwiki", ".mediawiki",
-            ".tikiwiki", ".twiki", ".vimwiki", ".jira", ".muse", ".t2t",
-            ".jats", ".man", ".pod",
-        }),
+        extensions=frozenset(
+            {
+                ".txt",
+                ".html",
+                ".xml",
+                ".csv",
+                ".adoc",
+                ".odt",
+                ".rst",
+                ".rtf",
+                ".epub",
+                ".tex",
+                ".org",
+                ".docbook",
+                ".typst",
+                ".docx",
+                ".pptx",
+                ".xlsx",
+                ".fb2",
+                ".opml",
+                ".bib",
+                ".ris",
+                ".tsv",
+                ".ipynb",
+                ".textile",
+                ".creole",
+                ".djot",
+                ".dokuwiki",
+                ".mediawiki",
+                ".tikiwiki",
+                ".twiki",
+                ".vimwiki",
+                ".jira",
+                ".muse",
+                ".t2t",
+                ".jats",
+                ".man",
+                ".pod",
+            }
+        ),
     ),
 }
 
@@ -166,7 +223,9 @@ def resolve_auto_pipeline(filename: str) -> ConversionPipeline:
     return _AUTO_MAPPING.get(suffix, ConversionPipeline.LLM)
 
 
-def get_converter(pipeline: ConversionPipeline, filename: str = "") -> DocumentConverter:
+def get_converter(
+    pipeline: ConversionPipeline, filename: str = ""
+) -> DocumentConverter:
     """Get a converter instance for the specified pipeline.
 
     Resolves AUTO to a concrete pipeline, validates extension compatibility,
@@ -204,7 +263,9 @@ def get_converter(pipeline: ConversionPipeline, filename: str = "") -> DocumentC
 
 def get_pipelines_info() -> list[ConversionPipelineInfo]:
     """Get metadata for all conversion pipelines."""
-    all_extensions = sorted({ext for e in _CONVERTER_CONFIG.values() for ext in e.extensions})
+    all_extensions = sorted(
+        {ext for e in _CONVERTER_CONFIG.values() for ext in e.extensions}
+    )
     infos = [
         ConversionPipelineInfo(
             value=ConversionPipeline.AUTO.value,

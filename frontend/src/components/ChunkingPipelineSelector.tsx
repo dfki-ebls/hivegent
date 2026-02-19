@@ -1,16 +1,16 @@
-import { useEffect, useState } from 'react';
-import { Scissors } from 'lucide-react';
+import { Scissors } from "lucide-react";
+import { useEffect, useState } from "react";
 
-import { getChunkingPipelines } from '../lib/api';
-import type { ChunkingPipeline, ChunkingPipelineInfo } from '../lib/types';
-import { Label } from './ui/label';
+import { getChunkingPipelines } from "../lib/api";
+import type { ChunkingPipeline, ChunkingPipelineInfo } from "../lib/types";
+import { Label } from "./ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from './ui/select';
+} from "./ui/select";
 
 interface ChunkingPipelineSelectorProps {
   value: ChunkingPipeline;
@@ -35,7 +35,10 @@ export function ChunkingPipelineSelector({
 
   return (
     <div className="flex items-center gap-2">
-      <Label htmlFor="chunking-pipeline-select" className="text-sm text-muted-foreground flex items-center gap-1.5">
+      <Label
+        htmlFor="chunking-pipeline-select"
+        className="text-sm text-muted-foreground flex items-center gap-1.5"
+      >
         <Scissors className="h-4 w-4" />
         Chunking
       </Label>
@@ -44,7 +47,11 @@ export function ChunkingPipelineSelector({
         onValueChange={(v) => onChange(v as ChunkingPipeline)}
         disabled={disabled}
       >
-        <SelectTrigger id="chunking-pipeline-select" className="w-[140px]" size="sm">
+        <SelectTrigger
+          id="chunking-pipeline-select"
+          className="w-[140px]"
+          size="sm"
+        >
           <SelectValue placeholder="Select chunking" />
         </SelectTrigger>
         <SelectContent>

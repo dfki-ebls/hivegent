@@ -175,8 +175,13 @@ class DocumentInfo(BaseModel):
     filename: str = Field(description="The filename of the document")
     size_bytes: int = Field(description="File size in bytes")
     modified_at: datetime = Field(description="Last modification timestamp")
-    chunk_count: int | None = Field(default=None, description="Number of chunks, if chunked")
-    has_original: bool = Field(default=False, description="Whether an original binary file exists for reconversion")
+    chunk_count: int | None = Field(
+        default=None, description="Number of chunks, if chunked"
+    )
+    has_original: bool = Field(
+        default=False,
+        description="Whether an original binary file exists for reconversion",
+    )
 
 
 class DocumentListResponse(BaseModel):
@@ -348,9 +353,15 @@ class DirectoryEntry(BaseModel):
     name: str = Field(description="Basename of the entry")
     path: str = Field(description="Relative path from documents root")
     size_bytes: int | None = Field(default=None, description="File size in bytes")
-    modified_at: datetime | None = Field(default=None, description="Last modification timestamp")
-    chunk_count: int | None = Field(default=None, description="Number of chunks, if chunked")
-    has_original: bool = Field(default=False, description="Whether an original binary file exists")
+    modified_at: datetime | None = Field(
+        default=None, description="Last modification timestamp"
+    )
+    chunk_count: int | None = Field(
+        default=None, description="Number of chunks, if chunked"
+    )
+    has_original: bool = Field(
+        default=False, description="Whether an original binary file exists"
+    )
     children: list["DirectoryEntry"] | None = Field(
         default=None, description="Child entries for directories"
     )
@@ -404,10 +415,10 @@ class CollectionUploadResponse(BaseModel):
 
     total_files: int = Field(description="Total files processed")
     markdown_files: int = Field(description="Number of markdown files uploaded")
-    converted_attachments: int = Field(description="Number of binary attachments converted")
+    converted_attachments: int = Field(
+        description="Number of binary attachments converted"
+    )
     failed_files: list[str] = Field(
         default_factory=list, description="Files that failed to process"
     )
     message: str = Field(description="Status message")
-
-

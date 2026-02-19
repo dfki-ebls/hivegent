@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { Check, Copy } from 'lucide-react';
-
-import { Button } from './ui/button';
+import { Check, Copy } from "lucide-react";
+import { useState } from "react";
+import { Alert, AlertDescription } from "./ui/alert";
+import { Button } from "./ui/button";
 import {
   Dialog,
   DialogContent,
@@ -9,8 +9,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from './ui/dialog';
-import { Alert, AlertDescription } from './ui/alert';
+} from "./ui/dialog";
 
 interface TokenCreatedDialogProps {
   token: string | null;

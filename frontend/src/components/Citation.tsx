@@ -1,5 +1,7 @@
 "use client";
 
+import { FileTextIcon } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
   HoverCard,
@@ -7,8 +9,6 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
-import { FileTextIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
 import { DocumentPreviewDialog } from "./DocumentPreviewDialog";
 
 /**
@@ -27,7 +27,7 @@ export function Citation(props: Record<string, unknown>) {
   const children = props.children as ReactNode;
   const [dialogOpen, setDialogOpen] = useState(false);
   const doc = useFetchedDocumentsStore((state) =>
-    filename ? state.documents.get(filename) : undefined
+    filename ? state.documents.get(filename) : undefined,
   );
 
   if (!filename) {
@@ -36,9 +36,7 @@ export function Citation(props: Record<string, unknown>) {
 
   const displayName = filename.split("/").pop() ?? filename;
   const chunkIndex = chunk ? parseInt(chunk, 10) : undefined;
-  const previewText = doc?.content
-    ? doc.content.slice(0, 300)
-    : null;
+  const previewText = doc?.content ? doc.content.slice(0, 300) : null;
 
   return (
     <span className="inline">

@@ -1,9 +1,22 @@
-import { useChat, type UIMessage } from '@ai-sdk/react';
-import { DefaultChatTransport } from 'ai';
-import { AlertCircle, CopyIcon, EyeOff, FileText, Folder, HistoryIcon, Minimize2, MessageSquareIcon, RefreshCcwIcon, SparklesIcon, SquarePen, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Components } from 'streamdown';
-import { useNavigate } from '@tanstack/react-router';
+import { type UIMessage, useChat } from "@ai-sdk/react";
+import { useNavigate } from "@tanstack/react-router";
+import { DefaultChatTransport } from "ai";
+import {
+  AlertCircle,
+  CopyIcon,
+  EyeOff,
+  FileText,
+  Folder,
+  HistoryIcon,
+  MessageSquareIcon,
+  Minimize2,
+  RefreshCcwIcon,
+  SparklesIcon,
+  SquarePen,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Components } from "streamdown";
 import {
   API_BASE_URL,
   buildLlmConfig,
@@ -13,34 +26,31 @@ import {
   getConversation,
   getConversationDocumentReferences,
   getMessages,
-} from '../lib/api';
+} from "../lib/api";
 import {
-  PERSONALITY_OPTIONS,
   type DocumentRange,
   type GrepMatch,
+  PERSONALITY_OPTIONS,
   type Personality,
   type RetrievedChunk,
-} from '../lib/types';
-import { useConversationsStore } from '../stores/conversations-store';
-import { useFetchedDocumentsStore } from '../stores/fetched-documents-store';
-import { useSettingsStore } from '../stores/settings-store';
-import { ConversationsList } from './ConversationsList';
-import { Button } from './ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+} from "../lib/types";
+import { useConversationsStore } from "../stores/conversations-store";
+import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
+import { useSettingsStore } from "../stores/settings-store";
 import {
   Conversation,
   ConversationContent,
   ConversationEmptyState,
   ConversationScrollButton,
-} from './ai-elements/conversation';
-import { Loader } from './ai-elements/loader';
+} from "./ai-elements/conversation";
+import { Loader } from "./ai-elements/loader";
 import {
   Message,
   MessageAction,
   MessageActions,
   MessageContent,
   MessageResponse,
-} from './ai-elements/message';
+} from "./ai-elements/message";
 import {
   PromptInput,
   PromptInputBody,
@@ -54,20 +64,23 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
-} from './ai-elements/prompt-input';
-import { Suggestion, Suggestions } from './ai-elements/suggestion';
-import { Tool, ToolContent, ToolHeader } from './ai-elements/tool';
-import { SettingsDialog } from './SettingsDialog';
+} from "./ai-elements/prompt-input";
+import { Suggestion, Suggestions } from "./ai-elements/suggestion";
+import { Tool, ToolContent, ToolHeader } from "./ai-elements/tool";
+import { Citation } from "./Citation";
+import { ConversationsList } from "./ConversationsList";
+import { SettingsDialog } from "./SettingsDialog";
 import {
   ToolError,
   ToolKeyValue,
   ToolParameters,
   ToolResult,
   ToolSection,
-} from './ToolDisplay';
-import { Citation } from './Citation';
-import { Alert, AlertDescription, AlertTitle } from './ui/alert';
-import { Badge } from './ui/badge';
+} from "./ToolDisplay";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 // --- Helper functions ---
 
@@ -83,14 +96,14 @@ import { Badge } from './ui/badge';
  * This inconsistency is a bug in pydantic-ai's _event_stream.py.
  */
 function getToolName(part: { type: string; toolName?: string }): string | null {
-  if (part.type === 'dynamic-tool' && part.toolName) return part.toolName;
-  if (part.type.startsWith('tool-')) return part.type.replace('tool-', '');
+  if (part.type === "dynamic-tool" && part.toolName) return part.toolName;
+  if (part.type.startsWith("tool-")) return part.type.replace("tool-", "");
   return null;
 }
 
 /** Parse JSON string or return value as-is. */
 function parseJson<T>(value: unknown): T | undefined {
-  if (typeof value === 'string') {
+  if (typeof value === "string") {
     try {
       return JSON.parse(value) as T;
     } catch {
@@ -105,38 +118,46 @@ function processToolOutput(
   toolName: string,
   input: Record<string, unknown> | undefined,
   output: unknown,
-  addDocument: (filename: string, content: string, source: string) => void
+  addDocument: (filename: string, content: string, source: string) => void,
 ) {
   if (!input || output == null) return;
 
   switch (toolName) {
-    case 'semantic_search': {
+    case "semantic_search": {
       const chunks = output as RetrievedChunk[];
       if (chunks?.length) {
         const query = input.query as string;
         for (const chunk of chunks) {
-          addDocument(chunk.filename, chunk.text, `search${query ? `: ${query}` : ''}`);
+          addDocument(
+            chunk.filename,
+            chunk.text,
+            `search${query ? `: ${query}` : ""}`,
+          );
         }
       }
       break;
     }
-    case 'get_document': {
+    case "get_document": {
       const filename = input.filename as string;
-      const content = typeof output === 'string' ? output : null;
+      const content = typeof output === "string" ? output : null;
       if (filename && content) {
-        addDocument(filename, content, 'get_document');
+        addDocument(filename, content, "get_document");
       }
       break;
     }
-    case 'get_document_lines': {
+    case "get_document_lines": {
       const filename = input.filename as string;
       const result = output as DocumentRange;
       if (filename && result?.content) {
-        addDocument(filename, result.content, `lines ${result.start_line}-${result.end_line}`);
+        addDocument(
+          filename,
+          result.content,
+          `lines ${result.start_line}-${result.end_line}`,
+        );
       }
       break;
     }
-    case 'grep': {
+    case "grep": {
       const matches = output as GrepMatch[];
       const pattern = input.pattern as string;
       if (matches?.length && pattern) {
@@ -149,16 +170,18 @@ function processToolOutput(
           }
         }
         for (const [filename, fileMatches] of byFile) {
-          const content = fileMatches.map((m) => `${m.line}: ${m.content ?? ''}`).join('\n');
+          const content = fileMatches
+            .map((m) => `${m.line}: ${m.content ?? ""}`)
+            .join("\n");
           addDocument(filename, content, `grep: ${pattern}`);
         }
       }
       break;
     }
-    case 'get_chunk': {
+    case "get_chunk": {
       const filename = input.filename as string;
       const chunkIndex = input.chunk_index as number;
-      if (filename && typeof output === 'string') {
+      if (filename && typeof output === "string") {
         addDocument(filename, output, `chunk ${chunkIndex}`);
       }
       break;
@@ -175,13 +198,21 @@ interface ToolPartInfo {
 }
 
 /** Extract tool info from a message part, handling both streaming and history formats. */
-function getToolPartInfo(part: UIMessage['parts'][number]): ToolPartInfo | null {
-  const typed = part as { type: string; toolName?: string; state?: string; input?: unknown; output?: unknown };
+function getToolPartInfo(
+  part: UIMessage["parts"][number],
+): ToolPartInfo | null {
+  const typed = part as {
+    type: string;
+    toolName?: string;
+    state?: string;
+    input?: unknown;
+    output?: unknown;
+  };
   const toolName = getToolName(typed);
   if (!toolName) return null;
   return {
     toolName,
-    state: typed.state ?? 'output-available',
+    state: typed.state ?? "output-available",
     input: parseJson<Record<string, unknown>>(typed.input),
     output: parseJson<unknown>(typed.output) ?? typed.output,
   };
@@ -189,19 +220,24 @@ function getToolPartInfo(part: UIMessage['parts'][number]): ToolPartInfo | null 
 
 /** Extract text from the last user message. */
 function getLastUserMessageText(messages: UIMessage[]): string | undefined {
-  const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
+  const lastUserMessage = [...messages]
+    .reverse()
+    .find((m) => m.role === "user");
   if (!lastUserMessage?.parts) return undefined;
   const texts = lastUserMessage.parts
-    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
     .map((p) => p.text);
-  return texts.length > 0 ? texts.join('\n') : undefined;
+  return texts.length > 0 ? texts.join("\n") : undefined;
 }
 
 /** Check if an error is a context length exceeded error. */
 function isContextLengthError(error: Error | null | undefined): boolean {
   if (!error) return false;
-  const msg = error.message || '';
-  return msg.includes('context_length_exceeded') || msg.includes('maximum context length');
+  const msg = error.message || "";
+  return (
+    msg.includes("context_length_exceeded") ||
+    msg.includes("maximum context length")
+  );
 }
 
 /** Load document references for a conversation and add them to the store. */
@@ -225,10 +261,12 @@ interface ToolPartDisplayProps {
 
 /** Renders semantic_search tool with custom formatting. */
 function SearchToolDisplay({ toolName, part }: ToolPartDisplayProps) {
-  const state = part.state ?? 'output-available';
-  const input = parseJson<{ query: string; type?: string; top_k?: number }>(part.input);
+  const state = part.state ?? "output-available";
+  const input = parseJson<{ query: string; type?: string; top_k?: number }>(
+    part.input,
+  );
   const output = parseJson<RetrievedChunk[]>(part.output);
-  const title = input?.type === 'sparse' ? 'Keyword Search' : 'Semantic Search';
+  const title = input?.type === "sparse" ? "Keyword Search" : "Semantic Search";
 
   return (
     <Tool defaultOpen={false}>
@@ -237,7 +275,9 @@ function SearchToolDisplay({ toolName, part }: ToolPartDisplayProps) {
         {input?.query && (
           <ToolSection title="Parameters">
             <ToolKeyValue label="Query" value={`"${input.query}"`} />
-            {input.top_k && <ToolKeyValue label="Max results" value={input.top_k} />}
+            {input.top_k && (
+              <ToolKeyValue label="Max results" value={input.top_k} />
+            )}
           </ToolSection>
         )}
         {output && (
@@ -261,7 +301,7 @@ function SearchToolDisplay({ toolName, part }: ToolPartDisplayProps) {
 
 /** Renders any tool with generic parameter/result display. */
 function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
-  const state = part.state ?? 'output-available';
+  const state = part.state ?? "output-available";
   const input = parseJson<Record<string, unknown>>(part.input);
 
   return (
@@ -272,11 +312,15 @@ function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
         {part.output !== undefined && (
           <ToolResult>
             <pre className="whitespace-pre-wrap">
-              {typeof part.output === 'string' ? part.output : JSON.stringify(part.output, null, 2)}
+              {typeof part.output === "string"
+                ? part.output
+                : JSON.stringify(part.output, null, 2)}
             </pre>
           </ToolResult>
         )}
-        {state === 'output-error' && part.errorText && <ToolError message={part.errorText} />}
+        {state === "output-error" && part.errorText && (
+          <ToolError message={part.errorText} />
+        )}
       </ToolContent>
     </Tool>
   );
@@ -284,7 +328,7 @@ function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
 
 /** Renders a tool part based on tool name. */
 function ToolPartDisplay({ toolName, part }: ToolPartDisplayProps) {
-  if (toolName === 'semantic_search') {
+  if (toolName === "semantic_search") {
     return <SearchToolDisplay toolName={toolName} part={part} />;
   }
   return <GenericToolDisplay toolName={toolName} part={part} />;
@@ -298,19 +342,31 @@ interface TextPartDisplayProps {
   onRegenerate: () => void;
 }
 
-const CITATION_ALLOWED_TAGS = { cite: ['filename', 'chunk'] };
+const CITATION_ALLOWED_TAGS = { cite: ["filename", "chunk"] };
 const CITATION_COMPONENTS = { cite: Citation } as Components;
 
-function TextPartDisplay({ text, showActions, onRegenerate }: TextPartDisplayProps) {
+function TextPartDisplay({
+  text,
+  showActions,
+  onRegenerate,
+}: TextPartDisplayProps) {
   return (
     <div>
-      <MessageResponse allowedTags={CITATION_ALLOWED_TAGS} components={CITATION_COMPONENTS}>{text}</MessageResponse>
+      <MessageResponse
+        allowedTags={CITATION_ALLOWED_TAGS}
+        components={CITATION_COMPONENTS}
+      >
+        {text}
+      </MessageResponse>
       {showActions && (
         <MessageActions>
           <MessageAction onClick={onRegenerate} label="Retry">
             <RefreshCcwIcon className="size-3" />
           </MessageAction>
-          <MessageAction onClick={() => navigator.clipboard.writeText(text)} label="Copy">
+          <MessageAction
+            onClick={() => navigator.clipboard.writeText(text)}
+            label="Copy"
+          >
             <CopyIcon className="size-3" />
           </MessageAction>
         </MessageActions>
@@ -322,15 +378,21 @@ function TextPartDisplay({ text, showActions, onRegenerate }: TextPartDisplayPro
 // --- Message part renderer ---
 
 interface MessagePartProps {
-  part: UIMessage['parts'][number];
+  part: UIMessage["parts"][number];
   partIndex: number;
   isLastTextPart: boolean;
   showActions: boolean;
   onRegenerate: () => void;
 }
 
-function MessagePart({ part, partIndex, isLastTextPart, showActions, onRegenerate }: MessagePartProps) {
-  if (part.type === 'text') {
+function MessagePart({
+  part,
+  partIndex,
+  isLastTextPart,
+  showActions,
+  onRegenerate,
+}: MessagePartProps) {
+  if (part.type === "text") {
     return (
       <TextPartDisplay
         key={partIndex}
@@ -343,12 +405,13 @@ function MessagePart({ part, partIndex, isLastTextPart, showActions, onRegenerat
 
   const info = getToolPartInfo(part);
   if (info) {
-    return <ToolPartDisplay key={partIndex} toolName={info.toolName} part={part} />;
+    return (
+      <ToolPartDisplay key={partIndex} toolName={info.toolName} part={part} />
+    );
   }
 
   return null;
 }
-
 
 interface ChatSidebarProps {
   id: string;
@@ -359,40 +422,53 @@ interface ChatSidebarProps {
 }
 
 const SUGGESTED_QUESTIONS = [
-  'What documents do I have?',
-  'Summarize my most recent notes',
-  'Find documents about meetings',
-  'What are my action items?',
+  "What documents do I have?",
+  "Summarize my most recent notes",
+  "Find documents about meetings",
+  "What are my action items?",
 ];
 
-export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemoveDocument, onClearDocuments }: ChatSidebarProps) {
+export function ChatSidebar({
+  id,
+  includedDocuments,
+  excludedDocuments,
+  onRemoveDocument,
+  onClearDocuments,
+}: ChatSidebarProps) {
   const navigate = useNavigate();
   const addDocument = useFetchedDocumentsStore((state) => state.addDocument);
-  const addDocumentReference = useFetchedDocumentsStore((state) => state.addDocumentReference);
-  const clearDocuments = useFetchedDocumentsStore((state) => state.clearDocuments);
-  const fetchConversations = useConversationsStore((state) => state.fetchConversations);
+  const addDocumentReference = useFetchedDocumentsStore(
+    (state) => state.addDocumentReference,
+  );
+  const clearDocuments = useFetchedDocumentsStore(
+    (state) => state.clearDocuments,
+  );
+  const fetchConversations = useConversationsStore(
+    (state) => state.fetchConversations,
+  );
   const { llm } = useSettingsStore();
-  const [inputValue, setInputValue] = useState('');
+  const [inputValue, setInputValue] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-  const [activeTab, setActiveTab] = useState('chat');
-  const [personality, setPersonality] = useState<Personality>('default');
+  const [activeTab, setActiveTab] = useState("chat");
+  const [personality, setPersonality] = useState<Personality>("default");
   const [compactedFrom, setCompactedFrom] = useState<string | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
   const pendingRetryRef = useRef<string | null>(null);
 
-  const hasDocumentFilters = includedDocuments.length > 0 || excludedDocuments.length > 0;
+  const hasDocumentFilters =
+    includedDocuments.length > 0 || excludedDocuments.length > 0;
 
   const handleNewChat = async () => {
     const newId = await createConversation();
     clearDocuments();
-    setActiveTab('chat');
-    navigate({ to: '/chat/$id', params: { id: newId } });
+    setActiveTab("chat");
+    navigate({ to: "/chat/$id", params: { id: newId } });
   };
 
   const handleConversationSelect = async (conversationId: string) => {
     clearDocuments();
-    setActiveTab('chat');
-    navigate({ to: '/chat/$id', params: { id: conversationId } });
+    setActiveTab("chat");
+    navigate({ to: "/chat/$id", params: { id: conversationId } });
     await loadDocumentReferences(conversationId, addDocumentReference);
   };
 
@@ -401,10 +477,18 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
       new DefaultChatTransport({
         api: `${API_BASE_URL}/api/chat`,
       }),
-    []
+    [],
   );
 
-  const { messages, sendMessage, status, error, regenerate, stop, setMessages } = useChat({
+  const {
+    messages,
+    sendMessage,
+    status,
+    error,
+    regenerate,
+    stop,
+    setMessages,
+  } = useChat({
     id,
     transport,
   });
@@ -438,25 +522,36 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
     };
   }, [id, setMessages, addDocumentReference]);
 
-  const handleSendMessage = useCallback(async (text: string) => {
-    if (!text.trim()) return;
-    const authHeaders = await getAuthHeaders();
-    sendMessage(
-      { text },
-      {
-        headers: authHeaders,
-        body: {
-          conversation_id: id,
-          personality,
-          llm: buildLlmConfig(llm),
-          included_documents: includedDocuments,
-          excluded_documents: excludedDocuments,
+  const handleSendMessage = useCallback(
+    async (text: string) => {
+      if (!text.trim()) return;
+      const authHeaders = await getAuthHeaders();
+      sendMessage(
+        { text },
+        {
+          headers: authHeaders,
+          body: {
+            conversation_id: id,
+            personality,
+            llm: buildLlmConfig(llm),
+            included_documents: includedDocuments,
+            excluded_documents: excludedDocuments,
+          },
         },
-      }
-    );
-    setInputValue('');
-    onClearDocuments();
-  }, [id, personality, llm, includedDocuments, excludedDocuments, sendMessage, onClearDocuments]);
+      );
+      setInputValue("");
+      onClearDocuments();
+    },
+    [
+      id,
+      personality,
+      llm,
+      includedDocuments,
+      excludedDocuments,
+      sendMessage,
+      onClearDocuments,
+    ],
+  );
 
   // Re-send the pending message after navigating to a compacted conversation
   useEffect(() => {
@@ -480,21 +575,27 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
     });
   }, [id, personality, llm, includedDocuments, excludedDocuments, regenerate]);
 
-  const handleCompact = useCallback(async (retryMessageText?: string) => {
-    setIsCompacting(true);
-    try {
-      const result = await compactConversation(id);
-      clearDocuments();
-      if (retryMessageText) {
-        pendingRetryRef.current = retryMessageText;
+  const handleCompact = useCallback(
+    async (retryMessageText?: string) => {
+      setIsCompacting(true);
+      try {
+        const result = await compactConversation(id);
+        clearDocuments();
+        if (retryMessageText) {
+          pendingRetryRef.current = retryMessageText;
+        }
+        navigate({
+          to: "/chat/$id",
+          params: { id: result.new_conversation_id },
+        });
+      } catch (err) {
+        console.error("Compaction failed:", err);
+      } finally {
+        setIsCompacting(false);
       }
-      navigate({ to: '/chat/$id', params: { id: result.new_conversation_id } });
-    } catch (err) {
-      console.error('Compaction failed:', err);
-    } finally {
-      setIsCompacting(false);
-    }
-  }, [id, clearDocuments, navigate]);
+    },
+    [id, clearDocuments, navigate],
+  );
 
   // Auto-compact when context window is exceeded
   useEffect(() => {
@@ -508,14 +609,18 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
       if (!message.parts) continue;
       for (const part of message.parts) {
         const info = getToolPartInfo(part);
-        if (!info || info.state !== 'output-available') continue;
+        if (!info || info.state !== "output-available") continue;
         processToolOutput(info.toolName, info.input, info.output, addDocument);
       }
     }
   }, [messages, addDocument]);
 
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col">
+    <Tabs
+      value={activeTab}
+      onValueChange={setActiveTab}
+      className="flex h-full flex-col"
+    >
       <div className="shrink-0 border-b px-4 flex items-center justify-between h-15">
         <TabsList>
           <TabsTrigger value="chat">
@@ -527,7 +632,12 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
             History
           </TabsTrigger>
         </TabsList>
-        <Button variant="ghost" size="icon" onClick={handleNewChat} title="New chat">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={handleNewChat}
+          title="New chat"
+        >
           <SquarePen className="h-4 w-4" />
         </Button>
       </div>
@@ -540,11 +650,14 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
                 <HistoryIcon className="h-4 w-4" />
                 <AlertTitle>Continued conversation</AlertTitle>
                 <AlertDescription>
-                  This conversation was compacted from a{' '}
+                  This conversation was compacted from a{" "}
                   <button
                     onClick={() => {
                       clearDocuments();
-                      navigate({ to: '/chat/$id', params: { id: compactedFrom } });
+                      navigate({
+                        to: "/chat/$id",
+                        params: { id: compactedFrom },
+                      });
                     }}
                     className="underline hover:text-primary"
                   >
@@ -559,7 +672,8 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Error</AlertTitle>
                 <AlertDescription>
-                  {error.message || 'An error occurred while processing your request.'}
+                  {error.message ||
+                    "An error occurred while processing your request."}
                 </AlertDescription>
               </Alert>
             )}
@@ -581,18 +695,21 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
             )}
             {messages.map((message, messageIndex) => {
               const isLastMessage = messageIndex === messages.length - 1;
-              const isAssistant = message.role === 'assistant';
-              const showActions = isAssistant && isLastMessage && status === 'ready';
+              const isAssistant = message.role === "assistant";
+              const showActions =
+                isAssistant && isLastMessage && status === "ready";
 
               return (
                 <Message key={message.id} from={message.role}>
                   <MessageContent>
                     {message.parts?.map((part, partIndex) => {
                       const isLastTextPart =
-                        part.type === 'text' &&
+                        part.type === "text" &&
                         isAssistant &&
                         isLastMessage &&
-                        !message.parts?.slice(partIndex + 1).some((p) => p.type === 'text');
+                        !message.parts
+                          ?.slice(partIndex + 1)
+                          .some((p) => p.type === "text");
 
                       return (
                         <MessagePart
@@ -609,7 +726,7 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
                 </Message>
               );
             })}
-            {status === 'submitted' && <Loader />}
+            {status === "submitted" && <Loader />}
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
@@ -634,13 +751,18 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
             {hasDocumentFilters && (
               <PromptInputHeader>
                 {includedDocuments.map((entry) => {
-                  const isDir = entry.endsWith('/');
+                  const isDir = entry.endsWith("/");
                   const displayName = isDir
-                    ? entry.slice(0, -1).split('/').pop() ?? entry
-                    : entry.split('/').pop() ?? entry;
+                    ? (entry.slice(0, -1).split("/").pop() ?? entry)
+                    : (entry.split("/").pop() ?? entry);
                   const Icon = isDir ? Folder : FileText;
                   return (
-                    <Badge key={`inc-${entry}`} variant="secondary" className="gap-1 text-xs" title={entry}>
+                    <Badge
+                      key={`inc-${entry}`}
+                      variant="secondary"
+                      className="gap-1 text-xs"
+                      title={entry}
+                    >
                       <Icon className="h-3 w-3" />
                       {displayName}
                       <button
@@ -654,13 +776,18 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
                   );
                 })}
                 {excludedDocuments.map((entry) => {
-                  const isDir = entry.endsWith('/');
+                  const isDir = entry.endsWith("/");
                   const displayName = isDir
-                    ? entry.slice(0, -1).split('/').pop() ?? entry
-                    : entry.split('/').pop() ?? entry;
+                    ? (entry.slice(0, -1).split("/").pop() ?? entry)
+                    : (entry.split("/").pop() ?? entry);
                   const Icon = isDir ? Folder : EyeOff;
                   return (
-                    <Badge key={`exc-${entry}`} variant="destructive" className="gap-1 text-xs" title={entry}>
+                    <Badge
+                      key={`exc-${entry}`}
+                      variant="destructive"
+                      className="gap-1 text-xs"
+                      title={entry}
+                    >
                       <Icon className="h-3 w-3" />
                       {displayName}
                       <button
@@ -688,15 +815,25 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
                 <div className="flex flex-col items-center gap-1">
                   <div className="flex items-center gap-1">
                     <SparklesIcon className="h-3 w-3 text-muted-foreground" />
-                    <span className="text-xs text-muted-foreground">Personality</span>
+                    <span className="text-xs text-muted-foreground">
+                      Personality
+                    </span>
                   </div>
-                  <PromptInputSelect value={personality} onValueChange={(value) => setPersonality(value as Personality)}>
+                  <PromptInputSelect
+                    value={personality}
+                    onValueChange={(value) =>
+                      setPersonality(value as Personality)
+                    }
+                  >
                     <PromptInputSelectTrigger className="h-8 w-auto min-w-24">
                       <PromptInputSelectValue placeholder="Personality" />
                     </PromptInputSelectTrigger>
                     <PromptInputSelectContent>
                       {PERSONALITY_OPTIONS.map((option) => (
-                        <PromptInputSelectItem key={option.value} value={option.value}>
+                        <PromptInputSelectItem
+                          key={option.value}
+                          value={option.value}
+                        >
                           {option.label}
                         </PromptInputSelectItem>
                       ))}
@@ -707,17 +844,19 @@ export function ChatSidebar({ id, includedDocuments, excludedDocuments, onRemove
                   <div className="flex flex-col items-center gap-1">
                     <div className="flex items-center gap-1">
                       <Minimize2 className="h-3 w-3 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">Compact</span>
+                      <span className="text-xs text-muted-foreground">
+                        Compact
+                      </span>
                     </div>
                     <Button
                       variant="outline"
                       size="sm"
                       className="h-8"
                       onClick={() => handleCompact()}
-                      disabled={status !== 'ready' || isCompacting}
+                      disabled={status !== "ready" || isCompacting}
                       title="Summarize and continue in a new chat"
                     >
-                      {isCompacting ? 'Compacting...' : 'Compact'}
+                      {isCompacting ? "Compacting..." : "Compact"}
                     </Button>
                   </div>
                 )}

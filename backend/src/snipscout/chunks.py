@@ -110,9 +110,7 @@ def chunk_document(
     return doc
 
 
-def load_chunked_document(
-    chunks_dir: Path, filename: str
-) -> ChunkedDocument | None:
+def load_chunked_document(chunks_dir: Path, filename: str) -> ChunkedDocument | None:
     """Load a chunked document from a directory by original filename.
 
     Args:
@@ -191,7 +189,9 @@ def list_chunked_documents(user_id: str) -> dict[str, int]:
 
     result: dict[str, int] = {}
     for path in chunks_dir.rglob("*.json"):
-        doc_filepath = str(path.relative_to(chunks_dir).as_posix()).removesuffix(".json")
+        doc_filepath = str(path.relative_to(chunks_dir).as_posix()).removesuffix(
+            ".json"
+        )
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             result[doc_filepath] = data.get("chunk_count", 0)
@@ -199,5 +199,3 @@ def list_chunked_documents(user_id: str) -> dict[str, int]:
             continue
 
     return result
-
-

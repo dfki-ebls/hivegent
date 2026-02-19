@@ -7,7 +7,12 @@ import httpx
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from joserfc import jwt
-from joserfc.errors import ExpiredTokenError, InvalidClaimError, JoseError, MissingClaimError
+from joserfc.errors import (
+    ExpiredTokenError,
+    InvalidClaimError,
+    JoseError,
+    MissingClaimError,
+)
 from joserfc.jwk import KeySet
 from joserfc.jwt import ClaimsOption, JWTClaimsRegistry
 from pydantic_settings import BaseSettings, SettingsConfigDict

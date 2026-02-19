@@ -1,18 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Loader2, RefreshCw, Scissors } from 'lucide-react';
+import { Loader2, RefreshCw, Scissors } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
-import { getDocumentChunks } from '../lib/api';
-import type { ChunkedDocumentResponse } from '../lib/types';
-import { Badge } from './ui/badge';
-import { Button } from './ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from './ui/dialog';
-import { ScrollArea } from './ui/scroll-area';
+import { getDocumentChunks } from "../lib/api";
+import type { ChunkedDocumentResponse } from "../lib/types";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
+import { ScrollArea } from "./ui/scroll-area";
 
 interface ChunkViewerDialogProps {
   open: boolean;
@@ -74,10 +69,16 @@ export function ChunkViewerDialog({
           </DialogTitle>
           {data && (
             <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <Badge variant="secondary">Chunking: {data.chunking_pipeline}</Badge>
-              <Badge variant="secondary">Chunk size: {data.chunk_size} tokens</Badge>
+              <Badge variant="secondary">
+                Chunking: {data.chunking_pipeline}
+              </Badge>
+              <Badge variant="secondary">
+                Chunk size: {data.chunk_size} tokens
+              </Badge>
               <Badge variant="secondary">{data.chunk_count} chunks</Badge>
-              <Badge variant="outline">Created: {formatDate(data.created_at)}</Badge>
+              <Badge variant="outline">
+                Created: {formatDate(data.created_at)}
+              </Badge>
               {onRechunk && (
                 <Button
                   variant="outline"
@@ -85,7 +86,9 @@ export function ChunkViewerDialog({
                   onClick={handleRechunk}
                   disabled={isRechunking}
                 >
-                  <RefreshCw className={`h-3 w-3 mr-1 ${isRechunking ? 'animate-spin' : ''}`} />
+                  <RefreshCw
+                    className={`h-3 w-3 mr-1 ${isRechunking ? "animate-spin" : ""}`}
+                  />
                   Rechunk
                 </Button>
               )}

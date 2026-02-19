@@ -1,10 +1,10 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { useCallback, useEffect, useState } from 'react';
-import { Key } from 'lucide-react';
+import { createFileRoute } from "@tanstack/react-router";
+import { Key } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
-import { CreateTokenDialog } from '../components/CreateTokenDialog';
-import { TokenCreatedDialog } from '../components/TokenCreatedDialog';
-import { TokenList } from '../components/TokenList';
+import { CreateTokenDialog } from "../components/CreateTokenDialog";
+import { TokenCreatedDialog } from "../components/TokenCreatedDialog";
+import { TokenList } from "../components/TokenList";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,11 +14,11 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '../components/ui/alert-dialog';
-import { createToken, listTokens, revokeToken } from '../lib/api';
-import type { TokenInfo } from '../lib/types';
+} from "../components/ui/alert-dialog";
+import { createToken, listTokens, revokeToken } from "../lib/api";
+import type { TokenInfo } from "../lib/types";
 
-export const Route = createFileRoute('/settings/tokens')({
+export const Route = createFileRoute("/settings/tokens")({
   component: TokensPage,
 });
 
@@ -38,7 +38,7 @@ function TokensPage() {
       const data = await listTokens();
       setTokens(data);
     } catch (error) {
-      console.error('Failed to fetch tokens:', error);
+      console.error("Failed to fetch tokens:", error);
     } finally {
       setIsLoading(false);
     }
@@ -56,7 +56,7 @@ function TokensPage() {
       setNewTokenName(name);
       await fetchTokens();
     } catch (error) {
-      console.error('Failed to create token:', error);
+      console.error("Failed to create token:", error);
     } finally {
       setIsCreating(false);
     }
@@ -68,7 +68,7 @@ function TokensPage() {
       await revokeToken(revokeConfirm.id);
       await fetchTokens();
     } catch (error) {
-      console.error('Failed to revoke token:', error);
+      console.error("Failed to revoke token:", error);
     } finally {
       setRevokeConfirm(null);
     }
