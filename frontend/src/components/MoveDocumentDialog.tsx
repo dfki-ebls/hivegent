@@ -52,16 +52,17 @@ export function MoveDocumentDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <label className="text-sm text-muted-foreground">
-              Current path
-            </label>
+            <span className="text-sm text-muted-foreground">Current path</span>
             <p className="text-sm font-mono bg-muted rounded px-2 py-1">
               {currentPath}
             </p>
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium">New path</label>
+            <label htmlFor="move-destination" className="text-sm font-medium">
+              New path
+            </label>
             <Input
+              id="move-destination"
               value={destination}
               onChange={(e) => setDestination(e.target.value)}
               placeholder="projects/report.md"

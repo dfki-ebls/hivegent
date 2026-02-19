@@ -68,10 +68,16 @@ function FileRow({
   onMove: () => void;
 }) {
   return (
+    // biome-ignore lint/a11y/useSemanticElements: contains nested interactive elements
     <div
+      role="button"
+      tabIndex={0}
       className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer group"
       style={{ paddingLeft: `${depth * 20 + 8}px` }}
       onClick={onEdit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onEdit();
+      }}
     >
       <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate text-sm">{entry.name}</span>
@@ -216,10 +222,16 @@ function DirectoryRow({
   const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
 
   return (
+    // biome-ignore lint/a11y/useSemanticElements: contains nested interactive elements
     <div
+      role="button"
+      tabIndex={0}
       className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer group"
       style={{ paddingLeft: `${depth * 20 + 8}px` }}
       onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onToggle();
+      }}
     >
       <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
       <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />

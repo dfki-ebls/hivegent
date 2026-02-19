@@ -58,12 +58,14 @@ export class AppErrorBoundary extends Component<Props, State> {
           )}
           <div className="flex flex-col gap-3 sm:flex-row sm:justify-center">
             <button
+              type="button"
               onClick={() => window.location.reload()}
               className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             >
               Reload
             </button>
             <button
+              type="button"
               onClick={clearAllStorage}
               className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground"
             >

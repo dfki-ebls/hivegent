@@ -240,6 +240,7 @@ function UploadArea({
 }: UploadAreaProps) {
   return (
     <div className="border-b p-4">
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop zone */}
       <div
         className={`flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-6 transition-colors ${
           isDragging
@@ -262,7 +263,6 @@ function UploadArea({
           className="hidden"
           onChange={onFileInputChange}
         />
-        {/* biome-ignore lint/a11y/useMediaCaption: directory input */}
         <input
           ref={directoryInputRef}
           type="file"
@@ -392,9 +392,15 @@ function DocumentListItem({
   onRemove,
 }: DocumentListItemProps) {
   return (
+    // biome-ignore lint/a11y/useSemanticElements: contains nested interactive elements
     <div
+      role="button"
+      tabIndex={0}
       className="flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50 cursor-pointer"
       onClick={onEdit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onEdit();
+      }}
     >
       <FileText className="h-8 w-8 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">

@@ -266,7 +266,7 @@ async function loadDocumentReferences(
 
 interface ToolPartDisplayProps {
   toolName: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // biome-ignore lint/suspicious/noExplicitAny: part type varies by tool
   part: any;
   onApprove?: (id: string) => void;
   onDeny?: (id: string) => void;
@@ -865,6 +865,7 @@ export function ChatSidebar({
                 <AlertDescription>
                   This conversation was compacted from a{" "}
                   <button
+                    type="button"
                     onClick={() => {
                       clearDocuments();
                       navigate({

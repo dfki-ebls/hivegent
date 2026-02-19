@@ -87,6 +87,7 @@
         };
         settings.formatter.biome.excludes = [
           "frontend/src/components/*/*.tsx"
+          "frontend/src/routeTree.gen.ts"
         ];
       };
     };

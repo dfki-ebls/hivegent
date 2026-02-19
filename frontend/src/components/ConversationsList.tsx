@@ -85,8 +85,10 @@ function TitleEditor({ value, onChange, onSave, onCancel }: TitleEditorProps) {
 
   return (
     <div
+      role="toolbar"
       className="flex items-center gap-1"
       onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
     >
       <Input
         value={value}
@@ -127,8 +129,10 @@ function ConversationActions({
 }: ConversationActionsProps) {
   return (
     <div
+      role="toolbar"
       className="absolute right-2 top-2 flex items-center gap-1 rounded bg-background/90 p-0.5"
       onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
     >
       <Button
         variant="ghost"
@@ -219,13 +223,19 @@ function ConversationItem({
   };
 
   return (
+    // biome-ignore lint/a11y/useSemanticElements: contains nested interactive elements
     <div
+      role="button"
+      tabIndex={0}
       className={`group relative rounded-lg border p-3 transition-colors cursor-pointer ${
         isActive
           ? "border-primary bg-primary/5"
           : "border-transparent hover:border-border hover:bg-muted/50"
       }`}
       onClick={() => !isEditing && onSelect()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !isEditing) onSelect();
+      }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >

@@ -104,7 +104,7 @@ function encodeFilePath(filepath: string): string {
 
 /** Check if a file requires conversion (anything that is not already markdown). */
 export function requiresConversion(filename: string): boolean {
-  const ext = "." + (filename.split(".").pop()?.toLowerCase() ?? "");
+  const ext = `.${filename.split(".").pop()?.toLowerCase() ?? ""}`;
   return ext !== ".md";
 }
 

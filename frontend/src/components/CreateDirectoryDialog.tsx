@@ -55,8 +55,11 @@ export function CreateDirectoryDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium">Directory name</label>
+            <label htmlFor="directory-name" className="text-sm font-medium">
+              Directory name
+            </label>
             <Input
+              id="directory-name"
               value={dirName}
               onChange={(e) => setDirName(e.target.value)}
               placeholder="new-folder"
