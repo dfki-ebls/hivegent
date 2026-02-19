@@ -3,14 +3,13 @@ import JSZip from "jszip";
 import {
   AlertCircle,
   Archive,
+  Eye,
   EyeOff,
   FileText,
   FolderOpen,
   FolderPlus,
-  MessageSquarePlus,
   Paperclip,
   Plus,
-  RefreshCw,
   RotateCcw,
   Scissors,
   Search,
@@ -377,7 +376,6 @@ interface DocumentListItemProps {
   onIncludeDocument: () => void;
   onExcludeDocument: () => void;
   onViewChunks: () => void;
-  onRechunk: () => void;
   onReconvert: () => void;
   onRemove: () => void;
 }
@@ -389,7 +387,6 @@ function DocumentListItem({
   onIncludeDocument,
   onExcludeDocument,
   onViewChunks,
-  onRechunk,
   onReconvert,
   onRemove,
 }: DocumentListItemProps) {
@@ -409,7 +406,14 @@ function DocumentListItem({
         <div className="flex items-center gap-2">
           <p className="truncate font-medium text-sm">{doc.filename}</p>
           {doc.chunk_count != null && (
-            <Badge variant="outline" className="shrink-0 text-xs gap-1">
+            <Badge
+              variant="outline"
+              className="shrink-0 text-xs gap-1 cursor-pointer hover:bg-muted"
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewChunks();
+              }}
+            >
               <Scissors className="h-3 w-3" />
               {doc.chunk_count}
             </Badge>
@@ -420,34 +424,6 @@ function DocumentListItem({
           {formatRelativeDate(doc.modified_at)}
         </p>
       </div>
-      {doc.chunk_count != null && (
-        <Button
-          variant="ghost"
-          size="icon"
-          title="View chunks"
-          onClick={(e) => {
-            e.stopPropagation();
-            onViewChunks();
-          }}
-          disabled={isLoading}
-        >
-          <Scissors className="h-4 w-4" />
-        </Button>
-      )}
-      {doc.chunk_count != null && (
-        <Button
-          variant="ghost"
-          size="icon"
-          title="Rechunk"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRechunk();
-          }}
-          disabled={isLoading}
-        >
-          <RefreshCw className="h-4 w-4" />
-        </Button>
-      )}
       {doc.has_original && (
         <Button
           variant="ghost"
@@ -472,7 +448,7 @@ function DocumentListItem({
         }}
         disabled={isLoading}
       >
-        <MessageSquarePlus className="h-4 w-4" />
+        <Eye className="h-4 w-4" />
       </Button>
       <Button
         variant="ghost"
@@ -640,13 +616,6 @@ function ManageDocuments({
   );
 
   // --- Rechunk / reconvert handlers ---
-
-  const handleRechunk = useCallback(
-    async (filepath: string) => {
-      await storeRechunk(filepath, chunkingPipeline);
-    },
-    [storeRechunk, chunkingPipeline],
-  );
 
   const handleReconvert = useCallback(
     async (filepath: string) => {
@@ -820,7 +789,6 @@ function ManageDocuments({
             onIncludeDocument={() => handleInclude(doc.filename)}
             onExcludeDocument={() => handleExclude(doc.filename)}
             onViewChunks={() => setChunkViewerFilename(doc.filename)}
-            onRechunk={() => handleRechunk(doc.filename)}
             onReconvert={() => handleReconvert(doc.filename)}
             onRemove={() => remove(doc.filename)}
           />
@@ -864,7 +832,6 @@ function ManageDocuments({
         onInclude={handleInclude}
         onExclude={handleExclude}
         onViewChunks={(path) => setChunkViewerFilename(path)}
-        onRechunk={handleRechunk}
         onReconvert={handleReconvert}
         onRemoveFile={(path) => remove(path)}
         onMoveFile={(path) => setMoveFilePath(path)}

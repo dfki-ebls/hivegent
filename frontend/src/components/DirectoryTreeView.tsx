@@ -1,14 +1,13 @@
 import {
   ChevronDown,
   ChevronRight,
+  Eye,
   EyeOff,
   FileText,
   Folder,
   FolderOpen,
   FolderPlus,
-  MessageSquarePlus,
   Move,
-  RefreshCw,
   RotateCcw,
   Scissors,
   Trash2,
@@ -33,7 +32,6 @@ interface DirectoryTreeViewProps {
   onInclude: (path: string) => void;
   onExclude: (path: string) => void;
   onViewChunks: (path: string) => void;
-  onRechunk: (path: string) => void;
   onReconvert: (path: string) => void;
   onRemoveFile: (path: string) => void;
   onMoveFile: (path: string) => void;
@@ -50,7 +48,6 @@ function FileRow({
   onInclude,
   onExclude,
   onViewChunks,
-  onRechunk,
   onReconvert,
   onRemove,
   onMove,
@@ -62,7 +59,6 @@ function FileRow({
   onInclude: () => void;
   onExclude: () => void;
   onViewChunks: () => void;
-  onRechunk: () => void;
   onReconvert: () => void;
   onRemove: () => void;
   onMove: () => void;
@@ -87,42 +83,19 @@ function FileRow({
         </span>
       )}
       {entry.chunk_count != null && (
-        <Badge variant="outline" className="shrink-0 text-xs gap-1">
+        <Badge
+          variant="outline"
+          className="shrink-0 text-xs gap-1 cursor-pointer hover:bg-muted"
+          onClick={(e) => {
+            e.stopPropagation();
+            onViewChunks();
+          }}
+        >
           <Scissors className="h-3 w-3" />
           {entry.chunk_count}
         </Badge>
       )}
       <div className="hidden gap-0.5 group-hover:flex">
-        {entry.chunk_count != null && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            title="View chunks"
-            onClick={(e) => {
-              e.stopPropagation();
-              onViewChunks();
-            }}
-            disabled={isLoading}
-          >
-            <Scissors className="h-3 w-3" />
-          </Button>
-        )}
-        {entry.chunk_count != null && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            title="Rechunk"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRechunk();
-            }}
-            disabled={isLoading}
-          >
-            <RefreshCw className="h-3 w-3" />
-          </Button>
-        )}
         {entry.has_original && (
           <Button
             variant="ghost"
@@ -149,7 +122,7 @@ function FileRow({
           }}
           disabled={isLoading}
         >
-          <MessageSquarePlus className="h-3 w-3" />
+          <Eye className="h-3 w-3" />
         </Button>
         <Button
           variant="ghost"
@@ -255,7 +228,7 @@ function DirectoryRow({
           }}
           disabled={isLoading}
         >
-          <MessageSquarePlus className="h-3 w-3" />
+          <Eye className="h-3 w-3" />
         </Button>
         <Button
           variant="ghost"
@@ -316,7 +289,6 @@ export function DirectoryTreeView({
   onInclude,
   onExclude,
   onViewChunks,
-  onRechunk,
   onReconvert,
   onRemoveFile,
   onMoveFile,
@@ -349,7 +321,6 @@ export function DirectoryTreeView({
           onInclude={() => onInclude(child.path)}
           onExclude={() => onExclude(child.path)}
           onViewChunks={() => onViewChunks(child.path)}
-          onRechunk={() => onRechunk(child.path)}
           onReconvert={() => onReconvert(child.path)}
           onRemove={() => onRemoveFile(child.path)}
           onMove={() => onMoveFile(child.path)}
