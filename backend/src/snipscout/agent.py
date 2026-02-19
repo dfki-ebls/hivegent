@@ -1,5 +1,6 @@
 """RAG agent with document retrieval tools."""
 
+import logging
 from dataclasses import dataclass
 from typing import Literal
 
@@ -27,7 +28,10 @@ __all__ = [
     "explore_toolset",
     "rag_toolset",
     "user_agent",
+    "write_toolset",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -251,3 +255,77 @@ async def explore_documents(ctx: RunContext[UserDeps], task: str) -> str:
         usage=ctx.usage,
     )
     return result.output
+
+
+# --- Write toolset (document mutation tools, require approval) ---
+
+write_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+
+
+def _rechunk(user_id: str, filename: str) -> None:
+    """Re-chunk a document and sync the search index after a write."""
+    from .chunks import chunk_document
+    from .retrieval import sync_index
+
+    docs_dir = settings.get_user_documents_dir(user_id)
+    file_path = docs_dir / filename
+    try:
+        text_content = file_path.read_text(encoding="utf-8")
+        chunk_document(user_id, filename, text_content)
+        sync_index(user_id)
+    except Exception:
+        logger.warning("Re-chunking failed for %s after write", filename)
+
+
+@write_toolset.tool(requires_approval=True)
+def edit_document(
+    ctx: RunContext[UserDeps],
+    filename: str,
+    old_string: str,
+    new_string: str,
+) -> str:
+    """Edit a document by replacing an exact string with new text.
+
+    Use this to make precise, surgical changes. The old_string must
+    appear exactly once in the file to prevent ambiguous edits.
+
+    Args:
+        filename: The relative document path (e.g. "notes/todo.md").
+        old_string: The exact text to replace. Must appear exactly once.
+        new_string: The replacement text.
+    """
+    result = tools.EditDocumentTool(
+        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        document_filter=ctx.deps.document_filter,
+    )(filename, old_string, new_string)
+
+    if not result.startswith("Error:"):
+        _rechunk(ctx.deps.user_id, filename)
+
+    return result
+
+
+@write_toolset.tool(requires_approval=True)
+def write_document(
+    ctx: RunContext[UserDeps],
+    filename: str,
+    content: str,
+    mode: Literal["prepend", "append", "replace"] = "replace",
+) -> str:
+    """Write content to a document.
+
+    Args:
+        filename: The relative document path (e.g. "notes/todo.md").
+        content: The text content to write.
+        mode: ``"replace"`` overwrites (creates if absent), ``"append"``
+            adds to the end, ``"prepend"`` adds to the start.
+    """
+    result = tools.WriteDocumentTool(
+        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        document_filter=ctx.deps.document_filter,
+    )(filename, content, mode)
+
+    if not result.startswith("Error:"):
+        _rechunk(ctx.deps.user_id, filename)
+
+    return result

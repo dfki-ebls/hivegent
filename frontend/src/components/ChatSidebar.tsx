@@ -1,6 +1,9 @@
 import { type UIMessage, useChat } from "@ai-sdk/react";
 import { useNavigate } from "@tanstack/react-router";
-import { DefaultChatTransport } from "ai";
+import {
+  DefaultChatTransport,
+  lastAssistantMessageIsCompleteWithApprovalResponses,
+} from "ai";
 import {
   AlertCircle,
   CopyIcon,
@@ -37,6 +40,14 @@ import {
 import { useConversationsStore } from "../stores/conversations-store";
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
 import { useSettingsStore } from "../stores/settings-store";
+import {
+  Confirmation,
+  ConfirmationAccepted,
+  ConfirmationAction,
+  ConfirmationActions,
+  ConfirmationRejected,
+  ConfirmationRequest,
+} from "./ai-elements/confirmation";
 import {
   Conversation,
   ConversationContent,
@@ -257,6 +268,8 @@ interface ToolPartDisplayProps {
   toolName: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   part: any;
+  onApprove?: (id: string) => void;
+  onDeny?: (id: string) => void;
 }
 
 /** Renders semantic_search tool with custom formatting. */
@@ -299,6 +312,167 @@ function SearchToolDisplay({ toolName, part }: ToolPartDisplayProps) {
   );
 }
 
+/** Renders edit_document tool with confirmation UI. */
+function EditDocumentToolDisplay({
+  part,
+  onApprove,
+  onDeny,
+}: ToolPartDisplayProps) {
+  const state = part.state ?? "output-available";
+  const approval = part.approval;
+  const input = parseJson<{
+    filename: string;
+    old_string: string;
+    new_string: string;
+  }>(part.input);
+
+  return (
+    <Tool defaultOpen={state === "approval-requested"}>
+      <ToolHeader
+        title="Edit Document"
+        type="tool-edit_document"
+        state={state}
+      />
+      <ToolContent>
+        {input && (
+          <ToolSection title="Parameters">
+            <ToolKeyValue label="File" value={input.filename} />
+            <ToolKeyValue
+              label="Replace"
+              value={
+                <pre className="whitespace-pre-wrap text-xs">
+                  {input.old_string}
+                </pre>
+              }
+            />
+            <ToolKeyValue
+              label="With"
+              value={
+                <pre className="whitespace-pre-wrap text-xs">
+                  {input.new_string}
+                </pre>
+              }
+            />
+          </ToolSection>
+        )}
+        <Confirmation approval={approval} state={state}>
+          <ConfirmationRequest>
+            <span className="text-sm">
+              Allow the assistant to edit <strong>{input?.filename}</strong>?
+            </span>
+          </ConfirmationRequest>
+          <ConfirmationAccepted>
+            <span className="text-sm text-green-700 dark:text-green-400">
+              Edit approved
+            </span>
+          </ConfirmationAccepted>
+          <ConfirmationRejected>
+            <span className="text-sm text-orange-700 dark:text-orange-400">
+              Edit denied
+            </span>
+          </ConfirmationRejected>
+          <ConfirmationActions>
+            <ConfirmationAction
+              variant="outline"
+              onClick={() => onDeny?.(approval?.id)}
+            >
+              Deny
+            </ConfirmationAction>
+            <ConfirmationAction onClick={() => onApprove?.(approval?.id)}>
+              Approve
+            </ConfirmationAction>
+          </ConfirmationActions>
+        </Confirmation>
+        {part.output !== undefined && (
+          <ToolResult>
+            <pre className="whitespace-pre-wrap text-xs">
+              {String(part.output)}
+            </pre>
+          </ToolResult>
+        )}
+        {part.errorText && <ToolError message={part.errorText} />}
+      </ToolContent>
+    </Tool>
+  );
+}
+
+/** Renders write_document tool with confirmation UI. */
+function WriteDocumentToolDisplay({
+  part,
+  onApprove,
+  onDeny,
+}: ToolPartDisplayProps) {
+  const state = part.state ?? "output-available";
+  const approval = part.approval;
+  const input = parseJson<{ filename: string; content: string; mode?: string }>(
+    part.input,
+  );
+  const modeLabel = input?.mode ?? "replace";
+
+  return (
+    <Tool defaultOpen={state === "approval-requested"}>
+      <ToolHeader
+        title="Write Document"
+        type="tool-write_document"
+        state={state}
+      />
+      <ToolContent>
+        {input && (
+          <ToolSection title="Parameters">
+            <ToolKeyValue label="File" value={input.filename} />
+            <ToolKeyValue label="Mode" value={modeLabel} />
+            <ToolKeyValue
+              label="Content"
+              value={
+                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap text-xs">
+                  {input.content}
+                </pre>
+              }
+            />
+          </ToolSection>
+        )}
+        <Confirmation approval={approval} state={state}>
+          <ConfirmationRequest>
+            <span className="text-sm">
+              Allow the assistant to <strong>{modeLabel}</strong>{" "}
+              <strong>{input?.filename}</strong>?
+            </span>
+          </ConfirmationRequest>
+          <ConfirmationAccepted>
+            <span className="text-sm text-green-700 dark:text-green-400">
+              Write approved
+            </span>
+          </ConfirmationAccepted>
+          <ConfirmationRejected>
+            <span className="text-sm text-orange-700 dark:text-orange-400">
+              Write denied
+            </span>
+          </ConfirmationRejected>
+          <ConfirmationActions>
+            <ConfirmationAction
+              variant="outline"
+              onClick={() => onDeny?.(approval?.id)}
+            >
+              Deny
+            </ConfirmationAction>
+            <ConfirmationAction onClick={() => onApprove?.(approval?.id)}>
+              Approve
+            </ConfirmationAction>
+          </ConfirmationActions>
+        </Confirmation>
+        {part.output !== undefined && (
+          <ToolResult>
+            <pre className="whitespace-pre-wrap text-xs">
+              {String(part.output)}
+            </pre>
+          </ToolResult>
+        )}
+        {part.errorText && <ToolError message={part.errorText} />}
+      </ToolContent>
+    </Tool>
+  );
+}
+
 /** Renders any tool with generic parameter/result display. */
 function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
   const state = part.state ?? "output-available";
@@ -327,9 +501,34 @@ function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
 }
 
 /** Renders a tool part based on tool name. */
-function ToolPartDisplay({ toolName, part }: ToolPartDisplayProps) {
+function ToolPartDisplay({
+  toolName,
+  part,
+  onApprove,
+  onDeny,
+}: ToolPartDisplayProps) {
   if (toolName === "semantic_search") {
     return <SearchToolDisplay toolName={toolName} part={part} />;
+  }
+  if (toolName === "edit_document") {
+    return (
+      <EditDocumentToolDisplay
+        toolName={toolName}
+        part={part}
+        onApprove={onApprove}
+        onDeny={onDeny}
+      />
+    );
+  }
+  if (toolName === "write_document") {
+    return (
+      <WriteDocumentToolDisplay
+        toolName={toolName}
+        part={part}
+        onApprove={onApprove}
+        onDeny={onDeny}
+      />
+    );
   }
   return <GenericToolDisplay toolName={toolName} part={part} />;
 }
@@ -383,6 +582,8 @@ interface MessagePartProps {
   isLastTextPart: boolean;
   showActions: boolean;
   onRegenerate: () => void;
+  onApprove: (id: string) => void;
+  onDeny: (id: string) => void;
 }
 
 function MessagePart({
@@ -391,6 +592,8 @@ function MessagePart({
   isLastTextPart,
   showActions,
   onRegenerate,
+  onApprove,
+  onDeny,
 }: MessagePartProps) {
   if (part.type === "text") {
     return (
@@ -406,7 +609,13 @@ function MessagePart({
   const info = getToolPartInfo(part);
   if (info) {
     return (
-      <ToolPartDisplay key={partIndex} toolName={info.toolName} part={part} />
+      <ToolPartDisplay
+        key={partIndex}
+        toolName={info.toolName}
+        part={part}
+        onApprove={onApprove}
+        onDeny={onDeny}
+      />
     );
   }
 
@@ -476,8 +685,10 @@ export function ChatSidebar({
     () =>
       new DefaultChatTransport({
         api: `${API_BASE_URL}/api/chat`,
+        headers: () => getAuthHeaders(),
+        body: { conversation_id: id },
       }),
-    [],
+    [id],
   );
 
   const {
@@ -488,9 +699,11 @@ export function ChatSidebar({
     regenerate,
     stop,
     setMessages,
+    addToolApprovalResponse,
   } = useChat({
     id,
     transport,
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
   });
 
   useEffect(() => {
@@ -719,6 +932,18 @@ export function ChatSidebar({
                           isLastTextPart={isLastTextPart}
                           showActions={showActions}
                           onRegenerate={handleRegenerate}
+                          onApprove={(approvalId) =>
+                            addToolApprovalResponse({
+                              id: approvalId,
+                              approved: true,
+                            })
+                          }
+                          onDeny={(approvalId) =>
+                            addToolApprovalResponse({
+                              id: approvalId,
+                              approved: false,
+                            })
+                          }
                         />
                       );
                     })}

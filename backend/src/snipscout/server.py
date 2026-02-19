@@ -28,7 +28,14 @@ from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
-from .agent import UserDeps, base_agent, explore_toolset, rag_toolset, user_agent
+from .agent import (
+    UserDeps,
+    base_agent,
+    explore_toolset,
+    rag_toolset,
+    user_agent,
+    write_toolset,
+)
 from .compaction import compact_conversation
 from .auth import User, get_current_user
 from .chunkers import (
@@ -437,6 +444,7 @@ async def chat(
         request,
         agent=user_agent,
         deps=UserDeps(user_id=user.id, document_filter=document_filter, llm=config.llm),
+        sdk_version=6,
         model=OpenAIResponsesModel(
             config.llm.model,
             provider=OpenAIProvider(
@@ -444,7 +452,7 @@ async def chat(
                 base_url=config.llm.base_url,
             ),
         ),
-        toolsets=[rag_toolset, explore_toolset],
+        toolsets=[rag_toolset, explore_toolset, write_toolset],
         instructions=PERSONALITY_TEMPLATES[config.personality] + CITATION_INSTRUCTIONS,
         on_complete=on_complete,
     )

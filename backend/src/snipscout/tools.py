@@ -21,6 +21,7 @@ from .types import (
 
 __all__ = [
     "DocumentFilter",
+    "EditDocumentTool",
     "GetChunkTool",
     "GetDocumentLinesTool",
     "GetDocumentTool",
@@ -29,6 +30,7 @@ __all__ = [
     "ListChunksTool",
     "ListDocumentsTool",
     "SearchTool",
+    "WriteDocumentTool",
 ]
 
 logger = logging.getLogger(__name__)
@@ -351,3 +353,96 @@ class GetChunkTool:
             if chunk.index == chunk_index:
                 return chunk.text
         return None
+
+
+@dataclass(slots=True, frozen=True)
+class EditDocumentTool:
+    """Edit a document by replacing an exact string with a new string."""
+
+    path: Path
+    document_filter: DocumentFilter | None = None
+
+    def __call__(
+        self,
+        filename: str,
+        old_string: str,
+        new_string: str,
+    ) -> str:
+        """Replace an exact string in a document.
+
+        Fails if the string does not exist or appears more than once,
+        ensuring unambiguous edits.
+
+        Args:
+            filename: The relative document path.
+            old_string: The exact text to replace. Must appear exactly once.
+            new_string: The replacement text.
+        """
+        if self.document_filter and not self.document_filter.is_included(filename):
+            return f"Error: '{filename}' is not accessible."
+        file_path = (self.path / filename).resolve()
+        if not file_path.is_relative_to(self.path.resolve()):
+            return "Error: path traversal detected."
+        if not file_path.is_file():
+            return f"Error: '{filename}' does not exist."
+
+        content = file_path.read_text(encoding="utf-8")
+        count = content.count(old_string)
+        if count == 0:
+            return f"Error: old_string not found in '{filename}'."
+        if count > 1:
+            return (
+                f"Error: old_string appears {count} times in '{filename}'; "
+                "must be unique."
+            )
+
+        new_content = content.replace(old_string, new_string, 1)
+        file_path.write_text(new_content, encoding="utf-8")
+        return f"Replaced 1 occurrence in '{filename}'."
+
+
+@dataclass(slots=True, frozen=True)
+class WriteDocumentTool:
+    """Write content to a document using prepend, append, or replace mode."""
+
+    path: Path
+    document_filter: DocumentFilter | None = None
+
+    def __call__(
+        self,
+        filename: str,
+        content: str,
+        mode: Literal["prepend", "append", "replace"] = "replace",
+    ) -> str:
+        """Write content to a document.
+
+        Args:
+            filename: The relative document path.
+            content: The text content to write.
+            mode: ``"replace"`` overwrites (creates if absent),
+                ``"append"`` adds to the end,
+                ``"prepend"`` adds to the start.
+        """
+        if self.document_filter and not self.document_filter.is_included(filename):
+            return f"Error: '{filename}' is not accessible."
+        file_path = (self.path / filename).resolve()
+        if not file_path.is_relative_to(self.path.resolve()):
+            return "Error: path traversal detected."
+        if not filename.endswith(DOCUMENT_EXTENSION):
+            return f"Error: only '{DOCUMENT_EXTENSION}' files are supported."
+
+        if mode == "replace":
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content, encoding="utf-8")
+            return f"Wrote {len(content)} characters to '{filename}'."
+
+        if not file_path.is_file():
+            return f"Error: '{filename}' does not exist (use mode='replace' to create)."
+
+        existing = file_path.read_text(encoding="utf-8")
+        if mode == "append":
+            file_path.write_text(existing + content, encoding="utf-8")
+            return f"Appended {len(content)} characters to '{filename}'."
+
+        file_path.write_text(content + existing, encoding="utf-8")
+        return f"Prepended {len(content)} characters to '{filename}'."

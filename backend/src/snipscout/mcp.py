@@ -1,19 +1,19 @@
 """FastMCP server with OIDCProxy auth and explicit typed tool wrappers."""
 
+import logging
 from typing import Literal
 
-from docket.dependencies import Depends
 from fastmcp import Context, FastMCP
+from fastmcp.dependencies import CurrentAccessToken, Depends
 from fastmcp.server.auth import AccessToken, OIDCProxy
-from fastmcp.server.dependencies import get_access_token
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from . import tools
 from .agent import UserDeps, explore_agent, explore_toolset
-from .prompts import EXPLORE_INSTRUCTIONS
 from .auth import auth_settings
 from .config import settings
+from .prompts import EXPLORE_INSTRUCTIONS
 from .types import (
     ChunkSummary,
     DocumentRange,
@@ -23,6 +23,8 @@ from .types import (
 )
 
 __all__ = ["mcp_app"]
+
+logger = logging.getLogger(__name__)
 
 
 mcp_auth: OIDCProxy | None = None
@@ -39,7 +41,7 @@ mcp_app = FastMCP("SnipScout", auth=mcp_auth)
 
 
 def _get_mcp_user_id(
-    access_token: AccessToken | None = Depends(get_access_token),
+    access_token: AccessToken | None = CurrentAccessToken(),
 ) -> str:
     """Extract user ID from the MCP auth token's ``sub`` claim."""
     if auth_settings.disabled:
@@ -50,6 +52,21 @@ def _get_mcp_user_id(
     if not isinstance(sub, str) or not sub:
         raise RuntimeError("Token missing 'sub' claim")
     return sub
+
+
+def _rechunk(user_id: str, filename: str) -> None:
+    """Re-chunk a document and sync the search index after a write."""
+    from .chunks import chunk_document
+    from .retrieval import sync_index
+
+    docs_dir = settings.get_user_documents_dir(user_id)
+    file_path = docs_dir / filename
+    try:
+        text_content = file_path.read_text(encoding="utf-8")
+        chunk_document(user_id, filename, text_content)
+        sync_index(user_id)
+    except Exception:
+        logger.warning("Re-chunking failed for %s after write", filename)
 
 
 @mcp_app.tool()
@@ -207,3 +224,73 @@ async def explore_documents(
         ],
     )
     return result.text
+
+
+@mcp_app.tool()
+async def edit_document(
+    filename: str,
+    old_string: str,
+    new_string: str,
+    ctx: Context,
+    user_id: str = Depends(_get_mcp_user_id),
+) -> str:
+    """Edit a document by replacing an exact string.
+
+    Asks the user for confirmation before modifying the file.
+    The old_string must appear exactly once in the file.
+
+    Args:
+        filename: The relative document path.
+        old_string: The exact text to replace. Must appear exactly once.
+        new_string: The replacement text.
+    """
+    response = await ctx.elicit(
+        message=(
+            f"Allow edit to '{filename}'?\n\n"
+            f"Replace:\n{old_string!r}\n\nWith:\n{new_string!r}"
+        ),
+    )
+    if response.action != "accept":
+        return "Edit denied by user."
+
+    docs_dir = settings.get_user_documents_dir(user_id)
+    result = tools.EditDocumentTool(path=docs_dir)(filename, old_string, new_string)
+
+    if not result.startswith("Error:"):
+        _rechunk(user_id, filename)
+
+    return result
+
+
+@mcp_app.tool()
+async def write_document(
+    filename: str,
+    content: str,
+    ctx: Context,
+    mode: Literal["prepend", "append", "replace"] = "replace",
+    user_id: str = Depends(_get_mcp_user_id),
+) -> str:
+    """Write content to a document (prepend, append, or replace).
+
+    Asks the user for confirmation before modifying the file.
+
+    Args:
+        filename: The relative document path.
+        content: The text content to write.
+        mode: "replace" overwrites (creates if absent), "append" adds to end,
+            "prepend" adds to start.
+    """
+    action = "Create/overwrite" if mode == "replace" else mode.capitalize()
+    response = await ctx.elicit(
+        message=f"Allow {action} '{filename}' ({len(content)} chars)?",
+    )
+    if response.action != "accept":
+        return "Write denied by user."
+
+    docs_dir = settings.get_user_documents_dir(user_id)
+    result = tools.WriteDocumentTool(path=docs_dir)(filename, content, mode)
+
+    if not result.startswith("Error:"):
+        _rechunk(user_id, filename)
+
+    return result
