@@ -50,7 +50,7 @@ class ConversionPipelineInfo:
 
 _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
     ConversionPipeline.LLM: _ConverterEntry(
-        module_name="llm_converter",
+        module_name="llm",
         class_name="LLMConverter",
         label="LLM",
         description="Uses vision model for all files",
@@ -72,14 +72,14 @@ _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
         ),
     ),
     ConversionPipeline.MARKER: _ConverterEntry(
-        module_name="marker_converter",
+        module_name="marker",
         class_name="MarkerConverter",
         label="Marker",
         description="Best for PDF documents",
         extensions=frozenset({".pdf"}),
     ),
     ConversionPipeline.DOCLING: _ConverterEntry(
-        module_name="docling_converter",
+        module_name="docling",
         class_name="DoclingConverter",
         label="Docling",
         description="Best for Office documents",
@@ -96,7 +96,7 @@ _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
         ),
     ),
     ConversionPipeline.MINERU: _ConverterEntry(
-        module_name="mineru_converter",
+        module_name="mineru",
         class_name="MinerUConverter",
         label="MinerU",
         description="High-quality PDF parsing (no XLSX)",
@@ -112,7 +112,7 @@ _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
         ),
     ),
     ConversionPipeline.PANDOC: _ConverterEntry(
-        module_name="pandoc_converter",
+        module_name="pandoc",
         class_name="PandocConverter",
         label="Pandoc",
         description="Universal converter for ODT, RST, RTF, EPUB, LaTeX, Org, "

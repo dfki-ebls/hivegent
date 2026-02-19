@@ -597,7 +597,7 @@ async def _upload_file_internal(
     # Convert the document
     try:
         if resolved_conversion == ConversionPipeline.LLM:
-            from .converters.llm_converter import LLMConverter
+            from .converters.llm import LLMConverter
 
             assert isinstance(converter, LLMConverter)
             markdown_content = await converter.convert(
@@ -1029,7 +1029,7 @@ async def reconvert_document(
     # Convert the document
     try:
         if resolved_conversion == ConversionPipeline.LLM:
-            from .converters.llm_converter import LLMConverter
+            from .converters.llm import LLMConverter
 
             assert isinstance(converter, LLMConverter)
             markdown_content = await converter.convert(
