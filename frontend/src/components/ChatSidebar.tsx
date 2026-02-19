@@ -15,6 +15,7 @@ import {
   MessageSquareIcon,
   Minimize2,
   Paperclip,
+  PencilIcon,
   RefreshCcwIcon,
   SparklesIcon,
   SquarePen,
@@ -96,6 +97,7 @@ import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+import { Textarea } from "./ui/textarea";
 
 // --- Prompt input toolbar components ---
 
@@ -626,6 +628,70 @@ function TextPartDisplay({
   );
 }
 
+// --- User text part component (with inline editing) ---
+
+interface UserTextPartDisplayProps {
+  text: string;
+  messageId: string;
+  isEditing: boolean;
+  onCancelEdit: () => void;
+  onSubmitEdit: (messageId: string, newText: string) => void;
+}
+
+function UserTextPartDisplay({
+  text,
+  messageId,
+  isEditing,
+  onCancelEdit,
+  onSubmitEdit,
+}: UserTextPartDisplayProps) {
+  const [editText, setEditText] = useState(text);
+
+  useEffect(() => {
+    setEditText(text);
+  }, [text, isEditing]);
+
+  if (isEditing) {
+    return (
+      <div className="space-y-2">
+        <Textarea
+          value={editText}
+          onChange={(e) => setEditText(e.target.value)}
+          className="min-h-[80px] resize-y"
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              onCancelEdit();
+            } else if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              if (editText.trim()) {
+                onSubmitEdit(messageId, editText);
+              }
+            }
+          }}
+        />
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={onCancelEdit}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (editText.trim()) {
+                onSubmitEdit(messageId, editText);
+              }
+            }}
+          >
+            Submit
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return <div className="whitespace-pre-wrap">{text}</div>;
+}
+
 // --- Message part renderer ---
 
 interface MessagePartProps {
@@ -633,6 +699,11 @@ interface MessagePartProps {
   partIndex: number;
   isLastTextPart: boolean;
   showActions: boolean;
+  isUserMessage: boolean;
+  messageId: string;
+  isEditing: boolean;
+  onCancelEdit: () => void;
+  onSubmitEdit: (messageId: string, newText: string) => void;
   onRegenerate: () => void;
   onApprove: (id: string) => void;
   onDeny: (id: string) => void;
@@ -643,10 +714,28 @@ function MessagePart({
   partIndex,
   isLastTextPart,
   showActions,
+  isUserMessage,
+  messageId,
+  isEditing,
+  onCancelEdit,
+  onSubmitEdit,
   onRegenerate,
   onApprove,
   onDeny,
 }: MessagePartProps) {
+  if (part.type === "text" && isUserMessage) {
+    return (
+      <UserTextPartDisplay
+        key={partIndex}
+        text={part.text}
+        messageId={messageId}
+        isEditing={isEditing}
+        onCancelEdit={onCancelEdit}
+        onSubmitEdit={onSubmitEdit}
+      />
+    );
+  }
+
   if (part.type === "text") {
     return (
       <TextPartDisplay
@@ -714,6 +803,7 @@ export function ChatSidebar({
   const [personality, setPersonality] = useState<Personality>("default");
   const [compactedFrom, setCompactedFrom] = useState<string | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const pendingRetryRef = useRef<string | null>(null);
 
   const hasDocumentFilters =
@@ -757,6 +847,13 @@ export function ChatSidebar({
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
   });
+
+  // Clear editing state when a response starts streaming
+  useEffect(() => {
+    if (status !== "ready") {
+      setEditingMessageId(null);
+    }
+  }, [status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -816,6 +913,27 @@ export function ChatSidebar({
       sendMessage,
       onClearDocuments,
     ],
+  );
+
+  const handleEditMessage = useCallback(
+    async (messageId: string, newText: string) => {
+      setEditingMessageId(null);
+      const authHeaders = await getAuthHeaders();
+      sendMessage(
+        { text: newText, messageId },
+        {
+          headers: authHeaders,
+          body: {
+            conversation_id: id,
+            personality,
+            llm: buildLlmConfig(llm),
+            included_documents: includedDocuments,
+            excluded_documents: excludedDocuments,
+          },
+        },
+      );
+    },
+    [id, personality, llm, includedDocuments, excludedDocuments, sendMessage],
   );
 
   // Re-send the pending message after navigating to a compacted conversation
@@ -974,6 +1092,12 @@ export function ChatSidebar({
               const showActions =
                 isAssistant && isLastMessage && status === "ready";
 
+              const isUser = message.role === "user";
+              const canEdit =
+                isUser &&
+                status === "ready" &&
+                editingMessageId !== message.id;
+
               return (
                 <Message key={message.id} from={message.role}>
                   <MessageContent>
@@ -993,6 +1117,11 @@ export function ChatSidebar({
                           partIndex={partIndex}
                           isLastTextPart={isLastTextPart}
                           showActions={showActions}
+                          isUserMessage={isUser}
+                          messageId={message.id}
+                          isEditing={editingMessageId === message.id}
+                          onCancelEdit={() => setEditingMessageId(null)}
+                          onSubmitEdit={handleEditMessage}
                           onRegenerate={handleRegenerate}
                           onApprove={(approvalId) =>
                             addToolApprovalResponse({
@@ -1010,6 +1139,31 @@ export function ChatSidebar({
                       );
                     })}
                   </MessageContent>
+                  {canEdit && (
+                    <MessageActions className="ml-auto">
+                      <MessageAction
+                        onClick={() => setEditingMessageId(message.id)}
+                        label="Edit"
+                      >
+                        <PencilIcon className="size-3" />
+                      </MessageAction>
+                      <MessageAction
+                        onClick={() => {
+                          const text = message.parts
+                            ?.filter(
+                              (p): p is { type: "text"; text: string } =>
+                                p.type === "text",
+                            )
+                            .map((p) => p.text)
+                            .join("\n");
+                          if (text) navigator.clipboard.writeText(text);
+                        }}
+                        label="Copy"
+                      >
+                        <CopyIcon className="size-3" />
+                      </MessageAction>
+                    </MessageActions>
+                  )}
                 </Message>
               );
             })}
