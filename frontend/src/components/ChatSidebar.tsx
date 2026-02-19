@@ -694,7 +694,7 @@ export function ChatSidebar({
   const fetchConversations = useConversationsStore(
     (state) => state.fetchConversations,
   );
-  const { llm } = useSettingsStore();
+  const { llm, smallModel } = useSettingsStore();
   const [inputValue, setInputValue] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [activeTab, setActiveTab] = useState("chat");
@@ -831,7 +831,14 @@ export function ChatSidebar({
     async (retryMessageText?: string) => {
       setIsCompacting(true);
       try {
-        const result = await compactConversation(id);
+        const result = await compactConversation(
+          id,
+          buildLlmConfig({
+            model: smallModel || llm.model,
+            apiKey: llm.apiKey,
+            baseUrl: llm.baseUrl,
+          }),
+        );
         clearDocuments();
         if (retryMessageText) {
           pendingRetryRef.current = retryMessageText;
@@ -846,7 +853,7 @@ export function ChatSidebar({
         setIsCompacting(false);
       }
     },
-    [id, clearDocuments, navigate],
+    [id, llm, smallModel, clearDocuments, navigate],
   );
 
   // Auto-compact when context window is exceeded
@@ -902,21 +909,23 @@ export function ChatSidebar({
                 <HistoryIcon className="h-4 w-4" />
                 <AlertTitle>Continued conversation</AlertTitle>
                 <AlertDescription>
-                  This conversation was compacted from a{" "}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      clearDocuments();
-                      navigate({
-                        to: "/chat/$id",
-                        params: { id: compactedFrom },
-                      });
-                    }}
-                    className="underline hover:text-primary"
-                  >
-                    previous chat
-                  </button>
-                  .
+                  <p>
+                    This conversation was compacted from a{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearDocuments();
+                        navigate({
+                          to: "/chat/$id",
+                          params: { id: compactedFrom },
+                        });
+                      }}
+                      className="underline hover:text-primary"
+                    >
+                      previous chat
+                    </button>
+                    .
+                  </p>
                 </AlertDescription>
               </Alert>
             )}

@@ -15,7 +15,6 @@ from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Query, Upl
 from fastapi.middleware.cors import CORSMiddleware
 from nanoid import generate
 from pydantic import BaseModel, Field
-from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
     ModelMessage,
     TextPart,
@@ -81,6 +80,7 @@ from .types import (
     ChatRequestConfig,
     ChunkedDocument,
     CollectionUploadResponse,
+    CompactConversationRequest,
     CompactConversationResponse,
     ConversationListResponse,
     ConversationSummary,
@@ -301,8 +301,7 @@ async def generate_title(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    messages = ModelMessagesTypeAdapter.validate_python(conversation.messages)
-    messages_text = _extract_message_texts(messages)
+    messages_text = _extract_message_texts(conversation.messages)
     if not messages_text:
         return GenerateTitleResponse(title=conversation.title or "Untitled")
 
@@ -359,15 +358,16 @@ async def delete_conversation_endpoint(
 @api_router.post("/conversation/{conversation_id}/compact")
 async def compact_conversation_endpoint(
     conversation_id: str,
+    request: CompactConversationRequest,
     user: Annotated[User, Depends(get_current_user)],
 ) -> CompactConversationResponse:
     """Compact a conversation by summarizing it into a new conversation.
 
     Creates a new conversation with a summary of the original, linking back
-    to the original via ``compacted_from``. Uses the server's small model
-    for summarization.
+    to the original via ``compacted_from``. Uses the small model for
+    summarization.
     """
-    llm_config = resolve_llm_config(LlmConfig(), default_model=settings.llm.small_model)
+    llm_config = resolve_llm_config(request.llm, default_model=settings.llm.small_model)
 
     try:
         result = await compact_conversation(user.id, conversation_id, llm_config)

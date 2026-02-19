@@ -5,7 +5,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic_ai import ModelMessage, ModelMessagesTypeAdapter
 
 
 @dataclass(slots=True, frozen=True)
@@ -259,13 +260,23 @@ class ConversationData(BaseModel):
     document_references: list[DocumentReference] = Field(
         default_factory=list, description="Documents accessed during the conversation"
     )
-    messages: list[dict[str, Any]] = Field(
+    messages: list[ModelMessage] = Field(
         default_factory=list, description="Conversation messages"
     )
     compacted_from: str | None = Field(
         default=None,
         description="ID of the conversation this was compacted from",
     )
+
+    @field_validator("messages", mode="before")
+    @classmethod
+    def _validate_messages(cls, v: Any) -> list[ModelMessage]:
+        return ModelMessagesTypeAdapter.validate_python(v)
+
+    @field_serializer("messages")
+    @classmethod
+    def _serialize_messages(cls, v: list[ModelMessage]) -> Any:
+        return ModelMessagesTypeAdapter.dump_python(v, mode="json")
 
 
 class ConversationSummary(BaseModel):
@@ -289,6 +300,12 @@ class ConversationListResponse(BaseModel):
         description="List of conversation summaries"
     )
     total_count: int = Field(description="Total number of conversations")
+
+
+class CompactConversationRequest(BaseModel):
+    """Request to compact a conversation."""
+
+    llm: LlmConfig = Field(default_factory=LlmConfig)
 
 
 class CompactConversationResponse(BaseModel):

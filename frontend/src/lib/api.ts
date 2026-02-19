@@ -358,10 +358,15 @@ export async function generateConversationTitle(
 
 export async function compactConversation(
   conversationId: string,
+  llm: LlmConfig,
 ): Promise<CompactConversationResponse> {
   const res = await authFetch(
     `${API_BASE_URL}/api/conversation/${conversationId}/compact`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ llm }),
+    },
   );
 
   if (!res.ok) {

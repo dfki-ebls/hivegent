@@ -4,16 +4,15 @@ Summarizes long conversations and creates new conversations with the summary
 as initial context, linking back to the original.
 """
 
-import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from nanoid import generate
-from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelResponse,
     TextPart,
     UserPromptPart,
 )
@@ -80,12 +79,14 @@ async def compact_conversation(
     if not conversation or not conversation.messages:
         raise ValueError(f"Conversation {conversation_id} not found or empty")
 
-    messages = ModelMessagesTypeAdapter.validate_json(json.dumps(conversation.messages))
-
-    summary = await _summarize_conversation(messages, llm_config)
+    summary = await _summarize_conversation(conversation.messages, llm_config)
 
     new_id = generate()
     now = datetime.now(timezone.utc)
+
+    summary_messages: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart(content=summary)]),
+    ]
 
     original_title = conversation.title or "Untitled"
     new_conversation = ConversationData(
@@ -94,7 +95,7 @@ async def compact_conversation(
         created_at=now,
         updated_at=now,
         document_references=conversation.document_references,
-        messages=[],
+        messages=summary_messages,
         compacted_from=conversation_id,
     )
 
@@ -131,15 +132,13 @@ async def _summarize_conversation(
     """
     conversation_text = _format_messages_for_summary(messages)
 
-    model = llm_config.model or settings.llm.small_model or settings.llm.model
-
     result = await base_agent.run(
         f"Conversation to summarize:\n\n{conversation_text}",
         model=OpenAIResponsesModel(
-            model,
+            llm_config.model,
             provider=OpenAIProvider(
-                api_key=llm_config.api_key or settings.llm.api_key,
-                base_url=llm_config.base_url or settings.llm.base_url or None,
+                api_key=llm_config.api_key,
+                base_url=llm_config.base_url,
             ),
         ),
         instructions=COMPACTION_INSTRUCTIONS,

@@ -1,13 +1,10 @@
 """Message persistence utilities."""
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Any
 
-from pydantic_ai import ModelMessagesTypeAdapter
-from pydantic_ai.messages import ModelMessage
-from pydantic_core import to_json
+from pydantic_ai.messages import ModelMessage, ToolCallPart, UserPromptPart
 
 from .config import settings
 from .types import ConversationData, ConversationSummary, DocumentReference
@@ -67,7 +64,7 @@ def load_messages(user_id: str, conversation_id: str) -> list[ModelMessage]:
     conversation = load_conversation(user_id, conversation_id)
     if not conversation:
         return []
-    return ModelMessagesTypeAdapter.validate_json(json.dumps(conversation.messages))
+    return list(conversation.messages)
 
 
 def save_messages(
@@ -85,62 +82,62 @@ def save_messages(
     now = datetime.now(timezone.utc)
 
     existing = load_conversation(user_id, conversation_id)
-    messages_data = json.loads(to_json(messages))
+    msgs = list(messages)
 
     if existing:
         conversation = ConversationData(
             id=conversation_id,
-            title=existing.title or _extract_title(messages_data),
+            title=existing.title or _extract_title(msgs),
             created_at=existing.created_at,
             updated_at=now,
-            document_references=_extract_document_refs(messages_data),
-            messages=messages_data,
+            document_references=_extract_document_refs(msgs),
+            messages=msgs,
             compacted_from=existing.compacted_from,
         )
     else:
         conversation = ConversationData(
             id=conversation_id,
-            title=_extract_title(messages_data),
+            title=_extract_title(msgs),
             created_at=now,
             updated_at=now,
-            document_references=_extract_document_refs(messages_data),
-            messages=messages_data,
+            document_references=_extract_document_refs(msgs),
+            messages=msgs,
         )
 
     path.write_bytes(conversation.model_dump_json(indent=2).encode())
 
 
-def _extract_title(messages: Sequence[Mapping[str, Any]]) -> str:
+def _extract_title(messages: Sequence[ModelMessage]) -> str:
     """Extract title from first user message content."""
     for msg in messages:
-        for part in msg.get("parts", []):
-            content = part.get("content")
-            if isinstance(content, str) and content.strip():
-                first_line = content.strip().split("\n")[0]
-                return (
-                    first_line[:100]
-                    if len(first_line) <= 100
-                    else first_line[:97] + "..."
-                )
+        for part in msg.parts:
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str):
+                text = part.content.strip()
+                if text:
+                    first_line = text.split("\n")[0]
+                    return (
+                        first_line[:100]
+                        if len(first_line) <= 100
+                        else first_line[:97] + "..."
+                    )
     return ""
 
 
 def _extract_document_refs(
-    messages: Sequence[Mapping[str, Any]],
+    messages: Sequence[ModelMessage],
 ) -> list[DocumentReference]:
     """Extract document references from tool calls."""
     refs: dict[str, list[str]] = {}
 
     for msg in messages:
-        for part in msg.get("parts", []):
-            tool_name = part.get("tool_name")
-            args = part.get("args", {})
-            if not tool_name or not isinstance(args, dict):
+        for part in msg.parts:
+            if not isinstance(part, ToolCallPart):
                 continue
-
-            filename = args.get("filename")
-            if filename:
-                refs.setdefault(filename, []).append(tool_name)
+            args = part.args
+            if isinstance(args, dict):
+                filename = args.get("filename")
+                if filename:
+                    refs.setdefault(filename, []).append(part.tool_name)
 
     return [
         DocumentReference(filename=fn, sources=list(set(sources)))
