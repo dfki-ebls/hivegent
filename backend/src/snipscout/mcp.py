@@ -4,7 +4,7 @@ import logging
 from typing import Literal
 
 from fastmcp import Context, FastMCP
-from fastmcp.dependencies import CurrentAccessToken, Depends
+from fastmcp.dependencies import CurrentAccessToken, Depends  # pyright: ignore[reportAttributeAccessIssue]
 from fastmcp.server.auth import AccessToken, OIDCProxy
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -249,6 +249,7 @@ async def edit_document(
             f"Allow edit to '{filename}'?\n\n"
             f"Replace:\n{old_string!r}\n\nWith:\n{new_string!r}"
         ),
+        response_type=None,
     )
     if response.action != "accept":
         return "Edit denied by user."
@@ -283,6 +284,7 @@ async def write_document(
     action = "Create/overwrite" if mode == "replace" else mode.capitalize()
     response = await ctx.elicit(
         message=f"Allow {action} '{filename}' ({len(content)} chars)?",
+        response_type=None,
     )
     if response.action != "accept":
         return "Write denied by user."
