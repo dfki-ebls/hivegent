@@ -72,6 +72,8 @@ class DocumentFilter:
 
 __all__ = [
     "ChatRequestConfig",
+    "ChunkedDocument",
+    "ChunkInfo",
     "ChunkSummary",
     "CollectionUploadResponse",
     "CompactConversationResponse",
@@ -148,6 +150,26 @@ class GrepMatch(BaseModel):
     filename: str = Field(description="The filename containing the match")
     line: int = Field(description="Line number of the match (1-indexed)")
     content: str | None = Field(default=None, description="The matching line content")
+
+
+class ChunkInfo(BaseModel):
+    """A single chunk within a chunked document."""
+
+    text: str = Field(description="The chunk text content")
+    token_count: int = Field(description="Number of tokens in the chunk")
+    start_index: int = Field(description="Start character index in original document")
+    end_index: int = Field(description="End character index in original document")
+    index: int = Field(description="Chunk index within the document")
+
+
+class ChunkedDocument(BaseModel):
+    """A document that has been chunked, with metadata."""
+
+    chunking_pipeline: str = Field(description="The chunking pipeline used")
+    chunk_size: int = Field(description="The target chunk size in tokens")
+    created_at: datetime = Field(description="When the chunks were created")
+    chunk_count: int = Field(description="Total number of chunks")
+    chunks: list[ChunkInfo] = Field(description="The document chunks")
 
 
 class ChunkSummary(BaseModel):

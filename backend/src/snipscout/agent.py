@@ -262,21 +262,6 @@ async def explore_documents(ctx: RunContext[UserDeps], task: str) -> str:
 write_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
-def _rechunk(user_id: str, filename: str) -> None:
-    """Re-chunk a document and sync the search index after a write."""
-    from .chunks import chunk_document
-    from .retrieval import sync_index
-
-    docs_dir = settings.get_user_documents_dir(user_id)
-    file_path = docs_dir / filename
-    try:
-        text_content = file_path.read_text(encoding="utf-8")
-        chunk_document(user_id, filename, text_content)
-        sync_index(user_id)
-    except Exception:
-        logger.warning("Re-chunking failed for %s after write", filename)
-
-
 @write_toolset.tool(requires_approval=True)
 def edit_document(
     ctx: RunContext[UserDeps],
@@ -294,15 +279,11 @@ def edit_document(
         old_string: The exact text to replace. Must appear exactly once.
         new_string: The replacement text.
     """
-    result = tools.EditDocumentTool(
+    return tools.EditDocumentTool(
         path=settings.get_user_documents_dir(ctx.deps.user_id),
+        user_id=ctx.deps.user_id,
         document_filter=ctx.deps.document_filter,
     )(filename, old_string, new_string)
-
-    if not result.startswith("Error:"):
-        _rechunk(ctx.deps.user_id, filename)
-
-    return result
 
 
 @write_toolset.tool(requires_approval=True)
@@ -320,12 +301,8 @@ def write_document(
         mode: ``"replace"`` overwrites (creates if absent), ``"append"``
             adds to the end, ``"prepend"`` adds to the start.
     """
-    result = tools.WriteDocumentTool(
+    return tools.WriteDocumentTool(
         path=settings.get_user_documents_dir(ctx.deps.user_id),
+        user_id=ctx.deps.user_id,
         document_filter=ctx.deps.document_filter,
     )(filename, content, mode)
-
-    if not result.startswith("Error:"):
-        _rechunk(ctx.deps.user_id, filename)
-
-    return result

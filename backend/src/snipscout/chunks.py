@@ -5,10 +5,10 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pydantic import BaseModel, Field
-
 from .chunkers import ChunkingPipeline, get_chunker
 from .config import settings
+from .retrieval import sync_index
+from .types import ChunkedDocument, ChunkInfo
 
 __all__ = [
     "ChunkInfo",
@@ -18,29 +18,10 @@ __all__ = [
     "get_chunks",
     "list_chunked_documents",
     "load_chunked_document",
+    "rechunk_document",
 ]
 
 logger = logging.getLogger(__name__)
-
-
-class ChunkInfo(BaseModel):
-    """A single chunk within a chunked document."""
-
-    text: str = Field(description="The chunk text content")
-    token_count: int = Field(description="Number of tokens in the chunk")
-    start_index: int = Field(description="Start character index in original document")
-    end_index: int = Field(description="End character index in original document")
-    index: int = Field(description="Chunk index within the document")
-
-
-class ChunkedDocument(BaseModel):
-    """A document that has been chunked, with metadata."""
-
-    chunking_pipeline: str = Field(description="The chunking pipeline used")
-    chunk_size: int = Field(description="The target chunk size in tokens")
-    created_at: datetime = Field(description="When the chunks were created")
-    chunk_count: int = Field(description="Total number of chunks")
-    chunks: list[ChunkInfo] = Field(description="The document chunks")
 
 
 def _get_chunk_path(user_id: str, filepath: str) -> Path:
@@ -199,3 +180,23 @@ def list_chunked_documents(user_id: str) -> dict[str, int]:
             continue
 
     return result
+
+
+def rechunk_document(user_id: str, filename: str) -> None:
+    """Re-chunk a document and sync the search index.
+
+    Reads the file from the user's documents directory, re-chunks it,
+    and rebuilds the LanceDB index.
+
+    Args:
+        user_id: The user ID.
+        filename: The relative document path.
+    """
+    docs_dir = settings.get_user_documents_dir(user_id)
+    file_path = docs_dir / filename
+    try:
+        text_content = file_path.read_text(encoding="utf-8")
+        chunk_document(user_id, filename, text_content)
+        sync_index(user_id)
+    except Exception:
+        logger.warning("Re-chunking failed for %s after write", filename)

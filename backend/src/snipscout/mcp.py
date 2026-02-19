@@ -54,21 +54,6 @@ def _get_mcp_user_id(
     return sub
 
 
-def _rechunk(user_id: str, filename: str) -> None:
-    """Re-chunk a document and sync the search index after a write."""
-    from .chunks import chunk_document
-    from .retrieval import sync_index
-
-    docs_dir = settings.get_user_documents_dir(user_id)
-    file_path = docs_dir / filename
-    try:
-        text_content = file_path.read_text(encoding="utf-8")
-        chunk_document(user_id, filename, text_content)
-        sync_index(user_id)
-    except Exception:
-        logger.warning("Re-chunking failed for %s after write", filename)
-
-
 @mcp_app.tool()
 def list_documents(
     subdir: str | None = None,
@@ -254,13 +239,10 @@ async def edit_document(
     if response.action != "accept":
         return "Edit denied by user."
 
-    docs_dir = settings.get_user_documents_dir(user_id)
-    result = tools.EditDocumentTool(path=docs_dir)(filename, old_string, new_string)
-
-    if not result.startswith("Error:"):
-        _rechunk(user_id, filename)
-
-    return result
+    return tools.EditDocumentTool(
+        path=settings.get_user_documents_dir(user_id),
+        user_id=user_id,
+    )(filename, old_string, new_string)
 
 
 @mcp_app.tool()
@@ -289,10 +271,7 @@ async def write_document(
     if response.action != "accept":
         return "Write denied by user."
 
-    docs_dir = settings.get_user_documents_dir(user_id)
-    result = tools.WriteDocumentTool(path=docs_dir)(filename, content, mode)
-
-    if not result.startswith("Error:"):
-        _rechunk(user_id, filename)
-
-    return result
+    return tools.WriteDocumentTool(
+        path=settings.get_user_documents_dir(user_id),
+        user_id=user_id,
+    )(filename, content, mode)

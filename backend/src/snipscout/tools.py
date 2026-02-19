@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ripgrepy import Ripgrepy
 
-from .chunks import load_chunked_document
+from .chunks import load_chunked_document, rechunk_document
 from .config import DOCUMENT_EXTENSION
 from .types import (
     ChunkSummary,
@@ -360,6 +360,7 @@ class EditDocumentTool:
     """Edit a document by replacing an exact string with a new string."""
 
     path: Path
+    user_id: str
     document_filter: DocumentFilter | None = None
 
     def __call__(
@@ -371,7 +372,8 @@ class EditDocumentTool:
         """Replace an exact string in a document.
 
         Fails if the string does not exist or appears more than once,
-        ensuring unambiguous edits.
+        ensuring unambiguous edits.  On success the document is
+        automatically re-chunked and the search index is synced.
 
         Args:
             filename: The relative document path.
@@ -398,6 +400,7 @@ class EditDocumentTool:
 
         new_content = content.replace(old_string, new_string, 1)
         file_path.write_text(new_content, encoding="utf-8")
+        rechunk_document(self.user_id, filename)
         return f"Replaced 1 occurrence in '{filename}'."
 
 
@@ -406,6 +409,7 @@ class WriteDocumentTool:
     """Write content to a document using prepend, append, or replace mode."""
 
     path: Path
+    user_id: str
     document_filter: DocumentFilter | None = None
 
     def __call__(
@@ -415,6 +419,9 @@ class WriteDocumentTool:
         mode: Literal["prepend", "append", "replace"] = "replace",
     ) -> str:
         """Write content to a document.
+
+        On success the document is automatically re-chunked and the
+        search index is synced.
 
         Args:
             filename: The relative document path.
@@ -434,15 +441,17 @@ class WriteDocumentTool:
         if mode == "replace":
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
-            return f"Wrote {len(content)} characters to '{filename}'."
-
-        if not file_path.is_file():
+            message = f"Wrote {len(content)} characters to '{filename}'."
+        elif not file_path.is_file():
             return f"Error: '{filename}' does not exist (use mode='replace' to create)."
-
-        existing = file_path.read_text(encoding="utf-8")
-        if mode == "append":
+        elif mode == "append":
+            existing = file_path.read_text(encoding="utf-8")
             file_path.write_text(existing + content, encoding="utf-8")
-            return f"Appended {len(content)} characters to '{filename}'."
+            message = f"Appended {len(content)} characters to '{filename}'."
+        else:
+            existing = file_path.read_text(encoding="utf-8")
+            file_path.write_text(content + existing, encoding="utf-8")
+            message = f"Prepended {len(content)} characters to '{filename}'."
 
-        file_path.write_text(content + existing, encoding="utf-8")
-        return f"Prepended {len(content)} characters to '{filename}'."
+        rechunk_document(self.user_id, filename)
+        return message

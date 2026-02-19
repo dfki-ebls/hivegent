@@ -5,7 +5,8 @@ import logging
 import shutil
 import tempfile
 import zipfile
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
@@ -37,6 +38,7 @@ from .agent import (
     write_toolset,
 )
 from .compaction import compact_conversation
+from .consistency import check_and_fix_all_users
 from .auth import User, get_current_user
 from .chunkers import (
     ChunkingPipeline,
@@ -44,7 +46,6 @@ from .chunkers import (
     get_chunking_pipelines_info,
 )
 from .chunks import (
-    ChunkedDocument,
     chunk_document,
     delete_chunks,
     get_chunks,
@@ -78,6 +79,7 @@ from .retrieval import sync_index
 from .tokens import token_store
 from .types import (
     ChatRequestConfig,
+    ChunkedDocument,
     CollectionUploadResponse,
     CompactConversationResponse,
     ConversationListResponse,
@@ -130,7 +132,16 @@ class ReconvertRequest(BaseModel):
 
 mcp_http_app = mcp_app.http_app(path="/")
 
-app = FastAPI(lifespan=mcp_http_app.lifespan)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Run startup consistency check, then delegate to MCP lifespan."""
+    check_and_fix_all_users()
+    async with mcp_http_app.lifespan(app):
+        yield
+
+
+app = FastAPI(lifespan=lifespan)
 configure_observability(app)
 
 app.add_middleware(

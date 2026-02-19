@@ -12,7 +12,7 @@ from typing import Any, Literal
 import cbrkit
 
 from .config import settings
-from .types import DocumentFilter
+from .types import ChunkedDocument, DocumentFilter
 
 __all__ = [
     "parse_chunk_key",
@@ -216,8 +216,6 @@ def _load_all_chunks(user_id: str) -> dict[str, str]:
     Returns:
         Dict mapping chunk keys to chunk text.
     """
-    from .chunks import ChunkedDocument
-
     chunks_dir = settings.get_user_chunks_dir(user_id)
     if not chunks_dir.exists():
         return {}
