@@ -8,6 +8,7 @@ import {
   FolderOpen,
   FolderPlus,
   MessageSquarePlus,
+  Paperclip,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -286,6 +287,7 @@ function UploadArea({
             onClick={onSelectFiles}
             disabled={isLoading}
           >
+            <Paperclip className="h-4 w-4 mr-1" />
             Select Files
           </Button>
           <Button
