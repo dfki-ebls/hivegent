@@ -1,7 +1,6 @@
 """Configuration settings for the snipscout application."""
 
 import re
-from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
@@ -9,61 +8,20 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = [
-    "BINARY_EXTENSIONS",
+    "DOCUMENT_EXTENSION",
     "EmbeddingSettings",
-    "FileExtension",
     "LlmSettings",
     "LogfireSettings",
     "McpSettings",
     "Settings",
-    "TEXT_EXTENSIONS",
     "sanitize_document_path",
     "sanitize_user_id",
     "settings",
 ]
 
 
-class FileExtension(StrEnum):
-    """Allowed file extensions for document uploads."""
-
-    # Text formats (stored as-is in documents/)
-    TXT = ".txt"
-    MD = ".md"
-    HTML = ".html"
-    XML = ".xml"
-    CSV = ".csv"
-    ADOC = ".adoc"
-
-    # Binary formats (stored in originals/, converted to markdown)
-    DOCX = ".docx"
-    XLSX = ".xlsx"
-    PPTX = ".pptx"
-    PDF = ".pdf"
-    PNG = ".png"
-    JPG = ".jpg"
-    JPEG = ".jpeg"
-
-
-# Text-based extensions that can be stored directly without conversion
-TEXT_EXTENSIONS = frozenset({
-    FileExtension.TXT,
-    FileExtension.MD,
-    FileExtension.HTML,
-    FileExtension.XML,
-    FileExtension.CSV,
-    FileExtension.ADOC,
-})
-
-# Binary extensions that require conversion to markdown
-BINARY_EXTENSIONS = frozenset({
-    FileExtension.DOCX,
-    FileExtension.XLSX,
-    FileExtension.PPTX,
-    FileExtension.PDF,
-    FileExtension.PNG,
-    FileExtension.JPG,
-    FileExtension.JPEG,
-})
+# All documents are converted and stored as markdown.
+DOCUMENT_EXTENSION = ".md"
 
 
 def sanitize_user_id(user_id: str) -> str:

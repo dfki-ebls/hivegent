@@ -10,7 +10,7 @@ from collections.abc import Callable, Set
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from .config import BINARY_EXTENSIONS, TEXT_EXTENSIONS
+from .config import DOCUMENT_EXTENSION
 
 __all__ = [
     "PreprocessedMarkdown",
@@ -20,9 +20,6 @@ __all__ = [
 _EMBED_RE = re.compile(r"!\[\[(.+?)\]\]")
 _WIKILINK_RE = re.compile(r"(?<!!)\[\[(.+?)\]\]")
 _MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
-
-_ALL_EXTENSIONS = frozenset(ext.value for ext in TEXT_EXTENSIONS | BINARY_EXTENSIONS)
-_BINARY_EXT_VALUES = frozenset(ext.value for ext in BINARY_EXTENSIONS)
 
 
 @dataclass(slots=True, frozen=True)
@@ -55,10 +52,10 @@ def _resolve_target(
         if candidate in collection_files:
             return candidate
 
-    for ext in (".md", *sorted(_ALL_EXTENSIONS)):
-        for base in (target, str(source_dir / target)):
-            if base + ext in collection_files:
-                return base + ext
+    # Try appending .md — the most common implicit extension in wikilinks
+    for base in (target, str(source_dir / target)):
+        if base + ".md" in collection_files:
+            return base + ".md"
 
     target_name = PurePosixPath(target).name
     for f in collection_files:
@@ -93,7 +90,7 @@ def _rewrite_link(
     if resolved is None:
         return f"[{alias}]"
 
-    if PurePosixPath(resolved).suffix.lower() in _BINARY_EXT_VALUES:
+    if PurePosixPath(resolved).suffix.lower() != DOCUMENT_EXTENSION:
         binary_attachments.add(resolved)
         resolved = str(PurePosixPath(resolved).with_suffix(".md"))
 
@@ -150,7 +147,7 @@ def preprocess_markdown(
         if path.startswith(("http://", "https://", "data:")):
             return m.group(0)
         resolved = _resolve_target(path, source_dir, collection_files)
-        if resolved and PurePosixPath(resolved).suffix.lower() in _BINARY_EXT_VALUES:
+        if resolved and PurePosixPath(resolved).suffix.lower() != DOCUMENT_EXTENSION:
             binaries.add(resolved)
             md_path = str(PurePosixPath(resolved).with_suffix(".md"))
             return f"[{alt or PurePosixPath(resolved).stem}]({_relative_link(md_path, source_dir)})"

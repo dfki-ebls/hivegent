@@ -30,12 +30,6 @@ class DocumentConverter(ABC):
         """The unique name of this converter."""
         ...
 
-    @property
-    @abstractmethod
-    def supported_extensions(self) -> frozenset[str]:
-        """File extensions supported by this converter (including the dot)."""
-        ...
-
     @abstractmethod
     async def convert(self, file_path: Path) -> str:
         """Convert a document to markdown.

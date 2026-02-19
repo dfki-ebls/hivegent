@@ -9,15 +9,6 @@ from .base import DocumentConverter
 
 __all__ = ["MinerUConverter"]
 
-_SUPPORTED_EXTENSIONS = frozenset({
-    ".pdf",
-    ".docx",
-    ".pptx",
-    ".png",
-    ".jpg",
-    ".jpeg",
-})
-
 
 class MinerUConverter(DocumentConverter):
     """Document converter using the MinerU library.
@@ -31,11 +22,6 @@ class MinerUConverter(DocumentConverter):
     def name(self) -> str:
         """The unique name of this converter."""
         return "mineru"
-
-    @property
-    def supported_extensions(self) -> frozenset[str]:
-        """File extensions supported by this converter."""
-        return _SUPPORTED_EXTENSIONS
 
     def __init__(self) -> None:
         """Initialize the converter with lazy loading."""

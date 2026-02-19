@@ -45,11 +45,6 @@ class LLMConverter(DocumentConverter):
         """The unique name of this converter."""
         return "llm"
 
-    @property
-    def supported_extensions(self) -> frozenset[str]:
-        """File extensions supported by this converter."""
-        return frozenset(MEDIA_TYPES.keys())
-
     async def convert(
         self,
         file_path: Path,

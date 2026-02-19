@@ -22,11 +22,6 @@ class MarkerConverter(DocumentConverter):
         """The unique name of this converter."""
         return "marker"
 
-    @property
-    def supported_extensions(self) -> frozenset[str]:
-        """File extensions supported by this converter."""
-        return frozenset({".pdf"})
-
     def __init__(self) -> None:
         """Initialize the converter with lazy loading."""
         self._converter: Any = None

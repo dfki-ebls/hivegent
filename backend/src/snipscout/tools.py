@@ -9,7 +9,7 @@ from pathlib import Path
 from ripgrepy import Ripgrepy
 
 from .chunks import load_chunked_document
-from .config import TEXT_EXTENSIONS
+from .config import DOCUMENT_EXTENSION
 from .types import (
     ChunkSummary,
     DocumentFilter,
@@ -85,11 +85,10 @@ class ListDocumentsTool:
         if not self.path.exists():
             return []
         results: list[DocumentSummary] = []
-        for ext in TEXT_EXTENSIONS:
-            for f in sorted(self.path.rglob(f"*{ext}")):
-                if f.is_file():
-                    rel = str(f.relative_to(self.path).as_posix())
-                    results.append(DocumentSummary(filename=rel, size=f.stat().st_size))
+        for f in sorted(self.path.rglob(f"*{DOCUMENT_EXTENSION}")):
+            if f.is_file():
+                rel = str(f.relative_to(self.path).as_posix())
+                results.append(DocumentSummary(filename=rel, size=f.stat().st_size))
         if subdir is not None or max_depth is not None:
             results = [
                 r
@@ -182,12 +181,11 @@ class GlobDocumentsTool:
         if not self.path.exists():
             return []
         results: list[str] = []
-        for ext in TEXT_EXTENSIONS:
-            for f in sorted(self.path.rglob(f"*{ext}")):
-                if f.is_file():
-                    rel = str(f.relative_to(self.path).as_posix())
-                    if fnmatch(rel, pattern):
-                        results.append(rel)
+        for f in sorted(self.path.rglob(f"*{DOCUMENT_EXTENSION}")):
+            if f.is_file():
+                rel = str(f.relative_to(self.path).as_posix())
+                if fnmatch(rel, pattern):
+                    results.append(rel)
         if self.document_filter:
             results = [r for r in results if self.document_filter.is_included(r)]
         return results

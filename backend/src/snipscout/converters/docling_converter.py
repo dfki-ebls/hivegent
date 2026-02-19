@@ -8,16 +8,6 @@ from .base import DocumentConverter
 
 __all__ = ["DoclingConverter"]
 
-_SUPPORTED_EXTENSIONS = frozenset({
-    ".pdf",
-    ".docx",
-    ".pptx",
-    ".xlsx",
-    ".png",
-    ".jpg",
-    ".jpeg",
-})
-
 
 class DoclingConverter(DocumentConverter):
     """Document converter using the Docling library.
@@ -31,11 +21,6 @@ class DoclingConverter(DocumentConverter):
     def name(self) -> str:
         """The unique name of this converter."""
         return "docling"
-
-    @property
-    def supported_extensions(self) -> frozenset[str]:
-        """File extensions supported by this converter."""
-        return _SUPPORTED_EXTENSIONS
 
     def __init__(self) -> None:
         """Initialize the converter with lazy loading."""

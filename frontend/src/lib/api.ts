@@ -16,7 +16,6 @@ import {
   DirectoryTreeResponseSchema,
   DocumentListResponseSchema,
   DocumentReferenceSchema,
-  FileExtension,
   GenerateTitleResponseSchema,
   MoveDocumentResponseSchema,
   TokenInfoSchema,
@@ -100,21 +99,10 @@ function encodeFilePath(filepath: string): string {
   return filepath.split('/').map(encodeURIComponent).join('/');
 }
 
-/** Binary extensions that require conversion. */
-const BINARY_EXTENSIONS = new Set([
-  FileExtension.DOCX,
-  FileExtension.XLSX,
-  FileExtension.PPTX,
-  FileExtension.PDF,
-  FileExtension.PNG,
-  FileExtension.JPG,
-  FileExtension.JPEG,
-]);
-
-/** Check if a file extension requires conversion. */
+/** Check if a file requires conversion (anything that is not already markdown). */
 export function requiresConversion(filename: string): boolean {
-  const ext = ('.' + filename.split('.').pop()?.toLowerCase()) as FileExtension;
-  return BINARY_EXTENSIONS.has(ext);
+  const ext = '.' + (filename.split('.').pop()?.toLowerCase() ?? '');
+  return ext !== '.md';
 }
 
 /** Fetch server-side LLM settings. */

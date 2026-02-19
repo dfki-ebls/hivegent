@@ -13,32 +13,14 @@ import { z } from 'zod';
 // Enums
 // ============================================================
 
-export enum FileExtension {
-  // Text formats (stored as-is)
-  TXT = '.txt',
-  MD = '.md',
-  HTML = '.html',
-  XML = '.xml',
-  CSV = '.csv',
-  ADOC = '.adoc',
-
-  // Binary formats (require conversion)
-  DOCX = '.docx',
-  XLSX = '.xlsx',
-  PPTX = '.pptx',
-  PDF = '.pdf',
-  PNG = '.png',
-  JPG = '.jpg',
-  JPEG = '.jpeg',
-}
-
-/** Available conversion pipelines for binary documents. */
+/** Available conversion pipelines for document conversion. */
 export enum ConversionPipeline {
   AUTO = 'auto',
   LLM = 'llm',
   MARKER = 'marker',
   DOCLING = 'docling',
   MINERU = 'mineru',
+  PANDOC = 'pandoc',
 }
 
 /** Available chunking pipelines. */
@@ -50,7 +32,6 @@ export enum ChunkingPipeline {
 }
 
 // Zod v4: z.enum() accepts TS enums directly (replaces deprecated nativeEnum)
-export const FileExtensionSchema = z.enum(FileExtension);
 export const ConversionPipelineSchema = z.enum(ConversionPipeline);
 export const ChunkingPipelineSchema = z.enum(ChunkingPipeline);
 

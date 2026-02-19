@@ -44,9 +44,7 @@ from .chunks import (
     list_chunked_documents,
 )
 from .config import (
-    BINARY_EXTENSIONS,
-    TEXT_EXTENSIONS,
-    FileExtension,
+    DOCUMENT_EXTENSION,
     sanitize_document_path,
     settings,
 )
@@ -452,24 +450,9 @@ async def chat(
     )
 
 
-def _get_allowed_extensions() -> set[str]:
-    """Get the set of allowed file extensions."""
-    return {ext.value for ext in FileExtension}
-
-
-def _get_text_extensions() -> set[str]:
-    """Get the set of text-based file extensions (for indexing)."""
-    return {ext.value for ext in TEXT_EXTENSIONS}
-
-
-def _get_binary_extensions() -> set[str]:
-    """Get the set of binary file extensions (require conversion)."""
-    return {ext.value for ext in BINARY_EXTENSIONS}
-
-
-def _is_text_file(suffix: str) -> bool:
-    """Check if a file extension is a text-based format."""
-    return suffix.lower() in _get_text_extensions()
+def _is_markdown(suffix: str) -> bool:
+    """Check if a file extension is markdown (stored directly without conversion)."""
+    return suffix.lower() == DOCUMENT_EXTENSION
 
 
 # --- Document endpoints ---
@@ -498,9 +481,8 @@ async def list_documents(
                 original_stems.add(str((rel.parent / rel.stem).as_posix()))
 
     if data_dir.exists():
-        text_extensions = _get_text_extensions()
-        for file_path in sorted(data_dir.rglob("*")):
-            if file_path.is_file() and file_path.suffix.lower() in text_extensions:
+        for file_path in sorted(data_dir.rglob(f"*{DOCUMENT_EXTENSION}")):
+            if file_path.is_file():
                 rel_path = str(file_path.relative_to(data_dir).as_posix())
                 rel = file_path.relative_to(data_dir)
                 doc_stem = str((rel.parent / rel.stem).as_posix())
@@ -552,8 +534,8 @@ async def _upload_file_internal(
 
     documents_dir = settings.get_user_documents_dir(user_id)
 
-    # Handle text files directly
-    if _is_text_file(suffix):
+    # Markdown files are stored directly without conversion
+    if _is_markdown(suffix):
         file_path = documents_dir / filepath
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(content)
@@ -583,23 +565,15 @@ async def _upload_file_internal(
     original_path.parent.mkdir(parents=True, exist_ok=True)
     original_path.write_bytes(content)
 
-    # Resolve AUTO to a concrete pipeline
-    resolved_conversion = conversion_pipeline
-    if conversion_pipeline == ConversionPipeline.AUTO:
-        resolved_conversion = resolve_auto_pipeline(basename)
-
-    # Get the converter and check extension support
+    # Get the converter (resolves AUTO and validates extension support)
     try:
-        converter = get_converter(resolved_conversion)
+        converter = get_converter(conversion_pipeline, filename=basename)
     except (ImportError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    if suffix not in converter.supported_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Conversion pipeline '{resolved_conversion.value}' does not support {suffix}. "
-            f"Supported: {', '.join(sorted(converter.supported_extensions))}",
-        )
+    resolved_conversion = conversion_pipeline
+    if conversion_pipeline == ConversionPipeline.AUTO:
+        resolved_conversion = resolve_auto_pipeline(basename)
 
     # Convert the document
     try:
@@ -687,16 +661,6 @@ async def upload_document(
     safe = _safe_path(filepath)
     llm = LlmConfig.model_validate_json(llm_config)
     resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
-
-    basename = safe.rsplit("/", 1)[-1] if "/" in safe else safe
-    allowed_extensions = _get_allowed_extensions()
-    suffix = "." + basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
-
-    if suffix not in allowed_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid file extension. Allowed: {', '.join(sorted(allowed_extensions))}",
-        )
 
     content = await file.read()
     if len(content) > settings.max_file_size_bytes:
@@ -812,26 +776,25 @@ async def upload_collection(
             all_binaries.update(result.binary_attachments)
 
         # Convert binary attachments
-        allowed = _get_allowed_extensions()
         for path in sorted(all_binaries):
             source = extract_root / path
-            if PurePosixPath(path).suffix.lower() not in allowed or not source.exists():
+            if not source.exists():
                 failed.append(path)
                 continue
             if await _try_upload(path, source.read_bytes()):
                 converted_count += 1
 
-        # Upload text files (preprocessed markdown or raw)
-        text_exts = _get_text_extensions()
+        # Upload remaining files (preprocessed markdown directly, everything else via conversion)
         for rel_path in sorted(collection_files):
             if rel_path in all_binaries:
                 continue
             suffix = PurePosixPath(rel_path).suffix.lower()
-            if suffix == ".md" and rel_path in preprocessed:
+            if suffix == DOCUMENT_EXTENSION and rel_path in preprocessed:
                 if await _try_upload(rel_path, preprocessed[rel_path].encode("utf-8")):
                     markdown_count += 1
-            elif suffix in text_exts:
-                await _try_upload(rel_path, (extract_root / rel_path).read_bytes())
+            else:
+                if await _try_upload(rel_path, (extract_root / rel_path).read_bytes()):
+                    converted_count += 1
 
     total = markdown_count + converted_count
     return CollectionUploadResponse(
@@ -867,10 +830,6 @@ async def get_document_content(
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
-    text_extensions = _get_text_extensions()
-    if file_path.suffix.lower() not in text_extensions:
-        raise HTTPException(status_code=400, detail="Invalid file type")
-
     return PlainTextResponse(file_path.read_text(encoding="utf-8"))
 
 
@@ -893,10 +852,6 @@ async def delete_document(
 
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
-
-    text_extensions = _get_text_extensions()
-    if file_path.suffix.lower() not in text_extensions:
-        raise HTTPException(status_code=400, detail="Invalid file type")
 
     file_path.unlink()
     _cleanup_empty_parents(file_path, data_dir)
@@ -1036,24 +991,17 @@ async def reconvert_document(
             detail=f"No original file found for '{safe}'",
         )
 
-    # Resolve AUTO conversion pipeline
-    resolved_conversion = request.conversion_pipeline
-    if request.conversion_pipeline == ConversionPipeline.AUTO:
-        resolved_conversion = resolve_auto_pipeline(original_path.name)
-
-    # Get the converter
+    # Get the converter (resolves AUTO and validates extension support)
     try:
-        converter = get_converter(resolved_conversion)
+        converter = get_converter(
+            request.conversion_pipeline, filename=original_path.name
+        )
     except (ImportError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    suffix = original_path.suffix.lower()
-    if suffix not in converter.supported_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Conversion pipeline '{resolved_conversion.value}' does not support {suffix}. "
-            f"Supported: {', '.join(sorted(converter.supported_extensions))}",
-        )
+    resolved_conversion = request.conversion_pipeline
+    if request.conversion_pipeline == ConversionPipeline.AUTO:
+        resolved_conversion = resolve_auto_pipeline(original_path.name)
 
     # Convert the document
     try:
@@ -1204,7 +1152,6 @@ def _build_directory_tree(
     root_path: Path,
     chunk_counts: dict[str, int],
     original_stems: set[str],
-    text_extensions: set[str],
 ) -> DirectoryEntry:
     """Recursively build a directory tree.
 
@@ -1213,7 +1160,6 @@ def _build_directory_tree(
         root_path: The documents root directory for computing relative paths.
         chunk_counts: Mapping of relative document paths to chunk counts.
         original_stems: Set of relative stems that have originals.
-        text_extensions: Set of text file extensions.
 
     Returns:
         A DirectoryEntry representing this directory and its children.
@@ -1229,10 +1175,10 @@ def _build_directory_tree(
             if item.is_dir():
                 children.append(
                     _build_directory_tree(
-                        item, root_path, chunk_counts, original_stems, text_extensions
+                        item, root_path, chunk_counts, original_stems
                     )
                 )
-            elif item.is_file() and item.suffix.lower() in text_extensions:
+            elif item.is_file() and item.suffix.lower() == DOCUMENT_EXTENSION:
                 file_rel = str(item.relative_to(root_path).as_posix())
                 item_rel = item.relative_to(root_path)
                 doc_stem = str((item_rel.parent / item_rel.stem).as_posix())
@@ -1267,7 +1213,6 @@ async def get_directory_tree(
     documents_dir = settings.get_user_documents_dir(user.id)
     originals_dir = settings.get_user_originals_dir(user.id)
     chunk_counts = list_chunked_documents(user.id)
-    text_extensions = _get_text_extensions()
 
     # Build set of relative stems that have originals
     original_stems: set[str] = set()
@@ -1278,7 +1223,7 @@ async def get_directory_tree(
                 original_stems.add(str((rel.parent / rel.stem).as_posix()))
 
     root = _build_directory_tree(
-        documents_dir, documents_dir, chunk_counts, original_stems, text_extensions
+        documents_dir, documents_dir, chunk_counts, original_stems
     )
 
     # Count totals
@@ -1350,10 +1295,9 @@ async def delete_directory(
     if not dir_path.exists() or not dir_path.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
 
-    # Count files before deletion
-    text_extensions = _get_text_extensions()
+    # Count documents before deletion
     files_deleted = sum(
-        1 for f in dir_path.rglob("*") if f.is_file() and f.suffix.lower() in text_extensions
+        1 for f in dir_path.rglob(f"*{DOCUMENT_EXTENSION}") if f.is_file()
     )
 
     # Delete the directory and all contents

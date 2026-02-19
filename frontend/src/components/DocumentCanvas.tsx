@@ -6,7 +6,6 @@ import { AlertCircle, Archive, EyeOff, FileText, FolderOpen, FolderPlus, Message
 
 import { buildLlmConfig, getDocumentContent, requiresConversion, uploadDocument } from '../lib/api';
 import type { ChunkingPipeline, ConversionPipeline, DocumentInfo, StoredDocument } from '../lib/types';
-import { FileExtension } from '../lib/types';
 import { useFetchedDocumentsStore } from '../stores/fetched-documents-store';
 import { useManagedDocumentsStore } from '../stores/managed-documents-store';
 import { useSettingsStore } from '../stores/settings-store';
@@ -27,8 +26,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 
 // --- Utility functions ---
 
-const ALLOWED_EXTENSIONS = Object.values(FileExtension);
-
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -46,11 +43,6 @@ function formatRelativeDate(dateString: string): string {
   if (diffDays < 7) return `${diffDays} days ago`;
   if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
   return date.toLocaleDateString();
-}
-
-function isValidFile(filename: string): boolean {
-  const ext = '.' + filename.split('.').pop()?.toLowerCase();
-  return ALLOWED_EXTENSIONS.includes(ext as FileExtension);
 }
 
 // --- Shared components ---
@@ -227,13 +219,12 @@ function UploadArea({
         <div className="text-center">
           <p className="font-medium">Drop files here to upload</p>
           <p className="text-sm text-muted-foreground">
-            or click to browse ({ALLOWED_EXTENSIONS.join(', ')})
+            or click to browse
           </p>
         </div>
         <input
           ref={fileInputRef}
           type="file"
-          accept={ALLOWED_EXTENSIONS.join(',')}
           multiple
           className="hidden"
           onChange={onFileInputChange}
@@ -552,20 +543,18 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const handleFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     for (const file of Array.from(files)) {
-      if (isValidFile(file.name)) {
-        const options = requiresConversion(file.name)
-          ? {
-              conversionPipeline,
-              chunkingPipeline,
-              llm: buildLlmConfig({
-                model: visionModel,
-                apiKey: llmSettings.apiKey,
-                baseUrl: llmSettings.baseUrl,
-              }),
-            }
-          : { chunkingPipeline };
-        await upload(file, options);
-      }
+      const options = requiresConversion(file.name)
+        ? {
+            conversionPipeline,
+            chunkingPipeline,
+            llm: buildLlmConfig({
+              model: visionModel,
+              apiKey: llmSettings.apiKey,
+              baseUrl: llmSettings.baseUrl,
+            }),
+          }
+        : { chunkingPipeline };
+      await upload(file, options);
     }
   }, [upload, conversionPipeline, chunkingPipeline, visionModel, llmSettings]);
 
@@ -699,7 +688,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
           <EmptyState
             icon={<FileText className="h-12 w-12 opacity-50" />}
             title="No documents yet"
-            description="Upload .txt or .md files to get started"
+            description="Upload documents to get started"
           />
         );
       }
@@ -711,7 +700,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         <EmptyState
           icon={<FileText className="h-12 w-12 opacity-50" />}
           title="No documents yet"
-          description="Upload .txt or .md files to get started"
+          description="Upload documents to get started"
         />
       );
     }
