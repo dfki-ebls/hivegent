@@ -24,6 +24,8 @@ import {
   type DocumentTab,
   DocumentTabSchema,
   ExpandedDirsSchema,
+  type Personality,
+  PersonalitySchema,
   type UserOverrides,
   UserOverridesSchema,
 } from "../lib/types";
@@ -47,6 +49,8 @@ const UI_DEFAULTS = {
   conversionPipeline: ConversionPipeline.AUTO,
   chunkingPipeline: ChunkingPipeline.AUTO,
   expandedDirs: [""] as string[],
+  personality: "default" as Personality,
+  customSystemMessage: "",
 };
 
 interface SettingsState {
@@ -61,6 +65,8 @@ interface SettingsState {
   conversionPipeline: ConversionPipeline;
   chunkingPipeline: ChunkingPipeline;
   expandedDirs: string[];
+  personality: Personality;
+  customSystemMessage: string;
 
   // Computed effective values (backend default + user override)
   llm: LLMSettings;
@@ -81,6 +87,8 @@ interface SettingsState {
   setChunkingPipeline: (pipeline: ChunkingPipeline) => void;
   toggleExpandedDir: (path: string) => void;
   setExpandedDirs: (dirs: string[]) => void;
+  setPersonality: (personality: Personality) => void;
+  setCustomSystemMessage: (message: string) => void;
 }
 
 /** Recompute effective values from backend defaults and user overrides. */
@@ -110,6 +118,8 @@ interface PersistedSettings {
   conversionPipeline: ConversionPipeline;
   chunkingPipeline: ChunkingPipeline;
   expandedDirs: string[];
+  personality: Personality;
+  customSystemMessage: string;
 }
 
 /**
@@ -244,6 +254,11 @@ export const useSettingsStore = create<SettingsState>()(
         }),
 
       setExpandedDirs: (dirs) => set({ expandedDirs: dirs }),
+
+      setPersonality: (personality) => set({ personality }),
+
+      setCustomSystemMessage: (customSystemMessage) =>
+        set({ customSystemMessage }),
     }),
     {
       name: "snipscout-settings",
@@ -254,6 +269,8 @@ export const useSettingsStore = create<SettingsState>()(
         conversionPipeline: state.conversionPipeline,
         chunkingPipeline: state.chunkingPipeline,
         expandedDirs: state.expandedDirs,
+        personality: state.personality,
+        customSystemMessage: state.customSystemMessage,
       }),
       merge: (persisted, current) => {
         const data = persisted as Record<string, unknown> | undefined;
@@ -277,6 +294,13 @@ export const useSettingsStore = create<SettingsState>()(
           expandedDirs:
             ExpandedDirsSchema.safeParse(data.expandedDirs).data ??
             UI_DEFAULTS.expandedDirs,
+          personality:
+            PersonalitySchema.safeParse(data.personality).data ??
+            UI_DEFAULTS.personality,
+          customSystemMessage:
+            typeof data.customSystemMessage === "string"
+              ? data.customSystemMessage
+              : UI_DEFAULTS.customSystemMessage,
           ...computeEffective(current.backendDefaults, overrides),
         };
       },

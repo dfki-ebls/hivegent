@@ -1,5 +1,6 @@
 import { RotateCcwIcon, SettingsIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
+import { PERSONALITY_OPTIONS, type Personality } from "../lib/types";
 import { useSettingsStore } from "../stores/settings-store";
 import { clearAllStorage } from "../stores/storage";
 import { Button } from "./ui/button";
@@ -13,6 +14,14 @@ import {
   DialogTrigger,
 } from "./ui/dialog";
 import { Input } from "./ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import { Textarea } from "./ui/textarea";
 
 // --- Section components ---
 
@@ -50,9 +59,13 @@ export function SettingsDialog() {
     smallModel,
     visionModel,
     hasServerApiKey,
+    personality,
+    customSystemMessage,
     setLLM,
     setSmallModel,
     setVisionModel,
+    setPersonality,
+    setCustomSystemMessage,
     reset,
   } = useSettingsStore();
 
@@ -68,10 +81,10 @@ export function SettingsDialog() {
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>LLM Settings</DialogTitle>
+          <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Configure your LLM provider settings. These settings are stored
-            locally in your browser.
+            Configure your LLM provider and assistant settings. These settings
+            are stored locally in your browser.
           </DialogDescription>
         </DialogHeader>
 
@@ -151,6 +164,45 @@ export function SettingsDialog() {
                 onChange={(e) => setVisionModel(e.target.value)}
               />
             </SettingsSection>
+          </div>
+
+          <div className="pt-2 border-t grid gap-4">
+            <SettingsSection
+              label="Personality"
+              description="Choose how the assistant responds."
+            >
+              <Select
+                value={personality}
+                onValueChange={(v) => setPersonality(v as Personality)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PERSONALITY_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingsSection>
+
+            {personality === "custom" && (
+              <SettingsSection
+                label="Custom System Message"
+                htmlFor="custom-system-message"
+                description="Provide your own system instructions for the assistant."
+              >
+                <Textarea
+                  id="custom-system-message"
+                  placeholder="You are a helpful assistant that..."
+                  value={customSystemMessage}
+                  onChange={(e) => setCustomSystemMessage(e.target.value)}
+                  className="min-h-[100px] resize-y"
+                />
+              </SettingsSection>
+            )}
           </div>
         </div>
 

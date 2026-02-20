@@ -7,6 +7,7 @@ import {
 } from "ai";
 import {
   AlertCircle,
+  BrainIcon,
   CopyIcon,
   EyeOff,
   FileText,
@@ -17,7 +18,6 @@ import {
   Paperclip,
   PencilIcon,
   RefreshCcwIcon,
-  SparklesIcon,
   SquarePen,
   X,
 } from "lucide-react";
@@ -36,8 +36,8 @@ import {
 import {
   type DocumentRange,
   type GrepMatch,
-  PERSONALITY_OPTIONS,
-  type Personality,
+  REASONING_EFFORT_OPTIONS,
+  type ReasoningEffort,
   type RetrievedChunk,
 } from "../lib/types";
 import { useConversationsStore } from "../stores/conversations-store";
@@ -796,11 +796,13 @@ export function ChatSidebar({
   const fetchConversations = useConversationsStore(
     (state) => state.fetchConversations,
   );
-  const { llm, smallModel } = useSettingsStore();
+  const { llm, smallModel, personality, customSystemMessage } =
+    useSettingsStore();
   const [inputValue, setInputValue] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [activeTab, setActiveTab] = useState("chat");
-  const [personality, setPersonality] = useState<Personality>("default");
+  const [reasoningEffort, setReasoningEffort] =
+    useState<ReasoningEffort>("auto");
   const [compactedFrom, setCompactedFrom] = useState<string | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -895,6 +897,9 @@ export function ChatSidebar({
           body: {
             conversation_id: id,
             personality,
+            system_message:
+              personality === "custom" ? customSystemMessage : undefined,
+            reasoning_effort: reasoningEffort,
             llm: buildLlmConfig(llm),
             included_documents: includedDocuments,
             excluded_documents: excludedDocuments,
@@ -907,6 +912,8 @@ export function ChatSidebar({
     [
       id,
       personality,
+      customSystemMessage,
+      reasoningEffort,
       llm,
       includedDocuments,
       excludedDocuments,
@@ -926,6 +933,9 @@ export function ChatSidebar({
           body: {
             conversation_id: id,
             personality,
+            system_message:
+              personality === "custom" ? customSystemMessage : undefined,
+            reasoning_effort: reasoningEffort,
             llm: buildLlmConfig(llm),
             included_documents: includedDocuments,
             excluded_documents: excludedDocuments,
@@ -933,7 +943,16 @@ export function ChatSidebar({
         },
       );
     },
-    [id, personality, llm, includedDocuments, excludedDocuments, sendMessage],
+    [
+      id,
+      personality,
+      customSystemMessage,
+      reasoningEffort,
+      llm,
+      includedDocuments,
+      excludedDocuments,
+      sendMessage,
+    ],
   );
 
   // Re-send the pending message after navigating to a compacted conversation
@@ -951,12 +970,24 @@ export function ChatSidebar({
       body: {
         conversation_id: id,
         personality,
+        system_message:
+          personality === "custom" ? customSystemMessage : undefined,
+        reasoning_effort: reasoningEffort,
         llm: buildLlmConfig(llm),
         included_documents: includedDocuments,
         excluded_documents: excludedDocuments,
       },
     });
-  }, [id, personality, llm, includedDocuments, excludedDocuments, regenerate]);
+  }, [
+    id,
+    personality,
+    customSystemMessage,
+    reasoningEffort,
+    llm,
+    includedDocuments,
+    excludedDocuments,
+    regenerate,
+  ]);
 
   const handleCompact = useCallback(
     async (retryMessageText?: string) => {
@@ -1022,14 +1053,27 @@ export function ChatSidebar({
             History
           </TabsTrigger>
         </TabsList>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={handleNewChat}
-          title="New chat"
-        >
-          <SquarePen className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {messages.length > 0 && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => handleCompact()}
+              disabled={status !== "ready" || isCompacting}
+              title="Compact conversation"
+            >
+              <Minimize2 className="h-4 w-4" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleNewChat}
+            title="New chat"
+          >
+            <SquarePen className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
@@ -1254,55 +1298,28 @@ export function ChatSidebar({
             <PromptInputFooter>
               <PromptInputTools>
                 <FileSelectButton />
+                <PromptInputSelect
+                  value={reasoningEffort}
+                  onValueChange={(v) =>
+                    setReasoningEffort(v as ReasoningEffort)
+                  }
+                >
+                  <PromptInputSelectTrigger className="h-8 w-auto min-w-20">
+                    <BrainIcon className="h-4 w-4" />
+                    <PromptInputSelectValue placeholder="Effort" />
+                  </PromptInputSelectTrigger>
+                  <PromptInputSelectContent>
+                    {REASONING_EFFORT_OPTIONS.map((option) => (
+                      <PromptInputSelectItem
+                        key={option.value}
+                        value={option.value}
+                      >
+                        {option.label}
+                      </PromptInputSelectItem>
+                    ))}
+                  </PromptInputSelectContent>
+                </PromptInputSelect>
                 <SettingsDialog />
-                <div className="flex flex-col items-center gap-1">
-                  <div className="flex items-center gap-1">
-                    <SparklesIcon className="h-3 w-3 text-muted-foreground" />
-                    <span className="text-xs text-muted-foreground">
-                      Personality
-                    </span>
-                  </div>
-                  <PromptInputSelect
-                    value={personality}
-                    onValueChange={(value) =>
-                      setPersonality(value as Personality)
-                    }
-                  >
-                    <PromptInputSelectTrigger className="h-8 w-auto min-w-24">
-                      <PromptInputSelectValue placeholder="Personality" />
-                    </PromptInputSelectTrigger>
-                    <PromptInputSelectContent>
-                      {PERSONALITY_OPTIONS.map((option) => (
-                        <PromptInputSelectItem
-                          key={option.value}
-                          value={option.value}
-                        >
-                          {option.label}
-                        </PromptInputSelectItem>
-                      ))}
-                    </PromptInputSelectContent>
-                  </PromptInputSelect>
-                </div>
-                {messages.length > 0 && (
-                  <div className="flex flex-col items-center gap-1">
-                    <div className="flex items-center gap-1">
-                      <Minimize2 className="h-3 w-3 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">
-                        Compact
-                      </span>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8"
-                      onClick={() => handleCompact()}
-                      disabled={status !== "ready" || isCompacting}
-                      title="Summarize and continue in a new chat"
-                    >
-                      {isCompacting ? "Compacting..." : "Compact"}
-                    </Button>
-                  </div>
-                )}
               </PromptInputTools>
               <PromptInputSubmit status={status} onStop={stop} />
             </PromptInputFooter>

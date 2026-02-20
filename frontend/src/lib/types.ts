@@ -359,7 +359,15 @@ export interface CreateTokenRequest {
 // ============================================================
 
 /** Available assistant personalities. */
-export type Personality = "default" | "concise" | "detailed";
+export type Personality = "default" | "concise" | "detailed" | "custom";
+
+/** Zod schema for personality (used in store rehydration). */
+export const PersonalitySchema = z.enum([
+  "default",
+  "concise",
+  "detailed",
+  "custom",
+]);
 
 /** Personality option for display in UI. */
 export interface PersonalityOption {
@@ -385,4 +393,27 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
     label: "Detailed",
     description: "Thorough explanations with comprehensive context",
   },
+  {
+    value: "custom",
+    label: "Custom",
+    description: "Use a custom system message",
+  },
+];
+
+/** Reasoning effort level for the LLM. */
+export type ReasoningEffort = "auto" | "none" | "low" | "medium" | "high";
+
+/** Reasoning effort option for display in UI. */
+export interface ReasoningEffortOption {
+  value: ReasoningEffort;
+  label: string;
+}
+
+/** Available reasoning effort options. */
+export const REASONING_EFFORT_OPTIONS: ReasoningEffortOption[] = [
+  { value: "auto", label: "Auto" },
+  { value: "none", label: "None" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
 ];

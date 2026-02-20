@@ -24,6 +24,7 @@ class Personality(StrEnum):
     DEFAULT = "default"
     CONCISE = "concise"
     DETAILED = "detailed"
+    CUSTOM = "custom"
 
 
 class LlmConfig(BaseModel):
@@ -119,6 +120,13 @@ class ChatRequestConfig(BaseModel):
 
     conversation_id: str = Field(default="", description="The conversation ID")
     personality: Personality = Field(default=Personality.DEFAULT)
+    system_message: str = Field(
+        default="", description="Custom system message (used when personality is 'custom')"
+    )
+    reasoning_effort: Literal["auto", "none", "low", "medium", "high"] = Field(
+        default="auto",
+        description="Reasoning effort level ('auto' means unset/provider default)",
+    )
     llm: LlmConfig = Field(default_factory=LlmConfig)
     included_documents: list[str] = Field(default_factory=list)
     excluded_documents: list[str] = Field(default_factory=list)

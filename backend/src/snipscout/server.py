@@ -20,7 +20,7 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -413,12 +413,19 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     except ValueError:
         personality = Personality.DEFAULT
 
+    system_message: str = body.get("system_message") or ""
+
+    raw_effort = body.get("reasoning_effort", "auto")
+    reasoning_effort = raw_effort if raw_effort in ("auto", "none", "low", "medium", "high") else "auto"
+
     included_documents: list[str] = body.get("included_documents") or []
     excluded_documents: list[str] = body.get("excluded_documents") or []
 
     return ChatRequestConfig(
         conversation_id=body.get("conversation_id", ""),
         personality=personality,
+        system_message=system_message,
+        reasoning_effort=reasoning_effort,
         llm=llm,
         included_documents=included_documents,
         excluded_documents=excluded_documents,
@@ -448,6 +455,20 @@ async def chat(
             excluded=frozenset(config.excluded_documents),
         )
 
+    if config.personality == Personality.CUSTOM and config.system_message:
+        instructions = config.system_message + CITATION_INSTRUCTIONS
+    else:
+        instructions = (
+            PERSONALITY_TEMPLATES.get(config.personality, PERSONALITY_TEMPLATES[Personality.DEFAULT])
+            + CITATION_INSTRUCTIONS
+        )
+
+    model_settings: OpenAIResponsesModelSettings | None = None
+    if config.reasoning_effort != "auto":
+        model_settings = OpenAIResponsesModelSettings(
+            openai_reasoning_effort=config.reasoning_effort,
+        )
+
     def on_complete(result: AgentRunResult[str]) -> None:
         """Save messages after the agent run completes."""
         save_messages(user.id, config.conversation_id, result.all_messages())
@@ -465,7 +486,8 @@ async def chat(
             ),
         ),
         toolsets=[rag_toolset, explore_toolset, write_toolset],
-        instructions=PERSONALITY_TEMPLATES[config.personality] + CITATION_INSTRUCTIONS,
+        instructions=instructions,
+        model_settings=model_settings,
         on_complete=on_complete,
     )
 
