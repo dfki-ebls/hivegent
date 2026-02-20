@@ -10,13 +10,13 @@ import {
 } from "@/components/ui/hover-card";
 import type { FetchedChunk } from "@/lib/types";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
-import { ChunkContextDialog } from "./ChunkContextDialog";
+import { DocumentDialog } from "./DocumentDialog";
 
 /**
  * Inline citation rendered by Streamdown for `<cite>` tags.
  *
  * Displays the cited text followed by a filename badge.
- * Hover shows a preview card, click opens the ChunkContextDialog.
+ * Hover shows a preview card, click opens the DocumentDialog.
  *
  * Accepts `Record<string, unknown>` because Streamdown's `Components` type
  * maps `cite` (a known HTML element) to its intrinsic props, while the actual
@@ -112,9 +112,10 @@ export function Citation(props: Record<string, unknown>) {
           </div>
         </HoverCardContent>
       </HoverCard>
-      <ChunkContextDialog
+      <DocumentDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
+        filename={filename}
         chunk={matchedChunk}
         fallbackFilename={filename}
       />

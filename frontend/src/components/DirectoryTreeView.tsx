@@ -31,7 +31,6 @@ interface DirectoryTreeViewProps {
   onEditFile: (path: string) => void;
   onInclude: (path: string) => void;
   onExclude: (path: string) => void;
-  onViewChunks: (path: string) => void;
   onReconvert: (path: string) => void;
   onRemoveFile: (path: string) => void;
   onMoveFile: (path: string) => void;
@@ -47,7 +46,6 @@ function FileRow({
   onEdit,
   onInclude,
   onExclude,
-  onViewChunks,
   onReconvert,
   onRemove,
   onMove,
@@ -58,7 +56,6 @@ function FileRow({
   onEdit: () => void;
   onInclude: () => void;
   onExclude: () => void;
-  onViewChunks: () => void;
   onReconvert: () => void;
   onRemove: () => void;
   onMove: () => void;
@@ -83,14 +80,7 @@ function FileRow({
         </span>
       )}
       {entry.chunk_count != null && (
-        <Badge
-          variant="outline"
-          className="shrink-0 text-xs gap-1 cursor-pointer hover:bg-muted"
-          onClick={(e) => {
-            e.stopPropagation();
-            onViewChunks();
-          }}
-        >
+        <Badge variant="outline" className="shrink-0 text-xs gap-1">
           <Scissors className="h-3 w-3" />
           {entry.chunk_count}
         </Badge>
@@ -288,7 +278,6 @@ export function DirectoryTreeView({
   onEditFile,
   onInclude,
   onExclude,
-  onViewChunks,
   onReconvert,
   onRemoveFile,
   onMoveFile,
@@ -320,7 +309,6 @@ export function DirectoryTreeView({
           onEdit={() => onEditFile(child.path)}
           onInclude={() => onInclude(child.path)}
           onExclude={() => onExclude(child.path)}
-          onViewChunks={() => onViewChunks(child.path)}
           onReconvert={() => onReconvert(child.path)}
           onRemove={() => onRemoveFile(child.path)}
           onMove={() => onMoveFile(child.path)}

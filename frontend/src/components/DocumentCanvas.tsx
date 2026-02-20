@@ -23,7 +23,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   buildLlmConfig,
-  getDocumentContent,
   requiresConversion,
   uploadDocument,
 } from "../lib/api";
@@ -39,9 +38,7 @@ import {
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
 import { useManagedDocumentsStore } from "../stores/managed-documents-store";
 import { useSettingsStore } from "../stores/settings-store";
-import { ChunkContextDialog } from "./ChunkContextDialog";
 import { ChunkingPipelineSelector } from "./ChunkingPipelineSelector";
-import { ChunkViewerDialog } from "./ChunkViewerDialog";
 import {
   Collapsible,
   CollapsibleContent,
@@ -50,7 +47,7 @@ import {
 import { ConversionPipelineSelector } from "./ConversionPipelineSelector";
 import { CreateDirectoryDialog } from "./CreateDirectoryDialog";
 import { DirectoryTreeView } from "./DirectoryTreeView";
-import { DocumentPreviewDialog } from "./DocumentPreviewDialog";
+import { DocumentDialog } from "./DocumentDialog";
 import { MoveDocumentDialog } from "./MoveDocumentDialog";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Badge } from "./ui/badge";
@@ -292,9 +289,10 @@ function FetchedDocuments() {
         </div>
       </ScrollArea>
 
-      <ChunkContextDialog
+      <DocumentDialog
         open={dialogOpen}
         onOpenChange={(v) => !v && closeDialog()}
+        filename={selectedChunk?.filename ?? dialogFilename ?? ""}
         chunk={selectedChunk}
         fallbackFilename={dialogFilename}
         initialFullDoc={initialFullDoc}
@@ -503,7 +501,6 @@ interface DocumentListItemProps {
   onEdit: () => void;
   onIncludeDocument: () => void;
   onExcludeDocument: () => void;
-  onViewChunks: () => void;
   onReconvert: () => void;
   onRemove: () => void;
 }
@@ -514,7 +511,6 @@ function DocumentListItem({
   onEdit,
   onIncludeDocument,
   onExcludeDocument,
-  onViewChunks,
   onReconvert,
   onRemove,
 }: DocumentListItemProps) {
@@ -534,14 +530,7 @@ function DocumentListItem({
         <div className="flex items-center gap-2">
           <p className="truncate font-medium text-sm">{doc.filename}</p>
           {doc.chunk_count != null && (
-            <Badge
-              variant="outline"
-              className="shrink-0 text-xs gap-1 cursor-pointer hover:bg-muted"
-              onClick={(e) => {
-                e.stopPropagation();
-                onViewChunks();
-              }}
-            >
+            <Badge variant="outline" className="shrink-0 text-xs gap-1">
               <Scissors className="h-3 w-3" />
               {doc.chunk_count}
             </Badge>
@@ -606,11 +595,14 @@ function DocumentListItem({
   );
 }
 
-interface EditorState {
+interface DialogState {
   filename: string;
-  content: string | null;
+  /** Show metadata badges and chunk sidebar from API. */
+  showMetadata: boolean;
+  /** Enable editing. */
+  editable: boolean;
+  /** New document mode. */
   isNew: boolean;
-  isLoading: boolean;
 }
 
 interface ManageDocumentsProps {
@@ -655,10 +647,7 @@ function ManageDocuments({
   const directoryInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [editor, setEditor] = useState<EditorState | null>(null);
-  const [chunkViewerFilename, setChunkViewerFilename] = useState<string | null>(
-    null,
-  );
+  const [dialogState, setDialogState] = useState<DialogState | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [moveFilePath, setMoveFilePath] = useState<string | null>(null);
   const [createDirParent, setCreateDirParent] = useState<string | undefined>(
@@ -681,39 +670,23 @@ function ManageDocuments({
     fetchDirectoryTree();
   }, [fetchDocuments, fetchDirectoryTree]);
 
-  // --- Editor handlers ---
+  // --- Dialog handlers ---
 
-  const handleEdit = useCallback(async (filepath: string) => {
-    setEditor({
+  const handleEdit = useCallback((filepath: string) => {
+    setDialogState({
       filename: filepath,
-      content: null,
+      showMetadata: true,
+      editable: true,
       isNew: false,
-      isLoading: true,
     });
-    try {
-      const content = await getDocumentContent(filepath);
-      setEditor({
-        filename: filepath,
-        content,
-        isNew: false,
-        isLoading: false,
-      });
-    } catch {
-      setEditor({
-        filename: filepath,
-        content: "Failed to load document content",
-        isNew: false,
-        isLoading: false,
-      });
-    }
   }, []);
 
   const handleNew = useCallback(() => {
-    setEditor({
+    setDialogState({
       filename: "new-document.md",
-      content: "",
+      showMetadata: false,
+      editable: true,
       isNew: true,
-      isLoading: false,
     });
   }, []);
 
@@ -916,7 +889,6 @@ function ManageDocuments({
             onEdit={() => handleEdit(doc.filename)}
             onIncludeDocument={() => handleInclude(doc.filename)}
             onExcludeDocument={() => handleExclude(doc.filename)}
-            onViewChunks={() => setChunkViewerFilename(doc.filename)}
             onReconvert={() => handleReconvert(doc.filename)}
             onRemove={() => remove(doc.filename)}
           />
@@ -959,7 +931,6 @@ function ManageDocuments({
         onEditFile={handleEdit}
         onInclude={handleInclude}
         onExclude={handleExclude}
-        onViewChunks={(path) => setChunkViewerFilename(path)}
         onReconvert={handleReconvert}
         onRemoveFile={(path) => remove(path)}
         onMoveFile={(path) => setMoveFilePath(path)}
@@ -1024,25 +995,21 @@ function ManageDocuments({
         </ScrollArea>
       </div>
 
-      <DocumentPreviewDialog
-        open={editor !== null}
-        onOpenChange={(open) => !open && setEditor(null)}
-        filename={editor?.filename ?? ""}
-        content={editor?.content ?? null}
-        isLoading={editor?.isLoading ?? false}
-        editable
+      <DocumentDialog
+        open={dialogState !== null}
+        onOpenChange={(open) => !open && setDialogState(null)}
+        filename={dialogState?.filename ?? ""}
+        showMetadata={dialogState?.showMetadata}
+        editable={dialogState?.editable}
+        isNew={dialogState?.isNew}
         onSave={handleSave}
-      />
-
-      <ChunkViewerDialog
-        open={chunkViewerFilename !== null}
-        onOpenChange={(open) => !open && setChunkViewerFilename(null)}
-        filename={chunkViewerFilename ?? ""}
-        onRechunk={async () => {
-          if (chunkViewerFilename) {
-            await storeRechunk(chunkViewerFilename, chunkingPipeline);
-          }
-        }}
+        onRechunk={
+          dialogState && !dialogState.isNew
+            ? async () => {
+                await storeRechunk(dialogState.filename, chunkingPipeline);
+              }
+            : undefined
+        }
       />
 
       <MoveDocumentDialog
