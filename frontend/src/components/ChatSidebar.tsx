@@ -1127,16 +1127,6 @@ export function ChatSidebar({
                 </AlertDescription>
               </Alert>
             )}
-            {error && !isContextLengthError(error) && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Error</AlertTitle>
-                <AlertDescription>
-                  {error.message ||
-                    "An error occurred while processing your request."}
-                </AlertDescription>
-              </Alert>
-            )}
             {isCompacting && (
               <Alert>
                 <Minimize2 className="h-4 w-4" />
@@ -1235,6 +1225,16 @@ export function ChatSidebar({
               );
             })}
             {status === "submitted" && <Loader />}
+            {error && !isContextLengthError(error) && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>
+                  {error.message ||
+                    "An error occurred while processing your request."}
+                </AlertDescription>
+              </Alert>
+            )}
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
