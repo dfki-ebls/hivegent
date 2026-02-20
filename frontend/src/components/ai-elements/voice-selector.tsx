@@ -1,5 +1,7 @@
 "use client";
 
+import type { ComponentProps, ReactNode } from "react";
+
 import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,7 +18,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
@@ -33,8 +34,7 @@ import {
   VenusAndMarsIcon,
   VenusIcon,
 } from "lucide-react";
-import type { ComponentProps, ReactNode } from "react";
-import { createContext, useContext, useMemo } from "react";
+import { createContext, useCallback, useContext, useMemo } from "react";
 
 interface VoiceSelectorContextValue {
   value: string | undefined;
@@ -74,19 +74,19 @@ export const VoiceSelector = ({
   ...props
 }: VoiceSelectorProps) => {
   const [value, setValue] = useControllableState({
-    prop: valueProp,
     defaultProp: defaultValue,
     onChange: onValueChange,
+    prop: valueProp,
   });
 
   const [open, setOpen] = useControllableState({
-    prop: openProp,
     defaultProp: defaultOpen,
     onChange: onOpenChange,
+    prop: openProp,
   });
 
   const voiceSelectorContext = useMemo(
-    () => ({ value, setValue, open, setOpen }),
+    () => ({ open, setOpen, setValue, value }),
     [value, setValue, open, setOpen]
   );
 
@@ -115,9 +115,12 @@ export const VoiceSelectorContent = ({
   title = "Voice Selector",
   ...props
 }: VoiceSelectorContentProps) => (
-  <DialogContent className={cn("p-0", className)} {...props}>
+  <DialogContent
+    aria-describedby={undefined}
+    className={cn("p-0", className)}
+    {...props}
+  >
     <DialogTitle className="sr-only">{title}</DialogTitle>
-    <DialogDescription className="sr-only">Choose a voice</DialogDescription>
     <Command className="**:data-[slot=command-input-wrapper]:h-auto">
       {children}
     </Command>
@@ -199,26 +202,33 @@ export const VoiceSelectorGender = ({
   let icon: ReactNode | null = null;
 
   switch (value) {
-    case "male":
+    case "male": {
       icon = <MarsIcon className="size-4" />;
       break;
-    case "female":
+    }
+    case "female": {
       icon = <VenusIcon className="size-4" />;
       break;
-    case "transgender":
+    }
+    case "transgender": {
       icon = <TransgenderIcon className="size-4" />;
       break;
-    case "androgyne":
+    }
+    case "androgyne": {
       icon = <MarsStrokeIcon className="size-4" />;
       break;
-    case "non-binary":
+    }
+    case "non-binary": {
       icon = <NonBinaryIcon className="size-4" />;
       break;
-    case "intersex":
+    }
+    case "intersex": {
       icon = <VenusAndMarsIcon className="size-4" />;
       break;
-    default:
+    }
+    default: {
       icon = <CircleSmallIcon className="size-4" />;
+    }
   }
 
   return (
@@ -272,98 +282,129 @@ export const VoiceSelectorAccent = ({
   let emoji: string | null = null;
 
   switch (value) {
-    case "american":
+    case "american": {
       emoji = "🇺🇸";
       break;
-    case "british":
+    }
+    case "british": {
       emoji = "🇬🇧";
       break;
-    case "australian":
+    }
+    case "australian": {
       emoji = "🇦🇺";
       break;
-    case "canadian":
+    }
+    case "canadian": {
       emoji = "🇨🇦";
       break;
-    case "irish":
+    }
+    case "irish": {
       emoji = "🇮🇪";
       break;
-    case "scottish":
+    }
+    case "scottish": {
       emoji = "🏴󠁧󠁢󠁳󠁣󠁴󠁿";
       break;
-    case "indian":
+    }
+    case "indian": {
       emoji = "🇮🇳";
       break;
-    case "south-african":
+    }
+    case "south-african": {
       emoji = "🇿🇦";
       break;
-    case "new-zealand":
+    }
+    case "new-zealand": {
       emoji = "🇳🇿";
       break;
-    case "spanish":
+    }
+    case "spanish": {
       emoji = "🇪🇸";
       break;
-    case "french":
+    }
+    case "french": {
       emoji = "🇫🇷";
       break;
-    case "german":
+    }
+    case "german": {
       emoji = "🇩🇪";
       break;
-    case "italian":
+    }
+    case "italian": {
       emoji = "🇮🇹";
       break;
-    case "portuguese":
+    }
+    case "portuguese": {
       emoji = "🇵🇹";
       break;
-    case "brazilian":
+    }
+    case "brazilian": {
       emoji = "🇧🇷";
       break;
-    case "mexican":
+    }
+    case "mexican": {
       emoji = "🇲🇽";
       break;
-    case "argentinian":
+    }
+    case "argentinian": {
       emoji = "🇦🇷";
       break;
-    case "japanese":
+    }
+    case "japanese": {
       emoji = "🇯🇵";
       break;
-    case "chinese":
+    }
+    case "chinese": {
       emoji = "🇨🇳";
       break;
-    case "korean":
+    }
+    case "korean": {
       emoji = "🇰🇷";
       break;
-    case "russian":
+    }
+    case "russian": {
       emoji = "🇷🇺";
       break;
-    case "arabic":
+    }
+    case "arabic": {
       emoji = "🇸🇦";
       break;
-    case "dutch":
+    }
+    case "dutch": {
       emoji = "🇳🇱";
       break;
-    case "swedish":
+    }
+    case "swedish": {
       emoji = "🇸🇪";
       break;
-    case "norwegian":
+    }
+    case "norwegian": {
       emoji = "🇳🇴";
       break;
-    case "danish":
+    }
+    case "danish": {
       emoji = "🇩🇰";
       break;
-    case "finnish":
+    }
+    case "finnish": {
       emoji = "🇫🇮";
       break;
-    case "polish":
+    }
+    case "polish": {
       emoji = "🇵🇱";
       break;
-    case "turkish":
+    }
+    case "turkish": {
       emoji = "🇹🇷";
       break;
-    case "greek":
+    }
+    case "greek": {
       emoji = "🇬🇷";
       break;
-    default:
+    }
+    default: {
       emoji = null;
+    }
   }
 
   return (
@@ -450,11 +491,14 @@ export const VoiceSelectorPreview = ({
   onClick,
   ...props
 }: VoiceSelectorPreviewProps) => {
-  const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    onClick?.(event);
-    onPlay?.();
-  };
+  const handleClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      onClick?.(event);
+      onPlay?.();
+    },
+    [onClick, onPlay]
+  );
 
   let icon = <PlayIcon className="size-3" />;
 
