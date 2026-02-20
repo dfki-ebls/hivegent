@@ -4,7 +4,13 @@ import { useCallback, useState } from "react";
 import { ChatSidebar } from "./ChatSidebar";
 import { DocumentCanvas } from "./DocumentCanvas";
 import { Button } from "./ui/button";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "./ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "./ui/sheet";
 
 interface ChatLayoutProps {
   id: string;
@@ -54,6 +60,9 @@ export function ChatLayout({ id }: ChatLayoutProps) {
         <SheetContent side="left" className="w-full sm:max-w-lg p-0">
           <SheetHeader className="border-b">
             <SheetTitle>Documents</SheetTitle>
+            <SheetDescription className="sr-only">
+              Browse fetched documents
+            </SheetDescription>
           </SheetHeader>
           <div className="h-[calc(100%-60px)] overflow-hidden">
             <DocumentCanvas

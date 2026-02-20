@@ -6,6 +6,7 @@ import { Button } from "./ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -58,15 +59,21 @@ export function DocumentPreviewDialog({
       <DialogContent className="h-[90vh] w-[90vw] max-w-4xl! flex flex-col">
         <DialogHeader>
           {editable ? (
-            <Input
-              value={filename}
-              onChange={(e) => setFilename(e.target.value)}
-              placeholder="filename.md"
-              className="text-lg font-semibold"
-            />
+            <>
+              <DialogTitle className="sr-only">Edit document</DialogTitle>
+              <Input
+                value={filename}
+                onChange={(e) => setFilename(e.target.value)}
+                placeholder="filename.md"
+                className="text-lg font-semibold"
+              />
+            </>
           ) : (
             <DialogTitle>{filename}</DialogTitle>
           )}
+          <DialogDescription className="sr-only">
+            {editable ? "Edit document content" : `Preview of ${initialFilename}`}
+          </DialogDescription>
         </DialogHeader>
         {isLoading ? (
           <div className="flex flex-1 items-center justify-center">

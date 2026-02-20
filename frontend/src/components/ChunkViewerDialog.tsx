@@ -6,7 +6,13 @@ import type { ChunkedDocumentResponse } from "../lib/types";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 import { ScrollArea } from "./ui/scroll-area";
 
 interface ChunkViewerDialogProps {
@@ -67,6 +73,9 @@ export function ChunkViewerDialog({
             <Scissors className="h-5 w-5" />
             Chunks: {filename}
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            View chunks for {filename}
+          </DialogDescription>
           {data && (
             <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
               <Badge variant="secondary">

@@ -13,6 +13,7 @@ import { Badge } from "./ui/badge";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "./ui/dialog";
@@ -198,6 +199,9 @@ export function ChunkContextDialog({
       <DialogContent className="h-[85vh] w-[90vw] max-w-5xl! flex flex-col p-0">
         <DialogHeader className="px-6 pt-6 pb-3">
           <DialogTitle className="truncate">{filename}</DialogTitle>
+          <DialogDescription className="sr-only">
+            Document content and chunk context for {filename}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-1 min-h-0">
