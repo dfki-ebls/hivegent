@@ -575,8 +575,8 @@ async def _upload_file_internal(
         try:
             text_content = content.decode("utf-8")
             chunked = chunk_document(user_id, filepath, text_content, chunking_pipeline)
-            chunk_count = chunked.chunk_count
-            chunking_used = chunked.chunking_pipeline
+            chunk_count = len(chunked.chunks)
+            chunking_used = chunked.pipeline
             sync_index(user_id)
         except Exception as e:
             logger.warning("Chunking failed for %s: %s", filepath, e)
@@ -649,8 +649,8 @@ async def _upload_file_internal(
         chunked = chunk_document(
             user_id, converted_relpath, markdown_content, chunking_pipeline
         )
-        chunk_count = chunked.chunk_count
-        chunking_used = chunked.chunking_pipeline
+        chunk_count = len(chunked.chunks)
+        chunking_used = chunked.pipeline
         sync_index(user_id)
     except Exception as e:
         logger.warning("Chunking failed for %s: %s", converted_relpath, e)
@@ -1076,8 +1076,8 @@ async def reconvert_document(
         chunked = chunk_document(
             user.id, safe, markdown_content, request.chunking_pipeline
         )
-        chunk_count = chunked.chunk_count
-        chunking_used = chunked.chunking_pipeline
+        chunk_count = len(chunked.chunks)
+        chunking_used = chunked.pipeline
         sync_index(user.id)
     except Exception as e:
         logger.warning("Chunking failed for %s: %s", safe, e)

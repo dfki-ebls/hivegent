@@ -100,16 +100,14 @@ export const ChunkInfoSchema = z.object({
   token_count: z.number(),
   start_index: z.number(),
   end_index: z.number(),
-  index: z.number(),
 });
 export type ChunkInfo = z.infer<typeof ChunkInfoSchema>;
 
 /** Response from the chunks endpoint. */
 export const ChunkedDocumentResponseSchema = z.object({
-  chunking_pipeline: z.string(),
+  pipeline: z.string(),
   chunk_size: z.number(),
   created_at: z.string(),
-  chunk_count: z.number(),
   chunks: z.array(ChunkInfoSchema),
 });
 export type ChunkedDocumentResponse = z.infer<

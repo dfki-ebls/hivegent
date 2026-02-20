@@ -168,23 +168,20 @@ class ChunkInfo(BaseModel):
     token_count: int = Field(description="Number of tokens in the chunk")
     start_index: int = Field(description="Start character index in original document")
     end_index: int = Field(description="End character index in original document")
-    index: int = Field(description="Chunk index within the document")
 
 
 class ChunkedDocument(BaseModel):
     """A document that has been chunked, with metadata."""
 
-    chunking_pipeline: str = Field(description="The chunking pipeline used")
+    pipeline: str = Field(description="The chunking pipeline used")
     chunk_size: int = Field(description="The target chunk size in tokens")
     created_at: datetime = Field(description="When the chunks were created")
-    chunk_count: int = Field(description="Total number of chunks")
     chunks: list[ChunkInfo] = Field(description="The document chunks")
 
 
 class ChunkSummary(BaseModel):
     """Summary metadata for a single chunk (used by agent tools)."""
 
-    index: int = Field(description="Chunk index within the document")
     token_count: int = Field(description="Number of tokens in the chunk")
     start_index: int = Field(description="Start character index in original document")
     end_index: int = Field(description="End character index in original document")

@@ -233,8 +233,8 @@ def _load_all_chunks(user_id: str) -> dict[str, str]:
             logger.warning("Failed to load chunks for %s: %s", doc_filename, exc)
             continue
 
-        for chunk in doc.chunks:
-            key = _build_chunk_key(doc_filename, chunk.index)
+        for i, chunk in enumerate(doc.chunks):
+            key = _build_chunk_key(doc_filename, i)
             casebase[key] = chunk.text
 
     return casebase

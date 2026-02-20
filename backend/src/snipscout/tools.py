@@ -317,7 +317,6 @@ class ListChunksTool:
             return None
         return [
             ChunkSummary(
-                index=c.index,
                 token_count=c.token_count,
                 start_index=c.start_index,
                 end_index=c.end_index,
@@ -349,9 +348,8 @@ class GetChunkTool:
         chunked = load_chunked_document(self.path, filename)
         if not chunked:
             return None
-        for chunk in chunked.chunks:
-            if chunk.index == chunk_index:
-                return chunk.text
+        if 0 <= chunk_index < len(chunked.chunks):
+            return chunked.chunks[chunk_index].text
         return None
 
 

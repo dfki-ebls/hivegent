@@ -70,12 +70,12 @@ export function ChunkViewerDialog({
           {data && (
             <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
               <Badge variant="secondary">
-                Chunking: {data.chunking_pipeline}
+                Chunking: {data.pipeline}
               </Badge>
               <Badge variant="secondary">
                 Chunk size: {data.chunk_size} tokens
               </Badge>
-              <Badge variant="secondary">{data.chunk_count} chunks</Badge>
+              <Badge variant="secondary">{data.chunks.length} chunks</Badge>
               <Badge variant="outline">
                 Created: {formatDate(data.created_at)}
               </Badge>
@@ -107,12 +107,12 @@ export function ChunkViewerDialog({
         ) : data ? (
           <ScrollArea className="flex-1 min-h-0">
             <div className="space-y-3 p-4">
-              {data.chunks.map((chunk) => (
-                <Card key={chunk.index}>
+              {data.chunks.map((chunk, i) => (
+                <Card key={i}>
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-sm">
-                        Chunk {chunk.index}
+                        Chunk {i}
                       </CardTitle>
                       <div className="flex gap-2">
                         <Badge variant="secondary">

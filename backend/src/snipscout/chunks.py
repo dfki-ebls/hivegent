@@ -62,26 +62,20 @@ def chunk_document(
     chunker = get_chunker(chunking_pipeline, filename=filename, chunk_size=chunk_size)
     raw_chunks = chunker.chunk(content)
 
-    resolved_pipeline = chunking_pipeline.value
-    if chunking_pipeline == ChunkingPipeline.AUTO:
-        resolved_pipeline = f"auto ({chunker.name})"
-
     chunks = [
         ChunkInfo(
             text=c.text,
             token_count=c.token_count,
             start_index=c.start_index,
             end_index=c.end_index,
-            index=c.index,
         )
         for c in raw_chunks
     ]
 
     doc = ChunkedDocument(
-        chunking_pipeline=resolved_pipeline,
+        pipeline=chunker.name,
         chunk_size=chunk_size,
         created_at=datetime.now(tz=timezone.utc),
-        chunk_count=len(chunks),
         chunks=chunks,
     )
 
@@ -175,7 +169,7 @@ def list_chunked_documents(user_id: str) -> dict[str, int]:
         )
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            result[doc_filepath] = data.get("chunk_count", 0)
+            result[doc_filepath] = len(data.get("chunks", []))
         except (json.JSONDecodeError, Exception):
             continue
 
