@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Query, Upl
 from fastapi.middleware.cors import CORSMiddleware
 from nanoid import generate
 from pydantic import BaseModel, Field
+from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import (
     ModelMessage,
     TextPart,
@@ -466,6 +467,7 @@ async def chat(
         agent=user_agent,
         deps=UserDeps(user_id=user.id, document_filter=document_filter, llm=config.llm),
         sdk_version=6,
+        output_type=[str, DeferredToolRequests],
         model=OpenAIResponsesModel(
             config.llm.model,
             provider=OpenAIProvider(
