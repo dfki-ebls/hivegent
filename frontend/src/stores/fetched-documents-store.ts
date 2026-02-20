@@ -1,87 +1,110 @@
 import { create } from "zustand";
-import type { RetrievedDocument, StoredDocument } from "../lib/types";
+import {
+  type ChunkPosition,
+  type FetchedChunk,
+  type FetchedDocument,
+  makeChunkId,
+} from "../lib/types";
 
 interface FetchedDocumentsStore {
-  documents: Map<string, StoredDocument>;
-  addSearchResults: (docs: RetrievedDocument[], query: string) => void;
-  addDocument: (filename: string, content: string, source: string) => void;
-  addDocumentReference: (
+  chunks: Map<string, FetchedChunk>;
+  documents: Map<string, FetchedDocument>;
+
+  /** Insert a chunk, creating/updating its parent document entry. */
+  addChunk: (chunk: Omit<FetchedChunk, "id">) => void;
+
+  /** Mark a document as fully fetched, storing its full content. */
+  markFullDocument: (
     filename: string,
-    sources: string[],
-    score?: number,
+    content: string,
+    source: string,
   ) => void;
-  clearDocuments: () => void;
+
+  /** Reset both maps. */
+  clearAll: () => void;
 }
 
 export const useFetchedDocumentsStore = create<FetchedDocumentsStore>(
   (set) => ({
+    chunks: new Map(),
     documents: new Map(),
-    addSearchResults: (docs, query) =>
+
+    addChunk: (chunk) =>
       set((state) => {
-        const newMap = new Map(state.documents);
-        const source = `search: ${query}`;
-        for (const doc of docs) {
-          const existing = newMap.get(doc.filename);
-          if (existing) {
-            const sources = existing.sources.includes(source)
-              ? existing.sources
-              : [...existing.sources, source];
-            const newScore = Math.max(doc.score, existing.score ?? 0);
-            newMap.set(doc.filename, { ...existing, score: newScore, sources });
-          } else {
-            newMap.set(doc.filename, {
-              filename: doc.filename,
-              content: doc.content,
-              score: doc.score,
-              sources: [source],
-            });
-          }
-        }
-        return { documents: newMap };
-      }),
-    addDocument: (filename, content, source) =>
-      set((state) => {
-        const newMap = new Map(state.documents);
-        const existing = newMap.get(filename);
+        const id = makeChunkId(chunk.filename, chunk.source, chunk.position);
+
+        // Deduplicate: skip if we already have this exact chunk
+        if (state.chunks.has(id)) return state;
+
+        const newChunks = new Map(state.chunks);
+        newChunks.set(id, { ...chunk, id });
+
+        const newDocs = new Map(state.documents);
+        const existing = newDocs.get(chunk.filename);
+
         if (existing) {
-          const sources = existing.sources.includes(source)
-            ? existing.sources
-            : [...existing.sources, source];
-          // Keep existing content if it's longer (more complete)
-          const newContent =
-            content.length > existing.content.length
-              ? content
-              : existing.content;
-          newMap.set(filename, { ...existing, content: newContent, sources });
-        } else {
-          newMap.set(filename, { filename, content, sources: [source] });
-        }
-        return { documents: newMap };
-      }),
-    addDocumentReference: (filename, sources, score) =>
-      set((state) => {
-        const newMap = new Map(state.documents);
-        const existing = newMap.get(filename);
-        if (existing) {
-          // Merge sources, keep existing content
-          const mergedSources = [
-            ...new Set([...existing.sources, ...sources]),
-          ];
-          const newScore =
-            score != null
-              ? Math.max(score, existing.score ?? 0)
-              : existing.score;
-          newMap.set(filename, {
+          const newBest =
+            chunk.score != null
+              ? Math.max(chunk.score, existing.bestScore ?? 0)
+              : existing.bestScore;
+          newDocs.set(chunk.filename, {
             ...existing,
-            sources: mergedSources,
-            score: newScore,
+            chunkIds: [...existing.chunkIds, id],
+            bestScore: newBest,
           });
         } else {
-          // Set reference without content (will be fetched when expanded)
-          newMap.set(filename, { filename, content: "", sources, score });
+          newDocs.set(chunk.filename, {
+            filename: chunk.filename,
+            fullContentFetched: false,
+            chunkIds: [id],
+            bestScore: chunk.score,
+          });
         }
-        return { documents: newMap };
+
+        return { chunks: newChunks, documents: newDocs };
       }),
-    clearDocuments: () => set({ documents: new Map() }),
+
+    markFullDocument: (filename, content, source) =>
+      set((state) => {
+        const newDocs = new Map(state.documents);
+        const newChunks = new Map(state.chunks);
+
+        const position: ChunkPosition = { type: "full_document" };
+        const id = makeChunkId(filename, source, position);
+
+        if (!newChunks.has(id)) {
+          newChunks.set(id, {
+            id,
+            filename,
+            content,
+            source,
+            position,
+          });
+        }
+
+        const existing = newDocs.get(filename);
+        if (existing) {
+          const chunkIds = existing.chunkIds.includes(id)
+            ? existing.chunkIds
+            : [...existing.chunkIds, id];
+          newDocs.set(filename, {
+            ...existing,
+            fullContentFetched: true,
+            fullContent: content,
+            chunkIds,
+          });
+        } else {
+          newDocs.set(filename, {
+            filename,
+            fullContentFetched: true,
+            fullContent: content,
+            chunkIds: [id],
+          });
+        }
+
+        return { chunks: newChunks, documents: newDocs };
+      }),
+
+    clearAll: () => set({ chunks: new Map(), documents: new Map() }),
   }),
 );

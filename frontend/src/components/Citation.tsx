@@ -1,22 +1,22 @@
 "use client";
 
 import { FileTextIcon } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
-import { getDocumentContent } from "@/lib/api";
+import type { FetchedChunk } from "@/lib/types";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
-import { DocumentPreviewDialog } from "./DocumentPreviewDialog";
+import { ChunkContextDialog } from "./ChunkContextDialog";
 
 /**
  * Inline citation rendered by Streamdown for `<cite>` tags.
  *
  * Displays the cited text followed by a filename badge.
- * Hover shows a preview card, click opens the full document modal.
+ * Hover shows a preview card, click opens the ChunkContextDialog.
  *
  * Accepts `Record<string, unknown>` because Streamdown's `Components` type
  * maps `cite` (a known HTML element) to its intrinsic props, while the actual
@@ -27,38 +27,49 @@ export function Citation(props: Record<string, unknown>) {
   const chunk = props.chunk as string | undefined;
   const children = props.children as ReactNode;
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [fetchError, setFetchError] = useState(false);
-  const doc = useFetchedDocumentsStore((state) =>
-    filename ? state.documents.get(filename) : undefined,
-  );
-  const addDocument = useFetchedDocumentsStore((state) => state.addDocument);
 
-  // Fetch document content when the dialog is opened and content is missing
-  useEffect(() => {
-    if (!dialogOpen || !filename || fetchError) return;
-    if (doc?.content) return;
-    let cancelled = false;
-    getDocumentContent(filename)
-      .then((content) => {
-        if (!cancelled) {
-          addDocument(filename, content, "preview");
+  const chunks = useFetchedDocumentsStore((state) => state.chunks);
+  const documents = useFetchedDocumentsStore((state) => state.documents);
+
+  // Find the best matching chunk for this citation
+  const matchedChunk = useMemo((): FetchedChunk | null => {
+    if (!filename) return null;
+    const doc = documents.get(filename);
+    if (!doc) return null;
+
+    const chunkIndex =
+      chunk !== undefined ? parseInt(chunk, 10) : undefined;
+
+    // Try to find a chunk matching by chunk_index
+    if (chunkIndex !== undefined) {
+      for (const id of doc.chunkIds) {
+        const c = chunks.get(id);
+        if (
+          c &&
+          c.position.type === "chunk_index" &&
+          c.position.chunkIndex === chunkIndex
+        ) {
+          return c;
         }
-      })
-      .catch(() => {
-        if (!cancelled) setFetchError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [dialogOpen, filename, doc?.content, addDocument, fetchError]);
+      }
+    }
+
+    // Fallback: return the first chunk for this document
+    for (const id of doc.chunkIds) {
+      const c = chunks.get(id);
+      if (c) return c;
+    }
+    return null;
+  }, [filename, chunk, documents, chunks]);
 
   if (!filename) {
     return <span>{children}</span>;
   }
 
   const displayName = filename.split("/").pop() ?? filename;
-  const chunkIndex = chunk ? parseInt(chunk, 10) : undefined;
-  const previewText = doc?.content ? doc.content.slice(0, 300) : null;
+  const chunkIndex =
+    chunk !== undefined ? parseInt(chunk, 10) : undefined;
+  const previewText = matchedChunk?.content.slice(0, 300) ?? null;
 
   return (
     <span className="inline">
@@ -88,7 +99,7 @@ export function Citation(props: Record<string, unknown>) {
             {previewText ? (
               <blockquote className="border-l-2 border-muted pl-3 text-sm text-muted-foreground italic line-clamp-4">
                 {previewText}
-                {(doc?.content.length ?? 0) > 300 && "\u2026"}
+                {(matchedChunk?.content.length ?? 0) > 300 && "\u2026"}
               </blockquote>
             ) : (
               <p className="text-xs text-muted-foreground italic">
@@ -96,17 +107,16 @@ export function Citation(props: Record<string, unknown>) {
               </p>
             )}
             <p className="text-xs text-muted-foreground">
-              Click to view full document
+              Click to view in context
             </p>
           </div>
         </HoverCardContent>
       </HoverCard>
-      <DocumentPreviewDialog
+      <ChunkContextDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        filename={filename}
-        content={doc?.content || null}
-        isLoading={dialogOpen && !doc?.content && !fetchError}
+        chunk={matchedChunk}
+        fallbackFilename={filename}
       />
     </span>
   );

@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -237,18 +237,6 @@ async def get_conversation(
         message_count=len(conversation.messages),
         compacted_from=conversation.compacted_from,
     )
-
-
-@api_router.get("/conversation/{conversation_id}/document-references")
-async def get_conversation_document_references(
-    conversation_id: str,
-    user: Annotated[User, Depends(get_current_user)],
-) -> list[dict[str, Any]]:
-    """Get document references for a conversation."""
-    conversation = load_conversation(user.id, conversation_id)
-    if not conversation:
-        return []
-    return [ref.model_dump() for ref in conversation.document_references]
 
 
 @api_router.put("/conversation/{conversation_id}/title")

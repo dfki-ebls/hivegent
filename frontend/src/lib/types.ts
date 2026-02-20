@@ -153,13 +153,6 @@ export const GrepMatchSchema = z.object({
 });
 export type GrepMatch = z.infer<typeof GrepMatchSchema>;
 
-export const RetrievedDocumentSchema = z.object({
-  filename: z.string(),
-  content: z.string(),
-  score: z.number(),
-});
-export type RetrievedDocument = z.infer<typeof RetrievedDocumentSchema>;
-
 export const RetrievedChunkSchema = z.object({
   filename: z.string(),
   chunk_index: z.number(),
@@ -168,14 +161,6 @@ export const RetrievedChunkSchema = z.object({
   score: z.number(),
 });
 export type RetrievedChunk = z.infer<typeof RetrievedChunkSchema>;
-
-/** A reference to a document accessed during a conversation. */
-export const DocumentReferenceSchema = z.object({
-  filename: z.string(),
-  sources: z.array(z.string()),
-  score: z.number().optional(),
-});
-export type DocumentReference = z.infer<typeof DocumentReferenceSchema>;
 
 /** Summary information for listing conversations. */
 export const ConversationSummarySchema = z.object({
@@ -324,12 +309,92 @@ export type CollectionUploadResponse = z.infer<
 // Frontend-only types (no runtime validation needed)
 // ============================================================
 
-/** Frontend-only type for storing fetched document content. */
-export interface StoredDocument {
+/** Position of a chunk within its parent document (discriminated union). */
+export type ChunkPosition =
+  | { type: "chunk_index"; chunkIndex: number }
+  | { type: "line"; line: number }
+  | { type: "line_range"; startLine: number; endLine: number }
+  | { type: "full_document" };
+
+/** A single fetched chunk (search result, grep match, line range, etc.). */
+export interface FetchedChunk {
+  id: string;
   filename: string;
   content: string;
+  source: string;
   score?: number;
-  sources: string[];
+  position: ChunkPosition;
+}
+
+/** A document that groups one or more fetched chunks. */
+export interface FetchedDocument {
+  filename: string;
+  fullContentFetched: boolean;
+  fullContent?: string;
+  chunkIds: string[];
+  bestScore?: number;
+}
+
+/** Build a deterministic chunk ID from its attributes. */
+export function makeChunkId(
+  filename: string,
+  source: string,
+  position: ChunkPosition,
+): string {
+  let positionKey: string;
+  switch (position.type) {
+    case "chunk_index":
+      positionKey = `chunk_${position.chunkIndex}`;
+      break;
+    case "line":
+      positionKey = `line_${position.line}`;
+      break;
+    case "line_range":
+      positionKey = `lines_${position.startLine}_${position.endLine}`;
+      break;
+    case "full_document":
+      positionKey = "full";
+      break;
+  }
+  return `${filename}::${source}::${positionKey}`;
+}
+
+/**
+ * Numeric sort key for a chunk position.
+ * Full document sorts first (-1), then by chunk index / line number.
+ */
+export function chunkSortKey(position: ChunkPosition): number {
+  switch (position.type) {
+    case "full_document":
+      return -1;
+    case "chunk_index":
+      return position.chunkIndex;
+    case "line":
+      return position.line;
+    case "line_range":
+      return position.startLine;
+  }
+}
+
+/** Human-readable label for a chunk position. */
+export function chunkPositionLabel(position: ChunkPosition): string {
+  switch (position.type) {
+    case "chunk_index":
+      return `Chunk #${position.chunkIndex}`;
+    case "line":
+      return `Line ${position.line}`;
+    case "line_range":
+      return `Lines ${position.startLine}-${position.endLine}`;
+    case "full_document":
+      return "Full document";
+  }
+}
+
+/** Sort chunks by position (full document first, then ascending). */
+export function sortChunks(chunks: FetchedChunk[]): FetchedChunk[] {
+  return [...chunks].sort(
+    (a, b) => chunkSortKey(a.position) - chunkSortKey(b.position),
+  );
 }
 
 // ============================================================

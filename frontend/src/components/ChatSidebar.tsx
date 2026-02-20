@@ -30,11 +30,12 @@ import {
   createConversation,
   getAuthHeaders,
   getConversation,
-  getConversationDocumentReferences,
   getMessages,
 } from "../lib/api";
 import {
+  type ChunkPosition,
   type DocumentRange,
+  type FetchedChunk,
   type GrepMatch,
   REASONING_EFFORT_OPTIONS,
   type ReasoningEffort,
@@ -182,12 +183,17 @@ function prettyPrint(value: unknown): string {
   return String(value);
 }
 
-/** Process tool output and add to document store. */
+/** Process tool output and add chunks to the document store. */
 function processToolOutput(
   toolName: string,
   input: Record<string, unknown> | undefined,
   output: unknown,
-  addDocument: (filename: string, content: string, source: string) => void,
+  addChunk: (chunk: Omit<FetchedChunk, "id">) => void,
+  markFullDocument: (
+    filename: string,
+    content: string,
+    source: string,
+  ) => void,
 ) {
   if (!input || output == null) return;
 
@@ -196,12 +202,19 @@ function processToolOutput(
       const chunks = output as RetrievedChunk[];
       if (chunks?.length) {
         const query = input.query as string;
+        const source = `search${query ? `: ${query}` : ""}`;
         for (const chunk of chunks) {
-          addDocument(
-            chunk.filename,
-            chunk.text,
-            `search${query ? `: ${query}` : ""}`,
-          );
+          const position: ChunkPosition = {
+            type: "chunk_index",
+            chunkIndex: chunk.chunk_index,
+          };
+          addChunk({
+            filename: chunk.filename,
+            content: chunk.text,
+            source,
+            score: chunk.score,
+            position,
+          });
         }
       }
       break;
@@ -210,7 +223,7 @@ function processToolOutput(
       const filename = input.filename as string;
       const content = typeof output === "string" ? output : null;
       if (filename && content) {
-        addDocument(filename, content, "get_document");
+        markFullDocument(filename, content, "get_document");
       }
       break;
     }
@@ -218,11 +231,17 @@ function processToolOutput(
       const filename = input.filename as string;
       const result = output as DocumentRange;
       if (filename && result?.content) {
-        addDocument(
+        const position: ChunkPosition = {
+          type: "line_range",
+          startLine: result.start_line,
+          endLine: result.end_line,
+        };
+        addChunk({
           filename,
-          result.content,
-          `lines ${result.start_line}-${result.end_line}`,
-        );
+          content: result.content,
+          source: `lines ${result.start_line}-${result.end_line}`,
+          position,
+        });
       }
       break;
     }
@@ -230,19 +249,20 @@ function processToolOutput(
       const matches = output as GrepMatch[];
       const pattern = input.pattern as string;
       if (matches?.length && pattern) {
-        const byFile = new Map<string, GrepMatch[]>();
+        const source = `grep: ${pattern}`;
         for (const match of matches) {
           if (match.line > 0) {
-            const fileMatches = byFile.get(match.filename) ?? [];
-            fileMatches.push(match);
-            byFile.set(match.filename, fileMatches);
+            const position: ChunkPosition = {
+              type: "line",
+              line: match.line,
+            };
+            addChunk({
+              filename: match.filename,
+              content: match.content ?? "",
+              source,
+              position,
+            });
           }
-        }
-        for (const [filename, fileMatches] of byFile) {
-          const content = fileMatches
-            .map((m) => `${m.line}: ${m.content ?? ""}`)
-            .join("\n");
-          addDocument(filename, content, `grep: ${pattern}`);
         }
       }
       break;
@@ -251,7 +271,16 @@ function processToolOutput(
       const filename = input.filename as string;
       const chunkIndex = input.chunk_index as number;
       if (filename && typeof output === "string") {
-        addDocument(filename, output, `chunk ${chunkIndex}`);
+        const position: ChunkPosition = {
+          type: "chunk_index",
+          chunkIndex,
+        };
+        addChunk({
+          filename,
+          content: output,
+          source: `chunk ${chunkIndex}`,
+          position,
+        });
       }
       break;
     }
@@ -307,17 +336,6 @@ function isContextLengthError(error: Error | null | undefined): boolean {
     msg.includes("context_length_exceeded") ||
     msg.includes("maximum context length")
   );
-}
-
-/** Load document references for a conversation and add them to the store. */
-async function loadDocumentReferences(
-  conversationId: string,
-  addRef: (filename: string, sources: string[], score?: number) => void,
-): Promise<void> {
-  const refs = await getConversationDocumentReferences(conversationId);
-  for (const ref of refs) {
-    addRef(ref.filename, ref.sources, ref.score);
-  }
 }
 
 // --- Tool display components ---
@@ -786,13 +804,11 @@ export function ChatSidebar({
   onClearDocuments,
 }: ChatSidebarProps) {
   const navigate = useNavigate();
-  const addDocument = useFetchedDocumentsStore((state) => state.addDocument);
-  const addDocumentReference = useFetchedDocumentsStore(
-    (state) => state.addDocumentReference,
+  const addChunk = useFetchedDocumentsStore((state) => state.addChunk);
+  const markFullDocument = useFetchedDocumentsStore(
+    (state) => state.markFullDocument,
   );
-  const clearDocuments = useFetchedDocumentsStore(
-    (state) => state.clearDocuments,
-  );
+  const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const fetchConversations = useConversationsStore(
     (state) => state.fetchConversations,
   );
@@ -813,16 +829,15 @@ export function ChatSidebar({
 
   const handleNewChat = async () => {
     const newId = await createConversation();
-    clearDocuments();
+    clearAll();
     setActiveTab("chat");
     navigate({ to: "/chat/$id", params: { id: newId } });
   };
 
   const handleConversationSelect = async (conversationId: string) => {
-    clearDocuments();
+    clearAll();
     setActiveTab("chat");
     navigate({ to: "/chat/$id", params: { id: conversationId } });
-    await loadDocumentReferences(conversationId, addDocumentReference);
   };
 
   const transport = useMemo(
@@ -867,9 +882,6 @@ export function ChatSidebar({
           setMessages(initialMessages);
         }
         if (!cancelled) {
-          await loadDocumentReferences(id, addDocumentReference);
-        }
-        if (!cancelled) {
           const conv = await getConversation(id);
           if (conv?.compacted_from) {
             setCompactedFrom(conv.compacted_from);
@@ -884,7 +896,7 @@ export function ChatSidebar({
     return () => {
       cancelled = true;
     };
-  }, [id, setMessages, addDocumentReference]);
+  }, [id, setMessages]);
 
   const handleSendMessage = useCallback(
     async (text: string, files?: FileUIPart[]) => {
@@ -1001,7 +1013,7 @@ export function ChatSidebar({
             baseUrl: llm.baseUrl,
           }),
         );
-        clearDocuments();
+        clearAll();
         if (retryMessageText) {
           pendingRetryRef.current = retryMessageText;
         }
@@ -1015,7 +1027,7 @@ export function ChatSidebar({
         setIsCompacting(false);
       }
     },
-    [id, llm, smallModel, clearDocuments, navigate],
+    [id, llm, smallModel, clearAll, navigate],
   );
 
   // Auto-compact when context window is exceeded
@@ -1031,10 +1043,16 @@ export function ChatSidebar({
       for (const part of message.parts) {
         const info = getToolPartInfo(part);
         if (!info || info.state !== "output-available") continue;
-        processToolOutput(info.toolName, info.input, info.output, addDocument);
+        processToolOutput(
+          info.toolName,
+          info.input,
+          info.output,
+          addChunk,
+          markFullDocument,
+        );
       }
     }
-  }, [messages, addDocument]);
+  }, [messages, addChunk, markFullDocument]);
 
   return (
     <Tabs
@@ -1089,7 +1107,7 @@ export function ChatSidebar({
                     <button
                       type="button"
                       onClick={() => {
-                        clearDocuments();
+                        clearAll();
                         navigate({
                           to: "/chat/$id",
                           params: { id: compactedFrom },

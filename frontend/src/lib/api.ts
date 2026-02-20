@@ -31,8 +31,6 @@ import {
   DirectoryTreeResponseSchema,
   type DocumentInfo,
   DocumentListResponseSchema,
-  type DocumentReference,
-  DocumentReferenceSchema,
   type GenerateTitleResponse,
   GenerateTitleResponseSchema,
   type LlmConfig,
@@ -295,19 +293,6 @@ export async function listConversations(): Promise<ConversationSummary[]> {
   }
   const data: unknown = await res.json();
   return ConversationListResponseSchema.parse(data).conversations;
-}
-
-export async function getConversationDocumentReferences(
-  conversationId: string,
-): Promise<DocumentReference[]> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/conversation/${conversationId}/document-references`,
-  );
-  if (!res.ok) {
-    return [];
-  }
-  const data: unknown = await res.json();
-  return z.array(DocumentReferenceSchema).parse(data);
 }
 
 export async function updateConversationTitle(

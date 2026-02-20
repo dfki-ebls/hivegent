@@ -3,6 +3,7 @@ import JSZip from "jszip";
 import {
   AlertCircle,
   Archive,
+  ChevronRight,
   Eye,
   EyeOff,
   FileText,
@@ -26,17 +27,26 @@ import {
   requiresConversion,
   uploadDocument,
 } from "../lib/api";
-import type {
-  ChunkingPipeline,
-  ConversionPipeline,
-  DocumentInfo,
-  StoredDocument,
+import {
+  type ChunkingPipeline,
+  type ConversionPipeline,
+  type DocumentInfo,
+  type FetchedChunk,
+  type FetchedDocument,
+  chunkPositionLabel,
+  sortChunks,
 } from "../lib/types";
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
 import { useManagedDocumentsStore } from "../stores/managed-documents-store";
 import { useSettingsStore } from "../stores/settings-store";
+import { ChunkContextDialog } from "./ChunkContextDialog";
 import { ChunkingPipelineSelector } from "./ChunkingPipelineSelector";
 import { ChunkViewerDialog } from "./ChunkViewerDialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./ui/collapsible";
 import { ConversionPipelineSelector } from "./ConversionPipelineSelector";
 import { CreateDirectoryDialog } from "./CreateDirectoryDialog";
 import { DirectoryTreeView } from "./DirectoryTreeView";
@@ -45,7 +55,6 @@ import { MoveDocumentDialog } from "./MoveDocumentDialog";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { ScrollArea } from "./ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
@@ -91,57 +100,173 @@ function EmptyState({ icon, title, description }: EmptyStateProps) {
 
 // --- Fetched documents components ---
 
-interface DocumentCardProps {
-  doc: StoredDocument;
+interface ChunkCardProps {
+  chunk: FetchedChunk;
   onClick: () => void;
 }
 
-function DocumentCard({ doc, onClick }: DocumentCardProps) {
+function ChunkCard({ chunk, onClick }: ChunkCardProps) {
   return (
-    <Card
-      className="flex cursor-pointer flex-col transition-colors hover:bg-muted/50"
+    <div
+      role="button"
+      tabIndex={0}
+      className="ml-4 rounded-md border bg-card p-3 cursor-pointer transition-colors hover:bg-muted/50"
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onClick();
+      }}
     >
-      <CardHeader className="pb-2">
-        <div className="flex items-start justify-between gap-2">
-          <CardTitle className="line-clamp-1 text-sm">{doc.filename}</CardTitle>
-          {doc.score !== undefined && (
-            <Badge variant="secondary" className="shrink-0">
-              {(doc.score * 100).toFixed(1)}%
-            </Badge>
-          )}
-        </div>
-        <div className="flex flex-wrap gap-1">
-          {doc.sources.map((source) => (
-            <Badge key={source} variant="outline" className="text-xs">
-              {source}
-            </Badge>
+      <div className="flex items-center gap-2 mb-1">
+        <Badge variant="outline" className="text-xs">
+          {chunk.source}
+        </Badge>
+        {chunk.score != null && (
+          <Badge variant="secondary" className="text-xs">
+            {(chunk.score * 100).toFixed(0)}%
+          </Badge>
+        )}
+        <span className="text-xs text-muted-foreground">
+          {chunkPositionLabel(chunk.position)}
+        </span>
+      </div>
+      <pre className="line-clamp-4 whitespace-pre-wrap text-xs text-muted-foreground">
+        {chunk.content}
+      </pre>
+    </div>
+  );
+}
+
+interface DocumentGroupProps {
+  doc: FetchedDocument;
+  chunks: FetchedChunk[];
+  onChunkClick: (chunk: FetchedChunk) => void;
+  onFilenameClick: (filename: string) => void;
+}
+
+function DocumentGroup({
+  doc,
+  chunks,
+  onChunkClick,
+  onFilenameClick,
+}: DocumentGroupProps) {
+  const [open, setOpen] = useState(true);
+
+  // Include all chunks except user-initiated "preview" full-document fetches.
+  // Model-fetched full documents appear as regular chunk cards (sorted first).
+  const contentChunks = useMemo(() => {
+    const visible = chunks.filter(
+      (c) =>
+        !(c.position.type === "full_document" && c.source === "preview"),
+    );
+    return sortChunks(visible);
+  }, [chunks]);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div className="flex items-center gap-2 px-1 py-2">
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
+            <ChevronRight
+              className={`h-4 w-4 transition-transform ${open ? "rotate-90" : ""}`}
+            />
+          </Button>
+        </CollapsibleTrigger>
+        <button
+          type="button"
+          className="truncate text-sm font-medium hover:underline text-left min-w-0"
+          onClick={() => onFilenameClick(doc.filename)}
+          title={doc.filename}
+        >
+          {doc.filename}
+        </button>
+        {contentChunks.length > 0 && (
+          <Badge variant="outline" className="shrink-0 text-xs">
+            {contentChunks.length} chunk
+            {contentChunks.length !== 1 ? "s" : ""}
+          </Badge>
+        )}
+        {doc.bestScore != null && (
+          <Badge variant="secondary" className="shrink-0 text-xs">
+            {(doc.bestScore * 100).toFixed(0)}%
+          </Badge>
+        )}
+      </div>
+      <CollapsibleContent>
+        <div className="space-y-2 pb-2">
+          {contentChunks.map((chunk) => (
+            <ChunkCard
+              key={chunk.id}
+              chunk={chunk}
+              onClick={() => onChunkClick(chunk)}
+            />
           ))}
         </div>
-      </CardHeader>
-      <CardContent className="flex-1">
-        <pre className="line-clamp-6 whitespace-pre-wrap text-xs text-muted-foreground">
-          {doc.content}
-        </pre>
-      </CardContent>
-    </Card>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
 function FetchedDocuments() {
+  const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
-  const [selectedDocument, setSelectedDocument] =
-    useState<StoredDocument | null>(null);
 
-  const documentList = useMemo(
+  // Dialog state
+  const [selectedChunk, setSelectedChunk] = useState<FetchedChunk | null>(null);
+  const [dialogFilename, setDialogFilename] = useState<string | undefined>(
+    undefined,
+  );
+  const [initialFullDoc, setInitialFullDoc] = useState(false);
+  const dialogOpen = selectedChunk !== null || dialogFilename !== undefined;
+
+  const sortedDocs = useMemo(
     () =>
       Array.from(documents.values()).sort(
-        (a, b) => (b.score ?? 0) - (a.score ?? 0),
+        (a, b) => (b.bestScore ?? 0) - (a.bestScore ?? 0),
       ),
     [documents],
   );
 
-  if (documentList.length === 0) {
+  const getChunksForDoc = useCallback(
+    (doc: FetchedDocument): FetchedChunk[] =>
+      doc.chunkIds
+        .map((id) => chunks.get(id))
+        .filter((c): c is FetchedChunk => c != null),
+    [chunks],
+  );
+
+  // Open the dialog on a specific chunk (in chunk-context mode)
+  const handleChunkClick = useCallback((chunk: FetchedChunk) => {
+    setInitialFullDoc(chunk.position.type === "full_document");
+    setDialogFilename(undefined);
+    setSelectedChunk(chunk);
+  }, []);
+
+  // Open the dialog for a document (in full-document mode)
+  const handleFilenameClick = useCallback(
+    (filename: string) => {
+      setInitialFullDoc(true);
+      // Try to pick the first chunk as anchor for the sidebar
+      const doc = documents.get(filename);
+      const first =
+        doc && doc.chunkIds.length > 0 ? chunks.get(doc.chunkIds[0]) : null;
+      if (first) {
+        setDialogFilename(undefined);
+        setSelectedChunk(first);
+      } else {
+        // No chunks yet — use fallbackFilename
+        setSelectedChunk(null);
+        setDialogFilename(filename);
+      }
+    },
+    [documents, chunks],
+  );
+
+  const closeDialog = useCallback(() => {
+    setSelectedChunk(null);
+    setDialogFilename(undefined);
+  }, []);
+
+  if (sortedDocs.length === 0) {
     return (
       <EmptyState
         icon={<Search className="h-12 w-12 opacity-50" />}
@@ -154,22 +279,25 @@ function FetchedDocuments() {
   return (
     <>
       <ScrollArea className="h-full">
-        <div className="grid gap-3 p-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
-          {documentList.map((doc) => (
-            <DocumentCard
+        <div className="space-y-1 p-4">
+          {sortedDocs.map((doc) => (
+            <DocumentGroup
               key={doc.filename}
               doc={doc}
-              onClick={() => setSelectedDocument(doc)}
+              chunks={getChunksForDoc(doc)}
+              onChunkClick={handleChunkClick}
+              onFilenameClick={handleFilenameClick}
             />
           ))}
         </div>
       </ScrollArea>
 
-      <DocumentPreviewDialog
-        open={selectedDocument !== null}
-        onOpenChange={(open) => !open && setSelectedDocument(null)}
-        filename={selectedDocument?.filename ?? ""}
-        content={selectedDocument?.content ?? null}
+      <ChunkContextDialog
+        open={dialogOpen}
+        onOpenChange={(v) => !v && closeDialog()}
+        chunk={selectedChunk}
+        fallbackFilename={dialogFilename}
+        initialFullDoc={initialFullDoc}
       />
     </>
   );

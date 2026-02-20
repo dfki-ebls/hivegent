@@ -94,7 +94,6 @@ async def compact_conversation(
         title=f"{original_title} (continued)",
         created_at=now,
         updated_at=now,
-        document_references=conversation.document_references,
         messages=summary_messages,
         compacted_from=conversation_id,
     )

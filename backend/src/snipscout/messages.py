@@ -4,10 +4,10 @@ import json
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
-from pydantic_ai.messages import ModelMessage, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, UserPromptPart
 
 from .config import settings
-from .types import ConversationData, ConversationSummary, DocumentReference
+from .types import ConversationData, ConversationSummary
 
 __all__ = [
     "delete_conversation",
@@ -35,20 +35,7 @@ def load_conversation(user_id: str, conversation_id: str) -> ConversationData | 
         return None
 
     data = json.loads(path.read_bytes())
-
-    # Handle legacy format (just messages array)
-    if isinstance(data, list):
-        now = datetime.now(timezone.utc)
-        return ConversationData(
-            id=conversation_id,
-            title="",
-            created_at=now,
-            updated_at=now,
-            document_references=[],
-            messages=data,
-        )
-
-    return ConversationData(**data)
+    return ConversationData(id=conversation_id, **data)
 
 
 def load_messages(user_id: str, conversation_id: str) -> list[ModelMessage]:
@@ -90,7 +77,6 @@ def save_messages(
             title=existing.title or _extract_title(msgs),
             created_at=existing.created_at,
             updated_at=now,
-            document_references=_extract_document_refs(msgs),
             messages=msgs,
             compacted_from=existing.compacted_from,
         )
@@ -100,7 +86,6 @@ def save_messages(
             title=_extract_title(msgs),
             created_at=now,
             updated_at=now,
-            document_references=_extract_document_refs(msgs),
             messages=msgs,
         )
 
@@ -121,28 +106,6 @@ def _extract_title(messages: Sequence[ModelMessage]) -> str:
                         else first_line[:97] + "..."
                     )
     return ""
-
-
-def _extract_document_refs(
-    messages: Sequence[ModelMessage],
-) -> list[DocumentReference]:
-    """Extract document references from tool calls."""
-    refs: dict[str, list[str]] = {}
-
-    for msg in messages:
-        for part in msg.parts:
-            if not isinstance(part, ToolCallPart):
-                continue
-            args = part.args
-            if isinstance(args, dict):
-                filename = args.get("filename")
-                if filename:
-                    refs.setdefault(filename, []).append(part.tool_name)
-
-    return [
-        DocumentReference(filename=fn, sources=list(set(sources)))
-        for fn, sources in refs.items()
-    ]
 
 
 def list_conversations(user_id: str) -> list[ConversationSummary]:
@@ -215,9 +178,7 @@ def update_conversation_title(user_id: str, conversation_id: str, title: str) ->
         return False
 
     data = json.loads(path.read_bytes())
-    if isinstance(data, dict):
-        data["title"] = title
-        data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        path.write_bytes(json.dumps(data, indent=2).encode())
-        return True
-    return False
+    data["title"] = title
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    path.write_bytes(json.dumps(data, indent=2).encode())
+    return True

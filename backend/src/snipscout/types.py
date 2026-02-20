@@ -97,7 +97,6 @@ __all__ = [
     "DocumentInfo",
     "DocumentListResponse",
     "DocumentRange",
-    "DocumentReference",
     "DocumentSummary",
     "GenerateTitleRequest",
     "GenerateTitleResponse",
@@ -250,24 +249,13 @@ class DeleteDocumentResponse(BaseModel):
     message: str = Field(description="Status message")
 
 
-class DocumentReference(BaseModel):
-    """A reference to a document accessed during a conversation."""
-
-    filename: str = Field(description="The filename of the document")
-    sources: list[str] = Field(description="How the document was accessed")
-    score: float | None = Field(default=None, description="Search relevance score")
-
-
 class ConversationData(BaseModel):
     """Full conversation data including messages and metadata."""
 
-    id: str = Field(description="Unique conversation ID")
+    id: str = Field(description="Derived from filename, not persisted", exclude=True)
     title: str = Field(description="Conversation title")
     created_at: datetime = Field(description="When the conversation was created")
     updated_at: datetime = Field(description="When the conversation was last updated")
-    document_references: list[DocumentReference] = Field(
-        default_factory=list, description="Documents accessed during the conversation"
-    )
     messages: list[ModelMessage] = Field(
         default_factory=list, description="Conversation messages"
     )
