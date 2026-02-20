@@ -81,6 +81,7 @@ import {
   PromptInputTools,
   usePromptInputAttachments,
 } from "./ai-elements/prompt-input";
+import { SpeechInput } from "./ai-elements/speech-input";
 import { Suggestion, Suggestions } from "./ai-elements/suggestion";
 import { CodeBlock } from "./ai-elements/code-block";
 import { Tool, ToolContent, ToolHeader } from "./ai-elements/tool";
@@ -827,6 +828,10 @@ export function ChatSidebar({
   const hasDocumentFilters =
     includedDocuments.length > 0 || excludedDocuments.length > 0;
 
+  const handleTranscriptionChange = useCallback((text: string) => {
+    setInputValue((prev) => (prev ? `${prev} ${text}` : text));
+  }, []);
+
   const handleNewChat = async () => {
     const newId = await createConversation();
     clearAll();
@@ -1316,6 +1321,12 @@ export function ChatSidebar({
             <PromptInputFooter>
               <PromptInputTools>
                 <FileSelectButton />
+                <SpeechInput
+                  variant="ghost"
+                  size="icon-sm"
+                  disabled={status !== "ready"}
+                  onTranscriptionChange={handleTranscriptionChange}
+                />
                 <PromptInputSelect
                   value={reasoningEffort}
                   onValueChange={(v) =>
