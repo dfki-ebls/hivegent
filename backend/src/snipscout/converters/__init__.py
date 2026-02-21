@@ -5,6 +5,7 @@ from enum import StrEnum
 from importlib import import_module
 
 from .base import DocumentConverter
+from .pandoc import _FORMAT_OVERRIDES, _SANDBOX_INCOMPATIBLE
 
 __all__ = [
     "ConversionPipeline",
@@ -25,6 +26,8 @@ class ConversionPipeline(StrEnum):
     DOCLING = "docling"
     MINERU = "mineru"
     PANDOC = "pandoc"
+    MARKITDOWN = "markitdown"
+    KREUZBERG = "kreuzberg"
 
 
 @dataclass(slots=True, frozen=True)
@@ -48,7 +51,36 @@ class ConversionPipelineInfo:
     extensions: list[str]
 
 
+def _docling_extensions() -> frozenset[str]:
+    """Derive supported extensions from docling's ``FormatToExtensions`` registry.
+
+    Returns an empty set when docling is not installed.
+
+    See Also:
+        https://github.com/docling-project/docling/blob/main/docling/datamodel/base_models.py
+    """
+    try:
+        from docling.datamodel.base_models import FormatToExtensions
+
+        return frozenset(
+            f".{ext}" for exts in FormatToExtensions.values() for ext in exts
+        )
+    except ImportError:
+        return frozenset()
+
+
+# Derived from converters/pandoc.py (_FORMAT_OVERRIDES + _SANDBOX_INCOMPATIBLE).
+# https://pandoc.org/MANUAL.html#general-options (--from)
+_PANDOC_EXTENSIONS: frozenset[str] = frozenset(_FORMAT_OVERRIDES) | _SANDBOX_INCOMPATIBLE
+
+# Derived from docling.datamodel.base_models.FormatToExtensions.
+# https://github.com/docling-project/docling/blob/main/docling/datamodel/base_models.py
+_DOCLING_EXTENSIONS: frozenset[str] = _docling_extensions()
+
 _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
+    # Extensions mirror the MEDIA_TYPES dict in converters/llm.py, which
+    # lists the media types accepted by the OpenAI Responses API.
+    # https://platform.openai.com/docs/guides/pdf-files
     ConversionPipeline.LLM: _ConverterEntry(
         module_name="llm",
         class_name="LLMConverter",
@@ -71,6 +103,9 @@ _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
             }
         ),
     ),
+    # Marker only converts PDFs. The provider registry lives in
+    # marker.providers.registry but has no public format listing API.
+    # https://github.com/VikParuchuri/marker
     ConversionPipeline.MARKER: _ConverterEntry(
         module_name="marker",
         class_name="MarkerConverter",
@@ -78,23 +113,17 @@ _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
         description="Best for PDF documents",
         extensions=frozenset({".pdf"}),
     ),
+    # Resolved from docling.datamodel.base_models.FormatToExtensions.
+    # https://github.com/docling-project/docling/blob/main/docling/datamodel/base_models.py
     ConversionPipeline.DOCLING: _ConverterEntry(
         module_name="docling",
         class_name="DoclingConverter",
         label="Docling",
         description="Best for Office documents",
-        extensions=frozenset(
-            {
-                ".pdf",
-                ".docx",
-                ".pptx",
-                ".xlsx",
-                ".png",
-                ".jpg",
-                ".jpeg",
-            }
-        ),
+        extensions=_DOCLING_EXTENSIONS,
     ),
+    # MinerU has no public format listing API.
+    # https://github.com/opendatalab/MinerU#supported-file-types
     ConversionPipeline.MINERU: _ConverterEntry(
         module_name="mineru",
         class_name="MinerUConverter",
@@ -111,50 +140,101 @@ _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
             }
         ),
     ),
+    # Resolved from converters/pandoc.py (_FORMAT_OVERRIDES + _SANDBOX_INCOMPATIBLE).
+    # Pandoc itself lists formats via pypandoc.get_pandoc_formats(), but those
+    # are format names, not extensions.
+    # https://pandoc.org/MANUAL.html#general-options (--from)
     ConversionPipeline.PANDOC: _ConverterEntry(
         module_name="pandoc",
         class_name="PandocConverter",
         label="Pandoc",
         description="Universal converter for ODT, RST, RTF, EPUB, LaTeX, Org, "
         "DocBook, Typst, and more",
+        extensions=_PANDOC_EXTENSIONS,
+    ),
+    # MarkItDown has no public format listing API. Each converter in
+    # markitdown.converters defines its own ACCEPTED_FILE_EXTENSIONS constant.
+    # https://github.com/microsoft/markitdown/tree/main/packages/markitdown/src/markitdown/converters
+    ConversionPipeline.MARKITDOWN: _ConverterEntry(
+        module_name="markitdown",
+        class_name="MarkItDownConverter",
+        label="MarkItDown",
+        description="Microsoft's converter for Office, PDF, images, and more",
         extensions=frozenset(
             {
-                ".txt",
-                ".html",
-                ".xml",
-                ".csv",
-                ".adoc",
-                ".odt",
-                ".rst",
-                ".rtf",
-                ".epub",
-                ".tex",
-                ".org",
-                ".docbook",
-                ".typst",
+                ".pdf",
                 ".docx",
-                ".pptx",
                 ".xlsx",
-                ".fb2",
-                ".opml",
-                ".bib",
-                ".ris",
-                ".tsv",
+                ".xls",
+                ".pptx",
+                ".html",
+                ".htm",
+                ".csv",
+                ".json",
+                ".jsonl",
+                ".ndjson",
+                ".xml",
+                ".rss",
+                ".atom",
+                ".epub",
                 ".ipynb",
-                ".textile",
-                ".creole",
-                ".djot",
-                ".dokuwiki",
-                ".mediawiki",
-                ".tikiwiki",
-                ".twiki",
-                ".vimwiki",
-                ".jira",
-                ".muse",
-                ".t2t",
-                ".jats",
-                ".man",
-                ".pod",
+                ".zip",
+                ".txt",
+                ".md",
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".wav",
+                ".mp3",
+                ".m4a",
+                ".msg",
+            }
+        ),
+    ),
+    # Kreuzberg exposes get_extensions_for_mime() per MIME type but has no
+    # API to enumerate all supported types at once.
+    # https://docs.kreuzberg.dev/features/supported-formats/
+    ConversionPipeline.KREUZBERG: _ConverterEntry(
+        module_name="kreuzberg",
+        class_name="KreuzbergConverter",
+        label="Kreuzberg",
+        description="Text extraction from 75+ formats with OCR support",
+        extensions=frozenset(
+            {
+                ".pdf",
+                ".docx",
+                ".xlsx",
+                ".pptx",
+                ".doc",
+                ".xls",
+                ".ppt",
+                ".odt",
+                ".ods",
+                ".html",
+                ".htm",
+                ".xml",
+                ".json",
+                ".csv",
+                ".epub",
+                ".rtf",
+                ".txt",
+                ".md",
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".gif",
+                ".webp",
+                ".tiff",
+                ".tif",
+                ".bmp",
+                ".svg",
+                ".ico",
+                ".msg",
+                ".eml",
+                ".zip",
+                ".tar",
+                ".gz",
+                ".7z",
             }
         ),
     ),
@@ -250,7 +330,7 @@ def get_converter(
 
     if filename:
         suffix = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ""
-        if suffix and suffix not in entry.extensions:
+        if suffix and entry.extensions and suffix not in entry.extensions:
             raise ValueError(
                 f"Conversion pipeline '{pipeline.value}' does not support "
                 f"{suffix}. Supported: {', '.join(sorted(entry.extensions))}"
