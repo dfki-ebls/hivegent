@@ -32,10 +32,12 @@ dependencies = [
 snipscout = "snipscout.cli:app"
 
 [project.optional-dependencies]
-marker = ["marker-pdf[full]>=1"]
-docling = ["docling>=2"]
-# mineru = ["mineru[all]>=2"]
-all = ["snipscout[marker,docling]"]
+marker = ["marker-pdf[full]>=1,<2"]
+docling = ["docling>=2,<3"]
+markitdown = ["markitdown[all]>=0.1,<1"]
+kreuzberg = ["kreuzberg>=4,<5"]
+# mineru = ["mineru[all]>=2,<3"]
+all = ["snipscout[marker,docling,kreuzberg,markitdown]"]
 
 [build-system]
 requires = ["uv-build>=0.9,<1"]
