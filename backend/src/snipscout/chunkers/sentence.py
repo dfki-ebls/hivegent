@@ -1,5 +1,7 @@
 """Sentence-based document chunker using chonkie."""
 
+from dataclasses import dataclass
+
 from chonkie import SentenceChunker
 
 from .base import ChunkData, DocumentChunker
@@ -7,6 +9,7 @@ from .base import ChunkData, DocumentChunker
 __all__ = ["SentenceDocumentChunker"]
 
 
+@dataclass(slots=True, frozen=True)
 class SentenceDocumentChunker(DocumentChunker):
     """Chunker that splits text respecting sentence boundaries.
 
@@ -14,21 +17,10 @@ class SentenceDocumentChunker(DocumentChunker):
     Best suited for prose and plain text documents.
     """
 
-    def __init__(self, chunk_size: int = 2048) -> None:
-        """Initialize the sentence chunker.
+    name = "sentence"
+    chunk_size = 2048
 
-        Args:
-            chunk_size: Target chunk size in tokens.
-        """
-        super().__init__(chunk_size)
-        self._chunker = SentenceChunker(chunk_size=chunk_size)
-
-    @property
-    def name(self) -> str:
-        """The unique name of this chunker."""
-        return "sentence"
-
-    def chunk(self, text: str) -> list[ChunkData]:
+    def __call__(self, text: str, /) -> list[ChunkData]:
         """Split text into sentence-boundary-respecting chunks.
 
         Args:
@@ -37,7 +29,7 @@ class SentenceDocumentChunker(DocumentChunker):
         Returns:
             List of ChunkData objects.
         """
-        chunks = self._chunker.chunk(text)
+        chunks = SentenceChunker(chunk_size=self.chunk_size).chunk(text)
         return [
             ChunkData(
                 text=c.text,

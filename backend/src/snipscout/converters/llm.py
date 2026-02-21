@@ -1,5 +1,6 @@
 """LLM-based document converter using Pydantic AI with vision models."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic_ai import BinaryContent
@@ -7,7 +8,8 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..agent import base_agent
-from .base import DocumentConverter, LLMConvertOptions
+from ..types import LlmConfig
+from .base import DocumentConverter
 
 __all__ = ["LLMConverter"]
 
@@ -33,6 +35,9 @@ Convert equations and formulas to LaTeX (inline $...$ or block $$...$$).
 Do not include any commentary, just the converted content."""
 
 
+# Extensions derived from the MEDIA_TYPES keys above.
+# https://platform.openai.com/docs/guides/pdf-files
+@dataclass(slots=True, frozen=True)
 class LLMConverter(DocumentConverter):
     """Document converter using vision-capable LLMs.
 
@@ -40,26 +45,25 @@ class LLMConverter(DocumentConverter):
     directly to vision-capable models for conversion to markdown.
     """
 
-    @property
-    def name(self) -> str:
-        """The unique name of this converter."""
-        return "llm"
+    name = "llm"
+    extensions = frozenset(MEDIA_TYPES)
 
-    async def convert(
+    async def __call__(
         self,
-        file_path: Path,
-        options: LLMConvertOptions | None = None,
+        path: Path,
+        /,
+        options: LlmConfig | None = None,
     ) -> str:
         """Convert a document to markdown using an LLM with vision capabilities.
 
         Args:
-            file_path: Path to the document to convert.
+            path: Path to the document to convert.
             options: LLM provider options (model, api_key, base_url).
 
         Returns:
             The document content converted to markdown.
         """
-        opts = options or LLMConvertOptions()
+        opts = options or LlmConfig()
 
         if not opts.model:
             raise ValueError(
@@ -67,12 +71,12 @@ class LLMConverter(DocumentConverter):
                 "Set SNIPSCOUT_LLM__VISION_MODEL or provide x-vision-model header."
             )
 
-        suffix = file_path.suffix.lower()
+        suffix = path.suffix.lower()
         media_type = MEDIA_TYPES.get(suffix)
         assert media_type is not None, f"Unsupported extension: {suffix}"
 
         content = BinaryContent(
-            data=file_path.read_bytes(),
+            data=path.read_bytes(),
             media_type=media_type,
         )
 

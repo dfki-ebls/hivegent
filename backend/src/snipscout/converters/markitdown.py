@@ -1,61 +1,72 @@
-"""MarkItDown-based document converter with lazy loading."""
+"""MarkItDown-based document converter."""
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+
+from markitdown import MarkItDown
 
 from .base import DocumentConverter
 
 __all__ = ["MarkItDownConverter"]
 
 
+# MarkItDown has no public format listing API. Each converter in
+# markitdown.converters defines its own ACCEPTED_FILE_EXTENSIONS constant.
+# https://github.com/microsoft/markitdown/tree/main/packages/markitdown/src/markitdown/converters
+@dataclass(slots=True, frozen=True)
 class MarkItDownConverter(DocumentConverter):
     """Document converter using Microsoft's MarkItDown library.
 
     MarkItDown converts Office documents, PDFs, images, HTML, and other
-    formats to markdown. This converter uses lazy imports to avoid loading
-    the dependencies until needed.
+    formats to markdown.
     """
 
-    @property
-    def name(self) -> str:
-        """The unique name of this converter."""
-        return "markitdown"
+    name = "markitdown"
+    extensions = frozenset(
+        {
+            ".pdf",
+            ".docx",
+            ".xlsx",
+            ".xls",
+            ".pptx",
+            ".html",
+            ".htm",
+            ".csv",
+            ".json",
+            ".jsonl",
+            ".ndjson",
+            ".xml",
+            ".rss",
+            ".atom",
+            ".epub",
+            ".ipynb",
+            ".zip",
+            ".txt",
+            ".md",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".wav",
+            ".mp3",
+            ".m4a",
+            ".msg",
+        }
+    )
 
-    def __init__(self) -> None:
-        """Initialize the converter with lazy loading."""
-        self._converter: Any = None
-
-    def _convert_sync(self, file_path: Path) -> str:
-        """Run the synchronous MarkItDown conversion.
-
-        Raises:
-            ImportError: If markitdown is not installed.
-        """
-        if self._converter is None:
-            try:
-                from markitdown import MarkItDown
-
-                self._converter = MarkItDown()
-            except ImportError as e:
-                raise ImportError(
-                    "markitdown is not installed. "
-                    "Install with: pip install 'markitdown[all]'"
-                ) from e
-
-        result = self._converter.convert(str(file_path))
+    def _convert_sync(self, path: Path) -> str:
+        """Run the synchronous MarkItDown conversion."""
+        md = MarkItDown()
+        result = md.convert(str(path))
         return str(result.text_content)
 
-    async def convert(self, file_path: Path) -> str:
+    async def __call__(self, path: Path, /) -> str:
         """Convert a document to markdown using MarkItDown.
 
         Args:
-            file_path: Path to the document to convert.
+            path: Path to the document to convert.
 
         Returns:
             The document content converted to markdown.
-
-        Raises:
-            ImportError: If markitdown is not installed.
         """
-        return await asyncio.to_thread(self._convert_sync, file_path)
+        return await asyncio.to_thread(self._convert_sync, path)

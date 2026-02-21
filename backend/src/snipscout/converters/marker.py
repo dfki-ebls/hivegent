@@ -1,61 +1,44 @@
-"""Marker-based PDF converter with lazy loading."""
+"""Marker-based PDF converter."""
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
 
 from .base import DocumentConverter
 
 __all__ = ["MarkerConverter"]
 
 
+# Marker only converts PDFs. The provider registry lives in
+# marker.providers.registry but has no public format listing API.
+# https://github.com/VikParuchuri/marker
+@dataclass(slots=True, frozen=True)
 class MarkerConverter(DocumentConverter):
     """PDF converter using the Marker library.
 
     Marker provides high-accuracy PDF to markdown conversion with support for
-    complex layouts, tables, and equations. This converter uses lazy imports
-    to avoid loading the heavy dependencies until needed.
+    complex layouts, tables, and equations.
     """
 
-    @property
-    def name(self) -> str:
-        """The unique name of this converter."""
-        return "marker"
+    name = "marker"
+    extensions = frozenset({".pdf"})
 
-    def __init__(self) -> None:
-        """Initialize the converter with lazy loading."""
-        self._converter: Any = None
-
-    def _convert_sync(self, file_path: Path) -> str:
-        """Run the synchronous Marker conversion.
-
-        Raises:
-            ImportError: If marker-pdf is not installed.
-        """
-        if self._converter is None:
-            try:
-                from marker.converters.pdf import PdfConverter
-                from marker.models import create_model_dict
-
-                self._converter = PdfConverter(artifact_dict=create_model_dict())
-            except ImportError as e:
-                raise ImportError(
-                    "marker-pdf is not installed. Install with: pip install marker-pdf"
-                ) from e
-
-        result = self._converter(str(file_path))
+    def _convert_sync(self, path: Path) -> str:
+        """Run the synchronous Marker conversion."""
+        converter = PdfConverter(artifact_dict=create_model_dict())
+        result = converter(str(path))
         return str(result.markdown)
 
-    async def convert(self, file_path: Path) -> str:
+    async def __call__(self, path: Path, /) -> str:
         """Convert a PDF document to markdown using Marker.
 
         Args:
-            file_path: Path to the PDF document to convert.
+            path: Path to the PDF document to convert.
 
         Returns:
             The document content converted to markdown.
-
-        Raises:
-            ImportError: If marker-pdf is not installed.
         """
-        return await asyncio.to_thread(self._convert_sync, file_path)
+        return await asyncio.to_thread(self._convert_sync, path)

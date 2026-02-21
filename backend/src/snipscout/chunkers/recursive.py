@@ -1,5 +1,7 @@
 """Recursive document chunker using chonkie."""
 
+from dataclasses import dataclass
+
 from chonkie import RecursiveChunker
 
 from .base import ChunkData, DocumentChunker
@@ -7,6 +9,7 @@ from .base import ChunkData, DocumentChunker
 __all__ = ["RecursiveDocumentChunker"]
 
 
+@dataclass(slots=True, frozen=True)
 class RecursiveDocumentChunker(DocumentChunker):
     """Chunker that splits text hierarchically.
 
@@ -15,21 +18,10 @@ class RecursiveDocumentChunker(DocumentChunker):
     Best suited for markdown and other structured documents.
     """
 
-    def __init__(self, chunk_size: int = 2048) -> None:
-        """Initialize the recursive chunker.
+    name = "recursive"
+    chunk_size = 2048
 
-        Args:
-            chunk_size: Target chunk size in tokens.
-        """
-        super().__init__(chunk_size)
-        self._chunker = RecursiveChunker(chunk_size=chunk_size)
-
-    @property
-    def name(self) -> str:
-        """The unique name of this chunker."""
-        return "recursive"
-
-    def chunk(self, text: str) -> list[ChunkData]:
+    def __call__(self, text: str, /) -> list[ChunkData]:
         """Split text using hierarchical recursive splitting.
 
         Args:
@@ -38,7 +30,7 @@ class RecursiveDocumentChunker(DocumentChunker):
         Returns:
             List of ChunkData objects.
         """
-        chunks = self._chunker.chunk(text)
+        chunks = RecursiveChunker(chunk_size=self.chunk_size).chunk(text)
         return [
             ChunkData(
                 text=c.text,

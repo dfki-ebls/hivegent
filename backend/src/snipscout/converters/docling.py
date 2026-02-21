@@ -1,60 +1,46 @@
-"""Docling-based document converter with lazy loading."""
+"""Docling-based document converter."""
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+
+from docling.datamodel.base_models import FormatToExtensions
+from docling.document_converter import (
+    DocumentConverter as DoclingDocumentConverter,
+)
 
 from .base import DocumentConverter
 
 __all__ = ["DoclingConverter"]
 
 
+# Derived from docling.datamodel.base_models.FormatToExtensions.
+# https://github.com/docling-project/docling/blob/main/docling/datamodel/base_models.py
+@dataclass(slots=True, frozen=True)
 class DoclingConverter(DocumentConverter):
     """Document converter using the Docling library.
 
     Docling provides high-quality document conversion with excellent support
-    for Office documents (DOCX, XLSX, PPTX), PDFs, and images. This converter
-    uses lazy imports to avoid loading the heavy dependencies until needed.
+    for Office documents (DOCX, XLSX, PPTX), PDFs, and images.
     """
 
-    @property
-    def name(self) -> str:
-        """The unique name of this converter."""
-        return "docling"
+    name = "docling"
+    extensions = frozenset(
+        f".{ext}" for exts in FormatToExtensions.values() for ext in exts
+    )
 
-    def __init__(self) -> None:
-        """Initialize the converter with lazy loading."""
-        self._converter: Any = None
-
-    def _convert_sync(self, file_path: Path) -> str:
-        """Run the synchronous Docling conversion.
-
-        Raises:
-            ImportError: If docling is not installed.
-        """
-        if self._converter is None:
-            try:
-                from docling.document_converter import DocumentConverter
-
-                self._converter = DocumentConverter()
-            except ImportError as e:
-                raise ImportError(
-                    "docling is not installed. Install with: pip install docling"
-                ) from e
-
-        result = self._converter.convert(str(file_path))
+    def _convert_sync(self, path: Path) -> str:
+        """Run the synchronous Docling conversion."""
+        result = DoclingDocumentConverter().convert(str(path))
         return str(result.document.export_to_markdown())
 
-    async def convert(self, file_path: Path) -> str:
+    async def __call__(self, path: Path, /) -> str:
         """Convert a document to markdown using Docling.
 
         Args:
-            file_path: Path to the document to convert.
+            path: Path to the document to convert.
 
         Returns:
             The document content converted to markdown.
-
-        Raises:
-            ImportError: If docling is not installed.
         """
-        return await asyncio.to_thread(self._convert_sync, file_path)
+        return await asyncio.to_thread(self._convert_sync, path)

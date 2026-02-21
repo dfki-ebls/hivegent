@@ -63,7 +63,6 @@ from .converters import (
     get_pipelines_info,
     resolve_auto_pipeline,
 )
-from .converters.base import LLMConvertOptions
 from .mcp import mcp_app
 from .observability import configure_observability
 from .messages import (
@@ -613,16 +612,12 @@ async def _upload_file_internal(
             from .converters.llm import LLMConverter
 
             assert isinstance(converter, LLMConverter)
-            markdown_content = await converter.convert(
+            markdown_content = await converter(
                 original_path,
-                options=LLMConvertOptions(
-                    model=llm_config.model,
-                    api_key=llm_config.api_key,
-                    base_url=llm_config.base_url,
-                ),
+                options=llm_config,
             )
         else:
-            markdown_content = await converter.convert(original_path)
+            markdown_content = await converter(original_path)
     except ImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -953,14 +948,12 @@ async def rechunk_document(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
     chunking_pipeline: ChunkingPipeline = Query(default=ChunkingPipeline.AUTO),
-    chunk_size: int = Query(default=2048, ge=64, le=16384),
 ) -> ChunkedDocument:
     """Re-chunk a document with different settings.
 
     Args:
         filepath: The relative document path.
         chunking_pipeline: The chunking pipeline to use.
-        chunk_size: The target chunk size in tokens.
     """
     safe = _safe_path(filepath)
     data_dir = settings.get_user_documents_dir(user.id)
@@ -973,7 +966,7 @@ async def rechunk_document(
 
     try:
         result = chunk_document(
-            user.id, safe, text_content, chunking_pipeline, chunk_size
+            user.id, safe, text_content, chunking_pipeline
         )
         sync_index(user.id)
         return result
@@ -1045,16 +1038,12 @@ async def reconvert_document(
             from .converters.llm import LLMConverter
 
             assert isinstance(converter, LLMConverter)
-            markdown_content = await converter.convert(
+            markdown_content = await converter(
                 original_path,
-                options=LLMConvertOptions(
-                    model=resolved.model,
-                    api_key=resolved.api_key,
-                    base_url=resolved.base_url,
-                ),
+                options=resolved,
             )
         else:
-            markdown_content = await converter.convert(original_path)
+            markdown_content = await converter(original_path)
     except ImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:

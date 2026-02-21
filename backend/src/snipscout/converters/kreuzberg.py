@@ -1,12 +1,19 @@
 """Kreuzberg-based document converter with native async support."""
 
+from dataclasses import dataclass
 from pathlib import Path
+
+from kreuzberg import extract_file
 
 from .base import DocumentConverter
 
 __all__ = ["KreuzbergConverter"]
 
 
+# Kreuzberg exposes get_extensions_for_mime() per MIME type but has no
+# API to enumerate all supported types at once.
+# https://docs.kreuzberg.dev/features/supported-formats/
+@dataclass(slots=True, frozen=True)
 class KreuzbergConverter(DocumentConverter):
     """Document converter using the Kreuzberg text extraction library.
 
@@ -15,30 +22,54 @@ class KreuzbergConverter(DocumentConverter):
     so no thread wrapping is needed.
     """
 
-    @property
-    def name(self) -> str:
-        """The unique name of this converter."""
-        return "kreuzberg"
+    name = "kreuzberg"
+    extensions = frozenset(
+        {
+            ".pdf",
+            ".docx",
+            ".xlsx",
+            ".pptx",
+            ".doc",
+            ".xls",
+            ".ppt",
+            ".odt",
+            ".ods",
+            ".html",
+            ".htm",
+            ".xml",
+            ".json",
+            ".csv",
+            ".epub",
+            ".rtf",
+            ".txt",
+            ".md",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".webp",
+            ".tiff",
+            ".tif",
+            ".bmp",
+            ".svg",
+            ".ico",
+            ".msg",
+            ".eml",
+            ".zip",
+            ".tar",
+            ".gz",
+            ".7z",
+        }
+    )
 
-    async def convert(self, file_path: Path) -> str:
+    async def __call__(self, path: Path, /) -> str:
         """Convert a document to plain text using Kreuzberg.
 
         Args:
-            file_path: Path to the document to convert.
+            path: Path to the document to convert.
 
         Returns:
             The extracted text content.
-
-        Raises:
-            ImportError: If kreuzberg is not installed.
         """
-        try:
-            from kreuzberg import extract_file
-        except ImportError as e:
-            raise ImportError(
-                "kreuzberg is not installed. "
-                "Install with: pip install kreuzberg"
-            ) from e
-
-        result = await extract_file(file_path)
+        result = await extract_file(path)
         return str(result.content)

@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import ClassVar
 
 __all__ = ["ChunkData", "DocumentChunker"]
 
@@ -25,27 +26,11 @@ class DocumentChunker(ABC):
     Chunkers split document text into smaller pieces for retrieval.
     """
 
-    def __init__(self, chunk_size: int = 2048) -> None:
-        """Initialize the chunker.
-
-        Args:
-            chunk_size: Target chunk size in tokens.
-        """
-        self._chunk_size = chunk_size
-
-    @property
-    def chunk_size(self) -> int:
-        """The target chunk size in tokens."""
-        return self._chunk_size
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """The unique name of this chunker."""
-        ...
+    name: ClassVar[str]
+    chunk_size: ClassVar[int]
 
     @abstractmethod
-    def chunk(self, text: str) -> list[ChunkData]:
+    def __call__(self, text: str, /) -> list[ChunkData]:
         """Split text into chunks.
 
         Args:

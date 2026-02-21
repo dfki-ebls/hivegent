@@ -1,7 +1,10 @@
 """Pandoc-based document converter for miscellaneous document formats."""
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
+
+import pypandoc
 
 from .base import DocumentConverter
 
@@ -11,6 +14,7 @@ __all__ = ["PandocConverter"]
 # Explicit format names are provided for safety even when pandoc might
 # auto-detect, since the cost of an override is zero while a wrong guess
 # causes a runtime error.
+# https://pandoc.org/MANUAL.html#general-options (--from)
 _FORMAT_OVERRIDES: dict[str, str] = {
     ".txt": "markdown",
     ".html": "html",
@@ -52,6 +56,7 @@ _FORMAT_OVERRIDES: dict[str, str] = {
 _SANDBOX_INCOMPATIBLE = frozenset({".docx", ".pptx", ".xlsx"})
 
 
+@dataclass(slots=True, frozen=True)
 class PandocConverter(DocumentConverter):
     """Document converter using pandoc via pypandoc.
 
@@ -61,49 +66,30 @@ class PandocConverter(DocumentConverter):
     specialized converters (Docling, Marker, MinerU).
     """
 
-    @property
-    def name(self) -> str:
-        """The unique name of this converter."""
-        return "pandoc"
+    name = "pandoc"
+    extensions = frozenset(_FORMAT_OVERRIDES) | _SANDBOX_INCOMPATIBLE
 
-    def _convert_sync(self, file_path: Path) -> str:
-        """Run the synchronous pypandoc conversion.
-
-        Args:
-            file_path: Path to the document to convert.
-
-        Returns:
-            The document content as a markdown string.
-
-        Raises:
-            ImportError: If pypandoc is not installed.
-            RuntimeError: If pandoc is not installed or conversion fails.
-        """
-        import pypandoc
-
-        suffix = file_path.suffix.lower()
+    def _convert_sync(self, path: Path) -> str:
+        """Run the synchronous pypandoc conversion."""
+        suffix = path.suffix.lower()
         fmt = _FORMAT_OVERRIDES.get(suffix)
         use_sandbox = suffix not in _SANDBOX_INCOMPATIBLE
         return str(
             pypandoc.convert_file(
-                file_path,
+                path,
                 to="markdown",
                 format=fmt,
                 sandbox=use_sandbox,
             )
         )
 
-    async def convert(self, file_path: Path) -> str:
+    async def __call__(self, path: Path, /) -> str:
         """Convert a document to markdown using pandoc.
 
         Args:
-            file_path: Path to the document to convert.
+            path: Path to the document to convert.
 
         Returns:
             The document content converted to markdown.
-
-        Raises:
-            ImportError: If pypandoc is not installed.
-            RuntimeError: If pandoc is not installed or conversion fails.
         """
-        return await asyncio.to_thread(self._convert_sync, file_path)
+        return await asyncio.to_thread(self._convert_sync, path)

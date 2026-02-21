@@ -45,7 +45,6 @@ def chunk_document(
     filename: str,
     content: str,
     chunking_pipeline: ChunkingPipeline = ChunkingPipeline.AUTO,
-    chunk_size: int = 2048,
 ) -> ChunkedDocument:
     """Chunk a document and persist the results to disk.
 
@@ -54,13 +53,12 @@ def chunk_document(
         filename: The document filename.
         content: The document text content.
         chunking_pipeline: The chunking pipeline to use.
-        chunk_size: The target chunk size in tokens.
 
     Returns:
         The chunked document with metadata.
     """
-    chunker = get_chunker(chunking_pipeline, filename=filename, chunk_size=chunk_size)
-    raw_chunks = chunker.chunk(content)
+    chunker = get_chunker(chunking_pipeline, filename=filename)
+    raw_chunks = chunker(content)
 
     chunks = [
         ChunkInfo(
@@ -74,7 +72,7 @@ def chunk_document(
 
     doc = ChunkedDocument(
         pipeline=chunker.name,
-        chunk_size=chunk_size,
+        chunk_size=chunker.chunk_size,
         created_at=datetime.now(tz=timezone.utc),
         chunks=chunks,
     )
