@@ -66,7 +66,9 @@ from .converters import (
 )
 from .mcp import mcp_app
 from .messages import (
+    create_conversation as persist_conversation,
     delete_conversation,
+    find_empty_conversation,
     list_conversations,
     load_conversation,
     load_messages,
@@ -298,8 +300,20 @@ async def get_settings(
 async def create_conversation(
     user: Annotated[User, Depends(get_current_user)],
 ) -> CreateConversationResponse:
-    """Create a new conversation and return its ID."""
+    """Create a new conversation and return its ID.
+
+    If an empty conversation (zero messages) already exists for this user,
+    its ``updated_at`` timestamp is refreshed and the same ID is returned.
+    This prevents clutter when the user clicks "Start New Chat" repeatedly
+    without sending a message.
+    """
+    existing_id = find_empty_conversation(user.id)
+    if existing_id:
+        update_conversation_title(user.id, existing_id, "")
+        return CreateConversationResponse(id=existing_id)
+
     conversation_id = generate()
+    persist_conversation(user.id, conversation_id)
     return CreateConversationResponse(id=conversation_id)
 
 
@@ -530,6 +544,9 @@ async def chat(
         raise HTTPException(
             status_code=400, detail="conversation_id is required in the request body"
         )
+
+    if not load_conversation(user.id, config.conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
     document_filter, group_filters = _parse_document_filters(
         config.included_documents,

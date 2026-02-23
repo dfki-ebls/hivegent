@@ -823,6 +823,7 @@ export function ChatSidebar({
   const [compactedFrom, setCompactedFrom] = useState<string | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [conversationError, setConversationError] = useState(false);
   const pendingRetryRef = useRef<string | null>(null);
 
   const hasDocumentFilters =
@@ -881,16 +882,20 @@ export function ChatSidebar({
     let cancelled = false;
     setIsLoadingHistory(true);
     setCompactedFrom(null);
-    getMessages(id)
-      .then(async (initialMessages) => {
+    setConversationError(false);
+    getConversation(id)
+      .then(async (conv) => {
+        if (cancelled) return;
+        if (!conv) {
+          setConversationError(true);
+          return;
+        }
+        if (conv.compacted_from) {
+          setCompactedFrom(conv.compacted_from);
+        }
+        const initialMessages = await getMessages(id);
         if (!cancelled && initialMessages.length > 0) {
           setMessages(initialMessages);
-        }
-        if (!cancelled) {
-          const conv = await getConversation(id);
-          if (conv?.compacted_from) {
-            setCompactedFrom(conv.compacted_from);
-          }
         }
       })
       .finally(() => {
@@ -1137,7 +1142,19 @@ export function ChatSidebar({
               </Alert>
             )}
             {isLoadingHistory && <Loader />}
-            {!isLoadingHistory && messages.length === 0 && !error && (
+            {!isLoadingHistory && conversationError && (
+              <div className="flex flex-col items-center justify-center gap-4 py-12 text-center">
+                <AlertCircle className="h-10 w-10 text-muted-foreground" />
+                <div>
+                  <p className="text-lg font-medium">Conversation not found</p>
+                  <p className="text-sm text-muted-foreground">
+                    This conversation does not exist or has been deleted.
+                  </p>
+                </div>
+                <Button onClick={handleNewChat}>Start New Chat</Button>
+              </div>
+            )}
+            {!isLoadingHistory && !conversationError && messages.length === 0 && !error && (
               <ConversationEmptyState
                 title="Ask about your documents"
                 description="Start a conversation to search and explore your documents."

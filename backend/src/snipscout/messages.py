@@ -10,7 +10,9 @@ from .config import settings
 from .types import ConversationData, ConversationSummary
 
 __all__ = [
+    "create_conversation",
     "delete_conversation",
+    "find_empty_conversation",
     "list_conversations",
     "load_conversation",
     "load_messages",
@@ -106,6 +108,54 @@ def _extract_title(messages: Sequence[ModelMessage]) -> str:
                         else first_line[:97] + "..."
                     )
     return ""
+
+
+def find_empty_conversation(user_id: str) -> str | None:
+    """Find an existing conversation with zero messages.
+
+    Scans the user's conversations directory for a file with an empty
+    message list and returns its ID.
+
+    Args:
+        user_id: The user ID to search conversations for.
+
+    Returns:
+        The conversation ID if an empty one exists, otherwise None.
+    """
+    user_dir = settings.get_user_conversations_dir(user_id)
+    if not user_dir.exists():
+        return None
+
+    for path in user_dir.glob("*.json"):
+        conv = load_conversation(user_id, path.stem)
+        if conv and len(conv.messages) == 0:
+            return conv.id
+
+    return None
+
+
+def create_conversation(user_id: str, conversation_id: str) -> None:
+    """Persist an empty conversation file.
+
+    Creates a new conversation JSON file with no messages.  The file
+    serves as proof that the ID was issued by the server.
+
+    Args:
+        user_id: The user ID that owns the conversation.
+        conversation_id: The conversation ID to create.
+    """
+    user_dir = settings.get_user_conversations_dir(user_id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    path = user_dir / f"{conversation_id}.json"
+    now = datetime.now(timezone.utc)
+    conversation = ConversationData(
+        id=conversation_id,
+        title="",
+        created_at=now,
+        updated_at=now,
+        messages=[],
+    )
+    path.write_bytes(conversation.model_dump_json(indent=2).encode())
 
 
 def list_conversations(user_id: str) -> list[ConversationSummary]:
