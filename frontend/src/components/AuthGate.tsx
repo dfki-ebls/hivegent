@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useAuth } from "../lib/auth-context";
+import { SignInButton } from "./SignInButton";
 
 interface AuthGateProps {
   children: ReactNode;
@@ -24,11 +25,14 @@ export function AuthGate({ children }: AuthGateProps) {
     );
   }
 
-  // If not authenticated, show message (will be redirected by route)
+  // If not authenticated, show message with sign in button
   if (!auth.isAuthenticated) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-muted-foreground">Please sign in to continue.</p>
+        <div className="flex flex-col items-center gap-4">
+          <p className="text-muted-foreground">Please sign in to continue.</p>
+          <SignInButton />
+        </div>
       </div>
     );
   }

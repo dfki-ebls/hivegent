@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { FileSearch, Loader2, LogIn } from "lucide-react";
+import { FileSearch, Loader2 } from "lucide-react";
 import { useState } from "react";
 
+import { SignInButton } from "../components/SignInButton";
 import { Button } from "../components/ui/button";
 import { createConversation } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
@@ -15,18 +16,9 @@ function IndexPage() {
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSignIn = async () => {
-    setIsLoading(true);
-    try {
-      await auth.signIn();
-      // For local auth, we're now authenticated, start a new chat
-      // For OIDC, this triggers a redirect, so we won't reach here
-      const id = await createConversation();
-      navigate({ to: "/chat/$id", params: { id } });
-    } catch (error) {
-      console.error("Sign in failed:", error);
-      setIsLoading(false);
-    }
+  const handlePostSignIn = async () => {
+    const id = await createConversation();
+    navigate({ to: "/chat/$id", params: { id } });
   };
 
   const handleNewChat = async () => {
@@ -84,14 +76,7 @@ function IndexPage() {
           Your intelligent document assistant powered by RAG. Upload documents
           and chat with your knowledge base.
         </p>
-        <Button onClick={handleSignIn} size="lg" disabled={isLoading}>
-          {isLoading ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <LogIn className="mr-2 h-4 w-4" />
-          )}
-          Sign In
-        </Button>
+        <SignInButton onSignedIn={handlePostSignIn} />
       </div>
     </div>
   );
