@@ -1,4 +1,4 @@
-"""Per-user LanceDB storage and retrieval using cbrkit."""
+"""Per-user and per-group LanceDB storage and retrieval using cbrkit."""
 
 import json
 import logging
@@ -12,11 +12,13 @@ from typing import Any, Literal
 import cbrkit
 
 from .config import settings
+from .store import Casebase
 from .types import ChunkedDocument, DocumentFilter
 
 __all__ = [
     "parse_chunk_key",
     "search_dense",
+    "search_multi",
     "search_sparse",
     "sync_index",
 ]
@@ -87,17 +89,17 @@ class _RetrievalState:
 
             return self._embedding_func
 
-    def _validate_fingerprint(self, user_id: str, lancedb_dir: Path) -> None:
+    def _validate_fingerprint(self, store_key: str, lancedb_dir: Path) -> None:
         """Check the embedding fingerprint and wipe stale vector data.
 
         Reads the stored fingerprint from the LanceDB directory.
         If it exists and differs from the current config, the directory
-        is wiped and the user is scheduled for re-indexing.
+        is wiped and the store is scheduled for re-indexing.
         The current fingerprint is always written back afterwards.
 
         Args:
-            user_id: The user ID (for logging and reindex tracking).
-            lancedb_dir: Path to the user's LanceDB directory.
+            store_key: The store key (for logging and reindex tracking).
+            lancedb_dir: Path to the store's LanceDB directory.
         """
         fp_path = lancedb_dir / EMBEDDING_FINGERPRINT_FILE
         current = settings.embedding.fingerprint()
@@ -109,41 +111,42 @@ class _RetrievalState:
 
         if stored is not None and stored != current:
             logger.warning(
-                "Embedding config changed for user %s "
+                "Embedding config changed for %s "
                 "(was %s, now %s) — wiping LanceDB directory",
-                user_id,
+                store_key,
                 stored,
                 current,
             )
-            self._storage_cache.pop(user_id, None)
+            self._storage_cache.pop(store_key, None)
             self._embedding_func = None
             shutil.rmtree(lancedb_dir)
             lancedb_dir.mkdir(parents=True, exist_ok=True)
-            self._pending_reindex.add(user_id)
+            self._pending_reindex.add(store_key)
 
         fp_path.write_text(json.dumps(current), encoding="utf-8")
 
-    def get_user_storage(self, user_id: str) -> cbrkit.indexable.lancedb[str]:
-        """Get or create the LanceDB storage for a user.
+    def get_storage(self, store: Casebase) -> cbrkit.indexable.lancedb[str]:
+        """Get or create the LanceDB storage for a casebase.
 
         Validates the embedding fingerprint on first access and
         invalidates stale vector data when the model config changes.
 
         Args:
-            user_id: The user ID.
+            store: The casebase identifier.
 
         Returns:
             The LanceDB storage instance.
         """
-        if user_id in self._storage_cache:
-            return self._storage_cache[user_id]
+        key = store.store_key
+        if key in self._storage_cache:
+            return self._storage_cache[key]
 
         with self._lock:
-            if user_id in self._storage_cache:
-                return self._storage_cache[user_id]
+            if key in self._storage_cache:
+                return self._storage_cache[key]
 
-            lancedb_dir = settings.get_user_lancedb_dir(user_id)
-            self._validate_fingerprint(user_id, lancedb_dir)
+            lancedb_dir = store.lancedb_dir(settings.data_dir)
+            self._validate_fingerprint(key, lancedb_dir)
 
             storage: cbrkit.indexable.lancedb[str] = cbrkit.indexable.lancedb(
                 uri=str(lancedb_dir),
@@ -152,7 +155,7 @@ class _RetrievalState:
                 conversion_func=self.get_embedding_func(),
                 metadata_func=_metadata_func,
             )
-            self._storage_cache[user_id] = storage
+            self._storage_cache[key] = storage
             return storage
 
 
@@ -207,16 +210,15 @@ def _metadata_func(key: str, value: str) -> dict[str, Any]:
     return {METADATA_FILENAME_COLUMN: filename}
 
 
-def _load_all_chunks(user_id: str) -> dict[str, str]:
-    """Load all chunks for a user as a casebase mapping.
+def _load_all_chunks_from_dir(chunks_dir: Path) -> dict[str, str]:
+    """Load all chunks from a chunks directory as a casebase mapping.
 
     Args:
-        user_id: The user ID.
+        chunks_dir: The directory containing chunk JSON files.
 
     Returns:
         Dict mapping chunk keys to chunk text.
     """
-    chunks_dir = settings.get_user_chunks_dir(user_id)
     if not chunks_dir.exists():
         return {}
 
@@ -240,19 +242,19 @@ def _load_all_chunks(user_id: str) -> dict[str, str]:
     return casebase
 
 
-def sync_index(user_id: str) -> None:
+def sync_index(store: Casebase) -> None:
     """Rebuild the LanceDB index from all chunk JSON files.
 
-    Loads every chunk for the user and calls ``create_index()`` which
+    Loads every chunk for the store and calls ``create_index()`` which
     diffs against the existing table and only adds/removes changed rows.
 
     Args:
-        user_id: The user ID.
+        store: The casebase to sync.
     """
-    _state._pending_reindex.discard(user_id)
-    storage = _state.get_user_storage(user_id)
-    casebase = _load_all_chunks(user_id)
-    logger.info("Syncing LanceDB index for user %s (%d chunks)", user_id, len(casebase))
+    _state._pending_reindex.discard(store.store_key)
+    storage = _state.get_storage(store)
+    casebase = _load_all_chunks_from_dir(store.chunks_dir(settings.data_dir))
+    logger.info("Syncing LanceDB index for %s (%d chunks)", store.store_key, len(casebase))
     storage.create_index(casebase)
 
 
@@ -296,17 +298,19 @@ def _build_where_clause(
     return " AND ".join(conditions)
 
 
-def _search(
-    user_id: str,
+def _search_storage(
+    storage: cbrkit.indexable.lancedb[str],
+    store_key: str,
     query: str,
     search_type: Literal["dense", "sparse"],
     top_k: int,
     document_filter: DocumentFilter | None,
 ) -> Sequence[tuple[str, str, float]]:
-    """Run a search against the user's LanceDB index.
+    """Run a search against a single LanceDB storage instance.
 
     Args:
-        user_id: The user ID.
+        storage: The LanceDB storage to search.
+        store_key: Store key for pending reindex check.
         query: The search query.
         search_type: ``"dense"`` or ``"sparse"``.
         top_k: Maximum number of results.
@@ -315,10 +319,6 @@ def _search(
     Returns:
         List of ``(chunk_key, text, score)`` tuples sorted by score.
     """
-    if user_id in _state._pending_reindex:
-        sync_index(user_id)
-
-    storage = _state.get_user_storage(user_id)
     if not storage.has_index():
         return []
 
@@ -342,16 +342,42 @@ def _search(
     ]
 
 
+def _search(
+    store: Casebase,
+    query: str,
+    search_type: Literal["dense", "sparse"],
+    top_k: int,
+    document_filter: DocumentFilter | None,
+) -> Sequence[tuple[str, str, float]]:
+    """Run a search against a casebase's LanceDB index.
+
+    Args:
+        store: The casebase to search.
+        query: The search query.
+        search_type: ``"dense"`` or ``"sparse"``.
+        top_k: Maximum number of results.
+        document_filter: Optional document filter.
+
+    Returns:
+        List of ``(chunk_key, text, score)`` tuples sorted by score.
+    """
+    if store.store_key in _state._pending_reindex:
+        sync_index(store)
+
+    storage = _state.get_storage(store)
+    return _search_storage(storage, store.store_key, query, search_type, top_k, document_filter)
+
+
 def search_dense(
-    user_id: str,
+    store: Casebase,
     query: str,
     top_k: int = 5,
     document_filter: DocumentFilter | None = None,
 ) -> Sequence[tuple[str, str, float]]:
-    """Dense vector search over a user's chunks.
+    """Dense vector search over a store's chunks.
 
     Args:
-        user_id: The user ID.
+        store: The casebase to search.
         query: Natural language search query.
         top_k: Maximum number of results.
         document_filter: Optional document include/exclude filter.
@@ -359,19 +385,19 @@ def search_dense(
     Returns:
         List of ``(chunk_key, text, score)`` tuples.
     """
-    return _search(user_id, query, "dense", top_k, document_filter)
+    return _search(store, query, "dense", top_k, document_filter)
 
 
 def search_sparse(
-    user_id: str,
+    store: Casebase,
     query: str,
     top_k: int = 5,
     document_filter: DocumentFilter | None = None,
 ) -> Sequence[tuple[str, str, float]]:
-    """Sparse BM25/FTS search over a user's chunks.
+    """Sparse BM25/FTS search over a store's chunks.
 
     Args:
-        user_id: The user ID.
+        store: The casebase to search.
         query: Natural language search query.
         top_k: Maximum number of results.
         document_filter: Optional document include/exclude filter.
@@ -379,4 +405,50 @@ def search_sparse(
     Returns:
         List of ``(chunk_key, text, score)`` tuples.
     """
-    return _search(user_id, query, "sparse", top_k, document_filter)
+    return _search(store, query, "sparse", top_k, document_filter)
+
+
+def search_multi(
+    stores: Sequence[Casebase],
+    query: str,
+    search_type: Literal["dense", "sparse"],
+    top_k: int = 5,
+    document_filter: DocumentFilter | None = None,
+    group_filters: dict[str, DocumentFilter] | None = None,
+) -> Sequence[tuple[str, str, str, float]]:
+    """Search across multiple casebases and merge results.
+
+    Results are merged by deduplication on chunk_key, keeping the highest
+    score. Returns at most ``top_k`` results sorted by score descending.
+
+    Args:
+        stores: Sequence of casebases to search.
+        query: Natural language search query.
+        search_type: ``"dense"`` or ``"sparse"``.
+        top_k: Maximum number of merged results.
+        document_filter: Optional document filter for user stores.
+        group_filters: Optional per-group document filters, keyed by
+            group ID.  Group stores without an entry are unfiltered.
+
+    Returns:
+        List of ``(store_key, chunk_key, text, score)`` tuples.
+    """
+    all_results: list[tuple[str, str, str, float]] = []
+
+    for store in stores:
+        if store.kind == "user":
+            store_filter = document_filter
+        else:
+            store_filter = (group_filters or {}).get(store.id)
+        try:
+            results = _search(store, query, search_type, top_k, store_filter)
+        except Exception:
+            logger.warning(
+                "Search failed for store %s", store.store_key, exc_info=True
+            )
+            continue
+        for chunk_key, text, score in results:
+            all_results.append((store.store_key, chunk_key, text, score))
+
+    all_results.sort(key=lambda x: x[3], reverse=True)
+    return all_results[:top_k]

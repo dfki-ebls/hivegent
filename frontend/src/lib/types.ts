@@ -58,6 +58,16 @@ export type UserOverrides = z.infer<typeof UserOverridesSchema>;
 // API response schemas
 // ============================================================
 
+/** Authenticated user information from the backend. */
+export const UserResponseSchema = z.object({
+  id: z.string(),
+  email: z.string().nullable().optional(),
+  name: z.string().nullable().optional(),
+  read_groups: z.array(z.string()).default([]),
+  write_groups: z.array(z.string()).default([]),
+});
+export type UserResponse = z.infer<typeof UserResponseSchema>;
+
 /** Settings exposed by the backend. */
 export const BackendSettingsSchema = z.object({
   model: z.string(),
@@ -65,6 +75,7 @@ export const BackendSettingsSchema = z.object({
   small_model: z.string(),
   has_api_key: z.boolean(),
   base_url: z.string(),
+  user: UserResponseSchema,
 });
 export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
 
@@ -152,6 +163,7 @@ export const GrepMatchSchema = z.object({
 export type GrepMatch = z.infer<typeof GrepMatchSchema>;
 
 export const RetrievedChunkSchema = z.object({
+  store_key: z.string().nullable().optional(),
   filename: z.string(),
   chunk_index: z.number(),
   text: z.string(),
@@ -302,6 +314,19 @@ export const CollectionUploadResponseSchema = z.object({
 export type CollectionUploadResponse = z.infer<
   typeof CollectionUploadResponseSchema
 >;
+
+/** Summary information about a knowledge group. */
+export const GroupInfoSchema = z.object({
+  slug: z.string(),
+  document_count: z.number(),
+});
+export type GroupInfo = z.infer<typeof GroupInfoSchema>;
+
+/** Response for listing knowledge groups. */
+export const GroupListResponseSchema = z.object({
+  groups: z.array(GroupInfoSchema),
+});
+export type GroupListResponse = z.infer<typeof GroupListResponseSchema>;
 
 // ============================================================
 // Frontend-only types (no runtime validation needed)

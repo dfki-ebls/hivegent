@@ -47,6 +47,8 @@ interface DocumentDialogProps {
   isNew?: boolean;
   /** Save handler for edit mode. */
   onSave?: (filename: string, content: string) => Promise<void>;
+  /** Custom content fetcher (defaults to getDocumentContent). */
+  getContent?: (filename: string) => Promise<string>;
 }
 
 type ViewMode = "full-doc" | "chunk" | "edit";
@@ -67,6 +69,7 @@ export function DocumentDialog({
   editable = false,
   isNew = false,
   onSave,
+  getContent,
 }: DocumentDialogProps) {
   // --- State ---
   const [fullContent, setFullContent] = useState<string | null>(null);
@@ -184,7 +187,8 @@ export function DocumentDialog({
 
     let cancelled = false;
     setIsLoading(true);
-    getDocumentContent(filename)
+    const fetcher = getContent ?? getDocumentContent;
+    fetcher(filename)
       .then((content) => {
         if (!cancelled) {
           setFullContent(content);
@@ -204,7 +208,7 @@ export function DocumentDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, filename, isNew, isManagedMode, markFullDocument]);
+  }, [open, filename, isNew, isManagedMode, markFullDocument, getContent]);
 
   // --- Scroll to highlighted chunk ---
   useEffect(() => {

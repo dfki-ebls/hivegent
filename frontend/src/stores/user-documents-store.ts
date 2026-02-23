@@ -23,7 +23,7 @@ import type {
   DocumentInfo,
 } from "../lib/types";
 
-interface ManagedDocumentsStore {
+interface UserDocumentsStore {
   documents: DocumentInfo[];
   directoryTree: DirectoryTreeResponse | null;
   isLoading: boolean;
@@ -50,7 +50,7 @@ interface ManagedDocumentsStore {
   clearError: () => void;
 }
 
-export const useManagedDocumentsStore = create<ManagedDocumentsStore>(
+export const useUserDocumentsStore = create<UserDocumentsStore>(
   (set, get) => ({
     documents: [],
     directoryTree: null,

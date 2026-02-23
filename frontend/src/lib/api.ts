@@ -149,6 +149,10 @@ export async function getMessages(
   return res.json();
 }
 
+// ============================================================
+// User document API functions (authenticated user's personal documents)
+// ============================================================
+
 export async function listDocuments(): Promise<DocumentInfo[]> {
   const res = await authFetch(`${API_BASE_URL}/api/documents`);
   if (!res.ok) {
@@ -552,7 +556,7 @@ export async function rechunkDocument(
   return ChunkedDocumentResponseSchema.parse(data);
 }
 
-// Directory management API functions
+// User directory management
 
 export async function getDirectoryTree(): Promise<DirectoryTreeResponse> {
   const res = await authFetch(`${API_BASE_URL}/api/directories/tree`);
@@ -623,4 +627,174 @@ export async function moveDocument(
 
   const data: unknown = await res.json();
   return MoveDocumentResponseSchema.parse(data);
+}
+
+// ============================================================
+// Group API functions (membership required, write requires write permission)
+// ============================================================
+
+/** Get directory tree for a group the user belongs to. */
+export async function getGroupDirectoryTree(
+  groupId: string,
+): Promise<DirectoryTreeResponse> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/directories/tree`,
+  );
+  if (!res.ok) {
+    throw new Error("Failed to fetch group directory tree");
+  }
+  const data: unknown = await res.json();
+  return DirectoryTreeResponseSchema.parse(data);
+}
+
+/** Get document content from a group the user belongs to. */
+export async function getGroupDocumentContent(
+  groupId: string,
+  filename: string,
+): Promise<string> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/content/${encodeFilePath(filename)}`,
+  );
+  if (!res.ok) {
+    throw new Error("Failed to fetch group document content");
+  }
+  return res.text();
+}
+
+/** Upload a document to a group (write access required). */
+export async function uploadGroupDocument(
+  groupId: string,
+  filename: string,
+  file: File,
+  options?: UploadDocumentOptions,
+): Promise<UploadDocumentResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const filepath = options?.targetDirectory
+    ? `${options.targetDirectory}/${filename}`
+    : filename;
+
+  let url = `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/content/${encodeFilePath(filepath)}`;
+  const params = new URLSearchParams();
+  if (requiresConversion(filename) && options?.conversionPipeline) {
+    params.set("conversion_pipeline", options.conversionPipeline);
+  }
+  if (options?.chunkingPipeline) {
+    params.set("chunking_pipeline", options.chunkingPipeline);
+  }
+  const queryString = params.toString();
+  if (queryString) {
+    url += `?${queryString}`;
+  }
+
+  if (requiresConversion(filename) && options?.llm) {
+    formData.append("llm_config", JSON.stringify(options.llm));
+  }
+
+  const res = await authFetch(url, { method: "PUT", body: formData });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Upload failed" }));
+    throw new Error(error.detail || "Upload failed");
+  }
+  const data: unknown = await res.json();
+  return UploadDocumentResponseSchema.parse(data);
+}
+
+/** Upload a collection to a group (write access required). */
+export async function uploadGroupCollection(
+  groupId: string,
+  file: File,
+  options?: UploadCollectionOptions,
+): Promise<CollectionUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  let url = `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/collections`;
+  const params = new URLSearchParams();
+  if (options?.conversionPipeline) {
+    params.set("conversion_pipeline", options.conversionPipeline);
+  }
+  if (options?.chunkingPipeline) {
+    params.set("chunking_pipeline", options.chunkingPipeline);
+  }
+  const queryString = params.toString();
+  if (queryString) {
+    url += `?${queryString}`;
+  }
+
+  if (options?.llm) {
+    formData.append("llm_config", JSON.stringify(options.llm));
+  }
+
+  const res = await authFetch(url, { method: "POST", body: formData });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Collection upload failed" }));
+    throw new Error(error.detail || "Collection upload failed");
+  }
+  const data: unknown = await res.json();
+  return CollectionUploadResponseSchema.parse(data);
+}
+
+/** Delete a document from a group (write access required). */
+export async function deleteGroupDocument(
+  groupId: string,
+  filename: string,
+): Promise<void> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/content/${encodeFilePath(filename)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Delete failed" }));
+    throw new Error(error.detail || "Delete failed");
+  }
+}
+
+/** Create a directory in a group (write access required). */
+export async function createGroupDirectory(
+  groupId: string,
+  path: string,
+): Promise<CreateDirectoryResponse> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/directories`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    },
+  );
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Failed to create directory" }));
+    throw new Error(error.detail || "Failed to create directory");
+  }
+  const data: unknown = await res.json();
+  return CreateDirectoryResponseSchema.parse(data);
+}
+
+/** Delete a directory from a group (write access required). */
+export async function deleteGroupDirectory(
+  groupId: string,
+  dirpath: string,
+): Promise<DeleteDirectoryResponse> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/directories`,
+    {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: dirpath }),
+    },
+  );
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Failed to delete directory" }));
+    throw new Error(error.detail || "Failed to delete directory");
+  }
+  const data: unknown = await res.json();
+  return DeleteDirectoryResponseSchema.parse(data);
 }

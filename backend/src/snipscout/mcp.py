@@ -14,6 +14,7 @@ from .agent import UserDeps, explore_agent, explore_toolset
 from .auth import auth_settings
 from .config import settings
 from .prompts import EXPLORE_INSTRUCTIONS
+from .store import Casebase
 from .types import (
     ChunkSummary,
     DocumentRange,
@@ -54,28 +55,66 @@ def _get_mcp_user_id(
     return sub
 
 
+def _get_mcp_user_store(
+    access_token: AccessToken | None = CurrentAccessToken(),
+) -> Casebase:
+    """Build the user's Casebase from the MCP auth token."""
+    return Casebase(kind="user", id=_get_mcp_user_id(access_token))
+
+
+def _get_mcp_group_stores(
+    access_token: AccessToken | None = CurrentAccessToken(),
+) -> tuple[Casebase, ...]:
+    """Build group Casebases from the MCP auth token's group claims.
+
+    Parses the permission suffix format (``group:read``, ``group:write``,
+    or bare ``group``) to extract just the group ID.
+    """
+    if auth_settings.disabled:
+        return ()
+    if access_token is None:
+        return ()
+    raw = access_token.claims.get(settings.groups.groups_claim, [])
+    if not isinstance(raw, list):
+        return ()
+    stores: list[Casebase] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, str) or not entry:
+            continue
+        # Strip permission suffix (e.g. "engineering:write" -> "engineering")
+        group_id = entry.rpartition(":")[0] if ":" in entry else entry
+        if group_id in seen:
+            continue
+        seen.add(group_id)
+        try:
+            stores.append(Casebase(kind="group", id=group_id))
+        except ValueError:
+            continue
+    return tuple(stores)
+
+
 @mcp_app.tool()
 def list_documents(
     subdir: str | None = None,
     max_depth: int | None = None,
-    user_id: str = Depends(_get_mcp_user_id),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[DocumentSummary]:
     """List all available documents with their sizes in bytes."""
-    return tools.ListDocumentsTool(path=settings.get_user_documents_dir(user_id))(
-        subdir=subdir,
-        max_depth=max_depth,
-    )
+    return tools.ListDocumentsTool(
+        path=store.documents_dir(settings.data_dir),
+    )(subdir=subdir, max_depth=max_depth)
 
 
 @mcp_app.tool()
 def get_document(
     filename: str,
-    user_id: str = Depends(_get_mcp_user_id),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> str | None:
     """Get the full content of a specific document by relative path."""
-    return tools.GetDocumentTool(path=settings.get_user_documents_dir(user_id))(
-        filename
-    )
+    return tools.GetDocumentTool(
+        path=store.documents_dir(settings.data_dir),
+    )(filename)
 
 
 @mcp_app.tool()
@@ -83,25 +122,23 @@ def get_document_lines(
     filename: str,
     start: int = 1,
     end: int | None = None,
-    user_id: str = Depends(_get_mcp_user_id),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> DocumentRange | None:
     """Get a range of lines from a document by relative path."""
-    return tools.GetDocumentLinesTool(path=settings.get_user_documents_dir(user_id))(
-        filename,
-        start,
-        end,
-    )
+    return tools.GetDocumentLinesTool(
+        path=store.documents_dir(settings.data_dir),
+    )(filename, start, end)
 
 
 @mcp_app.tool()
 def glob_documents(
     pattern: str,
-    user_id: str = Depends(_get_mcp_user_id),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[str]:
     """Find documents matching a glob pattern."""
-    return tools.GlobDocumentsTool(path=settings.get_user_documents_dir(user_id))(
-        pattern
-    )
+    return tools.GlobDocumentsTool(
+        path=store.documents_dir(settings.data_dir),
+    )(pattern)
 
 
 @mcp_app.tool()
@@ -110,10 +147,12 @@ def grep(
     glob: str | None = None,
     context_lines: int = 0,
     include_content: bool = True,
-    user_id: str = Depends(_get_mcp_user_id),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[GrepMatch]:
     """Search documents for a pattern."""
-    return tools.GrepTool(path=settings.get_user_documents_dir(user_id))(
+    return tools.GrepTool(
+        path=store.documents_dir(settings.data_dir),
+    )(
         pattern,
         glob=glob,
         context_lines=context_lines,
@@ -126,39 +165,40 @@ def semantic_search(
     query: str,
     type: Literal["dense", "sparse"] = "dense",
     top_k: int = 5,
-    user_id: str = Depends(_get_mcp_user_id),
+    store: Casebase = Depends(_get_mcp_user_store),
+    group_stores: tuple[Casebase, ...] = Depends(_get_mcp_group_stores),
 ) -> list[RetrievedChunk]:
     """Search chunks using semantic similarity or keyword matching.
 
+    Searches across personal documents and all group casebases.
     Use "dense" for vector embeddings (conceptual queries),
     "sparse" for BM25/FTS (keyword queries).
     """
-    return tools.SearchTool(user_id=user_id, search_type=type)(
-        query,
-        top_k,
-    )
+    all_stores = (store, *group_stores)
+    return tools.SearchTool(stores=all_stores, search_type=type)(query, top_k)
 
 
 @mcp_app.tool()
 def list_chunks(
     filename: str,
-    user_id: str = Depends(_get_mcp_user_id),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[ChunkSummary] | None:
     """List chunk metadata for a document by relative path."""
-    return tools.ListChunksTool(path=settings.get_user_chunks_dir(user_id))(filename)
+    return tools.ListChunksTool(
+        path=store.chunks_dir(settings.data_dir),
+    )(filename)
 
 
 @mcp_app.tool()
 def get_chunk(
     filename: str,
     chunk_index: int,
-    user_id: str = Depends(_get_mcp_user_id),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> str | None:
     """Get the text content of a specific chunk by relative document path."""
-    return tools.GetChunkTool(path=settings.get_user_chunks_dir(user_id))(
-        filename,
-        chunk_index,
-    )
+    return tools.GetChunkTool(
+        path=store.chunks_dir(settings.data_dir),
+    )(filename, chunk_index)
 
 
 @mcp_app.tool()
@@ -166,6 +206,8 @@ async def explore_documents(
     task: str,
     ctx: Context,
     user_id: str = Depends(_get_mcp_user_id),
+    store: Casebase = Depends(_get_mcp_user_store),
+    group_stores: tuple[Casebase, ...] = Depends(_get_mcp_group_stores),
 ) -> str | None:
     """Explore documents using a subagent.
 
@@ -188,13 +230,18 @@ async def explore_documents(
                     base_url=settings.llm.base_url or None,
                 ),
             ),
-            deps=UserDeps(user_id=user_id),
+            deps=UserDeps(
+                user_id=user_id,
+                store=store,
+                group_stores=group_stores,
+            ),
             toolsets=[explore_toolset],
             instructions=EXPLORE_INSTRUCTIONS,
         )
         return result.output
 
-    docs_dir = settings.get_user_documents_dir(user_id)
+    docs_dir = store.documents_dir(settings.data_dir)
+    all_stores = (store, *group_stores)
 
     result = await ctx.sample(
         task,
@@ -203,8 +250,8 @@ async def explore_documents(
             tools.ListDocumentsTool(path=docs_dir),
             tools.GlobDocumentsTool(path=docs_dir),
             tools.GrepTool(path=docs_dir),
-            tools.SearchTool(user_id=user_id, search_type="dense"),
-            tools.SearchTool(user_id=user_id, search_type="sparse"),
+            tools.SearchTool(stores=all_stores, search_type="dense"),
+            tools.SearchTool(stores=all_stores, search_type="sparse"),
             tools.GetDocumentLinesTool(path=docs_dir),
         ],
     )
@@ -217,7 +264,7 @@ async def edit_document(
     old_string: str,
     new_string: str,
     ctx: Context,
-    user_id: str = Depends(_get_mcp_user_id),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> str:
     """Edit a document by replacing an exact string.
 
@@ -240,8 +287,8 @@ async def edit_document(
         return "Edit denied by user."
 
     return tools.EditDocumentTool(
-        path=settings.get_user_documents_dir(user_id),
-        user_id=user_id,
+        path=store.documents_dir(settings.data_dir),
+        store=store,
     )(filename, old_string, new_string)
 
 
@@ -251,7 +298,7 @@ async def write_document(
     content: str,
     ctx: Context,
     mode: Literal["prepend", "append", "replace"] = "replace",
-    user_id: str = Depends(_get_mcp_user_id),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> str:
     """Write content to a document (prepend, append, or replace).
 
@@ -272,6 +319,6 @@ async def write_document(
         return "Write denied by user."
 
     return tools.WriteDocumentTool(
-        path=settings.get_user_documents_dir(user_id),
-        user_id=user_id,
+        path=store.documents_dir(settings.data_dir),
+        store=store,
     )(filename, content, mode)

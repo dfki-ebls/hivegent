@@ -1,7 +1,7 @@
 """RAG agent with document retrieval tools."""
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from pydantic_ai import Agent, FunctionToolset, RunContext
@@ -11,6 +11,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from . import tools
 from .config import settings
 from .prompts import EXPLORE_INSTRUCTIONS
+from .store import Casebase
 from .types import (
     ChunkSummary,
     DocumentFilter,
@@ -39,8 +40,26 @@ class UserDeps:
     """Dependencies for user-specific agent operations."""
 
     user_id: str
+    store: Casebase
+    group_stores: tuple[Casebase, ...] = ()
     document_filter: DocumentFilter | None = None
+    group_filters: dict[str, DocumentFilter] = field(default_factory=dict)
     llm: LlmConfig | None = None
+
+    @property
+    def all_stores(self) -> tuple[Casebase, ...]:
+        """All stores the user has access to (personal + group)."""
+        return (self.store, *self.group_stores)
+
+    def filter_for_store(self, store: Casebase) -> DocumentFilter | None:
+        """Get the applicable DocumentFilter for a specific store.
+
+        Returns the user filter for user stores, the per-group filter
+        for group stores (if any), or ``None`` if no filter applies.
+        """
+        if store.kind == "user":
+            return self.document_filter
+        return self.group_filters.get(store.id)
 
 
 base_agent: Agent[None, str] = Agent()
@@ -65,7 +84,7 @@ def list_documents(
         max_depth: Maximum nesting depth relative to *subdir* (or root).
     """
     return tools.ListDocumentsTool(
-        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        path=ctx.deps.store.documents_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(subdir=subdir, max_depth=max_depth)
 
@@ -81,7 +100,7 @@ def glob_documents(
         pattern: Glob pattern to match (e.g., "*.md", "notes/*.txt", "**/*.py").
     """
     return tools.GlobDocumentsTool(
-        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        path=ctx.deps.store.documents_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(pattern)
 
@@ -106,7 +125,7 @@ def grep(
         include_content: Whether to include the matching line content.
     """
     return tools.GrepTool(
-        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        path=ctx.deps.store.documents_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(
         pattern,
@@ -125,6 +144,10 @@ def semantic_search(
 ) -> list[RetrievedChunk]:
     """Search chunks using semantic similarity or keyword matching.
 
+    Searches across your personal documents and all group casebases
+    you have access to.  Results include a ``store_key`` indicating the
+    source (e.g. ``"user:alice"`` or ``"group:engineering"``).
+
     Use ``"dense"`` (default) for conceptual queries where exact keywords
     may not appear.  Use ``"sparse"`` for queries with specific terms that
     should appear verbatim.
@@ -135,9 +158,10 @@ def semantic_search(
         top_k: Maximum results to return.
     """
     return tools.SearchTool(
-        user_id=ctx.deps.user_id,
+        stores=ctx.deps.all_stores,
         search_type=type,
         document_filter=ctx.deps.document_filter,
+        group_filters=ctx.deps.group_filters,
     )(query, top_k)
 
 
@@ -156,7 +180,7 @@ def get_document_lines(
         end: Last line to include (1-indexed, default: end of file).
     """
     return tools.GetDocumentLinesTool(
-        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        path=ctx.deps.store.documents_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(filename, start, end)
 
@@ -174,7 +198,7 @@ def get_document(ctx: RunContext[UserDeps], filename: str) -> str | None:
         filename: The relative path to retrieve (e.g. "report.md" or "projects/report.md").
     """
     return tools.GetDocumentTool(
-        path=settings.get_user_documents_dir(ctx.deps.user_id),
+        path=ctx.deps.store.documents_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(filename)
 
@@ -190,7 +214,7 @@ def list_chunks(
         filename: The relative document path (e.g. "report.md" or "projects/report.md").
     """
     return tools.ListChunksTool(
-        path=settings.get_user_chunks_dir(ctx.deps.user_id),
+        path=ctx.deps.store.chunks_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(filename)
 
@@ -208,7 +232,7 @@ def get_chunk(
         chunk_index: The index of the chunk to retrieve.
     """
     return tools.GetChunkTool(
-        path=settings.get_user_chunks_dir(ctx.deps.user_id),
+        path=ctx.deps.store.chunks_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(
         filename,
@@ -280,8 +304,8 @@ def edit_document(
         new_string: The replacement text.
     """
     return tools.EditDocumentTool(
-        path=settings.get_user_documents_dir(ctx.deps.user_id),
-        user_id=ctx.deps.user_id,
+        path=ctx.deps.store.documents_dir(settings.data_dir),
+        store=ctx.deps.store,
         document_filter=ctx.deps.document_filter,
     )(filename, old_string, new_string)
 
@@ -302,7 +326,7 @@ def write_document(
             adds to the end, ``"prepend"`` adds to the start.
     """
     return tools.WriteDocumentTool(
-        path=settings.get_user_documents_dir(ctx.deps.user_id),
-        user_id=ctx.deps.user_id,
+        path=ctx.deps.store.documents_dir(settings.data_dir),
+        store=ctx.deps.store,
         document_filter=ctx.deps.document_filter,
     )(filename, content, mode)

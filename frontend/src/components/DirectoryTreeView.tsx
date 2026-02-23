@@ -31,11 +31,11 @@ interface DirectoryTreeViewProps {
   onEditFile: (path: string) => void;
   onInclude: (path: string) => void;
   onExclude: (path: string) => void;
-  onReconvert: (path: string) => void;
-  onRemoveFile: (path: string) => void;
-  onMoveFile: (path: string) => void;
-  onCreateSubdir: (parentPath: string) => void;
-  onDeleteDir: (path: string) => void;
+  onReconvert?: (path: string) => void;
+  onRemoveFile?: (path: string) => void;
+  onMoveFile?: (path: string) => void;
+  onCreateSubdir?: (parentPath: string) => void;
+  onDeleteDir?: (path: string) => void;
   depth?: number;
 }
 
@@ -56,9 +56,9 @@ function FileRow({
   onEdit: () => void;
   onInclude: () => void;
   onExclude: () => void;
-  onReconvert: () => void;
-  onRemove: () => void;
-  onMove: () => void;
+  onReconvert?: () => void;
+  onRemove?: () => void;
+  onMove?: () => void;
 }) {
   return (
     // biome-ignore lint/a11y/useSemanticElements: contains nested interactive elements
@@ -86,7 +86,7 @@ function FileRow({
         </Badge>
       )}
       <div className="hidden gap-0.5 group-hover:flex">
-        {entry.has_original && (
+        {entry.has_original && onReconvert && (
           <Button
             variant="ghost"
             size="icon"
@@ -127,32 +127,36 @@ function FileRow({
         >
           <EyeOff className="h-3 w-3" />
         </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          title="Move"
-          onClick={(e) => {
-            e.stopPropagation();
-            onMove();
-          }}
-          disabled={isLoading}
-        >
-          <Move className="h-3 w-3" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          title="Delete"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-          disabled={isLoading}
-        >
-          <Trash2 className="h-3 w-3 text-destructive" />
-        </Button>
+        {onMove && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            title="Move"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMove();
+            }}
+            disabled={isLoading}
+          >
+            <Move className="h-3 w-3" />
+          </Button>
+        )}
+        {onRemove && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            title="Delete"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove();
+            }}
+            disabled={isLoading}
+          >
+            <Trash2 className="h-3 w-3 text-destructive" />
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -178,8 +182,8 @@ function DirectoryRow({
   onToggle: () => void;
   onIncludeDir: () => void;
   onExcludeDir: () => void;
-  onCreateSubdir: () => void;
-  onDeleteDir: () => void;
+  onCreateSubdir?: () => void;
+  onDeleteDir?: () => void;
 }) {
   const FolderIcon = isExpanded ? FolderOpen : Folder;
   const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
@@ -233,32 +237,36 @@ function DirectoryRow({
         >
           <EyeOff className="h-3 w-3" />
         </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          title="Create subdirectory"
-          onClick={(e) => {
-            e.stopPropagation();
-            onCreateSubdir();
-          }}
-          disabled={isLoading}
-        >
-          <FolderPlus className="h-3 w-3" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          title="Delete directory"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDeleteDir();
-          }}
-          disabled={isLoading}
-        >
-          <Trash2 className="h-3 w-3 text-destructive" />
-        </Button>
+        {onCreateSubdir && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            title="Create subdirectory"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCreateSubdir();
+            }}
+            disabled={isLoading}
+          >
+            <FolderPlus className="h-3 w-3" />
+          </Button>
+        )}
+        {onDeleteDir && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            title="Delete directory"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDeleteDir();
+            }}
+            disabled={isLoading}
+          >
+            <Trash2 className="h-3 w-3 text-destructive" />
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -309,9 +317,9 @@ export function DirectoryTreeView({
           onEdit={() => onEditFile(child.path)}
           onInclude={() => onInclude(child.path)}
           onExclude={() => onExclude(child.path)}
-          onReconvert={() => onReconvert(child.path)}
-          onRemove={() => onRemoveFile(child.path)}
-          onMove={() => onMoveFile(child.path)}
+          onReconvert={onReconvert ? () => onReconvert(child.path) : undefined}
+          onRemove={onRemoveFile ? () => onRemoveFile(child.path) : undefined}
+          onMove={onMoveFile ? () => onMoveFile(child.path) : undefined}
         />
       );
     }
@@ -330,8 +338,12 @@ export function DirectoryTreeView({
           onToggle={() => toggleDir(child.path)}
           onIncludeDir={() => onInclude(dirPath)}
           onExcludeDir={() => onExclude(dirPath)}
-          onCreateSubdir={() => onCreateSubdir(child.path)}
-          onDeleteDir={() => onDeleteDir(child.path)}
+          onCreateSubdir={
+            onCreateSubdir ? () => onCreateSubdir(child.path) : undefined
+          }
+          onDeleteDir={
+            onDeleteDir ? () => onDeleteDir(child.path) : undefined
+          }
         />
         {isExpanded &&
           (child.children ?? []).map((grandchild) =>

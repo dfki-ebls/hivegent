@@ -17,6 +17,7 @@ from joserfc.jwk import KeySet
 from joserfc.jwt import ClaimsOption, JWTClaimsRegistry
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .config import settings
 from .tokens import token_store
 from .types import User
 
@@ -121,6 +122,49 @@ def _build_claims_registry() -> JWTClaimsRegistry:
     return JWTClaimsRegistry(leeway=300, **options)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
 
 
+def _extract_group_permissions(
+    claims: dict[str, object],
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Extract group memberships and permissions from JWT claims.
+
+    Each entry in the groups claim can be:
+    - ``"engineering:write"`` -- write (and read) access
+    - ``"sales:read"`` -- explicit read-only access
+    - ``"sales"`` -- bare name, uses ``default_permission`` setting
+
+    Args:
+        claims: The decoded JWT claims dictionary.
+
+    Returns:
+        Tuple of ``(read_groups, write_groups)``.
+    """
+    raw = claims.get(settings.groups.groups_claim, [])
+    if not isinstance(raw, list):
+        return frozenset(), frozenset()
+
+    read_groups: set[str] = set()
+    write_groups: set[str] = set()
+
+    for entry in raw:
+        if not isinstance(entry, str) or not entry:
+            continue
+        if ":" in entry:
+            group_id, _, suffix = entry.rpartition(":")
+            if not group_id:
+                continue
+            if suffix == "write":
+                write_groups.add(group_id)
+            else:
+                read_groups.add(group_id)
+        else:
+            if settings.groups.default_permission == "write":
+                write_groups.add(entry)
+            else:
+                read_groups.add(entry)
+
+    return frozenset(read_groups), frozenset(write_groups)
+
+
 async def validate_jwt_token(token: str) -> User:
     """Validate a JWT token and extract user information.
 
@@ -128,7 +172,7 @@ async def validate_jwt_token(token: str) -> User:
         token: The JWT token to validate.
 
     Returns:
-        A User instance with extracted claims.
+        A User instance with extracted claims, groups, and admin status.
 
     Raises:
         HTTPException: If the token is invalid.
@@ -172,10 +216,13 @@ async def validate_jwt_token(token: str) -> User:
         ) from e
 
     claims = decoded.claims
+    read_groups, write_groups = _extract_group_permissions(claims)
     return User(
         id=claims["sub"],
         email=claims.get("email"),
         name=claims.get("name") or claims.get("preferred_username"),
+        read_groups=read_groups,
+        write_groups=write_groups,
     )
 
 
@@ -204,10 +251,18 @@ async def get_current_user(
     """
     # Bypass authentication in development mode
     if auth_settings.disabled:
+        # Give write access to all groups that exist on disk
+        groups_dir = settings.data_dir / "groups"
+        dev_groups = frozenset(
+            d.name
+            for d in groups_dir.iterdir()
+            if d.is_dir()
+        ) if groups_dir.exists() else frozenset[str]()
         return User(
             id="localhost",
             email="dev@localhost",
             name="Localhost User",
+            write_groups=dev_groups,
         )
 
     if credentials is None:
@@ -232,3 +287,5 @@ async def get_current_user(
 
     # Otherwise validate as JWT
     return await validate_jwt_token(token)
+
+

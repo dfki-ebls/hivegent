@@ -4,14 +4,15 @@ import logging
 from dataclasses import dataclass, field
 
 from .chunks import chunk_document, delete_chunks
-from .config import DOCUMENT_EXTENSION, sanitize_user_id, settings
+from .config import DOCUMENT_EXTENSION, sanitize_group_id, sanitize_user_id, settings
 from .retrieval import sync_index
+from .store import Casebase
 
 __all__ = [
     "ConsistencyReport",
-    "check_and_fix_all_users",
-    "check_user_consistency",
-    "fix_user_consistency",
+    "check_and_fix_all_stores",
+    "check_store_consistency",
+    "fix_store_consistency",
 ]
 
 logger = logging.getLogger(__name__)
@@ -19,16 +20,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True, frozen=True)
 class ConsistencyReport:
-    """Result of comparing documents, chunks, and index for one user.
+    """Result of comparing documents, chunks, and index for one store.
 
     Attributes:
-        user_id: The user whose data was checked.
+        store: The casebase that was checked.
         new_documents: Document paths that have no matching chunk file.
         stale_documents: Document paths whose mtime exceeds their chunk mtime.
         orphaned_chunks: Chunk files that have no matching document.
     """
 
-    user_id: str
+    store: Casebase
     new_documents: list[str] = field(default_factory=list)
     stale_documents: list[str] = field(default_factory=list)
     orphaned_chunks: list[str] = field(default_factory=list)
@@ -43,20 +44,22 @@ class ConsistencyReport:
         )
 
 
-def check_user_consistency(user_id: str) -> ConsistencyReport:
-    """Compare documents and chunk files for a single user.
+def check_store_consistency(store: Casebase) -> ConsistencyReport:
+    """Compare documents and chunk files for a single store.
 
     Computes paths directly to avoid ``mkdir`` side effects from the
-    ``get_user_*`` helpers.  Only uses stat calls, never reads file content.
+    directory helpers.  Only uses stat calls, never reads file content.
 
     Args:
-        user_id: The user to check.
+        store: The casebase to check.
 
     Returns:
         A report describing any inconsistencies found.
     """
-    docs_dir = settings.data_dir / user_id / "documents"
-    chunks_dir = settings.data_dir / user_id / "chunks"
+    subdir = "users" if store.kind == "user" else "groups"
+    base = settings.data_dir / subdir / store.id
+    docs_dir = base / "documents"
+    chunks_dir = base / "chunks"
 
     # Collect document relative paths and their mtimes.
     doc_mtimes: dict[str, float] = {}
@@ -86,14 +89,14 @@ def check_user_consistency(user_id: str) -> ConsistencyReport:
     )
 
     return ConsistencyReport(
-        user_id=user_id,
+        store=store,
         new_documents=new_documents,
         stale_documents=stale_documents,
         orphaned_chunks=orphaned_chunks,
     )
 
 
-def fix_user_consistency(report: ConsistencyReport) -> None:
+def fix_store_consistency(report: ConsistencyReport) -> None:
     """Repair inconsistencies described by a report.
 
     Deletes orphaned chunks, rechunks new and stale documents, then
@@ -106,40 +109,69 @@ def fix_user_consistency(report: ConsistencyReport) -> None:
     if report.is_consistent:
         return
 
-    user_id = report.user_id
-    docs_dir = settings.data_dir / user_id / "documents"
+    store = report.store
+    docs_dir = store.documents_dir(settings.data_dir)
 
     for path in report.orphaned_chunks:
         try:
-            delete_chunks(user_id, path)
-            logger.info("Deleted orphaned chunks: %s/%s", user_id, path)
+            delete_chunks(store, path)
+            logger.info("Deleted orphaned chunks: %s/%s", store.store_key, path)
         except Exception:
             logger.warning(
-                "Failed to delete orphaned chunks: %s/%s", user_id, path, exc_info=True
+                "Failed to delete orphaned chunks: %s/%s",
+                store.store_key,
+                path,
+                exc_info=True,
             )
 
     for path in report.new_documents + report.stale_documents:
         try:
             content = (docs_dir / path).read_text(encoding="utf-8")
-            chunk_document(user_id, path, content)
-            logger.info("Chunked document: %s/%s", user_id, path)
+            chunk_document(store, path, content)
+            logger.info("Chunked document: %s/%s", store.store_key, path)
         except Exception:
             logger.warning(
-                "Failed to chunk document: %s/%s", user_id, path, exc_info=True
+                "Failed to chunk document: %s/%s",
+                store.store_key,
+                path,
+                exc_info=True,
             )
 
     try:
-        sync_index(user_id)
-        logger.info("Index synced for user %s", user_id)
+        sync_index(store)
+        logger.info("Index synced for %s", store.store_key)
     except Exception:
-        logger.warning("Failed to sync index for user %s", user_id, exc_info=True)
+        logger.warning(
+            "Failed to sync index for %s", store.store_key, exc_info=True
+        )
 
 
-def check_and_fix_all_users() -> None:
-    """Run the consistency check for every user directory.
+def _check_and_fix_store(store: Casebase) -> None:
+    """Check and fix a single store, catching exceptions."""
+    try:
+        report = check_store_consistency(store)
+        if report.is_consistent:
+            logger.debug("Store %s is consistent", store.store_key)
+        else:
+            logger.info(
+                "Store %s: %d new, %d stale, %d orphaned",
+                store.store_key,
+                len(report.new_documents),
+                len(report.stale_documents),
+                len(report.orphaned_chunks),
+            )
+            fix_store_consistency(report)
+    except Exception:
+        logger.warning(
+            "Consistency check failed for %s", store.store_key, exc_info=True
+        )
 
-    Skips ``data_dir`` entries that are not valid user directories.
-    Each user is handled independently so one broken user does not
+
+def check_and_fix_all_stores() -> None:
+    """Run the consistency check for every user and group store.
+
+    Scans ``data/users/`` and ``data/groups/`` for store directories.
+    Each store is handled independently so one broken store does not
     block the rest.
     """
     logger.info("Starting consistency check")
@@ -148,36 +180,36 @@ def check_and_fix_all_users() -> None:
         logger.info("Data directory does not exist, skipping consistency check")
         return
 
-    for entry in sorted(settings.data_dir.iterdir()):
-        if not entry.is_dir():
-            continue
+    # Check user stores
+    users_dir = settings.data_dir / "users"
+    if users_dir.exists():
+        for entry in sorted(users_dir.iterdir()):
+            if not entry.is_dir():
+                continue
+            try:
+                sanitize_user_id(entry.name)
+            except ValueError:
+                logger.debug("Skipping invalid user directory: %s", entry.name)
+                continue
+            if not (entry / "documents").is_dir():
+                logger.debug("Skipping user without documents: %s", entry.name)
+                continue
+            _check_and_fix_store(Casebase(kind="user", id=entry.name))
 
-        try:
-            sanitize_user_id(entry.name)
-        except ValueError:
-            logger.debug("Skipping non-user directory: %s", entry.name)
-            continue
-
-        if not (entry / "documents").is_dir():
-            logger.debug("Skipping user without documents: %s", entry.name)
-            continue
-
-        try:
-            report = check_user_consistency(entry.name)
-            if report.is_consistent:
-                logger.debug("User %s is consistent", entry.name)
-            else:
-                logger.info(
-                    "User %s: %d new, %d stale, %d orphaned",
-                    entry.name,
-                    len(report.new_documents),
-                    len(report.stale_documents),
-                    len(report.orphaned_chunks),
-                )
-                fix_user_consistency(report)
-        except Exception:
-            logger.warning(
-                "Consistency check failed for user %s", entry.name, exc_info=True
-            )
+    # Check group stores
+    groups_dir = settings.data_dir / "groups"
+    if groups_dir.exists():
+        for entry in sorted(groups_dir.iterdir()):
+            if not entry.is_dir():
+                continue
+            try:
+                sanitize_group_id(entry.name)
+            except ValueError:
+                logger.debug("Skipping invalid group directory: %s", entry.name)
+                continue
+            if not (entry / "documents").is_dir():
+                logger.debug("Skipping group without documents: %s", entry.name)
+                continue
+            _check_and_fix_store(Casebase(kind="group", id=entry.name))
 
     logger.info("Consistency check complete")

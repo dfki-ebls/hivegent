@@ -37,8 +37,6 @@ from .agent import (
     user_agent,
     write_toolset,
 )
-from .compaction import compact_conversation
-from .consistency import check_and_fix_all_users
 from .auth import User, get_current_user
 from .chunkers import (
     ChunkingPipeline,
@@ -51,11 +49,14 @@ from .chunks import (
     get_chunks,
     list_chunked_documents,
 )
+from .compaction import compact_conversation
 from .config import (
     DOCUMENT_EXTENSION,
     sanitize_document_path,
+    sanitize_group_id,
     settings,
 )
+from .consistency import check_and_fix_all_stores
 from .converters import (
     ConversionPipeline,
     ConversionPipelineInfo,
@@ -64,7 +65,6 @@ from .converters import (
     resolve_auto_pipeline,
 )
 from .mcp import mcp_app
-from .observability import configure_observability
 from .messages import (
     delete_conversation,
     list_conversations,
@@ -73,8 +73,10 @@ from .messages import (
     save_messages,
     update_conversation_title,
 )
+from .observability import configure_observability
 from .prompts import CITATION_INSTRUCTIONS, PERSONALITY_TEMPLATES
 from .retrieval import sync_index
+from .store import Casebase
 from .tokens import token_store
 from .types import (
     ChatRequestConfig,
@@ -94,8 +96,8 @@ from .types import (
     DeleteDirectoryResponse,
     DeleteDocumentResponse,
     DirectoryEntry,
-    DocumentFilter,
     DirectoryTreeResponse,
+    DocumentFilter,
     DocumentInfo,
     DocumentListResponse,
     GenerateTitleRequest,
@@ -108,6 +110,7 @@ from .types import (
     TokenInfo,
     UpdateTitleRequest,
     UploadDocumentResponse,
+    UserResponse,
 )
 from .wikilinks import preprocess_markdown
 
@@ -121,6 +124,79 @@ def resolve_llm_config(llm: LlmConfig, *, default_model: str = "") -> LlmConfig:
         api_key=llm.api_key or settings.llm.api_key,
         base_url=llm.base_url or settings.llm.base_url or None,
     )
+
+
+def _parse_document_filters(
+    included_documents: list[str],
+    excluded_documents: list[str],
+    user_groups: frozenset[str],
+) -> tuple[DocumentFilter | None, dict[str, DocumentFilter]]:
+    """Parse include/exclude lists into per-store document filters.
+
+    Entries prefixed with ``@groupId/`` are routed to per-group filters.
+    All other entries apply to the user store.
+
+    Args:
+        included_documents: Include list from the chat request.
+        excluded_documents: Exclude list from the chat request.
+        user_groups: The authenticated user's group memberships.
+
+    Returns:
+        Tuple of ``(user_filter, group_filters_by_id)``.
+    """
+    user_included: list[str] = []
+    user_excluded: list[str] = []
+    group_included: dict[str, list[str]] = {}
+    group_excluded: dict[str, list[str]] = {}
+
+    for entry in included_documents:
+        if entry.startswith("@") and "/" in entry:
+            group_id, _, path = entry[1:].partition("/")
+            if group_id in user_groups:
+                # Empty path after "@groupId/" means whole group — use trailing /
+                group_included.setdefault(group_id, []).append(path or "/")
+        else:
+            user_included.append(entry)
+
+    for entry in excluded_documents:
+        if entry.startswith("@") and "/" in entry:
+            group_id, _, path = entry[1:].partition("/")
+            if group_id in user_groups:
+                group_excluded.setdefault(group_id, []).append(path or "/")
+        else:
+            user_excluded.append(entry)
+
+    user_filter: DocumentFilter | None = None
+    if user_included or user_excluded:
+        user_filter = DocumentFilter(
+            included=frozenset(user_included),
+            excluded=frozenset(user_excluded),
+        )
+
+    group_filters: dict[str, DocumentFilter] = {}
+    for gid in set(group_included) | set(group_excluded):
+        group_filters[gid] = DocumentFilter(
+            included=frozenset(group_included.get(gid, [])),
+            excluded=frozenset(group_excluded.get(gid, [])),
+        )
+
+    return user_filter, group_filters
+
+
+def _user_store(user: User) -> Casebase:
+    """Build the personal Casebase for a user."""
+    return Casebase(kind="user", id=user.id)
+
+
+def _group_stores(user: User) -> tuple[Casebase, ...]:
+    """Build group Casebases from the user's group memberships."""
+    stores: list[Casebase] = []
+    for g in user.all_groups:
+        try:
+            stores.append(Casebase(kind="group", id=g))
+        except ValueError:
+            continue
+    return tuple(stores)
 
 
 class ReconvertRequest(BaseModel):
@@ -137,7 +213,7 @@ mcp_http_app = mcp_app.http_app(path="/")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Run startup consistency check, then delegate to MCP lifespan."""
-    check_and_fix_all_users()
+    check_and_fix_all_stores()
     async with mcp_http_app.lifespan(app):
         yield
 
@@ -174,6 +250,24 @@ def _safe_path(filepath: str) -> str:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _safe_group_id(group_id: str) -> str:
+    """Sanitize a group ID from a URL path parameter.
+
+    Args:
+        group_id: The raw group ID from the URL.
+
+    Returns:
+        Sanitized group ID.
+
+    Raises:
+        HTTPException: If the group ID is invalid.
+    """
+    try:
+        return sanitize_group_id(group_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 def _cleanup_empty_parents(path: Path, stop_at: Path) -> None:
     """Remove empty parent directories up to *stop_at*."""
     parent = path.parent
@@ -196,6 +290,7 @@ async def get_settings(
         small_model=settings.llm.small_model,
         has_api_key=bool(settings.llm.api_key),
         base_url=settings.llm.base_url,
+        user=UserResponse.from_user(user),
     )
 
 
@@ -436,12 +531,11 @@ async def chat(
             status_code=400, detail="conversation_id is required in the request body"
         )
 
-    document_filter: DocumentFilter | None = None
-    if config.included_documents or config.excluded_documents:
-        document_filter = DocumentFilter(
-            included=frozenset(config.included_documents),
-            excluded=frozenset(config.excluded_documents),
-        )
+    document_filter, group_filters = _parse_document_filters(
+        config.included_documents,
+        config.excluded_documents,
+        user.all_groups,
+    )
 
     if config.personality == Personality.CUSTOM and config.system_message:
         instructions = config.system_message + CITATION_INSTRUCTIONS
@@ -457,6 +551,9 @@ async def chat(
             openai_reasoning_effort=config.reasoning_effort,
         )
 
+    store = _user_store(user)
+    group_stores_tuple = _group_stores(user)
+
     def on_complete(result: AgentRunResult[str]) -> None:
         """Save messages after the agent run completes."""
         save_messages(user.id, config.conversation_id, result.all_messages())
@@ -464,7 +561,14 @@ async def chat(
     return await VercelAIAdapter.dispatch_request(
         request,
         agent=user_agent,
-        deps=UserDeps(user_id=user.id, document_filter=document_filter, llm=config.llm),
+        deps=UserDeps(
+            user_id=user.id,
+            store=store,
+            group_stores=group_stores_tuple,
+            document_filter=document_filter,
+            group_filters=group_filters,
+            llm=config.llm,
+        ),
         sdk_version=6,
         output_type=[str, DeferredToolRequests],
         model=OpenAIResponsesModel(
@@ -489,52 +593,8 @@ def _is_markdown(suffix: str) -> bool:
 # --- Document endpoints ---
 
 
-@api_router.get("/documents")
-async def list_documents(
-    user: Annotated[User, Depends(get_current_user)],
-) -> DocumentListResponse:
-    """List all documents in the user's data directory.
-
-    Returns only text-based files (including converted markdown files).
-    Uses recursive search to include files in subdirectories.
-    """
-    data_dir = settings.get_user_documents_dir(user.id)
-    originals_dir = settings.get_user_originals_dir(user.id)
-    documents: list[DocumentInfo] = []
-    chunk_counts = list_chunked_documents(user.id)
-
-    # Build set of relative stems that have originals for reconversion
-    original_stems: set[str] = set()
-    if originals_dir.exists():
-        for orig in originals_dir.rglob("*"):
-            if orig.is_file():
-                rel = orig.relative_to(originals_dir)
-                original_stems.add(str((rel.parent / rel.stem).as_posix()))
-
-    if data_dir.exists():
-        for file_path in sorted(data_dir.rglob(f"*{DOCUMENT_EXTENSION}")):
-            if file_path.is_file():
-                rel_path = str(file_path.relative_to(data_dir).as_posix())
-                rel = file_path.relative_to(data_dir)
-                doc_stem = str((rel.parent / rel.stem).as_posix())
-                stat = file_path.stat()
-                documents.append(
-                    DocumentInfo(
-                        filename=rel_path,
-                        size_bytes=stat.st_size,
-                        modified_at=datetime.fromtimestamp(
-                            stat.st_mtime, tz=timezone.utc
-                        ),
-                        chunk_count=chunk_counts.get(rel_path),
-                        has_original=doc_stem in original_stems,
-                    )
-                )
-
-    return DocumentListResponse(documents=documents, total_count=len(documents))
-
-
 async def _upload_file_internal(
-    user_id: str,
+    store: Casebase,
     filepath: str,
     content: bytes,
     conversion_pipeline: ConversionPipeline,
@@ -544,10 +604,10 @@ async def _upload_file_internal(
     """Upload a single file, converting binary files to markdown.
 
     This is the shared implementation used by both the single-file upload
-    endpoint and the collection upload endpoint.
+    endpoint and the collection upload endpoint, for both user and group stores.
 
     Args:
-        user_id: The authenticated user ID.
+        store: The casebase to upload to.
         filepath: Sanitized relative POSIX path for the document.
         content: Raw file bytes.
         conversion_pipeline: The conversion pipeline for binary files.
@@ -563,7 +623,7 @@ async def _upload_file_internal(
     basename = filepath.rsplit("/", 1)[-1] if "/" in filepath else filepath
     suffix = "." + basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
 
-    documents_dir = settings.get_user_documents_dir(user_id)
+    documents_dir = store.documents_dir(settings.data_dir)
 
     # Markdown files are stored directly without conversion
     if _is_markdown(suffix):
@@ -575,10 +635,10 @@ async def _upload_file_internal(
         chunking_used = None
         try:
             text_content = content.decode("utf-8")
-            chunked = chunk_document(user_id, filepath, text_content, chunking_pipeline)
+            chunked = chunk_document(store, filepath, text_content, chunking_pipeline)
             chunk_count = len(chunked.chunks)
             chunking_used = chunked.pipeline
-            sync_index(user_id)
+            sync_index(store)
         except Exception as e:
             logger.warning("Chunking failed for %s: %s", filepath, e)
 
@@ -591,7 +651,7 @@ async def _upload_file_internal(
         )
 
     # Handle binary files - store original and convert to markdown
-    originals_dir = settings.get_user_originals_dir(user_id)
+    originals_dir = store.originals_dir(settings.data_dir)
     original_path = originals_dir / filepath
     original_path.parent.mkdir(parents=True, exist_ok=True)
     original_path.write_bytes(content)
@@ -644,11 +704,11 @@ async def _upload_file_internal(
     chunking_used = None
     try:
         chunked = chunk_document(
-            user_id, converted_relpath, markdown_content, chunking_pipeline
+            store, converted_relpath, markdown_content, chunking_pipeline
         )
         chunk_count = len(chunked.chunks)
         chunking_used = chunked.pipeline
-        sync_index(user_id)
+        sync_index(store)
     except Exception as e:
         logger.warning("Chunking failed for %s: %s", converted_relpath, e)
 
@@ -661,6 +721,51 @@ async def _upload_file_internal(
         chunking_pipeline_used=chunking_used,
         message="Document uploaded and converted successfully",
     )
+
+
+@api_router.get("/documents")
+async def list_documents(
+    user: Annotated[User, Depends(get_current_user)],
+) -> DocumentListResponse:
+    """List all documents in the user's data directory.
+
+    Returns only text-based files (including converted markdown files).
+    Uses recursive search to include files in subdirectories.
+    """
+    store = _user_store(user)
+    data_dir = store.documents_dir(settings.data_dir)
+    originals_dir = store.originals_dir(settings.data_dir)
+    documents: list[DocumentInfo] = []
+    chunk_counts = list_chunked_documents(store)
+
+    # Build set of relative stems that have originals for reconversion
+    original_stems: set[str] = set()
+    if originals_dir.exists():
+        for orig in originals_dir.rglob("*"):
+            if orig.is_file():
+                rel = orig.relative_to(originals_dir)
+                original_stems.add(str((rel.parent / rel.stem).as_posix()))
+
+    if data_dir.exists():
+        for file_path in sorted(data_dir.rglob(f"*{DOCUMENT_EXTENSION}")):
+            if file_path.is_file():
+                rel_path = str(file_path.relative_to(data_dir).as_posix())
+                rel = file_path.relative_to(data_dir)
+                doc_stem = str((rel.parent / rel.stem).as_posix())
+                stat = file_path.stat()
+                documents.append(
+                    DocumentInfo(
+                        filename=rel_path,
+                        size_bytes=stat.st_size,
+                        modified_at=datetime.fromtimestamp(
+                            stat.st_mtime, tz=timezone.utc
+                        ),
+                        chunk_count=chunk_counts.get(rel_path),
+                        has_original=doc_stem in original_stems,
+                    )
+                )
+
+    return DocumentListResponse(documents=documents, total_count=len(documents))
 
 
 @api_router.put("/documents/content/{filepath:path}")
@@ -697,7 +802,7 @@ async def upload_document(
         )
 
     return await _upload_file_internal(
-        user_id=user.id,
+        store=_user_store(user),
         filepath=safe,
         content=content,
         conversion_pipeline=conversion_pipeline,
@@ -728,6 +833,7 @@ async def upload_collection(
     """
     llm = LlmConfig.model_validate_json(llm_config)
     resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
+    store = _user_store(user)
 
     raw = await file.read()
     if len(raw) > _MAX_COLLECTION_SIZE_BYTES:
@@ -745,7 +851,7 @@ async def upload_collection(
         try:
             safe = sanitize_document_path(rel_path)
             await _upload_file_internal(
-                user.id,
+                store,
                 safe,
                 content_bytes,
                 conversion_pipeline,
@@ -853,7 +959,8 @@ async def get_document_content(
         filepath: The relative path to the document.
     """
     safe = _safe_path(filepath)
-    data_dir = settings.get_user_documents_dir(user.id)
+    store = _user_store(user)
+    data_dir = store.documents_dir(settings.data_dir)
     file_path = data_dir / safe
 
     if not file_path.exists():
@@ -876,7 +983,8 @@ async def delete_document(
         filepath: The relative path to the document.
     """
     safe = _safe_path(filepath)
-    data_dir = settings.get_user_documents_dir(user.id)
+    store = _user_store(user)
+    data_dir = store.documents_dir(settings.data_dir)
     file_path = data_dir / safe
 
     if not file_path.exists():
@@ -887,11 +995,11 @@ async def delete_document(
 
     file_path.unlink()
     _cleanup_empty_parents(file_path, data_dir)
-    delete_chunks(user.id, safe)
-    sync_index(user.id)
+    delete_chunks(store, safe)
+    sync_index(store)
 
     # Also delete the original if it exists
-    originals_dir = settings.get_user_originals_dir(user.id)
+    originals_dir = store.originals_dir(settings.data_dir)
     stem = Path(safe).stem
     parent = str(Path(safe).parent)
     if parent != ".":
@@ -937,7 +1045,7 @@ async def get_document_chunks(
         filepath: The relative document path.
     """
     safe = _safe_path(filepath)
-    chunked = get_chunks(user.id, safe)
+    chunked = get_chunks(_user_store(user), safe)
     if not chunked:
         raise HTTPException(status_code=404, detail="No chunks found for this document")
     return chunked
@@ -956,7 +1064,8 @@ async def rechunk_document(
         chunking_pipeline: The chunking pipeline to use.
     """
     safe = _safe_path(filepath)
-    data_dir = settings.get_user_documents_dir(user.id)
+    store = _user_store(user)
+    data_dir = store.documents_dir(settings.data_dir)
     file_path = data_dir / safe
 
     if not file_path.exists() or not file_path.is_file():
@@ -966,9 +1075,9 @@ async def rechunk_document(
 
     try:
         result = chunk_document(
-            user.id, safe, text_content, chunking_pipeline
+            store, safe, text_content, chunking_pipeline
         )
-        sync_index(user.id)
+        sync_index(store)
         return result
     except Exception as e:
         raise HTTPException(
@@ -993,10 +1102,11 @@ async def reconvert_document(
         request: Reconversion options including pipeline and LLM config.
     """
     safe = _safe_path(filepath)
+    store = _user_store(user)
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
 
-    originals_dir = settings.get_user_originals_dir(user.id)
-    documents_dir = settings.get_user_documents_dir(user.id)
+    originals_dir = store.originals_dir(settings.data_dir)
+    documents_dir = store.documents_dir(settings.data_dir)
 
     # Find original file by matching stem in the mirrored directory structure
     safe_path = Path(safe)
@@ -1065,11 +1175,11 @@ async def reconvert_document(
     chunking_used = None
     try:
         chunked = chunk_document(
-            user.id, safe, markdown_content, request.chunking_pipeline
+            store, safe, markdown_content, request.chunking_pipeline
         )
         chunk_count = len(chunked.chunks)
         chunking_used = chunked.pipeline
-        sync_index(user.id)
+        sync_index(store)
     except Exception as e:
         logger.warning("Chunking failed for %s: %s", safe, e)
 
@@ -1110,9 +1220,10 @@ async def move_document(
             status_code=400, detail="Source and destination are the same"
         )
 
-    documents_dir = settings.get_user_documents_dir(user.id)
-    chunks_dir = settings.get_user_chunks_dir(user.id)
-    originals_dir = settings.get_user_originals_dir(user.id)
+    store = _user_store(user)
+    documents_dir = store.documents_dir(settings.data_dir)
+    chunks_dir = store.chunks_dir(settings.data_dir)
+    originals_dir = store.originals_dir(settings.data_dir)
 
     src_doc = documents_dir / src
     if not src_doc.exists() or not src_doc.is_file():
@@ -1160,7 +1271,7 @@ async def move_document(
                 break
 
     # Update LanceDB index to reflect new filenames in metadata.
-    sync_index(user.id)
+    sync_index(store)
 
     return MoveDocumentResponse(
         source=src,
@@ -1228,14 +1339,11 @@ def _build_directory_tree(
     )
 
 
-@api_router.get("/directories/tree")
-async def get_directory_tree(
-    user: Annotated[User, Depends(get_current_user)],
-) -> DirectoryTreeResponse:
-    """Build a recursive directory tree from the user's documents directory."""
-    documents_dir = settings.get_user_documents_dir(user.id)
-    originals_dir = settings.get_user_originals_dir(user.id)
-    chunk_counts = list_chunked_documents(user.id)
+def _build_tree_response(store: Casebase) -> DirectoryTreeResponse:
+    """Build a directory tree response for any casebase."""
+    documents_dir = store.documents_dir(settings.data_dir)
+    originals_dir = store.originals_dir(settings.data_dir)
+    chunk_counts = list_chunked_documents(store)
 
     # Build set of relative stems that have originals
     original_stems: set[str] = set()
@@ -1272,6 +1380,14 @@ async def get_directory_tree(
     )
 
 
+@api_router.get("/directories/tree")
+async def get_directory_tree(
+    user: Annotated[User, Depends(get_current_user)],
+) -> DirectoryTreeResponse:
+    """Build a recursive directory tree from the user's documents directory."""
+    return _build_tree_response(_user_store(user))
+
+
 @api_router.post("/directories")
 async def create_directory(
     request: CreateDirectoryRequest,
@@ -1283,7 +1399,8 @@ async def create_directory(
         request: The directory path to create.
     """
     safe = _safe_path(request.path)
-    documents_dir = settings.get_user_documents_dir(user.id)
+    store = _user_store(user)
+    documents_dir = store.documents_dir(settings.data_dir)
     dir_path = documents_dir / safe
 
     if dir_path.exists():
@@ -1310,9 +1427,10 @@ async def delete_directory(
         request: The directory path to delete.
     """
     safe = _safe_path(request.path)
-    documents_dir = settings.get_user_documents_dir(user.id)
-    chunks_dir = settings.get_user_chunks_dir(user.id)
-    originals_dir = settings.get_user_originals_dir(user.id)
+    store = _user_store(user)
+    documents_dir = store.documents_dir(settings.data_dir)
+    chunks_dir = store.chunks_dir(settings.data_dir)
+    originals_dir = store.originals_dir(settings.data_dir)
 
     dir_path = documents_dir / safe
     if not dir_path.exists() or not dir_path.is_dir():
@@ -1340,7 +1458,7 @@ async def delete_directory(
         _cleanup_empty_parents(originals_subdir, originals_dir)
 
     # Update LanceDB index to remove deleted chunks.
-    sync_index(user.id)
+    sync_index(store)
 
     return DeleteDirectoryResponse(
         path=safe,
@@ -1392,6 +1510,592 @@ async def revoke_token(
     """Revoke a personal access token."""
     if not token_store.revoke_token(user.id, token_id):
         raise HTTPException(status_code=404, detail="Token not found")
+
+
+# --- User-facing group endpoints (read-only, membership required) ---
+
+
+def _require_group_member(user: User, group_id: str) -> str:
+    """Validate group ID and check the user is a member.
+
+    Args:
+        user: The authenticated user.
+        group_id: The raw group ID from the URL.
+
+    Returns:
+        Sanitized group ID.
+
+    Raises:
+        HTTPException: If the ID is invalid or user is not a member.
+    """
+    safe_id = _safe_group_id(group_id)
+    if safe_id not in user.all_groups:
+        raise HTTPException(status_code=403, detail="Not a member of this group")
+    return safe_id
+
+
+def _require_group_write(user: User, group_id: str) -> str:
+    """Validate group ID and check the user has write access.
+
+    Args:
+        user: The authenticated user.
+        group_id: The raw group ID from the URL.
+
+    Returns:
+        Sanitized group ID.
+
+    Raises:
+        HTTPException: If the ID is invalid or user lacks write access.
+    """
+    safe_id = _safe_group_id(group_id)
+    if safe_id not in user.write_groups:
+        raise HTTPException(
+            status_code=403, detail="Write access required for this group"
+        )
+    return safe_id
+
+
+@api_router.get("/groups/{group_id}/directories/tree")
+async def get_group_directory_tree(
+    group_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> DirectoryTreeResponse:
+    """Get directory tree for a group the user belongs to."""
+    safe_id = _require_group_member(user, group_id)
+    return _build_tree_response(Casebase(kind="group", id=safe_id))
+
+
+@api_router.get("/groups/{group_id}/documents/content/{filepath:path}")
+async def get_group_document_content(
+    group_id: str,
+    filepath: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> PlainTextResponse:
+    """Get content of a group document the user has access to."""
+    safe_id = _require_group_member(user, group_id)
+    safe = _safe_path(filepath)
+    store = Casebase(kind="group", id=safe_id)
+    data_dir = store.documents_dir(settings.data_dir)
+    file_path = data_dir / safe
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not file_path.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    return PlainTextResponse(file_path.read_text(encoding="utf-8"))
+
+
+@api_router.get("/groups/{group_id}/documents")
+async def list_group_documents(
+    group_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> DocumentListResponse:
+    """List all documents in a group's data directory."""
+    safe_id = _require_group_member(user, group_id)
+    store = Casebase(kind="group", id=safe_id)
+    data_dir = store.documents_dir(settings.data_dir)
+    originals_dir = store.originals_dir(settings.data_dir)
+    documents: list[DocumentInfo] = []
+    chunk_counts = list_chunked_documents(store)
+
+    original_stems: set[str] = set()
+    if originals_dir.exists():
+        for orig in originals_dir.rglob("*"):
+            if orig.is_file():
+                rel = orig.relative_to(originals_dir)
+                original_stems.add(str((rel.parent / rel.stem).as_posix()))
+
+    if data_dir.exists():
+        for file_path in sorted(data_dir.rglob(f"*{DOCUMENT_EXTENSION}")):
+            if file_path.is_file():
+                rel_path = str(file_path.relative_to(data_dir).as_posix())
+                rel = file_path.relative_to(data_dir)
+                doc_stem = str((rel.parent / rel.stem).as_posix())
+                stat = file_path.stat()
+                documents.append(
+                    DocumentInfo(
+                        filename=rel_path,
+                        size_bytes=stat.st_size,
+                        modified_at=datetime.fromtimestamp(
+                            stat.st_mtime, tz=timezone.utc
+                        ),
+                        chunk_count=chunk_counts.get(rel_path),
+                        has_original=doc_stem in original_stems,
+                    )
+                )
+
+    return DocumentListResponse(documents=documents, total_count=len(documents))
+
+
+@api_router.put("/groups/{group_id}/documents/content/{filepath:path}")
+async def upload_group_document(
+    group_id: str,
+    filepath: str,
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+    conversion_pipeline: ConversionPipeline = Query(default=ConversionPipeline.AUTO),
+    chunking_pipeline: ChunkingPipeline = Query(default=ChunkingPipeline.AUTO),
+    llm_config: str = Form(default="{}"),
+) -> UploadDocumentResponse:
+    """Upload a document to a group's knowledge base.
+
+    Requires write access to the group.
+
+    Args:
+        group_id: The group identifier.
+        filepath: The target relative path.
+        file: The uploaded file content.
+        conversion_pipeline: The conversion pipeline for binary files.
+        chunking_pipeline: The chunking pipeline to use.
+        llm_config: JSON-encoded LLM configuration for conversion.
+    """
+    safe_id = _require_group_write(user, group_id)
+    safe = _safe_path(filepath)
+    llm = LlmConfig.model_validate_json(llm_config)
+    resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
+
+    content = await file.read()
+    if len(content) > settings.max_file_size_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
+        )
+
+    return await _upload_file_internal(
+        store=Casebase(kind="group", id=safe_id),
+        filepath=safe,
+        content=content,
+        conversion_pipeline=conversion_pipeline,
+        chunking_pipeline=chunking_pipeline,
+        llm_config=resolved,
+    )
+
+
+@api_router.post("/groups/{group_id}/collections")
+async def upload_group_collection(
+    group_id: str,
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+    conversion_pipeline: ConversionPipeline = Query(default=ConversionPipeline.AUTO),
+    chunking_pipeline: ChunkingPipeline = Query(default=ChunkingPipeline.AUTO),
+    llm_config: str = Form(default="{}"),
+) -> CollectionUploadResponse:
+    """Upload a ZIP collection to a group's knowledge base.
+
+    Requires write access to the group.
+    """
+    safe_id = _require_group_write(user, group_id)
+    llm = LlmConfig.model_validate_json(llm_config)
+    resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
+    store = Casebase(kind="group", id=safe_id)
+
+    raw = await file.read()
+    if len(raw) > _MAX_COLLECTION_SIZE_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Collection too large. Maximum size: {_MAX_COLLECTION_SIZE_BYTES} bytes",
+        )
+
+    failed: list[str] = []
+    markdown_count = 0
+    converted_count = 0
+
+    async def _try_upload(rel_path: str, content_bytes: bytes) -> bool:
+        try:
+            safe = sanitize_document_path(rel_path)
+            await _upload_file_internal(
+                store, safe, content_bytes,
+                conversion_pipeline, chunking_pipeline, resolved,
+            )
+            return True
+        except Exception as e:
+            logger.warning("Failed to process %s: %s", rel_path, e)
+            failed.append(rel_path)
+            return False
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        extract_root = Path(tmp_dir)
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                for info in zf.infolist():
+                    norm = str(PurePosixPath(info.filename))
+                    if norm.startswith("/") or norm.startswith("..") or "/.." in norm:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"ZIP contains unsafe path: {info.filename}",
+                        )
+                zf.extractall(extract_root)
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=400, detail="Invalid ZIP file")
+
+        top_items = list(extract_root.iterdir())
+        if len(top_items) == 1 and top_items[0].is_dir():
+            extract_root = top_items[0]
+
+        collection_files = {
+            str(p.relative_to(extract_root).as_posix())
+            for p in extract_root.rglob("*")
+            if p.is_file()
+        }
+        if len(collection_files) > _MAX_COLLECTION_FILES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Collection has too many files ({len(collection_files)}). "
+                f"Maximum: {_MAX_COLLECTION_FILES}",
+            )
+
+        all_binaries: set[str] = set()
+        preprocessed: dict[str, str] = {}
+        for rel_path in sorted(collection_files):
+            if PurePosixPath(rel_path).suffix.lower() != ".md":
+                continue
+            try:
+                text = (extract_root / rel_path).read_text(encoding="utf-8")
+            except Exception as e:
+                logger.warning("Failed to read %s: %s", rel_path, e)
+                failed.append(rel_path)
+                continue
+            result = preprocess_markdown(text, rel_path, collection_files)
+            preprocessed[rel_path] = result.content
+            all_binaries.update(result.binary_attachments)
+
+        for path in sorted(all_binaries):
+            source = extract_root / path
+            if not source.exists():
+                failed.append(path)
+                continue
+            if await _try_upload(path, source.read_bytes()):
+                converted_count += 1
+
+        for rel_path in sorted(collection_files):
+            if rel_path in all_binaries:
+                continue
+            suffix = PurePosixPath(rel_path).suffix.lower()
+            if suffix == DOCUMENT_EXTENSION and rel_path in preprocessed:
+                if await _try_upload(rel_path, preprocessed[rel_path].encode("utf-8")):
+                    markdown_count += 1
+            else:
+                if await _try_upload(rel_path, (extract_root / rel_path).read_bytes()):
+                    converted_count += 1
+
+    total = markdown_count + converted_count
+    return CollectionUploadResponse(
+        total_files=total,
+        markdown_files=markdown_count,
+        converted_attachments=converted_count,
+        failed_files=failed,
+        message=f"Collection uploaded: {markdown_count} markdown, "
+        f"{converted_count} attachments converted"
+        + (f", {len(failed)} failed" if failed else ""),
+    )
+
+
+@api_router.delete("/groups/{group_id}/documents/content/{filepath:path}")
+async def delete_group_document(
+    group_id: str,
+    filepath: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> DeleteDocumentResponse:
+    """Delete a document from a group's knowledge base.
+
+    Requires write access to the group.
+
+    Args:
+        group_id: The group identifier.
+        filepath: The relative path to the document.
+    """
+    safe_id = _require_group_write(user, group_id)
+    safe = _safe_path(filepath)
+    store = Casebase(kind="group", id=safe_id)
+    data_dir = store.documents_dir(settings.data_dir)
+    file_path = data_dir / safe
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    file_path.unlink()
+    _cleanup_empty_parents(file_path, data_dir)
+    delete_chunks(store, safe)
+    sync_index(store)
+
+    # Also delete the original if it exists
+    originals_dir = store.originals_dir(settings.data_dir)
+    stem = Path(safe).stem
+    parent = str(Path(safe).parent)
+    if parent != ".":
+        orig_dir = originals_dir / parent
+    else:
+        orig_dir = originals_dir
+    if orig_dir.exists():
+        for candidate in orig_dir.iterdir():
+            if candidate.is_file() and candidate.stem == stem:
+                candidate.unlink()
+                _cleanup_empty_parents(candidate, originals_dir)
+                break
+
+    return DeleteDocumentResponse(
+        filename=safe,
+        message="Document deleted successfully",
+    )
+
+
+@api_router.post("/groups/{group_id}/directories")
+async def create_group_directory(
+    group_id: str,
+    request: CreateDirectoryRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> CreateDirectoryResponse:
+    """Create a new directory within a group's documents directory.
+
+    Requires write access to the group.
+    """
+    safe_id = _require_group_write(user, group_id)
+    safe = _safe_path(request.path)
+    store = Casebase(kind="group", id=safe_id)
+    documents_dir = store.documents_dir(settings.data_dir)
+    dir_path = documents_dir / safe
+
+    if dir_path.exists():
+        raise HTTPException(status_code=409, detail="Directory already exists")
+
+    dir_path.mkdir(parents=True, exist_ok=True)
+
+    return CreateDirectoryResponse(
+        path=safe,
+        message="Directory created successfully",
+    )
+
+
+@api_router.delete("/groups/{group_id}/directories")
+async def delete_group_directory(
+    group_id: str,
+    request: DeleteDirectoryRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> DeleteDirectoryResponse:
+    """Delete a directory from a group's documents.
+
+    Requires write access to the group.
+    """
+    safe_id = _require_group_write(user, group_id)
+    safe = _safe_path(request.path)
+    store = Casebase(kind="group", id=safe_id)
+    documents_dir = store.documents_dir(settings.data_dir)
+    chunks_dir = store.chunks_dir(settings.data_dir)
+    originals_dir = store.originals_dir(settings.data_dir)
+
+    dir_path = documents_dir / safe
+    if not dir_path.exists() or not dir_path.is_dir():
+        raise HTTPException(status_code=404, detail="Directory not found")
+
+    files_deleted = sum(
+        1 for f in dir_path.rglob(f"*{DOCUMENT_EXTENSION}") if f.is_file()
+    )
+
+    shutil.rmtree(dir_path)
+    _cleanup_empty_parents(dir_path, documents_dir)
+
+    chunks_subdir = chunks_dir / safe
+    if chunks_subdir.exists() and chunks_subdir.is_dir():
+        shutil.rmtree(chunks_subdir)
+        _cleanup_empty_parents(chunks_subdir, chunks_dir)
+
+    originals_subdir = originals_dir / safe
+    if originals_subdir.exists() and originals_subdir.is_dir():
+        shutil.rmtree(originals_subdir)
+        _cleanup_empty_parents(originals_subdir, originals_dir)
+
+    sync_index(store)
+
+    return DeleteDirectoryResponse(
+        path=safe,
+        files_deleted=files_deleted,
+        message="Directory deleted successfully",
+    )
+
+
+@api_router.post("/groups/{group_id}/documents/reconvert/{filepath:path}")
+async def reconvert_group_document(
+    group_id: str,
+    filepath: str,
+    request: ReconvertRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> UploadDocumentResponse:
+    """Re-convert a group document from its original binary file.
+
+    Requires write access to the group.
+
+    Args:
+        group_id: The group identifier.
+        filepath: The text document relative path.
+        request: Reconversion options including pipeline and LLM config.
+    """
+    safe_id = _require_group_write(user, group_id)
+    safe = _safe_path(filepath)
+    store = Casebase(kind="group", id=safe_id)
+    resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
+
+    originals_dir = store.originals_dir(settings.data_dir)
+    documents_dir = store.documents_dir(settings.data_dir)
+
+    safe_path = Path(safe)
+    target_stem = safe_path.stem
+    parent = str(safe_path.parent)
+    if parent != ".":
+        orig_search_dir = originals_dir / parent
+    else:
+        orig_search_dir = originals_dir
+
+    original_path = None
+    if orig_search_dir.exists():
+        for candidate in orig_search_dir.iterdir():
+            if candidate.is_file() and candidate.stem == target_stem:
+                original_path = candidate
+                break
+
+    if not original_path:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No original file found for '{safe}'",
+        )
+
+    try:
+        converter = get_converter(
+            request.conversion_pipeline, filename=original_path.name
+        )
+    except (ImportError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    resolved_conversion = request.conversion_pipeline
+    if request.conversion_pipeline == ConversionPipeline.AUTO:
+        resolved_conversion = resolve_auto_pipeline(original_path.name)
+
+    try:
+        if resolved_conversion == ConversionPipeline.LLM:
+            from .converters.llm import LLMConverter
+
+            assert isinstance(converter, LLMConverter)
+            markdown_content = await converter(original_path, options=resolved)
+        else:
+            markdown_content = await converter(original_path)
+    except ImportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Conversion failed: {e!s}")
+
+    converted_path = documents_dir / safe
+    converted_path.parent.mkdir(parents=True, exist_ok=True)
+    converted_path.write_text(markdown_content, encoding="utf-8")
+    stat = converted_path.stat()
+
+    chunk_count = None
+    chunking_used = None
+    try:
+        chunked = chunk_document(
+            store, safe, markdown_content, request.chunking_pipeline
+        )
+        chunk_count = len(chunked.chunks)
+        chunking_used = chunked.pipeline
+        sync_index(store)
+    except Exception as e:
+        logger.warning("Chunking failed for %s: %s", safe, e)
+
+    return UploadDocumentResponse(
+        filename=original_path.name,
+        converted_filename=safe,
+        size_bytes=stat.st_size,
+        conversion_pipeline_used=resolved_conversion.value,
+        chunk_count=chunk_count,
+        chunking_pipeline_used=chunking_used,
+        message="Document reconverted successfully",
+    )
+
+
+@api_router.post("/groups/{group_id}/documents/move/{filepath:path}")
+async def move_group_document(
+    group_id: str,
+    filepath: str,
+    request: MoveDocumentRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> MoveDocumentResponse:
+    """Move a group document to a new location.
+
+    Requires write access to the group.
+
+    Args:
+        group_id: The group identifier.
+        filepath: The current relative path of the document.
+        request: The move destination.
+    """
+    safe_id = _require_group_write(user, group_id)
+    src = _safe_path(filepath)
+    dst = _safe_path(request.destination)
+
+    if src == dst:
+        raise HTTPException(
+            status_code=400, detail="Source and destination are the same"
+        )
+
+    store = Casebase(kind="group", id=safe_id)
+    documents_dir = store.documents_dir(settings.data_dir)
+    chunks_dir = store.chunks_dir(settings.data_dir)
+    originals_dir = store.originals_dir(settings.data_dir)
+
+    src_doc = documents_dir / src
+    if not src_doc.exists() or not src_doc.is_file():
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    dst_doc = documents_dir / dst
+    if dst_doc.exists():
+        raise HTTPException(status_code=409, detail="Destination already exists")
+
+    dst_doc.parent.mkdir(parents=True, exist_ok=True)
+    src_doc.rename(dst_doc)
+    _cleanup_empty_parents(src_doc, documents_dir)
+
+    src_chunks = chunks_dir / f"{src}.json"
+    if src_chunks.exists():
+        dst_chunks = chunks_dir / f"{dst}.json"
+        dst_chunks.parent.mkdir(parents=True, exist_ok=True)
+        src_chunks.rename(dst_chunks)
+        _cleanup_empty_parents(src_chunks, chunks_dir)
+
+    src_path = Path(src)
+    src_stem = src_path.stem
+    src_parent = str(src_path.parent)
+    if src_parent != ".":
+        orig_search_dir = originals_dir / src_parent
+    else:
+        orig_search_dir = originals_dir
+
+    if orig_search_dir.exists():
+        for candidate in orig_search_dir.iterdir():
+            if candidate.is_file() and candidate.stem == src_stem:
+                dst_path = Path(dst)
+                dst_parent = str(dst_path.parent)
+                if dst_parent != ".":
+                    dst_orig_dir = originals_dir / dst_parent
+                else:
+                    dst_orig_dir = originals_dir
+                dst_orig_dir.mkdir(parents=True, exist_ok=True)
+                dst_orig = dst_orig_dir / (dst_path.stem + candidate.suffix)
+                candidate.rename(dst_orig)
+                _cleanup_empty_parents(candidate, originals_dir)
+                break
+
+    sync_index(store)
+
+    return MoveDocumentResponse(
+        source=src,
+        destination=dst,
+        message="Document moved successfully",
+    )
 
 
 app.include_router(api_router)

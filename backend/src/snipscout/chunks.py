@@ -8,6 +8,7 @@ from pathlib import Path
 from .chunkers import ChunkingPipeline, get_chunker
 from .config import settings
 from .retrieval import sync_index
+from .store import Casebase
 from .types import ChunkedDocument, ChunkInfo
 
 __all__ = [
@@ -24,24 +25,24 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-def _get_chunk_path(user_id: str, filepath: str) -> Path:
+def _get_chunk_path(store: Casebase, filepath: str) -> Path:
     """Get the path to a chunk JSON file.
 
     Args:
-        user_id: The user ID.
+        store: The casebase.
         filepath: The relative document path.
 
     Returns:
         Path to the chunk JSON file.
     """
-    chunks_dir = settings.get_user_chunks_dir(user_id)
+    chunks_dir = store.chunks_dir(settings.data_dir)
     chunk_file_path = chunks_dir / f"{filepath}.json"
     chunk_file_path.parent.mkdir(parents=True, exist_ok=True)
     return chunk_file_path
 
 
 def chunk_document(
-    user_id: str,
+    store: Casebase,
     filename: str,
     content: str,
     chunking_pipeline: ChunkingPipeline = ChunkingPipeline.AUTO,
@@ -49,7 +50,7 @@ def chunk_document(
     """Chunk a document and persist the results to disk.
 
     Args:
-        user_id: The user ID.
+        store: The casebase.
         filename: The document filename.
         content: The document text content.
         chunking_pipeline: The chunking pipeline to use.
@@ -77,7 +78,7 @@ def chunk_document(
         chunks=chunks,
     )
 
-    chunk_path = _get_chunk_path(user_id, filename)
+    chunk_path = _get_chunk_path(store, filename)
     chunk_path.write_text(doc.model_dump_json(indent=2), encoding="utf-8")
 
     return doc
@@ -105,32 +106,32 @@ def load_chunked_document(chunks_dir: Path, filename: str) -> ChunkedDocument | 
         return None
 
 
-def get_chunks(user_id: str, filename: str) -> ChunkedDocument | None:
+def get_chunks(store: Casebase, filename: str) -> ChunkedDocument | None:
     """Load chunks for a document from disk.
 
     Args:
-        user_id: The user ID.
+        store: The casebase.
         filename: The document filename.
 
     Returns:
         The chunked document, or None if not found.
     """
-    return load_chunked_document(settings.get_user_chunks_dir(user_id), filename)
+    return load_chunked_document(store.chunks_dir(settings.data_dir), filename)
 
 
-def delete_chunks(user_id: str, filepath: str) -> bool:
+def delete_chunks(store: Casebase, filepath: str) -> bool:
     """Delete chunk file for a document.
 
     After unlinking, cleans up empty parent directories up to the chunks root.
 
     Args:
-        user_id: The user ID.
+        store: The casebase.
         filepath: The relative document path.
 
     Returns:
         True if the chunk file was deleted, False if it didn't exist.
     """
-    chunks_dir = settings.get_user_chunks_dir(user_id)
+    chunks_dir = store.chunks_dir(settings.data_dir)
     chunk_path = chunks_dir / f"{filepath}.json"
     if chunk_path.exists():
         chunk_path.unlink()
@@ -147,16 +148,16 @@ def delete_chunks(user_id: str, filepath: str) -> bool:
     return False
 
 
-def list_chunked_documents(user_id: str) -> dict[str, int]:
-    """List all chunked documents for a user with their chunk counts.
+def list_chunked_documents(store: Casebase) -> dict[str, int]:
+    """List all chunked documents for a store with their chunk counts.
 
     Args:
-        user_id: The user ID.
+        store: The casebase.
 
     Returns:
         Dict mapping document filename to chunk count.
     """
-    chunks_dir = settings.get_user_chunks_dir(user_id)
+    chunks_dir = store.chunks_dir(settings.data_dir)
     if not chunks_dir.exists():
         return {}
 
@@ -174,21 +175,21 @@ def list_chunked_documents(user_id: str) -> dict[str, int]:
     return result
 
 
-def rechunk_document(user_id: str, filename: str) -> None:
+def rechunk_document(store: Casebase, filename: str) -> None:
     """Re-chunk a document and sync the search index.
 
-    Reads the file from the user's documents directory, re-chunks it,
+    Reads the file from the store's documents directory, re-chunks it,
     and rebuilds the LanceDB index.
 
     Args:
-        user_id: The user ID.
+        store: The casebase.
         filename: The relative document path.
     """
-    docs_dir = settings.get_user_documents_dir(user_id)
+    docs_dir = store.documents_dir(settings.data_dir)
     file_path = docs_dir / filename
     try:
         text_content = file_path.read_text(encoding="utf-8")
-        chunk_document(user_id, filename, text_content)
-        sync_index(user_id)
+        chunk_document(store, filename, text_content)
+        sync_index(store)
     except Exception:
         logger.warning("Re-chunking failed for %s after write", filename)

@@ -10,11 +10,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 __all__ = [
     "DOCUMENT_EXTENSION",
     "EmbeddingSettings",
+    "GroupSettings",
     "LlmSettings",
     "LogfireSettings",
     "McpSettings",
     "Settings",
     "sanitize_document_path",
+    "sanitize_group_id",
     "sanitize_user_id",
     "settings",
 ]
@@ -22,6 +24,9 @@ __all__ = [
 
 # All documents are converted and stored as markdown.
 DOCUMENT_EXTENSION = ".md"
+
+# Reserved top-level directory names in the data directory.
+_RESERVED_NAMES = frozenset({"users", "groups", "traces"})
 
 
 def sanitize_user_id(user_id: str) -> str:
@@ -44,6 +49,29 @@ def sanitize_user_id(user_id: str) -> str:
 
     if not sanitized or sanitized != user_id:
         raise ValueError(f"Invalid user ID: {user_id!r}")
+
+    return sanitized
+
+
+def sanitize_group_id(group_id: str) -> str:
+    """Sanitize a group ID to prevent path traversal attacks.
+
+    Args:
+        group_id: The group ID to sanitize.
+
+    Returns:
+        The sanitized group ID.
+
+    Raises:
+        ValueError: If the group ID is invalid or contains unsafe characters.
+    """
+    if not group_id:
+        raise ValueError("Group ID cannot be empty")
+
+    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "", group_id)
+
+    if not sanitized or sanitized != group_id:
+        raise ValueError(f"Invalid group ID: {group_id!r}")
 
     return sanitized
 
@@ -137,6 +165,16 @@ class McpSettings(BaseModel):
     base_url: str = "http://localhost:8000/mcp"
 
 
+class GroupSettings(BaseModel):
+    """Settings for group-based knowledge sharing.
+
+    Configurable via ``SNIPSCOUT_GROUPS__*`` environment variables.
+    """
+
+    groups_claim: str = "groups"
+    default_permission: str = "read"
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -151,6 +189,7 @@ class Settings(BaseSettings):
     embedding: EmbeddingSettings = EmbeddingSettings()
     logfire: LogfireSettings = LogfireSettings()
     mcp: McpSettings = McpSettings()
+    groups: GroupSettings = GroupSettings()
 
     data_dir: Path = Path("data")
     max_file_size_bytes: int = 10 * 1024 * 1024  # 10 MB
@@ -165,6 +204,8 @@ class Settings(BaseSettings):
         """
         return self.logfire.traces_dir or self.data_dir / "traces"
 
+    # --- User directories ---
+
     def get_user_dir(self, user_id: str) -> Path:
         """Get the root directory for a specific user.
 
@@ -172,13 +213,13 @@ class Settings(BaseSettings):
             user_id: The user ID.
 
         Returns:
-            Path to the user's root directory.
+            Path to the user's root directory under ``data/users/<id>/``.
 
         Raises:
             ValueError: If the user ID is invalid.
         """
         safe_id = sanitize_user_id(user_id)
-        path = self.data_dir / safe_id
+        path = self.data_dir / "users" / safe_id
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -278,6 +319,89 @@ class Settings(BaseSettings):
             ValueError: If the user ID is invalid.
         """
         path = self.get_user_dir(user_id) / "originals"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    # --- Group directories ---
+
+    def get_group_dir(self, group_id: str) -> Path:
+        """Get the root directory for a specific group.
+
+        Args:
+            group_id: The group ID.
+
+        Returns:
+            Path to the group's root directory under ``data/groups/<id>/``.
+
+        Raises:
+            ValueError: If the group ID is invalid.
+        """
+        safe_id = sanitize_group_id(group_id)
+        path = self.data_dir / "groups" / safe_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_group_documents_dir(self, group_id: str) -> Path:
+        """Get the documents directory for a specific group.
+
+        Args:
+            group_id: The group ID.
+
+        Returns:
+            Path to the group's documents directory.
+
+        Raises:
+            ValueError: If the group ID is invalid.
+        """
+        path = self.get_group_dir(group_id) / "documents"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_group_chunks_dir(self, group_id: str) -> Path:
+        """Get the chunks directory for a specific group.
+
+        Args:
+            group_id: The group ID.
+
+        Returns:
+            Path to the group's chunks directory.
+
+        Raises:
+            ValueError: If the group ID is invalid.
+        """
+        path = self.get_group_dir(group_id) / "chunks"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_group_lancedb_dir(self, group_id: str) -> Path:
+        """Get the LanceDB directory for a specific group.
+
+        Args:
+            group_id: The group ID.
+
+        Returns:
+            Path to the group's LanceDB directory.
+
+        Raises:
+            ValueError: If the group ID is invalid.
+        """
+        path = self.get_group_dir(group_id) / "lancedb"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_group_originals_dir(self, group_id: str) -> Path:
+        """Get the originals directory for a specific group.
+
+        Args:
+            group_id: The group ID.
+
+        Returns:
+            Path to the group's originals directory.
+
+        Raises:
+            ValueError: If the group ID is invalid.
+        """
+        path = self.get_group_dir(group_id) / "originals"
         path.mkdir(parents=True, exist_ok=True)
         return path
 

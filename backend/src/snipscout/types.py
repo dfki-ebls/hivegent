@@ -11,11 +11,23 @@ from pydantic_ai import ModelMessage, ModelMessagesTypeAdapter
 
 @dataclass(slots=True, frozen=True)
 class User:
-    """Authenticated user information."""
+    """Authenticated user information with group membership.
+
+    Groups are split by permission level:
+    - ``read_groups``: groups with at least read access
+    - ``write_groups``: groups with write (and implicit read) access
+    """
 
     id: str
     email: str | None = None
     name: str | None = None
+    read_groups: frozenset[str] = field(default_factory=frozenset)
+    write_groups: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def all_groups(self) -> frozenset[str]:
+        """Return all groups the user belongs to (read + write)."""
+        return self.read_groups | self.write_groups
 
 
 class Personality(StrEnum):
@@ -101,6 +113,8 @@ __all__ = [
     "GenerateTitleRequest",
     "GenerateTitleResponse",
     "GrepMatch",
+    "GroupInfo",
+    "GroupListResponse",
     "LlmConfig",
     "MoveDocumentRequest",
     "MoveDocumentResponse",
@@ -111,6 +125,7 @@ __all__ = [
     "UpdateTitleRequest",
     "UploadDocumentResponse",
     "User",
+    "UserResponse",
 ]
 
 
@@ -190,11 +205,14 @@ class ChunkSummary(BaseModel):
 class RetrievedChunk(BaseModel):
     """A chunk retrieved from search."""
 
+    store_key: str | None = Field(
+        default=None, description="Source store identifier (e.g. 'user:alice', 'group:eng')"
+    )
     filename: str = Field(description="The document filename")
     chunk_index: int = Field(description="Chunk index within the document")
     text: str = Field(description="The chunk text content")
     token_count: int = Field(description="Number of tokens in the chunk")
-    score: float = Field(description="The relevance score from BM25")
+    score: float = Field(description="The relevance score")
 
 
 class DocumentInfo(BaseModel):
@@ -322,14 +340,43 @@ class UpdateTitleRequest(BaseModel):
     title: str = Field(description="The new title for the conversation")
 
 
+class UserResponse(BaseModel):
+    """Serializable user information for API responses."""
+
+    id: str = Field(description="User identifier")
+    email: str | None = Field(default=None, description="User email address")
+    name: str | None = Field(default=None, description="User display name")
+    read_groups: list[str] = Field(default_factory=list, description="Groups with read access")
+    write_groups: list[str] = Field(default_factory=list, description="Groups with write access")
+
+    @staticmethod
+    def from_user(user: "User") -> "UserResponse":
+        """Create a UserResponse from a User dataclass.
+
+        Args:
+            user: The authenticated user.
+
+        Returns:
+            A serializable user response.
+        """
+        return UserResponse(
+            id=user.id,
+            email=user.email,
+            name=user.name,
+            read_groups=sorted(user.read_groups),
+            write_groups=sorted(user.write_groups),
+        )
+
+
 class SettingsResponse(BaseModel):
-    """LLM settings (API key masked as boolean)."""
+    """LLM settings (API key masked as boolean) and user context."""
 
     model: str = Field(description="Default chat model")
     vision_model: str = Field(description="Default vision model for conversion")
     small_model: str = Field(description="Default model for lightweight tasks")
     has_api_key: bool = Field(description="Whether a server-side API key is configured")
     base_url: str = Field(description="Default base URL for the LLM provider")
+    user: UserResponse = Field(description="Authenticated user information")
 
 
 class GenerateTitleRequest(BaseModel):
@@ -461,3 +508,16 @@ class CollectionUploadResponse(BaseModel):
         default_factory=list, description="Files that failed to process"
     )
     message: str = Field(description="Status message")
+
+
+class GroupInfo(BaseModel):
+    """Summary information about a casebase group."""
+
+    slug: str = Field(description="The group identifier")
+    document_count: int = Field(description="Number of documents in the group")
+
+
+class GroupListResponse(BaseModel):
+    """Response for listing casebase groups."""
+
+    groups: list[GroupInfo] = Field(description="List of group summaries")

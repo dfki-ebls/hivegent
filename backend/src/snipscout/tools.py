@@ -1,15 +1,17 @@
 """Shared path-scoped tool generators used by agent and MCP wrappers."""
 
 import logging
-from dataclasses import dataclass
-from typing import Literal
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Literal
 
 from ripgrepy import Ripgrepy
 
 from .chunks import load_chunked_document, rechunk_document
 from .config import DOCUMENT_EXTENSION
+from .store import Casebase
 from .types import (
     ChunkSummary,
     DocumentFilter,
@@ -258,11 +260,12 @@ class GrepTool:
 
 @dataclass(slots=True, frozen=True)
 class SearchTool:
-    """Dense or sparse chunk search using LanceDB."""
+    """Dense or sparse chunk search across one or more casebases."""
 
-    user_id: str
+    stores: Sequence[Casebase]
     search_type: Literal["dense", "sparse"]
     document_filter: DocumentFilter | None = None
+    group_filters: dict[str, DocumentFilter] = field(default_factory=dict)
 
     def __call__(
         self,
@@ -271,28 +274,32 @@ class SearchTool:
     ) -> list[RetrievedChunk]:
         """Search chunks using the configured search type.
 
+        Searches across all configured stores and merges results by score.
+
         Args:
             query: Natural language search query.
             top_k: Maximum results to return.
         """
-        from .retrieval import parse_chunk_key, search_dense, search_sparse
+        from .retrieval import parse_chunk_key, search_multi
 
-        search_func = search_dense if self.search_type == "dense" else search_sparse
-        results = search_func(
-            self.user_id,
+        results = search_multi(
+            self.stores,
             query,
+            self.search_type,
             top_k,
             self.document_filter,
+            self.group_filters,
         )
         return [
             RetrievedChunk(
+                store_key=store_key,
                 filename=filename,
                 chunk_index=chunk_index,
                 text=text,
                 token_count=len(text.split()),
                 score=round(score, 4),
             )
-            for key, text, score in results
+            for store_key, key, text, score in results
             for filename, chunk_index in [parse_chunk_key(key)]
         ]
 
@@ -358,7 +365,7 @@ class EditDocumentTool:
     """Edit a document by replacing an exact string with a new string."""
 
     path: Path
-    user_id: str
+    store: Casebase
     document_filter: DocumentFilter | None = None
 
     def __call__(
@@ -398,7 +405,7 @@ class EditDocumentTool:
 
         new_content = content.replace(old_string, new_string, 1)
         file_path.write_text(new_content, encoding="utf-8")
-        rechunk_document(self.user_id, filename)
+        rechunk_document(self.store, filename)
         return f"Replaced 1 occurrence in '{filename}'."
 
 
@@ -407,7 +414,7 @@ class WriteDocumentTool:
     """Write content to a document using prepend, append, or replace mode."""
 
     path: Path
-    user_id: str
+    store: Casebase
     document_filter: DocumentFilter | None = None
 
     def __call__(
@@ -451,5 +458,5 @@ class WriteDocumentTool:
             file_path.write_text(content + existing, encoding="utf-8")
             message = f"Prepended {len(content)} characters to '{filename}'."
 
-        rechunk_document(self.user_id, filename)
+        rechunk_document(self.store, filename)
         return message

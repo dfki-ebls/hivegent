@@ -3,12 +3,14 @@ import JSZip from "jszip";
 import {
   AlertCircle,
   Archive,
+  ChevronDown,
   ChevronRight,
   Eye,
   EyeOff,
   FileText,
   FolderOpen,
   FolderPlus,
+  Loader2,
   Paperclip,
   Plus,
   RotateCcw,
@@ -16,6 +18,7 @@ import {
   Search,
   Trash2,
   Upload,
+  Users,
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -23,12 +26,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   buildLlmConfig,
+  getGroupDirectoryTree,
+  getGroupDocumentContent,
   requiresConversion,
   uploadDocument,
 } from "../lib/api";
 import {
   type ChunkingPipeline,
   type ConversionPipeline,
+  type DirectoryTreeResponse,
   type DocumentInfo,
   type FetchedChunk,
   type FetchedDocument,
@@ -36,8 +42,12 @@ import {
   sortChunks,
 } from "../lib/types";
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
-import { useManagedDocumentsStore } from "../stores/managed-documents-store";
-import { useSettingsStore } from "../stores/settings-store";
+import { useUserDocumentsStore } from "../stores/user-documents-store";
+import {
+  canWriteGroup,
+  getAllGroups,
+  useSettingsStore,
+} from "../stores/settings-store";
 import { ChunkingPipelineSelector } from "./ChunkingPipelineSelector";
 import {
   Collapsible,
@@ -595,6 +605,155 @@ function DocumentListItem({
   );
 }
 
+// --- Group documents components ---
+
+interface GroupDocumentsSectionProps {
+  groupId: string;
+  canWrite: boolean;
+  onInclude: (path: string) => void;
+  onExclude: (path: string) => void;
+  onViewFile: (groupId: string, filepath: string) => void;
+  onRemoveFile?: (groupId: string, filepath: string) => void;
+  onCreateSubdir?: (groupId: string, parentPath: string) => void;
+  onDeleteDir?: (groupId: string, dirPath: string) => void;
+}
+
+function GroupDocumentsSection({
+  groupId,
+  canWrite,
+  onInclude,
+  onExclude,
+  onViewFile,
+  onRemoveFile,
+  onCreateSubdir,
+  onDeleteDir,
+}: GroupDocumentsSectionProps) {
+  const [tree, setTree] = useState<DirectoryTreeResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || hasLoaded) return;
+    setIsLoading(true);
+    getGroupDirectoryTree(groupId)
+      .then(setTree)
+      .catch(() => setTree(null))
+      .finally(() => {
+        setIsLoading(false);
+        setHasLoaded(true);
+      });
+  }, [groupId, isOpen, hasLoaded]);
+
+  const handleInclude = useCallback(
+    (path: string) => onInclude(`@${groupId}/${path}`),
+    [groupId, onInclude],
+  );
+
+  const handleExclude = useCallback(
+    (path: string) => onExclude(`@${groupId}/${path}`),
+    [groupId, onExclude],
+  );
+
+  const handleIncludeGroup = useCallback(
+    () => onInclude(`@${groupId}/`),
+    [groupId, onInclude],
+  );
+
+  const handleExcludeGroup = useCallback(
+    () => onExclude(`@${groupId}/`),
+    [groupId, onExclude],
+  );
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <div className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 group">
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
+            {isOpen ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </Button>
+        </CollapsibleTrigger>
+        <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className="min-w-0 flex-1 truncate text-sm font-medium text-left"
+          >
+            {groupId}
+          </button>
+        </CollapsibleTrigger>
+        {tree && (
+          <Badge variant="secondary" className="shrink-0 text-xs">
+            {tree.total_files}
+          </Badge>
+        )}
+        <div className="hidden gap-0.5 group-hover:flex">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            title="Include group in chat"
+            onClick={handleIncludeGroup}
+          >
+            <Eye className="h-3 w-3" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            title="Exclude group from chat"
+            onClick={handleExcludeGroup}
+          >
+            <EyeOff className="h-3 w-3" />
+          </Button>
+        </div>
+      </div>
+      <CollapsibleContent>
+        {isLoading && (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        {!isLoading && tree && tree.total_files > 0 && (
+          <div className="ml-4">
+            <DirectoryTreeView
+              entry={tree.root}
+              isLoading={false}
+              onEditFile={(path) => onViewFile(groupId, path)}
+              onInclude={handleInclude}
+              onExclude={handleExclude}
+              onRemoveFile={
+                canWrite && onRemoveFile
+                  ? (path) => onRemoveFile(groupId, path)
+                  : undefined
+              }
+              onCreateSubdir={
+                canWrite && onCreateSubdir
+                  ? (path) => onCreateSubdir(groupId, path)
+                  : undefined
+              }
+              onDeleteDir={
+                canWrite && onDeleteDir
+                  ? (path) => onDeleteDir(groupId, path)
+                  : undefined
+              }
+            />
+          </div>
+        )}
+        {!isLoading && (!tree || tree.total_files === 0) && (
+          <p className="ml-8 py-2 text-xs text-muted-foreground">
+            No documents in this group
+          </p>
+        )}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 interface DialogState {
   filename: string;
   /** Show metadata badges and chunk sidebar from API. */
@@ -603,6 +762,8 @@ interface DialogState {
   editable: boolean;
   /** New document mode. */
   isNew: boolean;
+  /** Custom content fetcher (for group documents). */
+  getContent?: (filename: string) => Promise<string>;
 }
 
 interface ManageDocumentsProps {
@@ -630,7 +791,7 @@ function ManageDocuments({
     createDir,
     deleteDir,
     clearError,
-  } = useManagedDocumentsStore();
+  } = useUserDocumentsStore();
   const llmSettings = useSettingsStore((state) => state.llm);
   const visionModel = useSettingsStore((state) => state.visionModel);
   const conversionPipeline = useSettingsStore(
@@ -689,6 +850,19 @@ function ManageDocuments({
       isNew: true,
     });
   }, []);
+
+  const handleViewGroupFile = useCallback(
+    (groupId: string, filepath: string) => {
+      setDialogState({
+        filename: filepath,
+        showMetadata: false,
+        editable: false,
+        isNew: false,
+        getContent: (f) => getGroupDocumentContent(groupId, f),
+      });
+    },
+    [],
+  );
 
   const handleSave = useCallback(
     async (filename: string, content: string) => {
@@ -991,6 +1165,26 @@ function ManageDocuments({
                 : `Your Documents (${documents.length})`}
             </h3>
             {isSearching ? renderFlatList() : renderTreeView()}
+
+            {!isSearching && getAllGroups().length > 0 && (
+              <>
+                <h3 className="mt-6 mb-3 text-sm font-medium text-muted-foreground">
+                  Group Knowledge
+                </h3>
+                <div className="space-y-0.5">
+                  {getAllGroups().map((groupId) => (
+                    <GroupDocumentsSection
+                      key={groupId}
+                      groupId={groupId}
+                      canWrite={canWriteGroup(groupId)}
+                      onInclude={handleInclude}
+                      onExclude={handleExclude}
+                      onViewFile={handleViewGroupFile}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </ScrollArea>
       </div>
@@ -1004,12 +1198,13 @@ function ManageDocuments({
         isNew={dialogState?.isNew}
         onSave={handleSave}
         onRechunk={
-          dialogState && !dialogState.isNew
+          dialogState && !dialogState.isNew && dialogState.editable
             ? async () => {
                 await storeRechunk(dialogState.filename, chunkingPipeline);
               }
             : undefined
         }
+        getContent={dialogState?.getContent}
       />
 
       <MoveDocumentDialog

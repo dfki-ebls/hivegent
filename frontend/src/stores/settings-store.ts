@@ -68,6 +68,10 @@ interface SettingsState {
   personality: Personality;
   customSystemMessage: string;
 
+  // User context (from backend, not persisted)
+  readGroups: string[];
+  writeGroups: string[];
+
   // Computed effective values (backend default + user override)
   llm: LLMSettings;
   smallModel: string;
@@ -176,6 +180,8 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       backendDefaults: null,
       overrides: EMPTY_OVERRIDES,
+      readGroups: [],
+      writeGroups: [],
       ...UI_DEFAULTS,
 
       // Initial computed values (no backend defaults yet)
@@ -228,6 +234,8 @@ export const useSettingsStore = create<SettingsState>()(
           const defaults = await fetchSettings();
           set((state) => ({
             backendDefaults: defaults,
+            readGroups: defaults.user.read_groups,
+            writeGroups: defaults.user.write_groups,
             ...computeEffective(defaults, state.overrides),
           }));
         } catch {
@@ -307,3 +315,15 @@ export const useSettingsStore = create<SettingsState>()(
     },
   ),
 );
+
+/** Return all groups the user belongs to (read + write). */
+export function getAllGroups(): string[] {
+  const { readGroups, writeGroups } = useSettingsStore.getState();
+  const union = new Set([...readGroups, ...writeGroups]);
+  return [...union].sort();
+}
+
+/** Check whether the user has write access to a group. */
+export function canWriteGroup(groupId: string): boolean {
+  return useSettingsStore.getState().writeGroups.includes(groupId);
+}
