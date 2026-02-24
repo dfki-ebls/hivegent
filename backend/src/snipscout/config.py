@@ -1,4 +1,4 @@
-"""Configuration settings for the snipscout application."""
+"""Configuration settings for the hivegent application."""
 
 import re
 from pathlib import Path, PurePosixPath
@@ -125,8 +125,8 @@ class LlmSettings(BaseModel):
 class LogfireSettings(BaseModel):
     """Logfire observability settings.
 
-    Configurable via ``SNIPSCOUT_LOGFIRE__ENABLED`` and
-    ``SNIPSCOUT_LOGFIRE__TRACES_DIR``.
+    Configurable via ``HIVEGENT_LOGFIRE__ENABLED`` and
+    ``HIVEGENT_LOGFIRE__TRACES_DIR``.
     """
 
     enabled: bool = True
@@ -136,8 +136,8 @@ class LogfireSettings(BaseModel):
 class EmbeddingSettings(BaseModel):
     """Embedding model configuration for dense retrieval.
 
-    Configurable via ``SNIPSCOUT_EMBEDDING__PROVIDER``,
-    ``SNIPSCOUT_EMBEDDING__MODEL``, etc.
+    Configurable via ``HIVEGENT_EMBEDDING__PROVIDER``,
+    ``HIVEGENT_EMBEDDING__MODEL``, etc.
     """
 
     provider: Literal["sentence-transformers", "openai"] = "sentence-transformers"
@@ -168,7 +168,7 @@ class McpSettings(BaseModel):
 class GroupSettings(BaseModel):
     """Settings for group-based knowledge sharing.
 
-    Configurable via ``SNIPSCOUT_GROUPS__*`` environment variables.
+    Configurable via ``HIVEGENT_GROUPS__*`` environment variables.
     """
 
     groups_claim: str = "groups"
@@ -179,7 +179,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_prefix="SNIPSCOUT_",
+        env_prefix="HIVEGENT_",
         env_nested_delimiter="__",
         env_file=".env",
         env_file_encoding="utf-8",

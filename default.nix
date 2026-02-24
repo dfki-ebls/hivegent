@@ -50,8 +50,8 @@
               ;
           in
           mkApplication {
-            venv = pythonSet.mkVirtualEnv "snipscout-env" workspace.deps.optionals;
-            package = pythonSet.snipscout;
+            venv = pythonSet.mkVirtualEnv "hivegent-env" workspace.deps.optionals;
+            package = pythonSet.hivegent;
           };
         frontend = pkgs.callPackage ./frontend { };
       };
@@ -60,7 +60,7 @@
           backend.command = ''
             exec ${lib.getExe pkgs.uv} \
               --directory backend \
-              run snipscout serve --host 127.0.0.1 --reload
+              run hivegent serve --host 127.0.0.1 --reload
           '';
           frontend.command = ''
             exec ${lib.getExe' pkgs.nodejs "npm"} \

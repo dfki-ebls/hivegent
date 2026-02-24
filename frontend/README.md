@@ -1,1 +1,1 @@
-# SnipScout Frontend
+# Hivegent Frontend

@@ -269,7 +269,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ customSystemMessage }),
     }),
     {
-      name: "snipscout-settings",
+      name: "hivegent-settings",
       storage: encryptedStorage,
       partialize: (state) => ({
         overrides: state.overrides,

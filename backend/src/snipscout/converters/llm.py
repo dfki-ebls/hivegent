@@ -68,7 +68,7 @@ class LLMConverter(DocumentConverter):
         if not opts.model:
             raise ValueError(
                 "No vision model configured. "
-                "Set SNIPSCOUT_LLM__VISION_MODEL or provide x-vision-model header."
+                "Set HIVEGENT_LLM__VISION_MODEL or provide x-vision-model header."
             )
 
         suffix = path.suffix.lower()

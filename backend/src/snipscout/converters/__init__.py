@@ -1,4 +1,4 @@
-"""Document conversion infrastructure for SnipScout."""
+"""Document conversion infrastructure for Hivegent."""
 
 from dataclasses import dataclass
 from enum import StrEnum

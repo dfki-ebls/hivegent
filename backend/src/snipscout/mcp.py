@@ -4,7 +4,10 @@ import logging
 from typing import Literal
 
 from fastmcp import Context, FastMCP
-from fastmcp.dependencies import CurrentAccessToken, Depends  # pyright: ignore[reportAttributeAccessIssue]
+from fastmcp.dependencies import (  # pyright: ignore[reportAttributeAccessIssue]
+    CurrentAccessToken,
+    Depends,
+)
 from fastmcp.server.auth import AccessToken, OIDCProxy
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -38,7 +41,7 @@ if not auth_settings.disabled:
         base_url=settings.mcp.base_url,
     )
 
-mcp_app = FastMCP("SnipScout", auth=mcp_auth)
+mcp_app = FastMCP("Hivegent", auth=mcp_auth)
 
 
 def _get_mcp_user_id(

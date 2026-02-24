@@ -1,4 +1,4 @@
-"""Document chunking infrastructure for SnipScout."""
+"""Document chunking infrastructure for Hivegent."""
 
 from dataclasses import dataclass
 from enum import StrEnum

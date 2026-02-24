@@ -15,7 +15,7 @@ import {
   LOCAL_USER,
 } from "./auth-context";
 
-const LOCAL_AUTH_KEY = "snipscout-local-auth";
+const LOCAL_AUTH_KEY = "hivegent-local-auth";
 
 /**
  * Provider component for local (non-OIDC) authentication.

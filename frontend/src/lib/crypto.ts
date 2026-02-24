@@ -8,7 +8,7 @@
  * Encrypted values use the format: `enc:<base64-iv>:<base64-ciphertext>`
  */
 
-const DB_NAME = "snipscout-crypto";
+const DB_NAME = "hivegent-crypto";
 const STORE_NAME = "keys";
 const KEY_ID = "master";
 const ENCRYPTED_PREFIX = "enc:";

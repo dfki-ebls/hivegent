@@ -32,7 +32,7 @@ class AuthSettings(BaseSettings):
     """Authentication settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_prefix="SNIPSCOUT_AUTH_",
+        env_prefix="HIVEGENT_AUTH_",
         env_file=".env",
         env_file_encoding="utf-8",
     )
@@ -238,7 +238,7 @@ async def get_current_user(
     Validates the Bearer token from the Authorization header.
     Supports both JWT tokens and Personal Access Tokens (PATs).
 
-    When SNIPSCOUT_AUTH_DISABLED=true, returns a dev user without validation.
+    When HIVEGENT_AUTH_DISABLED=true, returns a dev user without validation.
 
     Args:
         credentials: The HTTP Bearer credentials.
@@ -253,11 +253,11 @@ async def get_current_user(
     if auth_settings.disabled:
         # Give write access to all groups that exist on disk
         groups_dir = settings.data_dir / "groups"
-        dev_groups = frozenset(
-            d.name
-            for d in groups_dir.iterdir()
-            if d.is_dir()
-        ) if groups_dir.exists() else frozenset[str]()
+        dev_groups = (
+            frozenset(d.name for d in groups_dir.iterdir() if d.is_dir())
+            if groups_dir.exists()
+            else frozenset[str]()
+        )
         return User(
             id="localhost",
             email="dev@localhost",
@@ -274,8 +274,8 @@ async def get_current_user(
 
     token = credentials.credentials
 
-    # Check if this is a Personal Access Token (starts with snipscout_)
-    if token.startswith("snipscout_"):
+    # Check if this is a Personal Access Token (starts with hivegent_)
+    if token.startswith("hivegent_"):
         user = token_store.validate_token(token)
         if user:
             return user
@@ -287,5 +287,3 @@ async def get_current_user(
 
     # Otherwise validate as JWT
     return await validate_jwt_token(token)
-
-

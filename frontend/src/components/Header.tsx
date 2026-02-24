@@ -66,7 +66,7 @@ export function Header() {
         className="flex items-center gap-2 text-foreground hover:opacity-80 transition-opacity"
       >
         <FileSearch className="h-6 w-6" />
-        <h1 className="text-xl font-semibold">SnipScout</h1>
+        <h1 className="text-xl font-semibold">Hivegent</h1>
       </Link>
 
       <UserMenu />

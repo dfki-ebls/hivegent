@@ -1,3 +1,3 @@
-from snipscout.cli import app
+from hivegent.cli import app
 
 app()

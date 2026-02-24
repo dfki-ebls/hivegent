@@ -2,7 +2,7 @@
  * OIDC configuration for authentication.
  *
  * Environment variables:
- * - VITE_OIDC_AUTHORITY: The OIDC provider's URL (e.g., https://auth.example.com/realms/snipscout)
+ * - VITE_OIDC_AUTHORITY: The OIDC provider's URL (e.g., https://auth.example.com/realms/hivegent)
  * - VITE_OIDC_CLIENT_ID: The client ID for this application
  */
 

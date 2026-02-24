@@ -14,7 +14,7 @@ mkShell {
     npm --prefix "$ROOT_DIR/frontend" install
     uv --directory "$ROOT_DIR/backend" sync --all-extras --locked
   '';
-  SNIPSCOUT_AUTH_DISABLED = "1";
+  HIVEGENT_AUTH_DISABLED = "1";
   UV_PYTHON = lib.getExe python3;
   packages = [
     nodejs

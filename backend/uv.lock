@@ -4342,7 +4342,7 @@ wheels = [
 ]
 
 [[package]]
-name = "snipscout"
+name = "hivegent"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -4411,7 +4411,7 @@ requires-dist = [
     { name = "pypandoc", specifier = ">=1,<2" },
     { name = "ripgrepy", specifier = ">=2,<3" },
     { name = "sentence-transformers", specifier = ">=5,<6" },
-    { name = "snipscout", extras = ["marker", "docling", "kreuzberg", "markitdown"], marker = "extra == 'all'" },
+    { name = "hivegent", extras = ["marker", "docling", "kreuzberg", "markitdown"], marker = "extra == 'all'" },
     { name = "typer", specifier = ">=0.21,<1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.40,<1" },
     { name = "zvec", git = "https://github.com/alibaba/zvec?tag=v0.2.0" },

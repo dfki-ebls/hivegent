@@ -1,4 +1,4 @@
-"""CLI for SnipScout service account management."""
+"""CLI for Hivegent service account management."""
 
 import json
 from collections.abc import Mapping
@@ -11,12 +11,12 @@ import typer
 __all__ = ["app"]
 
 app = typer.Typer(
-    help="SnipScout CLI for service account management.",
+    help="Hivegent CLI for service account management.",
     no_args_is_help=True,
 )
 
 # Default paths
-CONFIG_DIR = Path.home() / ".config" / "snipscout"
+CONFIG_DIR = Path.home() / ".config" / "hivegent"
 CREDENTIALS_FILE = CONFIG_DIR / "credentials.json"
 DEFAULT_API_URL = "http://localhost:8000"
 
@@ -65,7 +65,7 @@ def _require_auth() -> str:
     """Require authentication and return the token."""
     token = _get_token()
     if not token:
-        typer.echo("Not authenticated. Run 'snipscout login' first.", err=True)
+        typer.echo("Not authenticated. Run 'hivegent login' first.", err=True)
         raise typer.Exit(1)
     return token
 
@@ -126,7 +126,7 @@ def login(
         str, typer.Option("--api-url", "-u", help="API base URL")
     ] = DEFAULT_API_URL,
 ) -> None:
-    """Authenticate with SnipScout.
+    """Authenticate with Hivegent.
 
     Supports both OIDC client credentials and personal access tokens (PATs).
     """
@@ -340,11 +340,11 @@ def serve(
         bool, typer.Option("--reload", "-r", help="Enable auto-reload")
     ] = False,
 ) -> None:
-    """Start the SnipScout API server."""
+    """Start the Hivegent API server."""
     import uvicorn
 
     uvicorn.run(
-        "snipscout.server:app",
+        "hivegent.server:app",
         host=host,
         port=port,
         reload=reload,

@@ -91,7 +91,7 @@ class TokenStore:
         """
         token_id = secrets.token_hex(8)
         token_secret = secrets.token_urlsafe(32)
-        raw_token = f"snipscout_{user_id}_{token_id}_{token_secret}"
+        raw_token = f"hivegent_{user_id}_{token_id}_{token_secret}"
 
         token_hash = self._hasher.hash(raw_token)
 
@@ -127,15 +127,15 @@ class TokenStore:
         """Validate a personal access token.
 
         Args:
-            raw_token: The raw token string (snipscout_<user_id>_<token_id>_<secret>).
+            raw_token: The raw token string (hivegent_<user_id>_<token_id>_<secret>).
 
         Returns:
             A User instance if valid, None otherwise.
         """
-        if not raw_token.startswith("snipscout_"):
+        if not raw_token.startswith("hivegent_"):
             return None
 
-        # Format: snipscout_{user_id}_{token_id}_{secret}
+        # Format: hivegent_{user_id}_{token_id}_{secret}
         parts = raw_token.split("_", 3)
         if len(parts) != 4:
             return None
