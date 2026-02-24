@@ -1,5 +1,6 @@
 {
   "name": "hivegent",
+  "description": "Agentic system for non-expert users to interact with LLMs guided by experience",
   "version": "0.1.0",
   "private": true,
   "type": "module",

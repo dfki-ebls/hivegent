@@ -1,7 +1,7 @@
 [project]
 name = "hivegent"
 version = "0.1.0"
-description = "Add your description here"
+description = "Agentic system for non-expert users to interact with LLMs guided by experience"
 readme = "README.md"
 requires-python = ">=3.13,<4"
 authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
