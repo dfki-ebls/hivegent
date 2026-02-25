@@ -20,6 +20,7 @@ from .store import Casebase
 from .tool_factory import ToolFactory
 from .types import (
     ChunkSummary,
+    ConversationSummary,
     DocumentRange,
     DocumentSummary,
     GrepMatch,
@@ -250,6 +251,32 @@ async def explore_documents(
         ],
     )
     return result.text
+
+
+@mcp_app.tool()
+def list_conversations(
+    factory: ToolFactory = Depends(_get_mcp_tool_factory),
+) -> list[ConversationSummary]:
+    """List past conversations with titles, dates, and message counts."""
+    return factory.list_conversations()
+
+
+@mcp_app.tool()
+def query_conversations(
+    filter: str,
+    filename: str | None = None,
+    factory: ToolFactory = Depends(_get_mcp_tool_factory),
+) -> str:
+    """Run a jq filter on conversation JSON files.
+
+    When no filename is given, all conversations are collected into
+    an array with an "id" field injected from each filename stem.
+
+    Args:
+        filter: A jq filter expression.
+        filename: Query a specific conversation file. If omitted, all are queried.
+    """
+    return factory.query_conversations(filter, filename)
 
 
 @mcp_app.tool()

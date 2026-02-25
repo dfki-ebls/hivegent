@@ -14,6 +14,7 @@ from .store import Casebase
 from .tool_factory import ToolFactory
 from .types import (
     ChunkSummary,
+    ConversationSummary,
     DocumentFilter,
     DocumentRange,
     DocumentSummary,
@@ -178,6 +179,59 @@ def get_document_lines(
         end: Last line to include (1-indexed, default: end of file).
     """
     return ctx.deps.tool_factory.get_document_lines(filename, start, end)
+
+
+@explore_toolset.tool
+def list_conversations(
+    ctx: RunContext[UserDeps],
+) -> list[ConversationSummary]:
+    """List past conversations with titles, dates, and message counts.
+
+    Returns summaries sorted by most recent first.
+    """
+    return ctx.deps.tool_factory.list_conversations()
+
+
+@explore_toolset.tool
+def query_conversations(
+    ctx: RunContext[UserDeps],
+    filter: str,
+    filename: str | None = None,
+) -> str:
+    """Run a jq filter on conversation JSON files.
+
+    Each conversation file has this schema::
+
+        {
+            "title": str,
+            "created_at": str (ISO datetime),
+            "updated_at": str (ISO datetime),
+            "messages": [
+                {
+                    "kind": "request" | "response",
+                    "parts": [{"part_kind": "user-prompt", "content": str}, ...]
+                },
+                ...
+            ]
+        }
+
+    When no ``filename`` is given, all conversations are collected into
+    an array with an ``"id"`` field injected from each filename stem.
+
+    Example filters:
+
+    - ``.[].title`` — list all conversation titles.
+    - ``[.[] | select(.title | test("budget"; "i"))]`` — find
+      conversations whose title mentions "budget".
+    - ``.messages[].parts[] | select(.content | test("deadline"))``
+      — search message content for "deadline" (single-file mode).
+
+    Args:
+        filter: A jq filter expression.
+        filename: Query a specific conversation file (e.g. ``"abc123.json"``).
+            If omitted, all conversations are queried.
+    """
+    return ctx.deps.tool_factory.query_conversations(filter, filename)
 
 
 # --- RAG toolset (heavier retrieval tools + explore delegation) ---

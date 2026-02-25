@@ -1,5 +1,6 @@
 """Generic path-scoped tool callables for document operations."""
 
+import json
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -7,6 +8,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Literal
 
+import jq
 from ripgrepy import Ripgrepy
 
 from .types import (
@@ -24,6 +26,7 @@ __all__ = [
     "GetDocumentTool",
     "GlobDocumentsTool",
     "GrepTool",
+    "JqTool",
     "ListChunksTool",
     "ListDocumentsTool",
     "SearchTool",
@@ -416,3 +419,55 @@ class WriteDocumentTool:
         if self.on_write:
             self.on_write(filename)
         return message
+
+
+@dataclass(slots=True, frozen=True)
+class JqTool:
+    """Run a jq filter against JSON files in a directory."""
+
+    path: Path
+    extension: str = ".json"
+
+    def __call__(self, filter: str, filename: str | None = None) -> str:
+        """Run a jq filter expression against JSON files.
+
+        Args:
+            filter: A jq filter expression.
+            filename: Query a specific file.  If omitted, all files
+                are collected into an array (each enriched with an
+                ``"id"`` field from the filename stem).
+        """
+        try:
+            compiled = jq.compile(filter)
+        except ValueError as exc:
+            return f"Error: invalid jq expression: {exc}"
+
+        if filename is not None:
+            file_path = (self.path / filename).resolve()
+            if not file_path.is_relative_to(self.path.resolve()):
+                return "Error: path traversal detected."
+            if not file_path.is_file():
+                return f"Error: file '{filename}' not found."
+            data = json.loads(file_path.read_text(encoding="utf-8"))
+            try:
+                result = compiled.input_value(data).all()
+            except Exception as exc:
+                return f"Error: jq execution failed: {exc}"
+            return json.dumps(result, default=str)
+
+        if not self.path.exists():
+            return "[]"
+
+        items: list[object] = []
+        for f in sorted(self.path.glob(f"*{self.extension}")):
+            if f.is_file():
+                data = json.loads(f.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    data["id"] = f.stem
+                items.append(data)
+
+        try:
+            result = compiled.input_value(items).all()
+        except Exception as exc:
+            return f"Error: jq execution failed: {exc}"
+        return json.dumps(result, default=str)

@@ -87,6 +87,19 @@ class Casebase:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def conversations_dir(self, data_dir: Path) -> Path:
+        """Return the conversations directory for this store.
+
+        Args:
+            data_dir: The application data root directory.
+
+        Returns:
+            Path to the store's conversations directory.
+        """
+        path = self.root_dir(data_dir) / "conversations"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def originals_dir(self, data_dir: Path) -> Path:
         """Return the originals directory for this store.
 

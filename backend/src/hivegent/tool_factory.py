@@ -1,12 +1,13 @@
 """Project-specific tool factory for constructing configured tool instances."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Literal
 
 from .chunks import load_chunked_document, rechunk_document
 from .config import DOCUMENT_EXTENSION, settings
+from .messages import list_conversations as _list_conversations
 from .retrieval import search_multi
 from .store import Casebase
 from .tools import (
@@ -16,12 +17,13 @@ from .tools import (
     GetDocumentTool,
     GlobDocumentsTool,
     GrepTool,
+    JqTool,
     ListChunksTool,
     ListDocumentsTool,
     SearchTool,
     WriteDocumentTool,
 )
-from .types import ChunkSummary, DocumentFilter
+from .types import ChunkSummary, ConversationSummary, DocumentFilter
 
 __all__ = ["ToolFactory"]
 
@@ -171,4 +173,16 @@ class ToolFactory:
             extension=DOCUMENT_EXTENSION,
             document_filter=self.document_filter,
             on_write=_on_write,
+        )
+
+    @property
+    def list_conversations(self) -> Callable[[], list[ConversationSummary]]:
+        """Create a callable that lists conversations for the user."""
+        return partial(_list_conversations, self.store.id)
+
+    @property
+    def query_conversations(self) -> JqTool:
+        """Create a JqTool for querying conversation JSON files."""
+        return JqTool(
+            path=self.store.conversations_dir(settings.data_dir),
         )

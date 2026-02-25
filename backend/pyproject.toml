@@ -13,6 +13,7 @@ dependencies = [
   "fastmcp>=3,<4",
   "frozendict>=2.4.7",
   "httpx>=0.28,<1",
+  "jq>=1,<2",
   "joserfc>=1,<2",
   "lancedb>=0.29,<1",
   "logfire>=4,<5",
