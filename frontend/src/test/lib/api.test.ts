@@ -1,0 +1,93 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  buildLlmConfig,
+  fetchSettings,
+  requiresConversion,
+} from "@/lib/api";
+
+describe("requiresConversion", () => {
+  it("returns false for .md files", () => {
+    expect(requiresConversion("report.md")).toBe(false);
+  });
+
+  it("returns true for .pdf files", () => {
+    expect(requiresConversion("document.pdf")).toBe(true);
+  });
+
+  it("returns true for .docx files", () => {
+    expect(requiresConversion("file.docx")).toBe(true);
+  });
+
+  it("returns true for .txt files", () => {
+    expect(requiresConversion("notes.txt")).toBe(true);
+  });
+});
+
+describe("buildLlmConfig", () => {
+  it("returns empty config for empty input", () => {
+    expect(buildLlmConfig({})).toEqual({});
+  });
+
+  it("maps model field", () => {
+    expect(buildLlmConfig({ model: "gpt-4" })).toEqual({ model: "gpt-4" });
+  });
+
+  it("maps apiKey to api_key", () => {
+    expect(buildLlmConfig({ apiKey: "sk-123" })).toEqual({
+      api_key: "sk-123",
+    });
+  });
+
+  it("maps baseUrl to base_url", () => {
+    expect(buildLlmConfig({ baseUrl: "https://api.example.com" })).toEqual({
+      base_url: "https://api.example.com",
+    });
+  });
+
+  it("skips empty strings", () => {
+    expect(buildLlmConfig({ model: "", apiKey: "" })).toEqual({});
+  });
+});
+
+describe("fetchSettings", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  it("fetches and parses settings", async () => {
+    const mockSettings = {
+      model: "gpt-4",
+      vision_model: "gpt-4-vision",
+      small_model: "gpt-3.5",
+      has_api_key: true,
+      base_url: "https://api.openai.com",
+      user: {
+        id: "user1",
+        email: "user@test.com",
+        name: "Test User",
+        read_groups: [],
+        write_groups: [],
+      },
+    };
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify(mockSettings), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await fetchSettings();
+    expect(result.model).toBe("gpt-4");
+    expect(result.user.id).toBe("user1");
+  });
+
+  it("throws on non-ok response", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response("", { status: 500 }),
+    );
+
+    await expect(fetchSettings()).rejects.toThrow("Failed to fetch settings");
+  });
+});
