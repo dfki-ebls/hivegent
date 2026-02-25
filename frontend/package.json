@@ -1,17 +1,14 @@
 {
   "name": "hivegent",
-  "description": "Agentic system for non-expert users to interact with LLMs guided by experience",
   "version": "0.1.0",
   "private": true,
+  "description": "Agentic system for non-expert users to interact with LLMs guided by experience",
   "type": "module",
   "scripts": {
     "dev": "vite --port 3000",
     "build": "vite build && tsc",
     "preview": "vite preview",
-    "test": "vitest run",
-    "format": "biome format",
-    "lint": "biome lint",
-    "check": "biome check"
+    "test": "vitest run"
   },
   "dependencies": {
     "@ai-sdk/react": "^3",
@@ -81,7 +78,6 @@
     "zustand": "^5"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2",
     "@fortawesome/fontawesome-svg-core": "^7",
     "@fortawesome/free-brands-svg-icons": "^7",
     "@fortawesome/free-regular-svg-icons": "^7",

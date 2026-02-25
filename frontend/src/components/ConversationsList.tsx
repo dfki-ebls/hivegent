@@ -223,7 +223,6 @@ function ConversationItem({
   };
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: contains nested interactive elements
     <div
       role="button"
       tabIndex={0}

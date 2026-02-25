@@ -376,7 +376,6 @@ function UploadArea({
 }: UploadAreaProps) {
   return (
     <div className="border-b p-4">
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop zone */}
       <div
         className={`flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-6 transition-colors ${
           isDragging
@@ -525,7 +524,6 @@ function DocumentListItem({
   onRemove,
 }: DocumentListItemProps) {
   return (
-    // biome-ignore lint/a11y/useSemanticElements: contains nested interactive elements
     <div
       role="button"
       tabIndex={0}

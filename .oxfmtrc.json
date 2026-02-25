@@ -1,0 +1,8 @@
+{
+  "$schema": "https://github.com/oxc-project/oxc/raw/refs/heads/main/npm/oxfmt/configuration_schema.json",
+  "ignorePatterns": [
+    "frontend/src/components/ai-elements/**/*.tsx",
+    "frontend/src/components/ui/**/*.tsx",
+    "frontend/src/**/*.gen.ts"
+  ]
+}

@@ -343,7 +343,6 @@ function isContextLengthError(error: Error | null | undefined): boolean {
 
 interface ToolPartDisplayProps {
   toolName: string;
-  // biome-ignore lint/suspicious/noExplicitAny: part type varies by tool
   part: any;
   onApprove?: (id: string) => void;
   onDeny?: (id: string) => void;

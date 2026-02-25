@@ -61,7 +61,6 @@ function FileRow({
   onMove?: () => void;
 }) {
   return (
-    // biome-ignore lint/a11y/useSemanticElements: contains nested interactive elements
     <div
       role="button"
       tabIndex={0}
@@ -189,7 +188,6 @@ function DirectoryRow({
   const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: contains nested interactive elements
     <div
       role="button"
       tabIndex={0}

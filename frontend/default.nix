@@ -2,7 +2,6 @@
   buildNpmPackage,
   importNpmLock,
   lib,
-  biome,
 }:
 let
 in
@@ -20,8 +19,6 @@ buildNpmPackage (finalAttrs: {
 
     runHook postInstall
   '';
-
-  BIOME_BINARY = lib.getExe biome;
 
   meta = with lib; {
     license = licenses.mit;
