@@ -38,21 +38,9 @@
         inherit (config.packages) backend frontend;
       };
       packages = {
-        backend =
-          let
-            inherit
-              (pkgs.callPackage ./backend {
-                inherit (inputs) uv2nix pyproject-nix pyproject-build-systems;
-              })
-              pythonSet
-              workspace
-              mkApplication
-              ;
-          in
-          mkApplication {
-            venv = pythonSet.mkVirtualEnv "hivegent-env" workspace.deps.optionals;
-            package = pythonSet.hivegent;
-          };
+        backend = pkgs.callPackage ./backend {
+          inherit (inputs) uv2nix pyproject-nix pyproject-build-systems;
+        };
         frontend = pkgs.callPackage ./frontend { };
       };
       process-compose.watch-dev = {
