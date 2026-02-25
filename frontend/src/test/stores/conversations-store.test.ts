@@ -48,9 +48,7 @@ describe("useConversationsStore", () => {
     });
 
     it("sets error on failure", async () => {
-      vi.mocked(listConversations).mockRejectedValueOnce(
-        new Error("Network error"),
-      );
+      vi.mocked(listConversations).mockRejectedValueOnce(new Error("Network error"));
 
       await useConversationsStore.getState().fetchConversations();
 
@@ -72,13 +70,11 @@ describe("useConversationsStore", () => {
 
     it("sets error and rethrows on failure", async () => {
       useConversationsStore.setState({ conversations: [mockConversation] });
-      vi.mocked(deleteConversation).mockRejectedValueOnce(
-        new Error("Delete failed"),
-      );
+      vi.mocked(deleteConversation).mockRejectedValueOnce(new Error("Delete failed"));
 
-      await expect(
-        useConversationsStore.getState().deleteConversation("conv1"),
-      ).rejects.toThrow("Delete failed");
+      await expect(useConversationsStore.getState().deleteConversation("conv1")).rejects.toThrow(
+        "Delete failed",
+      );
 
       expect(useConversationsStore.getState().error).toBe("Delete failed");
     });
@@ -88,9 +84,7 @@ describe("useConversationsStore", () => {
     it("updates an existing conversation", () => {
       useConversationsStore.setState({ conversations: [mockConversation] });
 
-      useConversationsStore
-        .getState()
-        .refreshConversation("conv1", { title: "Updated Title" });
+      useConversationsStore.getState().refreshConversation("conv1", { title: "Updated Title" });
 
       const conv = useConversationsStore.getState().conversations[0];
       expect(conv.title).toBe("Updated Title");
@@ -105,9 +99,7 @@ describe("useConversationsStore", () => {
       });
 
       expect(useConversationsStore.getState().conversations).toHaveLength(1);
-      expect(useConversationsStore.getState().conversations[0].title).toBe(
-        "New Conversation",
-      );
+      expect(useConversationsStore.getState().conversations[0].title).toBe("New Conversation");
     });
   });
 });

@@ -10,13 +10,7 @@ import {
 import { useSettingsStore } from "../stores/settings-store";
 import { PipelineConfigDialog } from "./PipelineConfigDialog";
 import { Label } from "./ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 interface ConversionPipelineSelectorProps {
   value: ConversionPipeline;
@@ -63,11 +57,7 @@ export function ConversionPipelineSelector({
         }}
         disabled={disabled}
       >
-        <SelectTrigger
-          id="conversion-pipeline-select"
-          className="w-[140px]"
-          size="sm"
-        >
+        <SelectTrigger id="conversion-pipeline-select" className="w-[140px]" size="sm">
           <SelectValue placeholder="Select conversion" />
         </SelectTrigger>
         <SelectContent>

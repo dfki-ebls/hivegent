@@ -86,14 +86,9 @@ function TokensPage() {
 
       <div className="border rounded-lg">
         {isLoading ? (
-          <div className="py-8 text-center text-muted-foreground">
-            Loading tokens...
-          </div>
+          <div className="py-8 text-center text-muted-foreground">Loading tokens...</div>
         ) : (
-          <TokenList
-            tokens={tokens}
-            onRevoke={(id, name) => setRevokeConfirm({ id, name })}
-          />
+          <TokenList tokens={tokens} onRevoke={(id, name) => setRevokeConfirm({ id, name })} />
         )}
       </div>
 
@@ -106,17 +101,13 @@ function TokensPage() {
         }}
       />
 
-      <AlertDialog
-        open={!!revokeConfirm}
-        onOpenChange={(open) => !open && setRevokeConfirm(null)}
-      >
+      <AlertDialog open={!!revokeConfirm} onOpenChange={(open) => !open && setRevokeConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Revoke API Token</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to revoke the token "{revokeConfirm?.name}"?
-              Any applications using this token will no longer be able to access
-              the API.
+              Are you sure you want to revoke the token "{revokeConfirm?.name}"? Any applications
+              using this token will no longer be able to access the API.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

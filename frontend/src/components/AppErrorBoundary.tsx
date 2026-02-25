@@ -31,11 +31,7 @@ export class AppErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error(
-      "AppErrorBoundary caught an error:",
-      error,
-      info.componentStack,
-    );
+    console.error("AppErrorBoundary caught an error:", error, info.componentStack);
   }
 
   private handleResetEverything = () => {
@@ -53,12 +49,10 @@ export class AppErrorBoundary extends Component<Props, State> {
     return (
       <div className="flex h-screen items-center justify-center bg-background p-8">
         <div className="mx-auto max-w-md space-y-6 text-center">
-          <h1 className="text-2xl font-bold text-foreground">
-            Something went wrong
-          </h1>
+          <h1 className="text-2xl font-bold text-foreground">Something went wrong</h1>
           <p className="text-muted-foreground">
-            The application encountered an unexpected error. You can try
-            reloading the page, or clear all local data if the problem persists.
+            The application encountered an unexpected error. You can try reloading the page, or
+            clear all local data if the problem persists.
           </p>
           {this.state.error && (
             <pre className="rounded-md bg-muted p-4 text-left text-xs text-muted-foreground overflow-auto max-h-32">

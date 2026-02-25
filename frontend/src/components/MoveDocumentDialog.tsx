@@ -53,9 +53,7 @@ export function MoveDocumentDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <span className="text-sm text-muted-foreground">Current path</span>
-            <p className="text-sm font-mono bg-muted rounded px-2 py-1">
-              {currentPath}
-            </p>
+            <p className="text-sm font-mono bg-muted rounded px-2 py-1">{currentPath}</p>
           </div>
           <div className="space-y-2">
             <label htmlFor="move-destination" className="text-sm font-medium">
@@ -70,18 +68,12 @@ export function MoveDocumentDialog({
             />
           </div>
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button
               type="submit"
-              disabled={
-                !destination.trim() || destination.trim() === currentPath
-              }
+              disabled={!destination.trim() || destination.trim() === currentPath}
             >
               Move
             </Button>

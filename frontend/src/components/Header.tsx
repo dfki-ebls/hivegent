@@ -52,10 +52,7 @@ function UserMenu() {
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={handleLogout}
-          className="flex items-center gap-2"
-        >
+        <DropdownMenuItem onClick={handleLogout} className="flex items-center gap-2">
           <LogOut className="h-4 w-4" />
           Sign out
         </DropdownMenuItem>

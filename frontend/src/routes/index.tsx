@@ -54,9 +54,7 @@ function IndexPage() {
             Your intelligent document assistant powered by RAG.
           </p>
           <Button onClick={handleNewChat} size="lg" disabled={isLoading}>
-            {isLoading ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : null}
+            {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             Start New Chat
           </Button>
         </div>
@@ -73,8 +71,8 @@ function IndexPage() {
           <h1 className="text-4xl font-bold">Hivegent</h1>
         </div>
         <p className="text-lg text-muted-foreground max-w-md">
-          Your intelligent document assistant powered by RAG. Upload documents
-          and chat with your knowledge base.
+          Your intelligent document assistant powered by RAG. Upload documents and chat with your
+          knowledge base.
         </p>
         <SignInButton onSignedIn={handlePostSignIn} />
       </div>

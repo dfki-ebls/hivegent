@@ -8,12 +8,7 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useAuth as useOidcAuth } from "react-oidc-context";
 import { clearAuthTokenProvider, setAuthTokenProvider } from "./api";
 import { isOidcConfigured } from "./auth-config";
-import {
-  AuthContext,
-  type AuthContextValue,
-  type AuthUser,
-  LOCAL_USER,
-} from "./auth-context";
+import { AuthContext, type AuthContextValue, type AuthUser, LOCAL_USER } from "./auth-context";
 
 const LOCAL_AUTH_KEY = "hivegent-local-auth";
 
@@ -92,10 +87,7 @@ function OidcAuthProviderWrapper({ children }: { children: ReactNode }) {
   const user: AuthUser | null = oidcAuth.user
     ? {
         id: oidcAuth.user.profile.sub,
-        name:
-          oidcAuth.user.profile.name ||
-          oidcAuth.user.profile.preferred_username ||
-          "User",
+        name: oidcAuth.user.profile.name || oidcAuth.user.profile.preferred_username || "User",
         email: oidcAuth.user.profile.email,
       }
     : null;

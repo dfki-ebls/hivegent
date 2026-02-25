@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  buildLlmConfig,
-  fetchSettings,
-  requiresConversion,
-} from "@/lib/api";
+import { buildLlmConfig, fetchSettings, requiresConversion } from "@/lib/api";
 
 describe("requiresConversion", () => {
   it("returns false for .md files", () => {
@@ -84,9 +80,7 @@ describe("fetchSettings", () => {
   });
 
   it("throws on non-ok response", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
-      new Response("", { status: 500 }),
-    );
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 500 }));
 
     await expect(fetchSettings()).rejects.toThrow("Failed to fetch settings");
   });

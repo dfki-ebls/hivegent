@@ -11,16 +11,12 @@ import {
 describe("makeChunkId", () => {
   it("builds id for chunk_index position", () => {
     const pos: ChunkPosition = { type: "chunk_index", chunkIndex: 3 };
-    expect(makeChunkId("report.md", "search", pos)).toBe(
-      "report.md::search::chunk_3",
-    );
+    expect(makeChunkId("report.md", "search", pos)).toBe("report.md::search::chunk_3");
   });
 
   it("builds id for line position", () => {
     const pos: ChunkPosition = { type: "line", line: 42 };
-    expect(makeChunkId("file.md", "grep", pos)).toBe(
-      "file.md::grep::line_42",
-    );
+    expect(makeChunkId("file.md", "grep", pos)).toBe("file.md::grep::line_42");
   });
 
   it("builds id for line_range position", () => {
@@ -29,16 +25,12 @@ describe("makeChunkId", () => {
       startLine: 10,
       endLine: 20,
     };
-    expect(makeChunkId("file.md", "range", pos)).toBe(
-      "file.md::range::lines_10_20",
-    );
+    expect(makeChunkId("file.md", "range", pos)).toBe("file.md::range::lines_10_20");
   });
 
   it("builds id for full_document position", () => {
     const pos: ChunkPosition = { type: "full_document" };
-    expect(makeChunkId("file.md", "fetch", pos)).toBe(
-      "file.md::fetch::full",
-    );
+    expect(makeChunkId("file.md", "fetch", pos)).toBe("file.md::fetch::full");
   });
 });
 
@@ -56,9 +48,7 @@ describe("chunkSortKey", () => {
   });
 
   it("returns startLine for line_range", () => {
-    expect(
-      chunkSortKey({ type: "line_range", startLine: 10, endLine: 20 }),
-    ).toBe(10);
+    expect(chunkSortKey({ type: "line_range", startLine: 10, endLine: 20 })).toBe(10);
   });
 });
 

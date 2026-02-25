@@ -41,8 +41,7 @@ import {
   UploadDocumentResponseSchema,
 } from "./types";
 
-export const API_BASE_URL =
-  import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 // Token provider function set by AuthProvider
 let getAccessToken: (() => Promise<string>) | null = null;
@@ -66,10 +65,7 @@ export function clearAuthTokenProvider() {
 /**
  * Make an authenticated fetch request.
  */
-async function authFetch(
-  url: string,
-  options: RequestInit = {},
-): Promise<Response> {
+async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const headers = new Headers(options.headers);
 
   if (getAccessToken) {
@@ -136,12 +132,8 @@ export async function createConversation(): Promise<string> {
   return CreateConversationResponseSchema.parse(data).id;
 }
 
-export async function getMessages(
-  conversationId: string,
-): Promise<UIMessage[]> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/conversation/${conversationId}/messages`,
-  );
+export async function getMessages(conversationId: string): Promise<UIMessage[]> {
+  const res = await authFetch(`${API_BASE_URL}/api/conversation/${conversationId}/messages`);
   if (!res.ok) {
     return [];
   }
@@ -179,9 +171,7 @@ export async function uploadDocument(
   formData.append("file", file);
 
   // Build the filepath, optionally prepending the target directory
-  const filepath = options?.targetDirectory
-    ? `${options.targetDirectory}/${filename}`
-    : filename;
+  const filepath = options?.targetDirectory ? `${options.targetDirectory}/${filename}` : filename;
 
   const url = `${API_BASE_URL}/api/documents/content/${encodeFilePath(filepath)}`;
 
@@ -235,9 +225,7 @@ export async function uploadCollection(
   });
 
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Collection upload failed" }));
+    const error = await res.json().catch(() => ({ detail: "Collection upload failed" }));
     throw new Error(error.detail || "Collection upload failed");
   }
 
@@ -246,12 +234,9 @@ export async function uploadCollection(
 }
 
 export async function deleteDocument(filename: string): Promise<void> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/documents/content/${encodeFilePath(filename)}`,
-    {
-      method: "DELETE",
-    },
-  );
+  const res = await authFetch(`${API_BASE_URL}/api/documents/content/${encodeFilePath(filename)}`, {
+    method: "DELETE",
+  });
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Delete failed" }));
@@ -260,9 +245,7 @@ export async function deleteDocument(filename: string): Promise<void> {
 }
 
 export async function getDocumentContent(filename: string): Promise<string> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/documents/content/${encodeFilePath(filename)}`,
-  );
+  const res = await authFetch(`${API_BASE_URL}/api/documents/content/${encodeFilePath(filename)}`);
 
   if (!res.ok) {
     throw new Error("Failed to fetch document content");
@@ -284,14 +267,11 @@ export async function updateConversationTitle(
   conversationId: string,
   title: string,
 ): Promise<ConversationSummary> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/conversation/${conversationId}/title`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
-    },
-  );
+  const res = await authFetch(`${API_BASE_URL}/api/conversation/${conversationId}/title`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Update failed" }));
@@ -306,19 +286,14 @@ export async function generateConversationTitle(
   conversationId: string,
   llm: LlmConfig,
 ): Promise<GenerateTitleResponse> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/conversation/${conversationId}/generate-title`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ llm }),
-    },
-  );
+  const res = await authFetch(`${API_BASE_URL}/api/conversation/${conversationId}/generate-title`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ llm }),
+  });
 
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Title generation failed" }));
+    const error = await res.json().catch(() => ({ detail: "Title generation failed" }));
     throw new Error(error.detail || "Title generation failed");
   }
 
@@ -330,19 +305,14 @@ export async function compactConversation(
   conversationId: string,
   llm: LlmConfig,
 ): Promise<CompactConversationResponse> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/conversation/${conversationId}/compact`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ llm }),
-    },
-  );
+  const res = await authFetch(`${API_BASE_URL}/api/conversation/${conversationId}/compact`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ llm }),
+  });
 
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Compaction failed" }));
+    const error = await res.json().catch(() => ({ detail: "Compaction failed" }));
     throw new Error(error.detail || "Compaction failed");
   }
 
@@ -350,26 +320,17 @@ export async function compactConversation(
   return CompactConversationResponseSchema.parse(data);
 }
 
-export async function getConversation(
-  conversationId: string,
-): Promise<ConversationSummary | null> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/conversation/${conversationId}`,
-  );
+export async function getConversation(conversationId: string): Promise<ConversationSummary | null> {
+  const res = await authFetch(`${API_BASE_URL}/api/conversation/${conversationId}`);
   if (!res.ok) return null;
   const data: unknown = await res.json();
   return ConversationSummarySchema.parse(data);
 }
 
-export async function deleteConversation(
-  conversationId: string,
-): Promise<void> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/conversation/${conversationId}`,
-    {
-      method: "DELETE",
-    },
-  );
+export async function deleteConversation(conversationId: string): Promise<void> {
+  const res = await authFetch(`${API_BASE_URL}/api/conversation/${conversationId}`, {
+    method: "DELETE",
+  });
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Delete failed" }));
@@ -393,9 +354,7 @@ export async function createToken(
   });
 
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Failed to create token" }));
+    const error = await res.json().catch(() => ({ detail: "Failed to create token" }));
     throw new Error(error.detail || "Failed to create token");
   }
 
@@ -420,18 +379,14 @@ export async function revokeToken(tokenId: string): Promise<void> {
   });
 
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Failed to revoke token" }));
+    const error = await res.json().catch(() => ({ detail: "Failed to revoke token" }));
     throw new Error(error.detail || "Failed to revoke token");
   }
 }
 
 // Conversion pipeline API functions
 
-export async function getConversionPipelines(): Promise<
-  ConversionPipelineInfo[]
-> {
+export async function getConversionPipelines(): Promise<ConversionPipelineInfo[]> {
   const res = await authFetch(`${API_BASE_URL}/api/conversion-pipelines`);
 
   if (!res.ok) {
@@ -455,17 +410,11 @@ export async function getChunkingPipelines(): Promise<ChunkingPipelineInfo[]> {
   return z.array(ChunkingPipelineInfoSchema).parse(data);
 }
 
-export async function getDocumentChunks(
-  filename: string,
-): Promise<ChunkedDocumentResponse> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/documents/chunks/${encodeFilePath(filename)}`,
-  );
+export async function getDocumentChunks(filename: string): Promise<ChunkedDocumentResponse> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/chunks/${encodeFilePath(filename)}`);
 
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Failed to fetch chunks" }));
+    const error = await res.json().catch(() => ({ detail: "Failed to fetch chunks" }));
     throw new Error(error.detail || "Failed to fetch chunks");
   }
 
@@ -495,9 +444,7 @@ export async function reconvertDocument(
   });
 
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Reconvert failed" }));
+    const error = await res.json().catch(() => ({ detail: "Reconvert failed" }));
     throw new Error(error.detail || "Reconvert failed");
   }
 
@@ -509,14 +456,11 @@ export async function rechunkDocument(
   filename: string,
   spec?: PipelineSpec,
 ): Promise<ChunkedDocumentResponse> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/documents/rechunk/${encodeFilePath(filename)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(spec ?? {}),
-    },
-  );
+  const res = await authFetch(`${API_BASE_URL}/api/documents/rechunk/${encodeFilePath(filename)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(spec ?? {}),
+  });
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Rechunk failed" }));
@@ -538,9 +482,7 @@ export async function getDirectoryTree(): Promise<DirectoryTreeResponse> {
   return DirectoryTreeResponseSchema.parse(data);
 }
 
-export async function createDirectory(
-  path: string,
-): Promise<CreateDirectoryResponse> {
+export async function createDirectory(path: string): Promise<CreateDirectoryResponse> {
   const res = await authFetch(`${API_BASE_URL}/api/directories`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -548,9 +490,7 @@ export async function createDirectory(
   });
 
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Failed to create directory" }));
+    const error = await res.json().catch(() => ({ detail: "Failed to create directory" }));
     throw new Error(error.detail || "Failed to create directory");
   }
 
@@ -558,9 +498,7 @@ export async function createDirectory(
   return CreateDirectoryResponseSchema.parse(data);
 }
 
-export async function deleteDirectory(
-  dirpath: string,
-): Promise<DeleteDirectoryResponse> {
+export async function deleteDirectory(dirpath: string): Promise<DeleteDirectoryResponse> {
   const res = await authFetch(`${API_BASE_URL}/api/directories`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
@@ -568,9 +506,7 @@ export async function deleteDirectory(
   });
 
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Failed to delete directory" }));
+    const error = await res.json().catch(() => ({ detail: "Failed to delete directory" }));
     throw new Error(error.detail || "Failed to delete directory");
   }
 
@@ -582,14 +518,11 @@ export async function moveDocument(
   filepath: string,
   destination: string,
 ): Promise<MoveDocumentResponse> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/documents/move/${encodeFilePath(filepath)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ destination }),
-    },
-  );
+  const res = await authFetch(`${API_BASE_URL}/api/documents/move/${encodeFilePath(filepath)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ destination }),
+  });
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Move failed" }));
@@ -610,9 +543,7 @@ export async function deleteAllConversations(): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Failed to delete conversations" }));
+    const error = await res.json().catch(() => ({ detail: "Failed to delete conversations" }));
     throw new Error(error.detail || "Failed to delete conversations");
   }
 }
@@ -623,9 +554,7 @@ export async function deleteAllDocuments(): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Failed to delete documents" }));
+    const error = await res.json().catch(() => ({ detail: "Failed to delete documents" }));
     throw new Error(error.detail || "Failed to delete documents");
   }
 }
@@ -636,9 +565,7 @@ export async function revokeAllTokens(): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Failed to revoke tokens" }));
+    const error = await res.json().catch(() => ({ detail: "Failed to revoke tokens" }));
     throw new Error(error.detail || "Failed to revoke tokens");
   }
 }
@@ -649,9 +576,7 @@ export async function deleteAllUserData(): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Failed to delete user data" }));
+    const error = await res.json().catch(() => ({ detail: "Failed to delete user data" }));
     throw new Error(error.detail || "Failed to delete user data");
   }
 }
@@ -661,9 +586,7 @@ export async function deleteAllUserData(): Promise<void> {
 // ============================================================
 
 /** Get directory tree for a group the user belongs to. */
-export async function getGroupDirectoryTree(
-  groupId: string,
-): Promise<DirectoryTreeResponse> {
+export async function getGroupDirectoryTree(groupId: string): Promise<DirectoryTreeResponse> {
   const res = await authFetch(
     `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/directories/tree`,
   );
@@ -675,10 +598,7 @@ export async function getGroupDirectoryTree(
 }
 
 /** Get document content from a group the user belongs to. */
-export async function getGroupDocumentContent(
-  groupId: string,
-  filename: string,
-): Promise<string> {
+export async function getGroupDocumentContent(groupId: string, filename: string): Promise<string> {
   const res = await authFetch(
     `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/content/${encodeFilePath(filename)}`,
   );
@@ -698,9 +618,7 @@ export async function uploadGroupDocument(
   const formData = new FormData();
   formData.append("file", file);
 
-  const filepath = options?.targetDirectory
-    ? `${options.targetDirectory}/${filename}`
-    : filename;
+  const filepath = options?.targetDirectory ? `${options.targetDirectory}/${filename}` : filename;
 
   const url = `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/content/${encodeFilePath(filepath)}`;
 
@@ -740,9 +658,7 @@ export async function uploadGroupCollection(
 
   const res = await authFetch(url, { method: "POST", body: formData });
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Collection upload failed" }));
+    const error = await res.json().catch(() => ({ detail: "Collection upload failed" }));
     throw new Error(error.detail || "Collection upload failed");
   }
   const data: unknown = await res.json();
@@ -750,10 +666,7 @@ export async function uploadGroupCollection(
 }
 
 /** Delete a document from a group (write access required). */
-export async function deleteGroupDocument(
-  groupId: string,
-  filename: string,
-): Promise<void> {
+export async function deleteGroupDocument(groupId: string, filename: string): Promise<void> {
   const res = await authFetch(
     `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/content/${encodeFilePath(filename)}`,
     { method: "DELETE" },
@@ -778,9 +691,7 @@ export async function createGroupDirectory(
     },
   );
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Failed to create directory" }));
+    const error = await res.json().catch(() => ({ detail: "Failed to create directory" }));
     throw new Error(error.detail || "Failed to create directory");
   }
   const data: unknown = await res.json();
@@ -801,9 +712,7 @@ export async function deleteGroupDirectory(
     },
   );
   if (!res.ok) {
-    const error = await res
-      .json()
-      .catch(() => ({ detail: "Failed to delete directory" }));
+    const error = await res.json().catch(() => ({ detail: "Failed to delete directory" }));
     throw new Error(error.detail || "Failed to delete directory");
   }
   const data: unknown = await res.json();

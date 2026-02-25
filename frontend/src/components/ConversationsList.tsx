@@ -1,11 +1,4 @@
-import {
-  CheckIcon,
-  MessageSquare,
-  PencilIcon,
-  SparklesIcon,
-  TrashIcon,
-  XIcon,
-} from "lucide-react";
+import { CheckIcon, MessageSquare, PencilIcon, SparklesIcon, TrashIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { buildLlmConfig } from "../lib/api";
 import { useConversationsStore } from "../stores/conversations-store";
@@ -100,12 +93,7 @@ function TitleEditor({ value, onChange, onSave, onCancel }: TitleEditorProps) {
       <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onSave}>
         <CheckIcon className="h-3 w-3" />
       </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={onCancel}
-      >
+      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onCancel}>
         <XIcon className="h-3 w-3" />
       </Button>
     </div>
@@ -134,13 +122,7 @@ function ConversationActions({
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={onEdit}
-        title="Edit title"
-      >
+      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onEdit} title="Edit title">
         <PencilIcon className="h-3 w-3" />
       </Button>
       <Button
@@ -151,9 +133,7 @@ function ConversationActions({
         disabled={isGenerating}
         title="Generate title with AI"
       >
-        <SparklesIcon
-          className={`h-3 w-3 ${isGenerating ? "animate-pulse" : ""}`}
-        />
+        <SparklesIcon className={`h-3 w-3 ${isGenerating ? "animate-pulse" : ""}`} />
       </Button>
       <Button
         variant="ghost"
@@ -249,9 +229,7 @@ function ConversationItem({
               onCancel={handleCancelEdit}
             />
           ) : (
-            <p className="truncate text-sm font-medium">
-              {title || "Untitled"}
-            </p>
+            <p className="truncate text-sm font-medium">{title || "Untitled"}</p>
           )}
           <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
             <span>{formatRelativeTime(updatedAt)}</span>

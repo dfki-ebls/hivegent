@@ -43,17 +43,9 @@ import {
 } from "../lib/types";
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
 import { useUserDocumentsStore } from "../stores/user-documents-store";
-import {
-  canWriteGroup,
-  getAllGroups,
-  useSettingsStore,
-} from "../stores/settings-store";
+import { canWriteGroup, getAllGroups, useSettingsStore } from "../stores/settings-store";
 import { ChunkingPipelineSelector } from "./ChunkingPipelineSelector";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "./ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { ConversionPipelineSelector } from "./ConversionPipelineSelector";
 import { CreateDirectoryDialog } from "./CreateDirectoryDialog";
 import { DirectoryTreeView } from "./DirectoryTreeView";
@@ -132,9 +124,7 @@ function ChunkCard({ chunk, onClick }: ChunkCardProps) {
             {(chunk.score * 100).toFixed(0)}%
           </Badge>
         )}
-        <span className="text-xs text-muted-foreground">
-          {chunkPositionLabel(chunk.position)}
-        </span>
+        <span className="text-xs text-muted-foreground">{chunkPositionLabel(chunk.position)}</span>
       </div>
       <pre className="line-clamp-4 whitespace-pre-wrap text-xs text-muted-foreground">
         {chunk.content}
@@ -150,20 +140,14 @@ interface DocumentGroupProps {
   onFilenameClick: (filename: string) => void;
 }
 
-function DocumentGroup({
-  doc,
-  chunks,
-  onChunkClick,
-  onFilenameClick,
-}: DocumentGroupProps) {
+function DocumentGroup({ doc, chunks, onChunkClick, onFilenameClick }: DocumentGroupProps) {
   const [open, setOpen] = useState(true);
 
   // Include all chunks except user-initiated "preview" full-document fetches.
   // Model-fetched full documents appear as regular chunk cards (sorted first).
   const contentChunks = useMemo(() => {
     const visible = chunks.filter(
-      (c) =>
-        !(c.position.type === "full_document" && c.source === "preview"),
+      (c) => !(c.position.type === "full_document" && c.source === "preview"),
     );
     return sortChunks(visible);
   }, [chunks]);
@@ -173,9 +157,7 @@ function DocumentGroup({
       <div className="flex items-center gap-2 px-1 py-2">
         <CollapsibleTrigger asChild>
           <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
-            <ChevronRight
-              className={`h-4 w-4 transition-transform ${open ? "rotate-90" : ""}`}
-            />
+            <ChevronRight className={`h-4 w-4 transition-transform ${open ? "rotate-90" : ""}`} />
           </Button>
         </CollapsibleTrigger>
         <button
@@ -201,11 +183,7 @@ function DocumentGroup({
       <CollapsibleContent>
         <div className="space-y-2 pb-2">
           {contentChunks.map((chunk) => (
-            <ChunkCard
-              key={chunk.id}
-              chunk={chunk}
-              onClick={() => onChunkClick(chunk)}
-            />
+            <ChunkCard key={chunk.id} chunk={chunk} onClick={() => onChunkClick(chunk)} />
           ))}
         </div>
       </CollapsibleContent>
@@ -219,25 +197,18 @@ function FetchedDocuments() {
 
   // Dialog state
   const [selectedChunk, setSelectedChunk] = useState<FetchedChunk | null>(null);
-  const [dialogFilename, setDialogFilename] = useState<string | undefined>(
-    undefined,
-  );
+  const [dialogFilename, setDialogFilename] = useState<string | undefined>(undefined);
   const [initialFullDoc, setInitialFullDoc] = useState(false);
   const dialogOpen = selectedChunk !== null || dialogFilename !== undefined;
 
   const sortedDocs = useMemo(
-    () =>
-      Array.from(documents.values()).sort(
-        (a, b) => (b.bestScore ?? 0) - (a.bestScore ?? 0),
-      ),
+    () => Array.from(documents.values()).sort((a, b) => (b.bestScore ?? 0) - (a.bestScore ?? 0)),
     [documents],
   );
 
   const getChunksForDoc = useCallback(
     (doc: FetchedDocument): FetchedChunk[] =>
-      doc.chunkIds
-        .map((id) => chunks.get(id))
-        .filter((c): c is FetchedChunk => c != null),
+      doc.chunkIds.map((id) => chunks.get(id)).filter((c): c is FetchedChunk => c != null),
     [chunks],
   );
 
@@ -254,8 +225,7 @@ function FetchedDocuments() {
       setInitialFullDoc(true);
       // Try to pick the first chunk as anchor for the sidebar
       const doc = documents.get(filename);
-      const first =
-        doc && doc.chunkIds.length > 0 ? chunks.get(doc.chunkIds[0]) : null;
+      const first = doc && doc.chunkIds.length > 0 ? chunks.get(doc.chunkIds[0]) : null;
       if (first) {
         setDialogFilename(undefined);
         setSelectedChunk(first);
@@ -324,12 +294,7 @@ function ErrorBanner({ message, onDismiss }: ErrorBannerProps) {
       <AlertCircle className="h-4 w-4" />
       <AlertDescription className="flex items-center justify-between">
         <span>{message}</span>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-auto p-1"
-          onClick={onDismiss}
-        >
+        <Button variant="ghost" size="sm" className="h-auto p-1" onClick={onDismiss}>
           <X className="h-4 w-4" />
         </Button>
       </AlertDescription>
@@ -415,30 +380,15 @@ function UploadArea({
           onChange={onZipInputChange}
         />
         <div className="flex gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onSelectFiles}
-            disabled={isLoading}
-          >
+          <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={isLoading}>
             <Paperclip className="h-4 w-4 mr-1" />
             Select Files
           </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onSelectDirectory}
-            disabled={isLoading}
-          >
+          <Button variant="secondary" size="sm" onClick={onSelectDirectory} disabled={isLoading}>
             <FolderOpen className="h-4 w-4 mr-1" />
             Upload Folder
           </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onSelectZip}
-            disabled={isLoading}
-          >
+          <Button variant="secondary" size="sm" onClick={onSelectZip} disabled={isLoading}>
             <Archive className="h-4 w-4 mr-1" />
             Upload ZIP
           </Button>
@@ -448,21 +398,11 @@ function UploadArea({
             Or create and edit documents directly in the browser
           </p>
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onNewDocument}
-              disabled={isLoading}
-            >
+            <Button variant="outline" size="sm" onClick={onNewDocument} disabled={isLoading}>
               <Plus className="h-4 w-4 mr-1" />
               New Document
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onNewFolder}
-              disabled={isLoading}
-            >
+            <Button variant="outline" size="sm" onClick={onNewFolder} disabled={isLoading}>
               <FolderPlus className="h-4 w-4 mr-1" />
               New Folder
             </Button>
@@ -545,8 +485,7 @@ function DocumentListItem({
           )}
         </div>
         <p className="text-xs text-muted-foreground">
-          {formatFileSize(doc.size_bytes)} ·{" "}
-          {formatRelativeDate(doc.modified_at)}
+          {formatFileSize(doc.size_bytes)} · {formatRelativeDate(doc.modified_at)}
         </p>
       </div>
       {doc.has_original && (
@@ -653,34 +592,21 @@ function GroupDocumentsSection({
     [groupId, onExclude],
   );
 
-  const handleIncludeGroup = useCallback(
-    () => onInclude(`@${groupId}/`),
-    [groupId, onInclude],
-  );
+  const handleIncludeGroup = useCallback(() => onInclude(`@${groupId}/`), [groupId, onInclude]);
 
-  const handleExcludeGroup = useCallback(
-    () => onExclude(`@${groupId}/`),
-    [groupId, onExclude],
-  );
+  const handleExcludeGroup = useCallback(() => onExclude(`@${groupId}/`), [groupId, onExclude]);
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <div className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 group">
         <CollapsibleTrigger asChild>
           <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
-            {isOpen ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
+            {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </Button>
         </CollapsibleTrigger>
         <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
         <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            className="min-w-0 flex-1 truncate text-sm font-medium text-left"
-          >
+          <button type="button" className="min-w-0 flex-1 truncate text-sm font-medium text-left">
             {groupId}
           </button>
         </CollapsibleTrigger>
@@ -725,27 +651,19 @@ function GroupDocumentsSection({
               onInclude={handleInclude}
               onExclude={handleExclude}
               onRemoveFile={
-                canWrite && onRemoveFile
-                  ? (path) => onRemoveFile(groupId, path)
-                  : undefined
+                canWrite && onRemoveFile ? (path) => onRemoveFile(groupId, path) : undefined
               }
               onCreateSubdir={
-                canWrite && onCreateSubdir
-                  ? (path) => onCreateSubdir(groupId, path)
-                  : undefined
+                canWrite && onCreateSubdir ? (path) => onCreateSubdir(groupId, path) : undefined
               }
               onDeleteDir={
-                canWrite && onDeleteDir
-                  ? (path) => onDeleteDir(groupId, path)
-                  : undefined
+                canWrite && onDeleteDir ? (path) => onDeleteDir(groupId, path) : undefined
               }
             />
           </div>
         )}
         {!isLoading && (!tree || tree.total_files === 0) && (
-          <p className="ml-8 py-2 text-xs text-muted-foreground">
-            No documents in this group
-          </p>
+          <p className="ml-8 py-2 text-xs text-muted-foreground">No documents in this group</p>
         )}
       </CollapsibleContent>
     </Collapsible>
@@ -769,10 +687,7 @@ interface ManageDocumentsProps {
   onExcludeDocument?: (filename: string) => void;
 }
 
-function ManageDocuments({
-  onIncludeDocument,
-  onExcludeDocument,
-}: ManageDocumentsProps) {
+function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumentsProps) {
   const {
     documents,
     directoryTree,
@@ -792,18 +707,12 @@ function ManageDocuments({
   } = useUserDocumentsStore();
   const llmSettings = useSettingsStore((state) => state.llm);
   const visionModel = useSettingsStore((state) => state.visionModel);
-  const conversionPipeline = useSettingsStore(
-    (state) => state.conversionPipeline,
-  );
+  const conversionPipeline = useSettingsStore((state) => state.conversionPipeline);
   const chunkingPipeline = useSettingsStore((state) => state.chunkingPipeline);
   const conversionConfigs = useSettingsStore((state) => state.conversionConfigs);
   const chunkingConfigs = useSettingsStore((state) => state.chunkingConfigs);
-  const setConversionPipeline = useSettingsStore(
-    (state) => state.setConversionPipeline,
-  );
-  const setChunkingPipeline = useSettingsStore(
-    (state) => state.setChunkingPipeline,
-  );
+  const setConversionPipeline = useSettingsStore((state) => state.setConversionPipeline);
+  const setChunkingPipeline = useSettingsStore((state) => state.setChunkingPipeline);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const directoryInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
@@ -811,9 +720,7 @@ function ManageDocuments({
   const [dialogState, setDialogState] = useState<DialogState | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [moveFilePath, setMoveFilePath] = useState<string | null>(null);
-  const [createDirParent, setCreateDirParent] = useState<string | undefined>(
-    undefined,
-  );
+  const [createDirParent, setCreateDirParent] = useState<string | undefined>(undefined);
   const [showCreateDir, setShowCreateDir] = useState(false);
 
   const fuse = useMemo(
@@ -865,18 +772,15 @@ function ManageDocuments({
     });
   }, []);
 
-  const handleViewGroupFile = useCallback(
-    (groupId: string, filepath: string) => {
-      setDialogState({
-        filename: filepath,
-        showMetadata: false,
-        editable: false,
-        isNew: false,
-        getContent: (f) => getGroupDocumentContent(groupId, f),
-      });
-    },
-    [],
-  );
+  const handleViewGroupFile = useCallback((groupId: string, filepath: string) => {
+    setDialogState({
+      filename: filepath,
+      showMetadata: false,
+      editable: false,
+      isNew: false,
+      getContent: (f) => getGroupDocumentContent(groupId, f),
+    });
+  }, []);
 
   const handleSave = useCallback(
     async (filename: string, content: string) => {
@@ -1087,10 +991,7 @@ function ManageDocuments({
       return null;
     }
 
-    if (
-      directoryTree.total_files === 0 &&
-      directoryTree.total_directories === 0
-    ) {
+    if (directoryTree.total_files === 0 && directoryTree.total_directories === 0) {
       return (
         <EmptyState
           icon={<FileText className="h-12 w-12 opacity-50" />}
@@ -1235,10 +1136,7 @@ interface DocumentCanvasProps {
   onExcludeDocument?: (filename: string) => void;
 }
 
-export function DocumentCanvas({
-  onIncludeDocument,
-  onExcludeDocument,
-}: DocumentCanvasProps) {
+export function DocumentCanvas({ onIncludeDocument, onExcludeDocument }: DocumentCanvasProps) {
   const documentTab = useSettingsStore((state) => state.documentTab);
   const setDocumentTab = useSettingsStore((state) => state.setDocumentTab);
 

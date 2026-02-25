@@ -3,14 +3,7 @@ import { Trash2 } from "lucide-react";
 
 import type { TokenInfo } from "../lib/types";
 import { Button } from "./ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "./ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 
 interface TokenListProps {
   tokens: TokenInfo[];
@@ -22,9 +15,7 @@ export function TokenList({ tokens, onRevoke }: TokenListProps) {
     return (
       <div className="text-center py-8 text-muted-foreground">
         <p>No API tokens yet.</p>
-        <p className="text-sm mt-1">
-          Create a token to access the API programmatically.
-        </p>
+        <p className="text-sm mt-1">Create a token to access the API programmatically.</p>
       </div>
     );
   }

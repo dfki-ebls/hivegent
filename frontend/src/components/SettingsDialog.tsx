@@ -13,13 +13,7 @@ import {
   DialogTrigger,
 } from "./ui/dialog";
 import { Input } from "./ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Textarea } from "./ui/textarea";
 
 // --- Section components ---
@@ -31,21 +25,14 @@ interface SettingsSectionProps {
   children: React.ReactNode;
 }
 
-function SettingsSection({
-  label,
-  htmlFor,
-  description,
-  children,
-}: SettingsSectionProps) {
+function SettingsSection({ label, htmlFor, description, children }: SettingsSectionProps) {
   return (
     <div className="grid gap-2">
       <label htmlFor={htmlFor} className="text-sm font-medium">
         {label}
       </label>
       {children}
-      {description && (
-        <p className="text-xs text-muted-foreground">{description}</p>
-      )}
+      {description && <p className="text-xs text-muted-foreground">{description}</p>}
     </div>
   );
 }
@@ -82,8 +69,8 @@ export function SettingsDialog() {
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Configure your LLM provider and assistant settings. These settings
-            are stored locally in your browser.
+            Configure your LLM provider and assistant settings. These settings are stored locally in
+            your browser.
           </DialogDescription>
         </DialogHeader>
 
@@ -116,9 +103,7 @@ export function SettingsDialog() {
                 id="api-key"
                 type="password"
                 placeholder={
-                  hasServerApiKey
-                    ? "Using server API key"
-                    : "Enter your API key (if required)"
+                  hasServerApiKey ? "Using server API key" : "Enter your API key (if required)"
                 }
                 value={llm.apiKey}
                 onChange={(e) => setLLM({ apiKey: e.target.value })}
@@ -168,14 +153,8 @@ export function SettingsDialog() {
 
           {/* Right column — Customization */}
           <div className="grid gap-4 content-start">
-            <SettingsSection
-              label="Personality"
-              description="Choose how the assistant responds."
-            >
-              <Select
-                value={personality}
-                onValueChange={(v) => setPersonality(v as Personality)}
-              >
+            <SettingsSection label="Personality" description="Choose how the assistant responds.">
+              <Select value={personality} onValueChange={(v) => setPersonality(v as Personality)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>

@@ -88,13 +88,7 @@ import { Tool, ToolContent, ToolHeader } from "./ai-elements/tool";
 import { Citation } from "./Citation";
 import { ConversationsList } from "./ConversationsList";
 import { SettingsDialog } from "./SettingsDialog";
-import {
-  ToolError,
-  ToolKeyValue,
-  ToolParameters,
-  ToolResult,
-  ToolSection,
-} from "./ToolDisplay";
+import { ToolError, ToolKeyValue, ToolParameters, ToolResult, ToolSection } from "./ToolDisplay";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -190,11 +184,7 @@ function processToolOutput(
   input: Record<string, unknown> | undefined,
   output: unknown,
   addChunk: (chunk: Omit<FetchedChunk, "id">) => void,
-  markFullDocument: (
-    filename: string,
-    content: string,
-    source: string,
-  ) => void,
+  markFullDocument: (filename: string, content: string, source: string) => void,
 ) {
   if (!input || output == null) return;
 
@@ -297,9 +287,7 @@ interface ToolPartInfo {
 }
 
 /** Extract tool info from a message part, handling both streaming and history formats. */
-function getToolPartInfo(
-  part: UIMessage["parts"][number],
-): ToolPartInfo | null {
+function getToolPartInfo(part: UIMessage["parts"][number]): ToolPartInfo | null {
   const typed = part as {
     type: string;
     toolName?: string;
@@ -319,9 +307,7 @@ function getToolPartInfo(
 
 /** Extract text from the last user message. */
 function getLastUserMessageText(messages: UIMessage[]): string | undefined {
-  const lastUserMessage = [...messages]
-    .reverse()
-    .find((m) => m.role === "user");
+  const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
   if (!lastUserMessage?.parts) return undefined;
   const texts = lastUserMessage.parts
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
@@ -333,10 +319,7 @@ function getLastUserMessageText(messages: UIMessage[]): string | undefined {
 function isContextLengthError(error: Error | null | undefined): boolean {
   if (!error) return false;
   const msg = error.message || "";
-  return (
-    msg.includes("context_length_exceeded") ||
-    msg.includes("maximum context length")
-  );
+  return msg.includes("context_length_exceeded") || msg.includes("maximum context length");
 }
 
 // --- Tool display components ---
@@ -351,9 +334,7 @@ interface ToolPartDisplayProps {
 /** Renders semantic_search tool with custom formatting. */
 function SearchToolDisplay({ toolName, part }: ToolPartDisplayProps) {
   const state = part.state ?? "output-available";
-  const input = parseJson<{ query: string; type?: string; top_k?: number }>(
-    part.input,
-  );
+  const input = parseJson<{ query: string; type?: string; top_k?: number }>(part.input);
   const output = parseJson<RetrievedChunk[]>(part.output);
   const title = input?.type === "sparse" ? "Keyword Search" : "Semantic Search";
 
@@ -364,9 +345,7 @@ function SearchToolDisplay({ toolName, part }: ToolPartDisplayProps) {
         {input?.query && (
           <ToolSection title="Parameters">
             <ToolKeyValue label="Query" value={`"${input.query}"`} />
-            {input.top_k && (
-              <ToolKeyValue label="Max results" value={input.top_k} />
-            )}
+            {input.top_k && <ToolKeyValue label="Max results" value={input.top_k} />}
           </ToolSection>
         )}
         {output && (
@@ -389,11 +368,7 @@ function SearchToolDisplay({ toolName, part }: ToolPartDisplayProps) {
 }
 
 /** Renders edit_document tool with confirmation UI. */
-function EditDocumentToolDisplay({
-  part,
-  onApprove,
-  onDeny,
-}: ToolPartDisplayProps) {
+function EditDocumentToolDisplay({ part, onApprove, onDeny }: ToolPartDisplayProps) {
   const state = part.state ?? "output-available";
   const approval = part.approval;
   const input = parseJson<{
@@ -404,30 +379,18 @@ function EditDocumentToolDisplay({
 
   return (
     <Tool defaultOpen={state === "approval-requested"}>
-      <ToolHeader
-        title="Edit Document"
-        type="tool-edit_document"
-        state={state}
-      />
+      <ToolHeader title="Edit Document" type="tool-edit_document" state={state} />
       <ToolContent>
         {input && (
           <ToolSection title="Parameters">
             <ToolKeyValue label="File" value={input.filename} />
             <ToolKeyValue
               label="Replace"
-              value={
-                <pre className="whitespace-pre-wrap text-xs">
-                  {input.old_string}
-                </pre>
-              }
+              value={<pre className="whitespace-pre-wrap text-xs">{input.old_string}</pre>}
             />
             <ToolKeyValue
               label="With"
-              value={
-                <pre className="whitespace-pre-wrap text-xs">
-                  {input.new_string}
-                </pre>
-              }
+              value={<pre className="whitespace-pre-wrap text-xs">{input.new_string}</pre>}
             />
           </ToolSection>
         )}
@@ -438,20 +401,13 @@ function EditDocumentToolDisplay({
             </span>
           </ConfirmationRequest>
           <ConfirmationAccepted>
-            <span className="text-sm text-green-700 dark:text-green-400">
-              Edit approved
-            </span>
+            <span className="text-sm text-green-700 dark:text-green-400">Edit approved</span>
           </ConfirmationAccepted>
           <ConfirmationRejected>
-            <span className="text-sm text-orange-700 dark:text-orange-400">
-              Edit denied
-            </span>
+            <span className="text-sm text-orange-700 dark:text-orange-400">Edit denied</span>
           </ConfirmationRejected>
           <ConfirmationActions>
-            <ConfirmationAction
-              variant="outline"
-              onClick={() => onDeny?.(approval?.id)}
-            >
+            <ConfirmationAction variant="outline" onClick={() => onDeny?.(approval?.id)}>
               Deny
             </ConfirmationAction>
             <ConfirmationAction onClick={() => onApprove?.(approval?.id)}>
@@ -461,9 +417,7 @@ function EditDocumentToolDisplay({
         </Confirmation>
         {part.output !== undefined && (
           <ToolResult>
-            <pre className="whitespace-pre-wrap text-xs font-mono">
-              {prettyPrint(part.output)}
-            </pre>
+            <pre className="whitespace-pre-wrap text-xs font-mono">{prettyPrint(part.output)}</pre>
           </ToolResult>
         )}
         {part.errorText && <ToolError message={part.errorText} />}
@@ -473,25 +427,15 @@ function EditDocumentToolDisplay({
 }
 
 /** Renders write_document tool with confirmation UI. */
-function WriteDocumentToolDisplay({
-  part,
-  onApprove,
-  onDeny,
-}: ToolPartDisplayProps) {
+function WriteDocumentToolDisplay({ part, onApprove, onDeny }: ToolPartDisplayProps) {
   const state = part.state ?? "output-available";
   const approval = part.approval;
-  const input = parseJson<{ filename: string; content: string; mode?: string }>(
-    part.input,
-  );
+  const input = parseJson<{ filename: string; content: string; mode?: string }>(part.input);
   const modeLabel = input?.mode ?? "replace";
 
   return (
     <Tool defaultOpen={state === "approval-requested"}>
-      <ToolHeader
-        title="Write Document"
-        type="tool-write_document"
-        state={state}
-      />
+      <ToolHeader title="Write Document" type="tool-write_document" state={state} />
       <ToolContent>
         {input && (
           <ToolSection title="Parameters">
@@ -510,25 +454,18 @@ function WriteDocumentToolDisplay({
         <Confirmation approval={approval} state={state}>
           <ConfirmationRequest>
             <span className="text-sm">
-              Allow the assistant to <strong>{modeLabel}</strong>{" "}
-              <strong>{input?.filename}</strong>?
+              Allow the assistant to <strong>{modeLabel}</strong> <strong>{input?.filename}</strong>
+              ?
             </span>
           </ConfirmationRequest>
           <ConfirmationAccepted>
-            <span className="text-sm text-green-700 dark:text-green-400">
-              Write approved
-            </span>
+            <span className="text-sm text-green-700 dark:text-green-400">Write approved</span>
           </ConfirmationAccepted>
           <ConfirmationRejected>
-            <span className="text-sm text-orange-700 dark:text-orange-400">
-              Write denied
-            </span>
+            <span className="text-sm text-orange-700 dark:text-orange-400">Write denied</span>
           </ConfirmationRejected>
           <ConfirmationActions>
-            <ConfirmationAction
-              variant="outline"
-              onClick={() => onDeny?.(approval?.id)}
-            >
+            <ConfirmationAction variant="outline" onClick={() => onDeny?.(approval?.id)}>
               Deny
             </ConfirmationAction>
             <ConfirmationAction onClick={() => onApprove?.(approval?.id)}>
@@ -538,9 +475,7 @@ function WriteDocumentToolDisplay({
         </Confirmation>
         {part.output !== undefined && (
           <ToolResult>
-            <pre className="whitespace-pre-wrap text-xs font-mono">
-              {prettyPrint(part.output)}
-            </pre>
+            <pre className="whitespace-pre-wrap text-xs font-mono">{prettyPrint(part.output)}</pre>
           </ToolResult>
         )}
         {part.errorText && <ToolError message={part.errorText} />}
@@ -564,21 +499,14 @@ function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
             <CodeBlock code={prettyPrint(part.output)} language="json" />
           </ToolResult>
         )}
-        {state === "output-error" && part.errorText && (
-          <ToolError message={part.errorText} />
-        )}
+        {state === "output-error" && part.errorText && <ToolError message={part.errorText} />}
       </ToolContent>
     </Tool>
   );
 }
 
 /** Renders a tool part based on tool name. */
-function ToolPartDisplay({
-  toolName,
-  part,
-  onApprove,
-  onDeny,
-}: ToolPartDisplayProps) {
+function ToolPartDisplay({ toolName, part, onApprove, onDeny }: ToolPartDisplayProps) {
   if (toolName === "semantic_search") {
     return <SearchToolDisplay toolName={toolName} part={part} />;
   }
@@ -616,17 +544,10 @@ interface TextPartDisplayProps {
 const CITATION_ALLOWED_TAGS = { cite: ["filename", "chunk"] };
 const CITATION_COMPONENTS = { cite: Citation } as Components;
 
-function TextPartDisplay({
-  text,
-  showActions,
-  onRegenerate,
-}: TextPartDisplayProps) {
+function TextPartDisplay({ text, showActions, onRegenerate }: TextPartDisplayProps) {
   return (
     <div>
-      <MessageResponse
-        allowedTags={CITATION_ALLOWED_TAGS}
-        components={CITATION_COMPONENTS}
-      >
+      <MessageResponse allowedTags={CITATION_ALLOWED_TAGS} components={CITATION_COMPONENTS}>
         {text}
       </MessageResponse>
       {showActions && (
@@ -634,10 +555,7 @@ function TextPartDisplay({
           <MessageAction onClick={onRegenerate} label="Retry">
             <RefreshCcwIcon className="size-3" />
           </MessageAction>
-          <MessageAction
-            onClick={() => navigator.clipboard.writeText(text)}
-            label="Copy"
-          >
+          <MessageAction onClick={() => navigator.clipboard.writeText(text)} label="Copy">
             <CopyIcon className="size-3" />
           </MessageAction>
         </MessageActions>
@@ -805,28 +723,21 @@ export function ChatSidebar({
 }: ChatSidebarProps) {
   const navigate = useNavigate();
   const addChunk = useFetchedDocumentsStore((state) => state.addChunk);
-  const markFullDocument = useFetchedDocumentsStore(
-    (state) => state.markFullDocument,
-  );
+  const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
-  const fetchConversations = useConversationsStore(
-    (state) => state.fetchConversations,
-  );
-  const { llm, smallModel, personality, customSystemMessage } =
-    useSettingsStore();
+  const fetchConversations = useConversationsStore((state) => state.fetchConversations);
+  const { llm, smallModel, personality, customSystemMessage } = useSettingsStore();
   const [inputValue, setInputValue] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [activeTab, setActiveTab] = useState("chat");
-  const [reasoningEffort, setReasoningEffort] =
-    useState<ReasoningEffort>("auto");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("auto");
   const [compactedFrom, setCompactedFrom] = useState<string | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [conversationError, setConversationError] = useState(false);
   const pendingRetryRef = useRef<string | null>(null);
 
-  const hasDocumentFilters =
-    includedDocuments.length > 0 || excludedDocuments.length > 0;
+  const hasDocumentFilters = includedDocuments.length > 0 || excludedDocuments.length > 0;
 
   const handleTranscriptionChange = useCallback((text: string) => {
     setInputValue((prev) => (prev ? `${prev} ${text}` : text));
@@ -918,8 +829,7 @@ export function ChatSidebar({
           body: {
             conversation_id: id,
             personality,
-            system_message:
-              personality === "custom" ? customSystemMessage : undefined,
+            system_message: personality === "custom" ? customSystemMessage : undefined,
             reasoning_effort: reasoningEffort,
             llm: buildLlmConfig(llm),
             included_documents: includedDocuments,
@@ -954,8 +864,7 @@ export function ChatSidebar({
           body: {
             conversation_id: id,
             personality,
-            system_message:
-              personality === "custom" ? customSystemMessage : undefined,
+            system_message: personality === "custom" ? customSystemMessage : undefined,
             reasoning_effort: reasoningEffort,
             llm: buildLlmConfig(llm),
             included_documents: includedDocuments,
@@ -991,8 +900,7 @@ export function ChatSidebar({
       body: {
         conversation_id: id,
         personality,
-        system_message:
-          personality === "custom" ? customSystemMessage : undefined,
+        system_message: personality === "custom" ? customSystemMessage : undefined,
         reasoning_effort: reasoningEffort,
         llm: buildLlmConfig(llm),
         included_documents: includedDocuments,
@@ -1052,23 +960,13 @@ export function ChatSidebar({
       for (const part of message.parts) {
         const info = getToolPartInfo(part);
         if (!info || info.state !== "output-available") continue;
-        processToolOutput(
-          info.toolName,
-          info.input,
-          info.output,
-          addChunk,
-          markFullDocument,
-        );
+        processToolOutput(info.toolName, info.input, info.output, addChunk, markFullDocument);
       }
     }
   }, [messages, addChunk, markFullDocument]);
 
   return (
-    <Tabs
-      value={activeTab}
-      onValueChange={setActiveTab}
-      className="flex h-full flex-col"
-    >
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col">
       <div className="shrink-0 border-b px-4 flex items-center justify-between h-15">
         <TabsList>
           <TabsTrigger value="chat">
@@ -1092,12 +990,7 @@ export function ChatSidebar({
               <Minimize2 className="h-4 w-4" />
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleNewChat}
-            title="New chat"
-          >
+          <Button variant="ghost" size="icon" onClick={handleNewChat} title="New chat">
             <SquarePen className="h-4 w-4" />
           </Button>
         </div>
@@ -1162,14 +1055,10 @@ export function ChatSidebar({
             {messages.map((message, messageIndex) => {
               const isLastMessage = messageIndex === messages.length - 1;
               const isAssistant = message.role === "assistant";
-              const showActions =
-                isAssistant && isLastMessage && status === "ready";
+              const showActions = isAssistant && isLastMessage && status === "ready";
 
               const isUser = message.role === "user";
-              const canEdit =
-                isUser &&
-                status === "ready" &&
-                editingMessageId !== message.id;
+              const canEdit = isUser && status === "ready" && editingMessageId !== message.id;
 
               return (
                 <Message key={message.id} from={message.role}>
@@ -1179,9 +1068,7 @@ export function ChatSidebar({
                         part.type === "text" &&
                         isAssistant &&
                         isLastMessage &&
-                        !message.parts
-                          ?.slice(partIndex + 1)
-                          .some((p) => p.type === "text");
+                        !message.parts?.slice(partIndex + 1).some((p) => p.type === "text");
 
                       return (
                         <MessagePart
@@ -1214,19 +1101,13 @@ export function ChatSidebar({
                   </MessageContent>
                   {canEdit && (
                     <MessageActions className="ml-auto">
-                      <MessageAction
-                        onClick={() => setEditingMessageId(message.id)}
-                        label="Edit"
-                      >
+                      <MessageAction onClick={() => setEditingMessageId(message.id)} label="Edit">
                         <PencilIcon className="size-3" />
                       </MessageAction>
                       <MessageAction
                         onClick={() => {
                           const text = message.parts
-                            ?.filter(
-                              (p): p is { type: "text"; text: string } =>
-                                p.type === "text",
-                            )
+                            ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
                             .map((p) => p.text)
                             .join("\n");
                           if (text) navigator.clipboard.writeText(text);
@@ -1246,8 +1127,7 @@ export function ChatSidebar({
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Error</AlertTitle>
                 <AlertDescription>
-                  {error.message ||
-                    "An error occurred while processing your request."}
+                  {error.message || "An error occurred while processing your request."}
                 </AlertDescription>
               </Alert>
             )}
@@ -1345,9 +1225,7 @@ export function ChatSidebar({
                 />
                 <PromptInputSelect
                   value={reasoningEffort}
-                  onValueChange={(v) =>
-                    setReasoningEffort(v as ReasoningEffort)
-                  }
+                  onValueChange={(v) => setReasoningEffort(v as ReasoningEffort)}
                 >
                   <PromptInputSelectTrigger className="h-8 w-auto min-w-20">
                     <BrainIcon className="h-4 w-4" />
@@ -1355,10 +1233,7 @@ export function ChatSidebar({
                   </PromptInputSelectTrigger>
                   <PromptInputSelectContent>
                     {REASONING_EFFORT_OPTIONS.map((option) => (
-                      <PromptInputSelectItem
-                        key={option.value}
-                        value={option.value}
-                      >
+                      <PromptInputSelectItem key={option.value} value={option.value}>
                         {option.label}
                       </PromptInputSelectItem>
                     ))}

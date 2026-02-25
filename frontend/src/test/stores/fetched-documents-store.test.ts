@@ -67,9 +67,7 @@ describe("useFetchedDocumentsStore", () => {
 
   describe("markFullDocument", () => {
     it("creates a document marked as fully fetched", () => {
-      useFetchedDocumentsStore
-        .getState()
-        .markFullDocument("report.md", "full content", "fetch");
+      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full content", "fetch");
 
       const state = useFetchedDocumentsStore.getState();
       const doc = state.documents.get("report.md");
@@ -85,9 +83,7 @@ describe("useFetchedDocumentsStore", () => {
         source: "search",
         position: { type: "chunk_index", chunkIndex: 0 },
       });
-      useFetchedDocumentsStore
-        .getState()
-        .markFullDocument("report.md", "full", "fetch");
+      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "fetch");
 
       const doc = useFetchedDocumentsStore.getState().documents.get("report.md");
       expect(doc!.fullContentFetched).toBe(true);

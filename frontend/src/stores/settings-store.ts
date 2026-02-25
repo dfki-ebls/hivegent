@@ -7,11 +7,7 @@
  */
 
 import { create } from "zustand";
-import {
-  createJSONStorage,
-  persist,
-  type StorageValue,
-} from "zustand/middleware";
+import { createJSONStorage, persist, type StorageValue } from "zustand/middleware";
 
 import { fetchSettings } from "../lib/api";
 import { decryptApiKey, encryptApiKey, isEncrypted } from "../lib/crypto";
@@ -111,10 +107,7 @@ interface SettingsState {
 function computeEffective(
   defaults: BackendSettings | null,
   overrides: UserOverrides,
-): Pick<
-  SettingsState,
-  "llm" | "smallModel" | "visionModel" | "hasServerApiKey"
-> {
+): Pick<SettingsState, "llm" | "smallModel" | "visionModel" | "hasServerApiKey"> {
   return {
     llm: {
       model: overrides.model || defaults?.model || "",
@@ -206,12 +199,8 @@ export const useSettingsStore = create<SettingsState>()(
           const newOverrides = {
             ...state.overrides,
             ...(settings.model !== undefined ? { model: settings.model } : {}),
-            ...(settings.apiKey !== undefined
-              ? { apiKey: settings.apiKey }
-              : {}),
-            ...(settings.baseUrl !== undefined
-              ? { baseUrl: settings.baseUrl }
-              : {}),
+            ...(settings.apiKey !== undefined ? { apiKey: settings.apiKey } : {}),
+            ...(settings.baseUrl !== undefined ? { baseUrl: settings.baseUrl } : {}),
           };
           return {
             overrides: newOverrides,
@@ -259,8 +248,7 @@ export const useSettingsStore = create<SettingsState>()(
 
       setDocumentTab: (tab) => set({ documentTab: tab }),
 
-      setConversionPipeline: (pipeline) =>
-        set({ conversionPipeline: pipeline }),
+      setConversionPipeline: (pipeline) => set({ conversionPipeline: pipeline }),
 
       setChunkingPipeline: (pipeline) => set({ chunkingPipeline: pipeline }),
 
@@ -279,8 +267,7 @@ export const useSettingsStore = create<SettingsState>()(
 
       setPersonality: (personality) => set({ personality }),
 
-      setCustomSystemMessage: (customSystemMessage) =>
-        set({ customSystemMessage }),
+      setCustomSystemMessage: (customSystemMessage) => set({ customSystemMessage }),
 
       setConversionConfig: (pipeline, config) =>
         set((state) => ({
@@ -322,15 +309,13 @@ export const useSettingsStore = create<SettingsState>()(
         const data = persisted as Record<string, unknown> | undefined;
         if (!data) return current;
 
-        const overrides =
-          UserOverridesSchema.safeParse(data.overrides).data ?? EMPTY_OVERRIDES;
+        const overrides = UserOverridesSchema.safeParse(data.overrides).data ?? EMPTY_OVERRIDES;
 
         return {
           ...current,
           overrides,
           documentTab:
-            DocumentTabSchema.safeParse(data.documentTab).data ??
-            UI_DEFAULTS.documentTab,
+            DocumentTabSchema.safeParse(data.documentTab).data ?? UI_DEFAULTS.documentTab,
           conversionPipeline:
             ConversionPipelineSchema.safeParse(data.conversionPipeline).data ??
             UI_DEFAULTS.conversionPipeline,
@@ -338,11 +323,9 @@ export const useSettingsStore = create<SettingsState>()(
             ChunkingPipelineSchema.safeParse(data.chunkingPipeline).data ??
             UI_DEFAULTS.chunkingPipeline,
           expandedDirs:
-            ExpandedDirsSchema.safeParse(data.expandedDirs).data ??
-            UI_DEFAULTS.expandedDirs,
+            ExpandedDirsSchema.safeParse(data.expandedDirs).data ?? UI_DEFAULTS.expandedDirs,
           personality:
-            PersonalitySchema.safeParse(data.personality).data ??
-            UI_DEFAULTS.personality,
+            PersonalitySchema.safeParse(data.personality).data ?? UI_DEFAULTS.personality,
           customSystemMessage:
             typeof data.customSystemMessage === "string"
               ? data.customSystemMessage

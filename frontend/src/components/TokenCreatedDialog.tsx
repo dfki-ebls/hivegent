@@ -17,11 +17,7 @@ interface TokenCreatedDialogProps {
   onClose: () => void;
 }
 
-export function TokenCreatedDialog({
-  token,
-  tokenName,
-  onClose,
-}: TokenCreatedDialogProps) {
+export function TokenCreatedDialog({ token, tokenName, onClose }: TokenCreatedDialogProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -37,15 +33,13 @@ export function TokenCreatedDialog({
         <DialogHeader>
           <DialogTitle>Token Created</DialogTitle>
           <DialogDescription>
-            Your new API token "{tokenName}" has been created. Copy it now - you
-            won't be able to see it again.
+            Your new API token "{tokenName}" has been created. Copy it now - you won't be able to
+            see it again.
           </DialogDescription>
         </DialogHeader>
         <div className="py-4">
           <Alert>
-            <AlertDescription className="font-mono text-sm break-all">
-              {token}
-            </AlertDescription>
+            <AlertDescription className="font-mono text-sm break-all">{token}</AlertDescription>
           </Alert>
         </div>
         <DialogFooter className="sm:justify-between">

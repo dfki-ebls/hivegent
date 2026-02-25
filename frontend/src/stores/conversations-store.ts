@@ -15,10 +15,7 @@ interface ConversationsState {
   deleteConversation: (id: string) => Promise<void>;
   updateTitle: (id: string, title: string) => Promise<void>;
   generateTitle: (id: string, llm: LlmConfig) => Promise<string>;
-  refreshConversation: (
-    id: string,
-    summary: Partial<ConversationSummary>,
-  ) => void;
+  refreshConversation: (id: string, summary: Partial<ConversationSummary>) => void;
 }
 
 export const useConversationsStore = create<ConversationsState>((set) => ({
@@ -91,9 +88,7 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
       const existing = state.conversations.find((c) => c.id === id);
       if (existing) {
         return {
-          conversations: state.conversations.map((c) =>
-            c.id === id ? { ...c, ...summary } : c,
-          ),
+          conversations: state.conversations.map((c) => (c.id === id ? { ...c, ...summary } : c)),
         };
       }
       // Add new conversation at the beginning if it doesn't exist

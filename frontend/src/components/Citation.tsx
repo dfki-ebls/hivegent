@@ -3,11 +3,7 @@
 import { FileTextIcon } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import type { FetchedChunk } from "@/lib/types";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { DocumentDialog } from "./DocumentDialog";
@@ -37,18 +33,13 @@ export function Citation(props: Record<string, unknown>) {
     const doc = documents.get(filename);
     if (!doc) return null;
 
-    const chunkIndex =
-      chunk !== undefined ? parseInt(chunk, 10) : undefined;
+    const chunkIndex = chunk !== undefined ? parseInt(chunk, 10) : undefined;
 
     // Try to find a chunk matching by chunk_index
     if (chunkIndex !== undefined) {
       for (const id of doc.chunkIds) {
         const c = chunks.get(id);
-        if (
-          c &&
-          c.position.type === "chunk_index" &&
-          c.position.chunkIndex === chunkIndex
-        ) {
+        if (c && c.position.type === "chunk_index" && c.position.chunkIndex === chunkIndex) {
           return c;
         }
       }
@@ -67,15 +58,12 @@ export function Citation(props: Record<string, unknown>) {
   }
 
   const displayName = filename.split("/").pop() ?? filename;
-  const chunkIndex =
-    chunk !== undefined ? parseInt(chunk, 10) : undefined;
+  const chunkIndex = chunk !== undefined ? parseInt(chunk, 10) : undefined;
   const previewText = matchedChunk?.content.slice(0, 300) ?? null;
 
   return (
     <span className="inline">
-      <span className="transition-colors hover:bg-accent/50 rounded-sm">
-        {children}
-      </span>
+      <span className="transition-colors hover:bg-accent/50 rounded-sm">{children}</span>
       <HoverCard openDelay={200} closeDelay={100}>
         <HoverCardTrigger asChild>
           <Badge
@@ -92,9 +80,7 @@ export function Citation(props: Record<string, unknown>) {
           <div className="space-y-2">
             <h4 className="truncate font-medium text-sm">{filename}</h4>
             {chunkIndex !== undefined && (
-              <p className="text-xs text-muted-foreground">
-                Chunk {chunkIndex}
-              </p>
+              <p className="text-xs text-muted-foreground">Chunk {chunkIndex}</p>
             )}
             {previewText ? (
               <blockquote className="border-l-2 border-muted pl-3 text-sm text-muted-foreground italic line-clamp-4">
@@ -102,13 +88,9 @@ export function Citation(props: Record<string, unknown>) {
                 {(matchedChunk?.content.length ?? 0) > 300 && "\u2026"}
               </blockquote>
             ) : (
-              <p className="text-xs text-muted-foreground italic">
-                No preview available
-              </p>
+              <p className="text-xs text-muted-foreground italic">No preview available</p>
             )}
-            <p className="text-xs text-muted-foreground">
-              Click to view in context
-            </p>
+            <p className="text-xs text-muted-foreground">Click to view in context</p>
           </div>
         </HoverCardContent>
       </HoverCard>

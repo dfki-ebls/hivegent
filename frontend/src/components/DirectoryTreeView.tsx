@@ -200,9 +200,7 @@ function DirectoryRow({
     >
       <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
       <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">
-        {entry.name}
-      </span>
+      <span className="min-w-0 flex-1 truncate text-sm font-medium">{entry.name}</span>
       {fileCount > 0 && (
         <Badge variant="secondary" className="shrink-0 text-xs">
           {fileCount}
@@ -272,10 +270,7 @@ function DirectoryRow({
 
 function countFiles(entry: DirectoryEntry): number {
   if (entry.type === "file") return 1;
-  return (entry.children ?? []).reduce(
-    (sum, child) => sum + countFiles(child),
-    0,
-  );
+  return (entry.children ?? []).reduce((sum, child) => sum + countFiles(child), 0);
 }
 
 export function DirectoryTreeView({
@@ -292,9 +287,7 @@ export function DirectoryTreeView({
   depth = 0,
 }: DirectoryTreeViewProps) {
   const expandedDirsArray = useSettingsStore((state) => state.expandedDirs);
-  const toggleExpandedDir = useSettingsStore(
-    (state) => state.toggleExpandedDir,
-  );
+  const toggleExpandedDir = useSettingsStore((state) => state.toggleExpandedDir);
   const expandedDirs = new Set(expandedDirsArray);
 
   const toggleDir = useCallback(
@@ -336,17 +329,11 @@ export function DirectoryTreeView({
           onToggle={() => toggleDir(child.path)}
           onIncludeDir={() => onInclude(dirPath)}
           onExcludeDir={() => onExclude(dirPath)}
-          onCreateSubdir={
-            onCreateSubdir ? () => onCreateSubdir(child.path) : undefined
-          }
-          onDeleteDir={
-            onDeleteDir ? () => onDeleteDir(child.path) : undefined
-          }
+          onCreateSubdir={onCreateSubdir ? () => onCreateSubdir(child.path) : undefined}
+          onDeleteDir={onDeleteDir ? () => onDeleteDir(child.path) : undefined}
         />
         {isExpanded &&
-          (child.children ?? []).map((grandchild) =>
-            renderEntry(grandchild, currentDepth + 1),
-          )}
+          (child.children ?? []).map((grandchild) => renderEntry(grandchild, currentDepth + 1))}
       </div>
     );
   };

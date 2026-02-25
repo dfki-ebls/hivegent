@@ -47,10 +47,7 @@ export type DocumentTab = z.infer<typeof DocumentTabSchema>;
 export const ExpandedDirsSchema = z.array(z.string());
 
 /** Per-pipeline configuration overrides, keyed by pipeline value. */
-export const PipelineConfigsSchema = z.record(
-  z.string(),
-  z.record(z.string(), z.unknown()),
-);
+export const PipelineConfigsSchema = z.record(z.string(), z.record(z.string(), z.unknown()));
 
 /** User-provided overrides stored in localStorage. Empty string = use backend default. */
 export const UserOverridesSchema = z.object({
@@ -90,9 +87,7 @@ export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
 export const CreateConversationResponseSchema = z.object({
   id: z.string(),
 });
-export type CreateConversationResponse = z.infer<
-  typeof CreateConversationResponseSchema
->;
+export type CreateConversationResponse = z.infer<typeof CreateConversationResponseSchema>;
 
 /** Metadata for a conversion pipeline, fetched from the backend. */
 export const ConversionPipelineInfoSchema = z.object({
@@ -103,9 +98,7 @@ export const ConversionPipelineInfoSchema = z.object({
   config_schema: z.record(z.string(), z.unknown()).optional(),
   config_defaults: z.record(z.string(), z.unknown()).optional(),
 });
-export type ConversionPipelineInfo = z.infer<
-  typeof ConversionPipelineInfoSchema
->;
+export type ConversionPipelineInfo = z.infer<typeof ConversionPipelineInfoSchema>;
 
 /** Metadata for a chunking pipeline, fetched from the backend. */
 export const ChunkingPipelineInfoSchema = z.object({
@@ -133,9 +126,7 @@ export const ChunkedDocumentResponseSchema = z.object({
   created_at: z.string(),
   chunks: z.array(ChunkInfoSchema),
 });
-export type ChunkedDocumentResponse = z.infer<
-  typeof ChunkedDocumentResponseSchema
->;
+export type ChunkedDocumentResponse = z.infer<typeof ChunkedDocumentResponseSchema>;
 
 export const DocumentInfoSchema = z.object({
   filename: z.string(),
@@ -200,9 +191,7 @@ export const ConversationListResponseSchema = z.object({
   conversations: z.array(ConversationSummarySchema),
   total_count: z.number(),
 });
-export type ConversationListResponse = z.infer<
-  typeof ConversationListResponseSchema
->;
+export type ConversationListResponse = z.infer<typeof ConversationListResponseSchema>;
 
 /** Response for conversation compaction. */
 export const CompactConversationResponseSchema = z.object({
@@ -210,9 +199,7 @@ export const CompactConversationResponseSchema = z.object({
   summary: z.string(),
   message: z.string(),
 });
-export type CompactConversationResponse = z.infer<
-  typeof CompactConversationResponseSchema
->;
+export type CompactConversationResponse = z.infer<typeof CompactConversationResponseSchema>;
 
 /** Response for title generation. */
 export const GenerateTitleResponseSchema = z.object({
@@ -279,9 +266,7 @@ export const CreateDirectoryResponseSchema = z.object({
   path: z.string(),
   message: z.string(),
 });
-export type CreateDirectoryResponse = z.infer<
-  typeof CreateDirectoryResponseSchema
->;
+export type CreateDirectoryResponse = z.infer<typeof CreateDirectoryResponseSchema>;
 
 /** Response from moving a document. */
 export const MoveDocumentResponseSchema = z.object({
@@ -297,9 +282,7 @@ export const DeleteDirectoryResponseSchema = z.object({
   files_deleted: z.number(),
   message: z.string(),
 });
-export type DeleteDirectoryResponse = z.infer<
-  typeof DeleteDirectoryResponseSchema
->;
+export type DeleteDirectoryResponse = z.infer<typeof DeleteDirectoryResponseSchema>;
 
 /** Response from document upload. */
 export const UploadDocumentResponseSchema = z.object({
@@ -311,9 +294,7 @@ export const UploadDocumentResponseSchema = z.object({
   chunking_pipeline_used: z.string().nullable(),
   message: z.string(),
 });
-export type UploadDocumentResponse = z.infer<
-  typeof UploadDocumentResponseSchema
->;
+export type UploadDocumentResponse = z.infer<typeof UploadDocumentResponseSchema>;
 
 /** Response from collection (directory/ZIP) upload. */
 export const CollectionUploadResponseSchema = z.object({
@@ -323,9 +304,7 @@ export const CollectionUploadResponseSchema = z.object({
   failed_files: z.array(z.string()),
   message: z.string(),
 });
-export type CollectionUploadResponse = z.infer<
-  typeof CollectionUploadResponseSchema
->;
+export type CollectionUploadResponse = z.infer<typeof CollectionUploadResponseSchema>;
 
 /** Summary information about a knowledge group. */
 export const GroupInfoSchema = z.object({
@@ -371,11 +350,7 @@ export interface FetchedDocument {
 }
 
 /** Build a deterministic chunk ID from its attributes. */
-export function makeChunkId(
-  filename: string,
-  source: string,
-  position: ChunkPosition,
-): string {
+export function makeChunkId(filename: string, source: string, position: ChunkPosition): string {
   let positionKey: string;
   switch (position.type) {
     case "chunk_index":
@@ -427,9 +402,7 @@ export function chunkPositionLabel(position: ChunkPosition): string {
 
 /** Sort chunks by position (full document first, then ascending). */
 export function sortChunks(chunks: FetchedChunk[]): FetchedChunk[] {
-  return [...chunks].sort(
-    (a, b) => chunkSortKey(a.position) - chunkSortKey(b.position),
-  );
+  return [...chunks].sort((a, b) => chunkSortKey(a.position) - chunkSortKey(b.position));
 }
 
 // ============================================================
@@ -474,12 +447,7 @@ export interface CreateTokenRequest {
 export type Personality = "default" | "concise" | "detailed" | "custom";
 
 /** Zod schema for personality (used in store rehydration). */
-export const PersonalitySchema = z.enum([
-  "default",
-  "concise",
-  "detailed",
-  "custom",
-]);
+export const PersonalitySchema = z.enum(["default", "concise", "detailed", "custom"]);
 
 /** Personality option for display in UI. */
 export interface PersonalityOption {

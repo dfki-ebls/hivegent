@@ -110,9 +110,7 @@ function DangerZoneSection() {
   return (
     <>
       <div className="grid gap-3">
-        <h2 className="text-lg font-semibold text-destructive">
-          Server — Danger Zone
-        </h2>
+        <h2 className="text-lg font-semibold text-destructive">Server — Danger Zone</h2>
         <p className="text-sm text-muted-foreground">
           These actions permanently delete data on the server.
         </p>
@@ -156,16 +154,11 @@ function DangerZoneSection() {
         </div>
       </div>
 
-      <AlertDialog
-        open={!!confirmAction}
-        onOpenChange={(open) => !open && setConfirmAction(null)}
-      >
+      <AlertDialog open={!!confirmAction} onOpenChange={(open) => !open && setConfirmAction(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{actionInfo?.title}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {actionInfo?.description}
-            </AlertDialogDescription>
+            <AlertDialogDescription>{actionInfo?.description}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>

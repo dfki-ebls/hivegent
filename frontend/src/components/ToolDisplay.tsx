@@ -24,12 +24,7 @@ export function ToolSection({
       >
         {title}
       </h4>
-      <div
-        className={cn(
-          "text-sm space-y-1",
-          variant === "error" && "text-destructive",
-        )}
-      >
+      <div className={cn("text-sm space-y-1", variant === "error" && "text-destructive")}>
         {children}
       </div>
     </div>
@@ -42,11 +37,7 @@ interface ToolKeyValueProps {
   indent?: boolean;
 }
 
-export function ToolKeyValue({
-  label,
-  value,
-  indent = false,
-}: ToolKeyValueProps) {
+export function ToolKeyValue({ label, value, indent = false }: ToolKeyValueProps) {
   return (
     <div className={cn(indent && "pl-4")}>
       <span className="text-muted-foreground">{label}:</span>{" "}

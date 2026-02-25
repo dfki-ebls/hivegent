@@ -79,14 +79,11 @@ export function DocumentDialog({
   const highlightRef = useRef<HTMLDivElement>(null);
 
   // Managed-mode chunk data
-  const [managedData, setManagedData] =
-    useState<ChunkedDocumentResponse | null>(null);
+  const [managedData, setManagedData] = useState<ChunkedDocumentResponse | null>(null);
   const [managedLoading, setManagedLoading] = useState(false);
   const [managedError, setManagedError] = useState<string | null>(null);
   const [isRechunking, setIsRechunking] = useState(false);
-  const [managedActiveIndex, setManagedActiveIndex] = useState<number | null>(
-    null,
-  );
+  const [managedActiveIndex, setManagedActiveIndex] = useState<number | null>(null);
 
   // Editing state
   const [editFilename, setEditFilename] = useState(filenameProp);
@@ -96,9 +93,7 @@ export function DocumentDialog({
   // Fetched-mode store access
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
-  const markFullDocument = useFetchedDocumentsStore(
-    (state) => state.markFullDocument,
-  );
+  const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
 
   const isManagedMode = showMetadata || onRechunk != null;
   const filename = chunk?.filename ?? fallbackFilename ?? filenameProp;
@@ -114,9 +109,7 @@ export function DocumentDialog({
     return sortChunks(resolved);
   }, [isManagedMode, filename, documents, chunks]);
 
-  const activeChunk = activeChunkId
-    ? (chunks.get(activeChunkId) ?? chunk)
-    : chunk;
+  const activeChunk = activeChunkId ? (chunks.get(activeChunkId) ?? chunk) : chunk;
 
   // --- Reset state on open ---
   useEffect(() => {
@@ -133,11 +126,7 @@ export function DocumentDialog({
       setFullContent(null);
     } else if (chunk) {
       setActiveChunkId(chunk.id);
-      setViewMode(
-        initialFullDoc || chunk.position.type === "full_document"
-          ? "full-doc"
-          : "chunk",
-      );
+      setViewMode(initialFullDoc || chunk.position.type === "full_document" ? "full-doc" : "chunk");
     } else {
       setActiveChunkId(null);
       setViewMode(editable ? "full-doc" : "full-doc");
@@ -255,11 +244,7 @@ export function DocumentDialog({
 
   // --- Render helpers ---
 
-  const renderChunkHighlight = (
-    content: string,
-    start: number,
-    end: number,
-  ) => {
+  const renderChunkHighlight = (content: string, start: number, end: number) => {
     const before = content.slice(0, start);
     const highlighted = content.slice(start, end);
     const after = content.slice(end);
@@ -315,15 +300,8 @@ export function DocumentDialog({
             >
               Cancel
             </Button>
-            <Button
-              onClick={handleSave}
-              disabled={isSaving || !editFilename.trim()}
-            >
-              {isSaving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                "Save"
-              )}
+            <Button onClick={handleSave} disabled={isSaving || !editFilename.trim()}>
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
             </Button>
           </DialogFooter>
         </div>
@@ -362,11 +340,7 @@ export function DocumentDialog({
       if (managedActiveIndex != null && managedData && fullContent) {
         const chunkInfo = managedData.chunks[managedActiveIndex];
         if (chunkInfo) {
-          return renderChunkHighlight(
-            fullContent,
-            chunkInfo.start_index,
-            chunkInfo.end_index,
-          );
+          return renderChunkHighlight(fullContent, chunkInfo.start_index, chunkInfo.end_index);
         }
       }
       return (
@@ -384,20 +358,14 @@ export function DocumentDialog({
       const idx = fullContent.indexOf(chunkText);
 
       if (idx >= 0) {
-        return renderChunkHighlight(
-          fullContent,
-          idx,
-          idx + chunkText.length,
-        );
+        return renderChunkHighlight(fullContent, idx, idx + chunkText.length);
       }
     }
 
     // Fallback: just show chunk content
     return (
       <ScrollArea className="flex-1 min-h-0">
-        <pre className="whitespace-pre-wrap text-sm p-4 font-mono">
-          {activeChunk.content}
-        </pre>
+        <pre className="whitespace-pre-wrap text-sm p-4 font-mono">{activeChunk.content}</pre>
       </ScrollArea>
     );
   };
@@ -431,9 +399,7 @@ export function DocumentDialog({
               <button
                 type="button"
                 className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
-                  viewMode === "full-doc"
-                    ? "bg-accent text-accent-foreground"
-                    : "hover:bg-muted"
+                  viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
                 }`}
                 onClick={() => {
                   setManagedActiveIndex(null);
@@ -463,17 +429,13 @@ export function DocumentDialog({
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <Badge
                       variant={
-                        viewMode === "chunk" && managedActiveIndex === i
-                          ? "default"
-                          : "outline"
+                        viewMode === "chunk" && managedActiveIndex === i ? "default" : "outline"
                       }
                       className="text-[10px] shrink-0"
                     >
                       Chunk #{i}
                     </Badge>
-                    <span className="text-muted-foreground">
-                      {chunkInfo.token_count} tokens
-                    </span>
+                    <span className="text-muted-foreground">{chunkInfo.token_count} tokens</span>
                   </div>
                   <p className="truncate text-muted-foreground mt-0.5">
                     {chunkInfo.text.slice(0, 60)}
@@ -496,9 +458,7 @@ export function DocumentDialog({
             <button
               type="button"
               className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
-                viewMode === "full-doc"
-                  ? "bg-accent text-accent-foreground"
-                  : "hover:bg-muted"
+                viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
               }`}
               onClick={() => setViewMode("full-doc")}
             >
@@ -528,9 +488,7 @@ export function DocumentDialog({
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <Badge
                       variant={
-                        viewMode === "chunk" && sibling.id === activeChunkId
-                          ? "default"
-                          : "outline"
+                        viewMode === "chunk" && sibling.id === activeChunkId ? "default" : "outline"
                       }
                       className="text-[10px] shrink-0"
                     >
@@ -568,30 +526,15 @@ export function DocumentDialog({
             <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
               {showMetadata && managedData && (
                 <>
-                  <Badge variant="secondary">
-                    Chunking: {managedData.pipeline}
-                  </Badge>
-                  <Badge variant="secondary">
-                    Chunk size: {managedData.chunk_size} tokens
-                  </Badge>
-                  <Badge variant="secondary">
-                    {managedData.chunks.length} chunks
-                  </Badge>
-                  <Badge variant="outline">
-                    Created: {formatDate(managedData.created_at)}
-                  </Badge>
+                  <Badge variant="secondary">Chunking: {managedData.pipeline}</Badge>
+                  <Badge variant="secondary">Chunk size: {managedData.chunk_size} tokens</Badge>
+                  <Badge variant="secondary">{managedData.chunks.length} chunks</Badge>
+                  <Badge variant="outline">Created: {formatDate(managedData.created_at)}</Badge>
                 </>
               )}
               {onRechunk && viewMode !== "edit" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleRechunk}
-                  disabled={isRechunking}
-                >
-                  <RefreshCw
-                    className={`h-3 w-3 mr-1 ${isRechunking ? "animate-spin" : ""}`}
-                  />
+                <Button variant="outline" size="sm" onClick={handleRechunk} disabled={isRechunking}>
+                  <RefreshCw className={`h-3 w-3 mr-1 ${isRechunking ? "animate-spin" : ""}`} />
                   Rechunk
                 </Button>
               )}

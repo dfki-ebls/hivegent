@@ -8,13 +8,7 @@
 
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Switch } from "./ui/switch";
 
 /** A single property definition from a JSON Schema. */
@@ -86,9 +80,7 @@ function ScalarField({
       <div className="flex items-center justify-between gap-4">
         <div className="grid gap-0.5">
           <Label htmlFor={id}>{label}</Label>
-          {prop.description && (
-            <p className="text-xs text-muted-foreground">{prop.description}</p>
-          )}
+          {prop.description && <p className="text-xs text-muted-foreground">{prop.description}</p>}
         </div>
         <Switch
           id={id}
@@ -105,10 +97,7 @@ function ScalarField({
     return (
       <div className="grid gap-1.5">
         <Label htmlFor={id}>{label}</Label>
-        <Select
-          value={String(value ?? prop.default ?? "")}
-          onValueChange={(v) => onChange(v)}
-        >
+        <Select value={String(value ?? prop.default ?? "")} onValueChange={(v) => onChange(v)}>
           <SelectTrigger id={id}>
             <SelectValue />
           </SelectTrigger>
@@ -120,9 +109,7 @@ function ScalarField({
             ))}
           </SelectContent>
         </Select>
-        {prop.description && (
-          <p className="text-xs text-muted-foreground">{prop.description}</p>
-        )}
+        {prop.description && <p className="text-xs text-muted-foreground">{prop.description}</p>}
       </div>
     );
   }
@@ -148,9 +135,7 @@ function ScalarField({
             }
           }}
         />
-        {prop.description && (
-          <p className="text-xs text-muted-foreground">{prop.description}</p>
-        )}
+        {prop.description && <p className="text-xs text-muted-foreground">{prop.description}</p>}
       </div>
     );
   }
@@ -160,14 +145,8 @@ function ScalarField({
     return (
       <div className="grid gap-1.5">
         <Label htmlFor={id}>{label}</Label>
-        <Input
-          id={id}
-          value={String(value ?? "")}
-          onChange={(e) => onChange(e.target.value)}
-        />
-        {prop.description && (
-          <p className="text-xs text-muted-foreground">{prop.description}</p>
-        )}
+        <Input id={id} value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />
+        {prop.description && <p className="text-xs text-muted-foreground">{prop.description}</p>}
       </div>
     );
   }
@@ -186,14 +165,15 @@ function ScalarField({
             const v = e.target.value;
             onChange(
               v
-                ? v.split(",").map((s: string) => s.trim()).filter(Boolean)
+                ? v
+                    .split(",")
+                    .map((s: string) => s.trim())
+                    .filter(Boolean)
                 : [],
             );
           }}
         />
-        {prop.description && (
-          <p className="text-xs text-muted-foreground">{prop.description}</p>
-        )}
+        {prop.description && <p className="text-xs text-muted-foreground">{prop.description}</p>}
       </div>
     );
   }
@@ -284,13 +264,9 @@ export function SchemaForm({ schema, values, onChange }: SchemaFormProps) {
         const nestedValues = (values[key] as Record<string, unknown>) ?? {};
         return (
           <div key={key} className="grid gap-3">
-            <h4 className="text-sm font-medium">
-              {prop.title || key}
-            </h4>
+            <h4 className="text-sm font-medium">{prop.title || key}</h4>
             {prop.description && (
-              <p className="text-xs text-muted-foreground -mt-2">
-                {prop.description}
-              </p>
+              <p className="text-xs text-muted-foreground -mt-2">{prop.description}</p>
             )}
             <ObjectFields
               properties={prop.properties}

@@ -9,11 +9,7 @@ import { RotateCcwIcon, SettingsIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "./ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "./ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -31,8 +27,7 @@ function isJsonSchema(v: unknown): v is JsonSchema {
   return (
     typeof v === "object" &&
     v !== null &&
-    (!("properties" in v) ||
-      typeof (v as Record<string, unknown>).properties === "object")
+    (!("properties" in v) || typeof (v as Record<string, unknown>).properties === "object")
   );
 }
 
@@ -134,30 +129,21 @@ export function PipelineConfigDialog({
           disabled={disabled}
           title={`Configure ${pipelineLabel}`}
         >
-          <SettingsIcon
-            className={`h-3.5 w-3.5 ${hasConfig ? "text-primary" : ""}`}
-          />
+          <SettingsIcon className={`h-3.5 w-3.5 ${hasConfig ? "text-primary" : ""}`} />
           <span className="sr-only">Configure {pipelineLabel}</span>
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
-            {pipelineLabel}{" "}
-            {pipelineType === "conversion" ? "Conversion" : "Chunking"} Settings
+            {pipelineLabel} {pipelineType === "conversion" ? "Conversion" : "Chunking"} Settings
           </DialogTitle>
-          <DialogDescription>
-            Configure options for the {pipelineLabel} pipeline.
-          </DialogDescription>
+          <DialogDescription>Configure options for the {pipelineLabel} pipeline.</DialogDescription>
         </DialogHeader>
 
         <div className="py-4 grid gap-4">
           {hasSchema ? (
-            <SchemaForm
-              schema={validSchema!}
-              values={values}
-              onChange={syncJsonFromValues}
-            />
+            <SchemaForm schema={validSchema!} values={values} onChange={syncJsonFromValues} />
           ) : (
             <p className="text-sm text-muted-foreground">
               No configuration options available for this pipeline.
@@ -179,9 +165,7 @@ export function PipelineConfigDialog({
                     onChange={(e) => handleAdvancedChange(e.target.value)}
                     className="font-mono text-xs min-h-[120px] resize-y"
                   />
-                  {jsonError && (
-                    <p className="text-xs text-destructive">{jsonError}</p>
-                  )}
+                  {jsonError && <p className="text-xs text-destructive">{jsonError}</p>}
                 </div>
               </CollapsibleContent>
             </Collapsible>
@@ -189,19 +173,11 @@ export function PipelineConfigDialog({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleReset}
-          >
+          <Button variant="outline" size="sm" onClick={handleReset}>
             <RotateCcwIcon className="h-3.5 w-3.5 mr-1.5" />
             Reset to Defaults
           </Button>
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={!!jsonError}
-          >
+          <Button size="sm" onClick={handleSave} disabled={!!jsonError}>
             Save
           </Button>
         </DialogFooter>

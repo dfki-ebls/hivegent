@@ -40,13 +40,7 @@ function CallbackPage() {
       navigate({ to: "/" });
     }
     // While auth.isLoading, we show the loading state
-  }, [
-    auth.isAuthenticated,
-    auth.error,
-    auth.isLoading,
-    navigate,
-    isCreatingChat,
-  ]);
+  }, [auth.isAuthenticated, auth.error, auth.isLoading, navigate, isCreatingChat]);
 
   return (
     <div className="flex h-full items-center justify-center">

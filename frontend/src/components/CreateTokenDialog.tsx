@@ -13,13 +13,7 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 interface CreateTokenDialogProps {
   onCreate: (name: string, expiresInDays?: number) => Promise<void>;
@@ -34,10 +28,7 @@ const EXPIRATION_OPTIONS = [
   { value: "never", label: "No expiration" },
 ];
 
-export function CreateTokenDialog({
-  onCreate,
-  isCreating,
-}: CreateTokenDialogProps) {
+export function CreateTokenDialog({ onCreate, isCreating }: CreateTokenDialogProps) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [expiration, setExpiration] = useState("90");
@@ -46,8 +37,7 @@ export function CreateTokenDialog({
     e.preventDefault();
     if (!name.trim()) return;
 
-    const expiresInDays =
-      expiration === "never" ? undefined : parseInt(expiration, 10);
+    const expiresInDays = expiration === "never" ? undefined : parseInt(expiration, 10);
     await onCreate(name.trim(), expiresInDays);
     setName("");
     setExpiration("90");
@@ -67,8 +57,8 @@ export function CreateTokenDialog({
           <DialogHeader>
             <DialogTitle>Create API Token</DialogTitle>
             <DialogDescription>
-              Create a new personal access token for API access. The token will
-              only be shown once after creation.
+              Create a new personal access token for API access. The token will only be shown once
+              after creation.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -99,11 +89,7 @@ export function CreateTokenDialog({
             </div>
           </div>
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setOpen(false)}
-            >
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
             <Button type="submit" disabled={!name.trim() || isCreating}>

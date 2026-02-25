@@ -2,21 +2,11 @@ import { Scissors } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { getChunkingPipelines } from "../lib/api";
-import {
-  ChunkingPipeline,
-  type ChunkingPipelineInfo,
-  ChunkingPipelineSchema,
-} from "../lib/types";
+import { ChunkingPipeline, type ChunkingPipelineInfo, ChunkingPipelineSchema } from "../lib/types";
 import { useSettingsStore } from "../stores/settings-store";
 import { PipelineConfigDialog } from "./PipelineConfigDialog";
 import { Label } from "./ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 interface ChunkingPipelineSelectorProps {
   value: ChunkingPipeline;
@@ -63,11 +53,7 @@ export function ChunkingPipelineSelector({
         }}
         disabled={disabled}
       >
-        <SelectTrigger
-          id="chunking-pipeline-select"
-          className="w-[140px]"
-          size="sm"
-        >
+        <SelectTrigger id="chunking-pipeline-select" className="w-[140px]" size="sm">
           <SelectValue placeholder="Select chunking" />
         </SelectTrigger>
         <SelectContent>
