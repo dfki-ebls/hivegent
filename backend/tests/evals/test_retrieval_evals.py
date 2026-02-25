@@ -1,6 +1,5 @@
 """Retrieval evaluation tests using BM25 (sparse search, no embedding model needed)."""
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -28,9 +27,7 @@ def _seed_store(
             if doc_name not in doc_contents:
                 # Use the expected answer as document content
                 doc_contents[doc_name] = (
-                    f"# {doc_name}\n\n"
-                    f"{ann['question']}\n\n"
-                    f"{ann['expected_answer']}\n"
+                    f"# {doc_name}\n\n{ann['question']}\n\n{ann['expected_answer']}\n"
                 )
 
     for doc_name, content in doc_contents.items():
@@ -71,6 +68,4 @@ def test_sparse_search_returns_nonempty(
 
     for ann in annotations:
         results = search_sparse(user_store, ann["question"], top_k=5)
-        assert len(results) > 0, (
-            f"No results for query {ann['question']!r}"
-        )
+        assert len(results) > 0, f"No results for query {ann['question']!r}"

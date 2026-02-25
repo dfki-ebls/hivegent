@@ -40,27 +40,19 @@ class TestBuildWhereClause:
 
     def test_include_exact(self) -> None:
         f = DocumentFilter(included=frozenset({"report.md"}))
-        assert _build_where_clause(f) == snapshot(
-            "(filename = 'report.md')"
-        )
+        assert _build_where_clause(f) == snapshot("(filename = 'report.md')")
 
     def test_include_directory(self) -> None:
         f = DocumentFilter(included=frozenset({"projects/"}))
-        assert _build_where_clause(f) == snapshot(
-            "(filename LIKE 'projects/%')"
-        )
+        assert _build_where_clause(f) == snapshot("(filename LIKE 'projects/%')")
 
     def test_exclude_exact(self) -> None:
         f = DocumentFilter(excluded=frozenset({"secret.md"}))
-        assert _build_where_clause(f) == snapshot(
-            "filename != 'secret.md'"
-        )
+        assert _build_where_clause(f) == snapshot("filename != 'secret.md'")
 
     def test_exclude_directory(self) -> None:
         f = DocumentFilter(excluded=frozenset({"private/"}))
-        assert _build_where_clause(f) == snapshot(
-            "filename NOT LIKE 'private/%'"
-        )
+        assert _build_where_clause(f) == snapshot("filename NOT LIKE 'private/%'")
 
     def test_include_and_exclude(self) -> None:
         f = DocumentFilter(

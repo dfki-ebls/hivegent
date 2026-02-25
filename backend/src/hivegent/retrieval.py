@@ -270,7 +270,9 @@ def sync_index(store: Casebase) -> None:
     _state._pending_reindex.discard(store.store_key)
     storage = _state.get_storage(store)
     casebase = _load_all_chunks_from_dir(store.chunks_dir(settings.data_dir))
-    logger.info("Syncing LanceDB index for %s (%d chunks)", store.store_key, len(casebase))
+    logger.info(
+        "Syncing LanceDB index for %s (%d chunks)", store.store_key, len(casebase)
+    )
     storage.create_index(casebase)
 
 
@@ -381,7 +383,9 @@ def _search(
         sync_index(store)
 
     storage = _state.get_storage(store)
-    return _search_storage(storage, store.store_key, query, search_type, top_k, document_filter)
+    return _search_storage(
+        storage, store.store_key, query, search_type, top_k, document_filter
+    )
 
 
 def search_dense(
@@ -459,23 +463,23 @@ def search_multi(
         try:
             results = _search(store, query, search_type, top_k, store_filter)
         except Exception:
-            logger.warning(
-                "Search failed for store %s", store.store_key, exc_info=True
-            )
+            logger.warning("Search failed for store %s", store.store_key, exc_info=True)
             continue
         for chunk_key, text, score in results:
             filename, chunk_index = parse_chunk_key(chunk_key)
-            all_results.append((
-                score,
-                RetrievedChunk(
-                    store_key=store.store_key,
-                    filename=filename,
-                    chunk_index=chunk_index,
-                    text=text,
-                    token_count=len(text.split()),
-                    score=round(score, 4),
-                ),
-            ))
+            all_results.append(
+                (
+                    score,
+                    RetrievedChunk(
+                        store_key=store.store_key,
+                        filename=filename,
+                        chunk_index=chunk_index,
+                        text=text,
+                        token_count=len(text.split()),
+                        score=round(score, 4),
+                    ),
+                )
+            )
 
     all_results.sort(key=lambda x: x[0], reverse=True)
     return [chunk for _, chunk in all_results[:top_k]]

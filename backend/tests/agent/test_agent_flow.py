@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai import capture_run_messages
 from pydantic_ai.models.test import TestModel
 
-from hivegent.agent import UserDeps, explore_agent, explore_toolset, rag_toolset, user_agent
+from hivegent.agent import UserDeps, explore_agent, explore_toolset, user_agent
 from hivegent.store import Casebase
 
 
@@ -48,10 +48,7 @@ async def test_explore_agent_calls_tools(data_dir: Path) -> None:
 
     # Check that tool calls happened
     tool_calls = [
-        part
-        for msg in messages
-        for part in msg.parts
-        if hasattr(part, "tool_name")
+        part for msg in messages for part in msg.parts if hasattr(part, "tool_name")
     ]
     assert len(tool_calls) > 0
 

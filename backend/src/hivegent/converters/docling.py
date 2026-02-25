@@ -18,9 +18,7 @@ from .config import DoclingConverterConfig
 __all__ = ["DoclingConverter"]
 
 # Formats that use the threaded PDF pipeline options.
-_PDF_FORMATS = frozenset(
-    {InputFormat.PDF, InputFormat.IMAGE, InputFormat.METS_GBS}
-)
+_PDF_FORMATS = frozenset({InputFormat.PDF, InputFormat.IMAGE, InputFormat.METS_GBS})
 
 
 # Derived from docling.datamodel.base_models.FormatToExtensions.

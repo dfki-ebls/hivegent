@@ -27,11 +27,7 @@ def _seed_and_get_deps(
         for doc_name in ann["relevant_documents"]:
             doc_path = docs_dir / doc_name
             doc_path.parent.mkdir(parents=True, exist_ok=True)
-            content = (
-                f"# {doc_name}\n\n"
-                f"{ann['question']}\n\n"
-                f"{ann['expected_answer']}\n"
-            )
+            content = f"# {doc_name}\n\n{ann['question']}\n\n{ann['expected_answer']}\n"
             doc_path.write_text(content, encoding="utf-8")
             chunk_document(user_store, doc_name, content)
 

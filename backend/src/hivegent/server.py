@@ -244,6 +244,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.exception_handler(ValidationError)
 async def _validation_error_handler(
     _request: Request, exc: ValidationError
@@ -567,7 +568,11 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     system_message: str = body.get("system_message") or ""
 
     raw_effort = body.get("reasoning_effort", "auto")
-    reasoning_effort = raw_effort if raw_effort in ("auto", "none", "low", "medium", "high") else "auto"
+    reasoning_effort = (
+        raw_effort
+        if raw_effort in ("auto", "none", "low", "medium", "high")
+        else "auto"
+    )
 
     included_documents: list[str] = body.get("included_documents") or []
     excluded_documents: list[str] = body.get("excluded_documents") or []
@@ -612,7 +617,9 @@ async def chat(
         instructions = config.system_message + CITATION_INSTRUCTIONS
     else:
         instructions = (
-            PERSONALITY_TEMPLATES.get(config.personality, PERSONALITY_TEMPLATES[Personality.DEFAULT])
+            PERSONALITY_TEMPLATES.get(
+                config.personality, PERSONALITY_TEMPLATES[Personality.DEFAULT]
+            )
             + CITATION_INSTRUCTIONS
         )
 
@@ -1101,7 +1108,12 @@ async def delete_all_documents(
     store = _user_store(user)
     data_dir = settings.data_dir
 
-    for dir_fn in (store.documents_dir, store.chunks_dir, store.originals_dir, store.lancedb_dir):
+    for dir_fn in (
+        store.documents_dir,
+        store.chunks_dir,
+        store.originals_dir,
+        store.lancedb_dir,
+    ):
         d = dir_fn(data_dir)
         if d.exists():
             shutil.rmtree(d)

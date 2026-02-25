@@ -83,9 +83,7 @@ def check_store_consistency(store: Casebase) -> ConsistencyReport:
     new_documents = sorted(doc_keys - chunk_keys)
     orphaned_chunks = sorted(chunk_keys - doc_keys)
     stale_documents = sorted(
-        rel
-        for rel in doc_keys & chunk_keys
-        if doc_mtimes[rel] > chunk_mtimes[rel]
+        rel for rel in doc_keys & chunk_keys if doc_mtimes[rel] > chunk_mtimes[rel]
     )
 
     return ConsistencyReport(
@@ -141,9 +139,7 @@ def fix_store_consistency(report: ConsistencyReport) -> None:
         sync_index(store)
         logger.info("Index synced for %s", store.store_key)
     except Exception:
-        logger.warning(
-            "Failed to sync index for %s", store.store_key, exc_info=True
-        )
+        logger.warning("Failed to sync index for %s", store.store_key, exc_info=True)
 
 
 def _check_and_fix_store(store: Casebase) -> None:

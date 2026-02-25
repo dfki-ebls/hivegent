@@ -139,7 +139,8 @@ class ChatRequestConfig(BaseModel):
     conversation_id: str = Field(default="", description="The conversation ID")
     personality: Personality = Field(default=Personality.DEFAULT)
     system_message: str = Field(
-        default="", description="Custom system message (used when personality is 'custom')"
+        default="",
+        description="Custom system message (used when personality is 'custom')",
     )
     reasoning_effort: Literal["auto", "none", "low", "medium", "high"] = Field(
         default="auto",
@@ -210,7 +211,8 @@ class RetrievedChunk(BaseModel):
     """A chunk retrieved from search."""
 
     store_key: str | None = Field(
-        default=None, description="Source store identifier (e.g. 'user:alice', 'group:eng')"
+        default=None,
+        description="Source store identifier (e.g. 'user:alice', 'group:eng')",
     )
     filename: str = Field(description="The document filename")
     chunk_index: int = Field(description="Chunk index within the document")
@@ -350,8 +352,12 @@ class UserResponse(BaseModel):
     id: str = Field(description="User identifier")
     email: str | None = Field(default=None, description="User email address")
     name: str | None = Field(default=None, description="User display name")
-    read_groups: list[str] = Field(default_factory=list, description="Groups with read access")
-    write_groups: list[str] = Field(default_factory=list, description="Groups with write access")
+    read_groups: list[str] = Field(
+        default_factory=list, description="Groups with read access"
+    )
+    write_groups: list[str] = Field(
+        default_factory=list, description="Groups with write access"
+    )
 
     @staticmethod
     def from_user(user: "User") -> "UserResponse":

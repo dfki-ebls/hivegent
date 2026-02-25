@@ -99,9 +99,7 @@ class ListDocumentsTool:
                 if _matches_subdir_and_depth(r.filename, subdir, max_depth)
             ]
         if self.document_filter:
-            results = [
-                r for r in results if self.document_filter(r.filename)
-            ]
+            results = [r for r in results if self.document_filter(r.filename)]
         return results
 
 
@@ -238,9 +236,7 @@ class GrepTool:
                     data = item["data"]
                     filepath = data["path"]["text"]
                     doc_name = str(Path(filepath).relative_to(self.path))
-                    if self.document_filter and not self.document_filter(
-                        doc_name
-                    ):
+                    if self.document_filter and not self.document_filter(doc_name):
                         continue
                     content = (
                         data["lines"]["text"].rstrip("\n") if include_content else None
