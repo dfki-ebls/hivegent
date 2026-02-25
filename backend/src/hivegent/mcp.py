@@ -12,11 +12,22 @@ from fastmcp.server.auth import AccessToken, OIDCProxy
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from . import tools
 from .agent import UserDeps, explore_agent, explore_toolset
 from .auth import auth_settings
 from .config import settings
 from .prompts import EXPLORE_INSTRUCTIONS
+from .tools import (
+    EditDocumentTool,
+    GetChunkTool,
+    GetDocumentLinesTool,
+    GetDocumentTool,
+    GlobDocumentsTool,
+    GrepTool,
+    ListChunksTool,
+    ListDocumentsTool,
+    SearchTool,
+    WriteDocumentTool,
+)
 from .store import Casebase
 from .types import (
     ChunkSummary,
@@ -104,7 +115,7 @@ def list_documents(
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[DocumentSummary]:
     """List all available documents with their sizes in bytes."""
-    return tools.ListDocumentsTool(
+    return ListDocumentsTool(
         path=store.documents_dir(settings.data_dir),
     )(subdir=subdir, max_depth=max_depth)
 
@@ -115,7 +126,7 @@ def get_document(
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> str | None:
     """Get the full content of a specific document by relative path."""
-    return tools.GetDocumentTool(
+    return GetDocumentTool(
         path=store.documents_dir(settings.data_dir),
     )(filename)
 
@@ -128,7 +139,7 @@ def get_document_lines(
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> DocumentRange | None:
     """Get a range of lines from a document by relative path."""
-    return tools.GetDocumentLinesTool(
+    return GetDocumentLinesTool(
         path=store.documents_dir(settings.data_dir),
     )(filename, start, end)
 
@@ -139,7 +150,7 @@ def glob_documents(
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[str]:
     """Find documents matching a glob pattern."""
-    return tools.GlobDocumentsTool(
+    return GlobDocumentsTool(
         path=store.documents_dir(settings.data_dir),
     )(pattern)
 
@@ -153,7 +164,7 @@ def grep(
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[GrepMatch]:
     """Search documents for a pattern."""
-    return tools.GrepTool(
+    return GrepTool(
         path=store.documents_dir(settings.data_dir),
     )(
         pattern,
@@ -178,7 +189,7 @@ def semantic_search(
     "sparse" for BM25/FTS (keyword queries).
     """
     all_stores = (store, *group_stores)
-    return tools.SearchTool(stores=all_stores, search_type=type)(query, top_k)
+    return SearchTool(stores=all_stores, search_type=type)(query, top_k)
 
 
 @mcp_app.tool()
@@ -187,7 +198,7 @@ def list_chunks(
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[ChunkSummary] | None:
     """List chunk metadata for a document by relative path."""
-    return tools.ListChunksTool(
+    return ListChunksTool(
         path=store.chunks_dir(settings.data_dir),
     )(filename)
 
@@ -199,7 +210,7 @@ def get_chunk(
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> str | None:
     """Get the text content of a specific chunk by relative document path."""
-    return tools.GetChunkTool(
+    return GetChunkTool(
         path=store.chunks_dir(settings.data_dir),
     )(filename, chunk_index)
 
@@ -250,12 +261,12 @@ async def explore_documents(
         task,
         system_prompt=EXPLORE_INSTRUCTIONS,
         tools=[
-            tools.ListDocumentsTool(path=docs_dir),
-            tools.GlobDocumentsTool(path=docs_dir),
-            tools.GrepTool(path=docs_dir),
-            tools.SearchTool(stores=all_stores, search_type="dense"),
-            tools.SearchTool(stores=all_stores, search_type="sparse"),
-            tools.GetDocumentLinesTool(path=docs_dir),
+            ListDocumentsTool(path=docs_dir),
+            GlobDocumentsTool(path=docs_dir),
+            GrepTool(path=docs_dir),
+            SearchTool(stores=all_stores, search_type="dense"),
+            SearchTool(stores=all_stores, search_type="sparse"),
+            GetDocumentLinesTool(path=docs_dir),
         ],
     )
     return result.text
@@ -289,7 +300,7 @@ async def edit_document(
     if response.action != "accept":
         return "Edit denied by user."
 
-    return tools.EditDocumentTool(
+    return EditDocumentTool(
         path=store.documents_dir(settings.data_dir),
         store=store,
     )(filename, old_string, new_string)
@@ -321,7 +332,7 @@ async def write_document(
     if response.action != "accept":
         return "Write denied by user."
 
-    return tools.WriteDocumentTool(
+    return WriteDocumentTool(
         path=store.documents_dir(settings.data_dir),
         store=store,
     )(filename, content, mode)

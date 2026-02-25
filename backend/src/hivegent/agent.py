@@ -8,8 +8,19 @@ from pydantic_ai import Agent, FunctionToolset, RunContext
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from . import tools
 from .config import settings
+from .tools import (
+    EditDocumentTool,
+    GetChunkTool,
+    GetDocumentLinesTool,
+    GetDocumentTool,
+    GlobDocumentsTool,
+    GrepTool,
+    ListChunksTool,
+    ListDocumentsTool,
+    SearchTool,
+    WriteDocumentTool,
+)
 from .prompts import EXPLORE_INSTRUCTIONS
 from .store import Casebase
 from .types import (
@@ -83,7 +94,7 @@ def list_documents(
         subdir: Only include documents under this subdirectory.
         max_depth: Maximum nesting depth relative to *subdir* (or root).
     """
-    return tools.ListDocumentsTool(
+    return ListDocumentsTool(
         path=ctx.deps.store.documents_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(subdir=subdir, max_depth=max_depth)
@@ -99,7 +110,7 @@ def glob_documents(
     Args:
         pattern: Glob pattern to match (e.g., "*.md", "notes/*.txt", "**/*.py").
     """
-    return tools.GlobDocumentsTool(
+    return GlobDocumentsTool(
         path=ctx.deps.store.documents_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(pattern)
@@ -124,7 +135,7 @@ def grep(
         context_lines: Number of lines to show before and after each match.
         include_content: Whether to include the matching line content.
     """
-    return tools.GrepTool(
+    return GrepTool(
         path=ctx.deps.store.documents_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(
@@ -157,7 +168,7 @@ def semantic_search(
         type: ``"dense"`` for vector embeddings, ``"sparse"`` for BM25/FTS.
         top_k: Maximum results to return.
     """
-    return tools.SearchTool(
+    return SearchTool(
         stores=ctx.deps.all_stores,
         search_type=type,
         document_filter=ctx.deps.document_filter,
@@ -179,7 +190,7 @@ def get_document_lines(
         start: First line to include (1-indexed, default: 1).
         end: Last line to include (1-indexed, default: end of file).
     """
-    return tools.GetDocumentLinesTool(
+    return GetDocumentLinesTool(
         path=ctx.deps.store.documents_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(filename, start, end)
@@ -197,7 +208,7 @@ def get_document(ctx: RunContext[UserDeps], filename: str) -> str | None:
     Args:
         filename: The relative path to retrieve (e.g. "report.md" or "projects/report.md").
     """
-    return tools.GetDocumentTool(
+    return GetDocumentTool(
         path=ctx.deps.store.documents_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(filename)
@@ -213,7 +224,7 @@ def list_chunks(
     Args:
         filename: The relative document path (e.g. "report.md" or "projects/report.md").
     """
-    return tools.ListChunksTool(
+    return ListChunksTool(
         path=ctx.deps.store.chunks_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(filename)
@@ -231,7 +242,7 @@ def get_chunk(
         filename: The relative document path (e.g. "report.md" or "projects/report.md").
         chunk_index: The index of the chunk to retrieve.
     """
-    return tools.GetChunkTool(
+    return GetChunkTool(
         path=ctx.deps.store.chunks_dir(settings.data_dir),
         document_filter=ctx.deps.document_filter,
     )(
@@ -303,7 +314,7 @@ def edit_document(
         old_string: The exact text to replace. Must appear exactly once.
         new_string: The replacement text.
     """
-    return tools.EditDocumentTool(
+    return EditDocumentTool(
         path=ctx.deps.store.documents_dir(settings.data_dir),
         store=ctx.deps.store,
         document_filter=ctx.deps.document_filter,
@@ -325,7 +336,7 @@ def write_document(
         mode: ``"replace"`` overwrites (creates if absent), ``"append"``
             adds to the end, ``"prepend"`` adds to the start.
     """
-    return tools.WriteDocumentTool(
+    return WriteDocumentTool(
         path=ctx.deps.store.documents_dir(settings.data_dir),
         store=ctx.deps.store,
         document_filter=ctx.deps.document_filter,
