@@ -1,20 +1,16 @@
-"""Shared path-scoped tool generators used by agent and MCP wrappers."""
+"""Generic path-scoped tool callables for document operations."""
 
 import logging
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Literal
 
 from ripgrepy import Ripgrepy
 
-from .chunks import load_chunked_document, rechunk_document
-from .config import DOCUMENT_EXTENSION
-from .store import Casebase
 from .types import (
     ChunkSummary,
-    DocumentFilter,
     DocumentRange,
     DocumentSummary,
     GrepMatch,
@@ -22,7 +18,6 @@ from .types import (
 )
 
 __all__ = [
-    "DocumentFilter",
     "EditDocumentTool",
     "GetChunkTool",
     "GetDocumentLinesTool",
@@ -73,7 +68,8 @@ class ListDocumentsTool:
     """List all available documents with their sizes in bytes."""
 
     path: Path
-    document_filter: DocumentFilter | None = None
+    extension: str = ".md"
+    document_filter: Callable[[str], bool] | None = None
 
     def __call__(
         self,
@@ -89,7 +85,7 @@ class ListDocumentsTool:
         if not self.path.exists():
             return []
         results: list[DocumentSummary] = []
-        for f in sorted(self.path.rglob(f"*{DOCUMENT_EXTENSION}")):
+        for f in sorted(self.path.rglob(f"*{self.extension}")):
             if f.is_file():
                 rel = str(f.relative_to(self.path).as_posix())
                 results.append(DocumentSummary(filename=rel, size=f.stat().st_size))
@@ -101,7 +97,7 @@ class ListDocumentsTool:
             ]
         if self.document_filter:
             results = [
-                r for r in results if self.document_filter.is_included(r.filename)
+                r for r in results if self.document_filter(r.filename)
             ]
         return results
 
@@ -111,7 +107,7 @@ class GetDocumentTool:
     """Get the full content of a specific document."""
 
     path: Path
-    document_filter: DocumentFilter | None = None
+    document_filter: Callable[[str], bool] | None = None
 
     def __call__(self, filename: str) -> str | None:
         """Get the full content of a specific document.
@@ -119,7 +115,7 @@ class GetDocumentTool:
         Args:
             filename: The exact filename to retrieve.
         """
-        if self.document_filter and not self.document_filter.is_included(filename):
+        if self.document_filter and not self.document_filter(filename):
             return None
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
@@ -134,7 +130,7 @@ class GetDocumentLinesTool:
     """Get a range of lines from a document."""
 
     path: Path
-    document_filter: DocumentFilter | None = None
+    document_filter: Callable[[str], bool] | None = None
 
     def __call__(
         self,
@@ -149,7 +145,7 @@ class GetDocumentLinesTool:
             start: First line to include (1-indexed, default: 1).
             end: Last line to include (1-indexed, default: end of file).
         """
-        if self.document_filter and not self.document_filter.is_included(filename):
+        if self.document_filter and not self.document_filter(filename):
             return None
 
         file_path = (self.path / filename).resolve()
@@ -176,7 +172,8 @@ class GlobDocumentsTool:
     """Find documents matching a glob pattern."""
 
     path: Path
-    document_filter: DocumentFilter | None = None
+    extension: str = ".md"
+    document_filter: Callable[[str], bool] | None = None
 
     def __call__(self, pattern: str) -> list[str]:
         """Find documents matching a glob pattern.
@@ -187,13 +184,13 @@ class GlobDocumentsTool:
         if not self.path.exists():
             return []
         results: list[str] = []
-        for f in sorted(self.path.rglob(f"*{DOCUMENT_EXTENSION}")):
+        for f in sorted(self.path.rglob(f"*{self.extension}")):
             if f.is_file():
                 rel = str(f.relative_to(self.path).as_posix())
                 if fnmatch(rel, pattern):
                     results.append(rel)
         if self.document_filter:
-            results = [r for r in results if self.document_filter.is_included(r)]
+            results = [r for r in results if self.document_filter(r)]
         return results
 
 
@@ -202,7 +199,7 @@ class GrepTool:
     """Search documents for a pattern."""
 
     path: Path
-    document_filter: DocumentFilter | None = None
+    document_filter: Callable[[str], bool] | None = None
 
     def __call__(
         self,
@@ -238,7 +235,7 @@ class GrepTool:
                     data = item["data"]
                     filepath = data["path"]["text"]
                     doc_name = str(Path(filepath).relative_to(self.path))
-                    if self.document_filter and not self.document_filter.is_included(
+                    if self.document_filter and not self.document_filter(
                         doc_name
                     ):
                         continue
@@ -260,12 +257,9 @@ class GrepTool:
 
 @dataclass(slots=True, frozen=True)
 class SearchTool:
-    """Dense or sparse chunk search across one or more casebases."""
+    """Search chunks using a configured search backend."""
 
-    stores: Sequence[Casebase]
-    search_type: Literal["dense", "sparse"]
-    document_filter: DocumentFilter | None = None
-    group_filters: dict[str, DocumentFilter] = field(default_factory=dict)
+    search_fn: Callable[[str, int], list[RetrievedChunk]]
 
     def __call__(
         self,
@@ -274,42 +268,19 @@ class SearchTool:
     ) -> list[RetrievedChunk]:
         """Search chunks using the configured search type.
 
-        Searches across all configured stores and merges results by score.
-
         Args:
             query: Natural language search query.
             top_k: Maximum results to return.
         """
-        from .retrieval import parse_chunk_key, search_multi
-
-        results = search_multi(
-            self.stores,
-            query,
-            self.search_type,
-            top_k,
-            self.document_filter,
-            self.group_filters,
-        )
-        return [
-            RetrievedChunk(
-                store_key=store_key,
-                filename=filename,
-                chunk_index=chunk_index,
-                text=text,
-                token_count=len(text.split()),
-                score=round(score, 4),
-            )
-            for store_key, key, text, score in results
-            for filename, chunk_index in [parse_chunk_key(key)]
-        ]
+        return self.search_fn(query, top_k)
 
 
 @dataclass(slots=True, frozen=True)
 class ListChunksTool:
     """List chunk metadata for a document."""
 
-    path: Path
-    document_filter: DocumentFilter | None = None
+    loader: Callable[[str], Sequence[ChunkSummary] | None]
+    document_filter: Callable[[str], bool] | None = None
 
     def __call__(self, filename: str) -> list[ChunkSummary] | None:
         """List chunk metadata for a document.
@@ -317,27 +288,18 @@ class ListChunksTool:
         Args:
             filename: The document filename.
         """
-        if self.document_filter and not self.document_filter.is_included(filename):
+        if self.document_filter and not self.document_filter(filename):
             return None
-        chunked = load_chunked_document(self.path, filename)
-        if not chunked:
-            return None
-        return [
-            ChunkSummary(
-                token_count=c.token_count,
-                start_index=c.start_index,
-                end_index=c.end_index,
-            )
-            for c in chunked.chunks
-        ]
+        result = self.loader(filename)
+        return list(result) if result is not None else None
 
 
 @dataclass(slots=True, frozen=True)
 class GetChunkTool:
     """Get the text content of a specific chunk."""
 
-    path: Path
-    document_filter: DocumentFilter | None = None
+    loader: Callable[[str, int], str | None]
+    document_filter: Callable[[str], bool] | None = None
 
     def __call__(
         self,
@@ -350,14 +312,9 @@ class GetChunkTool:
             filename: The document filename.
             chunk_index: The index of the chunk to retrieve.
         """
-        if self.document_filter and not self.document_filter.is_included(filename):
+        if self.document_filter and not self.document_filter(filename):
             return None
-        chunked = load_chunked_document(self.path, filename)
-        if not chunked:
-            return None
-        if 0 <= chunk_index < len(chunked.chunks):
-            return chunked.chunks[chunk_index].text
-        return None
+        return self.loader(filename, chunk_index)
 
 
 @dataclass(slots=True, frozen=True)
@@ -365,8 +322,8 @@ class EditDocumentTool:
     """Edit a document by replacing an exact string with a new string."""
 
     path: Path
-    store: Casebase
-    document_filter: DocumentFilter | None = None
+    document_filter: Callable[[str], bool] | None = None
+    on_write: Callable[[str], object] | None = None
 
     def __call__(
         self,
@@ -377,15 +334,14 @@ class EditDocumentTool:
         """Replace an exact string in a document.
 
         Fails if the string does not exist or appears more than once,
-        ensuring unambiguous edits.  On success the document is
-        automatically re-chunked and the search index is synced.
+        ensuring unambiguous edits.
 
         Args:
             filename: The relative document path.
             old_string: The exact text to replace. Must appear exactly once.
             new_string: The replacement text.
         """
-        if self.document_filter and not self.document_filter.is_included(filename):
+        if self.document_filter and not self.document_filter(filename):
             return f"Error: '{filename}' is not accessible."
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
@@ -405,7 +361,8 @@ class EditDocumentTool:
 
         new_content = content.replace(old_string, new_string, 1)
         file_path.write_text(new_content, encoding="utf-8")
-        rechunk_document(self.store, filename)
+        if self.on_write:
+            self.on_write(filename)
         return f"Replaced 1 occurrence in '{filename}'."
 
 
@@ -414,8 +371,9 @@ class WriteDocumentTool:
     """Write content to a document using prepend, append, or replace mode."""
 
     path: Path
-    store: Casebase
-    document_filter: DocumentFilter | None = None
+    extension: str = ".md"
+    document_filter: Callable[[str], bool] | None = None
+    on_write: Callable[[str], object] | None = None
 
     def __call__(
         self,
@@ -425,9 +383,6 @@ class WriteDocumentTool:
     ) -> str:
         """Write content to a document.
 
-        On success the document is automatically re-chunked and the
-        search index is synced.
-
         Args:
             filename: The relative document path.
             content: The text content to write.
@@ -435,13 +390,13 @@ class WriteDocumentTool:
                 ``"append"`` adds to the end,
                 ``"prepend"`` adds to the start.
         """
-        if self.document_filter and not self.document_filter.is_included(filename):
+        if self.document_filter and not self.document_filter(filename):
             return f"Error: '{filename}' is not accessible."
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
             return "Error: path traversal detected."
-        if not filename.endswith(DOCUMENT_EXTENSION):
-            return f"Error: only '{DOCUMENT_EXTENSION}' files are supported."
+        if not filename.endswith(self.extension):
+            return f"Error: only '{self.extension}' files are supported."
 
         if mode == "replace":
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -458,5 +413,6 @@ class WriteDocumentTool:
             file_path.write_text(content + existing, encoding="utf-8")
             message = f"Prepended {len(content)} characters to '{filename}'."
 
-        rechunk_document(self.store, filename)
+        if self.on_write:
+            self.on_write(filename)
         return message

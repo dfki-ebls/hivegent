@@ -71,7 +71,7 @@ class DocumentFilter:
             return filepath.startswith(entry)
         return filepath == entry
 
-    def is_included(self, filepath: str) -> bool:
+    def __call__(self, filepath: str) -> bool:
         """Return whether *filepath* passes the filter."""
         if self.included and not any(
             self._matches(entry, filepath) for entry in self.included

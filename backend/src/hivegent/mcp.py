@@ -16,19 +16,8 @@ from .agent import UserDeps, explore_agent, explore_toolset
 from .auth import auth_settings
 from .config import settings
 from .prompts import EXPLORE_INSTRUCTIONS
-from .tools import (
-    EditDocumentTool,
-    GetChunkTool,
-    GetDocumentLinesTool,
-    GetDocumentTool,
-    GlobDocumentsTool,
-    GrepTool,
-    ListChunksTool,
-    ListDocumentsTool,
-    SearchTool,
-    WriteDocumentTool,
-)
 from .store import Casebase
+from .tool_factory import ToolFactory
 from .types import (
     ChunkSummary,
     DocumentRange,
@@ -108,27 +97,31 @@ def _get_mcp_group_stores(
     return tuple(stores)
 
 
+def _get_mcp_tool_factory(
+    store: Casebase = Depends(_get_mcp_user_store),
+    group_stores: tuple[Casebase, ...] = Depends(_get_mcp_group_stores),
+) -> ToolFactory:
+    """Build a ToolFactory from the MCP auth context."""
+    return ToolFactory(store=store, group_stores=group_stores)
+
+
 @mcp_app.tool()
 def list_documents(
     subdir: str | None = None,
     max_depth: int | None = None,
-    store: Casebase = Depends(_get_mcp_user_store),
+    factory: ToolFactory = Depends(_get_mcp_tool_factory),
 ) -> list[DocumentSummary]:
     """List all available documents with their sizes in bytes."""
-    return ListDocumentsTool(
-        path=store.documents_dir(settings.data_dir),
-    )(subdir=subdir, max_depth=max_depth)
+    return factory.list_documents(subdir=subdir, max_depth=max_depth)
 
 
 @mcp_app.tool()
 def get_document(
     filename: str,
-    store: Casebase = Depends(_get_mcp_user_store),
+    factory: ToolFactory = Depends(_get_mcp_tool_factory),
 ) -> str | None:
     """Get the full content of a specific document by relative path."""
-    return GetDocumentTool(
-        path=store.documents_dir(settings.data_dir),
-    )(filename)
+    return factory.get_document(filename)
 
 
 @mcp_app.tool()
@@ -136,23 +129,19 @@ def get_document_lines(
     filename: str,
     start: int = 1,
     end: int | None = None,
-    store: Casebase = Depends(_get_mcp_user_store),
+    factory: ToolFactory = Depends(_get_mcp_tool_factory),
 ) -> DocumentRange | None:
     """Get a range of lines from a document by relative path."""
-    return GetDocumentLinesTool(
-        path=store.documents_dir(settings.data_dir),
-    )(filename, start, end)
+    return factory.get_document_lines(filename, start, end)
 
 
 @mcp_app.tool()
 def glob_documents(
     pattern: str,
-    store: Casebase = Depends(_get_mcp_user_store),
+    factory: ToolFactory = Depends(_get_mcp_tool_factory),
 ) -> list[str]:
     """Find documents matching a glob pattern."""
-    return GlobDocumentsTool(
-        path=store.documents_dir(settings.data_dir),
-    )(pattern)
+    return factory.glob_documents(pattern)
 
 
 @mcp_app.tool()
@@ -161,12 +150,10 @@ def grep(
     glob: str | None = None,
     context_lines: int = 0,
     include_content: bool = True,
-    store: Casebase = Depends(_get_mcp_user_store),
+    factory: ToolFactory = Depends(_get_mcp_tool_factory),
 ) -> list[GrepMatch]:
     """Search documents for a pattern."""
-    return GrepTool(
-        path=store.documents_dir(settings.data_dir),
-    )(
+    return factory.grep(
         pattern,
         glob=glob,
         context_lines=context_lines,
@@ -179,8 +166,7 @@ def semantic_search(
     query: str,
     type: Literal["dense", "sparse"] = "dense",
     top_k: int = 5,
-    store: Casebase = Depends(_get_mcp_user_store),
-    group_stores: tuple[Casebase, ...] = Depends(_get_mcp_group_stores),
+    factory: ToolFactory = Depends(_get_mcp_tool_factory),
 ) -> list[RetrievedChunk]:
     """Search chunks using semantic similarity or keyword matching.
 
@@ -188,31 +174,27 @@ def semantic_search(
     Use "dense" for vector embeddings (conceptual queries),
     "sparse" for BM25/FTS (keyword queries).
     """
-    all_stores = (store, *group_stores)
-    return SearchTool(stores=all_stores, search_type=type)(query, top_k)
+    search = factory.dense_search if type == "dense" else factory.sparse_search
+    return search(query, top_k)
 
 
 @mcp_app.tool()
 def list_chunks(
     filename: str,
-    store: Casebase = Depends(_get_mcp_user_store),
+    factory: ToolFactory = Depends(_get_mcp_tool_factory),
 ) -> list[ChunkSummary] | None:
     """List chunk metadata for a document by relative path."""
-    return ListChunksTool(
-        path=store.chunks_dir(settings.data_dir),
-    )(filename)
+    return factory.list_chunks(filename)
 
 
 @mcp_app.tool()
 def get_chunk(
     filename: str,
     chunk_index: int,
-    store: Casebase = Depends(_get_mcp_user_store),
+    factory: ToolFactory = Depends(_get_mcp_tool_factory),
 ) -> str | None:
     """Get the text content of a specific chunk by relative document path."""
-    return GetChunkTool(
-        path=store.chunks_dir(settings.data_dir),
-    )(filename, chunk_index)
+    return factory.get_chunk(filename, chunk_index)
 
 
 @mcp_app.tool()
@@ -254,19 +236,17 @@ async def explore_documents(
         )
         return result.output
 
-    docs_dir = store.documents_dir(settings.data_dir)
-    all_stores = (store, *group_stores)
-
+    factory = ToolFactory(store=store, group_stores=group_stores)
     result = await ctx.sample(
         task,
         system_prompt=EXPLORE_INSTRUCTIONS,
         tools=[
-            ListDocumentsTool(path=docs_dir),
-            GlobDocumentsTool(path=docs_dir),
-            GrepTool(path=docs_dir),
-            SearchTool(stores=all_stores, search_type="dense"),
-            SearchTool(stores=all_stores, search_type="sparse"),
-            GetDocumentLinesTool(path=docs_dir),
+            factory.list_documents,
+            factory.glob_documents,
+            factory.grep,
+            factory.dense_search,
+            factory.sparse_search,
+            factory.get_document_lines,
         ],
     )
     return result.text
@@ -278,7 +258,7 @@ async def edit_document(
     old_string: str,
     new_string: str,
     ctx: Context,
-    store: Casebase = Depends(_get_mcp_user_store),
+    factory: ToolFactory = Depends(_get_mcp_tool_factory),
 ) -> str:
     """Edit a document by replacing an exact string.
 
@@ -300,10 +280,7 @@ async def edit_document(
     if response.action != "accept":
         return "Edit denied by user."
 
-    return EditDocumentTool(
-        path=store.documents_dir(settings.data_dir),
-        store=store,
-    )(filename, old_string, new_string)
+    return factory.edit_document(filename, old_string, new_string)
 
 
 @mcp_app.tool()
@@ -312,7 +289,7 @@ async def write_document(
     content: str,
     ctx: Context,
     mode: Literal["prepend", "append", "replace"] = "replace",
-    store: Casebase = Depends(_get_mcp_user_store),
+    factory: ToolFactory = Depends(_get_mcp_tool_factory),
 ) -> str:
     """Write content to a document (prepend, append, or replace).
 
@@ -332,7 +309,4 @@ async def write_document(
     if response.action != "accept":
         return "Write denied by user."
 
-    return WriteDocumentTool(
-        path=store.documents_dir(settings.data_dir),
-        store=store,
-    )(filename, content, mode)
+    return factory.write_document(filename, content, mode)

@@ -1,33 +1,52 @@
-"""Unit tests for shared tool classes."""
+"""Unit tests for shared tool classes and ToolFactory."""
 
 from pathlib import Path
 
-from hivegent.tools import GetDocumentLinesTool, GetDocumentTool, ListDocumentsTool
-from hivegent.types import DocumentFilter
+from hivegent.tools import (
+    EditDocumentTool,
+    GetChunkTool,
+    GetDocumentLinesTool,
+    GetDocumentTool,
+    GlobDocumentsTool,
+    ListChunksTool,
+    ListDocumentsTool,
+    SearchTool,
+    WriteDocumentTool,
+)
+from hivegent.types import ChunkSummary, DocumentFilter, RetrievedChunk
 
 
 class TestListDocumentsTool:
     """Tests for ListDocumentsTool."""
 
     def test_empty_dir(self, tmp_path: Path) -> None:
-        tool = ListDocumentsTool(path=tmp_path)
+        tool = ListDocumentsTool(path=tmp_path, extension=".md")
         assert tool() == []
 
     def test_lists_md_files(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("hello")
         (tmp_path / "b.txt").write_text("world")  # not .md, should be ignored
-        result = tool = ListDocumentsTool(path=tmp_path)
+        tool = ListDocumentsTool(path=tmp_path, extension=".md")
         result = tool()
         filenames = [r.filename for r in result]
         assert "a.md" in filenames
         assert "b.txt" not in filenames
+
+    def test_custom_extension(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("hello")
+        (tmp_path / "b.md").write_text("world")
+        tool = ListDocumentsTool(path=tmp_path, extension=".txt")
+        result = tool()
+        filenames = [r.filename for r in result]
+        assert "a.txt" in filenames
+        assert "b.md" not in filenames
 
     def test_subdir_filter(self, tmp_path: Path) -> None:
         sub = tmp_path / "notes"
         sub.mkdir()
         (sub / "n.md").write_text("note")
         (tmp_path / "top.md").write_text("top")
-        tool = ListDocumentsTool(path=tmp_path)
+        tool = ListDocumentsTool(path=tmp_path, extension=".md")
         result = tool(subdir="notes")
         filenames = [r.filename for r in result]
         assert "notes/n.md" in filenames
@@ -37,14 +56,16 @@ class TestListDocumentsTool:
         (tmp_path / "a.md").write_text("a")
         (tmp_path / "b.md").write_text("b")
         doc_filter = DocumentFilter(excluded=frozenset({"b.md"}))
-        tool = ListDocumentsTool(path=tmp_path, document_filter=doc_filter)
+        tool = ListDocumentsTool(
+            path=tmp_path, extension=".md", document_filter=doc_filter
+        )
         result = tool()
         filenames = [r.filename for r in result]
         assert "a.md" in filenames
         assert "b.md" not in filenames
 
     def test_nonexistent_dir(self, tmp_path: Path) -> None:
-        tool = ListDocumentsTool(path=tmp_path / "nonexistent")
+        tool = ListDocumentsTool(path=tmp_path / "nonexistent", extension=".md")
         assert tool() == []
 
 
@@ -103,3 +124,163 @@ class TestGetDocumentLinesTool:
         result = tool("doc.md", start=-5)
         assert result is not None
         assert result.start_line == 1
+
+
+class TestGlobDocumentsTool:
+    """Tests for GlobDocumentsTool."""
+
+    def test_matches_pattern(self, tmp_path: Path) -> None:
+        (tmp_path / "notes.md").write_text("a")
+        (tmp_path / "readme.md").write_text("b")
+        tool = GlobDocumentsTool(path=tmp_path, extension=".md")
+        result = tool("note*")
+        assert result == ["notes.md"]
+
+    def test_custom_extension(self, tmp_path: Path) -> None:
+        (tmp_path / "data.txt").write_text("a")
+        (tmp_path / "data.md").write_text("b")
+        tool = GlobDocumentsTool(path=tmp_path, extension=".txt")
+        result = tool("*")
+        assert result == ["data.txt"]
+
+
+class TestSearchTool:
+    """Tests for SearchTool."""
+
+    def test_delegates_to_search_fn(self) -> None:
+        expected = [
+            RetrievedChunk(
+                store_key="user:test",
+                filename="doc.md",
+                chunk_index=0,
+                text="hello",
+                token_count=1,
+                score=0.9,
+            )
+        ]
+
+        def mock_search(query: str, top_k: int) -> list[RetrievedChunk]:
+            return expected
+
+        tool = SearchTool(search_fn=mock_search)
+        assert tool("hello", 5) == expected
+
+
+class TestListChunksTool:
+    """Tests for ListChunksTool."""
+
+    def test_returns_chunks(self) -> None:
+        chunks = [ChunkSummary(token_count=10, start_index=0, end_index=50)]
+
+        def loader(filename: str) -> list[ChunkSummary] | None:
+            if filename == "doc.md":
+                return chunks
+            return None
+
+        tool = ListChunksTool(loader=loader)
+        assert tool("doc.md") == chunks
+
+    def test_returns_none_for_missing(self) -> None:
+        tool = ListChunksTool(loader=lambda _: None)
+        assert tool("missing.md") is None
+
+    def test_respects_filter(self) -> None:
+        doc_filter = DocumentFilter(excluded=frozenset({"secret.md"}))
+        tool = ListChunksTool(
+            loader=lambda _: [ChunkSummary(token_count=1, start_index=0, end_index=1)],
+            document_filter=doc_filter,
+        )
+        assert tool("secret.md") is None
+
+
+class TestGetChunkTool:
+    """Tests for GetChunkTool."""
+
+    def test_returns_chunk_text(self) -> None:
+        def loader(filename: str, chunk_index: int) -> str | None:
+            if filename == "doc.md" and chunk_index == 0:
+                return "chunk content"
+            return None
+
+        tool = GetChunkTool(loader=loader)
+        assert tool("doc.md", 0) == "chunk content"
+
+    def test_returns_none_for_invalid_index(self) -> None:
+        tool = GetChunkTool(loader=lambda _f, _i: None)
+        assert tool("doc.md", 99) is None
+
+    def test_respects_filter(self) -> None:
+        doc_filter = DocumentFilter(excluded=frozenset({"secret.md"}))
+        tool = GetChunkTool(
+            loader=lambda _f, _i: "text",
+            document_filter=doc_filter,
+        )
+        assert tool("secret.md", 0) is None
+
+
+class TestEditDocumentTool:
+    """Tests for EditDocumentTool."""
+
+    def test_replaces_string(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.md").write_text("hello world")
+        tool = EditDocumentTool(path=tmp_path)
+        result = tool("doc.md", "hello", "goodbye")
+        assert "Replaced 1 occurrence" in result
+        assert (tmp_path / "doc.md").read_text() == "goodbye world"
+
+    def test_calls_on_write(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.md").write_text("hello world")
+        written: list[str] = []
+        tool = EditDocumentTool(path=tmp_path, on_write=written.append)
+        tool("doc.md", "hello", "goodbye")
+        assert written == ["doc.md"]
+
+    def test_error_on_missing_string(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.md").write_text("hello world")
+        tool = EditDocumentTool(path=tmp_path)
+        result = tool("doc.md", "missing", "new")
+        assert "Error" in result
+
+    def test_error_on_duplicate_string(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.md").write_text("hello hello")
+        tool = EditDocumentTool(path=tmp_path)
+        result = tool("doc.md", "hello", "goodbye")
+        assert "Error" in result
+        assert "2 times" in result
+
+
+class TestWriteDocumentTool:
+    """Tests for WriteDocumentTool."""
+
+    def test_replace_creates_file(self, tmp_path: Path) -> None:
+        tool = WriteDocumentTool(path=tmp_path, extension=".md")
+        result = tool("new.md", "content")
+        assert "Wrote" in result
+        assert (tmp_path / "new.md").read_text() == "content"
+
+    def test_append(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.md").write_text("start")
+        tool = WriteDocumentTool(path=tmp_path, extension=".md")
+        result = tool("doc.md", " end", mode="append")
+        assert "Appended" in result
+        assert (tmp_path / "doc.md").read_text() == "start end"
+
+    def test_prepend(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.md").write_text("end")
+        tool = WriteDocumentTool(path=tmp_path, extension=".md")
+        result = tool("doc.md", "start ", mode="prepend")
+        assert "Prepended" in result
+        assert (tmp_path / "doc.md").read_text() == "start end"
+
+    def test_rejects_wrong_extension(self, tmp_path: Path) -> None:
+        tool = WriteDocumentTool(path=tmp_path, extension=".md")
+        result = tool("doc.txt", "content")
+        assert "Error" in result
+
+    def test_calls_on_write(self, tmp_path: Path) -> None:
+        written: list[str] = []
+        tool = WriteDocumentTool(
+            path=tmp_path, extension=".md", on_write=written.append
+        )
+        tool("doc.md", "content")
+        assert written == ["doc.md"]

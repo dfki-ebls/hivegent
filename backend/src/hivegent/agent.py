@@ -9,20 +9,9 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from .config import settings
-from .tools import (
-    EditDocumentTool,
-    GetChunkTool,
-    GetDocumentLinesTool,
-    GetDocumentTool,
-    GlobDocumentsTool,
-    GrepTool,
-    ListChunksTool,
-    ListDocumentsTool,
-    SearchTool,
-    WriteDocumentTool,
-)
 from .prompts import EXPLORE_INSTRUCTIONS
 from .store import Casebase
+from .tool_factory import ToolFactory
 from .types import (
     ChunkSummary,
     DocumentFilter,
@@ -72,6 +61,16 @@ class UserDeps:
             return self.document_filter
         return self.group_filters.get(store.id)
 
+    @property
+    def tool_factory(self) -> ToolFactory:
+        """Create a ToolFactory from these dependencies."""
+        return ToolFactory(
+            store=self.store,
+            document_filter=self.document_filter,
+            group_stores=self.group_stores,
+            group_filters=self.group_filters,
+        )
+
 
 base_agent: Agent[None, str] = Agent()
 user_agent: Agent[UserDeps, str] = Agent(deps_type=UserDeps)
@@ -94,10 +93,7 @@ def list_documents(
         subdir: Only include documents under this subdirectory.
         max_depth: Maximum nesting depth relative to *subdir* (or root).
     """
-    return ListDocumentsTool(
-        path=ctx.deps.store.documents_dir(settings.data_dir),
-        document_filter=ctx.deps.document_filter,
-    )(subdir=subdir, max_depth=max_depth)
+    return ctx.deps.tool_factory.list_documents(subdir=subdir, max_depth=max_depth)
 
 
 @explore_toolset.tool
@@ -110,10 +106,7 @@ def glob_documents(
     Args:
         pattern: Glob pattern to match (e.g., "*.md", "notes/*.txt", "**/*.py").
     """
-    return GlobDocumentsTool(
-        path=ctx.deps.store.documents_dir(settings.data_dir),
-        document_filter=ctx.deps.document_filter,
-    )(pattern)
+    return ctx.deps.tool_factory.glob_documents(pattern)
 
 
 @explore_toolset.tool
@@ -135,10 +128,7 @@ def grep(
         context_lines: Number of lines to show before and after each match.
         include_content: Whether to include the matching line content.
     """
-    return GrepTool(
-        path=ctx.deps.store.documents_dir(settings.data_dir),
-        document_filter=ctx.deps.document_filter,
-    )(
+    return ctx.deps.tool_factory.grep(
         pattern,
         glob=glob,
         context_lines=context_lines,
@@ -168,12 +158,9 @@ def semantic_search(
         type: ``"dense"`` for vector embeddings, ``"sparse"`` for BM25/FTS.
         top_k: Maximum results to return.
     """
-    return SearchTool(
-        stores=ctx.deps.all_stores,
-        search_type=type,
-        document_filter=ctx.deps.document_filter,
-        group_filters=ctx.deps.group_filters,
-    )(query, top_k)
+    factory = ctx.deps.tool_factory
+    search = factory.dense_search if type == "dense" else factory.sparse_search
+    return search(query, top_k)
 
 
 @explore_toolset.tool
@@ -190,10 +177,7 @@ def get_document_lines(
         start: First line to include (1-indexed, default: 1).
         end: Last line to include (1-indexed, default: end of file).
     """
-    return GetDocumentLinesTool(
-        path=ctx.deps.store.documents_dir(settings.data_dir),
-        document_filter=ctx.deps.document_filter,
-    )(filename, start, end)
+    return ctx.deps.tool_factory.get_document_lines(filename, start, end)
 
 
 # --- RAG toolset (heavier retrieval tools + explore delegation) ---
@@ -208,10 +192,7 @@ def get_document(ctx: RunContext[UserDeps], filename: str) -> str | None:
     Args:
         filename: The relative path to retrieve (e.g. "report.md" or "projects/report.md").
     """
-    return GetDocumentTool(
-        path=ctx.deps.store.documents_dir(settings.data_dir),
-        document_filter=ctx.deps.document_filter,
-    )(filename)
+    return ctx.deps.tool_factory.get_document(filename)
 
 
 @rag_toolset.tool
@@ -224,10 +205,7 @@ def list_chunks(
     Args:
         filename: The relative document path (e.g. "report.md" or "projects/report.md").
     """
-    return ListChunksTool(
-        path=ctx.deps.store.chunks_dir(settings.data_dir),
-        document_filter=ctx.deps.document_filter,
-    )(filename)
+    return ctx.deps.tool_factory.list_chunks(filename)
 
 
 @rag_toolset.tool
@@ -242,13 +220,7 @@ def get_chunk(
         filename: The relative document path (e.g. "report.md" or "projects/report.md").
         chunk_index: The index of the chunk to retrieve.
     """
-    return GetChunkTool(
-        path=ctx.deps.store.chunks_dir(settings.data_dir),
-        document_filter=ctx.deps.document_filter,
-    )(
-        filename,
-        chunk_index,
-    )
+    return ctx.deps.tool_factory.get_chunk(filename, chunk_index)
 
 
 @rag_toolset.tool
@@ -314,11 +286,7 @@ def edit_document(
         old_string: The exact text to replace. Must appear exactly once.
         new_string: The replacement text.
     """
-    return EditDocumentTool(
-        path=ctx.deps.store.documents_dir(settings.data_dir),
-        store=ctx.deps.store,
-        document_filter=ctx.deps.document_filter,
-    )(filename, old_string, new_string)
+    return ctx.deps.tool_factory.edit_document(filename, old_string, new_string)
 
 
 @write_toolset.tool(requires_approval=True)
@@ -336,8 +304,4 @@ def write_document(
         mode: ``"replace"`` overwrites (creates if absent), ``"append"``
             adds to the end, ``"prepend"`` adds to the start.
     """
-    return WriteDocumentTool(
-        path=ctx.deps.store.documents_dir(settings.data_dir),
-        store=ctx.deps.store,
-        document_filter=ctx.deps.document_filter,
-    )(filename, content, mode)
+    return ctx.deps.tool_factory.write_document(filename, content, mode)

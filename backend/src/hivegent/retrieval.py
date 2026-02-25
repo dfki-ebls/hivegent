@@ -13,7 +13,7 @@ import cbrkit
 
 from .config import settings
 from .store import Casebase
-from .types import ChunkedDocument, DocumentFilter
+from .types import ChunkedDocument, DocumentFilter, RetrievedChunk
 
 __all__ = [
     "parse_chunk_key",
@@ -410,30 +410,30 @@ def search_sparse(
 
 def search_multi(
     stores: Sequence[Casebase],
-    query: str,
     search_type: Literal["dense", "sparse"],
+    query: str,
     top_k: int = 5,
     document_filter: DocumentFilter | None = None,
     group_filters: dict[str, DocumentFilter] | None = None,
-) -> Sequence[tuple[str, str, str, float]]:
+) -> list[RetrievedChunk]:
     """Search across multiple casebases and merge results.
 
-    Results are merged by deduplication on chunk_key, keeping the highest
-    score. Returns at most ``top_k`` results sorted by score descending.
+    Results are merged by score. Returns at most ``top_k`` results
+    sorted by score descending.
 
     Args:
         stores: Sequence of casebases to search.
-        query: Natural language search query.
         search_type: ``"dense"`` or ``"sparse"``.
+        query: Natural language search query.
         top_k: Maximum number of merged results.
         document_filter: Optional document filter for user stores.
         group_filters: Optional per-group document filters, keyed by
             group ID.  Group stores without an entry are unfiltered.
 
     Returns:
-        List of ``(store_key, chunk_key, text, score)`` tuples.
+        List of :class:`RetrievedChunk` results.
     """
-    all_results: list[tuple[str, str, str, float]] = []
+    all_results: list[tuple[float, RetrievedChunk]] = []
 
     for store in stores:
         if store.kind == "user":
@@ -448,7 +448,18 @@ def search_multi(
             )
             continue
         for chunk_key, text, score in results:
-            all_results.append((store.store_key, chunk_key, text, score))
+            filename, chunk_index = parse_chunk_key(chunk_key)
+            all_results.append((
+                score,
+                RetrievedChunk(
+                    store_key=store.store_key,
+                    filename=filename,
+                    chunk_index=chunk_index,
+                    text=text,
+                    token_count=len(text.split()),
+                    score=round(score, 4),
+                ),
+            ))
 
-    all_results.sort(key=lambda x: x[3], reverse=True)
-    return all_results[:top_k]
+    all_results.sort(key=lambda x: x[0], reverse=True)
+    return [chunk for _, chunk in all_results[:top_k]]
