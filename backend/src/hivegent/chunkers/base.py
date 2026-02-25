@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
 __all__ = ["ChunkData", "DocumentChunker"]
 
@@ -30,11 +30,17 @@ class DocumentChunker(ABC):
     chunk_size: ClassVar[int]
 
     @abstractmethod
-    def __call__(self, text: str, /) -> list[ChunkData]:
+    def __call__(
+        self,
+        text: str,
+        /,
+        config: dict[str, Any] | None = None,
+    ) -> list[ChunkData]:
         """Split text into chunks.
 
         Args:
             text: The document text to chunk.
+            config: Optional pipeline-specific configuration dict.
 
         Returns:
             List of ChunkData objects.

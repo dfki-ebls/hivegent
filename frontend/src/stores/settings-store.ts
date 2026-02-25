@@ -26,6 +26,7 @@ import {
   ExpandedDirsSchema,
   type Personality,
   PersonalitySchema,
+  PipelineConfigsSchema,
   type UserOverrides,
   UserOverridesSchema,
 } from "../lib/types";
@@ -44,6 +45,9 @@ const EMPTY_OVERRIDES: UserOverrides = {
   visionModel: "",
 };
 
+/** Per-pipeline configuration overrides, keyed by pipeline value. */
+export type PipelineConfigs = Record<string, Record<string, unknown>>;
+
 const UI_DEFAULTS = {
   documentTab: "fetched" as DocumentTab,
   conversionPipeline: ConversionPipeline.AUTO,
@@ -51,6 +55,8 @@ const UI_DEFAULTS = {
   expandedDirs: [""] as string[],
   personality: "default" as Personality,
   customSystemMessage: "",
+  conversionConfigs: {} as PipelineConfigs,
+  chunkingConfigs: {} as PipelineConfigs,
 };
 
 interface SettingsState {
@@ -67,6 +73,8 @@ interface SettingsState {
   expandedDirs: string[];
   personality: Personality;
   customSystemMessage: string;
+  conversionConfigs: PipelineConfigs;
+  chunkingConfigs: PipelineConfigs;
 
   // User context (from backend, not persisted)
   readGroups: string[];
@@ -93,6 +101,10 @@ interface SettingsState {
   setExpandedDirs: (dirs: string[]) => void;
   setPersonality: (personality: Personality) => void;
   setCustomSystemMessage: (message: string) => void;
+  setConversionConfig: (pipeline: string, config: Record<string, unknown>) => void;
+  setChunkingConfig: (pipeline: string, config: Record<string, unknown>) => void;
+  resetConversionConfig: (pipeline: string) => void;
+  resetChunkingConfig: (pipeline: string) => void;
 }
 
 /** Recompute effective values from backend defaults and user overrides. */
@@ -124,6 +136,8 @@ interface PersistedSettings {
   expandedDirs: string[];
   personality: Personality;
   customSystemMessage: string;
+  conversionConfigs: PipelineConfigs;
+  chunkingConfigs: PipelineConfigs;
 }
 
 /**
@@ -267,6 +281,28 @@ export const useSettingsStore = create<SettingsState>()(
 
       setCustomSystemMessage: (customSystemMessage) =>
         set({ customSystemMessage }),
+
+      setConversionConfig: (pipeline, config) =>
+        set((state) => ({
+          conversionConfigs: { ...state.conversionConfigs, [pipeline]: config },
+        })),
+
+      setChunkingConfig: (pipeline, config) =>
+        set((state) => ({
+          chunkingConfigs: { ...state.chunkingConfigs, [pipeline]: config },
+        })),
+
+      resetConversionConfig: (pipeline) =>
+        set((state) => {
+          const { [pipeline]: _, ...rest } = state.conversionConfigs;
+          return { conversionConfigs: rest };
+        }),
+
+      resetChunkingConfig: (pipeline) =>
+        set((state) => {
+          const { [pipeline]: _, ...rest } = state.chunkingConfigs;
+          return { chunkingConfigs: rest };
+        }),
     }),
     {
       name: "hivegent-settings",
@@ -279,6 +315,8 @@ export const useSettingsStore = create<SettingsState>()(
         expandedDirs: state.expandedDirs,
         personality: state.personality,
         customSystemMessage: state.customSystemMessage,
+        conversionConfigs: state.conversionConfigs,
+        chunkingConfigs: state.chunkingConfigs,
       }),
       merge: (persisted, current) => {
         const data = persisted as Record<string, unknown> | undefined;
@@ -309,6 +347,12 @@ export const useSettingsStore = create<SettingsState>()(
             typeof data.customSystemMessage === "string"
               ? data.customSystemMessage
               : UI_DEFAULTS.customSystemMessage,
+          conversionConfigs:
+            PipelineConfigsSchema.safeParse(data.conversionConfigs).data ??
+            UI_DEFAULTS.conversionConfigs,
+          chunkingConfigs:
+            PipelineConfigsSchema.safeParse(data.chunkingConfigs).data ??
+            UI_DEFAULTS.chunkingConfigs,
           ...computeEffective(current.backendDefaults, overrides),
         };
       },

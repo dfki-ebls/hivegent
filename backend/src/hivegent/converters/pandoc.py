@@ -3,10 +3,12 @@
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pypandoc
 
 from .base import DocumentConverter
+from .config import PandocConverterConfig
 
 __all__ = ["PandocConverter"]
 
@@ -69,8 +71,9 @@ class PandocConverter(DocumentConverter):
     name = "pandoc"
     extensions = frozenset(_FORMAT_OVERRIDES) | _SANDBOX_INCOMPATIBLE
 
-    def _convert_sync(self, path: Path) -> str:
+    def _convert_sync(self, path: Path, config: dict[str, Any] | None) -> str:
         """Run the synchronous pypandoc conversion."""
+        parsed = PandocConverterConfig(**(config or {}))
         suffix = path.suffix.lower()
         fmt = _FORMAT_OVERRIDES.get(suffix)
         use_sandbox = suffix not in _SANDBOX_INCOMPATIBLE
@@ -80,16 +83,23 @@ class PandocConverter(DocumentConverter):
                 to="markdown",
                 format=fmt,
                 sandbox=use_sandbox,
+                extra_args=parsed.extra_args,
             )
         )
 
-    async def __call__(self, path: Path, /) -> str:
+    async def __call__(
+        self,
+        path: Path,
+        /,
+        config: dict[str, Any] | None = None,
+    ) -> str:
         """Convert a document to markdown using pandoc.
 
         Args:
             path: Path to the document to convert.
+            config: Optional Pandoc pipeline configuration.
 
         Returns:
             The document content converted to markdown.
         """
-        return await asyncio.to_thread(self._convert_sync, path)
+        return await asyncio.to_thread(self._convert_sync, path, config)

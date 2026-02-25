@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from pydantic_ai import BinaryContent
 from pydantic_ai.models.openai import OpenAIResponsesModel
@@ -10,6 +11,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from ..agent import base_agent
 from ..types import LlmConfig
 from .base import DocumentConverter
+from .config import LlmConverterConfig
 
 __all__ = ["LLMConverter"]
 
@@ -52,17 +54,20 @@ class LLMConverter(DocumentConverter):
         self,
         path: Path,
         /,
+        config: dict[str, Any] | None = None,
         options: LlmConfig | None = None,
     ) -> str:
         """Convert a document to markdown using an LLM with vision capabilities.
 
         Args:
             path: Path to the document to convert.
+            config: Optional LLM converter configuration (e.g. custom prompt).
             options: LLM provider options (model, api_key, base_url).
 
         Returns:
             The document content converted to markdown.
         """
+        parsed = LlmConverterConfig(**(config or {}))
         opts = options or LlmConfig()
 
         if not opts.model:
@@ -81,7 +86,7 @@ class LLMConverter(DocumentConverter):
         )
 
         result = await base_agent.run(
-            [CONVERSION_PROMPT, content],
+            [parsed.prompt, content],
             model=OpenAIResponsesModel(
                 opts.model,
                 provider=OpenAIProvider(

@@ -2,7 +2,13 @@ import { Scissors } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { getChunkingPipelines } from "../lib/api";
-import type { ChunkingPipeline, ChunkingPipelineInfo } from "../lib/types";
+import {
+  ChunkingPipeline,
+  type ChunkingPipelineInfo,
+  ChunkingPipelineSchema,
+} from "../lib/types";
+import { useSettingsStore } from "../stores/settings-store";
+import { PipelineConfigDialog } from "./PipelineConfigDialog";
 import { Label } from "./ui/label";
 import {
   Select,
@@ -25,6 +31,10 @@ export function ChunkingPipelineSelector({
 }: ChunkingPipelineSelectorProps) {
   const [pipelines, setPipelines] = useState<ChunkingPipelineInfo[]>([]);
 
+  const chunkingConfigs = useSettingsStore((s) => s.chunkingConfigs);
+  const setChunkingConfig = useSettingsStore((s) => s.setChunkingConfig);
+  const resetChunkingConfig = useSettingsStore((s) => s.resetChunkingConfig);
+
   useEffect(() => {
     getChunkingPipelines()
       .then(setPipelines)
@@ -32,6 +42,9 @@ export function ChunkingPipelineSelector({
         // Silently fail — selector will be empty until pipelines load
       });
   }, []);
+
+  const selectedPipeline = pipelines.find((p) => p.value === value);
+  const isAuto = value === ChunkingPipeline.AUTO;
 
   return (
     <div className="flex items-center gap-2">
@@ -44,7 +57,10 @@ export function ChunkingPipelineSelector({
       </Label>
       <Select
         value={value}
-        onValueChange={(v) => onChange(v as ChunkingPipeline)}
+        onValueChange={(v) => {
+          const parsed = ChunkingPipelineSchema.safeParse(v);
+          if (parsed.success) onChange(parsed.data);
+        }}
         disabled={disabled}
       >
         <SelectTrigger
@@ -62,6 +78,18 @@ export function ChunkingPipelineSelector({
           ))}
         </SelectContent>
       </Select>
+      {selectedPipeline && !isAuto && (
+        <PipelineConfigDialog
+          pipelineLabel={selectedPipeline.label}
+          pipelineType="chunking"
+          configSchema={selectedPipeline.config_schema ?? {}}
+          configDefaults={selectedPipeline.config_defaults ?? {}}
+          currentConfig={chunkingConfigs[value] ?? {}}
+          onSave={(config) => setChunkingConfig(value, config)}
+          onReset={() => resetChunkingConfig(value)}
+          disabled={disabled}
+        />
+      )}
     </div>
   );
 }

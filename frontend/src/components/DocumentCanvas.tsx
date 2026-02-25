@@ -798,6 +798,8 @@ function ManageDocuments({
     (state) => state.conversionPipeline,
   );
   const chunkingPipeline = useSettingsStore((state) => state.chunkingPipeline);
+  const conversionConfigs = useSettingsStore((state) => state.conversionConfigs);
+  const chunkingConfigs = useSettingsStore((state) => state.chunkingConfigs);
   const setConversionPipeline = useSettingsStore(
     (state) => state.setConversionPipeline,
   );
@@ -867,11 +869,14 @@ function ManageDocuments({
   const handleSave = useCallback(
     async (filename: string, content: string) => {
       const file = new File([content], filename, { type: "text/plain" });
-      await uploadDocument(filename, file, { chunkingPipeline });
+      await uploadDocument(filename, file, {
+        chunkingPipeline,
+        chunkingConfig: chunkingConfigs[chunkingPipeline],
+      });
       await fetchDocuments();
       await fetchDirectoryTree();
     },
-    [fetchDocuments, fetchDirectoryTree, chunkingPipeline],
+    [fetchDocuments, fetchDirectoryTree, chunkingPipeline, chunkingConfigs],
   );
 
   // --- Include / exclude handlers ---
@@ -902,6 +907,8 @@ function ManageDocuments({
           apiKey: llmSettings.apiKey,
           baseUrl: llmSettings.baseUrl,
         }),
+        conversionConfig: conversionConfigs[conversionPipeline],
+        chunkingConfig: chunkingConfigs[chunkingPipeline],
       });
     },
     [
@@ -910,6 +917,8 @@ function ManageDocuments({
       chunkingPipeline,
       visionModel,
       llmSettings,
+      conversionConfigs,
+      chunkingConfigs,
     ],
   );
 
@@ -928,12 +937,17 @@ function ManageDocuments({
                 apiKey: llmSettings.apiKey,
                 baseUrl: llmSettings.baseUrl,
               }),
+              conversionConfig: conversionConfigs[conversionPipeline],
+              chunkingConfig: chunkingConfigs[chunkingPipeline],
             }
-          : { chunkingPipeline };
+          : {
+              chunkingPipeline,
+              chunkingConfig: chunkingConfigs[chunkingPipeline],
+            };
         await upload(file, options);
       }
     },
-    [upload, conversionPipeline, chunkingPipeline, visionModel, llmSettings],
+    [upload, conversionPipeline, chunkingPipeline, visionModel, llmSettings, conversionConfigs, chunkingConfigs],
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -978,6 +992,8 @@ function ManageDocuments({
           apiKey: llmSettings.apiKey,
           baseUrl: llmSettings.baseUrl,
         }),
+        conversionConfig: conversionConfigs[conversionPipeline],
+        chunkingConfig: chunkingConfigs[chunkingPipeline],
       };
 
       // Bundle directory files into a ZIP using JSZip
@@ -997,7 +1013,7 @@ function ManageDocuments({
         directoryInputRef.current.value = "";
       }
     },
-    [uploadCol, conversionPipeline, chunkingPipeline, visionModel, llmSettings],
+    [uploadCol, conversionPipeline, chunkingPipeline, visionModel, llmSettings, conversionConfigs, chunkingConfigs],
   );
 
   const handleZipInputChange = useCallback(
@@ -1016,6 +1032,8 @@ function ManageDocuments({
           apiKey: llmSettings.apiKey,
           baseUrl: llmSettings.baseUrl,
         }),
+        conversionConfig: conversionConfigs[conversionPipeline],
+        chunkingConfig: chunkingConfigs[chunkingPipeline],
       };
 
       await uploadCol(file, options);
@@ -1024,7 +1042,7 @@ function ManageDocuments({
         zipInputRef.current.value = "";
       }
     },
-    [uploadCol, conversionPipeline, chunkingPipeline, visionModel, llmSettings],
+    [uploadCol, conversionPipeline, chunkingPipeline, visionModel, llmSettings, conversionConfigs, chunkingConfigs],
   );
 
   // --- Directory handlers ---
@@ -1200,7 +1218,7 @@ function ManageDocuments({
         onRechunk={
           dialogState && !dialogState.isNew && dialogState.editable
             ? async () => {
-                await storeRechunk(dialogState.filename, chunkingPipeline);
+                await storeRechunk(dialogState.filename, chunkingPipeline, chunkingConfigs[chunkingPipeline]);
               }
             : undefined
         }

@@ -1,10 +1,12 @@
 """Token-based document chunker using chonkie."""
 
 from dataclasses import dataclass
+from typing import Any
 
 from chonkie import TokenChunker
 
 from .base import ChunkData, DocumentChunker
+from .config import TokenChunkerConfig
 
 __all__ = ["TokenDocumentChunker"]
 
@@ -20,16 +22,26 @@ class TokenDocumentChunker(DocumentChunker):
     name = "token"
     chunk_size = 2048
 
-    def __call__(self, text: str, /) -> list[ChunkData]:
+    def __call__(
+        self,
+        text: str,
+        /,
+        config: dict[str, Any] | None = None,
+    ) -> list[ChunkData]:
         """Split text into fixed token-count chunks.
 
         Args:
             text: The document text to chunk.
+            config: Optional chunker configuration.
 
         Returns:
             List of ChunkData objects.
         """
-        chunks = TokenChunker(chunk_size=self.chunk_size).chunk(text)
+        parsed = TokenChunkerConfig(**(config or {}))
+        chunks = TokenChunker(
+            chunk_size=parsed.chunk_size,
+            chunk_overlap=parsed.chunk_overlap,
+        ).chunk(text)
         return [
             ChunkData(
                 text=c.text,

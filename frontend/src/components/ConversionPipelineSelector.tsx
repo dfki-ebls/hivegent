@@ -2,7 +2,13 @@ import { FileType } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { getConversionPipelines } from "../lib/api";
-import type { ConversionPipeline, ConversionPipelineInfo } from "../lib/types";
+import {
+  ConversionPipeline,
+  type ConversionPipelineInfo,
+  ConversionPipelineSchema,
+} from "../lib/types";
+import { useSettingsStore } from "../stores/settings-store";
+import { PipelineConfigDialog } from "./PipelineConfigDialog";
 import { Label } from "./ui/label";
 import {
   Select,
@@ -25,6 +31,10 @@ export function ConversionPipelineSelector({
 }: ConversionPipelineSelectorProps) {
   const [pipelines, setPipelines] = useState<ConversionPipelineInfo[]>([]);
 
+  const conversionConfigs = useSettingsStore((s) => s.conversionConfigs);
+  const setConversionConfig = useSettingsStore((s) => s.setConversionConfig);
+  const resetConversionConfig = useSettingsStore((s) => s.resetConversionConfig);
+
   useEffect(() => {
     getConversionPipelines()
       .then(setPipelines)
@@ -32,6 +42,9 @@ export function ConversionPipelineSelector({
         // Silently fail — selector will be empty until pipelines load
       });
   }, []);
+
+  const selectedPipeline = pipelines.find((p) => p.value === value);
+  const isAuto = value === ConversionPipeline.AUTO;
 
   return (
     <div className="flex items-center gap-2">
@@ -44,7 +57,10 @@ export function ConversionPipelineSelector({
       </Label>
       <Select
         value={value}
-        onValueChange={(v) => onChange(v as ConversionPipeline)}
+        onValueChange={(v) => {
+          const parsed = ConversionPipelineSchema.safeParse(v);
+          if (parsed.success) onChange(parsed.data);
+        }}
         disabled={disabled}
       >
         <SelectTrigger
@@ -62,6 +78,18 @@ export function ConversionPipelineSelector({
           ))}
         </SelectContent>
       </Select>
+      {selectedPipeline && !isAuto && (
+        <PipelineConfigDialog
+          pipelineLabel={selectedPipeline.label}
+          pipelineType="conversion"
+          configSchema={selectedPipeline.config_schema ?? {}}
+          configDefaults={selectedPipeline.config_defaults ?? {}}
+          currentConfig={conversionConfigs[value] ?? {}}
+          onSave={(config) => setConversionConfig(value, config)}
+          onReset={() => resetConversionConfig(value)}
+          disabled={disabled}
+        />
+      )}
     </div>
   );
 }

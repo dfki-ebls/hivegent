@@ -39,6 +39,7 @@ interface UserDocumentsStore {
   rechunk: (
     filename: string,
     chunkingPipeline?: ChunkingPipeline,
+    chunkingConfig?: Record<string, unknown>,
   ) => Promise<void>;
   reconvert: (
     filename: string,
@@ -131,10 +132,10 @@ export const useUserDocumentsStore = create<UserDocumentsStore>(
       }
     },
 
-    rechunk: async (filename: string, chunkingPipeline?: ChunkingPipeline) => {
+    rechunk: async (filename: string, chunkingPipeline?: ChunkingPipeline, chunkingConfig?: Record<string, unknown>) => {
       set({ isLoading: true, error: null });
       try {
-        await rechunkDocument(filename, chunkingPipeline);
+        await rechunkDocument(filename, chunkingPipeline, chunkingConfig);
         await get().fetchDocuments();
         await get().fetchDirectoryTree();
       } catch (err) {

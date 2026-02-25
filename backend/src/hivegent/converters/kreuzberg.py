@@ -2,10 +2,12 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from kreuzberg import extract_file
+from kreuzberg import ExtractionConfig, extract_file
 
 from .base import DocumentConverter
+from .config import KreuzbergConverterConfig
 
 __all__ = ["KreuzbergConverter"]
 
@@ -62,14 +64,27 @@ class KreuzbergConverter(DocumentConverter):
         }
     )
 
-    async def __call__(self, path: Path, /) -> str:
+    async def __call__(
+        self,
+        path: Path,
+        /,
+        config: dict[str, Any] | None = None,
+    ) -> str:
         """Convert a document to plain text using Kreuzberg.
 
         Args:
             path: Path to the document to convert.
+            config: Optional Kreuzberg pipeline configuration.
 
         Returns:
             The extracted text content.
         """
-        result = await extract_file(path)
+        parsed = KreuzbergConverterConfig(**(config or {}))
+        extraction_config = ExtractionConfig(
+            force_ocr=parsed.force_ocr,
+            output_format=parsed.output_format,
+            enable_quality_processing=parsed.enable_quality_processing,
+            include_document_structure=parsed.include_document_structure,
+        )
+        result = await extract_file(path, config=extraction_config)
         return str(result.content)

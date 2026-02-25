@@ -3,6 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from markitdown import MarkItDown
 
@@ -60,11 +61,17 @@ class MarkItDownConverter(DocumentConverter):
         result = md.convert(str(path))
         return str(result.text_content)
 
-    async def __call__(self, path: Path, /) -> str:
+    async def __call__(
+        self,
+        path: Path,
+        /,
+        config: dict[str, Any] | None = None,
+    ) -> str:
         """Convert a document to markdown using MarkItDown.
 
         Args:
             path: Path to the document to convert.
+            config: Optional pipeline configuration (currently unused).
 
         Returns:
             The document content converted to markdown.

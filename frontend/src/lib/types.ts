@@ -21,6 +21,8 @@ export enum ConversionPipeline {
   DOCLING = "docling",
   MINERU = "mineru",
   PANDOC = "pandoc",
+  MARKITDOWN = "markitdown",
+  KREUZBERG = "kreuzberg",
 }
 
 /** Available chunking pipelines. */
@@ -43,6 +45,12 @@ export const DocumentTabSchema = z.enum(["fetched", "manage"]);
 export type DocumentTab = z.infer<typeof DocumentTabSchema>;
 
 export const ExpandedDirsSchema = z.array(z.string());
+
+/** Per-pipeline configuration overrides, keyed by pipeline value. */
+export const PipelineConfigsSchema = z.record(
+  z.string(),
+  z.record(z.string(), z.unknown()),
+);
 
 /** User-provided overrides stored in localStorage. Empty string = use backend default. */
 export const UserOverridesSchema = z.object({
@@ -92,6 +100,8 @@ export const ConversionPipelineInfoSchema = z.object({
   label: z.string(),
   description: z.string(),
   extensions: z.array(z.string()),
+  config_schema: z.record(z.string(), z.unknown()).optional(),
+  config_defaults: z.record(z.string(), z.unknown()).optional(),
 });
 export type ConversionPipelineInfo = z.infer<
   typeof ConversionPipelineInfoSchema
@@ -102,6 +112,8 @@ export const ChunkingPipelineInfoSchema = z.object({
   value: z.string(),
   label: z.string(),
   description: z.string(),
+  config_schema: z.record(z.string(), z.unknown()).optional(),
+  config_defaults: z.record(z.string(), z.unknown()).optional(),
 });
 export type ChunkingPipelineInfo = z.infer<typeof ChunkingPipelineInfoSchema>;
 

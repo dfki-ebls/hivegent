@@ -4,6 +4,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from .chunkers import ChunkingPipeline, get_chunker
 from .config import settings
@@ -46,6 +47,7 @@ def chunk_document(
     filename: str,
     content: str,
     chunking_pipeline: ChunkingPipeline = ChunkingPipeline.AUTO,
+    chunking_config: dict[str, Any] | None = None,
 ) -> ChunkedDocument:
     """Chunk a document and persist the results to disk.
 
@@ -54,12 +56,13 @@ def chunk_document(
         filename: The document filename.
         content: The document text content.
         chunking_pipeline: The chunking pipeline to use.
+        chunking_config: Optional pipeline-specific configuration.
 
     Returns:
         The chunked document with metadata.
     """
     chunker = get_chunker(chunking_pipeline, filename=filename)
-    raw_chunks = chunker(content)
+    raw_chunks = chunker(content, config=chunking_config)
 
     chunks = [
         ChunkInfo(

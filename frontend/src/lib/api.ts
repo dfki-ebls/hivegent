@@ -146,7 +146,9 @@ export async function getMessages(
   if (!res.ok) {
     return [];
   }
-  return res.json();
+  const data: unknown = await res.json();
+  if (!Array.isArray(data)) return [];
+  return data as UIMessage[];
 }
 
 // ============================================================
@@ -168,6 +170,8 @@ export interface UploadDocumentOptions {
   chunkingPipeline?: ChunkingPipeline;
   llm?: LlmConfig;
   targetDirectory?: string;
+  conversionConfig?: Record<string, unknown>;
+  chunkingConfig?: Record<string, unknown>;
 }
 
 export async function uploadDocument(
@@ -201,6 +205,12 @@ export async function uploadDocument(
   if (requiresConversion(filename) && options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
   }
+  if (options?.conversionConfig && Object.keys(options.conversionConfig).length > 0) {
+    formData.append("conversion_config", JSON.stringify(options.conversionConfig));
+  }
+  if (options?.chunkingConfig && Object.keys(options.chunkingConfig).length > 0) {
+    formData.append("chunking_config", JSON.stringify(options.chunkingConfig));
+  }
 
   const res = await authFetch(url, {
     method: "PUT",
@@ -221,6 +231,8 @@ export interface UploadCollectionOptions {
   conversionPipeline?: ConversionPipeline;
   chunkingPipeline?: ChunkingPipeline;
   llm?: LlmConfig;
+  conversionConfig?: Record<string, unknown>;
+  chunkingConfig?: Record<string, unknown>;
 }
 
 /** Upload a markdown collection as a ZIP archive. */
@@ -246,6 +258,12 @@ export async function uploadCollection(
 
   if (options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
+  }
+  if (options?.conversionConfig && Object.keys(options.conversionConfig).length > 0) {
+    formData.append("conversion_config", JSON.stringify(options.conversionConfig));
+  }
+  if (options?.chunkingConfig && Object.keys(options.chunkingConfig).length > 0) {
+    formData.append("chunking_config", JSON.stringify(options.chunkingConfig));
   }
 
   const res = await authFetch(url, {
@@ -497,6 +515,8 @@ export interface ReconvertDocumentOptions {
   conversionPipeline?: ConversionPipeline;
   chunkingPipeline?: ChunkingPipeline;
   llm?: LlmConfig;
+  conversionConfig?: Record<string, unknown>;
+  chunkingConfig?: Record<string, unknown>;
 }
 
 export async function reconvertDocument(
@@ -512,6 +532,8 @@ export async function reconvertDocument(
       conversion_pipeline: options?.conversionPipeline ?? "auto",
       chunking_pipeline: options?.chunkingPipeline ?? "auto",
       llm: options?.llm ?? {},
+      conversion_config: options?.conversionConfig ?? null,
+      chunking_config: options?.chunkingConfig ?? null,
     }),
   });
 
@@ -529,23 +551,24 @@ export async function reconvertDocument(
 export async function rechunkDocument(
   filename: string,
   chunkingPipeline?: ChunkingPipeline,
-  chunkSize?: number,
+  chunkingConfig?: Record<string, unknown>,
 ): Promise<ChunkedDocumentResponse> {
-  const params = new URLSearchParams();
+  const body: Record<string, unknown> = {};
   if (chunkingPipeline) {
-    params.set("chunking_pipeline", chunkingPipeline);
+    body.chunking_pipeline = chunkingPipeline;
   }
-  if (chunkSize) {
-    params.set("chunk_size", chunkSize.toString());
-  }
-
-  let url = `${API_BASE_URL}/api/documents/rechunk/${encodeFilePath(filename)}`;
-  const queryString = params.toString();
-  if (queryString) {
-    url += `?${queryString}`;
+  if (chunkingConfig && Object.keys(chunkingConfig).length > 0) {
+    body.chunking_config = chunkingConfig;
   }
 
-  const res = await authFetch(url, { method: "POST" });
+  const res = await authFetch(
+    `${API_BASE_URL}/api/documents/rechunk/${encodeFilePath(filename)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Rechunk failed" }));
@@ -747,6 +770,12 @@ export async function uploadGroupDocument(
   if (requiresConversion(filename) && options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
   }
+  if (options?.conversionConfig && Object.keys(options.conversionConfig).length > 0) {
+    formData.append("conversion_config", JSON.stringify(options.conversionConfig));
+  }
+  if (options?.chunkingConfig && Object.keys(options.chunkingConfig).length > 0) {
+    formData.append("chunking_config", JSON.stringify(options.chunkingConfig));
+  }
 
   const res = await authFetch(url, { method: "PUT", body: formData });
   if (!res.ok) {
@@ -781,6 +810,12 @@ export async function uploadGroupCollection(
 
   if (options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
+  }
+  if (options?.conversionConfig && Object.keys(options.conversionConfig).length > 0) {
+    formData.append("conversion_config", JSON.stringify(options.conversionConfig));
+  }
+  if (options?.chunkingConfig && Object.keys(options.chunkingConfig).length > 0) {
+    formData.append("chunking_config", JSON.stringify(options.chunkingConfig));
   }
 
   const res = await authFetch(url, { method: "POST", body: formData });

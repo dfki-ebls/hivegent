@@ -3,6 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
@@ -32,11 +33,17 @@ class MarkerConverter(DocumentConverter):
         result = converter(str(path))
         return str(result.markdown)
 
-    async def __call__(self, path: Path, /) -> str:
+    async def __call__(
+        self,
+        path: Path,
+        /,
+        config: dict[str, Any] | None = None,
+    ) -> str:
         """Convert a PDF document to markdown using Marker.
 
         Args:
             path: Path to the PDF document to convert.
+            config: Optional pipeline configuration (currently unused).
 
         Returns:
             The document content converted to markdown.

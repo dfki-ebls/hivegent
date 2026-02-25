@@ -1,11 +1,24 @@
 """Document conversion infrastructure for Hivegent."""
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, ValidationError
 
 from cbrkit.helpers import optional_dependencies
 
 from .base import DocumentConverter
+from .config import (
+    DoclingConverterConfig,
+    KreuzbergConverterConfig,
+    LlmConverterConfig,
+    MarkerConverterConfig,
+    MarkItDownConverterConfig,
+    MinerUConverterConfig,
+    PandocConverterConfig,
+)
 from .llm import LLMConverter
 from .pandoc import PandocConverter
 
@@ -16,7 +29,10 @@ __all__ = [
     "get_converter",
     "get_pipelines_info",
     "resolve_auto_pipeline",
+    "validate_conversion_config",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class ConversionPipeline(StrEnum):
@@ -39,6 +55,7 @@ class _ConverterEntry:
     converter_class: type[DocumentConverter]
     label: str
     description: str
+    config_model: type[BaseModel] | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -49,6 +66,8 @@ class ConversionPipelineInfo:
     label: str
     description: str
     extensions: list[str]
+    config_schema: dict[str, Any] = field(default_factory=dict)
+    config_defaults: dict[str, Any] = field(default_factory=dict)
 
 
 # Core converters (always available)
@@ -57,12 +76,14 @@ _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
         converter_class=LLMConverter,
         label="LLM",
         description="Uses vision model for all files",
+        config_model=LlmConverterConfig,
     ),
     ConversionPipeline.PANDOC: _ConverterEntry(
         converter_class=PandocConverter,
         label="Pandoc",
         description="Universal converter for ODT, RST, RTF, EPUB, LaTeX, Org, "
         "DocBook, Typst, and more",
+        config_model=PandocConverterConfig,
     ),
 }
 
@@ -74,6 +95,7 @@ with optional_dependencies():
         converter_class=MarkerConverter,
         label="Marker",
         description="Best for PDF documents",
+        config_model=MarkerConverterConfig,
     )
 
 with optional_dependencies():
@@ -83,6 +105,7 @@ with optional_dependencies():
         converter_class=DoclingConverter,
         label="Docling",
         description="Best for Office documents",
+        config_model=DoclingConverterConfig,
     )
 
 with optional_dependencies():
@@ -92,6 +115,7 @@ with optional_dependencies():
         converter_class=MinerUConverter,
         label="MinerU",
         description="High-quality PDF parsing (no XLSX)",
+        config_model=MinerUConverterConfig,
     )
 
 with optional_dependencies():
@@ -101,6 +125,7 @@ with optional_dependencies():
         converter_class=MarkItDownConverter,
         label="MarkItDown",
         description="Microsoft's converter for Office, PDF, images, and more",
+        config_model=MarkItDownConverterConfig,
     )
 
 with optional_dependencies():
@@ -110,6 +135,7 @@ with optional_dependencies():
         converter_class=KreuzbergConverter,
         label="Kreuzberg",
         description="Text extraction from 75+ formats with OCR support",
+        config_model=KreuzbergConverterConfig,
     )
 
 _AUTO_MAPPING: dict[str, ConversionPipeline] = {
@@ -217,6 +243,34 @@ def get_converter(
     return entry.converter_class()
 
 
+def validate_conversion_config(
+    pipeline: ConversionPipeline,
+    config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Validate a conversion config dict against the pipeline's config model.
+
+    For ``AUTO`` pipelines, validation is skipped since the concrete pipeline
+    is not known until file extension resolution.
+
+    Args:
+        pipeline: The conversion pipeline.
+        config: The raw config dict to validate.
+
+    Returns:
+        The validated and normalized config dict, or ``None`` if no config.
+
+    Raises:
+        ValidationError: If the config is invalid for the pipeline.
+    """
+    if config is None or pipeline == ConversionPipeline.AUTO:
+        return config
+    entry = _CONVERTER_CONFIG.get(pipeline)
+    if entry is None or entry.config_model is None:
+        return config
+    validated = entry.config_model(**config)
+    return validated.model_dump()
+
+
 def get_pipelines_info() -> list[ConversionPipelineInfo]:
     """Get metadata for all conversion pipelines."""
     all_extensions = sorted(
@@ -235,12 +289,25 @@ def get_pipelines_info() -> list[ConversionPipelineInfo]:
         ),
     ]
     for pipeline, entry in _CONVERTER_CONFIG.items():
+        config_schema: dict[str, Any] = {}
+        config_defaults: dict[str, Any] = {}
+        if entry.config_model is not None:
+            config_schema = entry.config_model.model_json_schema()
+            try:
+                config_defaults = entry.config_model().model_dump()
+            except ValidationError:
+                logger.warning(
+                    "Config model %s is not default-constructible",
+                    entry.config_model.__name__,
+                )
         infos.append(
             ConversionPipelineInfo(
                 value=pipeline.value,
                 label=entry.label,
                 description=entry.description,
                 extensions=sorted(entry.converter_class.extensions),
+                config_schema=config_schema,
+                config_defaults=config_defaults,
             )
         )
     return infos
