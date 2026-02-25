@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { FileSearch, Key, LogOut, User } from "lucide-react";
+import { FileSearch, Key, LogOut, User, UserCog } from "lucide-react";
 import { isOidcConfigured } from "../lib/auth-config";
 import { useAuth } from "../lib/auth-context";
 import { Button } from "./ui/button";
@@ -39,6 +39,12 @@ function UserMenu() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        <DropdownMenuItem asChild>
+          <Link to="/settings/account" className="flex items-center gap-2">
+            <UserCog className="h-4 w-4" />
+            Account
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <Link to="/settings/tokens" className="flex items-center gap-2">
             <Key className="h-4 w-4" />

@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -15,7 +16,7 @@ pytestmark = pytest.mark.slow
 def _seed_store(
     data_dir: Path,
     store: Casebase,
-    annotations: list[dict],
+    annotations: list[dict[str, Any]],
 ) -> None:
     """Seed documents and chunks from annotations fixture."""
     docs_dir = store.documents_dir(data_dir)
@@ -44,7 +45,7 @@ def _seed_store(
 def test_sparse_search_finds_relevant_chunks(
     data_dir: Path,
     user_store: Casebase,
-    annotations: list[dict],
+    annotations: list[dict[str, Any]],
 ) -> None:
     """BM25 search returns relevant chunks in top-k for each annotation."""
     _seed_store(data_dir, user_store, annotations)
@@ -63,7 +64,7 @@ def test_sparse_search_finds_relevant_chunks(
 def test_sparse_search_returns_nonempty(
     data_dir: Path,
     user_store: Casebase,
-    annotations: list[dict],
+    annotations: list[dict[str, Any]],
 ) -> None:
     """Each annotation query returns at least one result."""
     _seed_store(data_dir, user_store, annotations)

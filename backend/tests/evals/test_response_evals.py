@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic_ai.models.test import TestModel
@@ -17,7 +18,7 @@ pytestmark = pytest.mark.slow
 def _seed_and_get_deps(
     data_dir: Path,
     user_store: Casebase,
-    annotations: list[dict],
+    annotations: list[dict[str, Any]],
 ) -> UserDeps:
     """Seed documents and return UserDeps."""
     docs_dir = user_store.documents_dir(data_dir)
@@ -41,7 +42,7 @@ def _seed_and_get_deps(
 async def test_response_with_test_model(
     data_dir: Path,
     user_store: Casebase,
-    annotations: list[dict],
+    annotations: list[dict[str, Any]],
 ) -> None:
     """TestModel agent produces a string response for each annotation query."""
     deps = _seed_and_get_deps(data_dir, user_store, annotations)
@@ -65,7 +66,7 @@ async def test_response_with_test_model(
 async def test_response_contains_expected_text(
     data_dir: Path,
     user_store: Casebase,
-    annotations: list[dict],
+    annotations: list[dict[str, Any]],
 ) -> None:
     """Real LLM response contains keywords from the expected answer."""
     from pydantic_ai.models.openai import OpenAIResponsesModel

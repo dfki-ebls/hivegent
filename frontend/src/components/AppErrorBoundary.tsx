@@ -2,11 +2,12 @@
  * Application-level error boundary with recovery options.
  *
  * Catches render errors and offers users a way to recover by either
- * reloading the page or clearing all local storage and reloading.
+ * reloading the page, clearing local storage, or resetting all data.
  */
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+import { deleteAllUserData } from "../lib/api";
 import { clearAllStorage } from "../stores/storage";
 
 interface Props {
@@ -16,15 +17,16 @@ interface Props {
 interface State {
   hasError: boolean;
   error: Error | null;
+  isResetting: boolean;
 }
 
 export class AppErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, isResetting: false };
   }
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { hasError: true, error };
   }
 
@@ -35,6 +37,13 @@ export class AppErrorBoundary extends Component<Props, State> {
       info.componentStack,
     );
   }
+
+  private handleResetEverything = () => {
+    this.setState({ isResetting: true });
+    deleteAllUserData()
+      .catch((e) => console.error("Failed to delete server data:", e))
+      .finally(() => clearAllStorage());
+  };
 
   render() {
     if (!this.state.hasError) {
@@ -70,6 +79,14 @@ export class AppErrorBoundary extends Component<Props, State> {
               className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground"
             >
               Clear local data &amp; reload
+            </button>
+            <button
+              type="button"
+              disabled={this.state.isResetting}
+              onClick={this.handleResetEverything}
+              className="inline-flex items-center justify-center rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
+            >
+              {this.state.isResetting ? "Resetting..." : "Reset everything"}
             </button>
           </div>
         </div>

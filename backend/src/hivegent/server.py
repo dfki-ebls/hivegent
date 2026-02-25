@@ -77,10 +77,14 @@ from .messages import (
 )
 from .observability import configure_observability
 from .prompts import CITATION_INSTRUCTIONS, PERSONALITY_TEMPLATES
-from .retrieval import sync_index
+from .retrieval import invalidate_store, sync_index
 from .store import Casebase
 from .tokens import token_store
 from .types import (
+    BulkDeleteConversationsResponse,
+    BulkDeleteDocumentsResponse,
+    BulkDeleteUserDataResponse,
+    BulkRevokeTokensResponse,
     ChatRequestConfig,
     ChunkedDocument,
     CollectionUploadResponse,
@@ -449,6 +453,21 @@ async def delete_conversation_endpoint(
     return DeleteConversationResponse(
         id=conversation_id,
         message="Conversation deleted successfully",
+    )
+
+
+@api_router.delete("/conversations")
+async def delete_all_conversations(
+    user: Annotated[User, Depends(get_current_user)],
+) -> BulkDeleteConversationsResponse:
+    """Delete all conversations for the authenticated user."""
+    conversations_dir = settings.get_user_conversations_dir(user.id)
+    count = sum(1 for f in conversations_dir.glob("*.json") if f.is_file())
+    if conversations_dir.exists():
+        shutil.rmtree(conversations_dir)
+    return BulkDeleteConversationsResponse(
+        deleted_count=count,
+        message="All conversations deleted successfully",
     )
 
 
@@ -1036,6 +1055,26 @@ async def delete_document(
     )
 
 
+@api_router.delete("/documents")
+async def delete_all_documents(
+    user: Annotated[User, Depends(get_current_user)],
+) -> BulkDeleteDocumentsResponse:
+    """Delete all documents, chunks, originals, and the search index."""
+    store = _user_store(user)
+    data_dir = settings.data_dir
+
+    for dir_fn in (store.documents_dir, store.chunks_dir, store.originals_dir, store.lancedb_dir):
+        d = dir_fn(data_dir)
+        if d.exists():
+            shutil.rmtree(d)
+
+    invalidate_store(store)
+
+    return BulkDeleteDocumentsResponse(
+        message="All documents and search index deleted successfully",
+    )
+
+
 @api_router.get("/conversion-pipelines")
 async def list_conversion_pipelines() -> list[ConversionPipelineInfo]:
     """Get metadata for all conversion pipelines."""
@@ -1527,6 +1566,42 @@ async def revoke_token(
     """Revoke a personal access token."""
     if not token_store.revoke_token(user.id, token_id):
         raise HTTPException(status_code=404, detail="Token not found")
+
+
+@api_router.delete("/tokens")
+async def revoke_all_tokens(
+    user: Annotated[User, Depends(get_current_user)],
+) -> BulkRevokeTokensResponse:
+    """Revoke all personal access tokens for the authenticated user."""
+    tokens_path = settings.get_user_tokens_path(user.id)
+    count = len(token_store.list_tokens(user.id))
+    if tokens_path.exists():
+        tokens_path.unlink()
+    return BulkRevokeTokensResponse(
+        revoked_count=count,
+        message="All tokens revoked successfully",
+    )
+
+
+@api_router.delete("/user-data")
+async def delete_all_user_data(
+    user: Annotated[User, Depends(get_current_user)],
+) -> BulkDeleteUserDataResponse:
+    """Delete all data for the authenticated user.
+
+    Wipes conversations, documents, chunks, originals, search index,
+    and tokens in one operation.
+    """
+    store = _user_store(user)
+    invalidate_store(store)
+
+    user_dir = settings.get_user_dir(user.id)
+    if user_dir.exists():
+        shutil.rmtree(user_dir)
+
+    return BulkDeleteUserDataResponse(
+        message="All user data deleted successfully",
+    )
 
 
 # --- User-facing group endpoints (read-only, membership required) ---

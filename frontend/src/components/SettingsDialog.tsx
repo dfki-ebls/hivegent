@@ -1,8 +1,7 @@
-import { RotateCcwIcon, SettingsIcon, Trash2Icon } from "lucide-react";
+import { RotateCcwIcon, SettingsIcon } from "lucide-react";
 import { useState } from "react";
 import { PERSONALITY_OPTIONS, type Personality } from "../lib/types";
 import { useSettingsStore } from "../stores/settings-store";
-import { clearAllStorage } from "../stores/storage";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -79,7 +78,7 @@ export function SettingsDialog() {
           <span className="sr-only">Settings</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
@@ -88,57 +87,58 @@ export function SettingsDialog() {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-4 py-4">
-          <SettingsSection
-            label="Model"
-            htmlFor="model"
-            description="The main model to use for chat. Leave empty to use the server default."
-          >
-            <Input
-              id="model"
-              placeholder="e.g., openai/gpt-4o"
-              value={llm.model}
-              onChange={(e) => setLLM({ model: e.target.value })}
-            />
-          </SettingsSection>
+        <div className="grid md:grid-cols-2 gap-6 py-4">
+          {/* Left column — Model Configuration */}
+          <div className="grid gap-4">
+            <SettingsSection
+              label="Model"
+              htmlFor="model"
+              description="The main model to use for chat. Leave empty to use the server default."
+            >
+              <Input
+                id="model"
+                placeholder="e.g., openai/gpt-4o"
+                value={llm.model}
+                onChange={(e) => setLLM({ model: e.target.value })}
+              />
+            </SettingsSection>
 
-          <SettingsSection
-            label="API Key (optional)"
-            htmlFor="api-key"
-            description={
-              hasServerApiKey
-                ? "Server API key configured. Override it here or leave empty to use the server key."
-                : "Only required for providers that need authentication."
-            }
-          >
-            <Input
-              id="api-key"
-              type="password"
-              placeholder={
+            <SettingsSection
+              label="API Key (optional)"
+              htmlFor="api-key"
+              description={
                 hasServerApiKey
-                  ? "Using server API key"
-                  : "Enter your API key (if required)"
+                  ? "Server API key configured. Override it here or leave empty to use the server key."
+                  : "Only required for providers that need authentication."
               }
-              value={llm.apiKey}
-              onChange={(e) => setLLM({ apiKey: e.target.value })}
-            />
-          </SettingsSection>
+            >
+              <Input
+                id="api-key"
+                type="password"
+                placeholder={
+                  hasServerApiKey
+                    ? "Using server API key"
+                    : "Enter your API key (if required)"
+                }
+                value={llm.apiKey}
+                onChange={(e) => setLLM({ apiKey: e.target.value })}
+              />
+            </SettingsSection>
 
-          <SettingsSection
-            label="Base URL"
-            htmlFor="base-url"
-            description="API endpoint for the LLM provider."
-          >
-            <Input
-              id="base-url"
-              type="url"
-              placeholder="e.g., http://localhost:11434/v1"
-              value={llm.baseUrl}
-              onChange={(e) => setLLM({ baseUrl: e.target.value })}
-            />
-          </SettingsSection>
+            <SettingsSection
+              label="Base URL"
+              htmlFor="base-url"
+              description="API endpoint for the LLM provider."
+            >
+              <Input
+                id="base-url"
+                type="url"
+                placeholder="e.g., http://localhost:11434/v1"
+                value={llm.baseUrl}
+                onChange={(e) => setLLM({ baseUrl: e.target.value })}
+              />
+            </SettingsSection>
 
-          <div className="pt-2 border-t grid gap-4">
             <SettingsSection
               label="Small Model (optional)"
               htmlFor="small-model"
@@ -166,7 +166,8 @@ export function SettingsDialog() {
             </SettingsSection>
           </div>
 
-          <div className="pt-2 border-t grid gap-4">
+          {/* Right column — Customization */}
+          <div className="grid gap-4 content-start">
             <SettingsSection
               label="Personality"
               description="Choose how the assistant responds."
@@ -206,17 +207,11 @@ export function SettingsDialog() {
           </div>
         </div>
 
-        <DialogFooter className="sm:justify-between">
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={reset}>
-              <RotateCcwIcon className="h-4 w-4 mr-2" />
-              Reset to Server Defaults
-            </Button>
-            <Button variant="destructive" onClick={clearAllStorage}>
-              <Trash2Icon className="h-4 w-4 mr-2" />
-              Clear All Local Data
-            </Button>
-          </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={reset}>
+            <RotateCcwIcon className="h-4 w-4 mr-2" />
+            Reset to Server Defaults
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

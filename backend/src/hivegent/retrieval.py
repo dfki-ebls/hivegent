@@ -16,6 +16,7 @@ from .store import Casebase
 from .types import ChunkedDocument, DocumentFilter, RetrievedChunk
 
 __all__ = [
+    "invalidate_store",
     "parse_chunk_key",
     "search_dense",
     "search_multi",
@@ -240,6 +241,21 @@ def _load_all_chunks_from_dir(chunks_dir: Path) -> dict[str, str]:
             casebase[key] = chunk.text
 
     return casebase
+
+
+def invalidate_store(store: Casebase) -> None:
+    """Remove a casebase from the retrieval cache.
+
+    Call this before wiping a store's LanceDB directory so that stale
+    connections are not reused.
+
+    Args:
+        store: The casebase to evict.
+    """
+    key = store.store_key
+    with _state._lock:
+        _state._storage_cache.pop(key, None)
+        _state._pending_reindex.discard(key)
 
 
 def sync_index(store: Casebase) -> None:

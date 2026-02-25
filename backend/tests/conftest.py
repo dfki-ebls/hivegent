@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -50,7 +51,7 @@ def app_client(data_dir: Path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN201
 
 
 @pytest.fixture()
-def annotations() -> list[dict]:
+def annotations() -> list[dict[str, Any]]:
     """Load the sample annotations fixture."""
     path = FIXTURES_DIR / "annotations.json"
     return json.loads(path.read_text(encoding="utf-8"))

@@ -85,6 +85,10 @@ class DocumentFilter:
 
 
 __all__ = [
+    "BulkDeleteConversationsResponse",
+    "BulkDeleteDocumentsResponse",
+    "BulkDeleteUserDataResponse",
+    "BulkRevokeTokensResponse",
     "ChatRequestConfig",
     "ChunkedDocument",
     "ChunkInfo",
@@ -493,6 +497,32 @@ class DeleteDirectoryResponse(BaseModel):
 
     path: str = Field(description="The deleted directory path")
     files_deleted: int = Field(description="Number of files deleted")
+    message: str = Field(description="Status message")
+
+
+class BulkDeleteConversationsResponse(BaseModel):
+    """Response for bulk conversation deletion."""
+
+    deleted_count: int = Field(description="Number of conversations deleted")
+    message: str = Field(description="Status message")
+
+
+class BulkDeleteDocumentsResponse(BaseModel):
+    """Response for bulk document deletion."""
+
+    message: str = Field(description="Status message")
+
+
+class BulkRevokeTokensResponse(BaseModel):
+    """Response for bulk token revocation."""
+
+    revoked_count: int = Field(description="Number of tokens revoked")
+    message: str = Field(description="Status message")
+
+
+class BulkDeleteUserDataResponse(BaseModel):
+    """Response for complete user data wipe."""
+
     message: str = Field(description="Status message")
 
 

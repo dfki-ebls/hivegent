@@ -630,6 +630,62 @@ export async function moveDocument(
 }
 
 // ============================================================
+// Bulk delete API functions
+// ============================================================
+
+/** Delete all conversations for the authenticated user. */
+export async function deleteAllConversations(): Promise<void> {
+  const res = await authFetch(`${API_BASE_URL}/api/conversations`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Failed to delete conversations" }));
+    throw new Error(error.detail || "Failed to delete conversations");
+  }
+}
+
+/** Delete all documents, chunks, originals, and the search index. */
+export async function deleteAllDocuments(): Promise<void> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Failed to delete documents" }));
+    throw new Error(error.detail || "Failed to delete documents");
+  }
+}
+
+/** Revoke all personal access tokens. */
+export async function revokeAllTokens(): Promise<void> {
+  const res = await authFetch(`${API_BASE_URL}/api/tokens`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Failed to revoke tokens" }));
+    throw new Error(error.detail || "Failed to revoke tokens");
+  }
+}
+
+/** Delete all user data (conversations, documents, tokens). */
+export async function deleteAllUserData(): Promise<void> {
+  const res = await authFetch(`${API_BASE_URL}/api/user-data`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const error = await res
+      .json()
+      .catch(() => ({ detail: "Failed to delete user data" }));
+    throw new Error(error.detail || "Failed to delete user data");
+  }
+}
+
+// ============================================================
 // Group API functions (membership required, write requires write permission)
 // ============================================================
 

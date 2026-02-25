@@ -4,9 +4,9 @@ import logging
 from typing import Literal
 
 from fastmcp import Context, FastMCP
-from fastmcp.dependencies import (  # pyright: ignore[reportAttributeAccessIssue]
+from fastmcp.dependencies import (
     CurrentAccessToken,
-    Depends,
+    Depends,  # pyright: ignore[reportAttributeAccessIssue]
 )
 from fastmcp.server.auth import AccessToken, OIDCProxy
 from pydantic_ai.models.openai import OpenAIResponsesModel
