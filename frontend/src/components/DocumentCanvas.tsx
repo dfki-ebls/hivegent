@@ -28,7 +28,6 @@ import {
   buildLlmConfig,
   getGroupDirectoryTree,
   getGroupDocumentContent,
-  requiresConversion,
   uploadDocument,
 } from "../lib/api";
 import {
@@ -38,6 +37,7 @@ import {
   type DocumentInfo,
   type FetchedChunk,
   type FetchedDocument,
+  type PipelineSpec,
   chunkPositionLabel,
   sortChunks,
 } from "../lib/types";
@@ -828,6 +828,20 @@ function ManageDocuments({
     return fuse.search(searchQuery).map((result) => result.item);
   }, [documents, searchQuery, fuse]);
 
+  const pipelineSpec: PipelineSpec = useMemo(
+    () => ({
+      conversion: {
+        pipeline: conversionPipeline,
+        config: conversionConfigs[conversionPipeline],
+      },
+      chunking: {
+        pipeline: chunkingPipeline,
+        config: chunkingConfigs[chunkingPipeline],
+      },
+    }),
+    [conversionPipeline, chunkingPipeline, conversionConfigs, chunkingConfigs],
+  );
+
   useEffect(() => {
     fetchDocuments();
     fetchDirectoryTree();
@@ -869,14 +883,11 @@ function ManageDocuments({
   const handleSave = useCallback(
     async (filename: string, content: string) => {
       const file = new File([content], filename, { type: "text/plain" });
-      await uploadDocument(filename, file, {
-        chunkingPipeline,
-        chunkingConfig: chunkingConfigs[chunkingPipeline],
-      });
+      await uploadDocument(filename, file, { spec: pipelineSpec });
       await fetchDocuments();
       await fetchDirectoryTree();
     },
-    [fetchDocuments, fetchDirectoryTree, chunkingPipeline, chunkingConfigs],
+    [fetchDocuments, fetchDirectoryTree, pipelineSpec],
   );
 
   // --- Include / exclude handlers ---
@@ -900,26 +911,15 @@ function ManageDocuments({
   const handleReconvert = useCallback(
     async (filepath: string) => {
       await storeReconvert(filepath, {
-        conversionPipeline,
-        chunkingPipeline,
+        spec: pipelineSpec,
         llm: buildLlmConfig({
           model: visionModel,
           apiKey: llmSettings.apiKey,
           baseUrl: llmSettings.baseUrl,
         }),
-        conversionConfig: conversionConfigs[conversionPipeline],
-        chunkingConfig: chunkingConfigs[chunkingPipeline],
       });
     },
-    [
-      storeReconvert,
-      conversionPipeline,
-      chunkingPipeline,
-      visionModel,
-      llmSettings,
-      conversionConfigs,
-      chunkingConfigs,
-    ],
+    [storeReconvert, pipelineSpec, visionModel, llmSettings],
   );
 
   // --- File upload handlers ---
@@ -927,27 +927,19 @@ function ManageDocuments({
   const handleFiles = useCallback(
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
+      const options = {
+        spec: pipelineSpec,
+        llm: buildLlmConfig({
+          model: visionModel,
+          apiKey: llmSettings.apiKey,
+          baseUrl: llmSettings.baseUrl,
+        }),
+      };
       for (const file of Array.from(files)) {
-        const options = requiresConversion(file.name)
-          ? {
-              conversionPipeline,
-              chunkingPipeline,
-              llm: buildLlmConfig({
-                model: visionModel,
-                apiKey: llmSettings.apiKey,
-                baseUrl: llmSettings.baseUrl,
-              }),
-              conversionConfig: conversionConfigs[conversionPipeline],
-              chunkingConfig: chunkingConfigs[chunkingPipeline],
-            }
-          : {
-              chunkingPipeline,
-              chunkingConfig: chunkingConfigs[chunkingPipeline],
-            };
         await upload(file, options);
       }
     },
-    [upload, conversionPipeline, chunkingPipeline, visionModel, llmSettings, conversionConfigs, chunkingConfigs],
+    [upload, pipelineSpec, visionModel, llmSettings],
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -985,15 +977,12 @@ function ManageDocuments({
       if (!files || files.length === 0) return;
 
       const options = {
-        conversionPipeline,
-        chunkingPipeline,
+        spec: pipelineSpec,
         llm: buildLlmConfig({
           model: visionModel,
           apiKey: llmSettings.apiKey,
           baseUrl: llmSettings.baseUrl,
         }),
-        conversionConfig: conversionConfigs[conversionPipeline],
-        chunkingConfig: chunkingConfigs[chunkingPipeline],
       };
 
       // Bundle directory files into a ZIP using JSZip
@@ -1013,7 +1002,7 @@ function ManageDocuments({
         directoryInputRef.current.value = "";
       }
     },
-    [uploadCol, conversionPipeline, chunkingPipeline, visionModel, llmSettings, conversionConfigs, chunkingConfigs],
+    [uploadCol, pipelineSpec, visionModel, llmSettings],
   );
 
   const handleZipInputChange = useCallback(
@@ -1025,15 +1014,12 @@ function ManageDocuments({
       if (!file.name.toLowerCase().endsWith(".zip")) return;
 
       const options = {
-        conversionPipeline,
-        chunkingPipeline,
+        spec: pipelineSpec,
         llm: buildLlmConfig({
           model: visionModel,
           apiKey: llmSettings.apiKey,
           baseUrl: llmSettings.baseUrl,
         }),
-        conversionConfig: conversionConfigs[conversionPipeline],
-        chunkingConfig: chunkingConfigs[chunkingPipeline],
       };
 
       await uploadCol(file, options);
@@ -1042,7 +1028,7 @@ function ManageDocuments({
         zipInputRef.current.value = "";
       }
     },
-    [uploadCol, conversionPipeline, chunkingPipeline, visionModel, llmSettings, conversionConfigs, chunkingConfigs],
+    [uploadCol, pipelineSpec, visionModel, llmSettings],
   );
 
   // --- Directory handlers ---
@@ -1218,7 +1204,7 @@ function ManageDocuments({
         onRechunk={
           dialogState && !dialogState.isNew && dialogState.editable
             ? async () => {
-                await storeRechunk(dialogState.filename, chunkingPipeline, chunkingConfigs[chunkingPipeline]);
+                await storeRechunk(dialogState.filename, pipelineSpec);
               }
             : undefined
         }

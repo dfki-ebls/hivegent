@@ -6,7 +6,6 @@ import {
   BackendSettingsSchema,
   type ChunkedDocumentResponse,
   ChunkedDocumentResponseSchema,
-  type ChunkingPipeline,
   type ChunkingPipelineInfo,
   ChunkingPipelineInfoSchema,
   type CollectionUploadResponse,
@@ -16,7 +15,6 @@ import {
   ConversationListResponseSchema,
   type ConversationSummary,
   ConversationSummarySchema,
-  type ConversionPipeline,
   type ConversionPipelineInfo,
   ConversionPipelineInfoSchema,
   CreateConversationResponseSchema,
@@ -36,6 +34,7 @@ import {
   type LlmConfig,
   type MoveDocumentResponse,
   MoveDocumentResponseSchema,
+  type PipelineSpec,
   type TokenInfo,
   TokenInfoSchema,
   type UploadDocumentResponse,
@@ -166,12 +165,9 @@ export async function listDocuments(): Promise<DocumentInfo[]> {
 
 /** Options for document upload. */
 export interface UploadDocumentOptions {
-  conversionPipeline?: ConversionPipeline;
-  chunkingPipeline?: ChunkingPipeline;
+  spec?: PipelineSpec;
   llm?: LlmConfig;
   targetDirectory?: string;
-  conversionConfig?: Record<string, unknown>;
-  chunkingConfig?: Record<string, unknown>;
 }
 
 export async function uploadDocument(
@@ -187,29 +183,13 @@ export async function uploadDocument(
     ? `${options.targetDirectory}/${filename}`
     : filename;
 
-  // Build URL with query parameters
-  let url = `${API_BASE_URL}/api/documents/content/${encodeFilePath(filepath)}`;
-  const params = new URLSearchParams();
-  if (requiresConversion(filename) && options?.conversionPipeline) {
-    params.set("conversion_pipeline", options.conversionPipeline);
-  }
-  if (options?.chunkingPipeline) {
-    params.set("chunking_pipeline", options.chunkingPipeline);
-  }
-  const queryString = params.toString();
-  if (queryString) {
-    url += `?${queryString}`;
-  }
+  const url = `${API_BASE_URL}/api/documents/content/${encodeFilePath(filepath)}`;
 
-  // Add LLM config as form field for binary files requiring conversion
+  if (options?.spec) {
+    formData.append("pipeline_spec", JSON.stringify(options.spec));
+  }
   if (requiresConversion(filename) && options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
-  }
-  if (options?.conversionConfig && Object.keys(options.conversionConfig).length > 0) {
-    formData.append("conversion_config", JSON.stringify(options.conversionConfig));
-  }
-  if (options?.chunkingConfig && Object.keys(options.chunkingConfig).length > 0) {
-    formData.append("chunking_config", JSON.stringify(options.chunkingConfig));
   }
 
   const res = await authFetch(url, {
@@ -228,11 +208,8 @@ export async function uploadDocument(
 
 /** Options for collection upload (ZIP or directory). */
 export interface UploadCollectionOptions {
-  conversionPipeline?: ConversionPipeline;
-  chunkingPipeline?: ChunkingPipeline;
+  spec?: PipelineSpec;
   llm?: LlmConfig;
-  conversionConfig?: Record<string, unknown>;
-  chunkingConfig?: Record<string, unknown>;
 }
 
 /** Upload a markdown collection as a ZIP archive. */
@@ -243,27 +220,13 @@ export async function uploadCollection(
   const formData = new FormData();
   formData.append("file", file);
 
-  let url = `${API_BASE_URL}/api/collections`;
-  const params = new URLSearchParams();
-  if (options?.conversionPipeline) {
-    params.set("conversion_pipeline", options.conversionPipeline);
-  }
-  if (options?.chunkingPipeline) {
-    params.set("chunking_pipeline", options.chunkingPipeline);
-  }
-  const queryString = params.toString();
-  if (queryString) {
-    url += `?${queryString}`;
-  }
+  const url = `${API_BASE_URL}/api/collections`;
 
+  if (options?.spec) {
+    formData.append("pipeline_spec", JSON.stringify(options.spec));
+  }
   if (options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
-  }
-  if (options?.conversionConfig && Object.keys(options.conversionConfig).length > 0) {
-    formData.append("conversion_config", JSON.stringify(options.conversionConfig));
-  }
-  if (options?.chunkingConfig && Object.keys(options.chunkingConfig).length > 0) {
-    formData.append("chunking_config", JSON.stringify(options.chunkingConfig));
   }
 
   const res = await authFetch(url, {
@@ -512,11 +475,8 @@ export async function getDocumentChunks(
 
 /** Options for document reconversion. */
 export interface ReconvertDocumentOptions {
-  conversionPipeline?: ConversionPipeline;
-  chunkingPipeline?: ChunkingPipeline;
+  spec?: PipelineSpec;
   llm?: LlmConfig;
-  conversionConfig?: Record<string, unknown>;
-  chunkingConfig?: Record<string, unknown>;
 }
 
 export async function reconvertDocument(
@@ -529,11 +489,8 @@ export async function reconvertDocument(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      conversion_pipeline: options?.conversionPipeline ?? "auto",
-      chunking_pipeline: options?.chunkingPipeline ?? "auto",
+      pipeline: options?.spec ?? {},
       llm: options?.llm ?? {},
-      conversion_config: options?.conversionConfig ?? null,
-      chunking_config: options?.chunkingConfig ?? null,
     }),
   });
 
@@ -550,23 +507,14 @@ export async function reconvertDocument(
 
 export async function rechunkDocument(
   filename: string,
-  chunkingPipeline?: ChunkingPipeline,
-  chunkingConfig?: Record<string, unknown>,
+  spec?: PipelineSpec,
 ): Promise<ChunkedDocumentResponse> {
-  const body: Record<string, unknown> = {};
-  if (chunkingPipeline) {
-    body.chunking_pipeline = chunkingPipeline;
-  }
-  if (chunkingConfig && Object.keys(chunkingConfig).length > 0) {
-    body.chunking_config = chunkingConfig;
-  }
-
   const res = await authFetch(
     `${API_BASE_URL}/api/documents/rechunk/${encodeFilePath(filename)}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(spec ?? {}),
     },
   );
 
@@ -754,27 +702,13 @@ export async function uploadGroupDocument(
     ? `${options.targetDirectory}/${filename}`
     : filename;
 
-  let url = `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/content/${encodeFilePath(filepath)}`;
-  const params = new URLSearchParams();
-  if (requiresConversion(filename) && options?.conversionPipeline) {
-    params.set("conversion_pipeline", options.conversionPipeline);
-  }
-  if (options?.chunkingPipeline) {
-    params.set("chunking_pipeline", options.chunkingPipeline);
-  }
-  const queryString = params.toString();
-  if (queryString) {
-    url += `?${queryString}`;
-  }
+  const url = `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/content/${encodeFilePath(filepath)}`;
 
+  if (options?.spec) {
+    formData.append("pipeline_spec", JSON.stringify(options.spec));
+  }
   if (requiresConversion(filename) && options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
-  }
-  if (options?.conversionConfig && Object.keys(options.conversionConfig).length > 0) {
-    formData.append("conversion_config", JSON.stringify(options.conversionConfig));
-  }
-  if (options?.chunkingConfig && Object.keys(options.chunkingConfig).length > 0) {
-    formData.append("chunking_config", JSON.stringify(options.chunkingConfig));
   }
 
   const res = await authFetch(url, { method: "PUT", body: formData });
@@ -795,27 +729,13 @@ export async function uploadGroupCollection(
   const formData = new FormData();
   formData.append("file", file);
 
-  let url = `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/collections`;
-  const params = new URLSearchParams();
-  if (options?.conversionPipeline) {
-    params.set("conversion_pipeline", options.conversionPipeline);
-  }
-  if (options?.chunkingPipeline) {
-    params.set("chunking_pipeline", options.chunkingPipeline);
-  }
-  const queryString = params.toString();
-  if (queryString) {
-    url += `?${queryString}`;
-  }
+  const url = `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/collections`;
 
+  if (options?.spec) {
+    formData.append("pipeline_spec", JSON.stringify(options.spec));
+  }
   if (options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
-  }
-  if (options?.conversionConfig && Object.keys(options.conversionConfig).length > 0) {
-    formData.append("conversion_config", JSON.stringify(options.conversionConfig));
-  }
-  if (options?.chunkingConfig && Object.keys(options.chunkingConfig).length > 0) {
-    formData.append("chunking_config", JSON.stringify(options.chunkingConfig));
   }
 
   const res = await authFetch(url, { method: "POST", body: formData });

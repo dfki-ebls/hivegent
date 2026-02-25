@@ -25,6 +25,7 @@ from .pandoc import PandocConverter
 __all__ = [
     "ConversionPipeline",
     "ConversionPipelineInfo",
+    "ConversionSpec",
     "DocumentConverter",
     "get_converter",
     "get_pipelines_info",
@@ -46,6 +47,13 @@ class ConversionPipeline(StrEnum):
     PANDOC = "pandoc"
     MARKITDOWN = "markitdown"
     KREUZBERG = "kreuzberg"
+
+
+class ConversionSpec(BaseModel):
+    """Conversion pipeline selection and configuration."""
+
+    pipeline: ConversionPipeline = ConversionPipeline.AUTO
+    config: dict[str, Any] | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -243,18 +251,14 @@ def get_converter(
     return entry.converter_class()
 
 
-def validate_conversion_config(
-    pipeline: ConversionPipeline,
-    config: dict[str, Any] | None,
-) -> dict[str, Any] | None:
+def validate_conversion_config(spec: ConversionSpec) -> dict[str, Any] | None:
     """Validate a conversion config dict against the pipeline's config model.
 
     For ``AUTO`` pipelines, validation is skipped since the concrete pipeline
     is not known until file extension resolution.
 
     Args:
-        pipeline: The conversion pipeline.
-        config: The raw config dict to validate.
+        spec: The conversion spec containing pipeline and config.
 
     Returns:
         The validated and normalized config dict, or ``None`` if no config.
@@ -262,12 +266,12 @@ def validate_conversion_config(
     Raises:
         ValidationError: If the config is invalid for the pipeline.
     """
-    if config is None or pipeline == ConversionPipeline.AUTO:
-        return config
-    entry = _CONVERTER_CONFIG.get(pipeline)
+    if spec.config is None or spec.pipeline == ConversionPipeline.AUTO:
+        return spec.config
+    entry = _CONVERTER_CONFIG.get(spec.pipeline)
     if entry is None or entry.config_model is None:
-        return config
-    validated = entry.config_model(**config)
+        return spec.config
+    validated = entry.config_model(**spec.config)
     return validated.model_dump()
 
 

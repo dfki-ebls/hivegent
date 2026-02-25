@@ -1,7 +1,6 @@
 """FastAPI server for the RAG agent."""
 
 import io
-import json
 import logging
 import shutil
 import tempfile
@@ -10,9 +9,9 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Annotated, Any
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from nanoid import generate
 from pydantic import BaseModel, Field, ValidationError
@@ -40,8 +39,8 @@ from .agent import (
 )
 from .auth import User, get_current_user
 from .chunkers import (
-    ChunkingPipeline,
     ChunkingPipelineInfo,
+    ChunkingSpec,
     get_chunking_pipelines_info,
     validate_chunking_config,
 )
@@ -62,6 +61,7 @@ from .consistency import check_and_fix_all_stores
 from .converters import (
     ConversionPipeline,
     ConversionPipelineInfo,
+    ConversionSpec,
     get_converter,
     get_pipelines_info,
     resolve_auto_pipeline,
@@ -208,27 +208,18 @@ def _group_stores(user: User) -> tuple[Casebase, ...]:
     return tuple(stores)
 
 
-class RechunkRequest(BaseModel):
-    """Request to rechunk a document."""
+class PipelineSpec(BaseModel):
+    """Bundled conversion and chunking pipeline selection with configuration."""
 
-    chunking_pipeline: ChunkingPipeline = ChunkingPipeline.AUTO
-    chunking_config: dict[str, Any] | None = Field(
-        default=None, description="Pipeline-specific chunking configuration"
-    )
+    conversion: ConversionSpec = Field(default_factory=ConversionSpec)
+    chunking: ChunkingSpec = Field(default_factory=ChunkingSpec)
 
 
 class ReconvertRequest(BaseModel):
     """Request to reconvert a document from its original binary file."""
 
-    conversion_pipeline: ConversionPipeline = ConversionPipeline.AUTO
-    chunking_pipeline: ChunkingPipeline = ChunkingPipeline.AUTO
+    pipeline: PipelineSpec = Field(default_factory=PipelineSpec)
     llm: LlmConfig = Field(default_factory=LlmConfig)
-    conversion_config: dict[str, Any] | None = Field(
-        default=None, description="Pipeline-specific conversion configuration"
-    )
-    chunking_config: dict[str, Any] | None = Field(
-        default=None, description="Pipeline-specific chunking configuration"
-    )
 
 
 mcp_http_app = mcp_app.http_app(path="/")
@@ -264,25 +255,22 @@ async def _validation_error_handler(
 api_router = APIRouter(prefix="/api", dependencies=[Depends(get_current_user)])
 
 
-def _parse_config_json(raw: str, field_name: str) -> dict[str, Any] | None:
-    """Parse a JSON-encoded pipeline config form field.
+def _parse_pipeline_spec(raw: str) -> PipelineSpec:
+    """Parse a JSON-encoded PipelineSpec form field.
 
     Args:
-        raw: Raw JSON string (may be empty).
-        field_name: Field name for error messages.
+        raw: Raw JSON string.
 
     Returns:
-        Parsed dict, or None if empty.
+        Parsed and validated PipelineSpec.
 
     Raises:
         HTTPException: If the JSON is malformed.
     """
-    if not raw:
-        return None
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid {field_name} JSON: {e}")
+        return PipelineSpec.model_validate_json(raw)
+    except (ValidationError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=f"Invalid pipeline_spec: {e}")
 
 
 def _safe_path(filepath: str) -> str:
@@ -680,11 +668,8 @@ async def _upload_file_internal(
     store: Casebase,
     filepath: str,
     content: bytes,
-    conversion_pipeline: ConversionPipeline,
-    chunking_pipeline: ChunkingPipeline,
+    spec: PipelineSpec,
     llm_config: LlmConfig,
-    conversion_config: dict[str, Any] | None = None,
-    chunking_config: dict[str, Any] | None = None,
 ) -> UploadDocumentResponse:
     """Upload a single file, converting binary files to markdown.
 
@@ -695,11 +680,8 @@ async def _upload_file_internal(
         store: The casebase to upload to.
         filepath: Sanitized relative POSIX path for the document.
         content: Raw file bytes.
-        conversion_pipeline: The conversion pipeline for binary files.
-        chunking_pipeline: The chunking pipeline.
+        spec: Pipeline spec for conversion and chunking.
         llm_config: Resolved LLM configuration for conversion.
-        conversion_config: Optional pipeline-specific conversion configuration.
-        chunking_config: Optional pipeline-specific chunking configuration.
 
     Returns:
         Upload response with file metadata.
@@ -722,9 +704,7 @@ async def _upload_file_internal(
         chunking_used = None
         try:
             text_content = content.decode("utf-8")
-            chunked = chunk_document(
-                store, filepath, text_content, chunking_pipeline, chunking_config
-            )
+            chunked = chunk_document(store, filepath, text_content, spec.chunking)
             chunk_count = len(chunked.chunks)
             chunking_used = chunked.pipeline
             sync_index(store)
@@ -745,6 +725,8 @@ async def _upload_file_internal(
     original_path.parent.mkdir(parents=True, exist_ok=True)
     original_path.write_bytes(content)
 
+    conversion_pipeline = spec.conversion.pipeline
+
     # Get the converter (resolves AUTO and validates extension support)
     try:
         converter = get_converter(conversion_pipeline, filename=basename)
@@ -763,11 +745,13 @@ async def _upload_file_internal(
             assert isinstance(converter, LLMConverter)
             markdown_content = await converter(
                 original_path,
-                config=conversion_config,
+                config=spec.conversion.config,
                 options=llm_config,
             )
         else:
-            markdown_content = await converter(original_path, config=conversion_config)
+            markdown_content = await converter(
+                original_path, config=spec.conversion.config
+            )
     except ImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -794,7 +778,7 @@ async def _upload_file_internal(
     chunking_used = None
     try:
         chunked = chunk_document(
-            store, converted_relpath, markdown_content, chunking_pipeline, chunking_config
+            store, converted_relpath, markdown_content, spec.chunking
         )
         chunk_count = len(chunked.chunks)
         chunking_used = chunked.pipeline
@@ -863,11 +847,8 @@ async def upload_document(
     filepath: str,
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
-    conversion_pipeline: ConversionPipeline = Query(default=ConversionPipeline.AUTO),
-    chunking_pipeline: ChunkingPipeline = Query(default=ChunkingPipeline.AUTO),
+    pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
-    conversion_config: str = Form(default=""),
-    chunking_config: str = Form(default=""),
 ) -> UploadDocumentResponse:
     """Upload or replace a document.
 
@@ -878,20 +859,15 @@ async def upload_document(
     Args:
         filepath: The target relative path (must have allowed extension).
         file: The uploaded file content.
-        conversion_pipeline: The conversion pipeline to use for binary files.
-        chunking_pipeline: The chunking pipeline to use.
+        pipeline_spec: JSON-encoded PipelineSpec for conversion and chunking.
         llm_config: JSON-encoded LLM configuration for conversion.
-        conversion_config: JSON-encoded pipeline-specific conversion config.
-        chunking_config: JSON-encoded pipeline-specific chunking config.
     """
     safe = _safe_path(filepath)
+    spec = _parse_pipeline_spec(pipeline_spec)
     llm = LlmConfig.model_validate_json(llm_config)
     resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
-
-    parsed_conversion_config = _parse_config_json(conversion_config, "conversion_config")
-    parsed_chunking_config = _parse_config_json(chunking_config, "chunking_config")
-    validate_conversion_config(conversion_pipeline, parsed_conversion_config)
-    validate_chunking_config(chunking_pipeline, parsed_chunking_config)
+    validate_conversion_config(spec.conversion)
+    validate_chunking_config(spec.chunking)
 
     content = await file.read()
     if len(content) > settings.max_file_size_bytes:
@@ -904,11 +880,8 @@ async def upload_document(
         store=_user_store(user),
         filepath=safe,
         content=content,
-        conversion_pipeline=conversion_pipeline,
-        chunking_pipeline=chunking_pipeline,
+        spec=spec,
         llm_config=resolved,
-        conversion_config=parsed_conversion_config,
-        chunking_config=parsed_chunking_config,
     )
 
 
@@ -922,24 +895,25 @@ _MAX_COLLECTION_FILES = 1000
 async def upload_collection(
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
-    conversion_pipeline: ConversionPipeline = Query(default=ConversionPipeline.AUTO),
-    chunking_pipeline: ChunkingPipeline = Query(default=ChunkingPipeline.AUTO),
+    pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
-    conversion_config: str = Form(default=""),
-    chunking_config: str = Form(default=""),
 ) -> CollectionUploadResponse:
     """Upload a markdown collection as a ZIP archive.
 
     Extracts the archive, normalizes Obsidian wikilinks to standard markdown
     links, detects and converts binary attachments via the conversion
     pipeline, then stores all files.
+
+    Args:
+        file: The ZIP archive.
+        pipeline_spec: JSON-encoded PipelineSpec for conversion and chunking.
+        llm_config: JSON-encoded LLM configuration for conversion.
     """
+    spec = _parse_pipeline_spec(pipeline_spec)
     llm = LlmConfig.model_validate_json(llm_config)
     resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
-    parsed_conversion_config = _parse_config_json(conversion_config, "conversion_config")
-    parsed_chunking_config = _parse_config_json(chunking_config, "chunking_config")
-    validate_conversion_config(conversion_pipeline, parsed_conversion_config)
-    validate_chunking_config(chunking_pipeline, parsed_chunking_config)
+    validate_conversion_config(spec.conversion)
+    validate_chunking_config(spec.chunking)
     store = _user_store(user)
 
     raw = await file.read()
@@ -957,16 +931,7 @@ async def upload_collection(
         """Upload a single file, appending to *failed* on error."""
         try:
             safe = sanitize_document_path(rel_path)
-            await _upload_file_internal(
-                store,
-                safe,
-                content_bytes,
-                conversion_pipeline,
-                chunking_pipeline,
-                resolved,
-                parsed_conversion_config,
-                parsed_chunking_config,
-            )
+            await _upload_file_internal(store, safe, content_bytes, spec, resolved)
             return True
         except Exception as e:
             logger.warning("Failed to process %s: %s", rel_path, e)
@@ -1183,18 +1148,18 @@ async def get_document_chunks(
 @api_router.post("/documents/rechunk/{filepath:path}")
 async def rechunk_document(
     filepath: str,
-    request: RechunkRequest,
+    request: PipelineSpec,
     user: Annotated[User, Depends(get_current_user)],
 ) -> ChunkedDocument:
     """Re-chunk a document with different settings.
 
     Args:
         filepath: The relative document path.
-        request: Rechunk options including pipeline and config.
+        request: Pipeline spec (only ``chunking`` is used).
     """
     safe = _safe_path(filepath)
     store = _user_store(user)
-    validate_chunking_config(request.chunking_pipeline, request.chunking_config)
+    validate_chunking_config(request.chunking)
     data_dir = store.documents_dir(settings.data_dir)
     file_path = data_dir / safe
 
@@ -1204,9 +1169,7 @@ async def rechunk_document(
     text_content = file_path.read_text(encoding="utf-8")
 
     try:
-        result = chunk_document(
-            store, safe, text_content, request.chunking_pipeline, request.chunking_config
-        )
+        result = chunk_document(store, safe, text_content, request.chunking)
         sync_index(store)
         return result
     except Exception as e:
@@ -1233,9 +1196,12 @@ async def reconvert_document(
     """
     safe = _safe_path(filepath)
     store = _user_store(user)
+    spec = request.pipeline
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
-    validate_conversion_config(request.conversion_pipeline, request.conversion_config)
-    validate_chunking_config(request.chunking_pipeline, request.chunking_config)
+    validate_conversion_config(spec.conversion)
+    validate_chunking_config(spec.chunking)
+
+    conversion_pipeline = spec.conversion.pipeline
 
     originals_dir = store.originals_dir(settings.data_dir)
     documents_dir = store.documents_dir(settings.data_dir)
@@ -1264,14 +1230,12 @@ async def reconvert_document(
 
     # Get the converter (resolves AUTO and validates extension support)
     try:
-        converter = get_converter(
-            request.conversion_pipeline, filename=original_path.name
-        )
+        converter = get_converter(conversion_pipeline, filename=original_path.name)
     except (ImportError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    resolved_conversion = request.conversion_pipeline
-    if request.conversion_pipeline == ConversionPipeline.AUTO:
+    resolved_conversion = conversion_pipeline
+    if conversion_pipeline == ConversionPipeline.AUTO:
         resolved_conversion = resolve_auto_pipeline(original_path.name)
 
     # Convert the document
@@ -1282,12 +1246,12 @@ async def reconvert_document(
             assert isinstance(converter, LLMConverter)
             markdown_content = await converter(
                 original_path,
-                config=request.conversion_config,
+                config=spec.conversion.config,
                 options=resolved,
             )
         else:
             markdown_content = await converter(
-                original_path, config=request.conversion_config
+                original_path, config=spec.conversion.config
             )
     except ImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1309,10 +1273,7 @@ async def reconvert_document(
     chunk_count = None
     chunking_used = None
     try:
-        chunked = chunk_document(
-            store, safe, markdown_content, request.chunking_pipeline,
-            request.chunking_config,
-        )
+        chunked = chunk_document(store, safe, markdown_content, spec.chunking)
         chunk_count = len(chunked.chunks)
         chunking_used = chunked.pipeline
         sync_index(store)
@@ -1806,11 +1767,8 @@ async def upload_group_document(
     filepath: str,
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
-    conversion_pipeline: ConversionPipeline = Query(default=ConversionPipeline.AUTO),
-    chunking_pipeline: ChunkingPipeline = Query(default=ChunkingPipeline.AUTO),
+    pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
-    conversion_config: str = Form(default=""),
-    chunking_config: str = Form(default=""),
 ) -> UploadDocumentResponse:
     """Upload a document to a group's knowledge base.
 
@@ -1820,20 +1778,16 @@ async def upload_group_document(
         group_id: The group identifier.
         filepath: The target relative path.
         file: The uploaded file content.
-        conversion_pipeline: The conversion pipeline for binary files.
-        chunking_pipeline: The chunking pipeline to use.
+        pipeline_spec: JSON-encoded PipelineSpec for conversion and chunking.
         llm_config: JSON-encoded LLM configuration for conversion.
-        conversion_config: JSON-encoded pipeline-specific conversion config.
-        chunking_config: JSON-encoded pipeline-specific chunking config.
     """
     safe_id = _require_group_write(user, group_id)
     safe = _safe_path(filepath)
+    spec = _parse_pipeline_spec(pipeline_spec)
     llm = LlmConfig.model_validate_json(llm_config)
     resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
-    parsed_conversion_config = _parse_config_json(conversion_config, "conversion_config")
-    parsed_chunking_config = _parse_config_json(chunking_config, "chunking_config")
-    validate_conversion_config(conversion_pipeline, parsed_conversion_config)
-    validate_chunking_config(chunking_pipeline, parsed_chunking_config)
+    validate_conversion_config(spec.conversion)
+    validate_chunking_config(spec.chunking)
 
     content = await file.read()
     if len(content) > settings.max_file_size_bytes:
@@ -1846,11 +1800,8 @@ async def upload_group_document(
         store=Casebase(kind="group", id=safe_id),
         filepath=safe,
         content=content,
-        conversion_pipeline=conversion_pipeline,
-        chunking_pipeline=chunking_pipeline,
+        spec=spec,
         llm_config=resolved,
-        conversion_config=parsed_conversion_config,
-        chunking_config=parsed_chunking_config,
     )
 
 
@@ -1859,23 +1810,23 @@ async def upload_group_collection(
     group_id: str,
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
-    conversion_pipeline: ConversionPipeline = Query(default=ConversionPipeline.AUTO),
-    chunking_pipeline: ChunkingPipeline = Query(default=ChunkingPipeline.AUTO),
+    pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
-    conversion_config: str = Form(default=""),
-    chunking_config: str = Form(default=""),
 ) -> CollectionUploadResponse:
     """Upload a ZIP collection to a group's knowledge base.
 
     Requires write access to the group.
+
+    Args:
+        pipeline_spec: JSON-encoded PipelineSpec for conversion and chunking.
+        llm_config: JSON-encoded LLM configuration for conversion.
     """
     safe_id = _require_group_write(user, group_id)
+    spec = _parse_pipeline_spec(pipeline_spec)
     llm = LlmConfig.model_validate_json(llm_config)
     resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
-    parsed_conversion_config = _parse_config_json(conversion_config, "conversion_config")
-    parsed_chunking_config = _parse_config_json(chunking_config, "chunking_config")
-    validate_conversion_config(conversion_pipeline, parsed_conversion_config)
-    validate_chunking_config(chunking_pipeline, parsed_chunking_config)
+    validate_conversion_config(spec.conversion)
+    validate_chunking_config(spec.chunking)
     store = Casebase(kind="group", id=safe_id)
 
     raw = await file.read()
@@ -1892,11 +1843,7 @@ async def upload_group_collection(
     async def _try_upload(rel_path: str, content_bytes: bytes) -> bool:
         try:
             safe = sanitize_document_path(rel_path)
-            await _upload_file_internal(
-                store, safe, content_bytes,
-                conversion_pipeline, chunking_pipeline, resolved,
-                parsed_conversion_config, parsed_chunking_config,
-            )
+            await _upload_file_internal(store, safe, content_bytes, spec, resolved)
             return True
         except Exception as e:
             logger.warning("Failed to process %s: %s", rel_path, e)
@@ -2126,7 +2073,12 @@ async def reconvert_group_document(
     safe_id = _require_group_write(user, group_id)
     safe = _safe_path(filepath)
     store = Casebase(kind="group", id=safe_id)
+    spec = request.pipeline
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
+    validate_conversion_config(spec.conversion)
+    validate_chunking_config(spec.chunking)
+
+    conversion_pipeline = spec.conversion.pipeline
 
     originals_dir = store.originals_dir(settings.data_dir)
     documents_dir = store.documents_dir(settings.data_dir)
@@ -2153,14 +2105,12 @@ async def reconvert_group_document(
         )
 
     try:
-        converter = get_converter(
-            request.conversion_pipeline, filename=original_path.name
-        )
+        converter = get_converter(conversion_pipeline, filename=original_path.name)
     except (ImportError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    resolved_conversion = request.conversion_pipeline
-    if request.conversion_pipeline == ConversionPipeline.AUTO:
+    resolved_conversion = conversion_pipeline
+    if conversion_pipeline == ConversionPipeline.AUTO:
         resolved_conversion = resolve_auto_pipeline(original_path.name)
 
     try:
@@ -2168,9 +2118,15 @@ async def reconvert_group_document(
             from .converters.llm import LLMConverter
 
             assert isinstance(converter, LLMConverter)
-            markdown_content = await converter(original_path, options=resolved)
+            markdown_content = await converter(
+                original_path,
+                config=spec.conversion.config,
+                options=resolved,
+            )
         else:
-            markdown_content = await converter(original_path)
+            markdown_content = await converter(
+                original_path, config=spec.conversion.config
+            )
     except ImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -2186,9 +2142,7 @@ async def reconvert_group_document(
     chunk_count = None
     chunking_used = None
     try:
-        chunked = chunk_document(
-            store, safe, markdown_content, request.chunking_pipeline
-        )
+        chunked = chunk_document(store, safe, markdown_content, spec.chunking)
         chunk_count = len(chunked.chunks)
         chunking_used = chunked.pipeline
         sync_index(store)

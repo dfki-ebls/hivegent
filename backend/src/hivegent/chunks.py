@@ -4,9 +4,8 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-from .chunkers import ChunkingPipeline, get_chunker
+from .chunkers import ChunkingSpec, get_chunker
 from .config import settings
 from .retrieval import sync_index
 from .store import Casebase
@@ -46,8 +45,7 @@ def chunk_document(
     store: Casebase,
     filename: str,
     content: str,
-    chunking_pipeline: ChunkingPipeline = ChunkingPipeline.AUTO,
-    chunking_config: dict[str, Any] | None = None,
+    chunking: ChunkingSpec | None = None,
 ) -> ChunkedDocument:
     """Chunk a document and persist the results to disk.
 
@@ -55,14 +53,14 @@ def chunk_document(
         store: The casebase.
         filename: The document filename.
         content: The document text content.
-        chunking_pipeline: The chunking pipeline to use.
-        chunking_config: Optional pipeline-specific configuration.
+        chunking: The chunking spec (pipeline + config).
 
     Returns:
         The chunked document with metadata.
     """
-    chunker = get_chunker(chunking_pipeline, filename=filename)
-    raw_chunks = chunker(content, config=chunking_config)
+    spec = chunking or ChunkingSpec()
+    chunker = get_chunker(spec.pipeline, filename=filename)
+    raw_chunks = chunker(content, config=spec.config)
 
     chunks = [
         ChunkInfo(
@@ -178,7 +176,11 @@ def list_chunked_documents(store: Casebase) -> dict[str, int]:
     return result
 
 
-def rechunk_document(store: Casebase, filename: str) -> None:
+def rechunk_document(
+    store: Casebase,
+    filename: str,
+    chunking: ChunkingSpec | None = None,
+) -> None:
     """Re-chunk a document and sync the search index.
 
     Reads the file from the store's documents directory, re-chunks it,
@@ -187,12 +189,13 @@ def rechunk_document(store: Casebase, filename: str) -> None:
     Args:
         store: The casebase.
         filename: The relative document path.
+        chunking: Optional chunking spec (pipeline + config).
     """
     docs_dir = store.documents_dir(settings.data_dir)
     file_path = docs_dir / filename
     try:
         text_content = file_path.read_text(encoding="utf-8")
-        chunk_document(store, filename, text_content)
+        chunk_document(store, filename, text_content, chunking)
         sync_index(store)
     except Exception:
         logger.warning("Re-chunking failed for %s after write", filename)

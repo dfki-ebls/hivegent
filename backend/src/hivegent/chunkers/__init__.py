@@ -20,6 +20,7 @@ from .token import TokenDocumentChunker
 __all__ = [
     "ChunkingPipeline",
     "ChunkingPipelineInfo",
+    "ChunkingSpec",
     "DocumentChunker",
     "get_chunker",
     "get_chunking_pipelines_info",
@@ -37,6 +38,13 @@ class ChunkingPipeline(StrEnum):
     TOKEN = "token"
     SENTENCE = "sentence"
     RECURSIVE = "recursive"
+
+
+class ChunkingSpec(BaseModel):
+    """Chunking pipeline selection and configuration."""
+
+    pipeline: ChunkingPipeline = ChunkingPipeline.AUTO
+    config: dict[str, Any] | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -132,18 +140,14 @@ def get_chunker(
     return entry.chunker_class()
 
 
-def validate_chunking_config(
-    pipeline: ChunkingPipeline,
-    config: dict[str, Any] | None,
-) -> dict[str, Any] | None:
+def validate_chunking_config(spec: ChunkingSpec) -> dict[str, Any] | None:
     """Validate a chunking config dict against the pipeline's config model.
 
     For ``AUTO`` pipelines, validation is skipped since the concrete pipeline
     is not known until file extension resolution.
 
     Args:
-        pipeline: The chunking pipeline.
-        config: The raw config dict to validate.
+        spec: The chunking spec containing pipeline and config.
 
     Returns:
         The validated and normalized config dict, or ``None`` if no config.
@@ -151,12 +155,12 @@ def validate_chunking_config(
     Raises:
         ValidationError: If the config is invalid for the pipeline.
     """
-    if config is None or pipeline == ChunkingPipeline.AUTO:
-        return config
-    entry = _CHUNKER_CONFIG.get(pipeline)
+    if spec.config is None or spec.pipeline == ChunkingPipeline.AUTO:
+        return spec.config
+    entry = _CHUNKER_CONFIG.get(spec.pipeline)
     if entry is None or entry.config_model is None:
-        return config
-    validated = entry.config_model(**config)
+        return spec.config
+    validated = entry.config_model(**spec.config)
     return validated.model_dump()
 
 

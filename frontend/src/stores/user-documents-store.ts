@@ -17,10 +17,10 @@ import {
   uploadDocument,
 } from "../lib/api";
 import type {
-  ChunkingPipeline,
   CollectionUploadResponse,
   DirectoryTreeResponse,
   DocumentInfo,
+  PipelineSpec,
 } from "../lib/types";
 
 interface UserDocumentsStore {
@@ -36,11 +36,7 @@ interface UserDocumentsStore {
     options?: UploadCollectionOptions,
   ) => Promise<CollectionUploadResponse>;
   remove: (filename: string) => Promise<void>;
-  rechunk: (
-    filename: string,
-    chunkingPipeline?: ChunkingPipeline,
-    chunkingConfig?: Record<string, unknown>,
-  ) => Promise<void>;
+  rechunk: (filename: string, spec?: PipelineSpec) => Promise<void>;
   reconvert: (
     filename: string,
     options?: ReconvertDocumentOptions,
@@ -132,10 +128,10 @@ export const useUserDocumentsStore = create<UserDocumentsStore>(
       }
     },
 
-    rechunk: async (filename: string, chunkingPipeline?: ChunkingPipeline, chunkingConfig?: Record<string, unknown>) => {
+    rechunk: async (filename: string, spec?: PipelineSpec) => {
       set({ isLoading: true, error: null });
       try {
-        await rechunkDocument(filename, chunkingPipeline, chunkingConfig);
+        await rechunkDocument(filename, spec);
         await get().fetchDocuments();
         await get().fetchDirectoryTree();
       } catch (err) {

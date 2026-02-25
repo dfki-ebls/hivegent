@@ -441,6 +441,18 @@ export interface SearchDocumentsInput {
   top_k?: number;
 }
 
+/** Bundled conversion + chunking pipeline selection with configuration. */
+export interface PipelineSpec {
+  conversion?: {
+    pipeline?: ConversionPipeline;
+    config?: Record<string, unknown>;
+  };
+  chunking?: {
+    pipeline?: ChunkingPipeline;
+    config?: Record<string, unknown>;
+  };
+}
+
 /** LLM provider configuration sent to the backend. */
 export interface LlmConfig {
   model?: string;
