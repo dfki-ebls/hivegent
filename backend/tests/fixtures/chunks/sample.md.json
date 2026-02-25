@@ -1,0 +1,19 @@
+{
+  "pipeline": "token",
+  "chunk_size": 512,
+  "created_at": "2025-01-15T10:30:00Z",
+  "chunks": [
+    {
+      "text": "Retrieval-augmented generation (RAG) combines retrieval with generation to ground LLM answers in external knowledge sources.",
+      "token_count": 18,
+      "start_index": 0,
+      "end_index": 123
+    },
+    {
+      "text": "Documents are split into smaller pieces called chunks. Each chunk is indexed for efficient retrieval.",
+      "token_count": 16,
+      "start_index": 124,
+      "end_index": 224
+    }
+  ]
+}

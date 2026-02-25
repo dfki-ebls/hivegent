@@ -52,7 +52,13 @@ class JWKSFetcher:
     def __init__(self) -> None:
         self._cache: KeySet | None = None
         self._cache_time: float = 0
-        self._client = httpx.AsyncClient()
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Lazily create the HTTP client on first use."""
+        if self._client is None:
+            self._client = httpx.AsyncClient()
+        return self._client
 
     def _is_cache_valid(self) -> bool:
         """Check if the cached JWKS is still valid."""
@@ -85,7 +91,7 @@ class JWKSFetcher:
         jwks_uri = f"{auth_settings.issuer.rstrip('/')}/.well-known/jwks.json"
 
         try:
-            response = await self._client.get(jwks_uri, timeout=10.0)
+            response = await self._get_client().get(jwks_uri, timeout=10.0)
             response.raise_for_status()
             jwks_data = response.json()
         except httpx.HTTPError as e:

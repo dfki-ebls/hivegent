@@ -39,9 +39,25 @@ kreuzberg = ["kreuzberg>=4,<5"]
 # mineru = ["mineru[all]>=2,<3"]
 all = ["hivegent[marker,docling,kreuzberg,markitdown]"]
 
+[dependency-groups]
+dev = [
+  "pytest>=8,<9",
+  "pytest-asyncio>=0.25,<1",
+  "inline-snapshot>=0.19,<1",
+  "pydantic-evals>=1,<2",
+  "dirty-equals>=0.8,<1",
+]
+
 [build-system]
 requires = ["uv-build>=0.9,<1"]
 build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+  "slow: marks tests as slow (deselect with -m 'not slow')",
+]
 
 [tool.uv.sources]
 cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }
