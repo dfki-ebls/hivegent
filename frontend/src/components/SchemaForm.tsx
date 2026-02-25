@@ -97,7 +97,10 @@ function ScalarField({
     return (
       <div className="grid gap-1.5">
         <Label htmlFor={id}>{label}</Label>
-        <Select value={String(value ?? prop.default ?? "")} onValueChange={(v) => onChange(v)}>
+        <Select
+          value={String((value ?? prop.default ?? "") as string | number)}
+          onValueChange={(v) => onChange(v)}
+        >
           <SelectTrigger id={id}>
             <SelectValue />
           </SelectTrigger>
@@ -122,7 +125,7 @@ function ScalarField({
         <Input
           id={id}
           type="number"
-          value={value !== undefined && value !== null ? String(value) : ""}
+          value={value !== undefined && value !== null ? String(value as number) : ""}
           min={prop.minimum ?? prop.exclusiveMinimum}
           max={prop.maximum ?? prop.exclusiveMaximum}
           step={prop.type === "integer" ? 1 : undefined}
@@ -145,7 +148,11 @@ function ScalarField({
     return (
       <div className="grid gap-1.5">
         <Label htmlFor={id}>{label}</Label>
-        <Input id={id} value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />
+        <Input
+          id={id}
+          value={String((value ?? "") as string)}
+          onChange={(e) => onChange(e.target.value)}
+        />
         {prop.description && <p className="text-xs text-muted-foreground">{prop.description}</p>}
       </div>
     );

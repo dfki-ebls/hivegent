@@ -175,7 +175,7 @@ function prettyPrint(value: unknown): string {
   if (typeof value === "object") {
     return JSON.stringify(value, null, 2);
   }
-  return String(value);
+  return String(value as number | boolean);
 }
 
 /** Process tool output and add chunks to the document store. */
@@ -747,13 +747,13 @@ export function ChatSidebar({
     const newId = await createConversation();
     clearAll();
     setActiveTab("chat");
-    navigate({ to: "/chat/$id", params: { id: newId } });
+    await navigate({ to: "/chat/$id", params: { id: newId } });
   };
 
   const handleConversationSelect = async (conversationId: string) => {
     clearAll();
     setActiveTab("chat");
-    navigate({ to: "/chat/$id", params: { id: conversationId } });
+    await navigate({ to: "/chat/$id", params: { id: conversationId } });
   };
 
   const transport = useMemo(
@@ -793,7 +793,7 @@ export function ChatSidebar({
     setIsLoadingHistory(true);
     setCompactedFrom(null);
     setConversationError(false);
-    getConversation(id)
+    void getConversation(id)
       .then(async (conv) => {
         if (cancelled) return;
         if (!conv) {
@@ -822,7 +822,7 @@ export function ChatSidebar({
     async (text: string, files?: FileUIPart[]) => {
       if (!text.trim() && (!files || files.length === 0)) return;
       const authHeaders = await getAuthHeaders();
-      sendMessage(
+      await sendMessage(
         { text, files },
         {
           headers: authHeaders,
@@ -857,7 +857,7 @@ export function ChatSidebar({
     async (messageId: string, newText: string) => {
       setEditingMessageId(null);
       const authHeaders = await getAuthHeaders();
-      sendMessage(
+      await sendMessage(
         { text: newText, messageId },
         {
           headers: authHeaders,
@@ -890,12 +890,12 @@ export function ChatSidebar({
     if (isLoadingHistory || !pendingRetryRef.current) return;
     const text = pendingRetryRef.current;
     pendingRetryRef.current = null;
-    handleSendMessage(text);
+    void handleSendMessage(text);
   }, [isLoadingHistory, handleSendMessage]);
 
   const handleRegenerate = useCallback(async () => {
     const authHeaders = await getAuthHeaders();
-    regenerate({
+    await regenerate({
       headers: authHeaders,
       body: {
         conversation_id: id,
@@ -934,7 +934,7 @@ export function ChatSidebar({
         if (retryMessageText) {
           pendingRetryRef.current = retryMessageText;
         }
-        navigate({
+        await navigate({
           to: "/chat/$id",
           params: { id: result.new_conversation_id },
         });
@@ -950,7 +950,7 @@ export function ChatSidebar({
   // Auto-compact when context window is exceeded
   useEffect(() => {
     if (!isContextLengthError(error)) return;
-    handleCompact(getLastUserMessageText(messages));
+    void handleCompact(getLastUserMessageText(messages));
   }, [error, messages, handleCompact]);
 
   // Sync tool outputs to the document store
@@ -1010,7 +1010,7 @@ export function ChatSidebar({
                       type="button"
                       onClick={() => {
                         clearAll();
-                        navigate({
+                        void navigate({
                           to: "/chat/$id",
                           params: { id: compactedFrom },
                         });
@@ -1110,7 +1110,7 @@ export function ChatSidebar({
                             ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
                             .map((p) => p.text)
                             .join("\n");
-                          if (text) navigator.clipboard.writeText(text);
+                          if (text) void navigator.clipboard.writeText(text);
                         }}
                         label="Copy"
                       >
@@ -1149,7 +1149,7 @@ export function ChatSidebar({
           )}
           <PromptInput
             onSubmit={(msg) => {
-              handleSendMessage(msg.text, msg.files);
+              void handleSendMessage(msg.text, msg.files);
             }}
           >
             {hasDocumentFilters && (

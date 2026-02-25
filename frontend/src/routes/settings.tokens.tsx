@@ -45,7 +45,7 @@ function TokensPage() {
   }, []);
 
   useEffect(() => {
-    fetchTokens();
+    void fetchTokens();
   }, [fetchTokens]);
 
   const handleCreate = async (name: string, expiresInDays?: number) => {

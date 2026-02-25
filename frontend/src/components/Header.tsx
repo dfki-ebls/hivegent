@@ -26,7 +26,7 @@ function UserMenu() {
     // For local auth, navigate to home after sign out
     // For OIDC, signOut triggers a redirect
     if (!isOidcConfigured()) {
-      navigate({ to: "/" });
+      await navigate({ to: "/" });
     }
   };
 

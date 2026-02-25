@@ -8,12 +8,7 @@ vi.mock("@/lib/api", () => ({
   clearAuthTokenProvider: vi.fn(),
 }));
 
-import {
-  deleteConversation,
-  generateConversationTitle,
-  listConversations,
-  updateConversationTitle,
-} from "@/lib/api";
+import { deleteConversation, listConversations } from "@/lib/api";
 import type { ConversationSummary } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
 

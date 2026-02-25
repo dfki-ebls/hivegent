@@ -18,7 +18,7 @@ function CallbackPage() {
   useEffect(() => {
     // If OIDC is not configured, redirect to home
     if (!isOidcConfigured()) {
-      navigate({ to: "/" });
+      void navigate({ to: "/" });
       return;
     }
 
@@ -28,16 +28,16 @@ function CallbackPage() {
       setIsCreatingChat(true);
       createConversation()
         .then((id) => {
-          navigate({ to: "/chat/$id", params: { id } });
+          void navigate({ to: "/chat/$id", params: { id } });
         })
         .catch((error) => {
           console.error("Failed to create conversation:", error);
-          navigate({ to: "/" });
+          void navigate({ to: "/" });
         });
     } else if (auth.error) {
       // Error during authentication
       console.error("Authentication error:", auth.error);
-      navigate({ to: "/" });
+      void navigate({ to: "/" });
     }
     // While auth.isLoading, we show the loading state
   }, [auth.isAuthenticated, auth.error, auth.isLoading, navigate, isCreatingChat]);

@@ -18,14 +18,14 @@ function IndexPage() {
 
   const handlePostSignIn = async () => {
     const id = await createConversation();
-    navigate({ to: "/chat/$id", params: { id } });
+    await navigate({ to: "/chat/$id", params: { id } });
   };
 
   const handleNewChat = async () => {
     setIsLoading(true);
     try {
       const id = await createConversation();
-      navigate({ to: "/chat/$id", params: { id } });
+      await navigate({ to: "/chat/$id", params: { id } });
     } catch (error) {
       console.error("Failed to create conversation:", error);
       setIsLoading(false);

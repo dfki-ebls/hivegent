@@ -273,7 +273,7 @@ export function ConversationsList({
   const { llm, smallModel } = useSettingsStore();
 
   useEffect(() => {
-    fetchConversations();
+    void fetchConversations();
   }, [fetchConversations]);
 
   const handleDelete = async (id: string) => {

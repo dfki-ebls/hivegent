@@ -20,7 +20,7 @@ function RootComponent() {
   const initFromBackend = useSettingsStore((state) => state.initFromBackend);
 
   useEffect(() => {
-    initFromBackend();
+    void initFromBackend();
   }, [initFromBackend]);
 
   return (

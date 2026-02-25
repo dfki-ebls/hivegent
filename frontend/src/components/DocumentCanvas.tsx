@@ -748,8 +748,8 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   );
 
   useEffect(() => {
-    fetchDocuments();
-    fetchDirectoryTree();
+    void fetchDocuments();
+    void fetchDirectoryTree();
   }, [fetchDocuments, fetchDirectoryTree]);
 
   // --- Dialog handlers ---
@@ -858,14 +858,14 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
-      handleFiles(e.dataTransfer.files);
+      void handleFiles(e.dataTransfer.files);
     },
     [handleFiles],
   );
 
   const handleFileInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      handleFiles(e.target.files);
+      void handleFiles(e.target.files);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -1116,7 +1116,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         currentPath={moveFilePath ?? ""}
         onMove={(destination) => {
           if (moveFilePath) {
-            storeMove(moveFilePath, destination);
+            void storeMove(moveFilePath, destination);
           }
         }}
       />
