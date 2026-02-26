@@ -1,6 +1,7 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { z } from "zod";
 
+import type { ToolsSpec } from "./types";
 import {
   type BackendSettings,
   BackendSettingsSchema,
@@ -33,6 +34,8 @@ import {
   GenerateTitleResponseSchema,
   type LlmConfig,
   type MoveDocumentResponse,
+  type ToolInfo,
+  ToolInfoSchema,
   MoveDocumentResponseSchema,
   type PipelineSpec,
   type TokenInfo,
@@ -111,6 +114,16 @@ export async function fetchSettings(): Promise<BackendSettings> {
   return BackendSettingsSchema.parse(data);
 }
 
+/** Fetch available agent tools from the backend. */
+export async function fetchTools(): Promise<ToolInfo[]> {
+  const res = await authFetch(`${API_BASE_URL}/api/tools`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch tools");
+  }
+  const data: unknown = await res.json();
+  return z.array(ToolInfoSchema).parse(data);
+}
+
 /** Build a sparse LlmConfig from frontend settings. */
 export function buildLlmConfig(s: {
   model?: string;
@@ -122,6 +135,18 @@ export function buildLlmConfig(s: {
   if (s.apiKey) config.api_key = s.apiKey;
   if (s.baseUrl) config.base_url = s.baseUrl;
   return config;
+}
+
+/** Convert a frontend ToolsSpec to the snake_case backend payload. */
+export function buildToolsPayload(spec: ToolsSpec): Record<string, unknown> {
+  return {
+    disabled_tools: spec.disabledTools,
+    mcp_servers: spec.mcpServers.map((s) => ({
+      url: s.url,
+      headers: s.headers,
+      tool_prefix: s.toolPrefix ?? null,
+    })),
+  };
 }
 
 export async function createConversation(): Promise<string> {

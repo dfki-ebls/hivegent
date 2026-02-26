@@ -6,6 +6,7 @@
  * into a single persisted store with Zod-validated rehydration.
  */
 
+import { z } from "zod";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StorageValue } from "zustand/middleware";
 
@@ -20,9 +21,12 @@ import {
   type DocumentTab,
   DocumentTabSchema,
   ExpandedDirsSchema,
+  type McpServerEntry,
   type Personality,
   PersonalitySchema,
   PipelineConfigsSchema,
+  type ToolsSpec,
+  ToolsSpecSchema,
   type UserOverrides,
   UserOverridesSchema,
 } from "../lib/types";
@@ -53,6 +57,7 @@ const UI_DEFAULTS = {
   customSystemMessage: "",
   conversionConfigs: {} as PipelineConfigs,
   chunkingConfigs: {} as PipelineConfigs,
+  toolsSpec: { disabledTools: [], mcpServers: [] } as ToolsSpec,
 };
 
 interface SettingsState {
@@ -71,6 +76,7 @@ interface SettingsState {
   customSystemMessage: string;
   conversionConfigs: PipelineConfigs;
   chunkingConfigs: PipelineConfigs;
+  toolsSpec: ToolsSpec;
 
   // User context (from backend, not persisted)
   readGroups: string[];
@@ -101,6 +107,11 @@ interface SettingsState {
   setChunkingConfig: (pipeline: string, config: Record<string, unknown>) => void;
   resetConversionConfig: (pipeline: string) => void;
   resetChunkingConfig: (pipeline: string) => void;
+  setDisabledTools: (tools: string[]) => void;
+  toggleTool: (toolName: string) => void;
+  addMcpServer: (server: McpServerEntry) => void;
+  removeMcpServer: (index: number) => void;
+  updateMcpServer: (index: number, server: McpServerEntry) => void;
 }
 
 /** Recompute effective values from backend defaults and user overrides. */
@@ -131,6 +142,7 @@ interface PersistedSettings {
   customSystemMessage: string;
   conversionConfigs: PipelineConfigs;
   chunkingConfigs: PipelineConfigs;
+  toolsSpec: ToolsSpec;
 }
 
 /**
@@ -290,6 +302,48 @@ export const useSettingsStore = create<SettingsState>()(
           const { [pipeline]: _, ...rest } = state.chunkingConfigs;
           return { chunkingConfigs: rest };
         }),
+
+      setDisabledTools: (tools) =>
+        set((state) => ({
+          toolsSpec: { ...state.toolsSpec, disabledTools: tools },
+        })),
+
+      toggleTool: (toolName) =>
+        set((state) => {
+          const disabled = new Set(state.toolsSpec.disabledTools);
+          if (disabled.has(toolName)) {
+            disabled.delete(toolName);
+          } else {
+            disabled.add(toolName);
+          }
+          return {
+            toolsSpec: { ...state.toolsSpec, disabledTools: [...disabled] },
+          };
+        }),
+
+      addMcpServer: (server) =>
+        set((state) => ({
+          toolsSpec: {
+            ...state.toolsSpec,
+            mcpServers: [...state.toolsSpec.mcpServers, server],
+          },
+        })),
+
+      removeMcpServer: (index) =>
+        set((state) => ({
+          toolsSpec: {
+            ...state.toolsSpec,
+            mcpServers: state.toolsSpec.mcpServers.filter((_, i) => i !== index),
+          },
+        })),
+
+      updateMcpServer: (index, server) =>
+        set((state) => ({
+          toolsSpec: {
+            ...state.toolsSpec,
+            mcpServers: state.toolsSpec.mcpServers.map((s, i) => (i === index ? server : s)),
+          },
+        })),
     }),
     {
       name: "hivegent-settings",
@@ -304,12 +358,23 @@ export const useSettingsStore = create<SettingsState>()(
         customSystemMessage: state.customSystemMessage,
         conversionConfigs: state.conversionConfigs,
         chunkingConfigs: state.chunkingConfigs,
+        toolsSpec: state.toolsSpec,
       }),
       merge: (persisted, current) => {
         const data = persisted as Record<string, unknown> | undefined;
         if (!data) return current;
 
         const overrides = UserOverridesSchema.safeParse(data.overrides).data ?? EMPTY_OVERRIDES;
+
+        // Migrate from flat disabledTools to toolsSpec
+        let toolsSpec = ToolsSpecSchema.safeParse(data.toolsSpec).data;
+        if (!toolsSpec) {
+          const legacyDisabled = z.array(z.string()).safeParse(data.disabledTools).data;
+          toolsSpec = {
+            disabledTools: legacyDisabled ?? [],
+            mcpServers: [],
+          };
+        }
 
         return {
           ...current,
@@ -336,6 +401,7 @@ export const useSettingsStore = create<SettingsState>()(
           chunkingConfigs:
             PipelineConfigsSchema.safeParse(data.chunkingConfigs).data ??
             UI_DEFAULTS.chunkingConfigs,
+          toolsSpec,
           ...computeEffective(current.backendDefaults, overrides),
         };
       },

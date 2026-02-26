@@ -306,6 +306,14 @@ export const CollectionUploadResponseSchema = z.object({
 });
 export type CollectionUploadResponse = z.infer<typeof CollectionUploadResponseSchema>;
 
+/** Metadata about an available agent tool. */
+export const ToolInfoSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  group: z.string(),
+});
+export type ToolInfo = z.infer<typeof ToolInfoSchema>;
+
 /** Summary information about a knowledge group. */
 export const GroupInfoSchema = z.object({
   slug: z.string(),
@@ -318,6 +326,25 @@ export const GroupListResponseSchema = z.object({
   groups: z.array(GroupInfoSchema),
 });
 export type GroupListResponse = z.infer<typeof GroupListResponseSchema>;
+
+// ============================================================
+// Tool configuration schemas (persisted in localStorage, sent to backend)
+// ============================================================
+
+/** A user-provided MCP server entry (HTTP transport only). */
+export const McpServerEntrySchema = z.object({
+  url: z.string(),
+  headers: z.record(z.string(), z.string()).default({}),
+  toolPrefix: z.string().optional(),
+});
+export type McpServerEntry = z.infer<typeof McpServerEntrySchema>;
+
+/** Bundled tool configuration: disabled built-in tools and custom MCP servers. */
+export const ToolsSpecSchema = z.object({
+  disabledTools: z.array(z.string()).default([]),
+  mcpServers: z.array(McpServerEntrySchema).default([]),
+});
+export type ToolsSpec = z.infer<typeof ToolsSpecSchema>;
 
 // ============================================================
 // Frontend-only types (no runtime validation needed)

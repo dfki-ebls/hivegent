@@ -84,6 +84,21 @@ class DocumentFilter:
         return True
 
 
+class McpServerConfig(BaseModel):
+    """User-provided MCP server (HTTP transport only)."""
+
+    url: str
+    headers: dict[str, str] = Field(default_factory=dict)
+    tool_prefix: str | None = None
+
+
+class ToolsSpec(BaseModel):
+    """Bundled tool configuration: disabled built-in tools and custom MCP servers."""
+
+    disabled_tools: list[str] = Field(default_factory=list)
+    mcp_servers: list[McpServerConfig] = Field(default_factory=list)
+
+
 __all__ = [
     "BulkDeleteConversationsResponse",
     "BulkDeleteDocumentsResponse",
@@ -120,12 +135,15 @@ __all__ = [
     "GroupInfo",
     "GroupListResponse",
     "LlmConfig",
+    "McpServerConfig",
     "MoveDocumentRequest",
     "MoveDocumentResponse",
     "Personality",
     "RetrievedChunk",
     "SettingsResponse",
     "TokenInfo",
+    "ToolInfo",
+    "ToolsSpec",
     "UpdateTitleRequest",
     "UploadDocumentResponse",
     "User",
@@ -149,6 +167,15 @@ class ChatRequestConfig(BaseModel):
     llm: LlmConfig = Field(default_factory=LlmConfig)
     included_documents: list[str] = Field(default_factory=list)
     excluded_documents: list[str] = Field(default_factory=list)
+    tools: ToolsSpec = Field(default_factory=ToolsSpec)
+
+
+class ToolInfo(BaseModel):
+    """Metadata about an available agent tool."""
+
+    name: str
+    description: str
+    group: str
 
 
 class CreateConversationResponse(BaseModel):

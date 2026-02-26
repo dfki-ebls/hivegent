@@ -26,6 +26,7 @@ import type { Components } from "streamdown";
 import {
   API_BASE_URL,
   buildLlmConfig,
+  buildToolsPayload,
   compactConversation,
   createConversation,
   getAuthHeaders,
@@ -726,7 +727,7 @@ export function ChatSidebar({
   const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const fetchConversations = useConversationsStore((state) => state.fetchConversations);
-  const { llm, smallModel, personality, customSystemMessage } = useSettingsStore();
+  const { llm, smallModel, personality, customSystemMessage, toolsSpec } = useSettingsStore();
   const [inputValue, setInputValue] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [activeTab, setActiveTab] = useState("chat");
@@ -834,6 +835,7 @@ export function ChatSidebar({
             llm: buildLlmConfig(llm),
             included_documents: includedDocuments,
             excluded_documents: excludedDocuments,
+            tools: buildToolsPayload(toolsSpec),
           },
         },
       );
@@ -848,6 +850,7 @@ export function ChatSidebar({
       llm,
       includedDocuments,
       excludedDocuments,
+      toolsSpec,
       sendMessage,
       onClearDocuments,
     ],
@@ -869,6 +872,7 @@ export function ChatSidebar({
             llm: buildLlmConfig(llm),
             included_documents: includedDocuments,
             excluded_documents: excludedDocuments,
+            tools: buildToolsPayload(toolsSpec),
           },
         },
       );
@@ -881,6 +885,7 @@ export function ChatSidebar({
       llm,
       includedDocuments,
       excludedDocuments,
+      toolsSpec,
       sendMessage,
     ],
   );
@@ -905,6 +910,7 @@ export function ChatSidebar({
         llm: buildLlmConfig(llm),
         included_documents: includedDocuments,
         excluded_documents: excludedDocuments,
+        tools: buildToolsPayload(toolsSpec),
       },
     });
   }, [
@@ -915,6 +921,7 @@ export function ChatSidebar({
     llm,
     includedDocuments,
     excludedDocuments,
+    toolsSpec,
     regenerate,
   ]);
 

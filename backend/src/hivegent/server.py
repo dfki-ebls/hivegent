@@ -30,12 +30,10 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
 from .agent import (
+    TOOLSET_GROUPS,
     UserDeps,
     base_agent,
-    explore_toolset,
-    rag_toolset,
     user_agent,
-    write_toolset,
 )
 from .auth import User, get_current_user
 from .chunkers import (
@@ -83,6 +81,7 @@ from .prompts import CITATION_INSTRUCTIONS, PERSONALITY_TEMPLATES
 from .retrieval import invalidate_store, sync_index
 from .store import Casebase
 from .tokens import token_store
+from .tool_factory import build_toolsets, collect_tool_info
 from .types import (
     BulkDeleteConversationsResponse,
     BulkDeleteDocumentsResponse,
@@ -117,6 +116,8 @@ from .types import (
     Personality,
     SettingsResponse,
     TokenInfo,
+    ToolInfo,
+    ToolsSpec,
     UpdateTitleRequest,
     UploadDocumentResponse,
     UserResponse,
@@ -549,6 +550,14 @@ async def get_messages(
     return VercelAIAdapter.dump_messages(messages)
 
 
+@api_router.get("/tools")
+async def list_tools(
+    _user: Annotated[User, Depends(get_current_user)],
+) -> list[ToolInfo]:
+    """Return metadata for all available agent tools."""
+    return collect_tool_info(TOOLSET_GROUPS)
+
+
 async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     """Parse chat configuration from the request body.
 
@@ -577,6 +586,9 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     included_documents: list[str] = body.get("included_documents") or []
     excluded_documents: list[str] = body.get("excluded_documents") or []
 
+    raw_tools = body.get("tools")
+    tools = ToolsSpec(**(raw_tools or {}))
+
     return ChatRequestConfig(
         conversation_id=body.get("conversation_id", ""),
         personality=personality,
@@ -585,6 +597,7 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
         llm=llm,
         included_documents=included_documents,
         excluded_documents=excluded_documents,
+        tools=tools,
     )
 
 
@@ -656,7 +669,10 @@ async def chat(
                 base_url=config.llm.base_url,
             ),
         ),
-        toolsets=[rag_toolset, explore_toolset, write_toolset],
+        toolsets=build_toolsets(
+            list(TOOLSET_GROUPS.values()),
+            config.tools,
+        ),
         instructions=instructions,
         model_settings=model_settings,
         on_complete=on_complete,

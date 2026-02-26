@@ -1,6 +1,7 @@
-import { RotateCcwIcon, SettingsIcon } from "lucide-react";
-import { useState } from "react";
-import { PERSONALITY_OPTIONS, type Personality } from "../lib/types";
+import { PlusIcon, RotateCcwIcon, SettingsIcon, TrashIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { fetchTools } from "../lib/api";
+import { PERSONALITY_OPTIONS, type Personality, type ToolInfo } from "../lib/types";
 import { useSettingsStore } from "../stores/settings-store";
 import { Button } from "./ui/button";
 import {
@@ -13,7 +14,9 @@ import {
   DialogTrigger,
 } from "./ui/dialog";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
 
 // --- Section components ---
@@ -47,15 +50,32 @@ export function SettingsDialog() {
     hasServerApiKey,
     personality,
     customSystemMessage,
+    toolsSpec,
     setLLM,
     setSmallModel,
     setVisionModel,
     setPersonality,
     setCustomSystemMessage,
+    toggleTool,
+    addMcpServer,
+    removeMcpServer,
     reset,
   } = useSettingsStore();
 
   const [open, setOpen] = useState(false);
+  const [tools, setTools] = useState<ToolInfo[]>([]);
+  const [newMcpUrl, setNewMcpUrl] = useState("");
+  const [newMcpPrefix, setNewMcpPrefix] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    void fetchTools().then(setTools).catch(() => setTools([]));
+  }, [open]);
+
+  const toolsByGroup = tools.reduce<Record<string, ToolInfo[]>>((acc, tool) => {
+    (acc[tool.group] ??= []).push(tool);
+    return acc;
+  }, {});
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -183,6 +203,110 @@ export function SettingsDialog() {
                 />
               </SettingsSection>
             )}
+
+            {tools.length > 0 && (
+              <SettingsSection
+                label="Tools"
+                description="Toggle which tools the assistant can use."
+              >
+                <div className="grid gap-3">
+                  {Object.entries(toolsByGroup).map(([group, groupTools]) => (
+                    <div key={group}>
+                      <p className="text-xs font-medium text-muted-foreground capitalize mb-1.5">
+                        {group}
+                      </p>
+                      <div className="grid gap-1.5">
+                        {groupTools.map((tool) => (
+                          <div
+                            key={tool.name}
+                            className="flex items-center justify-between gap-2"
+                          >
+                            <Label
+                              htmlFor={`tool-${tool.name}`}
+                              className="text-xs font-normal cursor-pointer"
+                              title={tool.description}
+                            >
+                              {tool.name}
+                            </Label>
+                            <Switch
+                              id={`tool-${tool.name}`}
+                              checked={!toolsSpec.disabledTools.includes(tool.name)}
+                              onCheckedChange={() => toggleTool(tool.name)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </SettingsSection>
+            )}
+
+            <SettingsSection
+              label="MCP Servers"
+              description="Connect external tool servers via the Model Context Protocol (HTTP transport)."
+            >
+              <div className="grid gap-2">
+                {toolsSpec.mcpServers.map((server, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs"
+                  >
+                    <span className="truncate flex-1" title={server.url}>
+                      {server.url}
+                    </span>
+                    {server.toolPrefix && (
+                      <span className="text-muted-foreground shrink-0">
+                        prefix: {server.toolPrefix}
+                      </span>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0"
+                      onClick={() => removeMcpServer(index)}
+                    >
+                      <TrashIcon className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))}
+                <div className="flex items-end gap-2">
+                  <div className="grid gap-1 flex-1">
+                    <Input
+                      placeholder="https://mcp-server.example.com/sse"
+                      value={newMcpUrl}
+                      onChange={(e) => setNewMcpUrl(e.target.value)}
+                      className="text-xs"
+                    />
+                  </div>
+                  <div className="grid gap-1 w-28">
+                    <Input
+                      placeholder="Prefix"
+                      value={newMcpPrefix}
+                      onChange={(e) => setNewMcpPrefix(e.target.value)}
+                      className="text-xs"
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9 shrink-0"
+                    disabled={!newMcpUrl.trim()}
+                    onClick={() => {
+                      addMcpServer({
+                        url: newMcpUrl.trim(),
+                        headers: {},
+                        toolPrefix: newMcpPrefix.trim() || undefined,
+                      });
+                      setNewMcpUrl("");
+                      setNewMcpPrefix("");
+                    }}
+                  >
+                    <PlusIcon className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </SettingsSection>
           </div>
         </div>
 

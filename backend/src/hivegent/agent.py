@@ -24,6 +24,7 @@ from .types import (
 )
 
 __all__ = [
+    "TOOLSET_GROUPS",
     "UserDeps",
     "base_agent",
     "explore_agent",
@@ -359,3 +360,12 @@ def write_document(
             adds to the end, ``"prepend"`` adds to the start.
     """
     return ctx.deps.tool_factory.write_document(filename, content, mode)
+
+
+# --- Toolset group registry (single source of truth for tool metadata) ---
+
+TOOLSET_GROUPS: dict[str, FunctionToolset[UserDeps]] = {
+    "explore": explore_toolset,
+    "rag": rag_toolset,
+    "write": write_toolset,
+}

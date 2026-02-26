@@ -5,6 +5,10 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Literal
 
+from pydantic_ai import FilteredToolset, FunctionToolset
+from pydantic_ai.mcp import MCPServerSSE
+from pydantic_ai.toolsets import AbstractToolset
+
 from .chunks import load_chunked_document, rechunk_document
 from .config import DOCUMENT_EXTENSION, settings
 from .messages import list_conversations as _list_conversations
@@ -23,9 +27,9 @@ from .tools import (
     SearchTool,
     WriteDocumentTool,
 )
-from .types import ChunkSummary, ConversationSummary, DocumentFilter
+from .types import ChunkSummary, ConversationSummary, DocumentFilter, ToolInfo, ToolsSpec
 
-__all__ = ["ToolFactory"]
+__all__ = ["ToolFactory", "build_toolsets", "collect_tool_info"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -186,3 +190,61 @@ class ToolFactory:
         return JqTool(
             path=self.store.conversations_dir(settings.data_dir),
         )
+
+
+def build_toolsets[T](
+    toolsets: Sequence[FunctionToolset[T]],
+    tools_spec: ToolsSpec,
+) -> Sequence[AbstractToolset[T]]:
+    """Apply disabled-tool filtering and append MCP server toolsets.
+
+    Args:
+        toolsets: Built-in agent toolsets.
+        tools_spec: Combined tool configuration from the chat request.
+
+    Returns:
+        Sequence of toolsets ready to pass to the agent.
+    """
+    result: list[AbstractToolset[T]] = []
+
+    if tools_spec.disabled_tools:
+        disabled = frozenset(tools_spec.disabled_tools)
+        result.extend(
+            FilteredToolset(
+                wrapped=ts,
+                filter_func=lambda _ctx, td, _disabled=disabled: td.name not in _disabled,
+            )
+            for ts in toolsets
+        )
+    else:
+        result.extend(toolsets)
+
+    for server_cfg in tools_spec.mcp_servers:
+        mcp_server = MCPServerSSE(
+            url=server_cfg.url,
+            headers=server_cfg.headers or {},
+            tool_prefix=server_cfg.tool_prefix,
+        )
+        result.append(mcp_server)
+
+    return result
+
+
+def collect_tool_info[T](
+    toolset_groups: dict[str, FunctionToolset[T]],
+) -> list[ToolInfo]:
+    """Collect metadata from all registered toolset groups.
+
+    Args:
+        toolset_groups: Mapping of group name to toolset.
+
+    Returns:
+        Flat list of tool info entries.
+    """
+    result: list[ToolInfo] = []
+    for group, toolset in toolset_groups.items():
+        for name, tool in toolset.tools.items():
+            result.append(
+                ToolInfo(name=name, description=tool.description or "", group=group)
+            )
+    return result
