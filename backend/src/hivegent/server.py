@@ -65,6 +65,8 @@ from .converters import (
     resolve_auto_pipeline,
     validate_conversion_config,
 )
+from .memory import clear_memory as clear_user_memory
+from .memory import load_memory
 from .mcp import mcp_app
 from .messages import (
     create_conversation as persist_conversation,
@@ -77,7 +79,12 @@ from .messages import (
     update_conversation_title,
 )
 from .observability import configure_observability
-from .prompts import CITATION_INSTRUCTIONS, PERSONALITY_TEMPLATES
+from .prompts import (
+    CITATION_INSTRUCTIONS,
+    MEMORY_INSTRUCTIONS,
+    MEMORY_INSTRUCTIONS_EMPTY,
+    PERSONALITY_TEMPLATES,
+)
 from .retrieval import invalidate_store, sync_index
 from .store import Casebase
 from .tokens import token_store
@@ -89,6 +96,7 @@ from .types import (
     BulkRevokeTokensResponse,
     ChatRequestConfig,
     ChunkedDocument,
+    ClearMemoryResponse,
     CollectionUploadResponse,
     CompactConversationRequest,
     CompactConversationResponse,
@@ -635,6 +643,15 @@ async def chat(
             )
             + CITATION_INSTRUCTIONS
         )
+
+    # Inject memory into the prompt when the save_memory tool is enabled
+    memory_enabled = "save_memory" not in (config.tools.disabled_tools or [])
+    if memory_enabled:
+        memory_content = load_memory(user.id)
+        if memory_content:
+            instructions += MEMORY_INSTRUCTIONS.format(memory_content=memory_content)
+        else:
+            instructions += MEMORY_INSTRUCTIONS_EMPTY
 
     model_settings: OpenAIResponsesModelSettings | None = None
     if config.reasoning_effort != "auto":
@@ -1649,6 +1666,18 @@ async def revoke_all_tokens(
     return BulkRevokeTokensResponse(
         revoked_count=count,
         message="All tokens revoked successfully",
+    )
+
+
+@api_router.delete("/memory")
+async def clear_memory_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+) -> ClearMemoryResponse:
+    """Clear the authenticated user's persistent memory."""
+    cleared = clear_user_memory(user.id)
+    return ClearMemoryResponse(
+        cleared=cleared,
+        message="Memory cleared" if cleared else "No memory to clear",
     )
 
 

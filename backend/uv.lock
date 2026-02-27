@@ -1524,7 +1524,7 @@ dependencies = [
     { name = "logfire" },
     { name = "nanoid" },
     { name = "opentelemetry-instrumentation-fastapi" },
-    { name = "pydantic-ai-slim", extra = ["openai", "ui"] },
+    { name = "pydantic-ai-slim", extra = ["mcp", "openai", "ui"] },
     { name = "pydantic-settings" },
     { name = "pypandoc" },
     { name = "ripgrepy" },
@@ -1583,7 +1583,7 @@ requires-dist = [
     { name = "markitdown", extras = ["all"], marker = "extra == 'markitdown'", specifier = ">=0.1,<1" },
     { name = "nanoid", specifier = ">=2,<3" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.60b1" },
-    { name = "pydantic-ai-slim", extras = ["ui", "openai"], specifier = ">=1,<2" },
+    { name = "pydantic-ai-slim", extras = ["ui", "openai", "mcp"], specifier = ">=1,<2" },
     { name = "pydantic-settings", specifier = ">=2,<3" },
     { name = "pypandoc", specifier = ">=1,<2" },
     { name = "ripgrepy", specifier = ">=2,<3" },
@@ -3494,6 +3494,9 @@ wheels = [
 ]
 
 [package.optional-dependencies]
+mcp = [
+    { name = "mcp" },
+]
 openai = [
     { name = "openai" },
     { name = "tiktoken" },

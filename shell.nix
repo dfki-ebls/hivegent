@@ -12,7 +12,7 @@ mkShell {
   shellHook = ''
     ROOT_DIR="$(${lib.getExe git} rev-parse --show-toplevel)"
     npm --prefix "$ROOT_DIR/frontend" install
-    uv --directory "$ROOT_DIR/backend" sync --all-extras --locked
+    uv --directory "$ROOT_DIR/backend" sync --all-extras
   '';
   HIVEGENT_AUTH_DISABLED = "1";
   UV_PYTHON = lib.getExe python3;

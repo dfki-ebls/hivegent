@@ -105,6 +105,7 @@ __all__ = [
     "BulkDeleteUserDataResponse",
     "BulkRevokeTokensResponse",
     "ChatRequestConfig",
+    "ClearMemoryResponse",
     "ChunkedDocument",
     "ChunkInfo",
     "ChunkSummary",
@@ -168,6 +169,13 @@ class ChatRequestConfig(BaseModel):
     included_documents: list[str] = Field(default_factory=list)
     excluded_documents: list[str] = Field(default_factory=list)
     tools: ToolsSpec = Field(default_factory=ToolsSpec)
+
+
+class ClearMemoryResponse(BaseModel):
+    """Response for clearing user memory."""
+
+    cleared: bool = Field(description="Whether memory was cleared")
+    message: str = Field(description="Status message")
 
 
 class ToolInfo(BaseModel):

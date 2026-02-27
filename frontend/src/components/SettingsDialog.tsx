@@ -1,8 +1,19 @@
 import { PlusIcon, RotateCcwIcon, SettingsIcon, TrashIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { fetchTools } from "../lib/api";
+import { clearMemory, fetchTools } from "../lib/api";
 import { PERSONALITY_OPTIONS, type Personality, type ToolInfo } from "../lib/types";
 import { useSettingsStore } from "../stores/settings-store";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "./ui/alert-dialog";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -310,7 +321,30 @@ export function SettingsDialog() {
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="flex-row justify-between sm:justify-between">
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" size="sm">
+                <TrashIcon className="h-4 w-4 mr-2" />
+                Clear Memory
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear memory?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will permanently delete all saved memory.
+                  The assistant will no longer remember information from previous conversations.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => void clearMemory()}>
+                  Clear
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           <Button variant="outline" size="sm" onClick={reset}>
             <RotateCcwIcon className="h-4 w-4 mr-2" />
             Reset to Server Defaults

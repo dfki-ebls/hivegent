@@ -595,6 +595,17 @@ export async function revokeAllTokens(): Promise<void> {
   }
 }
 
+/** Clear the user's persistent memory. */
+export async function clearMemory(): Promise<void> {
+  const res = await authFetch(`${API_BASE_URL}/api/memory`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to clear memory" }));
+    throw new Error(error.detail || "Failed to clear memory");
+  }
+}
+
 /** Delete all user data (conversations, documents, tokens). */
 export async function deleteAllUserData(): Promise<void> {
   const res = await authFetch(`${API_BASE_URL}/api/user-data`, {

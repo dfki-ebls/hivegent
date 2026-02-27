@@ -2,7 +2,13 @@
 
 from .types import Personality
 
-__all__ = ["CITATION_INSTRUCTIONS", "EXPLORE_INSTRUCTIONS", "PERSONALITY_TEMPLATES"]
+__all__ = [
+    "CITATION_INSTRUCTIONS",
+    "EXPLORE_INSTRUCTIONS",
+    "MEMORY_INSTRUCTIONS",
+    "MEMORY_INSTRUCTIONS_EMPTY",
+    "PERSONALITY_TEMPLATES",
+]
 
 EXPLORE_INSTRUCTIONS = """\
 You are a document exploration assistant.
@@ -25,6 +31,21 @@ When referencing information from documents, always use inline citation tags:
 Use the exact filename from your tool results as the filename attribute.
 Prefer chunk citations with the chunk index when you retrieved a specific chunk.
 Place citations around the relevant text inline, not grouped at the end."""
+
+MEMORY_INSTRUCTIONS = """
+
+<memory>
+{memory_content}
+</memory>
+
+You have persistent memory that is preserved across conversations.
+When you learn important information about the user, their preferences, key decisions, or ongoing projects, use the save_memory tool to update your memory.
+Always include previously saved information you want to retain, as the tool overwrites the entire memory."""
+
+MEMORY_INSTRUCTIONS_EMPTY = """
+
+You have persistent memory that is preserved across conversations, but it is currently empty.
+When you learn important information about the user, their preferences, key decisions, or ongoing projects, use the save_memory tool to start building your memory."""
 
 PERSONALITY_TEMPLATES: dict[Personality, str] = {
     Personality.DEFAULT: """You are a helpful RAG (Retrieval-Augmented Generation) assistant.

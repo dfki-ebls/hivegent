@@ -9,6 +9,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from .config import settings
+from .memory import save_memory as _save_memory
 from .prompts import EXPLORE_INSTRUCTIONS
 from .store import Casebase
 from .tool_factory import ToolFactory
@@ -29,6 +30,7 @@ __all__ = [
     "base_agent",
     "explore_agent",
     "explore_toolset",
+    "memory_toolset",
     "rag_toolset",
     "user_agent",
     "write_toolset",
@@ -362,10 +364,30 @@ def write_document(
     return ctx.deps.tool_factory.write_document(filename, content, mode)
 
 
+# --- Memory toolset (persistent user memory, no approval needed) ---
+
+memory_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+
+
+@memory_toolset.tool
+def save_memory(ctx: RunContext[UserDeps], content: str) -> str:
+    """Save information to persistent memory that is preserved across conversations.
+
+    Overwrites the entire memory, so always include previously saved information
+    you want to retain.
+
+    Args:
+        content: The full markdown content for the memory file.
+    """
+    _save_memory(ctx.deps.user_id, content)
+    return "Memory saved successfully."
+
+
 # --- Toolset group registry (single source of truth for tool metadata) ---
 
 TOOLSET_GROUPS: dict[str, FunctionToolset[UserDeps]] = {
     "explore": explore_toolset,
     "rag": rag_toolset,
     "write": write_toolset,
+    "memory": memory_toolset,
 }
