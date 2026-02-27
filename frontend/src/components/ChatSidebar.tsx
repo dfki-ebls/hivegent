@@ -595,7 +595,6 @@ function UserTextPartDisplay({
           value={editText}
           onChange={(e) => setEditText(e.target.value)}
           className="min-h-[80px] resize-y"
-          autoFocus
           onKeyDown={(e) => {
             if (e.key === "Escape") {
               onCancelEdit();

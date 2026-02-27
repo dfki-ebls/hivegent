@@ -88,7 +88,6 @@ function TitleEditor({ value, onChange, onSave, onCancel }: TitleEditorProps) {
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={handleKeyDown}
         className="h-6 text-sm"
-        autoFocus
       />
       <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onSave}>
         <CheckIcon className="h-3 w-3" />
@@ -203,18 +202,14 @@ function ConversationItem({
   };
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      className={`group relative rounded-lg border p-3 transition-colors cursor-pointer ${
+    <button
+      type="button"
+      className={`group relative w-full rounded-lg border p-3 transition-colors cursor-pointer text-left ${
         isActive
           ? "border-primary bg-primary/5"
           : "border-transparent hover:border-border hover:bg-muted/50"
       }`}
       onClick={() => !isEditing && onSelect()}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && !isEditing) onSelect();
-      }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -247,7 +242,7 @@ function ConversationItem({
           onDelete={onDelete}
         />
       )}
-    </div>
+    </button>
   );
 }
 

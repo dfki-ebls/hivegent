@@ -64,7 +64,6 @@ export function MoveDocumentDialog({
               value={destination}
               onChange={(e) => setDestination(e.target.value)}
               placeholder="projects/report.md"
-              autoFocus
             />
           </div>
           <DialogFooter>

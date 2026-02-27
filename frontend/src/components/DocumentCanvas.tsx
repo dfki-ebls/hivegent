@@ -106,14 +106,10 @@ interface ChunkCardProps {
 
 function ChunkCard({ chunk, onClick }: ChunkCardProps) {
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      className="ml-4 rounded-md border bg-card p-3 cursor-pointer transition-colors hover:bg-muted/50"
+    <button
+      type="button"
+      className="ml-4 w-[calc(100%-1rem)] rounded-md border bg-card p-3 cursor-pointer transition-colors hover:bg-muted/50 text-left"
       onClick={onClick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") onClick();
-      }}
     >
       <div className="flex items-center gap-2 mb-1">
         <Badge variant="outline" className="text-xs">
@@ -129,7 +125,7 @@ function ChunkCard({ chunk, onClick }: ChunkCardProps) {
       <pre className="line-clamp-4 whitespace-pre-wrap text-xs text-muted-foreground">
         {chunk.content}
       </pre>
-    </div>
+    </button>
   );
 }
 
@@ -464,14 +460,10 @@ function DocumentListItem({
   onRemove,
 }: DocumentListItemProps) {
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      className="flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50 cursor-pointer"
+    <button
+      type="button"
+      className="flex w-full items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50 cursor-pointer text-left"
       onClick={onEdit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") onEdit();
-      }}
     >
       <FileText className="h-8 w-8 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
@@ -538,7 +530,7 @@ function DocumentListItem({
       >
         <Trash2 className="h-4 w-4 text-destructive" />
       </Button>
-    </div>
+    </button>
   );
 }
 

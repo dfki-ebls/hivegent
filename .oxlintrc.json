@@ -1,6 +1,18 @@
 {
   "$schema": "https://github.com/oxc-project/oxc/raw/refs/heads/main/npm/oxlint/configuration_schema.json",
-  "plugins": ["oxc", "eslint", "typescript", "unicorn", "react", "react-perf"],
+  "plugins": [
+    "eslint",
+    "import",
+    "jsx-a11y",
+    "node",
+    "oxc",
+    "promise",
+    "react",
+    "react-perf",
+    "typescript",
+    "unicorn",
+    "vitest"
+  ],
   "ignorePatterns": [
     "frontend/src/components/ai-elements/**/*.tsx",
     "frontend/src/components/ui/**/*.tsx",

@@ -63,7 +63,6 @@ export function CreateDirectoryDialog({
               value={dirName}
               onChange={(e) => setDirName(e.target.value)}
               placeholder="new-folder"
-              autoFocus
             />
           </div>
           <DialogFooter>
