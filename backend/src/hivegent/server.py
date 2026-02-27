@@ -88,7 +88,7 @@ from .prompts import (
 from .retrieval import invalidate_store, sync_index
 from .store import Casebase
 from .tokens import token_store
-from .tool_factory import build_toolsets, collect_tool_info
+from .tool_factory import build_mcp_server, build_toolsets, collect_tool_info
 from .types import (
     BulkDeleteConversationsResponse,
     BulkDeleteDocumentsResponse,
@@ -119,6 +119,8 @@ from .types import (
     GenerateTitleRequest,
     GenerateTitleResponse,
     LlmConfig,
+    McpServerConfig,
+    McpTestResponse,
     MoveDocumentRequest,
     MoveDocumentResponse,
     Personality,
@@ -564,6 +566,24 @@ async def list_tools(
 ) -> list[ToolInfo]:
     """Return metadata for all available agent tools."""
     return collect_tool_info(TOOLSET_GROUPS)
+
+
+@api_router.post("/mcp/test")
+async def test_mcp_server(
+    config: McpServerConfig,
+    _user: Annotated[User, Depends(get_current_user)],
+) -> McpTestResponse:
+    """Test connectivity to an MCP server and return tool count."""
+    import asyncio
+
+    mcp_server = build_mcp_server(config)
+    try:
+        async with asyncio.timeout(10):
+            async with mcp_server:
+                tools = await mcp_server.list_tools()
+                return McpTestResponse(ok=True, tool_count=len(tools))
+    except Exception as exc:
+        return McpTestResponse(ok=False, error=str(exc))
 
 
 async def _parse_chat_config(request: Request) -> ChatRequestConfig:

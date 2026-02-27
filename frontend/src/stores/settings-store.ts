@@ -145,9 +145,60 @@ interface PersistedSettings {
   toolsSpec: ToolsSpec;
 }
 
+/** Encrypt a single string value if it is non-empty and not already encrypted. */
+async function tryEncrypt(value: string): Promise<string> {
+  if (!value || isEncrypted(value)) return value;
+  return encryptApiKey(value);
+}
+
+/** Decrypt a single string value if it looks encrypted. */
+async function tryDecrypt(value: string): Promise<string> {
+  if (!isEncrypted(value)) return value;
+  return decryptApiKey(value);
+}
+
+/** Encrypt sensitive fields inside MCP server entries (header values, OAuth2 secrets). */
+async function encryptMcpServers(servers: McpServerEntry[]): Promise<McpServerEntry[]> {
+  return Promise.all(
+    servers.map(async (s) => {
+      const encHeaders: Record<string, string> = {};
+      for (const [k, v] of Object.entries(s.headers)) {
+        encHeaders[k] = await tryEncrypt(v);
+      }
+      return {
+        ...s,
+        headers: encHeaders,
+        oauth2: s.oauth2
+          ? { ...s.oauth2, clientSecret: await tryEncrypt(s.oauth2.clientSecret) }
+          : undefined,
+      };
+    }),
+  );
+}
+
+/** Decrypt sensitive fields inside MCP server entries. */
+async function decryptMcpServers(servers: McpServerEntry[]): Promise<McpServerEntry[]> {
+  return Promise.all(
+    servers.map(async (s) => {
+      const decHeaders: Record<string, string> = {};
+      for (const [k, v] of Object.entries(s.headers)) {
+        decHeaders[k] = await tryDecrypt(v);
+      }
+      return {
+        ...s,
+        headers: decHeaders,
+        oauth2: s.oauth2
+          ? { ...s.oauth2, clientSecret: await tryDecrypt(s.oauth2.clientSecret) }
+          : undefined,
+      };
+    }),
+  );
+}
+
 /**
- * Custom storage that encrypts the API key before writing to localStorage
- * and decrypts it on read.  All other fields pass through unchanged.
+ * Custom storage that encrypts sensitive values before writing to localStorage
+ * and decrypts them on read.  Covers the LLM API key and MCP server secrets
+ * (header values, OAuth2 client secrets).
  */
 const encryptedStorage = createJSONStorage(() => ({
   getItem: async (name: string): Promise<string | null> => {
@@ -162,6 +213,7 @@ const encryptedStorage = createJSONStorage(() => ({
       return null;
     }
 
+    // Decrypt LLM API key
     const apiKey = stored.state.overrides.apiKey;
     if (typeof apiKey === "string" && isEncrypted(apiKey)) {
       try {
@@ -172,17 +224,41 @@ const encryptedStorage = createJSONStorage(() => ({
       }
     }
 
+    // Decrypt MCP server secrets
+    if (stored.state.toolsSpec?.mcpServers?.length) {
+      try {
+        stored.state.toolsSpec.mcpServers = await decryptMcpServers(
+          stored.state.toolsSpec.mcpServers,
+        );
+      } catch (err) {
+        console.warn("Failed to decrypt MCP server secrets:", err);
+      }
+    }
+
     return JSON.stringify(stored);
   },
 
   setItem: async (name: string, value: string): Promise<void> => {
     const stored = JSON.parse(value) as StorageValue<PersistedSettings>;
+
+    // Encrypt LLM API key
     const apiKey = stored.state.overrides.apiKey;
     if (typeof apiKey === "string" && apiKey && !isEncrypted(apiKey)) {
       try {
         stored.state.overrides.apiKey = await encryptApiKey(apiKey);
       } catch (err) {
         console.warn("Failed to encrypt API key, storing in plain text:", err);
+      }
+    }
+
+    // Encrypt MCP server secrets
+    if (stored.state.toolsSpec?.mcpServers?.length) {
+      try {
+        stored.state.toolsSpec.mcpServers = await encryptMcpServers(
+          stored.state.toolsSpec.mcpServers,
+        );
+      } catch (err) {
+        console.warn("Failed to encrypt MCP server secrets:", err);
       }
     }
 

@@ -84,12 +84,33 @@ class DocumentFilter:
         return True
 
 
+class McpOAuth2Config(BaseModel):
+    """OAuth2 Client Credentials configuration for an MCP server."""
+
+    client_id: str
+    client_secret: str
+    scopes: str | None = None
+
+
 class McpServerConfig(BaseModel):
     """User-provided MCP server (HTTP transport only)."""
 
     url: str
     headers: dict[str, str] = Field(default_factory=dict)
     tool_prefix: str | None = None
+    oauth2: McpOAuth2Config | None = None
+
+
+class McpTestResponse(BaseModel):
+    """Response from testing an MCP server connection."""
+
+    ok: bool = Field(description="Whether the connection test succeeded")
+    tool_count: int | None = Field(
+        default=None, description="Number of tools discovered"
+    )
+    error: str | None = Field(
+        default=None, description="Error message if the test failed"
+    )
 
 
 class ToolsSpec(BaseModel):
@@ -136,7 +157,9 @@ __all__ = [
     "GroupInfo",
     "GroupListResponse",
     "LlmConfig",
+    "McpOAuth2Config",
     "McpServerConfig",
+    "McpTestResponse",
     "MoveDocumentRequest",
     "MoveDocumentResponse",
     "Personality",

@@ -5,8 +5,9 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Literal
 
+import httpx
 from pydantic_ai import FilteredToolset, FunctionToolset
-from pydantic_ai.mcp import MCPServerSSE
+from pydantic_ai.mcp import MCPServerStreamableHTTP
 from pydantic_ai.toolsets import AbstractToolset
 
 from .chunks import load_chunked_document, rechunk_document
@@ -27,9 +28,16 @@ from .tools import (
     SearchTool,
     WriteDocumentTool,
 )
-from .types import ChunkSummary, ConversationSummary, DocumentFilter, ToolInfo, ToolsSpec
+from .types import (
+    ChunkSummary,
+    ConversationSummary,
+    DocumentFilter,
+    McpServerConfig,
+    ToolInfo,
+    ToolsSpec,
+)
 
-__all__ = ["ToolFactory", "build_toolsets", "collect_tool_info"]
+__all__ = ["ToolFactory", "build_mcp_server", "build_toolsets", "collect_tool_info"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -192,6 +200,53 @@ class ToolFactory:
         )
 
 
+def build_mcp_server(server_cfg: McpServerConfig) -> MCPServerStreamableHTTP:
+    """Build an MCP server toolset from a user-provided config.
+
+    Uses Streamable HTTP transport.  When OAuth2 client credentials are
+    configured, the connection is authenticated via
+    ``ClientCredentialsOAuthProvider``.
+
+    Args:
+        server_cfg: User-provided MCP server configuration.
+
+    Returns:
+        A configured ``MCPServerStreamableHTTP`` instance.
+    """
+    if server_cfg.oauth2:
+        import warnings
+
+        from fastmcp.client.auth.oauth import TokenStorageAdapter
+        from key_value.aio.stores.memory import MemoryStore
+        from mcp.client.auth.extensions.client_credentials import (
+            ClientCredentialsOAuthProvider,
+        )
+
+        store = MemoryStore()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            storage = TokenStorageAdapter(store, server_url=server_cfg.url)
+        oauth_provider = ClientCredentialsOAuthProvider(
+            server_url=server_cfg.url,
+            storage=storage,
+            client_id=server_cfg.oauth2.client_id,
+            client_secret=server_cfg.oauth2.client_secret,
+            scopes=server_cfg.oauth2.scopes,
+        )
+        http_client = httpx.AsyncClient(auth=oauth_provider)
+        return MCPServerStreamableHTTP(
+            url=server_cfg.url,
+            http_client=http_client,
+            tool_prefix=server_cfg.tool_prefix,
+        )
+
+    return MCPServerStreamableHTTP(
+        url=server_cfg.url,
+        headers=server_cfg.headers or {},
+        tool_prefix=server_cfg.tool_prefix,
+    )
+
+
 def build_toolsets[T](
     toolsets: Sequence[FunctionToolset[T]],
     tools_spec: ToolsSpec,
@@ -220,12 +275,7 @@ def build_toolsets[T](
         result.extend(toolsets)
 
     for server_cfg in tools_spec.mcp_servers:
-        mcp_server = MCPServerSSE(
-            url=server_cfg.url,
-            headers=server_cfg.headers or {},
-            tool_prefix=server_cfg.tool_prefix,
-        )
-        result.append(mcp_server)
+        result.append(build_mcp_server(server_cfg))
 
     return result
 

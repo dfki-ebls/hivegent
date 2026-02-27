@@ -331,11 +331,20 @@ export type GroupListResponse = z.infer<typeof GroupListResponseSchema>;
 // Tool configuration schemas (persisted in localStorage, sent to backend)
 // ============================================================
 
+/** OAuth2 Client Credentials configuration for an MCP server. */
+export const McpOAuth2ConfigSchema = z.object({
+  clientId: z.string(),
+  clientSecret: z.string(),
+  scopes: z.string().optional(),
+});
+export type McpOAuth2Config = z.infer<typeof McpOAuth2ConfigSchema>;
+
 /** A user-provided MCP server entry (HTTP transport only). */
 export const McpServerEntrySchema = z.object({
   url: z.string(),
   headers: z.record(z.string(), z.string()).default({}),
   toolPrefix: z.string().optional(),
+  oauth2: McpOAuth2ConfigSchema.optional(),
 });
 export type McpServerEntry = z.infer<typeof McpServerEntrySchema>;
 

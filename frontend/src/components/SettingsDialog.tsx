@@ -1,7 +1,23 @@
-import { PlusIcon, RotateCcwIcon, SettingsIcon, TrashIcon } from "lucide-react";
+import {
+  CheckIcon,
+  LoaderIcon,
+  LockIcon,
+  PlugIcon,
+  PlusIcon,
+  RotateCcwIcon,
+  SettingsIcon,
+  TrashIcon,
+  XIcon,
+} from "lucide-react";
 import { useEffect, useState } from "react";
-import { clearMemory, fetchTools } from "../lib/api";
-import { PERSONALITY_OPTIONS, type Personality, type ToolInfo } from "../lib/types";
+import { clearMemory, fetchTools, type McpTestResult, testMcpServer } from "../lib/api";
+import {
+  PERSONALITY_OPTIONS,
+  type McpOAuth2Config,
+  type McpServerEntry,
+  type Personality,
+  type ToolInfo,
+} from "../lib/types";
 import { useSettingsStore } from "../stores/settings-store";
 import {
   AlertDialog,
@@ -51,6 +67,10 @@ function SettingsSection({ label, htmlFor, description, children }: SettingsSect
   );
 }
 
+// --- Auth mode types ---
+
+type AuthMode = "none" | "headers" | "oauth2";
+
 // --- Main component ---
 
 export function SettingsDialog() {
@@ -75,8 +95,19 @@ export function SettingsDialog() {
 
   const [open, setOpen] = useState(false);
   const [tools, setTools] = useState<ToolInfo[]>([]);
+
+  // New MCP server form state
   const [newMcpUrl, setNewMcpUrl] = useState("");
   const [newMcpPrefix, setNewMcpPrefix] = useState("");
+  const [authMode, setAuthMode] = useState<AuthMode>("none");
+  const [headers, setHeaders] = useState<{ key: string; value: string }[]>([]);
+  const [oauth2, setOAuth2] = useState<McpOAuth2Config>({
+    clientId: "",
+    clientSecret: "",
+  });
+
+  // Test connection state: index -> result
+  const [testResults, setTestResults] = useState<Record<number, McpTestResult | "loading">>({});
 
   useEffect(() => {
     if (!open) return;
@@ -88,6 +119,51 @@ export function SettingsDialog() {
     return acc;
   }, {});
 
+  function resetNewMcpForm() {
+    setNewMcpUrl("");
+    setNewMcpPrefix("");
+    setAuthMode("none");
+    setHeaders([]);
+    setOAuth2({ clientId: "", clientSecret: "" });
+  }
+
+  function handleAddMcpServer() {
+    const entry: McpServerEntry = {
+      url: newMcpUrl.trim(),
+      headers: {},
+      toolPrefix: newMcpPrefix.trim() || undefined,
+    };
+
+    if (authMode === "headers") {
+      for (const h of headers) {
+        if (h.key.trim()) {
+          entry.headers[h.key.trim()] = h.value;
+        }
+      }
+    } else if (authMode === "oauth2") {
+      entry.oauth2 = { ...oauth2 };
+    }
+
+    addMcpServer(entry);
+    resetNewMcpForm();
+  }
+
+  function handleTestConnection(index: number) {
+    const server = toolsSpec.mcpServers[index];
+    setTestResults((prev) => ({ ...prev, [index]: "loading" }));
+    void testMcpServer(server).then((result) => {
+      setTestResults((prev) => ({ ...prev, [index]: result }));
+    });
+  }
+
+  /** Whether a server has any auth configured. */
+  function hasAuth(server: McpServerEntry): boolean {
+    return (
+      Object.keys(server.headers).length > 0 ||
+      server.oauth2 !== undefined
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -96,7 +172,7 @@ export function SettingsDialog() {
           <span className="sr-only">Settings</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-5xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
@@ -105,8 +181,8 @@ export function SettingsDialog() {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid md:grid-cols-2 gap-6 py-4">
-          {/* Left column — Model Configuration */}
+        <div className="grid lg:grid-cols-3 gap-6 py-4">
+          {/* Column 1 — Model Configuration */}
           <div className="grid gap-4">
             <SettingsSection
               label="Model"
@@ -182,7 +258,7 @@ export function SettingsDialog() {
             </SettingsSection>
           </div>
 
-          {/* Right column — Customization */}
+          {/* Column 2 — Personality */}
           <div className="grid gap-4 content-start">
             <SettingsSection label="Personality" description="Choose how the assistant responds.">
               <Select value={personality} onValueChange={(v) => setPersonality(v as Personality)}>
@@ -214,7 +290,10 @@ export function SettingsDialog() {
                 />
               </SettingsSection>
             )}
+          </div>
 
+          {/* Column 3 — Tools + MCP Servers */}
+          <div className="grid gap-4 content-start">
             {tools.length > 0 && (
               <SettingsSection
                 label="Tools"
@@ -255,65 +334,204 @@ export function SettingsDialog() {
 
             <SettingsSection
               label="MCP Servers"
-              description="Connect external tool servers via the Model Context Protocol (HTTP transport)."
+              description="Connect external tool servers via the Model Context Protocol (Streamable HTTP transport). A prefix namespaces all tools from a server (e.g., prefix &quot;jira&quot; turns &quot;search&quot; into &quot;jira_search&quot;), preventing name collisions when multiple servers provide similarly-named tools."
             >
               <div className="grid gap-2">
-                {toolsSpec.mcpServers.map((server, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs"
-                  >
-                    <span className="truncate flex-1" title={server.url}>
-                      {server.url}
-                    </span>
-                    {server.toolPrefix && (
-                      <span className="text-muted-foreground shrink-0">
-                        prefix: {server.toolPrefix}
-                      </span>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 shrink-0"
-                      onClick={() => removeMcpServer(index)}
+                {/* Existing servers */}
+                {toolsSpec.mcpServers.map((server, index) => {
+                  const result = testResults[index];
+                  return (
+                    <div
+                      key={index}
+                      className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs"
                     >
-                      <TrashIcon className="h-3 w-3" />
-                    </Button>
+                      {hasAuth(server) && (
+                        <LockIcon className="h-3 w-3 text-muted-foreground shrink-0" />
+                      )}
+                      <span className="truncate flex-1" title={server.url}>
+                        {server.url}
+                      </span>
+                      {server.toolPrefix && (
+                        <span className="text-muted-foreground shrink-0">
+                          prefix: {server.toolPrefix}
+                        </span>
+                      )}
+                      {/* Test result indicator */}
+                      {result === "loading" && (
+                        <LoaderIcon className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
+                      )}
+                      {result !== undefined && result !== "loading" && result.ok && (
+                        <span className="flex items-center gap-0.5 text-green-600 shrink-0">
+                          <CheckIcon className="h-3 w-3" />
+                          {result.tool_count}
+                        </span>
+                      )}
+                      {result !== undefined && result !== "loading" && !result.ok && (
+                        <span
+                          className="flex items-center gap-0.5 text-red-600 shrink-0"
+                          title={result.error ?? "Connection failed"}
+                        >
+                          <XIcon className="h-3 w-3" />
+                        </span>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 shrink-0"
+                        title="Test connection"
+                        disabled={result === "loading"}
+                        onClick={() => handleTestConnection(index)}
+                      >
+                        <PlugIcon className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 shrink-0"
+                        onClick={() => removeMcpServer(index)}
+                      >
+                        <TrashIcon className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  );
+                })}
+
+                {/* Add new server form */}
+                <div className="grid gap-2 rounded-md border p-3">
+                  <div className="flex items-end gap-2">
+                    <div className="grid gap-1 flex-1">
+                      <Input
+                        placeholder="https://mcp-server.example.com/mcp"
+                        value={newMcpUrl}
+                        onChange={(e) => setNewMcpUrl(e.target.value)}
+                        className="text-xs"
+                      />
+                    </div>
+                    <div className="grid gap-1 w-28">
+                      <Input
+                        placeholder="Prefix"
+                        value={newMcpPrefix}
+                        onChange={(e) => setNewMcpPrefix(e.target.value)}
+                        className="text-xs"
+                      />
+                    </div>
                   </div>
-                ))}
-                <div className="flex items-end gap-2">
-                  <div className="grid gap-1 flex-1">
-                    <Input
-                      placeholder="https://mcp-server.example.com/sse"
-                      value={newMcpUrl}
-                      onChange={(e) => setNewMcpUrl(e.target.value)}
-                      className="text-xs"
-                    />
+
+                  {/* Auth mode selector */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Auth:</span>
+                    <Select
+                      value={authMode}
+                      onValueChange={(v) => setAuthMode(v as AuthMode)}
+                    >
+                      <SelectTrigger className="h-7 text-xs w-auto">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">None</SelectItem>
+                        <SelectItem value="headers">Headers</SelectItem>
+                        <SelectItem value="oauth2">OAuth2 Client Credentials</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <div className="grid gap-1 w-28">
-                    <Input
-                      placeholder="Prefix"
-                      value={newMcpPrefix}
-                      onChange={(e) => setNewMcpPrefix(e.target.value)}
-                      className="text-xs"
-                    />
-                  </div>
+
+                  {/* Headers editor */}
+                  {authMode === "headers" && (
+                    <div className="grid gap-1.5">
+                      {headers.map((h, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <Input
+                            placeholder="Header name"
+                            value={h.key}
+                            onChange={(e) =>
+                              setHeaders((prev) =>
+                                prev.map((hh, ii) =>
+                                  ii === i ? { ...hh, key: e.target.value } : hh,
+                                ),
+                              )
+                            }
+                            className="text-xs flex-1"
+                          />
+                          <Input
+                            type="password"
+                            placeholder="Value"
+                            value={h.value}
+                            onChange={(e) =>
+                              setHeaders((prev) =>
+                                prev.map((hh, ii) =>
+                                  ii === i ? { ...hh, value: e.target.value } : hh,
+                                ),
+                              )
+                            }
+                            className="text-xs flex-1"
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0"
+                            onClick={() =>
+                              setHeaders((prev) => prev.filter((_, ii) => ii !== i))
+                            }
+                          >
+                            <TrashIcon className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ))}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-xs w-fit"
+                        onClick={() => setHeaders((prev) => [...prev, { key: "", value: "" }])}
+                      >
+                        <PlusIcon className="h-3 w-3 mr-1" />
+                        Add Header
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* OAuth2 Client Credentials form */}
+                  {authMode === "oauth2" && (
+                    <div className="grid gap-1.5">
+                      <Input
+                        placeholder="Client ID"
+                        value={oauth2.clientId}
+                        onChange={(e) =>
+                          setOAuth2((prev) => ({ ...prev, clientId: e.target.value }))
+                        }
+                        className="text-xs"
+                      />
+                      <Input
+                        type="password"
+                        placeholder="Client Secret"
+                        value={oauth2.clientSecret}
+                        onChange={(e) =>
+                          setOAuth2((prev) => ({ ...prev, clientSecret: e.target.value }))
+                        }
+                        className="text-xs"
+                      />
+                      <Input
+                        placeholder="Scopes (optional, space-separated)"
+                        value={oauth2.scopes ?? ""}
+                        onChange={(e) =>
+                          setOAuth2((prev) => ({
+                            ...prev,
+                            scopes: e.target.value || undefined,
+                          }))
+                        }
+                        className="text-xs"
+                      />
+                    </div>
+                  )}
+
                   <Button
                     variant="outline"
-                    size="icon"
-                    className="h-9 w-9 shrink-0"
+                    size="sm"
+                    className="text-xs w-fit"
                     disabled={!newMcpUrl.trim()}
-                    onClick={() => {
-                      addMcpServer({
-                        url: newMcpUrl.trim(),
-                        headers: {},
-                        toolPrefix: newMcpPrefix.trim() || undefined,
-                      });
-                      setNewMcpUrl("");
-                      setNewMcpPrefix("");
-                    }}
+                    onClick={handleAddMcpServer}
                   >
-                    <PlusIcon className="h-4 w-4" />
+                    <PlusIcon className="h-3 w-3 mr-1" />
+                    Add Server
                   </Button>
                 </div>
               </div>

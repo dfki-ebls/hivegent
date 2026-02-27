@@ -1,7 +1,7 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { z } from "zod";
 
-import type { ToolsSpec } from "./types";
+import type { McpServerEntry, ToolsSpec } from "./types";
 import {
   type BackendSettings,
   BackendSettingsSchema,
@@ -124,6 +124,38 @@ export async function fetchTools(): Promise<ToolInfo[]> {
   return z.array(ToolInfoSchema).parse(data);
 }
 
+/** Response from testing an MCP server connection. */
+export interface McpTestResult {
+  ok: boolean;
+  tool_count: number | null;
+  error: string | null;
+}
+
+/** Test connectivity to an MCP server. */
+export async function testMcpServer(server: McpServerEntry): Promise<McpTestResult> {
+  const res = await authFetch(`${API_BASE_URL}/api/mcp/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: server.url,
+      headers: server.headers,
+      tool_prefix: server.toolPrefix ?? null,
+      oauth2: server.oauth2
+        ? {
+            client_id: server.oauth2.clientId,
+            client_secret: server.oauth2.clientSecret,
+            scopes: server.oauth2.scopes ?? null,
+          }
+        : null,
+    }),
+  });
+
+  if (!res.ok) {
+    return { ok: false, tool_count: null, error: "Request failed" };
+  }
+  return (await res.json()) as McpTestResult;
+}
+
 /** Build a sparse LlmConfig from frontend settings. */
 export function buildLlmConfig(s: {
   model?: string;
@@ -145,6 +177,13 @@ export function buildToolsPayload(spec: ToolsSpec): Record<string, unknown> {
       url: s.url,
       headers: s.headers,
       tool_prefix: s.toolPrefix ?? null,
+      oauth2: s.oauth2
+        ? {
+            client_id: s.oauth2.clientId,
+            client_secret: s.oauth2.clientSecret,
+            scopes: s.oauth2.scopes ?? null,
+          }
+        : null,
     })),
   };
 }
