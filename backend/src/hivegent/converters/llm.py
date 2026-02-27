@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
 from pydantic_ai import BinaryContent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -11,9 +12,24 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from ..agent import base_agent
 from ..types import LlmConfig
 from .base import DocumentConverter
-from .config import LlmConverterConfig
 
-__all__ = ["LLMConverter"]
+__all__ = ["LLMConverter", "LlmConverterConfig"]
+
+
+class LlmConverterConfig(BaseModel):
+    """Configuration for the LLM conversion pipeline."""
+
+    prompt: str = Field(
+        default=(
+            "Convert this document to markdown.\n"
+            "Extract all text preserving structure (headings, lists, paragraphs).\n"
+            "Convert tables to markdown tables.\n"
+            "Convert equations and formulas to LaTeX (inline $...$ or block $$...$$).\n"
+            "Do not include any commentary, just the converted content."
+        ),
+        description="System prompt sent to the vision model for conversion.",
+    )
+
 
 MEDIA_TYPES: dict[str, str] = {
     ".pdf": "application/pdf",

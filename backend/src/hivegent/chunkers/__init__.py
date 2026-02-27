@@ -8,14 +8,9 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from .base import DocumentChunker
-from .config import (
-    RecursiveChunkerConfig,
-    SentenceChunkerConfig,
-    TokenChunkerConfig,
-)
-from .recursive import RecursiveDocumentChunker
-from .sentence import SentenceDocumentChunker
-from .token import TokenDocumentChunker
+from .recursive import RecursiveChunkerConfig, RecursiveDocumentChunker
+from .sentence import SentenceChunkerConfig, SentenceDocumentChunker
+from .token import TokenChunkerConfig, TokenDocumentChunker
 
 __all__ = [
     "ChunkingPipeline",

@@ -4,11 +4,27 @@ from dataclasses import dataclass
 from typing import Any
 
 from chonkie import RecursiveChunker
+from pydantic import BaseModel, Field
 
 from .base import ChunkData, DocumentChunker
-from .config import RecursiveChunkerConfig
 
-__all__ = ["RecursiveDocumentChunker"]
+__all__ = ["RecursiveChunkerConfig", "RecursiveDocumentChunker"]
+
+
+class RecursiveChunkerConfig(BaseModel):
+    """Configuration for the Recursive chunking pipeline."""
+
+    chunk_size: int = Field(
+        default=2048,
+        ge=64,
+        le=32768,
+        description="Target chunk size in tokens.",
+    )
+    min_characters_per_chunk: int = Field(
+        default=24,
+        ge=1,
+        description="Minimum character count for a chunk.",
+    )
 
 
 @dataclass(slots=True, frozen=True)

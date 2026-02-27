@@ -5,11 +5,32 @@ from pathlib import Path
 from typing import Any
 
 from kreuzberg import ExtractionConfig, extract_file
+from pydantic import BaseModel, Field
 
 from .base import DocumentConverter
-from .config import KreuzbergConverterConfig
 
-__all__ = ["KreuzbergConverter"]
+__all__ = ["KreuzbergConverter", "KreuzbergConverterConfig"]
+
+
+class KreuzbergConverterConfig(BaseModel):
+    """Configuration for the Kreuzberg conversion pipeline."""
+
+    force_ocr: bool = Field(
+        default=False,
+        description="Force OCR even when embedded text is available.",
+    )
+    output_format: str = Field(
+        default="plain",
+        description="Output format ('plain' or 'markdown').",
+    )
+    enable_quality_processing: bool = Field(
+        default=True,
+        description="Enable quality post-processing of extracted text.",
+    )
+    include_document_structure: bool = Field(
+        default=False,
+        description="Include structural elements (headings, lists) in output.",
+    )
 
 
 # Kreuzberg exposes get_extensions_for_mime() per MIME type but has no

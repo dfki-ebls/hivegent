@@ -60,6 +60,12 @@ markers = [
   "slow: marks tests as slow (deselect with -m 'not slow')",
 ]
 
+[tool.ty.environment]
+extra-paths = ["stubs"]
+
+[tool.basedpyright]
+stubPath = "stubs"
+
 [tool.uv.sources]
 cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }
 zvec = { git = "https://github.com/alibaba/zvec", tag = "v0.2.0" }

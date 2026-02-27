@@ -111,7 +111,9 @@ export function SettingsDialog() {
 
   useEffect(() => {
     if (!open) return;
-    void fetchTools().then(setTools).catch(() => setTools([]));
+    void fetchTools()
+      .then(setTools)
+      .catch(() => setTools([]));
   }, [open]);
 
   const toolsByGroup = tools.reduce<Record<string, ToolInfo[]>>((acc, tool) => {
@@ -158,10 +160,7 @@ export function SettingsDialog() {
 
   /** Whether a server has any auth configured. */
   function hasAuth(server: McpServerEntry): boolean {
-    return (
-      Object.keys(server.headers).length > 0 ||
-      server.oauth2 !== undefined
-    );
+    return Object.keys(server.headers).length > 0 || server.oauth2 !== undefined;
   }
 
   return (
@@ -307,10 +306,7 @@ export function SettingsDialog() {
                       </p>
                       <div className="grid gap-1.5">
                         {groupTools.map((tool) => (
-                          <div
-                            key={tool.name}
-                            className="flex items-center justify-between gap-2"
-                          >
+                          <div key={tool.name} className="flex items-center justify-between gap-2">
                             <Label
                               htmlFor={`tool-${tool.name}`}
                               className="text-xs font-normal cursor-pointer"
@@ -420,10 +416,7 @@ export function SettingsDialog() {
                   {/* Auth mode selector */}
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">Auth:</span>
-                    <Select
-                      value={authMode}
-                      onValueChange={(v) => setAuthMode(v as AuthMode)}
-                    >
+                    <Select value={authMode} onValueChange={(v) => setAuthMode(v as AuthMode)}>
                       <SelectTrigger className="h-7 text-xs w-auto">
                         <SelectValue />
                       </SelectTrigger>
@@ -469,9 +462,7 @@ export function SettingsDialog() {
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7 shrink-0"
-                            onClick={() =>
-                              setHeaders((prev) => prev.filter((_, ii) => ii !== i))
-                            }
+                            onClick={() => setHeaders((prev) => prev.filter((_, ii) => ii !== i))}
                           >
                             <TrashIcon className="h-3 w-3" />
                           </Button>
@@ -551,15 +542,13 @@ export function SettingsDialog() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Clear memory?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This will permanently delete all saved memory.
-                  The assistant will no longer remember information from previous conversations.
+                  This will permanently delete all saved memory. The assistant will no longer
+                  remember information from previous conversations.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={() => void clearMemory()}>
-                  Clear
-                </AlertDialogAction>
+                <AlertDialogAction onClick={() => void clearMemory()}>Clear</AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>

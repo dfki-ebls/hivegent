@@ -6,16 +6,35 @@ from pathlib import Path
 from typing import Any
 
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
-from docling.datamodel.pipeline_options import PipelineOptions
-from docling.document_converter import (
-    DocumentConverter as DoclingDocumentConverter,
-    FormatOption,
+from docling.datamodel.pipeline_options import (
+    ConvertPipelineOptions,
+    ThreadedPdfPipelineOptions,
 )
+from docling.document_converter import DocumentConverter as DoclingDocumentConverter
+from pydantic import BaseModel, Field
 
 from .base import DocumentConverter
-from .config import DoclingConverterConfig
 
-__all__ = ["DoclingConverter"]
+__all__ = ["DoclingConverter", "DoclingConverterConfig"]
+
+
+class DoclingConverterConfig(BaseModel):
+    """Configuration for the Docling conversion pipeline.
+
+    Uses docling's own Pydantic option models.
+    ``pdf_options`` applies to PDF and image formats;
+    ``convert_options`` applies to Office and text formats.
+    """
+
+    pdf_options: ThreadedPdfPipelineOptions = Field(
+        default_factory=ThreadedPdfPipelineOptions,
+        description="Options for PDF and image formats (OCR, table structure, layout, etc.)",
+    )
+    convert_options: ConvertPipelineOptions = Field(
+        default_factory=ConvertPipelineOptions,
+        description="Options for Office and text formats (DOCX, PPTX, HTML, etc.)",
+    )
+
 
 # Formats that use the threaded PDF pipeline options.
 _PDF_FORMATS = frozenset({InputFormat.PDF, InputFormat.IMAGE, InputFormat.METS_GBS})
@@ -40,17 +59,16 @@ class DoclingConverter(DocumentConverter):
         """Run the synchronous Docling conversion."""
         parsed = DoclingConverterConfig(**(config or {}))
 
-        # Build format options: PDF/image formats use pdf_options,
-        # everything else uses convert_options.
-        format_options: dict[InputFormat, FormatOption] = {}
-        for fmt in InputFormat:
-            if fmt in _PDF_FORMATS:
-                opts: PipelineOptions = parsed.pdf_options
-            else:
-                opts = parsed.convert_options
-            format_options[fmt] = FormatOption(pipeline_options=opts)
+        # Start from default format options (which include the correct backend
+        # and pipeline_cls) and only override pipeline_options.
+        converter = DoclingDocumentConverter()
+        for fmt in converter.format_to_options:
+            default = converter.format_to_options[fmt]
+            opts = parsed.pdf_options if fmt in _PDF_FORMATS else parsed.convert_options
+            converter.format_to_options[fmt] = default.model_copy(
+                update={"pipeline_options": opts}
+            )
 
-        converter = DoclingDocumentConverter(format_options=format_options)
         result = converter.convert(str(path))
         return str(result.document.export_to_markdown())
 

@@ -8,10 +8,15 @@ from typing import Any
 
 from magic_pdf.data.data_reader_writer import FileBasedDataWriter  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
 from magic_pdf.pipe.UNIPipe import UNIPipe  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
+from pydantic import BaseModel
 
 from .base import DocumentConverter
 
-__all__ = ["MinerUConverter"]
+__all__ = ["MinerUConverter", "MinerUConverterConfig"]
+
+
+class MinerUConverterConfig(BaseModel):
+    """Configuration for the MinerU conversion pipeline."""
 
 
 # MinerU has no public format listing API.

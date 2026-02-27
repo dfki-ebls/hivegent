@@ -10,17 +10,8 @@ from pydantic import BaseModel, ValidationError
 from cbrkit.helpers import optional_dependencies
 
 from .base import DocumentConverter
-from .config import (
-    DoclingConverterConfig,
-    KreuzbergConverterConfig,
-    LlmConverterConfig,
-    MarkerConverterConfig,
-    MarkItDownConverterConfig,
-    MinerUConverterConfig,
-    PandocConverterConfig,
-)
-from .llm import LLMConverter
-from .pandoc import PandocConverter
+from .llm import LLMConverter, LlmConverterConfig
+from .pandoc import PandocConverter, PandocConverterConfig
 
 __all__ = [
     "ConversionPipeline",
@@ -97,7 +88,7 @@ _CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
 
 # Optional converters (registered only when their dependencies are installed)
 with optional_dependencies():
-    from .marker import MarkerConverter
+    from .marker import MarkerConverter, MarkerConverterConfig
 
     _CONVERTER_CONFIG[ConversionPipeline.MARKER] = _ConverterEntry(
         converter_class=MarkerConverter,
@@ -107,7 +98,7 @@ with optional_dependencies():
     )
 
 with optional_dependencies():
-    from .docling import DoclingConverter
+    from .docling import DoclingConverter, DoclingConverterConfig
 
     _CONVERTER_CONFIG[ConversionPipeline.DOCLING] = _ConverterEntry(
         converter_class=DoclingConverter,
@@ -117,7 +108,7 @@ with optional_dependencies():
     )
 
 with optional_dependencies():
-    from .mineru import MinerUConverter
+    from .mineru import MinerUConverter, MinerUConverterConfig
 
     _CONVERTER_CONFIG[ConversionPipeline.MINERU] = _ConverterEntry(
         converter_class=MinerUConverter,
@@ -127,7 +118,7 @@ with optional_dependencies():
     )
 
 with optional_dependencies():
-    from .markitdown import MarkItDownConverter
+    from .markitdown import MarkItDownConverter, MarkItDownConverterConfig
 
     _CONVERTER_CONFIG[ConversionPipeline.MARKITDOWN] = _ConverterEntry(
         converter_class=MarkItDownConverter,
@@ -137,7 +128,7 @@ with optional_dependencies():
     )
 
 with optional_dependencies():
-    from .kreuzberg import KreuzbergConverter
+    from .kreuzberg import KreuzbergConverter, KreuzbergConverterConfig
 
     _CONVERTER_CONFIG[ConversionPipeline.KREUZBERG] = _ConverterEntry(
         converter_class=KreuzbergConverter,

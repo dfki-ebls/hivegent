@@ -7,10 +7,15 @@ from typing import Any
 
 from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
+from pydantic import BaseModel
 
 from .base import DocumentConverter
 
-__all__ = ["MarkerConverter"]
+__all__ = ["MarkerConverter", "MarkerConverterConfig"]
+
+
+class MarkerConverterConfig(BaseModel):
+    """Configuration for the Marker conversion pipeline."""
 
 
 # Marker only converts PDFs. The provider registry lives in

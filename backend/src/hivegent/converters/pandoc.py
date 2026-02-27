@@ -6,11 +6,21 @@ from pathlib import Path
 from typing import Any
 
 import pypandoc
+from pydantic import BaseModel, Field
 
 from .base import DocumentConverter
-from .config import PandocConverterConfig
 
-__all__ = ["PandocConverter"]
+__all__ = ["PandocConverter", "PandocConverterConfig"]
+
+
+class PandocConverterConfig(BaseModel):
+    """Configuration for the Pandoc conversion pipeline."""
+
+    extra_args: list[str] = Field(
+        default_factory=list,
+        description="Additional pandoc CLI arguments (e.g. '--wrap=none', '--toc').",
+    )
+
 
 # Pandoc cannot always infer the input format from the file extension.
 # Explicit format names are provided for safety even when pandoc might

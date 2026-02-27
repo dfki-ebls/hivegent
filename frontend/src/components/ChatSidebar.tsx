@@ -835,7 +835,6 @@ export function ChatSidebar({
             included_documents: includedDocuments,
             excluded_documents: excludedDocuments,
             tools: buildToolsPayload(toolsSpec),
-
           },
         },
       );
@@ -874,7 +873,6 @@ export function ChatSidebar({
             included_documents: includedDocuments,
             excluded_documents: excludedDocuments,
             tools: buildToolsPayload(toolsSpec),
-
           },
         },
       );

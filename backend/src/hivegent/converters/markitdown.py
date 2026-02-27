@@ -6,10 +6,15 @@ from pathlib import Path
 from typing import Any
 
 from markitdown import MarkItDown
+from pydantic import BaseModel
 
 from .base import DocumentConverter
 
-__all__ = ["MarkItDownConverter"]
+__all__ = ["MarkItDownConverter", "MarkItDownConverterConfig"]
+
+
+class MarkItDownConverterConfig(BaseModel):
+    """Configuration for the MarkItDown conversion pipeline."""
 
 
 # MarkItDown has no public format listing API. Each converter in

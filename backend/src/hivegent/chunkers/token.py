@@ -4,11 +4,27 @@ from dataclasses import dataclass
 from typing import Any
 
 from chonkie import TokenChunker
+from pydantic import BaseModel, Field
 
 from .base import ChunkData, DocumentChunker
-from .config import TokenChunkerConfig
 
-__all__ = ["TokenDocumentChunker"]
+__all__ = ["TokenChunkerConfig", "TokenDocumentChunker"]
+
+
+class TokenChunkerConfig(BaseModel):
+    """Configuration for the Token chunking pipeline."""
+
+    chunk_size: int = Field(
+        default=2048,
+        ge=64,
+        le=32768,
+        description="Target chunk size in tokens.",
+    )
+    chunk_overlap: int = Field(
+        default=0,
+        ge=0,
+        description="Number of overlapping tokens between consecutive chunks.",
+    )
 
 
 @dataclass(slots=True, frozen=True)
