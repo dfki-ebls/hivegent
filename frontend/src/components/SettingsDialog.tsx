@@ -10,7 +10,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { clearMemory, fetchTools, type McpTestResult, testMcpServer } from "../lib/api";
+import { clearMemory, listTools, type McpTestResult, testMcpServer } from "../lib/api";
 import {
   PERSONALITY_OPTIONS,
   type McpOAuth2Config,
@@ -111,7 +111,7 @@ export function SettingsDialog() {
 
   useEffect(() => {
     if (!open) return;
-    void fetchTools()
+    void listTools()
       .then(setTools)
       .catch(() => setTools([]));
   }, [open]);

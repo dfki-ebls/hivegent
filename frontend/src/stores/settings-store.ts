@@ -10,7 +10,7 @@ import { z } from "zod";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StorageValue } from "zustand/middleware";
 
-import { fetchSettings } from "../lib/api";
+import { getSettings } from "../lib/api";
 import { decryptApiKey, encryptApiKey, isEncrypted } from "../lib/crypto";
 import {
   type BackendSettings,
@@ -322,7 +322,7 @@ export const useSettingsStore = create<SettingsState>()(
 
       initFromBackend: async () => {
         try {
-          const defaults = await fetchSettings();
+          const defaults = await getSettings();
           set((state) => ({
             backendDefaults: defaults,
             readGroups: defaults.user.read_groups,

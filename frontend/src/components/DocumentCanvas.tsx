@@ -26,7 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   buildLlmConfig,
-  getGroupDirectoryTree,
+  getGroupDirectories,
   getGroupDocumentContent,
   uploadDocument,
 } from "../lib/api";
@@ -565,7 +565,7 @@ function GroupDocumentsSection({
   useEffect(() => {
     if (!isOpen || hasLoaded) return;
     setIsLoading(true);
-    getGroupDirectoryTree(groupId)
+    getGroupDirectories(groupId)
       .then(setTree)
       .catch(() => setTree(null))
       .finally(() => {

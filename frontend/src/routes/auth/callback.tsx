@@ -28,7 +28,7 @@ function CallbackPage() {
       setIsCreatingChat(true);
       createConversation()
         .then((id) => {
-          void navigate({ to: "/chat/$id", params: { id } });
+          void navigate({ to: "/conversations/$id", params: { id } });
         })
         .catch((error) => {
           console.error("Failed to create conversation:", error);

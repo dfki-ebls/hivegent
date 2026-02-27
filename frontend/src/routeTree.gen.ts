@@ -12,7 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsTokensRouteImport } from './routes/settings.tokens'
 import { Route as SettingsAccountRouteImport } from './routes/settings.account'
-import { Route as ChatIdRouteImport } from './routes/chat.$id'
+import { Route as ConversationsIdRouteImport } from './routes/conversations.$id'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 
 const IndexRoute = IndexRouteImport.update({
@@ -30,9 +30,9 @@ const SettingsAccountRoute = SettingsAccountRouteImport.update({
   path: '/settings/account',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ChatIdRoute = ChatIdRouteImport.update({
-  id: '/chat/$id',
-  path: '/chat/$id',
+const ConversationsIdRoute = ConversationsIdRouteImport.update({
+  id: '/conversations/$id',
+  path: '/conversations/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthCallbackRoute = AuthCallbackRouteImport.update({
@@ -44,14 +44,14 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth/callback': typeof AuthCallbackRoute
-  '/chat/$id': typeof ChatIdRoute
+  '/conversations/$id': typeof ConversationsIdRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/tokens': typeof SettingsTokensRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth/callback': typeof AuthCallbackRoute
-  '/chat/$id': typeof ChatIdRoute
+  '/conversations/$id': typeof ConversationsIdRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/tokens': typeof SettingsTokensRoute
 }
@@ -59,7 +59,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/auth/callback': typeof AuthCallbackRoute
-  '/chat/$id': typeof ChatIdRoute
+  '/conversations/$id': typeof ConversationsIdRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/tokens': typeof SettingsTokensRoute
 }
@@ -68,21 +68,21 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth/callback'
-    | '/chat/$id'
+    | '/conversations/$id'
     | '/settings/account'
     | '/settings/tokens'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/auth/callback'
-    | '/chat/$id'
+    | '/conversations/$id'
     | '/settings/account'
     | '/settings/tokens'
   id:
     | '__root__'
     | '/'
     | '/auth/callback'
-    | '/chat/$id'
+    | '/conversations/$id'
     | '/settings/account'
     | '/settings/tokens'
   fileRoutesById: FileRoutesById
@@ -90,7 +90,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
-  ChatIdRoute: typeof ChatIdRoute
+  ConversationsIdRoute: typeof ConversationsIdRoute
   SettingsAccountRoute: typeof SettingsAccountRoute
   SettingsTokensRoute: typeof SettingsTokensRoute
 }
@@ -118,11 +118,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAccountRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/chat/$id': {
-      id: '/chat/$id'
-      path: '/chat/$id'
-      fullPath: '/chat/$id'
-      preLoaderRoute: typeof ChatIdRouteImport
+    '/conversations/$id': {
+      id: '/conversations/$id'
+      path: '/conversations/$id'
+      fullPath: '/conversations/$id'
+      preLoaderRoute: typeof ConversationsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth/callback': {
@@ -138,7 +138,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthCallbackRoute: AuthCallbackRoute,
-  ChatIdRoute: ChatIdRoute,
+  ConversationsIdRoute: ConversationsIdRoute,
   SettingsAccountRoute: SettingsAccountRoute,
   SettingsTokensRoute: SettingsTokensRoute,
 }

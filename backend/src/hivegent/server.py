@@ -65,18 +65,18 @@ from .converters import (
     resolve_auto_pipeline,
     validate_conversion_config,
 )
-from .memory import clear_memory as clear_user_memory
+from .memory import clear_memory
 from .memory import load_memory
 from .mcp import mcp_app
 from .messages import (
-    create_conversation as persist_conversation,
-    delete_conversation,
+    persist_conversation,
     find_empty_conversation,
     list_conversations,
     load_conversation,
     load_messages,
+    remove_conversation,
     save_messages,
-    update_conversation_title,
+    set_conversation_title,
 )
 from .observability import configure_observability
 from .prompts import (
@@ -347,7 +347,7 @@ async def get_settings(
     )
 
 
-@api_router.post("/conversation")
+@api_router.post("/conversations")
 async def create_conversation(
     user: Annotated[User, Depends(get_current_user)],
 ) -> CreateConversationResponse:
@@ -360,7 +360,7 @@ async def create_conversation(
     """
     existing_id = find_empty_conversation(user.id)
     if existing_id:
-        update_conversation_title(user.id, existing_id, "")
+        set_conversation_title(user.id, existing_id, "")
         return CreateConversationResponse(id=existing_id)
 
     conversation_id = generate()
@@ -380,7 +380,7 @@ async def get_conversations(
     )
 
 
-@api_router.get("/conversation/{conversation_id}")
+@api_router.get("/conversations/{conversation_id}")
 async def get_conversation(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -399,14 +399,14 @@ async def get_conversation(
     )
 
 
-@api_router.put("/conversation/{conversation_id}/title")
-async def update_title(
+@api_router.put("/conversations/{conversation_id}/title")
+async def update_conversation_title(
     conversation_id: str,
     request: UpdateTitleRequest,
     user: Annotated[User, Depends(get_current_user)],
 ) -> ConversationSummary:
     """Update the title of a conversation."""
-    if not update_conversation_title(user.id, conversation_id, request.title):
+    if not set_conversation_title(user.id, conversation_id, request.title):
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     conversation = load_conversation(user.id, conversation_id)
@@ -438,8 +438,8 @@ def _extract_message_texts(
     return texts
 
 
-@api_router.post("/conversation/{conversation_id}/generate-title")
-async def generate_title(
+@api_router.post("/conversations/{conversation_id}/title/generation")
+async def generate_conversation_title(
     conversation_id: str,
     request: GenerateTitleRequest,
     user: Annotated[User, Depends(get_current_user)],
@@ -479,7 +479,7 @@ Return ONLY the title, no quotes or extra text.
         if len(generated_title) > 100:
             generated_title = generated_title[:97] + "..."
 
-        update_conversation_title(user.id, conversation_id, generated_title)
+        set_conversation_title(user.id, conversation_id, generated_title)
 
         return GenerateTitleResponse(title=generated_title)
 
@@ -489,13 +489,13 @@ Return ONLY the title, no quotes or extra text.
         )
 
 
-@api_router.delete("/conversation/{conversation_id}")
-async def delete_conversation_endpoint(
+@api_router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
 ) -> DeleteConversationResponse:
     """Delete a conversation."""
-    if not delete_conversation(user.id, conversation_id):
+    if not remove_conversation(user.id, conversation_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
     return DeleteConversationResponse(
         id=conversation_id,
@@ -518,8 +518,8 @@ async def delete_all_conversations(
     )
 
 
-@api_router.post("/conversation/{conversation_id}/compact")
-async def compact_conversation_endpoint(
+@api_router.post("/conversations/{conversation_id}/compaction")
+async def create_conversation_compaction(
     conversation_id: str,
     request: CompactConversationRequest,
     user: Annotated[User, Depends(get_current_user)],
@@ -548,8 +548,8 @@ async def compact_conversation_endpoint(
     )
 
 
-@api_router.get("/conversation/{conversation_id}/messages")
-async def get_messages(
+@api_router.get("/conversations/{conversation_id}/messages")
+async def get_conversation_messages(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
 ) -> list[UIMessage]:
@@ -629,8 +629,9 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     )
 
 
-@api_router.post("/chat")
-async def chat(
+@api_router.post("/conversations/{conversation_id}/chat")
+async def create_conversation_chat(
+    conversation_id: str,
     request: Request,
     user: Annotated[User, Depends(get_current_user)],
 ) -> Response:
@@ -639,13 +640,9 @@ async def chat(
     Configuration is passed via the request body (see ChatRequestConfig).
     """
     config = await _parse_chat_config(request)
+    config.conversation_id = conversation_id
 
-    if not config.conversation_id:
-        raise HTTPException(
-            status_code=400, detail="conversation_id is required in the request body"
-        )
-
-    if not load_conversation(user.id, config.conversation_id):
+    if not load_conversation(user.id, conversation_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     document_filter, group_filters = _parse_document_filters(
@@ -902,7 +899,7 @@ async def list_documents(
     return DocumentListResponse(documents=documents, total_count=len(documents))
 
 
-@api_router.put("/documents/content/{filepath:path}")
+@api_router.put("/documents/{filepath:path}")
 async def upload_document(
     filepath: str,
     file: UploadFile,
@@ -951,7 +948,7 @@ _MAX_COLLECTION_SIZE_BYTES = 100 * 1024 * 1024
 _MAX_COLLECTION_FILES = 1000
 
 
-@api_router.post("/collections")
+@api_router.post("/documents/collections")
 async def upload_collection(
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
@@ -1080,79 +1077,6 @@ async def upload_collection(
     )
 
 
-@api_router.get("/documents/content/{filepath:path}")
-async def get_document_content(
-    filepath: str,
-    user: Annotated[User, Depends(get_current_user)],
-) -> PlainTextResponse:
-    """Get the content of a document.
-
-    Only text-based documents can be read directly.
-
-    Args:
-        filepath: The relative path to the document.
-    """
-    safe = _safe_path(filepath)
-    store = _user_store(user)
-    data_dir = store.documents_dir(settings.data_dir)
-    file_path = data_dir / safe
-
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    if not file_path.is_file():
-        raise HTTPException(status_code=400, detail="Path is not a file")
-
-    return PlainTextResponse(file_path.read_text(encoding="utf-8"))
-
-
-@api_router.delete("/documents/content/{filepath:path}")
-async def delete_document(
-    filepath: str,
-    user: Annotated[User, Depends(get_current_user)],
-) -> DeleteDocumentResponse:
-    """Delete a document and its associated chunks and original.
-
-    Args:
-        filepath: The relative path to the document.
-    """
-    safe = _safe_path(filepath)
-    store = _user_store(user)
-    data_dir = store.documents_dir(settings.data_dir)
-    file_path = data_dir / safe
-
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    if not file_path.is_file():
-        raise HTTPException(status_code=400, detail="Path is not a file")
-
-    file_path.unlink()
-    _cleanup_empty_parents(file_path, data_dir)
-    delete_chunks(store, safe)
-    sync_index(store)
-
-    # Also delete the original if it exists
-    originals_dir = store.originals_dir(settings.data_dir)
-    stem = Path(safe).stem
-    parent = str(Path(safe).parent)
-    if parent != ".":
-        orig_dir = originals_dir / parent
-    else:
-        orig_dir = originals_dir
-    if orig_dir.exists():
-        for candidate in orig_dir.iterdir():
-            if candidate.is_file() and candidate.stem == stem:
-                candidate.unlink()
-                _cleanup_empty_parents(candidate, originals_dir)
-                break
-
-    return DeleteDocumentResponse(
-        filename=safe,
-        message="Document deleted successfully",
-    )
-
-
 @api_router.delete("/documents")
 async def delete_all_documents(
     user: Annotated[User, Depends(get_current_user)],
@@ -1178,7 +1102,7 @@ async def delete_all_documents(
     )
 
 
-@api_router.get("/conversion-pipelines")
+@api_router.get("/pipelines/conversion")
 async def list_conversion_pipelines() -> list[ConversionPipelineInfo]:
     """Get metadata for all conversion pipelines."""
     return get_pipelines_info()
@@ -1187,7 +1111,7 @@ async def list_conversion_pipelines() -> list[ConversionPipelineInfo]:
 # Chunking endpoints
 
 
-@api_router.get("/chunking-pipelines")
+@api_router.get("/pipelines/chunking")
 async def list_chunking_pipelines() -> list[ChunkingPipelineInfo]:
     """Get metadata for all chunking pipelines."""
     return get_chunking_pipelines_info()
@@ -1442,6 +1366,85 @@ async def move_document(
     )
 
 
+# --- Catch-all document content routes ---
+# These use {filepath:path} which is greedy.  FastAPI matches routes in
+# declaration order, so static-prefix routes (/documents/chunks/,
+# /documents/rechunk/, etc.) MUST be declared before these catch-all routes.
+
+
+@api_router.get("/documents/{filepath:path}")
+async def get_document_content(
+    filepath: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> PlainTextResponse:
+    """Get the content of a document.
+
+    Only text-based documents can be read directly.
+
+    Args:
+        filepath: The relative path to the document.
+    """
+    safe = _safe_path(filepath)
+    store = _user_store(user)
+    data_dir = store.documents_dir(settings.data_dir)
+    file_path = data_dir / safe
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    return PlainTextResponse(file_path.read_text(encoding="utf-8"))
+
+
+@api_router.delete("/documents/{filepath:path}")
+async def delete_document(
+    filepath: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> DeleteDocumentResponse:
+    """Delete a document and its associated chunks and original.
+
+    Args:
+        filepath: The relative path to the document.
+    """
+    safe = _safe_path(filepath)
+    store = _user_store(user)
+    data_dir = store.documents_dir(settings.data_dir)
+    file_path = data_dir / safe
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    file_path.unlink()
+    _cleanup_empty_parents(file_path, data_dir)
+    delete_chunks(store, safe)
+    sync_index(store)
+
+    # Also delete the original if it exists
+    originals_dir = store.originals_dir(settings.data_dir)
+    stem = Path(safe).stem
+    parent = str(Path(safe).parent)
+    if parent != ".":
+        orig_dir = originals_dir / parent
+    else:
+        orig_dir = originals_dir
+    if orig_dir.exists():
+        for candidate in orig_dir.iterdir():
+            if candidate.is_file() and candidate.stem == stem:
+                candidate.unlink()
+                _cleanup_empty_parents(candidate, originals_dir)
+                break
+
+    return DeleteDocumentResponse(
+        filename=safe,
+        message="Document deleted successfully",
+    )
+
+
 # --- Directory endpoints ---
 
 
@@ -1542,8 +1545,8 @@ def _build_tree_response(store: Casebase) -> DirectoryTreeResponse:
     )
 
 
-@api_router.get("/directories/tree")
-async def get_directory_tree(
+@api_router.get("/directories")
+async def get_directories(
     user: Annotated[User, Depends(get_current_user)],
 ) -> DirectoryTreeResponse:
     """Build a recursive directory tree from the user's documents directory."""
@@ -1690,11 +1693,11 @@ async def revoke_all_tokens(
 
 
 @api_router.delete("/memory")
-async def clear_memory_endpoint(
+async def delete_memory(
     user: Annotated[User, Depends(get_current_user)],
 ) -> ClearMemoryResponse:
     """Clear the authenticated user's persistent memory."""
-    cleared = clear_user_memory(user.id)
+    cleared = clear_memory(user.id)
     return ClearMemoryResponse(
         cleared=cleared,
         message="Memory cleared" if cleared else "No memory to clear",
@@ -1765,8 +1768,8 @@ def _require_group_write(user: User, group_id: str) -> str:
     return safe_id
 
 
-@api_router.get("/groups/{group_id}/directories/tree")
-async def get_group_directory_tree(
+@api_router.get("/groups/{group_id}/directories")
+async def get_group_directories(
     group_id: str,
     user: Annotated[User, Depends(get_current_user)],
 ) -> DirectoryTreeResponse:
@@ -1775,7 +1778,7 @@ async def get_group_directory_tree(
     return _build_tree_response(Casebase(kind="group", id=safe_id))
 
 
-@api_router.get("/groups/{group_id}/documents/content/{filepath:path}")
+@api_router.get("/groups/{group_id}/documents/{filepath:path}")
 async def get_group_document_content(
     group_id: str,
     filepath: str,
@@ -1838,7 +1841,7 @@ async def list_group_documents(
     return DocumentListResponse(documents=documents, total_count=len(documents))
 
 
-@api_router.put("/groups/{group_id}/documents/content/{filepath:path}")
+@api_router.put("/groups/{group_id}/documents/{filepath:path}")
 async def upload_group_document(
     group_id: str,
     filepath: str,
@@ -1882,7 +1885,7 @@ async def upload_group_document(
     )
 
 
-@api_router.post("/groups/{group_id}/collections")
+@api_router.post("/groups/{group_id}/documents/collections")
 async def upload_group_collection(
     group_id: str,
     file: UploadFile,
@@ -2005,7 +2008,7 @@ async def upload_group_collection(
     )
 
 
-@api_router.delete("/groups/{group_id}/documents/content/{filepath:path}")
+@api_router.delete("/groups/{group_id}/documents/{filepath:path}")
 async def delete_group_document(
     group_id: str,
     filepath: str,

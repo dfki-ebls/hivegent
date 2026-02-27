@@ -10,14 +10,14 @@ from .config import settings
 from .types import ConversationData, ConversationSummary
 
 __all__ = [
-    "create_conversation",
-    "delete_conversation",
+    "persist_conversation",
     "find_empty_conversation",
     "list_conversations",
     "load_conversation",
     "load_messages",
+    "remove_conversation",
     "save_messages",
-    "update_conversation_title",
+    "set_conversation_title",
 ]
 
 
@@ -134,7 +134,7 @@ def find_empty_conversation(user_id: str) -> str | None:
     return None
 
 
-def create_conversation(user_id: str, conversation_id: str) -> None:
+def persist_conversation(user_id: str, conversation_id: str) -> None:
     """Persist an empty conversation file.
 
     Creates a new conversation JSON file with no messages.  The file
@@ -193,7 +193,7 @@ def list_conversations(user_id: str) -> list[ConversationSummary]:
     return conversations
 
 
-def delete_conversation(user_id: str, conversation_id: str) -> bool:
+def remove_conversation(user_id: str, conversation_id: str) -> bool:
     """Delete a conversation.
 
     Args:
@@ -211,7 +211,7 @@ def delete_conversation(user_id: str, conversation_id: str) -> bool:
     return False
 
 
-def update_conversation_title(user_id: str, conversation_id: str, title: str) -> bool:
+def set_conversation_title(user_id: str, conversation_id: str, title: str) -> bool:
     """Update conversation title.
 
     Args:

@@ -1,7 +1,7 @@
 import { Scissors } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { getChunkingPipelines } from "../lib/api";
+import { listChunkingPipelines } from "../lib/api";
 import { ChunkingPipeline, type ChunkingPipelineInfo, ChunkingPipelineSchema } from "../lib/types";
 import { useSettingsStore } from "../stores/settings-store";
 import { PipelineConfigDialog } from "./PipelineConfigDialog";
@@ -26,7 +26,7 @@ export function ChunkingPipelineSelector({
   const resetChunkingConfig = useSettingsStore((s) => s.resetChunkingConfig);
 
   useEffect(() => {
-    getChunkingPipelines()
+    listChunkingPipelines()
       .then(setPipelines)
       .catch(() => {
         // Silently fail — selector will be empty until pipelines load

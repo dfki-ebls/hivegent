@@ -31,7 +31,7 @@ import {
   createConversation,
   getAuthHeaders,
   getConversation,
-  getMessages,
+  getConversationMessages,
 } from "../lib/api";
 import {
   type ChunkPosition,
@@ -747,21 +747,20 @@ export function ChatSidebar({
     const newId = await createConversation();
     clearAll();
     setActiveTab("chat");
-    await navigate({ to: "/chat/$id", params: { id: newId } });
+    await navigate({ to: "/conversations/$id", params: { id: newId } });
   };
 
   const handleConversationSelect = async (conversationId: string) => {
     clearAll();
     setActiveTab("chat");
-    await navigate({ to: "/chat/$id", params: { id: conversationId } });
+    await navigate({ to: "/conversations/$id", params: { id: conversationId } });
   };
 
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
-        api: `${API_BASE_URL}/api/chat`,
+        api: `${API_BASE_URL}/api/conversations/${id}/chat`,
         headers: () => getAuthHeaders(),
-        body: { conversation_id: id },
       }),
     [id],
   );
@@ -803,7 +802,7 @@ export function ChatSidebar({
         if (conv.compacted_from) {
           setCompactedFrom(conv.compacted_from);
         }
-        const initialMessages = await getMessages(id);
+        const initialMessages = await getConversationMessages(id);
         if (!cancelled && initialMessages.length > 0) {
           setMessages(initialMessages);
         }
@@ -827,7 +826,6 @@ export function ChatSidebar({
         {
           headers: authHeaders,
           body: {
-            conversation_id: id,
             personality,
             system_message: personality === "custom" ? customSystemMessage : undefined,
             reasoning_effort: reasoningEffort,
@@ -842,7 +840,6 @@ export function ChatSidebar({
       onClearDocuments();
     },
     [
-      id,
       personality,
       customSystemMessage,
       reasoningEffort,
@@ -865,7 +862,6 @@ export function ChatSidebar({
         {
           headers: authHeaders,
           body: {
-            conversation_id: id,
             personality,
             system_message: personality === "custom" ? customSystemMessage : undefined,
             reasoning_effort: reasoningEffort,
@@ -878,7 +874,6 @@ export function ChatSidebar({
       );
     },
     [
-      id,
       personality,
       customSystemMessage,
       reasoningEffort,
@@ -904,7 +899,6 @@ export function ChatSidebar({
     await regenerate({
       headers: authHeaders,
       body: {
-        conversation_id: id,
         personality,
         system_message: personality === "custom" ? customSystemMessage : undefined,
         reasoning_effort: reasoningEffort,
@@ -915,7 +909,6 @@ export function ChatSidebar({
       },
     });
   }, [
-    id,
     personality,
     customSystemMessage,
     reasoningEffort,
@@ -943,7 +936,7 @@ export function ChatSidebar({
           pendingRetryRef.current = retryMessageText;
         }
         await navigate({
-          to: "/chat/$id",
+          to: "/conversations/$id",
           params: { id: result.new_conversation_id },
         });
       } catch (err) {
@@ -1019,7 +1012,7 @@ export function ChatSidebar({
                       onClick={() => {
                         clearAll();
                         void navigate({
-                          to: "/chat/$id",
+                          to: "/conversations/$id",
                           params: { id: compactedFrom },
                         });
                       }}

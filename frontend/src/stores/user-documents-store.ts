@@ -8,7 +8,7 @@ import {
   createDirectory,
   deleteDirectory,
   deleteDocument,
-  getDirectoryTree,
+  getDirectories,
   listDocuments,
   moveDocument,
   rechunkDocument,
@@ -62,7 +62,7 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => ({
 
   fetchDirectoryTree: async () => {
     try {
-      const directoryTree = await getDirectoryTree();
+      const directoryTree = await getDirectories();
       set({ directoryTree });
     } catch (err) {
       set({

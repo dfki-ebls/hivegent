@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildLlmConfig, fetchSettings, requiresConversion } from "@/lib/api";
+import { buildLlmConfig, getSettings, requiresConversion } from "@/lib/api";
 
 describe("requiresConversion", () => {
   it("returns false for .md files", () => {
@@ -46,7 +46,7 @@ describe("buildLlmConfig", () => {
   });
 });
 
-describe("fetchSettings", () => {
+describe("getSettings", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
   });
@@ -74,7 +74,7 @@ describe("fetchSettings", () => {
       }),
     );
 
-    const result = await fetchSettings();
+    const result = await getSettings();
     expect(result.model).toBe("gpt-4");
     expect(result.user.id).toBe("user1");
   });
@@ -82,6 +82,6 @@ describe("fetchSettings", () => {
   it("throws on non-ok response", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 500 }));
 
-    await expect(fetchSettings()).rejects.toThrow("Failed to fetch settings");
+    await expect(getSettings()).rejects.toThrow("Failed to fetch settings");
   });
 });

@@ -1,7 +1,7 @@
 import { FileType } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { getConversionPipelines } from "../lib/api";
+import { listConversionPipelines } from "../lib/api";
 import {
   ConversionPipeline,
   type ConversionPipelineInfo,
@@ -30,7 +30,7 @@ export function ConversionPipelineSelector({
   const resetConversionConfig = useSettingsStore((s) => s.resetConversionConfig);
 
   useEffect(() => {
-    getConversionPipelines()
+    listConversionPipelines()
       .then(setPipelines)
       .catch(() => {
         // Silently fail — selector will be empty until pipelines load

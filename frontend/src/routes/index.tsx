@@ -1,9 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { FileSearch, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef } from "react";
 
 import { SignInButton } from "../components/SignInButton";
-import { Button } from "../components/ui/button";
 import { createConversation } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 
@@ -14,50 +13,32 @@ export const Route = createFileRoute("/")({
 function IndexPage() {
   const auth = useAuth();
   const navigate = useNavigate();
-  const [isLoading, setIsLoading] = useState(false);
+  const redirectingRef = useRef(false);
 
   const handlePostSignIn = async () => {
     const id = await createConversation();
-    await navigate({ to: "/chat/$id", params: { id } });
+    await navigate({ to: "/conversations/$id", params: { id } });
   };
 
-  const handleNewChat = async () => {
-    setIsLoading(true);
-    try {
-      const id = await createConversation();
-      await navigate({ to: "/chat/$id", params: { id } });
-    } catch (error) {
-      console.error("Failed to create conversation:", error);
-      setIsLoading(false);
-    }
-  };
+  // Auto-redirect authenticated users to a new conversation
+  useEffect(() => {
+    if (!auth.isAuthenticated || auth.isLoading || redirectingRef.current) return;
+    redirectingRef.current = true;
+    createConversation()
+      .then((id) => {
+        void navigate({ to: "/conversations/$id", params: { id } });
+      })
+      .catch((error) => {
+        console.error("Failed to create conversation:", error);
+        redirectingRef.current = false;
+      });
+  }, [auth.isAuthenticated, auth.isLoading, navigate]);
 
-  // Show loading while auth is initializing
-  if (auth.isLoading) {
+  // Show loading while auth is initializing or redirecting
+  if (auth.isLoading || auth.isAuthenticated) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  // If authenticated, show option to start a new chat
-  if (auth.isAuthenticated) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="flex flex-col items-center gap-6 text-center">
-          <div className="flex items-center gap-3">
-            <FileSearch className="h-12 w-12 text-primary" />
-            <h1 className="text-4xl font-bold">Hivegent</h1>
-          </div>
-          <p className="text-lg text-muted-foreground max-w-md">
-            Your intelligent document assistant powered by RAG.
-          </p>
-          <Button onClick={handleNewChat} size="lg" disabled={isLoading}>
-            {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            Start New Chat
-          </Button>
-        </div>
       </div>
     );
   }

@@ -5,7 +5,7 @@ import {
   createGroupDirectory,
   deleteGroupDirectory,
   deleteGroupDocument,
-  getGroupDirectoryTree,
+  getGroupDirectories,
   uploadGroupCollection,
   uploadGroupDocument,
 } from "../lib/api";
@@ -45,7 +45,7 @@ export const useGroupDocumentsStore = create<GroupDocumentsStore>((set, get) => 
     const groupId = get().selectedGroupId;
     if (!groupId) return;
     try {
-      const directoryTree = await getGroupDirectoryTree(groupId);
+      const directoryTree = await getGroupDirectories(groupId);
       set({ directoryTree });
     } catch (err) {
       set({
