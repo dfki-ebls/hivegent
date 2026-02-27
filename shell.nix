@@ -6,6 +6,9 @@
   python3,
   uv,
   git,
+  jq,
+  pandoc,
+  ripgrep,
   lib,
 }:
 mkShell {
@@ -22,5 +25,9 @@ mkShell {
     treefmt
     uv
     watch-dev
+    # CLI tools used by backend subprocess wrappers
+    jq
+    pandoc
+    ripgrep
   ];
 }

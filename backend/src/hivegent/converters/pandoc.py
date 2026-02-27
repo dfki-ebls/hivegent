@@ -1,13 +1,12 @@
 """Pandoc-based document converter for miscellaneous document formats."""
 
-import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pypandoc
 from pydantic import BaseModel, Field
 
+from ..subprocesses import pandoc_convert
 from .base import DocumentConverter
 
 __all__ = ["PandocConverter", "PandocConverterConfig"]
@@ -70,7 +69,7 @@ _SANDBOX_INCOMPATIBLE = frozenset({".docx", ".pptx", ".xlsx"})
 
 @dataclass(slots=True, frozen=True)
 class PandocConverter(DocumentConverter):
-    """Document converter using pandoc via pypandoc.
+    """Document converter using pandoc as an async subprocess.
 
     Supports a wide range of document formats including ODT, RST, RTF, EPUB,
     LaTeX, Org-mode, DocBook, Typst, wiki markups, bibliography formats, and
@@ -80,22 +79,6 @@ class PandocConverter(DocumentConverter):
 
     name = "pandoc"
     extensions = frozenset(_FORMAT_OVERRIDES) | _SANDBOX_INCOMPATIBLE
-
-    def _convert_sync(self, path: Path, config: dict[str, Any] | None) -> str:
-        """Run the synchronous pypandoc conversion."""
-        parsed = PandocConverterConfig(**(config or {}))
-        suffix = path.suffix.lower()
-        fmt = _FORMAT_OVERRIDES.get(suffix)
-        use_sandbox = suffix not in _SANDBOX_INCOMPATIBLE
-        return str(
-            pypandoc.convert_file(
-                path,
-                to="markdown",
-                format=fmt,
-                sandbox=use_sandbox,
-                extra_args=parsed.extra_args,
-            )
-        )
 
     async def __call__(
         self,
@@ -112,4 +95,11 @@ class PandocConverter(DocumentConverter):
         Returns:
             The document content converted to markdown.
         """
-        return await asyncio.to_thread(self._convert_sync, path, config)
+        parsed = PandocConverterConfig(**(config or {}))
+        suffix = path.suffix.lower()
+        return await pandoc_convert(
+            path,
+            from_format=_FORMAT_OVERRIDES.get(suffix),
+            sandbox=suffix not in _SANDBOX_INCOMPATIBLE,
+            extra_args=parsed.extra_args,
+        )

@@ -146,7 +146,7 @@ def glob_documents(
 
 
 @mcp_app.tool()
-def grep(
+async def grep(
     pattern: str,
     glob: str | None = None,
     context_lines: int = 0,
@@ -154,7 +154,7 @@ def grep(
     factory: ToolFactory = Depends(_get_mcp_tool_factory),
 ) -> list[GrepMatch]:
     """Search documents for a pattern."""
-    return factory.grep(
+    return await factory.grep(
         pattern,
         glob=glob,
         context_lines=context_lines,
@@ -262,7 +262,7 @@ def list_conversations(
 
 
 @mcp_app.tool()
-def query_conversations(
+async def query_conversations(
     filter: str,
     filename: str | None = None,
     factory: ToolFactory = Depends(_get_mcp_tool_factory),
@@ -276,7 +276,7 @@ def query_conversations(
         filter: A jq filter expression.
         filename: Query a specific conversation file. If omitted, all are queried.
     """
-    return factory.query_conversations(filter, filename)
+    return await factory.query_conversations(filter, filename)
 
 
 @mcp_app.tool()

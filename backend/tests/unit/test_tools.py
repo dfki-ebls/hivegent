@@ -291,42 +291,41 @@ class TestWriteDocumentTool:
 class TestJqTool:
     """Tests for JqTool."""
 
-    def test_single_file_query(self, tmp_path: Path) -> None:
+    async def test_single_file_query(self, tmp_path: Path) -> None:
         data = {"title": "Hello", "count": 42}
         (tmp_path / "item.json").write_text(json.dumps(data))
         tool = JqTool(path=tmp_path)
-        result = json.loads(tool(".title", "item.json"))
+        result = json.loads(await tool(".title", "item.json"))
         assert result == ["Hello"]
 
-    def test_all_files_query_with_id_injection(self, tmp_path: Path) -> None:
+    async def test_all_files_query_with_id_injection(self, tmp_path: Path) -> None:
         (tmp_path / "alpha.json").write_text(json.dumps({"val": 1}))
         (tmp_path / "beta.json").write_text(json.dumps({"val": 2}))
         tool = JqTool(path=tmp_path)
-        raw = json.loads(tool("[.[] | {id, val}]"))
-        # .all() returns a list of jq outputs; the filter produces one array
+        raw = json.loads(await tool("[.[] | {id, val}]"))
         result = raw[0]
         ids = {item["id"] for item in result}
         assert ids == {"alpha", "beta"}
         vals = {item["val"] for item in result}
         assert vals == {1, 2}
 
-    def test_invalid_jq_expression(self, tmp_path: Path) -> None:
+    async def test_invalid_jq_expression(self, tmp_path: Path) -> None:
         (tmp_path / "item.json").write_text(json.dumps({"x": 1}))
         tool = JqTool(path=tmp_path)
-        result = tool("invalid [[[", "item.json")
+        result = await tool("invalid [[[", "item.json")
         assert result.startswith("Error:")
 
-    def test_empty_directory(self, tmp_path: Path) -> None:
+    async def test_empty_directory(self, tmp_path: Path) -> None:
         tool = JqTool(path=tmp_path)
-        result = json.loads(tool("."))
+        result = json.loads(await tool("."))
         assert result == [[]]
 
-    def test_nonexistent_filename(self, tmp_path: Path) -> None:
+    async def test_nonexistent_filename(self, tmp_path: Path) -> None:
         tool = JqTool(path=tmp_path)
-        result = tool(".", "missing.json")
+        result = await tool(".", "missing.json")
         assert result.startswith("Error:")
 
-    def test_nonexistent_directory(self, tmp_path: Path) -> None:
+    async def test_nonexistent_directory(self, tmp_path: Path) -> None:
         tool = JqTool(path=tmp_path / "nonexistent")
-        result = tool(".")
+        result = await tool(".")
         assert result == "[]"

@@ -8,9 +8,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Literal
 
-import jq
-from ripgrepy import Ripgrepy
-
+from .subprocesses import jq_filter, rg_search
 from .types import (
     ChunkSummary,
     DocumentRange,
@@ -202,7 +200,7 @@ class GrepTool:
     path: Path
     document_filter: Callable[[str], bool] | None = None
 
-    def __call__(
+    async def __call__(
         self,
         pattern: str,
         glob: str | None = None,
@@ -223,31 +221,25 @@ class GrepTool:
         if not self.path.exists():
             return []
 
-        rg = Ripgrepy(pattern, str(self.path)).smart_case()
-        if glob:
-            rg = rg.glob(glob)
-        if context_lines > 0:
-            rg = rg.context(context_lines)
-
         matches: list[GrepMatch] = []
         try:
-            for item in rg.json().run().as_dict:
-                if item.get("type") == "match":
-                    data = item["data"]
-                    filepath = data["path"]["text"]
-                    doc_name = str(Path(filepath).relative_to(self.path))
-                    if self.document_filter and not self.document_filter(doc_name):
-                        continue
-                    content = (
-                        data["lines"]["text"].rstrip("\n") if include_content else None
+            for rg_match in await rg_search(
+                pattern,
+                self.path,
+                glob=glob,
+                context_lines=context_lines,
+            ):
+                doc_name = str(Path(rg_match.path).relative_to(self.path))
+                if self.document_filter and not self.document_filter(doc_name):
+                    continue
+                content = rg_match.line_text if include_content else None
+                matches.append(
+                    GrepMatch(
+                        filename=doc_name,
+                        line=rg_match.line_number,
+                        content=content,
                     )
-                    matches.append(
-                        GrepMatch(
-                            filename=doc_name,
-                            line=data["line_number"],
-                            content=content,
-                        )
-                    )
+                )
         except Exception:
             logger.warning("Grep failed for pattern %r in %s", pattern, self.path)
 
@@ -424,7 +416,7 @@ class JqTool:
     path: Path
     extension: str = ".json"
 
-    def __call__(self, filter: str, filename: str | None = None) -> str:
+    async def __call__(self, filter: str, filename: str | None = None) -> str:
         """Run a jq filter expression against JSON files.
 
         Args:
@@ -433,11 +425,6 @@ class JqTool:
                 are collected into an array (each enriched with an
                 ``"id"`` field from the filename stem).
         """
-        try:
-            compiled = jq.compile(filter)
-        except ValueError as exc:
-            return f"Error: invalid jq expression: {exc}"
-
         if filename is not None:
             file_path = (self.path / filename).resolve()
             if not file_path.is_relative_to(self.path.resolve()):
@@ -445,25 +432,20 @@ class JqTool:
             if not file_path.is_file():
                 return f"Error: file '{filename}' not found."
             data = json.loads(file_path.read_text(encoding="utf-8"))
-            try:
-                result = compiled.input_value(data).all()
-            except Exception as exc:
-                return f"Error: jq execution failed: {exc}"
-            return json.dumps(result, default=str)
-
-        if not self.path.exists():
+        elif not self.path.exists():
             return "[]"
-
-        items: list[object] = []
-        for f in sorted(self.path.glob(f"*{self.extension}")):
-            if f.is_file():
-                data = json.loads(f.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    data["id"] = f.stem
-                items.append(data)
+        else:
+            items: list[object] = []
+            for f in sorted(self.path.glob(f"*{self.extension}")):
+                if f.is_file():
+                    entry = json.loads(f.read_text(encoding="utf-8"))
+                    if isinstance(entry, dict):
+                        entry["id"] = f.stem
+                    items.append(entry)
+            data = items
 
         try:
-            result = compiled.input_value(items).all()
-        except Exception as exc:
-            return f"Error: jq execution failed: {exc}"
+            result = await jq_filter(filter, data)
+        except ValueError as exc:
+            return f"Error: {exc}"
         return json.dumps(result, default=str)

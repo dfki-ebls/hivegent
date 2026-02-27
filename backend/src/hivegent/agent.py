@@ -114,7 +114,7 @@ def glob_documents(
 
 
 @explore_toolset.tool
-def grep(
+async def grep(
     ctx: RunContext[UserDeps],
     pattern: str,
     glob: str | None = None,
@@ -132,7 +132,7 @@ def grep(
         context_lines: Number of lines to show before and after each match.
         include_content: Whether to include the matching line content.
     """
-    return ctx.deps.tool_factory.grep(
+    return await ctx.deps.tool_factory.grep(
         pattern,
         glob=glob,
         context_lines=context_lines,
@@ -196,7 +196,7 @@ def list_conversations(
 
 
 @explore_toolset.tool
-def query_conversations(
+async def query_conversations(
     ctx: RunContext[UserDeps],
     filter: str,
     filename: str | None = None,
@@ -234,7 +234,7 @@ def query_conversations(
         filename: Query a specific conversation file (e.g. ``"abc123.json"``).
             If omitted, all conversations are queried.
     """
-    return ctx.deps.tool_factory.query_conversations(filter, filename)
+    return await ctx.deps.tool_factory.query_conversations(filter, filename)
 
 
 # --- RAG toolset (heavier retrieval tools + explore delegation) ---
