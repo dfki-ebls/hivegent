@@ -1,11 +1,12 @@
 """FastAPI server for the RAG agent."""
 
 import io
+import json
 import logging
 import shutil
 import tempfile
 import zipfile
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -27,7 +28,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse, Response
+from starlette.responses import PlainTextResponse, Response, StreamingResponse
 
 from .agent import (
     TOOLSET_GROUPS,
@@ -97,6 +98,8 @@ from .types import (
     ChatRequestConfig,
     ChunkedDocument,
     ClearMemoryResponse,
+    CollectionCompleteEvent,
+    CollectionProgressEvent,
     CollectionUploadResponse,
     CompactConversationRequest,
     CompactConversationResponse,
@@ -948,44 +951,33 @@ _MAX_COLLECTION_SIZE_BYTES = 100 * 1024 * 1024
 _MAX_COLLECTION_FILES = 1000
 
 
-@api_router.post("/documents/collections")
-async def upload_collection(
-    file: UploadFile,
-    user: Annotated[User, Depends(get_current_user)],
-    pipeline_spec: str = Form(default="{}"),
-    llm_config: str = Form(default="{}"),
-) -> CollectionUploadResponse:
-    """Upload a markdown collection as a ZIP archive.
+async def _process_collection(
+    store: Casebase,
+    raw: bytes,
+    spec: PipelineSpec,
+    resolved: LlmConfig,
+) -> AsyncGenerator[CollectionProgressEvent | CollectionCompleteEvent, None]:
+    """Process a ZIP collection, yielding progress events for each file.
 
-    Extracts the archive, normalizes Obsidian wikilinks to standard markdown
-    links, detects and converts binary attachments via the conversion
-    pipeline, then stores all files.
+    This generator is the shared implementation for both the blocking and
+    streaming collection upload endpoints, for both user and group stores.
 
     Args:
-        file: The ZIP archive.
-        pipeline_spec: JSON-encoded PipelineSpec for conversion and chunking.
-        llm_config: JSON-encoded LLM configuration for conversion.
+        store: The casebase to upload to.
+        raw: Raw ZIP file bytes.
+        spec: Pipeline spec for conversion and chunking.
+        resolved: Resolved LLM configuration for conversion.
+
+    Yields:
+        A ``CollectionProgressEvent`` for each file, then a final
+        ``CollectionCompleteEvent``.
     """
-    spec = _parse_pipeline_spec(pipeline_spec)
-    llm = LlmConfig.model_validate_json(llm_config)
-    resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
-    validate_conversion_config(spec.conversion)
-    validate_chunking_config(spec.chunking)
-    store = _user_store(user)
-
-    raw = await file.read()
-    if len(raw) > _MAX_COLLECTION_SIZE_BYTES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Collection too large. Maximum size: {_MAX_COLLECTION_SIZE_BYTES} bytes",
-        )
-
     failed: list[str] = []
     markdown_count = 0
     converted_count = 0
+    current = 0
 
     async def _try_upload(rel_path: str, content_bytes: bytes) -> bool:
-        """Upload a single file, appending to *failed* on error."""
         try:
             safe = sanitize_document_path(rel_path)
             await _upload_file_internal(store, safe, content_bytes, spec, resolved)
@@ -1044,30 +1036,50 @@ async def upload_collection(
             preprocessed[rel_path] = result.content
             all_binaries.update(result.binary_attachments)
 
-        # Convert binary attachments
+        # Build upload plan (paths only, bytes read on demand to avoid
+        # buffering the entire collection in memory).
+        # Each entry: (rel_path, is_markdown)
+        upload_plan: list[tuple[str, bool]] = []
         for path in sorted(all_binaries):
             source = extract_root / path
             if not source.exists():
                 failed.append(path)
                 continue
-            if await _try_upload(path, source.read_bytes()):
-                converted_count += 1
+            upload_plan.append((path, False))
 
-        # Upload remaining files (preprocessed markdown directly, everything else via conversion)
         for rel_path in sorted(collection_files):
             if rel_path in all_binaries:
                 continue
             suffix = PurePosixPath(rel_path).suffix.lower()
             if suffix == DOCUMENT_EXTENSION and rel_path in preprocessed:
-                if await _try_upload(rel_path, preprocessed[rel_path].encode("utf-8")):
-                    markdown_count += 1
+                upload_plan.append((rel_path, True))
             else:
-                if await _try_upload(rel_path, (extract_root / rel_path).read_bytes()):
-                    converted_count += 1
+                upload_plan.append((rel_path, False))
 
-    total = markdown_count + converted_count
-    return CollectionUploadResponse(
-        total_files=total,
+        total = len(upload_plan)
+
+        for rel_path, is_markdown in upload_plan:
+            if is_markdown:
+                content_bytes = preprocessed[rel_path].encode("utf-8")
+            else:
+                content_bytes = (extract_root / rel_path).read_bytes()
+            ok = await _try_upload(rel_path, content_bytes)
+            if ok:
+                if is_markdown:
+                    markdown_count += 1
+                else:
+                    converted_count += 1
+            current += 1
+            yield CollectionProgressEvent(
+                file=rel_path,
+                current=current,
+                total=total,
+                status="ok" if ok else "failed",
+            )
+
+    total_ok = markdown_count + converted_count
+    yield CollectionCompleteEvent(
+        total_files=total_ok,
         markdown_files=markdown_count,
         converted_attachments=converted_count,
         failed_files=failed,
@@ -1075,6 +1087,131 @@ async def upload_collection(
         f"{converted_count} attachments converted"
         + (f", {len(failed)} failed" if failed else ""),
     )
+
+
+def _validate_collection_upload(
+    pipeline_spec: str,
+    llm_config: str,
+) -> tuple[PipelineSpec, LlmConfig]:
+    """Parse and validate pipeline spec and LLM config for collection upload.
+
+    Args:
+        pipeline_spec: JSON-encoded PipelineSpec.
+        llm_config: JSON-encoded LLM configuration.
+
+    Returns:
+        Tuple of (PipelineSpec, resolved LlmConfig).
+    """
+    spec = _parse_pipeline_spec(pipeline_spec)
+    llm = LlmConfig.model_validate_json(llm_config)
+    resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
+    validate_conversion_config(spec.conversion)
+    validate_chunking_config(spec.chunking)
+    return spec, resolved
+
+
+def _collection_stream_response(
+    store: Casebase,
+    raw: bytes,
+    spec: PipelineSpec,
+    resolved: LlmConfig,
+) -> StreamingResponse:
+    """Wrap ``_process_collection`` in a Server-Sent Events streaming response.
+
+    Args:
+        store: The casebase to upload to.
+        raw: Raw ZIP file bytes.
+        spec: Pipeline spec for conversion and chunking.
+        resolved: Resolved LLM configuration for conversion.
+
+    Returns:
+        A ``StreamingResponse`` that yields NDJSON events.
+    """
+
+    async def _event_stream() -> AsyncGenerator[str, None]:
+        async for event in _process_collection(store, raw, spec, resolved):
+            yield f"data: {json.dumps(event.model_dump())}\n\n"
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _read_collection_zip(file: UploadFile) -> bytes:
+    """Read and validate a collection ZIP upload.
+
+    Args:
+        file: The uploaded file.
+
+    Returns:
+        Raw ZIP bytes.
+
+    Raises:
+        HTTPException: If the file exceeds the size limit.
+    """
+    raw = await file.read()
+    if len(raw) > _MAX_COLLECTION_SIZE_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Collection too large. Maximum size: {_MAX_COLLECTION_SIZE_BYTES} bytes",
+        )
+    return raw
+
+
+@api_router.post("/documents/collections")
+async def upload_collection(
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+    pipeline_spec: str = Form(default="{}"),
+    llm_config: str = Form(default="{}"),
+) -> CollectionUploadResponse:
+    """Upload a markdown collection as a ZIP archive.
+
+    Extracts the archive, normalizes Obsidian wikilinks to standard markdown
+    links, detects and converts binary attachments via the conversion
+    pipeline, then stores all files.
+
+    Args:
+        file: The ZIP archive.
+        pipeline_spec: JSON-encoded PipelineSpec for conversion and chunking.
+        llm_config: JSON-encoded LLM configuration for conversion.
+    """
+    spec, resolved = _validate_collection_upload(pipeline_spec, llm_config)
+    store = _user_store(user)
+    raw = await _read_collection_zip(file)
+
+    result: CollectionCompleteEvent | None = None
+    async for event in _process_collection(store, raw, spec, resolved):
+        if isinstance(event, CollectionCompleteEvent):
+            result = event
+
+    assert result is not None
+    return result
+
+
+@api_router.post("/documents/collections/stream")
+async def upload_collection_stream(
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+    pipeline_spec: str = Form(default="{}"),
+    llm_config: str = Form(default="{}"),
+) -> StreamingResponse:
+    """Upload a collection with streaming progress events.
+
+    Returns Server-Sent Events (NDJSON) with per-file progress updates
+    and a final completion event.
+
+    Args:
+        file: The ZIP archive.
+        pipeline_spec: JSON-encoded PipelineSpec for conversion and chunking.
+        llm_config: JSON-encoded LLM configuration for conversion.
+    """
+    spec, resolved = _validate_collection_upload(pipeline_spec, llm_config)
+    store = _user_store(user)
+    raw = await _read_collection_zip(file)
+    return _collection_stream_response(store, raw, spec, resolved)
 
 
 @api_router.delete("/documents")
@@ -1902,110 +2039,41 @@ async def upload_group_collection(
         llm_config: JSON-encoded LLM configuration for conversion.
     """
     safe_id = _require_group_write(user, group_id)
-    spec = _parse_pipeline_spec(pipeline_spec)
-    llm = LlmConfig.model_validate_json(llm_config)
-    resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
-    validate_conversion_config(spec.conversion)
-    validate_chunking_config(spec.chunking)
+    spec, resolved = _validate_collection_upload(pipeline_spec, llm_config)
     store = Casebase(kind="group", id=safe_id)
+    raw = await _read_collection_zip(file)
 
-    raw = await file.read()
-    if len(raw) > _MAX_COLLECTION_SIZE_BYTES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Collection too large. Maximum size: {_MAX_COLLECTION_SIZE_BYTES} bytes",
-        )
+    result: CollectionCompleteEvent | None = None
+    async for event in _process_collection(store, raw, spec, resolved):
+        if isinstance(event, CollectionCompleteEvent):
+            result = event
 
-    failed: list[str] = []
-    markdown_count = 0
-    converted_count = 0
+    assert result is not None
+    return result
 
-    async def _try_upload(rel_path: str, content_bytes: bytes) -> bool:
-        try:
-            safe = sanitize_document_path(rel_path)
-            await _upload_file_internal(store, safe, content_bytes, spec, resolved)
-            return True
-        except Exception as e:
-            logger.warning("Failed to process %s: %s", rel_path, e)
-            failed.append(rel_path)
-            return False
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        extract_root = Path(tmp_dir)
+@api_router.post("/groups/{group_id}/documents/collections/stream")
+async def upload_group_collection_stream(
+    group_id: str,
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+    pipeline_spec: str = Form(default="{}"),
+    llm_config: str = Form(default="{}"),
+) -> StreamingResponse:
+    """Upload a collection to a group with streaming progress events.
 
-        try:
-            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                for info in zf.infolist():
-                    norm = str(PurePosixPath(info.filename))
-                    if norm.startswith("/") or norm.startswith("..") or "/.." in norm:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"ZIP contains unsafe path: {info.filename}",
-                        )
-                zf.extractall(extract_root)
-        except zipfile.BadZipFile:
-            raise HTTPException(status_code=400, detail="Invalid ZIP file")
+    Requires write access to the group.
 
-        top_items = list(extract_root.iterdir())
-        if len(top_items) == 1 and top_items[0].is_dir():
-            extract_root = top_items[0]
-
-        collection_files = {
-            str(p.relative_to(extract_root).as_posix())
-            for p in extract_root.rglob("*")
-            if p.is_file()
-        }
-        if len(collection_files) > _MAX_COLLECTION_FILES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Collection has too many files ({len(collection_files)}). "
-                f"Maximum: {_MAX_COLLECTION_FILES}",
-            )
-
-        all_binaries: set[str] = set()
-        preprocessed: dict[str, str] = {}
-        for rel_path in sorted(collection_files):
-            if PurePosixPath(rel_path).suffix.lower() != ".md":
-                continue
-            try:
-                text = (extract_root / rel_path).read_text(encoding="utf-8")
-            except Exception as e:
-                logger.warning("Failed to read %s: %s", rel_path, e)
-                failed.append(rel_path)
-                continue
-            result = preprocess_markdown(text, rel_path, collection_files)
-            preprocessed[rel_path] = result.content
-            all_binaries.update(result.binary_attachments)
-
-        for path in sorted(all_binaries):
-            source = extract_root / path
-            if not source.exists():
-                failed.append(path)
-                continue
-            if await _try_upload(path, source.read_bytes()):
-                converted_count += 1
-
-        for rel_path in sorted(collection_files):
-            if rel_path in all_binaries:
-                continue
-            suffix = PurePosixPath(rel_path).suffix.lower()
-            if suffix == DOCUMENT_EXTENSION and rel_path in preprocessed:
-                if await _try_upload(rel_path, preprocessed[rel_path].encode("utf-8")):
-                    markdown_count += 1
-            else:
-                if await _try_upload(rel_path, (extract_root / rel_path).read_bytes()):
-                    converted_count += 1
-
-    total = markdown_count + converted_count
-    return CollectionUploadResponse(
-        total_files=total,
-        markdown_files=markdown_count,
-        converted_attachments=converted_count,
-        failed_files=failed,
-        message=f"Collection uploaded: {markdown_count} markdown, "
-        f"{converted_count} attachments converted"
-        + (f", {len(failed)} failed" if failed else ""),
-    )
+    Args:
+        file: The ZIP archive.
+        pipeline_spec: JSON-encoded PipelineSpec for conversion and chunking.
+        llm_config: JSON-encoded LLM configuration for conversion.
+    """
+    safe_id = _require_group_write(user, group_id)
+    spec, resolved = _validate_collection_upload(pipeline_spec, llm_config)
+    store = Casebase(kind="group", id=safe_id)
+    raw = await _read_collection_zip(file)
+    return _collection_stream_response(store, raw, spec, resolved)
 
 
 @api_router.delete("/groups/{group_id}/documents/{filepath:path}")

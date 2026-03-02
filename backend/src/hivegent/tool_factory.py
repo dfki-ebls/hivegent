@@ -267,8 +267,9 @@ def build_toolsets[T](
         result.extend(
             FilteredToolset(
                 wrapped=ts,
-                filter_func=lambda _ctx, td, _disabled=disabled: td.name
-                not in _disabled,
+                filter_func=lambda _ctx, td, _disabled=disabled: (
+                    td.name not in _disabled
+                ),
             )
             for ts in toolsets
         )

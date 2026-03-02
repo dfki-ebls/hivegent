@@ -330,7 +330,7 @@ export function SettingsDialog() {
 
             <SettingsSection
               label="MCP Servers"
-              description="Connect external tool servers via the Model Context Protocol (Streamable HTTP transport). A prefix namespaces all tools from a server (e.g., prefix &quot;jira&quot; turns &quot;search&quot; into &quot;jira_search&quot;), preventing name collisions when multiple servers provide similarly-named tools."
+              description='Connect external tool servers via the Model Context Protocol (Streamable HTTP transport). A prefix namespaces all tools from a server (e.g., prefix "jira" turns "search" into "jira_search"), preventing name collisions when multiple servers provide similarly-named tools.'
             >
               <div className="grid gap-2">
                 {/* Existing servers */}

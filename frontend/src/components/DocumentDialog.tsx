@@ -428,9 +428,7 @@ export function DocumentDialog({
             >
               <div className="flex items-center gap-1.5 flex-wrap">
                 <Badge
-                  variant={
-                    viewMode === "chunk" && managedActiveIndex === i ? "default" : "outline"
-                  }
+                  variant={viewMode === "chunk" && managedActiveIndex === i ? "default" : "outline"}
                   className="text-[10px] shrink-0"
                 >
                   Chunk #{i}
@@ -491,9 +489,7 @@ export function DocumentDialog({
                   {chunkPositionLabel(sibling.position)}
                 </Badge>
                 {sibling.score != null && (
-                  <span className="text-muted-foreground">
-                    {(sibling.score * 100).toFixed(0)}%
-                  </span>
+                  <span className="text-muted-foreground">{(sibling.score * 100).toFixed(0)}%</span>
                 )}
               </div>
               <p className="truncate text-muted-foreground mt-0.5">

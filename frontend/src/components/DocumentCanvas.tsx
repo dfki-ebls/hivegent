@@ -38,6 +38,7 @@ import {
   type FetchedChunk,
   type FetchedDocument,
   type PipelineSpec,
+  type UploadProgress,
   chunkPositionLabel,
   sortChunks,
 } from "../lib/types";
@@ -55,6 +56,7 @@ import { Alert, AlertDescription } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Progress } from "./ui/progress";
 import { ScrollArea } from "./ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
@@ -301,6 +303,7 @@ function ErrorBanner({ message, onDismiss }: ErrorBannerProps) {
 interface UploadAreaProps {
   isDragging: boolean;
   isLoading: boolean;
+  uploadProgress: UploadProgress | null;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   directoryInputRef: React.RefObject<HTMLInputElement | null>;
   zipInputRef: React.RefObject<HTMLInputElement | null>;
@@ -320,6 +323,7 @@ interface UploadAreaProps {
 function UploadArea({
   isDragging,
   isLoading,
+  uploadProgress,
   fileInputRef,
   directoryInputRef,
   zipInputRef,
@@ -347,11 +351,39 @@ function UploadArea({
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
-        <Upload className="h-10 w-10 text-muted-foreground" />
-        <div className="text-center">
-          <p className="font-medium">Drop files here to upload</p>
-          <p className="text-sm text-muted-foreground">or click to browse</p>
-        </div>
+        {uploadProgress ? (
+          <div className="flex w-full flex-col items-center gap-2">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-sm font-medium">Uploading...</p>
+            <p className="max-w-full truncate text-xs text-muted-foreground">
+              {uploadProgress.currentFile}
+            </p>
+            <div className="flex w-full items-center gap-2">
+              <Progress
+                value={
+                  uploadProgress.total > 0
+                    ? (uploadProgress.current / uploadProgress.total) * 100
+                    : 0
+                }
+                className="flex-1"
+              />
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                {uploadProgress.current} / {uploadProgress.total}
+              </span>
+            </div>
+            {uploadProgress.failedFiles.length > 0 && (
+              <p className="text-xs text-destructive">{uploadProgress.failedFiles.length} failed</p>
+            )}
+          </div>
+        ) : (
+          <>
+            <Upload className="h-10 w-10 text-muted-foreground" />
+            <div className="text-center">
+              <p className="font-medium">Drop files here to upload</p>
+              <p className="text-sm text-muted-foreground">or click to browse</p>
+            </div>
+          </>
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -689,10 +721,12 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     documents,
     directoryTree,
     isLoading,
+    uploadProgress,
     error,
     fetchDocuments,
     fetchDirectoryTree,
     upload,
+    uploadMultiple,
     uploadCol,
     remove,
     rechunk: storeRechunk,
@@ -834,11 +868,14 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
           baseUrl: llmSettings.baseUrl,
         }),
       };
-      for (const file of Array.from(files)) {
-        await upload(file, options);
+      const fileArray = Array.from(files);
+      if (fileArray.length === 1) {
+        await upload(fileArray[0], options);
+      } else {
+        await uploadMultiple(fileArray, options);
       }
     },
-    [upload, pipelineSpec, visionModel, llmSettings],
+    [upload, uploadMultiple, pipelineSpec, visionModel, llmSettings],
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -1021,6 +1058,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       <UploadArea
         isDragging={isDragging}
         isLoading={isLoading}
+        uploadProgress={uploadProgress}
         fileInputRef={fileInputRef}
         directoryInputRef={directoryInputRef}
         zipInputRef={zipInputRef}

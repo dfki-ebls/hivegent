@@ -1,7 +1,7 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { z } from "zod";
 
-import type { McpServerEntry, ToolsSpec } from "./types";
+import type { CollectionStreamEvent, McpServerEntry, ToolsSpec, UploadProgress } from "./types";
 import {
   type BackendSettings,
   BackendSettingsSchema,
@@ -11,6 +11,7 @@ import {
   ChunkingPipelineInfoSchema,
   type CollectionUploadResponse,
   CollectionUploadResponseSchema,
+  CollectionStreamEventSchema,
   type CompactConversationResponse,
   CompactConversationResponseSchema,
   ConversationListResponseSchema,
@@ -266,26 +267,27 @@ export interface UploadCollectionOptions {
   llm?: LlmConfig;
 }
 
-/** Upload a markdown collection as a ZIP archive. */
-export async function uploadCollection(
-  file: File,
-  options?: UploadCollectionOptions,
-): Promise<CollectionUploadResponse> {
+/** Build FormData for a collection upload (shared by streaming and non-streaming paths). */
+function buildCollectionFormData(file: File, options?: UploadCollectionOptions): FormData {
   const formData = new FormData();
   formData.append("file", file);
-
-  const url = `${API_BASE_URL}/api/documents/collections`;
-
   if (options?.spec) {
     formData.append("pipeline_spec", JSON.stringify(options.spec));
   }
   if (options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
   }
+  return formData;
+}
 
-  const res = await authFetch(url, {
+/** Upload a markdown collection as a ZIP archive. */
+export async function uploadCollection(
+  file: File,
+  options?: UploadCollectionOptions,
+): Promise<CollectionUploadResponse> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/collections`, {
     method: "POST",
-    body: formData,
+    body: buildCollectionFormData(file, options),
   });
 
   if (!res.ok) {
@@ -295,6 +297,108 @@ export async function uploadCollection(
 
   const data: unknown = await res.json();
   return CollectionUploadResponseSchema.parse(data);
+}
+
+/** Options for streaming collection upload (extends base with progress + abort). */
+export type StreamingCollectionOptions = UploadCollectionOptions & {
+  onProgress?: (progress: UploadProgress) => void;
+  signal?: AbortSignal;
+};
+
+/** Post a collection ZIP to a streaming endpoint and parse SSE progress events. */
+async function postCollectionStream(
+  url: string,
+  file: File,
+  options?: StreamingCollectionOptions,
+): Promise<CollectionUploadResponse> {
+  const formData = buildCollectionFormData(file, options);
+
+  const res = await authFetch(url, {
+    method: "POST",
+    body: formData,
+    signal: options?.signal,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Collection upload failed" }));
+    throw new Error(error.detail || "Collection upload failed");
+  }
+
+  return parseCollectionStream(res, options?.onProgress);
+}
+
+/** Upload a collection with streaming progress events via SSE. */
+export function uploadCollectionStream(
+  file: File,
+  options?: StreamingCollectionOptions,
+): Promise<CollectionUploadResponse> {
+  return postCollectionStream(`${API_BASE_URL}/api/documents/collections/stream`, file, options);
+}
+
+/** Upload a collection to a group with streaming progress events via SSE. */
+export function uploadGroupCollectionStream(
+  groupId: string,
+  file: File,
+  options?: StreamingCollectionOptions,
+): Promise<CollectionUploadResponse> {
+  return postCollectionStream(
+    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/collections/stream`,
+    file,
+    options,
+  );
+}
+
+/** Parse an SSE response from a streaming collection upload. */
+async function parseCollectionStream(
+  res: Response,
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<CollectionUploadResponse> {
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: CollectionUploadResponse | null = null;
+  let failedSnapshot: string[] = [];
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data: ")) continue;
+
+      let event: CollectionStreamEvent;
+      try {
+        const raw: unknown = JSON.parse(trimmed.slice(6));
+        event = CollectionStreamEventSchema.parse(raw);
+      } catch {
+        continue;
+      }
+
+      if (event.type === "progress") {
+        if (event.status === "failed") {
+          failedSnapshot = [...failedSnapshot, event.file];
+        }
+        onProgress?.({
+          current: event.current,
+          total: event.total,
+          currentFile: event.file,
+          failedFiles: failedSnapshot,
+        });
+      } else {
+        result = event;
+      }
+    }
+  }
+
+  if (!result) throw new Error("Stream ended without completion event");
+  return result;
 }
 
 export async function deleteDocument(filename: string): Promise<void> {
@@ -350,11 +454,14 @@ export async function generateConversationTitle(
   conversationId: string,
   llm: LlmConfig,
 ): Promise<GenerateTitleResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}/title/generation`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ llm }),
-  });
+  const res = await authFetch(
+    `${API_BASE_URL}/api/conversations/${conversationId}/title/generation`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ llm }),
+    },
+  );
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Title generation failed" }));
@@ -719,19 +826,11 @@ export async function uploadGroupCollection(
   file: File,
   options?: UploadCollectionOptions,
 ): Promise<CollectionUploadResponse> {
-  const formData = new FormData();
-  formData.append("file", file);
-
   const url = `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/collections`;
-
-  if (options?.spec) {
-    formData.append("pipeline_spec", JSON.stringify(options.spec));
-  }
-  if (options?.llm) {
-    formData.append("llm_config", JSON.stringify(options.llm));
-  }
-
-  const res = await authFetch(url, { method: "POST", body: formData });
+  const res = await authFetch(url, {
+    method: "POST",
+    body: buildCollectionFormData(file, options),
+  });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Collection upload failed" }));
     throw new Error(error.detail || "Collection upload failed");

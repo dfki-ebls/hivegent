@@ -130,6 +130,8 @@ __all__ = [
     "ChunkedDocument",
     "ChunkInfo",
     "ChunkSummary",
+    "CollectionCompleteEvent",
+    "CollectionProgressEvent",
     "CollectionUploadResponse",
     "CompactConversationResponse",
     "ConversationData",
@@ -602,6 +604,24 @@ class CollectionUploadResponse(BaseModel):
         default_factory=list, description="Files that failed to process"
     )
     message: str = Field(description="Status message")
+
+
+class CollectionProgressEvent(BaseModel):
+    """SSE progress event emitted during streaming collection upload."""
+
+    type: Literal["progress"] = "progress"
+    file: str = Field(description="File currently being processed")
+    current: int = Field(description="Number of files processed so far")
+    total: int = Field(description="Total number of files to process")
+    status: Literal["ok", "failed"] = Field(
+        description="Whether this file succeeded or failed"
+    )
+
+
+class CollectionCompleteEvent(CollectionUploadResponse):
+    """SSE completion event emitted at the end of streaming collection upload."""
+
+    type: Literal["complete"] = "complete"
 
 
 class GroupInfo(BaseModel):

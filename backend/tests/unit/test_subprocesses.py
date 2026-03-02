@@ -1,6 +1,5 @@
 """Unit tests for async subprocess wrappers."""
 
-import json
 from pathlib import Path
 
 import pytest
@@ -50,7 +49,7 @@ class TestRun:
 
     async def test_stdout_ndjson(self) -> None:
         result = await run(
-            ["sh", "-c", 'echo \'{"a":1}\'\necho \'{"b":2}\''],
+            ["sh", "-c", "echo '{\"a\":1}'\necho '{\"b\":2}'"],
         )
         items = list(result.stdout_ndjson())
         assert items == [{"a": 1}, {"b": 2}]

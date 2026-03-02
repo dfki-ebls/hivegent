@@ -306,6 +306,37 @@ export const CollectionUploadResponseSchema = z.object({
 });
 export type CollectionUploadResponse = z.infer<typeof CollectionUploadResponseSchema>;
 
+/** SSE progress event from streaming collection upload. */
+export const CollectionProgressEventSchema = z.object({
+  type: z.literal("progress"),
+  file: z.string(),
+  current: z.number(),
+  total: z.number(),
+  status: z.enum(["ok", "failed"]),
+});
+export type CollectionProgressEvent = z.infer<typeof CollectionProgressEventSchema>;
+
+/** SSE completion event from streaming collection upload. */
+export const CollectionCompleteEventSchema = CollectionUploadResponseSchema.extend({
+  type: z.literal("complete"),
+});
+export type CollectionCompleteEvent = z.infer<typeof CollectionCompleteEventSchema>;
+
+/** Discriminated union of SSE events from streaming collection upload. */
+export const CollectionStreamEventSchema = z.discriminatedUnion("type", [
+  CollectionProgressEventSchema,
+  CollectionCompleteEventSchema,
+]);
+export type CollectionStreamEvent = z.infer<typeof CollectionStreamEventSchema>;
+
+/** Upload progress state shared between multi-file and collection uploads. */
+export interface UploadProgress {
+  current: number;
+  total: number;
+  currentFile: string;
+  failedFiles: string[];
+}
+
 /** Metadata about an available agent tool. */
 export const ToolInfoSchema = z.object({
   name: z.string(),

@@ -13,7 +13,7 @@ import {
   moveDocument,
   rechunkDocument,
   reconvertDocument,
-  uploadCollection,
+  uploadCollectionStream,
   uploadDocument,
 } from "../lib/api";
 import type {
@@ -21,17 +21,23 @@ import type {
   DirectoryTreeResponse,
   DocumentInfo,
   PipelineSpec,
+  UploadProgress,
 } from "../lib/types";
 
 interface UserDocumentsStore {
   documents: DocumentInfo[];
   directoryTree: DirectoryTreeResponse | null;
   isLoading: boolean;
+  uploadProgress: UploadProgress | null;
   error: string | null;
   fetchDocuments: () => Promise<void>;
   fetchDirectoryTree: () => Promise<void>;
   upload: (file: File, options?: UploadDocumentOptions) => Promise<void>;
-  uploadCol: (file: File, options?: UploadCollectionOptions) => Promise<CollectionUploadResponse>;
+  uploadMultiple: (files: File[], options?: UploadDocumentOptions) => Promise<void>;
+  uploadCol: (
+    file: File,
+    options?: UploadCollectionOptions & { signal?: AbortSignal },
+  ) => Promise<CollectionUploadResponse>;
   remove: (filename: string) => Promise<void>;
   rechunk: (filename: string, spec?: PipelineSpec) => Promise<void>;
   reconvert: (filename: string, options?: ReconvertDocumentOptions) => Promise<void>;
@@ -45,6 +51,7 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => ({
   documents: [],
   directoryTree: null,
   isLoading: false,
+  uploadProgress: null,
   error: null,
 
   fetchDocuments: async () => {
@@ -85,18 +92,47 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => ({
     }
   },
 
-  uploadCol: async (file: File, options?: UploadCollectionOptions) => {
-    set({ isLoading: true, error: null });
+  uploadMultiple: async (files: File[], options?: UploadDocumentOptions) => {
+    set({ isLoading: true, error: null, uploadProgress: null });
+    let failedSnapshot: string[] = [];
     try {
-      const result = await uploadCollection(file, options);
-      await get().fetchDocuments();
-      await get().fetchDirectoryTree();
-      set({ isLoading: false });
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        set({
+          uploadProgress: {
+            current: i,
+            total: files.length,
+            currentFile: file.name,
+            failedFiles: failedSnapshot,
+          },
+        });
+        try {
+          await uploadDocument(file.name, file, options);
+        } catch {
+          failedSnapshot = [...failedSnapshot, file.name];
+        }
+      }
+      await Promise.all([get().fetchDocuments(), get().fetchDirectoryTree()]);
+    } finally {
+      set({ isLoading: false, uploadProgress: null });
+    }
+  },
+
+  uploadCol: async (file: File, options?: UploadCollectionOptions & { signal?: AbortSignal }) => {
+    set({ isLoading: true, error: null, uploadProgress: null });
+    try {
+      const result = await uploadCollectionStream(file, {
+        ...options,
+        onProgress: (progress) => set({ uploadProgress: progress }),
+      });
+      await Promise.all([get().fetchDocuments(), get().fetchDirectoryTree()]);
+      set({ isLoading: false, uploadProgress: null });
       return result;
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : "Collection upload failed",
         isLoading: false,
+        uploadProgress: null,
       });
       throw err;
     }

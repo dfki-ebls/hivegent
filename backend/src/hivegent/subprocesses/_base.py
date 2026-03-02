@@ -88,6 +88,10 @@ async def run(
         stderr=stderr,
         returncode=proc.returncode or 0,
     )
-    if check and result.returncode != 0 and result.returncode not in allowed_returncodes:
+    if (
+        check
+        and result.returncode != 0
+        and result.returncode not in allowed_returncodes
+    ):
         raise SubprocessError(result)
     return result

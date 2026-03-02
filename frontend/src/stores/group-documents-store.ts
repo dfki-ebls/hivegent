@@ -6,21 +6,26 @@ import {
   deleteGroupDirectory,
   deleteGroupDocument,
   getGroupDirectories,
-  uploadGroupCollection,
+  uploadGroupCollectionStream,
   uploadGroupDocument,
 } from "../lib/api";
-import type { CollectionUploadResponse, DirectoryTreeResponse } from "../lib/types";
+import type { CollectionUploadResponse, DirectoryTreeResponse, UploadProgress } from "../lib/types";
 
 interface GroupDocumentsStore {
   selectedGroupId: string | null;
   directoryTree: DirectoryTreeResponse | null;
   isLoading: boolean;
+  uploadProgress: UploadProgress | null;
   error: string | null;
 
   selectGroup: (groupId: string | null) => void;
   fetchDirectoryTree: () => Promise<void>;
   upload: (file: File, options?: UploadDocumentOptions) => Promise<void>;
-  uploadCol: (file: File, options?: UploadCollectionOptions) => Promise<CollectionUploadResponse>;
+  uploadMultiple: (files: File[], options?: UploadDocumentOptions) => Promise<void>;
+  uploadCol: (
+    file: File,
+    options?: UploadCollectionOptions & { signal?: AbortSignal },
+  ) => Promise<CollectionUploadResponse>;
   remove: (filename: string) => Promise<void>;
   createDir: (path: string) => Promise<void>;
   deleteDir: (path: string) => Promise<void>;
@@ -31,6 +36,7 @@ export const useGroupDocumentsStore = create<GroupDocumentsStore>((set, get) => 
   selectedGroupId: null,
   directoryTree: null,
   isLoading: false,
+  uploadProgress: null,
   error: null,
 
   selectGroup: (groupId: string | null) => {
@@ -70,19 +76,51 @@ export const useGroupDocumentsStore = create<GroupDocumentsStore>((set, get) => 
     }
   },
 
-  uploadCol: async (file: File, options?: UploadCollectionOptions) => {
+  uploadMultiple: async (files: File[], options?: UploadDocumentOptions) => {
+    const groupId = get().selectedGroupId;
+    if (!groupId) return;
+    set({ isLoading: true, error: null, uploadProgress: null });
+    let failedSnapshot: string[] = [];
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        set({
+          uploadProgress: {
+            current: i,
+            total: files.length,
+            currentFile: file.name,
+            failedFiles: failedSnapshot,
+          },
+        });
+        try {
+          await uploadGroupDocument(groupId, file.name, file, options);
+        } catch {
+          failedSnapshot = [...failedSnapshot, file.name];
+        }
+      }
+      await get().fetchDirectoryTree();
+    } finally {
+      set({ isLoading: false, uploadProgress: null });
+    }
+  },
+
+  uploadCol: async (file: File, options?: UploadCollectionOptions & { signal?: AbortSignal }) => {
     const groupId = get().selectedGroupId;
     if (!groupId) throw new Error("No group selected");
-    set({ isLoading: true, error: null });
+    set({ isLoading: true, error: null, uploadProgress: null });
     try {
-      const result = await uploadGroupCollection(groupId, file, options);
+      const result = await uploadGroupCollectionStream(groupId, file, {
+        ...options,
+        onProgress: (progress) => set({ uploadProgress: progress }),
+      });
       await get().fetchDirectoryTree();
-      set({ isLoading: false });
+      set({ isLoading: false, uploadProgress: null });
       return result;
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : "Collection upload failed",
         isLoading: false,
+        uploadProgress: null,
       });
       throw err;
     }
