@@ -329,6 +329,32 @@ export const CollectionStreamEventSchema = z.discriminatedUnion("type", [
 ]);
 export type CollectionStreamEvent = z.infer<typeof CollectionStreamEventSchema>;
 
+/** SSE progress event from a bulk rechunk/reconvert operation. */
+export const BulkOperationProgressEventSchema = z.object({
+  type: z.literal("progress"),
+  file: z.string(),
+  current: z.number(),
+  total: z.number(),
+  status: z.enum(["ok", "failed"]),
+});
+export type BulkOperationProgressEvent = z.infer<typeof BulkOperationProgressEventSchema>;
+
+/** SSE completion event from a bulk operation. */
+export const BulkOperationCompleteEventSchema = z.object({
+  type: z.literal("complete"),
+  total_files: z.number(),
+  failed_files: z.array(z.string()),
+  message: z.string(),
+});
+export type BulkOperationCompleteEvent = z.infer<typeof BulkOperationCompleteEventSchema>;
+
+/** Discriminated union of SSE events from a bulk operation stream. */
+export const BulkOperationStreamEventSchema = z.discriminatedUnion("type", [
+  BulkOperationProgressEventSchema,
+  BulkOperationCompleteEventSchema,
+]);
+export type BulkOperationStreamEvent = z.infer<typeof BulkOperationStreamEventSchema>;
+
 /** Upload progress state shared between multi-file and collection uploads. */
 export interface UploadProgress {
   current: number;

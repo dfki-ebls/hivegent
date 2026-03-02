@@ -124,6 +124,8 @@ __all__ = [
     "BulkDeleteConversationsResponse",
     "BulkDeleteDocumentsResponse",
     "BulkDeleteUserDataResponse",
+    "BulkOperationCompleteEvent",
+    "BulkOperationProgressEvent",
     "BulkRevokeTokensResponse",
     "ChatRequestConfig",
     "ClearMemoryResponse",
@@ -622,6 +624,31 @@ class CollectionCompleteEvent(CollectionUploadResponse):
     """SSE completion event emitted at the end of streaming collection upload."""
 
     type: Literal["complete"] = "complete"
+
+
+class BulkOperationProgressEvent(BaseModel):
+    """SSE progress event emitted during a bulk rechunk/reconvert operation."""
+
+    type: Literal["progress"] = "progress"
+    file: str = Field(description="File currently being processed")
+    current: int = Field(description="Number of files processed so far")
+    total: int = Field(description="Total number of files to process")
+    status: Literal["ok", "failed"] = Field(
+        description="Whether this file succeeded or failed"
+    )
+
+
+class BulkOperationCompleteEvent(BaseModel):
+    """SSE completion event emitted at the end of a bulk operation."""
+
+    type: Literal["complete"] = "complete"
+    total_files: int = Field(description="Total files processed")
+    failed_files: list[str] = Field(
+        default_factory=list, description="Files that failed to process"
+    )
+    message: str = Field(description="Status message")
+
+
 
 
 class GroupInfo(BaseModel):

@@ -1,10 +1,18 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { z } from "zod";
 
-import type { CollectionStreamEvent, McpServerEntry, ToolsSpec, UploadProgress } from "./types";
+import type {
+  BulkOperationCompleteEvent,
+  BulkOperationStreamEvent,
+  CollectionStreamEvent,
+  McpServerEntry,
+  ToolsSpec,
+  UploadProgress,
+} from "./types";
 import {
   type BackendSettings,
   BackendSettingsSchema,
+  BulkOperationStreamEventSchema,
   type ChunkedDocumentResponse,
   ChunkedDocumentResponseSchema,
   type ChunkingPipelineInfo,
@@ -348,18 +356,25 @@ export function uploadGroupCollectionStream(
   );
 }
 
-/** Parse an SSE response from a streaming collection upload. */
-async function parseCollectionStream(
+/**
+ * Generic SSE stream parser for progress + completion event protocols.
+ *
+ * Works with any discriminated union where progress events have
+ * `type: "progress"` with `file`, `current`, `total`, `status` fields,
+ * and completion events have `type: "complete"`.
+ */
+async function parseSseProgressStream<TEvent extends { type: string }, TComplete>(
   res: Response,
+  schema: z.ZodType<TEvent>,
   onProgress?: (progress: UploadProgress) => void,
-): Promise<CollectionUploadResponse> {
+): Promise<TComplete> {
   const reader = res.body?.getReader();
   if (!reader) throw new Error("No response body");
 
   const decoder = new TextDecoder();
   let buffer = "";
-  let result: CollectionUploadResponse | null = null;
-  let failedSnapshot: string[] = [];
+  let result: TComplete | null = null;
+  const failedFiles: string[] = [];
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -373,32 +388,45 @@ async function parseCollectionStream(
       const trimmed = line.trim();
       if (!trimmed.startsWith("data: ")) continue;
 
-      let event: CollectionStreamEvent;
+      let event: TEvent;
       try {
         const raw: unknown = JSON.parse(trimmed.slice(6));
-        event = CollectionStreamEventSchema.parse(raw);
+        event = schema.parse(raw);
       } catch {
         continue;
       }
 
       if (event.type === "progress") {
-        if (event.status === "failed") {
-          failedSnapshot = [...failedSnapshot, event.file];
+        const p = event as TEvent & { file: string; current: number; total: number; status: string };
+        if (p.status === "failed") {
+          failedFiles.push(p.file);
         }
         onProgress?.({
-          current: event.current,
-          total: event.total,
-          currentFile: event.file,
-          failedFiles: failedSnapshot,
+          current: p.current,
+          total: p.total,
+          currentFile: p.file,
+          failedFiles: [...failedFiles],
         });
       } else {
-        result = event;
+        result = event as unknown as TComplete;
       }
     }
   }
 
   if (!result) throw new Error("Stream ended without completion event");
   return result;
+}
+
+/** Parse an SSE response from a streaming collection upload. */
+function parseCollectionStream(
+  res: Response,
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<CollectionUploadResponse> {
+  return parseSseProgressStream<CollectionStreamEvent, CollectionUploadResponse>(
+    res,
+    CollectionStreamEventSchema,
+    onProgress,
+  );
 }
 
 export async function deleteDocument(filename: string): Promise<void> {
@@ -640,6 +668,89 @@ export async function rechunkDocument(
 
   const data: unknown = await res.json();
   return ChunkedDocumentResponseSchema.parse(data);
+}
+
+// --- Bulk operation API functions ---
+
+/** Options for streaming bulk operations. */
+export interface BulkOperationStreamOptions {
+  onProgress?: (progress: UploadProgress) => void;
+  signal?: AbortSignal;
+}
+
+/** Parse an SSE response from a streaming bulk operation. */
+function parseBulkOperationStream(
+  res: Response,
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<BulkOperationCompleteEvent> {
+  return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
+    res,
+    BulkOperationStreamEventSchema,
+    onProgress,
+  );
+}
+
+/** Bulk rechunk multiple documents with streaming progress. */
+export async function bulkRechunkStream(
+  files: string[],
+  spec?: PipelineSpec,
+  options?: BulkOperationStreamOptions,
+): Promise<BulkOperationCompleteEvent> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/rechunk/bulk/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ files, pipeline: spec ?? {} }),
+    signal: options?.signal,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Bulk rechunk failed" }));
+    throw new Error(error.detail || "Bulk rechunk failed");
+  }
+
+  return parseBulkOperationStream(res, options?.onProgress);
+}
+
+/** Bulk reconvert multiple documents with streaming progress. */
+export async function bulkReconvertStream(
+  files: string[],
+  spec?: PipelineSpec,
+  llm?: LlmConfig,
+  options?: BulkOperationStreamOptions,
+): Promise<BulkOperationCompleteEvent> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/reconvert/bulk/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ files, pipeline: spec ?? {}, llm: llm ?? {} }),
+    signal: options?.signal,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Bulk reconvert failed" }));
+    throw new Error(error.detail || "Bulk reconvert failed");
+  }
+
+  return parseBulkOperationStream(res, options?.onProgress);
+}
+
+/** Bulk delete multiple documents with streaming progress. */
+export async function bulkDeleteStream(
+  files: string[],
+  options?: BulkOperationStreamOptions,
+): Promise<BulkOperationCompleteEvent> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/delete/bulk/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ files }),
+    signal: options?.signal,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Bulk delete failed" }));
+    throw new Error(error.detail || "Bulk delete failed");
+  }
+
+  return parseBulkOperationStream(res, options?.onProgress);
 }
 
 // User directory management

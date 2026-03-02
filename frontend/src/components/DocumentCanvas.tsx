@@ -33,6 +33,7 @@ import {
 import {
   type ChunkingPipeline,
   type ConversionPipeline,
+  type DirectoryEntry,
   type DirectoryTreeResponse,
   type DocumentInfo,
   type FetchedChunk,
@@ -45,6 +46,7 @@ import {
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
 import { useUserDocumentsStore } from "../stores/user-documents-store";
 import { canWriteGroup, getAllGroups, useSettingsStore } from "../stores/settings-store";
+import { Checkbox } from "./ui/checkbox";
 import { ChunkingPipelineSelector } from "./ChunkingPipelineSelector";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { ConversionPipelineSelector } from "./ConversionPipelineSelector";
@@ -53,6 +55,16 @@ import { DirectoryTreeView } from "./DirectoryTreeView";
 import { DocumentDialog } from "./DocumentDialog";
 import { MoveDocumentDialog } from "./MoveDocumentDialog";
 import { Alert, AlertDescription } from "./ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -480,6 +492,8 @@ interface DocumentListItemProps {
   onExcludeDocument: () => void;
   onReconvert: () => void;
   onRemove: () => void;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }
 
 function DocumentListItem({
@@ -490,6 +504,8 @@ function DocumentListItem({
   onExcludeDocument,
   onReconvert,
   onRemove,
+  selected,
+  onToggleSelect,
 }: DocumentListItemProps) {
   return (
     <button
@@ -497,6 +513,14 @@ function DocumentListItem({
       className="flex w-full items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50 cursor-pointer text-left"
       onClick={onEdit}
     >
+      {onToggleSelect && (
+        <Checkbox
+          checked={selected ?? false}
+          onCheckedChange={() => onToggleSelect()}
+          onClick={(e) => e.stopPropagation()}
+          className="shrink-0"
+        />
+      )}
       <FileText className="h-8 w-8 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -716,12 +740,25 @@ interface ManageDocumentsProps {
   onExcludeDocument?: (filename: string) => void;
 }
 
+/** Recursively collect all file paths from a directory entry. */
+function collectFilePaths(entry: DirectoryEntry, out: string[] = []): string[] {
+  if (entry.type === "file") {
+    out.push(entry.path);
+  } else {
+    for (const child of entry.children ?? []) {
+      collectFilePaths(child, out);
+    }
+  }
+  return out;
+}
+
 function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumentsProps) {
   const {
     documents,
     directoryTree,
     isLoading,
     uploadProgress,
+    bulkProgress,
     error,
     fetchDocuments,
     fetchDirectoryTree,
@@ -731,6 +768,9 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     remove,
     rechunk: storeRechunk,
     reconvert: storeReconvert,
+    bulkRechunk: storeBulkRechunk,
+    bulkReconvert: storeBulkReconvert,
+    bulkDelete: storeBulkDelete,
     move: storeMove,
     createDir,
     deleteDir,
@@ -753,6 +793,27 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const [moveFilePath, setMoveFilePath] = useState<string | null>(null);
   const [createDirParent, setCreateDirParent] = useState<string | undefined>(undefined);
   const [showCreateDir, setShowCreateDir] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [pendingDelete, setPendingDelete] = useState<
+    | { kind: "file"; path: string }
+    | { kind: "directory"; path: string }
+    | { kind: "bulk"; files: string[] }
+    | null
+  >(null);
+
+  const toggleFile = useCallback((path: string) => {
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedFiles(new Set()), []);
 
   const fuse = useMemo(
     () => new Fuse(documents, { keys: ["filename"], threshold: 0.4 }),
@@ -763,6 +824,47 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     if (!searchQuery.trim()) return documents;
     return fuse.search(searchQuery).map((result) => result.item);
   }, [documents, searchQuery, fuse]);
+
+  const isSearching = searchQuery.trim().length > 0;
+
+  const visibleFilePaths = useMemo(() => {
+    if (isSearching) {
+      return filteredDocuments.map((d) => d.filename);
+    }
+    if (directoryTree) {
+      return collectFilePaths(directoryTree.root);
+    }
+    return documents.map((d) => d.filename);
+  }, [isSearching, filteredDocuments, directoryTree, documents]);
+
+  const { allSelected, someSelected } = useMemo(() => {
+    let count = 0;
+    for (const p of visibleFilePaths) {
+      if (selectedFiles.has(p)) count++;
+    }
+    return {
+      allSelected: visibleFilePaths.length > 0 && count === visibleFilePaths.length,
+      someSelected: count > 0,
+    };
+  }, [visibleFilePaths, selectedFiles]);
+
+  const toggleSelectAll = useCallback(() => {
+    if (allSelected) {
+      clearSelection();
+    } else {
+      setSelectedFiles(new Set(visibleFilePaths));
+    }
+  }, [allSelected, visibleFilePaths, clearSelection]);
+
+  const docsByFilename = useMemo(
+    () => new Map(documents.map((d) => [d.filename, d])),
+    [documents],
+  );
+
+  const selectedReconvertable = useMemo(
+    () => [...selectedFiles].filter((f) => docsByFilename.get(f)?.has_original === true),
+    [selectedFiles, docsByFilename],
+  );
 
   const pipelineSpec: PipelineSpec = useMemo(
     () => ({
@@ -854,6 +956,49 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     },
     [storeReconvert, pipelineSpec, visionModel, llmSettings],
   );
+
+  // --- Bulk operation handlers ---
+
+  const handleBulkRechunk = useCallback(async () => {
+    const files = [...selectedFiles];
+    clearSelection();
+    await storeBulkRechunk(files, pipelineSpec);
+  }, [selectedFiles, clearSelection, storeBulkRechunk, pipelineSpec]);
+
+  const handleBulkReconvert = useCallback(async () => {
+    const files = [...selectedReconvertable];
+    clearSelection();
+    await storeBulkReconvert(
+      files,
+      pipelineSpec,
+      buildLlmConfig({
+        model: visionModel,
+        apiKey: llmSettings.apiKey,
+        baseUrl: llmSettings.baseUrl,
+      }),
+    );
+  }, [selectedReconvertable, clearSelection, storeBulkReconvert, pipelineSpec, visionModel, llmSettings]);
+
+  const handleBulkDelete = useCallback(() => {
+    setPendingDelete({ kind: "bulk", files: [...selectedFiles] });
+  }, [selectedFiles]);
+
+  const confirmDelete = useCallback(async () => {
+    if (!pendingDelete) return;
+    setPendingDelete(null);
+    switch (pendingDelete.kind) {
+      case "file":
+        await remove(pendingDelete.path);
+        break;
+      case "directory":
+        await deleteDir(pendingDelete.path);
+        break;
+      case "bulk":
+        clearSelection();
+        await storeBulkDelete(pendingDelete.files);
+        break;
+    }
+  }, [pendingDelete, remove, deleteDir, clearSelection, storeBulkDelete]);
 
   // --- File upload handlers ---
 
@@ -981,8 +1126,6 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
 
   // --- Render helpers ---
 
-  const isSearching = searchQuery.trim().length > 0;
-
   const renderFlatList = () => {
     if (filteredDocuments.length === 0) {
       return (
@@ -1004,7 +1147,9 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
             onIncludeDocument={() => handleInclude(doc.filename)}
             onExcludeDocument={() => handleExclude(doc.filename)}
             onReconvert={() => handleReconvert(doc.filename)}
-            onRemove={() => remove(doc.filename)}
+            onRemove={() => setPendingDelete({ kind: "file", path: doc.filename })}
+            selected={selectedFiles.has(doc.filename)}
+            onToggleSelect={() => toggleFile(doc.filename)}
           />
         ))}
       </div>
@@ -1043,16 +1188,18 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         onInclude={handleInclude}
         onExclude={handleExclude}
         onReconvert={handleReconvert}
-        onRemoveFile={(path) => remove(path)}
+        onRemoveFile={(path) => setPendingDelete({ kind: "file", path })}
         onMoveFile={(path) => setMoveFilePath(path)}
         onCreateSubdir={handleCreateSubdir}
-        onDeleteDir={(path) => deleteDir(path)}
+        onDeleteDir={(path) => setPendingDelete({ kind: "directory", path })}
+        selectedFiles={selectedFiles}
+        onToggleSelectFile={toggleFile}
       />
     );
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col overflow-y-auto">
       {error && <ErrorBanner message={error} onDismiss={clearError} />}
 
       <UploadArea
@@ -1083,48 +1230,114 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         onChunkingPipelineChange={setChunkingPipeline}
       />
 
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="p-4 pb-2">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search documents..."
-              className="pl-9"
-            />
-          </div>
+      {(selectedFiles.size > 0 || bulkProgress) && (
+        <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-muted/80 backdrop-blur px-4 py-2">
+          {bulkProgress ? (
+            <div className="flex flex-1 items-center gap-3">
+              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+              <span className="truncate text-sm">{bulkProgress.currentFile}</span>
+              <Progress
+                value={
+                  bulkProgress.total > 0
+                    ? (bulkProgress.current / bulkProgress.total) * 100
+                    : 0
+                }
+                className="w-24 shrink-0"
+              />
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                {bulkProgress.current}/{bulkProgress.total}
+              </span>
+              {bulkProgress.failedFiles.length > 0 && (
+                <span className="shrink-0 text-xs text-destructive">
+                  {bulkProgress.failedFiles.length} failed
+                </span>
+              )}
+            </div>
+          ) : (
+            <>
+              <span className="text-sm font-medium">{selectedFiles.size} selected</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void handleBulkRechunk()}
+                disabled={isLoading}
+              >
+                <Scissors className="h-4 w-4 mr-1" />
+                Rechunk
+              </Button>
+              {selectedReconvertable.length > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void handleBulkReconvert()}
+                  disabled={isLoading}
+                >
+                  <RotateCcw className="h-4 w-4 mr-1" />
+                  Reconvert
+                </Button>
+              )}
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleBulkDelete}
+                disabled={isLoading}
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                Delete
+              </Button>
+              <Button variant="ghost" size="icon" className="ml-auto h-7 w-7" onClick={clearSelection}>
+                <X className="h-4 w-4" />
+              </Button>
+            </>
+          )}
         </div>
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="px-4 pb-4">
-            <h3 className="mb-3 text-sm font-medium text-muted-foreground">
-              {isSearching
-                ? `Found ${filteredDocuments.length} of ${documents.length}`
-                : `Your Documents (${documents.length})`}
-            </h3>
-            {isSearching ? renderFlatList() : renderTreeView()}
+      )}
 
-            {!isSearching && getAllGroups().length > 0 && (
-              <>
-                <h3 className="mt-6 mb-3 text-sm font-medium text-muted-foreground">
-                  Group Knowledge
-                </h3>
-                <div className="space-y-0.5">
-                  {getAllGroups().map((groupId) => (
-                    <GroupDocumentsSection
-                      key={groupId}
-                      groupId={groupId}
-                      canWrite={canWriteGroup(groupId)}
-                      onInclude={handleInclude}
-                      onExclude={handleExclude}
-                      onViewFile={handleViewGroupFile}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </ScrollArea>
+      <div className="p-4 pb-2">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search documents..."
+            className="pl-9"
+          />
+        </div>
+      </div>
+
+      <div className="px-4 pb-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Checkbox
+            checked={allSelected ? true : someSelected ? "indeterminate" : false}
+            onCheckedChange={toggleSelectAll}
+          />
+          <h3 className="text-sm font-medium text-muted-foreground">
+            {isSearching
+              ? `Found ${filteredDocuments.length} of ${documents.length}`
+              : `Your Documents (${documents.length})`}
+          </h3>
+        </div>
+        {isSearching ? renderFlatList() : renderTreeView()}
+
+        {!isSearching && getAllGroups().length > 0 && (
+          <>
+            <h3 className="mt-6 mb-3 text-sm font-medium text-muted-foreground">
+              Group Knowledge
+            </h3>
+            <div className="space-y-0.5">
+              {getAllGroups().map((groupId) => (
+                <GroupDocumentsSection
+                  key={groupId}
+                  groupId={groupId}
+                  canWrite={canWriteGroup(groupId)}
+                  onInclude={handleInclude}
+                  onExclude={handleExclude}
+                  onViewFile={handleViewGroupFile}
+                />
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       <DocumentDialog
@@ -1162,6 +1375,33 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         parentPath={createDirParent}
         onCreate={createDir}
       />
+
+      <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingDelete?.kind === "bulk"
+                ? `Delete ${pendingDelete.files.length} documents?`
+                : pendingDelete?.kind === "directory"
+                  ? "Delete directory?"
+                  : "Delete document?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete?.kind === "bulk"
+                ? "This will permanently delete the selected documents, their chunks, and any original files. This action cannot be undone."
+                : pendingDelete?.kind === "directory"
+                  ? `This will permanently delete the directory "${pendingDelete.path}" and all its contents. This action cannot be undone.`
+                  : `This will permanently delete "${pendingDelete?.path}" and its chunks. This action cannot be undone.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => void confirmDelete()}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

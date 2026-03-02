@@ -5,6 +5,9 @@ import type {
   UploadDocumentOptions,
 } from "../lib/api";
 import {
+  bulkDeleteStream,
+  bulkRechunkStream,
+  bulkReconvertStream,
   createDirectory,
   deleteDirectory,
   deleteDocument,
@@ -20,6 +23,7 @@ import type {
   CollectionUploadResponse,
   DirectoryTreeResponse,
   DocumentInfo,
+  LlmConfig,
   PipelineSpec,
   UploadProgress,
 } from "../lib/types";
@@ -29,6 +33,7 @@ interface UserDocumentsStore {
   directoryTree: DirectoryTreeResponse | null;
   isLoading: boolean;
   uploadProgress: UploadProgress | null;
+  bulkProgress: UploadProgress | null;
   error: string | null;
   fetchDocuments: () => Promise<void>;
   fetchDirectoryTree: () => Promise<void>;
@@ -41,6 +46,13 @@ interface UserDocumentsStore {
   remove: (filename: string) => Promise<void>;
   rechunk: (filename: string, spec?: PipelineSpec) => Promise<void>;
   reconvert: (filename: string, options?: ReconvertDocumentOptions) => Promise<void>;
+  bulkRechunk: (files: string[], spec?: PipelineSpec) => Promise<void>;
+  bulkReconvert: (
+    files: string[],
+    spec?: PipelineSpec,
+    llm?: LlmConfig,
+  ) => Promise<void>;
+  bulkDelete: (files: string[]) => Promise<void>;
   move: (filepath: string, destination: string) => Promise<void>;
   createDir: (path: string) => Promise<void>;
   deleteDir: (path: string) => Promise<void>;
@@ -52,6 +64,7 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => ({
   directoryTree: null,
   isLoading: false,
   uploadProgress: null,
+  bulkProgress: null,
   error: null,
 
   fetchDocuments: async () => {
@@ -177,6 +190,54 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => ({
         error: err instanceof Error ? err.message : "Reconvert failed",
         isLoading: false,
       });
+    }
+  },
+
+  bulkRechunk: async (files: string[], spec?: PipelineSpec) => {
+    set({ bulkProgress: null, error: null });
+    try {
+      await bulkRechunkStream(files, spec, {
+        onProgress: (progress) => set({ bulkProgress: progress }),
+      });
+      await Promise.all([get().fetchDocuments(), get().fetchDirectoryTree()]);
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Bulk rechunk failed",
+      });
+    } finally {
+      set({ bulkProgress: null });
+    }
+  },
+
+  bulkReconvert: async (files: string[], spec?: PipelineSpec, llm?: LlmConfig) => {
+    set({ bulkProgress: null, error: null });
+    try {
+      await bulkReconvertStream(files, spec, llm, {
+        onProgress: (progress) => set({ bulkProgress: progress }),
+      });
+      await Promise.all([get().fetchDocuments(), get().fetchDirectoryTree()]);
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Bulk reconvert failed",
+      });
+    } finally {
+      set({ bulkProgress: null });
+    }
+  },
+
+  bulkDelete: async (files: string[]) => {
+    set({ bulkProgress: null, error: null });
+    try {
+      await bulkDeleteStream(files, {
+        onProgress: (progress) => set({ bulkProgress: progress }),
+      });
+      await Promise.all([get().fetchDocuments(), get().fetchDirectoryTree()]);
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Bulk delete failed",
+      });
+    } finally {
+      set({ bulkProgress: null });
     }
   },
 

@@ -18,6 +18,7 @@ import type { DirectoryEntry } from "../lib/types";
 import { useSettingsStore } from "../stores/settings-store";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -36,6 +37,8 @@ interface DirectoryTreeViewProps {
   onMoveFile?: (path: string) => void;
   onCreateSubdir?: (parentPath: string) => void;
   onDeleteDir?: (path: string) => void;
+  selectedFiles?: Set<string>;
+  onToggleSelectFile?: (path: string) => void;
   depth?: number;
 }
 
@@ -49,6 +52,8 @@ function FileRow({
   onReconvert,
   onRemove,
   onMove,
+  selected,
+  onToggleSelect,
 }: {
   entry: DirectoryEntry;
   isLoading: boolean;
@@ -59,6 +64,8 @@ function FileRow({
   onReconvert?: () => void;
   onRemove?: () => void;
   onMove?: () => void;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   return (
     <button
@@ -68,6 +75,14 @@ function FileRow({
       onClick={onEdit}
     >
       <div className="flex items-center gap-2 min-w-0">
+        {onToggleSelect && (
+          <Checkbox
+            checked={selected ?? false}
+            onCheckedChange={() => onToggleSelect()}
+            onClick={(e) => e.stopPropagation()}
+            className="shrink-0"
+          />
+        )}
         <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 truncate text-sm">{entry.name}</span>
       </div>
@@ -283,6 +298,8 @@ export function DirectoryTreeView({
   onMoveFile,
   onCreateSubdir,
   onDeleteDir,
+  selectedFiles,
+  onToggleSelectFile,
   depth = 0,
 }: DirectoryTreeViewProps) {
   const expandedDirsArray = useSettingsStore((state) => state.expandedDirs);
@@ -310,6 +327,10 @@ export function DirectoryTreeView({
           onReconvert={onReconvert ? () => onReconvert(child.path) : undefined}
           onRemove={onRemoveFile ? () => onRemoveFile(child.path) : undefined}
           onMove={onMoveFile ? () => onMoveFile(child.path) : undefined}
+          selected={selectedFiles?.has(child.path)}
+          onToggleSelect={
+            onToggleSelectFile ? () => onToggleSelectFile(child.path) : undefined
+          }
         />
       );
     }

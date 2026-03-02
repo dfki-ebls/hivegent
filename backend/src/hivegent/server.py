@@ -6,11 +6,11 @@ import logging
 import shutil
 import tempfile
 import zipfile
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -94,6 +94,8 @@ from .types import (
     BulkDeleteConversationsResponse,
     BulkDeleteDocumentsResponse,
     BulkDeleteUserDataResponse,
+    BulkOperationCompleteEvent,
+    BulkOperationProgressEvent,
     BulkRevokeTokensResponse,
     ChatRequestConfig,
     ChunkedDocument,
@@ -234,6 +236,27 @@ class ReconvertRequest(BaseModel):
 
     pipeline: PipelineSpec = Field(default_factory=PipelineSpec)
     llm: LlmConfig = Field(default_factory=LlmConfig)
+
+
+class BulkRechunkRequest(BaseModel):
+    """Request to bulk rechunk multiple documents."""
+
+    files: list[str] = Field(description="List of file paths to rechunk")
+    pipeline: PipelineSpec = Field(default_factory=PipelineSpec)
+
+
+class BulkReconvertRequest(BaseModel):
+    """Request to bulk reconvert multiple documents from originals."""
+
+    files: list[str] = Field(description="List of file paths to reconvert")
+    pipeline: PipelineSpec = Field(default_factory=PipelineSpec)
+    llm: LlmConfig = Field(default_factory=LlmConfig)
+
+
+class BulkDeleteRequest(BaseModel):
+    """Request to bulk delete multiple documents."""
+
+    files: list[str] = Field(description="List of file paths to delete")
 
 
 mcp_http_app = mcp_app.http_app(path="/")
@@ -1110,6 +1133,29 @@ def _validate_collection_upload(
     return spec, resolved
 
 
+def _sse_stream_response(
+    generator: AsyncGenerator[BaseModel, None],
+) -> StreamingResponse:
+    """Wrap an async generator of Pydantic models in a Server-Sent Events response.
+
+    Args:
+        generator: Async generator yielding Pydantic model events.
+
+    Returns:
+        A ``StreamingResponse`` that yields NDJSON events.
+    """
+
+    async def _event_stream() -> AsyncGenerator[str, None]:
+        async for event in generator:
+            yield f"data: {json.dumps(event.model_dump())}\n\n"
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 def _collection_stream_response(
     store: Casebase,
     raw: bytes,
@@ -1127,16 +1173,7 @@ def _collection_stream_response(
     Returns:
         A ``StreamingResponse`` that yields NDJSON events.
     """
-
-    async def _event_stream() -> AsyncGenerator[str, None]:
-        async for event in _process_collection(store, raw, spec, resolved):
-            yield f"data: {json.dumps(event.model_dump())}\n\n"
-
-    return StreamingResponse(
-        _event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return _sse_stream_response(_process_collection(store, raw, spec, resolved))
 
 
 async def _read_collection_zip(file: UploadFile) -> bytes:
@@ -1239,6 +1276,229 @@ async def delete_all_documents(
     )
 
 
+# --- Bulk operation helpers ---
+
+
+async def _reconvert_single(
+    store: Casebase,
+    safe: str,
+    spec: PipelineSpec,
+    resolved: LlmConfig,
+) -> UploadDocumentResponse:
+    """Reconvert a single document from its original binary file.
+
+    Args:
+        store: The casebase containing the document.
+        safe: Sanitized relative document path.
+        spec: Pipeline spec for conversion and chunking.
+        resolved: Resolved LLM configuration.
+
+    Returns:
+        Upload response with reconversion details.
+
+    Raises:
+        HTTPException: If the original file is not found or conversion fails.
+    """
+    conversion_pipeline = spec.conversion.pipeline
+
+    originals_dir = store.originals_dir(settings.data_dir)
+    documents_dir = store.documents_dir(settings.data_dir)
+
+    safe_path = Path(safe)
+    target_stem = safe_path.stem
+    parent = str(safe_path.parent)
+    if parent != ".":
+        orig_search_dir = originals_dir / parent
+    else:
+        orig_search_dir = originals_dir
+
+    original_path = None
+    if orig_search_dir.exists():
+        for candidate in orig_search_dir.iterdir():
+            if candidate.is_file() and candidate.stem == target_stem:
+                original_path = candidate
+                break
+
+    if not original_path:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No original file found for '{safe}'",
+        )
+
+    try:
+        converter = get_converter(conversion_pipeline, filename=original_path.name)
+    except (ImportError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    resolved_conversion = conversion_pipeline
+    if conversion_pipeline == ConversionPipeline.AUTO:
+        resolved_conversion = resolve_auto_pipeline(original_path.name)
+
+    try:
+        if resolved_conversion == ConversionPipeline.LLM:
+            from .converters.llm import LLMConverter
+
+            assert isinstance(converter, LLMConverter)
+            markdown_content = await converter(
+                original_path,
+                config=spec.conversion.config,
+                options=resolved,
+            )
+        else:
+            markdown_content = await converter(
+                original_path, config=spec.conversion.config
+            )
+    except ImportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Conversion failed: {e!s}",
+        )
+
+    converted_path = documents_dir / safe
+    converted_path.parent.mkdir(parents=True, exist_ok=True)
+    converted_path.write_text(markdown_content, encoding="utf-8")
+    stat = converted_path.stat()
+
+    chunk_count = None
+    chunking_used = None
+    try:
+        chunked = chunk_document(store, safe, markdown_content, spec.chunking)
+        chunk_count = len(chunked.chunks)
+        chunking_used = chunked.pipeline
+    except Exception as e:
+        logger.warning("Chunking failed for %s: %s", safe, e)
+
+    return UploadDocumentResponse(
+        filename=original_path.name,
+        converted_filename=safe,
+        size_bytes=stat.st_size,
+        conversion_pipeline_used=resolved_conversion.value,
+        chunk_count=chunk_count,
+        chunking_pipeline_used=chunking_used,
+        message="Document reconverted successfully",
+    )
+
+
+async def _process_bulk_operation(
+    store: Casebase,
+    files: list[str],
+    process_one: Callable[[str], Awaitable[None]],
+    label: str,
+) -> AsyncGenerator[BulkOperationProgressEvent | BulkOperationCompleteEvent, None]:
+    """Run a per-file operation over multiple documents, yielding SSE progress.
+
+    Args:
+        store: The casebase (used for ``sync_index`` at the end).
+        files: List of relative file paths to process.
+        process_one: Async callback that processes a single sanitized file path.
+        label: Human-readable verb for the completion message (e.g. "Rechunked").
+
+    Yields:
+        Progress events per file, then a completion event.
+    """
+    total = len(files)
+    failed_files: list[str] = []
+
+    for i, filepath in enumerate(files):
+        status: Literal["ok", "failed"] = "ok"
+        try:
+            await process_one(filepath)
+        except Exception as e:
+            logger.warning("Bulk %s failed for %s: %s", label.lower(), filepath, e)
+            status = "failed"
+            failed_files.append(filepath)
+
+        yield BulkOperationProgressEvent(
+            file=filepath,
+            current=i + 1,
+            total=total,
+            status=status,
+        )
+
+    sync_index(store)
+
+    yield BulkOperationCompleteEvent(
+        total_files=total,
+        failed_files=failed_files,
+        message=f"{label} {total - len(failed_files)} of {total} files",
+    )
+
+
+@api_router.post("/documents/rechunk/bulk/stream")
+async def bulk_rechunk_stream(
+    request: BulkRechunkRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> StreamingResponse:
+    """Bulk rechunk multiple documents with streaming progress.
+
+    Args:
+        request: Bulk rechunk request with file paths and pipeline spec.
+    """
+    validate_chunking_config(request.pipeline.chunking)
+    store = _user_store(user)
+    data_dir = store.documents_dir(settings.data_dir)
+    spec = request.pipeline
+
+    async def _rechunk_one(filepath: str) -> None:
+        safe = _safe_path(filepath)
+        text_content = (data_dir / safe).read_text(encoding="utf-8")
+        chunk_document(store, safe, text_content, spec.chunking)
+
+    return _sse_stream_response(
+        _process_bulk_operation(store, request.files, _rechunk_one, "Rechunked"),
+    )
+
+
+@api_router.post("/documents/reconvert/bulk/stream")
+async def bulk_reconvert_stream(
+    request: BulkReconvertRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> StreamingResponse:
+    """Bulk reconvert multiple documents with streaming progress.
+
+    Args:
+        request: Bulk reconvert request with file paths, pipeline spec, and LLM config.
+    """
+    resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
+    validate_conversion_config(request.pipeline.conversion)
+    validate_chunking_config(request.pipeline.chunking)
+    store = _user_store(user)
+    spec = request.pipeline
+
+    async def _reconvert_one(filepath: str) -> None:
+        safe = _safe_path(filepath)
+        await _reconvert_single(store, safe, spec, resolved)
+
+    return _sse_stream_response(
+        _process_bulk_operation(store, request.files, _reconvert_one, "Reconverted"),
+    )
+
+
+@api_router.post("/documents/delete/bulk/stream")
+async def bulk_delete_stream(
+    request: BulkDeleteRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> StreamingResponse:
+    """Bulk delete multiple documents with streaming progress.
+
+    Args:
+        request: Bulk delete request with file paths.
+    """
+    store = _user_store(user)
+
+    async def _delete_one(filepath: str) -> None:
+        safe = _safe_path(filepath)
+        _delete_single(store, safe)
+
+    return _sse_stream_response(
+        _process_bulk_operation(store, request.files, _delete_one, "Deleted"),
+    )
+
+
 @api_router.get("/pipelines/conversion")
 async def list_conversion_pipelines() -> list[ConversionPipelineInfo]:
     """Get metadata for all conversion pipelines."""
@@ -1327,94 +1587,9 @@ async def reconvert_document(
     validate_conversion_config(spec.conversion)
     validate_chunking_config(spec.chunking)
 
-    conversion_pipeline = spec.conversion.pipeline
-
-    originals_dir = store.originals_dir(settings.data_dir)
-    documents_dir = store.documents_dir(settings.data_dir)
-
-    # Find original file by matching stem in the mirrored directory structure
-    safe_path = Path(safe)
-    target_stem = safe_path.stem
-    parent = str(safe_path.parent)
-    if parent != ".":
-        orig_search_dir = originals_dir / parent
-    else:
-        orig_search_dir = originals_dir
-
-    original_path = None
-    if orig_search_dir.exists():
-        for candidate in orig_search_dir.iterdir():
-            if candidate.is_file() and candidate.stem == target_stem:
-                original_path = candidate
-                break
-
-    if not original_path:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No original file found for '{safe}'",
-        )
-
-    # Get the converter (resolves AUTO and validates extension support)
-    try:
-        converter = get_converter(conversion_pipeline, filename=original_path.name)
-    except (ImportError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    resolved_conversion = conversion_pipeline
-    if conversion_pipeline == ConversionPipeline.AUTO:
-        resolved_conversion = resolve_auto_pipeline(original_path.name)
-
-    # Convert the document
-    try:
-        if resolved_conversion == ConversionPipeline.LLM:
-            from .converters.llm import LLMConverter
-
-            assert isinstance(converter, LLMConverter)
-            markdown_content = await converter(
-                original_path,
-                config=spec.conversion.config,
-                options=resolved,
-            )
-        else:
-            markdown_content = await converter(
-                original_path, config=spec.conversion.config
-            )
-    except ImportError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Conversion failed: {e!s}",
-        )
-
-    # Overwrite the text file
-    converted_path = documents_dir / safe
-    converted_path.parent.mkdir(parents=True, exist_ok=True)
-    converted_path.write_text(markdown_content, encoding="utf-8")
-    stat = converted_path.stat()
-
-    # Rechunk the new content
-    chunk_count = None
-    chunking_used = None
-    try:
-        chunked = chunk_document(store, safe, markdown_content, spec.chunking)
-        chunk_count = len(chunked.chunks)
-        chunking_used = chunked.pipeline
-        sync_index(store)
-    except Exception as e:
-        logger.warning("Chunking failed for %s: %s", safe, e)
-
-    return UploadDocumentResponse(
-        filename=original_path.name,
-        converted_filename=safe,
-        size_bytes=stat.st_size,
-        conversion_pipeline_used=resolved_conversion.value,
-        chunk_count=chunk_count,
-        chunking_pipeline_used=chunking_used,
-        message="Document reconverted successfully",
-    )
+    result = await _reconvert_single(store, safe, spec, resolved)
+    sync_index(store)
+    return result
 
 
 # --- Document move endpoint ---
@@ -1535,18 +1710,18 @@ async def get_document_content(
     return PlainTextResponse(file_path.read_text(encoding="utf-8"))
 
 
-@api_router.delete("/documents/{filepath:path}")
-async def delete_document(
-    filepath: str,
-    user: Annotated[User, Depends(get_current_user)],
-) -> DeleteDocumentResponse:
-    """Delete a document and its associated chunks and original.
+def _delete_single(store: Casebase, safe: str) -> None:
+    """Delete a single document, its chunks, and its original file.
+
+    Does **not** call ``sync_index``; the caller is responsible for that.
 
     Args:
-        filepath: The relative path to the document.
+        store: The user's casebase.
+        safe: Sanitized relative document path.
+
+    Raises:
+        HTTPException: If the document is not found or the path is not a file.
     """
-    safe = _safe_path(filepath)
-    store = _user_store(user)
     data_dir = store.documents_dir(settings.data_dir)
     file_path = data_dir / safe
 
@@ -1559,7 +1734,6 @@ async def delete_document(
     file_path.unlink()
     _cleanup_empty_parents(file_path, data_dir)
     delete_chunks(store, safe)
-    sync_index(store)
 
     # Also delete the original if it exists
     originals_dir = store.originals_dir(settings.data_dir)
@@ -1575,6 +1749,22 @@ async def delete_document(
                 candidate.unlink()
                 _cleanup_empty_parents(candidate, originals_dir)
                 break
+
+
+@api_router.delete("/documents/{filepath:path}")
+async def delete_document(
+    filepath: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> DeleteDocumentResponse:
+    """Delete a document and its associated chunks and original.
+
+    Args:
+        filepath: The relative path to the document.
+    """
+    safe = _safe_path(filepath)
+    store = _user_store(user)
+    _delete_single(store, safe)
+    sync_index(store)
 
     return DeleteDocumentResponse(
         filename=safe,
