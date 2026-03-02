@@ -7,7 +7,7 @@ requires-python = ">=3.13,<4"
 authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
 dependencies = [
   "argon2-cffi>=25,<26",
-  "cbrkit>=1,<2",
+  "cbrkit>=1.2,<2",
   "chonkie>=1,<2",
   "fastapi[standard]>=0.120,<1",
   "fastmcp>=3,<4",
@@ -23,7 +23,7 @@ dependencies = [
   "sentence_transformers>=5,<6",
   "typer>=0.21,<1",
   "uvicorn[standard]>=0.40,<1",
-  "zvec>=0.2,<1",
+  # "zvec>=0.2,<1",
 ]
 
 [project.scripts]
@@ -58,5 +58,5 @@ markers = [
 ]
 
 [tool.uv.sources]
-cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }
-zvec = { git = "https://github.com/alibaba/zvec", tag = "v0.2.0" }
+# cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }
+# zvec = { git = "https://github.com/alibaba/zvec", tag = "v0.2.0" }
