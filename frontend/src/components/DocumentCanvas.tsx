@@ -1052,7 +1052,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
             />
           </div>
         </div>
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="px-4 pb-4">
             <h3 className="mb-3 text-sm font-medium text-muted-foreground">
               {isSearching
