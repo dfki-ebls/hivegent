@@ -590,24 +590,21 @@ function GroupDocumentsSection({
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <div className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 group">
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
-            {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </Button>
-        </CollapsibleTrigger>
-        <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <CollapsibleTrigger asChild>
-          <button type="button" className="min-w-0 flex-1 truncate text-sm font-medium text-left">
-            {groupId}
-          </button>
-        </CollapsibleTrigger>
-        {tree && (
-          <Badge variant="secondary" className="shrink-0 text-xs">
-            {tree.total_files}
-          </Badge>
-        )}
-        <div className="hidden gap-0.5 group-hover:flex">
+      <div className="grid grid-cols-[minmax(0,1fr)_8rem_4rem_3.5rem] items-center gap-x-2 rounded-md px-2 py-1.5 hover:bg-muted/50 group">
+        <div className="flex items-center gap-2 min-w-0">
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
+              {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </Button>
+          </CollapsibleTrigger>
+          <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <CollapsibleTrigger asChild>
+            <button type="button" className="min-w-0 truncate text-sm font-medium text-left">
+              {groupId}
+            </button>
+          </CollapsibleTrigger>
+        </div>
+        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
           <Button
             variant="ghost"
             size="icon"
@@ -626,6 +623,14 @@ function GroupDocumentsSection({
           >
             <EyeOff className="h-3 w-3" />
           </Button>
+        </div>
+        <span />
+        <div className="flex justify-end">
+          {tree && (
+            <Badge variant="secondary" className="text-xs">
+              {tree.total_files}
+            </Badge>
+          )}
         </div>
       </div>
       <CollapsibleContent>

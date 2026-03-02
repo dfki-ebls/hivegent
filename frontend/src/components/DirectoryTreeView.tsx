@@ -63,39 +63,15 @@ function FileRow({
   return (
     <button
       type="button"
-      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer group text-left"
+      className="grid w-full grid-cols-[minmax(0,1fr)_8rem_4rem_3.5rem] items-center gap-x-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer group text-left"
       style={{ paddingLeft: `${depth * 20 + 8}px` }}
       onClick={onEdit}
     >
-      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate text-sm">{entry.name}</span>
-      {entry.size_bytes != null && (
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {formatFileSize(entry.size_bytes)}
-        </span>
-      )}
-      {entry.chunk_count != null && (
-        <Badge variant="outline" className="shrink-0 text-xs gap-1">
-          <Scissors className="h-3 w-3" />
-          {entry.chunk_count}
-        </Badge>
-      )}
-      <div className="hidden gap-0.5 group-hover:flex">
-        {entry.has_original && onReconvert && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            title="Reconvert from original"
-            onClick={(e) => {
-              e.stopPropagation();
-              onReconvert();
-            }}
-            disabled={isLoading}
-          >
-            <RotateCcw className="h-3 w-3" />
-          </Button>
-        )}
+      <div className="flex items-center gap-2 min-w-0">
+        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate text-sm">{entry.name}</span>
+      </div>
+      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
         <Button
           variant="ghost"
           size="icon"
@@ -122,6 +98,21 @@ function FileRow({
         >
           <EyeOff className="h-3 w-3" />
         </Button>
+        {entry.has_original && onReconvert && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            title="Reconvert from original"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReconvert();
+            }}
+            disabled={isLoading}
+          >
+            <RotateCcw className="h-3 w-3" />
+          </Button>
+        )}
         {onMove && (
           <Button
             variant="ghost"
@@ -151,6 +142,17 @@ function FileRow({
           >
             <Trash2 className="h-3 w-3 text-destructive" />
           </Button>
+        )}
+      </div>
+      <span className="text-right text-xs text-muted-foreground">
+        {entry.size_bytes != null ? formatFileSize(entry.size_bytes) : ""}
+      </span>
+      <div className="flex justify-end">
+        {entry.chunk_count != null && (
+          <Badge variant="outline" className="text-xs gap-1">
+            <Scissors className="h-3 w-3" />
+            {entry.chunk_count}
+          </Badge>
         )}
       </div>
     </button>
@@ -186,19 +188,16 @@ function DirectoryRow({
   return (
     <button
       type="button"
-      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer group text-left"
+      className="grid w-full grid-cols-[minmax(0,1fr)_8rem_4rem_3.5rem] items-center gap-x-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer group text-left"
       style={{ paddingLeft: `${depth * 20 + 8}px` }}
       onClick={onToggle}
     >
-      <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">{entry.name}</span>
-      {fileCount > 0 && (
-        <Badge variant="secondary" className="shrink-0 text-xs">
-          {fileCount}
-        </Badge>
-      )}
-      <div className="hidden gap-0.5 group-hover:flex">
+      <div className="flex items-center gap-2 min-w-0">
+        <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate text-sm font-medium">{entry.name}</span>
+      </div>
+      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
         <Button
           variant="ghost"
           size="icon"
@@ -254,6 +253,14 @@ function DirectoryRow({
           >
             <Trash2 className="h-3 w-3 text-destructive" />
           </Button>
+        )}
+      </div>
+      <span />
+      <div className="flex justify-end">
+        {fileCount > 0 && (
+          <Badge variant="secondary" className="text-xs">
+            {fileCount}
+          </Badge>
         )}
       </div>
     </button>
