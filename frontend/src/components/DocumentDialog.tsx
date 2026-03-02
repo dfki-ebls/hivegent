@@ -201,12 +201,14 @@ export function DocumentDialog({
 
   // --- Scroll to highlighted chunk ---
   useEffect(() => {
-    if (highlightRef.current) {
-      highlightRef.current.scrollIntoView({
+    if (!highlightRef.current) return;
+    // Delay until layout is settled so scroll measurements are correct.
+    requestAnimationFrame(() => {
+      highlightRef.current?.scrollIntoView({
         behavior: "smooth",
-        block: "center",
+        block: "start",
       });
-    }
+    });
   }, [activeChunkId, managedActiveIndex, fullContent, viewMode]);
 
   // --- Rechunk handler ---
@@ -392,129 +394,121 @@ export function DocumentDialog({
       if (!managedData || managedData.chunks.length === 0) return null;
 
       return (
-        <div className="w-56 shrink-0 border-r flex flex-col">
-          <ScrollArea className="flex-1">
-            <div className="p-2 space-y-1">
-              {/* Full Document toggle */}
-              <button
-                type="button"
-                className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
-                  viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
-                }`}
-                onClick={() => {
-                  setManagedActiveIndex(null);
-                  setViewMode("full-doc");
-                }}
-              >
-                <FileText className="h-3 w-3 shrink-0" />
-                <span className="font-medium">Full document</span>
-              </button>
+        <div className="w-56 shrink-0 border-r min-h-0 overflow-y-auto p-2 space-y-1">
+          {/* Full Document toggle */}
+          <button
+            type="button"
+            className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
+              viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
+            }`}
+            onClick={() => {
+              setManagedActiveIndex(null);
+              setViewMode("full-doc");
+            }}
+          >
+            <FileText className="h-3 w-3 shrink-0" />
+            <span className="font-medium">Full document</span>
+          </button>
 
-              <div className="border-t my-1" />
+          <div className="border-t my-1" />
 
-              {managedData.chunks.map((chunkInfo, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
-                    viewMode === "chunk" && managedActiveIndex === i
-                      ? "bg-accent text-accent-foreground"
-                      : "hover:bg-muted"
-                  }`}
-                  onClick={() => {
-                    setManagedActiveIndex(i);
-                    setViewMode("chunk");
-                  }}
+          {managedData.chunks.map((chunkInfo, i) => (
+            <button
+              key={i}
+              type="button"
+              className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
+                viewMode === "chunk" && managedActiveIndex === i
+                  ? "bg-accent text-accent-foreground"
+                  : "hover:bg-muted"
+              }`}
+              onClick={() => {
+                setManagedActiveIndex(i);
+                setViewMode("chunk");
+              }}
+            >
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Badge
+                  variant={
+                    viewMode === "chunk" && managedActiveIndex === i ? "default" : "outline"
+                  }
+                  className="text-[10px] shrink-0"
                 >
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <Badge
-                      variant={
-                        viewMode === "chunk" && managedActiveIndex === i ? "default" : "outline"
-                      }
-                      className="text-[10px] shrink-0"
-                    >
-                      Chunk #{i}
-                    </Badge>
-                    <span className="text-muted-foreground">{chunkInfo.token_count} tokens</span>
-                  </div>
-                  <p className="truncate text-muted-foreground mt-0.5">
-                    {chunkInfo.text.slice(0, 60)}
-                    {chunkInfo.text.length > 60 ? "..." : ""}
-                  </p>
-                </button>
-              ))}
-            </div>
-          </ScrollArea>
+                  Chunk #{i}
+                </Badge>
+                <span className="text-muted-foreground">{chunkInfo.token_count} tokens</span>
+              </div>
+              <p className="truncate text-muted-foreground mt-0.5">
+                {chunkInfo.text.slice(0, 60)}
+                {chunkInfo.text.length > 60 ? "..." : ""}
+              </p>
+            </button>
+          ))}
         </div>
       );
     }
 
     // Fetched-mode sidebar: sibling chunks from store
     return (
-      <div className="w-56 shrink-0 border-r flex flex-col">
-        <ScrollArea className="flex-1">
-          <div className="p-2 space-y-1">
-            {/* Full Document toggle */}
+      <div className="w-56 shrink-0 border-r min-h-0 overflow-y-auto p-2 space-y-1">
+        {/* Full Document toggle */}
+        <button
+          type="button"
+          className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
+            viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
+          }`}
+          onClick={() => setViewMode("full-doc")}
+        >
+          <FileText className="h-3 w-3 shrink-0" />
+          <span className="font-medium">Full document</span>
+        </button>
+
+        {siblingChunks.length > 0 && <div className="border-t my-1" />}
+
+        {/* Chunk entries */}
+        {siblingChunks
+          .filter((c) => c.position.type !== "full_document")
+          .map((sibling) => (
             <button
+              key={sibling.id}
               type="button"
-              className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
-                viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
+              className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
+                viewMode === "chunk" && sibling.id === activeChunkId
+                  ? "bg-accent text-accent-foreground"
+                  : "hover:bg-muted"
               }`}
-              onClick={() => setViewMode("full-doc")}
+              onClick={() => {
+                setActiveChunkId(sibling.id);
+                setViewMode("chunk");
+              }}
             >
-              <FileText className="h-3 w-3 shrink-0" />
-              <span className="font-medium">Full document</span>
-            </button>
-
-            {siblingChunks.length > 0 && <div className="border-t my-1" />}
-
-            {/* Chunk entries */}
-            {siblingChunks
-              .filter((c) => c.position.type !== "full_document")
-              .map((sibling) => (
-                <button
-                  key={sibling.id}
-                  type="button"
-                  className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
-                    viewMode === "chunk" && sibling.id === activeChunkId
-                      ? "bg-accent text-accent-foreground"
-                      : "hover:bg-muted"
-                  }`}
-                  onClick={() => {
-                    setActiveChunkId(sibling.id);
-                    setViewMode("chunk");
-                  }}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Badge
+                  variant={
+                    viewMode === "chunk" && sibling.id === activeChunkId ? "default" : "outline"
+                  }
+                  className="text-[10px] shrink-0"
                 >
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <Badge
-                      variant={
-                        viewMode === "chunk" && sibling.id === activeChunkId ? "default" : "outline"
-                      }
-                      className="text-[10px] shrink-0"
-                    >
-                      {chunkPositionLabel(sibling.position)}
-                    </Badge>
-                    {sibling.score != null && (
-                      <span className="text-muted-foreground">
-                        {(sibling.score * 100).toFixed(0)}%
-                      </span>
-                    )}
-                  </div>
-                  <p className="truncate text-muted-foreground mt-0.5">
-                    {sibling.content.slice(0, 60)}
-                    {sibling.content.length > 60 ? "..." : ""}
-                  </p>
-                </button>
-              ))}
-          </div>
-        </ScrollArea>
+                  {chunkPositionLabel(sibling.position)}
+                </Badge>
+                {sibling.score != null && (
+                  <span className="text-muted-foreground">
+                    {(sibling.score * 100).toFixed(0)}%
+                  </span>
+                )}
+              </div>
+              <p className="truncate text-muted-foreground mt-0.5">
+                {sibling.content.slice(0, 60)}
+                {sibling.content.length > 60 ? "..." : ""}
+              </p>
+            </button>
+          ))}
       </div>
     );
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[85vh] w-[90vw] max-w-5xl! flex flex-col p-0">
+      <DialogContent className="h-[85vh] w-[90vw] max-w-5xl! flex flex-col overflow-hidden p-0">
         <DialogHeader className="px-6 pt-6 pb-3 space-y-2">
           <DialogTitle className="truncate pr-8">{filename}</DialogTitle>
           <DialogDescription className="sr-only">
