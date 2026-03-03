@@ -68,23 +68,26 @@ function FileRow({
   onToggleSelect?: () => void;
 }) {
   return (
-    <button
-      type="button"
-      className="grid w-full grid-cols-[minmax(0,1fr)_8rem_4rem_3.5rem] items-center gap-x-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer group text-left"
+    <div
+      className="grid w-full grid-cols-[minmax(0,1fr)_8rem_4rem_3.5rem] items-center gap-x-2 rounded-md px-2 py-1.5 hover:bg-muted/50 group"
       style={{ paddingLeft: `${depth * 20 + 8}px` }}
-      onClick={onEdit}
     >
       <div className="flex items-center gap-2 min-w-0">
         {onToggleSelect && (
           <Checkbox
             checked={selected ?? false}
             onCheckedChange={() => onToggleSelect()}
-            onClick={(e) => e.stopPropagation()}
             className="shrink-0"
           />
         )}
-        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 truncate text-sm">{entry.name}</span>
+        <button
+          type="button"
+          className="flex items-center gap-2 min-w-0 text-left cursor-pointer"
+          onClick={onEdit}
+        >
+          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate text-sm">{entry.name}</span>
+        </button>
       </div>
       <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
         <Button
@@ -92,10 +95,7 @@ function FileRow({
           size="icon"
           className="h-6 w-6"
           title="Include in chat"
-          onClick={(e) => {
-            e.stopPropagation();
-            onInclude();
-          }}
+          onClick={onInclude}
           disabled={isLoading}
         >
           <Eye className="h-3 w-3" />
@@ -105,10 +105,7 @@ function FileRow({
           size="icon"
           className="h-6 w-6"
           title="Exclude from chat"
-          onClick={(e) => {
-            e.stopPropagation();
-            onExclude();
-          }}
+          onClick={onExclude}
           disabled={isLoading}
         >
           <EyeOff className="h-3 w-3" />
@@ -119,10 +116,7 @@ function FileRow({
             size="icon"
             className="h-6 w-6"
             title="Reconvert from original"
-            onClick={(e) => {
-              e.stopPropagation();
-              onReconvert();
-            }}
+            onClick={onReconvert}
             disabled={isLoading}
           >
             <RotateCcw className="h-3 w-3" />
@@ -134,10 +128,7 @@ function FileRow({
             size="icon"
             className="h-6 w-6"
             title="Move"
-            onClick={(e) => {
-              e.stopPropagation();
-              onMove();
-            }}
+            onClick={onMove}
             disabled={isLoading}
           >
             <Move className="h-3 w-3" />
@@ -149,10 +140,7 @@ function FileRow({
             size="icon"
             className="h-6 w-6"
             title="Delete"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove();
-            }}
+            onClick={onRemove}
             disabled={isLoading}
           >
             <Trash2 className="h-3 w-3 text-destructive" />
@@ -170,7 +158,7 @@ function FileRow({
           </Badge>
         )}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -201,27 +189,26 @@ function DirectoryRow({
   const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
 
   return (
-    <button
-      type="button"
-      className="grid w-full grid-cols-[minmax(0,1fr)_8rem_4rem_3.5rem] items-center gap-x-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer group text-left"
+    <div
+      className="grid w-full grid-cols-[minmax(0,1fr)_8rem_4rem_3.5rem] items-center gap-x-2 rounded-md px-2 py-1.5 hover:bg-muted/50 group"
       style={{ paddingLeft: `${depth * 20 + 8}px` }}
-      onClick={onToggle}
     >
-      <div className="flex items-center gap-2 min-w-0">
+      <button
+        type="button"
+        className="flex items-center gap-2 min-w-0 text-left cursor-pointer"
+        onClick={onToggle}
+      >
         <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
         <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 truncate text-sm font-medium">{entry.name}</span>
-      </div>
+      </button>
       <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
         <Button
           variant="ghost"
           size="icon"
           className="h-6 w-6"
           title="Include directory in chat"
-          onClick={(e) => {
-            e.stopPropagation();
-            onIncludeDir();
-          }}
+          onClick={onIncludeDir}
           disabled={isLoading}
         >
           <Eye className="h-3 w-3" />
@@ -231,10 +218,7 @@ function DirectoryRow({
           size="icon"
           className="h-6 w-6"
           title="Exclude directory from chat"
-          onClick={(e) => {
-            e.stopPropagation();
-            onExcludeDir();
-          }}
+          onClick={onExcludeDir}
           disabled={isLoading}
         >
           <EyeOff className="h-3 w-3" />
@@ -245,10 +229,7 @@ function DirectoryRow({
             size="icon"
             className="h-6 w-6"
             title="Create subdirectory"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCreateSubdir();
-            }}
+            onClick={onCreateSubdir}
             disabled={isLoading}
           >
             <FolderPlus className="h-3 w-3" />
@@ -260,10 +241,7 @@ function DirectoryRow({
             size="icon"
             className="h-6 w-6"
             title="Delete directory"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDeleteDir();
-            }}
+            onClick={onDeleteDir}
             disabled={isLoading}
           >
             <Trash2 className="h-3 w-3 text-destructive" />
@@ -278,7 +256,7 @@ function DirectoryRow({
           </Badge>
         )}
       </div>
-    </button>
+    </div>
   );
 }
 

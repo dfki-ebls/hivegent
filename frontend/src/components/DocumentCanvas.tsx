@@ -1234,82 +1234,77 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         onChunkingPipelineChange={setChunkingPipeline}
       />
 
-      {(selectedFiles.size > 0 || bulkProgress) && (
-        <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-muted/80 backdrop-blur px-4 py-2">
-          {bulkProgress ? (
-            <div className="flex flex-1 items-center gap-3">
-              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-              <span className="truncate text-sm">{bulkProgress.currentFile}</span>
-              <Progress
-                value={
-                  bulkProgress.total > 0 ? (bulkProgress.current / bulkProgress.total) * 100 : 0
-                }
-                className="w-24 shrink-0"
-              />
-              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                {bulkProgress.current}/{bulkProgress.total}
-              </span>
-              {bulkProgress.failedFiles.length > 0 && (
-                <span className="shrink-0 text-xs text-destructive">
-                  {bulkProgress.failedFiles.length} failed
+      <div className="p-4 pb-2">
+        {selectedFiles.size > 0 || bulkProgress ? (
+          <div className="flex h-9 items-center justify-center gap-2">
+            {bulkProgress ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                <span className="truncate text-sm">{bulkProgress.currentFile}</span>
+                <Progress
+                  value={
+                    bulkProgress.total > 0 ? (bulkProgress.current / bulkProgress.total) * 100 : 0
+                  }
+                  className="w-24 shrink-0"
+                />
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {bulkProgress.current}/{bulkProgress.total}
                 </span>
-              )}
-            </div>
-          ) : (
-            <>
-              <span className="text-sm font-medium">{selectedFiles.size} selected</span>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void handleBulkRechunk()}
-                disabled={isLoading}
-              >
-                <Scissors className="h-4 w-4 mr-1" />
-                Rechunk
-              </Button>
-              {selectedReconvertable.length > 0 && (
+                {bulkProgress.failedFiles.length > 0 && (
+                  <span className="shrink-0 text-xs text-destructive">
+                    {bulkProgress.failedFiles.length} failed
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="text-sm font-medium">{selectedFiles.size} selected</span>
+                {selectedReconvertable.length > 0 && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleBulkReconvert()}
+                    disabled={isLoading}
+                  >
+                    <RotateCcw className="h-4 w-4 mr-1" />
+                    Reconvert
+                  </Button>
+                )}
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => void handleBulkReconvert()}
+                  onClick={() => void handleBulkRechunk()}
                   disabled={isLoading}
                 >
-                  <RotateCcw className="h-4 w-4 mr-1" />
-                  Reconvert
+                  <Scissors className="h-4 w-4 mr-1" />
+                  Rechunk
                 </Button>
-              )}
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={handleBulkDelete}
-                disabled={isLoading}
-              >
-                <Trash2 className="h-4 w-4 mr-1" />
-                Delete
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="ml-auto h-7 w-7"
-                onClick={clearSelection}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </>
-          )}
-        </div>
-      )}
-
-      <div className="p-4 pb-2">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search documents..."
-            className="pl-9"
-          />
-        </div>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleBulkDelete}
+                  disabled={isLoading}
+                >
+                  <Trash2 className="h-4 w-4 mr-1" />
+                  Delete
+                </Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={clearSelection}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search documents..."
+              className="pl-9"
+            />
+          </div>
+        )}
       </div>
 
       <div className="px-4 pb-4">
