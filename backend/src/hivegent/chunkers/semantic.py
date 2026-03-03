@@ -1,8 +1,7 @@
 """Semantic document chunker using chonkie."""
 
 import asyncio
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 
 from chonkie import SemanticChunker
 from pydantic import Field
@@ -57,32 +56,30 @@ class SemanticDocumentChunker(DocumentChunker):
     """
 
     name = "semantic"
+    config: SemanticChunkerConfig = field(default_factory=SemanticChunkerConfig)
 
-    def _chunk(self, text: str, config: dict[str, Any] | None) -> list[ChunkData]:
-        parsed = SemanticChunkerConfig(**(config or {}))
+    def _chunk(self, text: str) -> list[ChunkData]:
         chunks = SemanticChunker(
             embedding_model=_DEFAULT_EMBEDDING_MODEL,
-            threshold=parsed.threshold,
-            chunk_size=parsed.chunk_size,
-            similarity_window=parsed.similarity_window,
-            min_sentences_per_chunk=parsed.min_sentences_per_chunk,
-            min_characters_per_sentence=parsed.min_characters_per_sentence,
+            threshold=self.config.threshold,
+            chunk_size=self.config.chunk_size,
+            similarity_window=self.config.similarity_window,
+            min_sentences_per_chunk=self.config.min_sentences_per_chunk,
+            min_characters_per_sentence=self.config.min_characters_per_sentence,
         ).chunk(text)
-        return apply_chonkie(chunks, parsed.refineries)
+        return apply_chonkie(chunks, self.config.refineries)
 
     async def __call__(
         self,
         text: str,
         /,
-        config: dict[str, Any] | None = None,
     ) -> list[ChunkData]:
         """Split text using semantic similarity boundaries.
 
         Args:
             text: The document text to chunk.
-            config: Optional chunker configuration.
 
         Returns:
             List of ChunkData objects.
         """
-        return await asyncio.to_thread(self._chunk, text, config)
+        return await asyncio.to_thread(self._chunk, text)

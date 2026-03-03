@@ -1,8 +1,7 @@
 """Pandoc-based document converter for miscellaneous document formats."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -79,27 +78,25 @@ class PandocConverter(DocumentConverter):
 
     name = "pandoc"
     extensions = frozenset(_FORMAT_OVERRIDES) | _SANDBOX_INCOMPATIBLE
+    config: PandocConverterConfig = field(default_factory=PandocConverterConfig)
 
     async def __call__(
         self,
         path: Path,
         /,
-        config: dict[str, Any] | None = None,
     ) -> str:
         """Convert a document to markdown using pandoc.
 
         Args:
             path: Path to the document to convert.
-            config: Optional Pandoc pipeline configuration.
 
         Returns:
             The document content converted to markdown.
         """
-        parsed = PandocConverterConfig(**(config or {}))
         suffix = path.suffix.lower()
         return await pandoc_convert(
             path,
             from_format=_FORMAT_OVERRIDES.get(suffix),
             sandbox=suffix not in _SANDBOX_INCOMPATIBLE,
-            extra_args=parsed.extra_args,
+            extra_args=self.config.extra_args,
         )

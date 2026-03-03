@@ -1,9 +1,8 @@
 """Docling-based document converter."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
 from docling.datamodel.pipeline_options import (
@@ -54,17 +53,16 @@ class DoclingConverter(DocumentConverter):
     extensions = frozenset(
         f".{ext}" for exts in FormatToExtensions.values() for ext in exts
     )
+    config: DoclingConverterConfig = field(default_factory=DoclingConverterConfig)
 
-    def _convert_sync(self, path: Path, config: dict[str, Any] | None) -> str:
+    def _convert_sync(self, path: Path) -> str:
         """Run the synchronous Docling conversion."""
-        parsed = DoclingConverterConfig(**(config or {}))
-
         # Start from default format options (which include the correct backend
         # and pipeline_cls) and only override pipeline_options.
         converter = DoclingDocumentConverter()
         for fmt in converter.format_to_options:
             default = converter.format_to_options[fmt]
-            opts = parsed.pdf_options if fmt in _PDF_FORMATS else parsed.convert_options
+            opts = self.config.pdf_options if fmt in _PDF_FORMATS else self.config.convert_options
             converter.format_to_options[fmt] = default.model_copy(
                 update={"pipeline_options": opts}
             )
@@ -76,15 +74,13 @@ class DoclingConverter(DocumentConverter):
         self,
         path: Path,
         /,
-        config: dict[str, Any] | None = None,
     ) -> str:
         """Convert a document to markdown using Docling.
 
         Args:
             path: Path to the document to convert.
-            config: Optional Docling pipeline configuration.
 
         Returns:
             The document content converted to markdown.
         """
-        return await asyncio.to_thread(self._convert_sync, path, config)
+        return await asyncio.to_thread(self._convert_sync, path)

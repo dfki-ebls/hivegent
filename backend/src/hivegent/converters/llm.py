@@ -1,8 +1,7 @@
 """LLM-based document converter using Pydantic AI with vision models."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 from pydantic_ai import BinaryContent
@@ -65,28 +64,23 @@ class LLMConverter(DocumentConverter):
 
     name = "llm"
     extensions = frozenset(MEDIA_TYPES)
+    config: LlmConverterConfig = field(default_factory=LlmConverterConfig)
+    llm_options: LlmConfig = field(default_factory=LlmConfig)
 
     async def __call__(
         self,
         path: Path,
         /,
-        config: dict[str, Any] | None = None,
-        options: LlmConfig | None = None,
     ) -> str:
         """Convert a document to markdown using an LLM with vision capabilities.
 
         Args:
             path: Path to the document to convert.
-            config: Optional LLM converter configuration (e.g. custom prompt).
-            options: LLM provider options (model, api_key, base_url).
 
         Returns:
             The document content converted to markdown.
         """
-        parsed = LlmConverterConfig(**(config or {}))
-        opts = options or LlmConfig()
-
-        if not opts.model:
+        if not self.llm_options.model:
             raise ValueError(
                 "No vision model configured. "
                 "Set HIVEGENT_LLM__VISION_MODEL or provide x-vision-model header."
@@ -102,12 +96,12 @@ class LLMConverter(DocumentConverter):
         )
 
         result = await base_agent.run(
-            [parsed.prompt, content],
+            [self.config.prompt, content],
             model=OpenAIResponsesModel(
-                opts.model,
+                self.llm_options.model,
                 provider=OpenAIProvider(
-                    api_key=opts.api_key,
-                    base_url=opts.base_url,
+                    api_key=self.llm_options.api_key,
+                    base_url=self.llm_options.base_url,
                 ),
             ),
         )

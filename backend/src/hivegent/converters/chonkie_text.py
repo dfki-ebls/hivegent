@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from chonkie import TextChef
 
@@ -26,13 +26,11 @@ class ChonkieTextConverter(DocumentConverter):
         self,
         path: Path,
         /,
-        config: dict[str, Any] | None = None,
     ) -> str:
         """Convert a plain text file to markdown.
 
         Args:
             path: Path to the text file.
-            config: Unused.
 
         Returns:
             The text content.

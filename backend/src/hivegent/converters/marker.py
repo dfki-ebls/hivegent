@@ -1,9 +1,8 @@
 """Marker-based PDF converter."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
@@ -31,6 +30,7 @@ class MarkerConverter(DocumentConverter):
 
     name = "marker"
     extensions = frozenset({".pdf"})
+    config: MarkerConverterConfig = field(default_factory=MarkerConverterConfig)
 
     def _convert_sync(self, path: Path) -> str:
         """Run the synchronous Marker conversion."""
@@ -42,13 +42,11 @@ class MarkerConverter(DocumentConverter):
         self,
         path: Path,
         /,
-        config: dict[str, Any] | None = None,
     ) -> str:
         """Convert a PDF document to markdown using Marker.
 
         Args:
             path: Path to the PDF document to convert.
-            config: Optional pipeline configuration (currently unused).
 
         Returns:
             The document content converted to markdown.

@@ -59,8 +59,8 @@ async def chunk_document(
         The chunked document with metadata.
     """
     spec = chunking or ChunkingSpec()
-    chunker = get_chunker(spec.pipeline, content_length=len(content))
-    raw_chunks = await chunker(content, config=spec.config)
+    chunker = get_chunker(spec.pipeline, content_length=len(content), config=spec.config)
+    raw_chunks = await chunker(content)
 
     chunks = [
         ChunkInfo(

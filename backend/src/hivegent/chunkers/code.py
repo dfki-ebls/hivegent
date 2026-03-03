@@ -1,8 +1,7 @@
 """Code-aware document chunker using chonkie."""
 
 import asyncio
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 
 from chonkie import CodeChunker
 from pydantic import Field
@@ -42,29 +41,27 @@ class CodeDocumentChunker(DocumentChunker):
     """
 
     name = "code"
+    config: CodeChunkerConfig = field(default_factory=CodeChunkerConfig)
 
-    def _chunk(self, text: str, config: dict[str, Any] | None) -> list[ChunkData]:
-        parsed = CodeChunkerConfig(**(config or {}))
+    def _chunk(self, text: str) -> list[ChunkData]:
         chunks = CodeChunker(
-            chunk_size=parsed.chunk_size,
-            language=parsed.language,
-            include_nodes=parsed.include_nodes,
+            chunk_size=self.config.chunk_size,
+            language=self.config.language,
+            include_nodes=self.config.include_nodes,
         ).chunk(text)
-        return apply_chonkie(chunks, parsed.refineries)
+        return apply_chonkie(chunks, self.config.refineries)
 
     async def __call__(
         self,
         text: str,
         /,
-        config: dict[str, Any] | None = None,
     ) -> list[ChunkData]:
         """Split code using syntax-aware boundaries.
 
         Args:
             text: The source code text to chunk.
-            config: Optional chunker configuration.
 
         Returns:
             List of ChunkData objects.
         """
-        return await asyncio.to_thread(self._chunk, text, config)
+        return await asyncio.to_thread(self._chunk, text)

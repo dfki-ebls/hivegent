@@ -1,8 +1,7 @@
 """LLM-guided document chunker using chonkie."""
 
 import asyncio
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 
 from chonkie import SlumberChunker
 from chonkie.genie.openai import OpenAIGenie
@@ -44,11 +43,11 @@ class SlumberDocumentChunker(DocumentChunker):
     """
 
     name = "slumber"
+    config: SlumberChunkerConfig = field(default_factory=SlumberChunkerConfig)
 
-    def _chunk(self, text: str, config: dict[str, Any] | None) -> list[ChunkData]:
+    def _chunk(self, text: str) -> list[ChunkData]:
         from ..config import settings
 
-        parsed = SlumberChunkerConfig(**(config or {}))
         genie = OpenAIGenie(
             model=settings.llm.small_model or settings.llm.model,
             api_key=settings.llm.api_key,
@@ -56,25 +55,23 @@ class SlumberDocumentChunker(DocumentChunker):
         )
         chunks = SlumberChunker(
             genie=genie,
-            chunk_size=parsed.chunk_size,
-            candidate_size=parsed.candidate_size,
-            min_characters_per_chunk=parsed.min_characters_per_chunk,
+            chunk_size=self.config.chunk_size,
+            candidate_size=self.config.candidate_size,
+            min_characters_per_chunk=self.config.min_characters_per_chunk,
         ).chunk(text)
-        return apply_chonkie(chunks, parsed.refineries)
+        return apply_chonkie(chunks, self.config.refineries)
 
     async def __call__(
         self,
         text: str,
         /,
-        config: dict[str, Any] | None = None,
     ) -> list[ChunkData]:
         """Split text using LLM-guided chunking.
 
         Args:
             text: The document text to chunk.
-            config: Optional chunker configuration.
 
         Returns:
             List of ChunkData objects.
         """
-        return await asyncio.to_thread(self._chunk, text, config)
+        return await asyncio.to_thread(self._chunk, text)

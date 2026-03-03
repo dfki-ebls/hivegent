@@ -2,9 +2,8 @@
 
 import asyncio
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from magic_pdf.data.data_reader_writer import FileBasedDataWriter  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
 from magic_pdf.pipe.UNIPipe import UNIPipe  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
@@ -40,6 +39,7 @@ class MinerUConverter(DocumentConverter):
             ".jpeg",
         }
     )
+    config: MinerUConverterConfig = field(default_factory=MinerUConverterConfig)
 
     def _convert_sync(self, path: Path) -> str:
         """Run the synchronous MinerU conversion."""
@@ -71,13 +71,11 @@ class MinerUConverter(DocumentConverter):
         self,
         path: Path,
         /,
-        config: dict[str, Any] | None = None,
     ) -> str:
         """Convert a document to markdown using MinerU.
 
         Args:
             path: Path to the document to convert.
-            config: Optional pipeline configuration (currently unused).
 
         Returns:
             The document content converted to markdown.

@@ -1,8 +1,7 @@
 """Table-aware document chunker using chonkie."""
 
 import asyncio
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 
 from chonkie import TableChunker
 from pydantic import Field
@@ -37,28 +36,26 @@ class TableDocumentChunker(DocumentChunker):
     """
 
     name = "table"
+    config: TableChunkerConfig = field(default_factory=TableChunkerConfig)
 
-    def _chunk(self, text: str, config: dict[str, Any] | None) -> list[ChunkData]:
-        parsed = TableChunkerConfig(**(config or {}))
+    def _chunk(self, text: str) -> list[ChunkData]:
         chunks = TableChunker(
-            tokenizer=parsed.tokenizer,
-            chunk_size=parsed.chunk_size,
+            tokenizer=self.config.tokenizer,
+            chunk_size=self.config.chunk_size,
         ).chunk(text)
-        return apply_chonkie(chunks, parsed.refineries)
+        return apply_chonkie(chunks, self.config.refineries)
 
     async def __call__(
         self,
         text: str,
         /,
-        config: dict[str, Any] | None = None,
     ) -> list[ChunkData]:
         """Split text into table-aware chunks.
 
         Args:
             text: The document text to chunk.
-            config: Optional chunker configuration.
 
         Returns:
             List of ChunkData objects.
         """
-        return await asyncio.to_thread(self._chunk, text, config)
+        return await asyncio.to_thread(self._chunk, text)

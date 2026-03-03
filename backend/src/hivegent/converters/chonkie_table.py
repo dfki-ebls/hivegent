@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from chonkie import TableChef
 
@@ -27,13 +27,11 @@ class ChonkieTableConverter(DocumentConverter):
         self,
         path: Path,
         /,
-        config: dict[str, Any] | None = None,
     ) -> str:
         """Convert a tabular file to markdown.
 
         Args:
             path: Path to the CSV or Excel file.
-            config: Unused.
 
         Returns:
             Markdown table content.

@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar
 
 __all__ = ["DocumentConverter"]
 
@@ -25,13 +25,11 @@ class DocumentConverter(ABC):
         self,
         path: Path,
         /,
-        config: dict[str, Any] | None = None,
     ) -> str:
         """Convert a document to markdown.
 
         Args:
             path: Path to the document to convert.
-            config: Optional pipeline-specific configuration dict.
 
         Returns:
             The document content converted to markdown.

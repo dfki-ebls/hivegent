@@ -1,8 +1,7 @@
 """Fast delimiter-based document chunker using chonkie."""
 
 import asyncio
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 
 from chonkie import FastChunker
 from pydantic import Field
@@ -45,30 +44,28 @@ class FastDocumentChunker(DocumentChunker):
     """
 
     name = "fast"
+    config: FastChunkerConfig = field(default_factory=FastChunkerConfig)
 
-    def _chunk(self, text: str, config: dict[str, Any] | None) -> list[ChunkData]:
-        parsed = FastChunkerConfig(**(config or {}))
+    def _chunk(self, text: str) -> list[ChunkData]:
         chunks = FastChunker(
-            chunk_size=parsed.chunk_size,
-            delimiters=parsed.delimiters,
-            prefix=parsed.prefix,
-            consecutive=parsed.consecutive,
+            chunk_size=self.config.chunk_size,
+            delimiters=self.config.delimiters,
+            prefix=self.config.prefix,
+            consecutive=self.config.consecutive,
         ).chunk(text)
-        return apply_chonkie(chunks, parsed.refineries)
+        return apply_chonkie(chunks, self.config.refineries)
 
     async def __call__(
         self,
         text: str,
         /,
-        config: dict[str, Any] | None = None,
     ) -> list[ChunkData]:
         """Split text using fast delimiter-based chunking.
 
         Args:
             text: The document text to chunk.
-            config: Optional chunker configuration.
 
         Returns:
             List of ChunkData objects.
         """
-        return await asyncio.to_thread(self._chunk, text, config)
+        return await asyncio.to_thread(self._chunk, text)

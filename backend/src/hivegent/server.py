@@ -41,7 +41,6 @@ from .chunkers import (
     ChunkingPipelineInfo,
     ChunkingSpec,
     get_chunking_pipelines_info,
-    validate_chunking_config,
 )
 from .chunks import (
     chunk_document,
@@ -64,7 +63,6 @@ from .converters import (
     get_converter,
     get_conversion_pipelines_info,
     resolve_auto_pipeline,
-    validate_conversion_config,
 )
 from .memory import clear_memory
 from .memory import load_memory
@@ -810,9 +808,16 @@ async def _upload_file_internal(
 
     conversion_pipeline = spec.conversion.pipeline
 
-    # Get the converter (resolves AUTO and validates extension support)
+    # Get the converter (resolves AUTO, validates extension, parses config)
     try:
-        converter = get_converter(conversion_pipeline, filename=basename)
+        converter = get_converter(
+            conversion_pipeline,
+            filename=basename,
+            config=spec.conversion.config,
+            llm_options=llm_config,
+        )
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
     except (ImportError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -822,19 +827,7 @@ async def _upload_file_internal(
 
     # Convert the document
     try:
-        if resolved_conversion == ConversionPipeline.LLM:
-            from .converters.llm import LLMConverter
-
-            assert isinstance(converter, LLMConverter)
-            markdown_content = await converter(
-                original_path,
-                config=spec.conversion.config,
-                options=llm_config,
-            )
-        else:
-            markdown_content = await converter(
-                original_path, config=spec.conversion.config
-            )
+        markdown_content = await converter(original_path)
     except ImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -949,8 +942,6 @@ async def upload_document(
     spec = _parse_pipeline_spec(pipeline_spec)
     llm = LlmConfig.model_validate_json(llm_config)
     resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
-    validate_conversion_config(spec.conversion)
-    validate_chunking_config(spec.chunking)
 
     content = await file.read()
     if len(content) > settings.max_file_size_bytes:
@@ -1128,8 +1119,6 @@ def _validate_collection_upload(
     spec = _parse_pipeline_spec(pipeline_spec)
     llm = LlmConfig.model_validate_json(llm_config)
     resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
-    validate_conversion_config(spec.conversion)
-    validate_chunking_config(spec.chunking)
     return spec, resolved
 
 
@@ -1326,7 +1315,14 @@ async def _reconvert_single(
         )
 
     try:
-        converter = get_converter(conversion_pipeline, filename=original_path.name)
+        converter = get_converter(
+            conversion_pipeline,
+            filename=original_path.name,
+            config=spec.conversion.config,
+            llm_options=resolved,
+        )
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
     except (ImportError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1335,19 +1331,7 @@ async def _reconvert_single(
         resolved_conversion = resolve_auto_pipeline(original_path.name)
 
     try:
-        if resolved_conversion == ConversionPipeline.LLM:
-            from .converters.llm import LLMConverter
-
-            assert isinstance(converter, LLMConverter)
-            markdown_content = await converter(
-                original_path,
-                config=spec.conversion.config,
-                options=resolved,
-            )
-        else:
-            markdown_content = await converter(
-                original_path, config=spec.conversion.config
-            )
+        markdown_content = await converter(original_path)
     except ImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -1438,7 +1422,6 @@ async def bulk_rechunk_stream(
     Args:
         request: Bulk rechunk request with file paths and pipeline spec.
     """
-    validate_chunking_config(request.pipeline.chunking)
     store = _user_store(user)
     data_dir = store.documents_dir(settings.data_dir)
     spec = request.pipeline
@@ -1464,8 +1447,6 @@ async def bulk_reconvert_stream(
         request: Bulk reconvert request with file paths, pipeline spec, and LLM config.
     """
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
-    validate_conversion_config(request.pipeline.conversion)
-    validate_chunking_config(request.pipeline.chunking)
     store = _user_store(user)
     spec = request.pipeline
 
@@ -1545,7 +1526,6 @@ async def rechunk_document(
     """
     safe = _safe_path(filepath)
     store = _user_store(user)
-    validate_chunking_config(request.chunking)
     data_dir = store.documents_dir(settings.data_dir)
     file_path = data_dir / safe
 
@@ -1584,8 +1564,6 @@ async def reconvert_document(
     store = _user_store(user)
     spec = request.pipeline
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
-    validate_conversion_config(spec.conversion)
-    validate_chunking_config(spec.chunking)
 
     result = await _reconvert_single(store, safe, spec, resolved)
     sync_index(store)
@@ -2193,8 +2171,6 @@ async def upload_group_document(
     spec = _parse_pipeline_spec(pipeline_spec)
     llm = LlmConfig.model_validate_json(llm_config)
     resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
-    validate_conversion_config(spec.conversion)
-    validate_chunking_config(spec.chunking)
 
     content = await file.read()
     if len(content) > settings.max_file_size_bytes:
@@ -2413,8 +2389,6 @@ async def reconvert_group_document(
     store = Casebase(kind="group", id=safe_id)
     spec = request.pipeline
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
-    validate_conversion_config(spec.conversion)
-    validate_chunking_config(spec.chunking)
 
     conversion_pipeline = spec.conversion.pipeline
 
@@ -2443,7 +2417,14 @@ async def reconvert_group_document(
         )
 
     try:
-        converter = get_converter(conversion_pipeline, filename=original_path.name)
+        converter = get_converter(
+            conversion_pipeline,
+            filename=original_path.name,
+            config=spec.conversion.config,
+            llm_options=resolved,
+        )
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
     except (ImportError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -2452,19 +2433,7 @@ async def reconvert_group_document(
         resolved_conversion = resolve_auto_pipeline(original_path.name)
 
     try:
-        if resolved_conversion == ConversionPipeline.LLM:
-            from .converters.llm import LLMConverter
-
-            assert isinstance(converter, LLMConverter)
-            markdown_content = await converter(
-                original_path,
-                config=spec.conversion.config,
-                options=resolved,
-            )
-        else:
-            markdown_content = await converter(
-                original_path, config=spec.conversion.config
-            )
+        markdown_content = await converter(original_path)
     except ImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:

@@ -1,9 +1,8 @@
 """MarkItDown-based document converter."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from markitdown import MarkItDown
 from pydantic import BaseModel
@@ -59,6 +58,7 @@ class MarkItDownConverter(DocumentConverter):
             ".msg",
         }
     )
+    config: MarkItDownConverterConfig = field(default_factory=MarkItDownConverterConfig)
 
     def _convert_sync(self, path: Path) -> str:
         """Run the synchronous MarkItDown conversion."""
@@ -70,13 +70,11 @@ class MarkItDownConverter(DocumentConverter):
         self,
         path: Path,
         /,
-        config: dict[str, Any] | None = None,
     ) -> str:
         """Convert a document to markdown using MarkItDown.
 
         Args:
             path: Path to the document to convert.
-            config: Optional pipeline configuration (currently unused).
 
         Returns:
             The document content converted to markdown.

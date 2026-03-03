@@ -1,8 +1,7 @@
 """Markdown-aware document chunker using chonkie."""
 
 import asyncio
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 
 from chonkie import MarkdownChef
 from chonkie.tokenizer import AutoTokenizer
@@ -28,9 +27,9 @@ class MarkdownDocumentChunker(DocumentChunker):
     """
 
     name = "markdown"
+    config: MarkdownChunkerConfig = field(default_factory=MarkdownChunkerConfig)
 
-    def _chunk(self, text: str, config: dict[str, Any] | None) -> list[ChunkData]:
-        parsed = MarkdownChunkerConfig(**(config or {}))
+    def _chunk(self, text: str) -> list[ChunkData]:
         doc = MarkdownChef().parse(text)
         tokenizer = AutoTokenizer("character")
 
@@ -55,21 +54,19 @@ class MarkdownDocumentChunker(DocumentChunker):
             )
             for start_idx, el_text in elements
         ]
-        return apply_chonkie(chunks, parsed.refineries)
+        return apply_chonkie(chunks, self.config.refineries)
 
     async def __call__(
         self,
         text: str,
         /,
-        config: dict[str, Any] | None = None,
     ) -> list[ChunkData]:
         """Split markdown text into semantic chunks.
 
         Args:
             text: The markdown text to chunk.
-            config: Optional chunker configuration.
 
         Returns:
             List of ChunkData objects sorted by start_index.
         """
-        return await asyncio.to_thread(self._chunk, text, config)
+        return await asyncio.to_thread(self._chunk, text)

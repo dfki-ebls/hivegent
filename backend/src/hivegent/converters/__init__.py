@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 
 from cbrkit.helpers import optional_dependencies
 
+from ..types import LlmConfig
 from .base import DocumentConverter
 from .chonkie_text import ChonkieTextConverter
 from .llm import LLMConverter, LlmConverterConfig
@@ -22,7 +23,6 @@ __all__ = [
     "get_converter",
     "get_conversion_pipelines_info",
     "resolve_auto_pipeline",
-    "validate_conversion_config",
 ]
 
 logger = logging.getLogger(__name__)
@@ -230,19 +230,25 @@ def resolve_auto_pipeline(filename: str) -> ConversionPipeline:
 
 
 def get_converter(
-    pipeline: ConversionPipeline, filename: str = ""
+    pipeline: ConversionPipeline,
+    filename: str = "",
+    config: dict[str, Any] | None = None,
+    llm_options: LlmConfig | None = None,
 ) -> DocumentConverter:
     """Get a converter instance for the specified pipeline.
 
     Resolves AUTO to a concrete pipeline, validates extension compatibility,
-    and returns a new converter instance.
+    and returns a new converter instance with parsed config.
 
     Args:
         pipeline: The conversion pipeline to use.
         filename: The document filename (required when pipeline is AUTO).
+        config: Optional raw config dict to parse into the pipeline's config model.
+        llm_options: LLM provider options (only used for the LLM pipeline).
 
     Raises:
         ImportError: If the converter's dependencies are not installed.
+        ValidationError: If the config is invalid for the pipeline.
         ValueError: If the pipeline is not recognized or the file extension
             is not supported by the chosen pipeline.
     """
@@ -268,31 +274,13 @@ def get_converter(
                 f"{suffix}. Supported: {', '.join(sorted(extensions))}"
             )
 
-    return entry.converter_class()
+    kwargs: dict[str, Any] = {}
+    if config and entry.config_model is not None:
+        kwargs["config"] = entry.config_model(**config)
+    if pipeline == ConversionPipeline.LLM and llm_options is not None:
+        kwargs["llm_options"] = llm_options
 
-
-def validate_conversion_config(spec: ConversionSpec) -> dict[str, Any] | None:
-    """Validate a conversion config dict against the pipeline's config model.
-
-    For ``AUTO`` pipelines, validation is skipped since the concrete pipeline
-    is not known until file extension resolution.
-
-    Args:
-        spec: The conversion spec containing pipeline and config.
-
-    Returns:
-        The validated and normalized config dict, or ``None`` if no config.
-
-    Raises:
-        ValidationError: If the config is invalid for the pipeline.
-    """
-    if spec.config is None or spec.pipeline == ConversionPipeline.AUTO:
-        return spec.config
-    entry = _CONVERTER_CONFIG.get(spec.pipeline)
-    if entry is None or entry.config_model is None:
-        return spec.config
-    validated = entry.config_model(**spec.config)
-    return validated.model_dump()
+    return entry.converter_class(**kwargs)
 
 
 def get_conversion_pipelines_info() -> list[ConversionPipelineInfo]:

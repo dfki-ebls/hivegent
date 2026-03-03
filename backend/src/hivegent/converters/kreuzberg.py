@@ -1,8 +1,7 @@
 """Kreuzberg-based document converter with native async support."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from kreuzberg import ExtractionConfig, extract_file
 from pydantic import BaseModel, Field
@@ -84,28 +83,26 @@ class KreuzbergConverter(DocumentConverter):
             ".7z",
         }
     )
+    config: KreuzbergConverterConfig = field(default_factory=KreuzbergConverterConfig)
 
     async def __call__(
         self,
         path: Path,
         /,
-        config: dict[str, Any] | None = None,
     ) -> str:
         """Convert a document to plain text using Kreuzberg.
 
         Args:
             path: Path to the document to convert.
-            config: Optional Kreuzberg pipeline configuration.
 
         Returns:
             The extracted text content.
         """
-        parsed = KreuzbergConverterConfig(**(config or {}))
         extraction_config = ExtractionConfig(
-            force_ocr=parsed.force_ocr,
-            output_format=parsed.output_format,
-            enable_quality_processing=parsed.enable_quality_processing,
-            include_document_structure=parsed.include_document_structure,
+            force_ocr=self.config.force_ocr,
+            output_format=self.config.output_format,
+            enable_quality_processing=self.config.enable_quality_processing,
+            include_document_structure=self.config.include_document_structure,
         )
         result = await extract_file(path, config=extraction_config)
         return str(result.content)

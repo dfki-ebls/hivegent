@@ -1,8 +1,7 @@
 """Late-interaction document chunker using chonkie."""
 
 import asyncio
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 
 from chonkie import LateChunker
 from pydantic import Field
@@ -40,29 +39,27 @@ class LateDocumentChunker(DocumentChunker):
     """
 
     name = "late"
+    config: LateChunkerConfig = field(default_factory=LateChunkerConfig)
 
-    def _chunk(self, text: str, config: dict[str, Any] | None) -> list[ChunkData]:
-        parsed = LateChunkerConfig(**(config or {}))
+    def _chunk(self, text: str) -> list[ChunkData]:
         chunks = LateChunker(
             embedding_model=_DEFAULT_EMBEDDING_MODEL,
-            chunk_size=parsed.chunk_size,
-            min_characters_per_chunk=parsed.min_characters_per_chunk,
+            chunk_size=self.config.chunk_size,
+            min_characters_per_chunk=self.config.min_characters_per_chunk,
         ).chunk(text)
-        return apply_chonkie(chunks, parsed.refineries)
+        return apply_chonkie(chunks, self.config.refineries)
 
     async def __call__(
         self,
         text: str,
         /,
-        config: dict[str, Any] | None = None,
     ) -> list[ChunkData]:
         """Split text using late-interaction chunking.
 
         Args:
             text: The document text to chunk.
-            config: Optional chunker configuration.
 
         Returns:
             List of ChunkData objects.
         """
-        return await asyncio.to_thread(self._chunk, text, config)
+        return await asyncio.to_thread(self._chunk, text)

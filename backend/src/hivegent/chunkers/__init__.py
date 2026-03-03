@@ -26,7 +26,6 @@ __all__ = [
     "DocumentChunker",
     "get_chunker",
     "get_chunking_pipelines_info",
-    "validate_chunking_config",
 ]
 
 logger = logging.getLogger(__name__)
@@ -169,6 +168,7 @@ def _resolve_auto(content_length: int) -> ChunkingPipeline:
 def get_chunker(
     pipeline: ChunkingPipeline,
     content_length: int = 0,
+    config: dict[str, Any] | None = None,
 ) -> DocumentChunker:
     """Get a chunker instance for the specified pipeline.
 
@@ -176,12 +176,14 @@ def get_chunker(
         pipeline: The chunking pipeline to use.
         content_length: Length of the document content in characters.
             Only used when *pipeline* is ``AUTO``.
+        config: Optional raw config dict to parse into the pipeline's config model.
 
     Returns:
         A configured DocumentChunker instance.
 
     Raises:
         ImportError: If the chunker's dependencies are not installed.
+        ValidationError: If the config is invalid for the pipeline.
         ValueError: If the pipeline is not recognized.
     """
     if pipeline == ChunkingPipeline.AUTO:
@@ -196,31 +198,12 @@ def get_chunker(
         raise ValueError(f"Unknown chunking pipeline: {pipeline}")
 
     entry = _CHUNKER_CONFIG[pipeline]
-    return entry.chunker_class()
 
+    kwargs: dict[str, Any] = {}
+    if config and entry.config_model is not None:
+        kwargs["config"] = entry.config_model(**config)
 
-def validate_chunking_config(spec: ChunkingSpec) -> dict[str, Any] | None:
-    """Validate a chunking config dict against the pipeline's config model.
-
-    For ``AUTO`` pipelines, validation is skipped since the concrete pipeline
-    is not known until file extension resolution.
-
-    Args:
-        spec: The chunking spec containing pipeline and config.
-
-    Returns:
-        The validated and normalized config dict, or ``None`` if no config.
-
-    Raises:
-        ValidationError: If the config is invalid for the pipeline.
-    """
-    if spec.config is None or spec.pipeline == ChunkingPipeline.AUTO:
-        return spec.config
-    entry = _CHUNKER_CONFIG.get(spec.pipeline)
-    if entry is None or entry.config_model is None:
-        return spec.config
-    validated = entry.config_model(**spec.config)
-    return validated.model_dump()
+    return entry.chunker_class(**kwargs)
 
 
 def get_chunking_pipelines_info() -> list[ChunkingPipelineInfo]:

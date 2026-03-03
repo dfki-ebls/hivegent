@@ -1,9 +1,8 @@
 """pdf_oxide-based PDF converter."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from pdf_oxide import PdfDocument
 from pydantic import BaseModel
@@ -27,6 +26,7 @@ class PdfOxideConverter(DocumentConverter):
 
     name = "pdf-oxide"
     extensions = frozenset({".pdf"})
+    config: PdfOxideConverterConfig = field(default_factory=PdfOxideConverterConfig)
 
     def _convert_sync(self, path: Path) -> str:
         """Run the synchronous pdf_oxide conversion."""
@@ -38,13 +38,11 @@ class PdfOxideConverter(DocumentConverter):
         self,
         path: Path,
         /,
-        config: dict[str, Any] | None = None,
     ) -> str:
         """Convert a PDF document to markdown using pdf_oxide.
 
         Args:
             path: Path to the PDF document to convert.
-            config: Optional pipeline configuration (currently unused).
 
         Returns:
             The document content converted to markdown.
