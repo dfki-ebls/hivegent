@@ -26,7 +26,7 @@ def test_upload_and_list_document(app_client, data_dir: Path) -> None:  # noqa: 
     """PUT a document then GET /api/documents shows it."""
     content = b"# Test Document\n\nHello world."
     response = app_client.put(
-        "/api/documents/content/test.md",
+        "/api/documents/test.md",
         files={"file": ("test.md", content, "text/markdown")},
     )
     assert response.status_code == 200
@@ -42,8 +42,8 @@ def test_upload_and_list_document(app_client, data_dir: Path) -> None:  # noqa: 
 
 
 def test_create_conversation(app_client) -> None:  # noqa: ANN001
-    """POST /api/conversation creates a new conversation."""
-    response = app_client.post("/api/conversation")
+    """POST /api/conversations creates a new conversation."""
+    response = app_client.post("/api/conversations")
     assert response.status_code == 200
     data = response.json()
     assert "id" in data
