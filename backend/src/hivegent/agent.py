@@ -327,7 +327,7 @@ write_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
 @write_toolset.tool(requires_approval=True)
-def edit_document(
+async def edit_document(
     ctx: RunContext[UserDeps],
     filename: str,
     old_string: str,
@@ -343,11 +343,11 @@ def edit_document(
         old_string: The exact text to replace. Must appear exactly once.
         new_string: The replacement text.
     """
-    return ctx.deps.tool_factory.edit_document(filename, old_string, new_string)
+    return await ctx.deps.tool_factory.edit_document(filename, old_string, new_string)
 
 
 @write_toolset.tool(requires_approval=True)
-def write_document(
+async def write_document(
     ctx: RunContext[UserDeps],
     filename: str,
     content: str,
@@ -361,7 +361,7 @@ def write_document(
         mode: ``"replace"`` overwrites (creates if absent), ``"append"``
             adds to the end, ``"prepend"`` adds to the start.
     """
-    return ctx.deps.tool_factory.write_document(filename, content, mode)
+    return await ctx.deps.tool_factory.write_document(filename, content, mode)
 
 
 # --- Memory toolset (persistent user memory, no approval needed) ---

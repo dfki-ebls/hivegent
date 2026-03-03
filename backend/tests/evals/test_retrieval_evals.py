@@ -12,7 +12,7 @@ from hivegent.store import Casebase
 pytestmark = pytest.mark.slow
 
 
-def _seed_store(
+async def _seed_store(
     data_dir: Path,
     store: Casebase,
     annotations: list[dict[str, Any]],
@@ -34,18 +34,18 @@ def _seed_store(
         doc_path = docs_dir / doc_name
         doc_path.parent.mkdir(parents=True, exist_ok=True)
         doc_path.write_text(content, encoding="utf-8")
-        chunk_document(store, doc_name, content)
+        await chunk_document(store, doc_name, content)
 
     sync_index(store)
 
 
-def test_sparse_search_finds_relevant_chunks(
+async def test_sparse_search_finds_relevant_chunks(
     data_dir: Path,
     user_store: Casebase,
     annotations: list[dict[str, Any]],
 ) -> None:
     """BM25 search returns relevant chunks in top-k for each annotation."""
-    _seed_store(data_dir, user_store, annotations)
+    await _seed_store(data_dir, user_store, annotations)
 
     for ann in annotations:
         results = search_sparse(user_store, ann["question"], top_k=10)
@@ -58,13 +58,13 @@ def test_sparse_search_finds_relevant_chunks(
             )
 
 
-def test_sparse_search_returns_nonempty(
+async def test_sparse_search_returns_nonempty(
     data_dir: Path,
     user_store: Casebase,
     annotations: list[dict[str, Any]],
 ) -> None:
     """Each annotation query returns at least one result."""
-    _seed_store(data_dir, user_store, annotations)
+    await _seed_store(data_dir, user_store, annotations)
 
     for ann in annotations:
         results = search_sparse(user_store, ann["question"], top_k=5)

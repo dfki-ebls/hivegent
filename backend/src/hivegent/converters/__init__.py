@@ -20,7 +20,7 @@ __all__ = [
     "ConversionSpec",
     "DocumentConverter",
     "get_converter",
-    "get_pipelines_info",
+    "get_conversion_pipelines_info",
     "resolve_auto_pipeline",
     "validate_conversion_config",
 ]
@@ -295,7 +295,7 @@ def validate_conversion_config(spec: ConversionSpec) -> dict[str, Any] | None:
     return validated.model_dump()
 
 
-def get_pipelines_info() -> list[ConversionPipelineInfo]:
+def get_conversion_pipelines_info() -> list[ConversionPipelineInfo]:
     """Get metadata for all conversion pipelines."""
     all_extensions = sorted(
         {

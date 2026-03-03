@@ -163,8 +163,8 @@ class ToolFactory:
         """Create an EditDocumentTool with automatic re-chunking."""
         store = self.store
 
-        def _on_write(filename: str) -> None:
-            rechunk_document(store, filename)
+        async def _on_write(filename: str) -> None:
+            await rechunk_document(store, filename)
 
         return EditDocumentTool(
             path=store.documents_dir(settings.data_dir),
@@ -177,8 +177,8 @@ class ToolFactory:
         """Create a WriteDocumentTool with automatic re-chunking."""
         store = self.store
 
-        def _on_write(filename: str) -> None:
-            rechunk_document(store, filename)
+        async def _on_write(filename: str) -> None:
+            await rechunk_document(store, filename)
 
         return WriteDocumentTool(
             path=store.documents_dir(settings.data_dir),

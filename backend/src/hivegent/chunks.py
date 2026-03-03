@@ -41,7 +41,7 @@ def _get_chunk_path(store: Casebase, filepath: str) -> Path:
     return chunk_file_path
 
 
-def chunk_document(
+async def chunk_document(
     store: Casebase,
     filename: str,
     content: str,
@@ -60,7 +60,7 @@ def chunk_document(
     """
     spec = chunking or ChunkingSpec()
     chunker = get_chunker(spec.pipeline, content_length=len(content))
-    raw_chunks = chunker(content, config=spec.config)
+    raw_chunks = await chunker(content, config=spec.config)
 
     chunks = [
         ChunkInfo(
@@ -175,7 +175,7 @@ def list_chunked_documents(store: Casebase) -> dict[str, int]:
     return result
 
 
-def rechunk_document(
+async def rechunk_document(
     store: Casebase,
     filename: str,
     chunking: ChunkingSpec | None = None,
@@ -194,7 +194,7 @@ def rechunk_document(
     file_path = docs_dir / filename
     try:
         text_content = file_path.read_text(encoding="utf-8")
-        chunk_document(store, filename, text_content, chunking)
+        await chunk_document(store, filename, text_content, chunking)
         sync_index(store)
     except Exception:
         logger.warning("Re-chunking failed for %s after write", filename)

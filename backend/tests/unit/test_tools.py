@@ -223,30 +223,34 @@ class TestGetChunkTool:
 class TestEditDocumentTool:
     """Tests for EditDocumentTool."""
 
-    def test_replaces_string(self, tmp_path: Path) -> None:
+    async def test_replaces_string(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("hello world")
         tool = EditDocumentTool(path=tmp_path)
-        result = tool("doc.md", "hello", "goodbye")
+        result = await tool("doc.md", "hello", "goodbye")
         assert "Replaced 1 occurrence" in result
         assert (tmp_path / "doc.md").read_text() == "goodbye world"
 
-    def test_calls_on_write(self, tmp_path: Path) -> None:
+    async def test_calls_on_write(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("hello world")
         written: list[str] = []
-        tool = EditDocumentTool(path=tmp_path, on_write=written.append)
-        tool("doc.md", "hello", "goodbye")
+
+        async def _on_write(filename: str) -> None:
+            written.append(filename)
+
+        tool = EditDocumentTool(path=tmp_path, on_write=_on_write)
+        await tool("doc.md", "hello", "goodbye")
         assert written == ["doc.md"]
 
-    def test_error_on_missing_string(self, tmp_path: Path) -> None:
+    async def test_error_on_missing_string(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("hello world")
         tool = EditDocumentTool(path=tmp_path)
-        result = tool("doc.md", "missing", "new")
+        result = await tool("doc.md", "missing", "new")
         assert "Error" in result
 
-    def test_error_on_duplicate_string(self, tmp_path: Path) -> None:
+    async def test_error_on_duplicate_string(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("hello hello")
         tool = EditDocumentTool(path=tmp_path)
-        result = tool("doc.md", "hello", "goodbye")
+        result = await tool("doc.md", "hello", "goodbye")
         assert "Error" in result
         assert "2 times" in result
 
@@ -254,37 +258,41 @@ class TestEditDocumentTool:
 class TestWriteDocumentTool:
     """Tests for WriteDocumentTool."""
 
-    def test_replace_creates_file(self, tmp_path: Path) -> None:
+    async def test_replace_creates_file(self, tmp_path: Path) -> None:
         tool = WriteDocumentTool(path=tmp_path, extension=".md")
-        result = tool("new.md", "content")
+        result = await tool("new.md", "content")
         assert "Wrote" in result
         assert (tmp_path / "new.md").read_text() == "content"
 
-    def test_append(self, tmp_path: Path) -> None:
+    async def test_append(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("start")
         tool = WriteDocumentTool(path=tmp_path, extension=".md")
-        result = tool("doc.md", " end", mode="append")
+        result = await tool("doc.md", " end", mode="append")
         assert "Appended" in result
         assert (tmp_path / "doc.md").read_text() == "start end"
 
-    def test_prepend(self, tmp_path: Path) -> None:
+    async def test_prepend(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("end")
         tool = WriteDocumentTool(path=tmp_path, extension=".md")
-        result = tool("doc.md", "start ", mode="prepend")
+        result = await tool("doc.md", "start ", mode="prepend")
         assert "Prepended" in result
         assert (tmp_path / "doc.md").read_text() == "start end"
 
-    def test_rejects_wrong_extension(self, tmp_path: Path) -> None:
+    async def test_rejects_wrong_extension(self, tmp_path: Path) -> None:
         tool = WriteDocumentTool(path=tmp_path, extension=".md")
-        result = tool("doc.txt", "content")
+        result = await tool("doc.txt", "content")
         assert "Error" in result
 
-    def test_calls_on_write(self, tmp_path: Path) -> None:
+    async def test_calls_on_write(self, tmp_path: Path) -> None:
         written: list[str] = []
+
+        async def _on_write(filename: str) -> None:
+            written.append(filename)
+
         tool = WriteDocumentTool(
-            path=tmp_path, extension=".md", on_write=written.append
+            path=tmp_path, extension=".md", on_write=_on_write
         )
-        tool("doc.md", "content")
+        await tool("doc.md", "content")
         assert written == ["doc.md"]
 
 

@@ -1,5 +1,6 @@
 """LLM-guided document chunker using chonkie."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -7,7 +8,8 @@ from chonkie import SlumberChunker
 from chonkie.genie.openai import OpenAIGenie
 from pydantic import Field
 
-from .base import BaseChonkieConfig, ChunkData, DocumentChunker, apply_chonkie
+from .base import ChunkData, DocumentChunker
+from .chonkie import BaseChonkieConfig, apply_chonkie
 
 __all__ = ["SlumberChunkerConfig", "SlumberDocumentChunker"]
 
@@ -43,21 +45,7 @@ class SlumberDocumentChunker(DocumentChunker):
 
     name = "slumber"
 
-    def __call__(
-        self,
-        text: str,
-        /,
-        config: dict[str, Any] | None = None,
-    ) -> list[ChunkData]:
-        """Split text using LLM-guided chunking.
-
-        Args:
-            text: The document text to chunk.
-            config: Optional chunker configuration.
-
-        Returns:
-            List of ChunkData objects.
-        """
+    def _chunk(self, text: str, config: dict[str, Any] | None) -> list[ChunkData]:
         from ..config import settings
 
         parsed = SlumberChunkerConfig(**(config or {}))
@@ -73,3 +61,20 @@ class SlumberDocumentChunker(DocumentChunker):
             min_characters_per_chunk=parsed.min_characters_per_chunk,
         ).chunk(text)
         return apply_chonkie(chunks, parsed.refineries)
+
+    async def __call__(
+        self,
+        text: str,
+        /,
+        config: dict[str, Any] | None = None,
+    ) -> list[ChunkData]:
+        """Split text using LLM-guided chunking.
+
+        Args:
+            text: The document text to chunk.
+            config: Optional chunker configuration.
+
+        Returns:
+            List of ChunkData objects.
+        """
+        return await asyncio.to_thread(self._chunk, text, config)

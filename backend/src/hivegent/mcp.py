@@ -307,7 +307,7 @@ async def edit_document(
     if response.action != "accept":
         return "Edit denied by user."
 
-    return factory.edit_document(filename, old_string, new_string)
+    return await factory.edit_document(filename, old_string, new_string)
 
 
 @mcp_app.tool()
@@ -336,4 +336,4 @@ async def write_document(
     if response.action != "accept":
         return "Write denied by user."
 
-    return factory.write_document(filename, content, mode)
+    return await factory.write_document(filename, content, mode)

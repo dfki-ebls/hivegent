@@ -2,7 +2,7 @@
 
 import json
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
@@ -314,9 +314,9 @@ class EditDocumentTool:
 
     path: Path
     document_filter: Callable[[str], bool] | None = None
-    on_write: Callable[[str], object] | None = None
+    on_write: Callable[[str], Awaitable[object]] | None = None
 
-    def __call__(
+    async def __call__(
         self,
         filename: str,
         old_string: str,
@@ -353,7 +353,7 @@ class EditDocumentTool:
         new_content = content.replace(old_string, new_string, 1)
         file_path.write_text(new_content, encoding="utf-8")
         if self.on_write:
-            self.on_write(filename)
+            await self.on_write(filename)
         return f"Replaced 1 occurrence in '{filename}'."
 
 
@@ -364,9 +364,9 @@ class WriteDocumentTool:
     path: Path
     extension: str = ".md"
     document_filter: Callable[[str], bool] | None = None
-    on_write: Callable[[str], object] | None = None
+    on_write: Callable[[str], Awaitable[object]] | None = None
 
-    def __call__(
+    async def __call__(
         self,
         filename: str,
         content: str,
@@ -405,7 +405,7 @@ class WriteDocumentTool:
             message = f"Prepended {len(content)} characters to '{filename}'."
 
         if self.on_write:
-            self.on_write(filename)
+            await self.on_write(filename)
         return message
 
 

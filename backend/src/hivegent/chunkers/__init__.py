@@ -232,7 +232,7 @@ def get_chunking_pipelines_info() -> list[ChunkingPipelineInfo]:
             description="Automatically selects the best chunker based on file type",
         ),
     ]
-    for entry in _CHUNKER_CONFIG.values():
+    for pipeline, entry in _CHUNKER_CONFIG.items():
         config_schema: dict[str, Any] = {}
         config_defaults: dict[str, Any] = {}
         if entry.config_model is not None:
@@ -246,7 +246,7 @@ def get_chunking_pipelines_info() -> list[ChunkingPipelineInfo]:
                 )
         infos.append(
             ChunkingPipelineInfo(
-                value=entry.chunker_class.name,
+                value=pipeline.value,
                 label=entry.label,
                 description=entry.description,
                 config_schema=config_schema,

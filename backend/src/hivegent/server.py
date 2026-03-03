@@ -62,7 +62,7 @@ from .converters import (
     ConversionPipelineInfo,
     ConversionSpec,
     get_converter,
-    get_pipelines_info,
+    get_conversion_pipelines_info,
     resolve_auto_pipeline,
     validate_conversion_config,
 )
@@ -265,7 +265,7 @@ mcp_http_app = mcp_app.http_app(path="/")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Run startup consistency check, then delegate to MCP lifespan."""
-    check_and_fix_all_stores()
+    await check_and_fix_all_stores()
     async with mcp_http_app.lifespan(app):
         yield
 
@@ -787,7 +787,7 @@ async def _upload_file_internal(
         chunking_used = None
         try:
             text_content = content.decode("utf-8")
-            chunked = chunk_document(store, filepath, text_content, spec.chunking)
+            chunked = await chunk_document(store, filepath, text_content, spec.chunking)
             chunk_count = len(chunked.chunks)
             chunking_used = chunked.pipeline
             sync_index(store)
@@ -860,7 +860,7 @@ async def _upload_file_internal(
     chunk_count = None
     chunking_used = None
     try:
-        chunked = chunk_document(
+        chunked = await chunk_document(
             store, converted_relpath, markdown_content, spec.chunking
         )
         chunk_count = len(chunked.chunks)
@@ -1366,7 +1366,7 @@ async def _reconvert_single(
     chunk_count = None
     chunking_used = None
     try:
-        chunked = chunk_document(store, safe, markdown_content, spec.chunking)
+        chunked = await chunk_document(store, safe, markdown_content, spec.chunking)
         chunk_count = len(chunked.chunks)
         chunking_used = chunked.pipeline
     except Exception as e:
@@ -1446,7 +1446,7 @@ async def bulk_rechunk_stream(
     async def _rechunk_one(filepath: str) -> None:
         safe = _safe_path(filepath)
         text_content = (data_dir / safe).read_text(encoding="utf-8")
-        chunk_document(store, safe, text_content, spec.chunking)
+        await chunk_document(store, safe, text_content, spec.chunking)
 
     return _sse_stream_response(
         _process_bulk_operation(store, request.files, _rechunk_one, "Rechunked"),
@@ -1502,7 +1502,7 @@ async def bulk_delete_stream(
 @api_router.get("/pipelines/conversion")
 async def list_conversion_pipelines() -> list[ConversionPipelineInfo]:
     """Get metadata for all conversion pipelines."""
-    return get_pipelines_info()
+    return get_conversion_pipelines_info()
 
 
 # Chunking endpoints
@@ -1555,7 +1555,7 @@ async def rechunk_document(
     text_content = file_path.read_text(encoding="utf-8")
 
     try:
-        result = chunk_document(store, safe, text_content, request.chunking)
+        result = await chunk_document(store, safe, text_content, request.chunking)
         sync_index(store)
         return result
     except Exception as e:
@@ -2480,7 +2480,7 @@ async def reconvert_group_document(
     chunk_count = None
     chunking_used = None
     try:
-        chunked = chunk_document(store, safe, markdown_content, spec.chunking)
+        chunked = await chunk_document(store, safe, markdown_content, spec.chunking)
         chunk_count = len(chunked.chunks)
         chunking_used = chunked.pipeline
         sync_index(store)

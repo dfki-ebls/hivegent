@@ -1,12 +1,14 @@
 """Code-aware document chunker using chonkie."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
 from chonkie import CodeChunker
 from pydantic import Field
 
-from .base import BaseChonkieConfig, ChunkData, DocumentChunker, apply_chonkie
+from .base import ChunkData, DocumentChunker
+from .chonkie import BaseChonkieConfig, apply_chonkie
 
 __all__ = ["CodeChunkerConfig", "CodeDocumentChunker"]
 
@@ -41,7 +43,16 @@ class CodeDocumentChunker(DocumentChunker):
 
     name = "code"
 
-    def __call__(
+    def _chunk(self, text: str, config: dict[str, Any] | None) -> list[ChunkData]:
+        parsed = CodeChunkerConfig(**(config or {}))
+        chunks = CodeChunker(
+            chunk_size=parsed.chunk_size,
+            language=parsed.language,
+            include_nodes=parsed.include_nodes,
+        ).chunk(text)
+        return apply_chonkie(chunks, parsed.refineries)
+
+    async def __call__(
         self,
         text: str,
         /,
@@ -56,10 +67,4 @@ class CodeDocumentChunker(DocumentChunker):
         Returns:
             List of ChunkData objects.
         """
-        parsed = CodeChunkerConfig(**(config or {}))
-        chunks = CodeChunker(
-            chunk_size=parsed.chunk_size,
-            language=parsed.language,
-            include_nodes=parsed.include_nodes,
-        ).chunk(text)
-        return apply_chonkie(chunks, parsed.refineries)
+        return await asyncio.to_thread(self._chunk, text, config)

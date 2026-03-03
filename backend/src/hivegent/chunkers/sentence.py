@@ -1,12 +1,14 @@
 """Sentence-based document chunker using chonkie."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
 from chonkie import SentenceChunker
 from pydantic import Field
 
-from .base import BaseChonkieConfig, ChunkData, DocumentChunker, apply_chonkie
+from .base import ChunkData, DocumentChunker
+from .chonkie import BaseChonkieConfig, apply_chonkie
 
 __all__ = ["SentenceChunkerConfig", "SentenceDocumentChunker"]
 
@@ -47,7 +49,17 @@ class SentenceDocumentChunker(DocumentChunker):
 
     name = "sentence"
 
-    def __call__(
+    def _chunk(self, text: str, config: dict[str, Any] | None) -> list[ChunkData]:
+        parsed = SentenceChunkerConfig(**(config or {}))
+        chunks = SentenceChunker(
+            chunk_size=parsed.chunk_size,
+            chunk_overlap=parsed.chunk_overlap,
+            min_sentences_per_chunk=parsed.min_sentences_per_chunk,
+            min_characters_per_sentence=parsed.min_characters_per_sentence,
+        ).chunk(text)
+        return apply_chonkie(chunks, parsed.refineries)
+
+    async def __call__(
         self,
         text: str,
         /,
@@ -62,11 +74,4 @@ class SentenceDocumentChunker(DocumentChunker):
         Returns:
             List of ChunkData objects.
         """
-        parsed = SentenceChunkerConfig(**(config or {}))
-        chunks = SentenceChunker(
-            chunk_size=parsed.chunk_size,
-            chunk_overlap=parsed.chunk_overlap,
-            min_sentences_per_chunk=parsed.min_sentences_per_chunk,
-            min_characters_per_sentence=parsed.min_characters_per_sentence,
-        ).chunk(text)
-        return apply_chonkie(chunks, parsed.refineries)
+        return await asyncio.to_thread(self._chunk, text, config)

@@ -15,7 +15,7 @@ from hivegent.store import Casebase
 pytestmark = pytest.mark.slow
 
 
-def _seed_and_get_deps(
+async def _seed_and_get_deps(
     data_dir: Path,
     user_store: Casebase,
     annotations: list[dict[str, Any]],
@@ -29,7 +29,7 @@ def _seed_and_get_deps(
             doc_path.parent.mkdir(parents=True, exist_ok=True)
             content = f"# {doc_name}\n\n{ann['question']}\n\n{ann['expected_answer']}\n"
             doc_path.write_text(content, encoding="utf-8")
-            chunk_document(user_store, doc_name, content)
+            await chunk_document(user_store, doc_name, content)
 
     sync_index(user_store)
     return UserDeps(user_id="testuser", store=user_store)
@@ -41,7 +41,7 @@ async def test_response_with_test_model(
     annotations: list[dict[str, Any]],
 ) -> None:
     """TestModel agent produces a string response for each annotation query."""
-    deps = _seed_and_get_deps(data_dir, user_store, annotations)
+    deps = await _seed_and_get_deps(data_dir, user_store, annotations)
 
     for ann in annotations:
         # Use explore_toolset to avoid explore_documents calling a real LLM.
@@ -70,7 +70,7 @@ async def test_response_contains_expected_text(
 
     from hivegent.config import settings
 
-    deps = _seed_and_get_deps(data_dir, user_store, annotations)
+    deps = await _seed_and_get_deps(data_dir, user_store, annotations)
 
     model = OpenAIResponsesModel(
         settings.llm.model,

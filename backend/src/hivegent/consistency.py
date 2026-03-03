@@ -94,7 +94,7 @@ def check_store_consistency(store: Casebase) -> ConsistencyReport:
     )
 
 
-def fix_store_consistency(report: ConsistencyReport) -> None:
+async def fix_store_consistency(report: ConsistencyReport) -> None:
     """Repair inconsistencies described by a report.
 
     Deletes orphaned chunks, rechunks new and stale documents, then
@@ -125,7 +125,7 @@ def fix_store_consistency(report: ConsistencyReport) -> None:
     for path in report.new_documents + report.stale_documents:
         try:
             content = (docs_dir / path).read_text(encoding="utf-8")
-            chunk_document(store, path, content)
+            await chunk_document(store, path, content)
             logger.info("Chunked document: %s/%s", store.store_key, path)
         except Exception:
             logger.warning(
@@ -142,7 +142,7 @@ def fix_store_consistency(report: ConsistencyReport) -> None:
         logger.warning("Failed to sync index for %s", store.store_key, exc_info=True)
 
 
-def _check_and_fix_store(store: Casebase) -> None:
+async def _check_and_fix_store(store: Casebase) -> None:
     """Check and fix a single store, catching exceptions."""
     try:
         report = check_store_consistency(store)
@@ -156,14 +156,14 @@ def _check_and_fix_store(store: Casebase) -> None:
                 len(report.stale_documents),
                 len(report.orphaned_chunks),
             )
-            fix_store_consistency(report)
+            await fix_store_consistency(report)
     except Exception:
         logger.warning(
             "Consistency check failed for %s", store.store_key, exc_info=True
         )
 
 
-def check_and_fix_all_stores() -> None:
+async def check_and_fix_all_stores() -> None:
     """Run the consistency check for every user and group store.
 
     Scans ``data/users/`` and ``data/groups/`` for store directories.
@@ -190,7 +190,7 @@ def check_and_fix_all_stores() -> None:
             if not (entry / "documents").is_dir():
                 logger.debug("Skipping user without documents: %s", entry.name)
                 continue
-            _check_and_fix_store(Casebase(kind="user", id=entry.name))
+            await _check_and_fix_store(Casebase(kind="user", id=entry.name))
 
     # Check group stores
     groups_dir = settings.data_dir / "groups"
@@ -206,6 +206,6 @@ def check_and_fix_all_stores() -> None:
             if not (entry / "documents").is_dir():
                 logger.debug("Skipping group without documents: %s", entry.name)
                 continue
-            _check_and_fix_store(Casebase(kind="group", id=entry.name))
+            await _check_and_fix_store(Casebase(kind="group", id=entry.name))
 
     logger.info("Consistency check complete")

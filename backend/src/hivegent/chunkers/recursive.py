@@ -1,12 +1,14 @@
 """Recursive document chunker using chonkie."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
 from chonkie import RecursiveChunker
 from pydantic import Field
 
-from .base import BaseChonkieConfig, ChunkData, DocumentChunker, apply_chonkie
+from .base import ChunkData, DocumentChunker
+from .chonkie import BaseChonkieConfig, apply_chonkie
 
 __all__ = ["RecursiveChunkerConfig", "RecursiveDocumentChunker"]
 
@@ -38,7 +40,15 @@ class RecursiveDocumentChunker(DocumentChunker):
 
     name = "recursive"
 
-    def __call__(
+    def _chunk(self, text: str, config: dict[str, Any] | None) -> list[ChunkData]:
+        parsed = RecursiveChunkerConfig(**(config or {}))
+        chunks = RecursiveChunker(
+            chunk_size=parsed.chunk_size,
+            min_characters_per_chunk=parsed.min_characters_per_chunk,
+        ).chunk(text)
+        return apply_chonkie(chunks, parsed.refineries)
+
+    async def __call__(
         self,
         text: str,
         /,
@@ -53,9 +63,4 @@ class RecursiveDocumentChunker(DocumentChunker):
         Returns:
             List of ChunkData objects.
         """
-        parsed = RecursiveChunkerConfig(**(config or {}))
-        chunks = RecursiveChunker(
-            chunk_size=parsed.chunk_size,
-            min_characters_per_chunk=parsed.min_characters_per_chunk,
-        ).chunk(text)
-        return apply_chonkie(chunks, parsed.refineries)
+        return await asyncio.to_thread(self._chunk, text, config)
