@@ -649,8 +649,6 @@ class BulkOperationCompleteEvent(BaseModel):
     message: str = Field(description="Status message")
 
 
-
-
 class GroupInfo(BaseModel):
     """Summary information about a casebase group."""
 
