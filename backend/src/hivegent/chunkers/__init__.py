@@ -5,11 +5,18 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from cbrkit.helpers import optional_dependencies
 from pydantic import BaseModel, ValidationError
 
 from .base import DocumentChunker
+from .fast import FastChunkerConfig, FastDocumentChunker
+from .late import LateChunkerConfig, LateDocumentChunker
+from .markdown import MarkdownChunkerConfig, MarkdownDocumentChunker
+from .neural import NeuralChunkerConfig, NeuralDocumentChunker
 from .recursive import RecursiveChunkerConfig, RecursiveDocumentChunker
 from .sentence import SentenceChunkerConfig, SentenceDocumentChunker
+from .slumber import SlumberChunkerConfig, SlumberDocumentChunker
+from .table import TableChunkerConfig, TableDocumentChunker
 from .token import TokenChunkerConfig, TokenDocumentChunker
 
 __all__ = [
@@ -19,7 +26,6 @@ __all__ = [
     "DocumentChunker",
     "get_chunker",
     "get_chunking_pipelines_info",
-    "resolve_auto_pipeline",
     "validate_chunking_config",
 ]
 
@@ -31,8 +37,16 @@ class ChunkingPipeline(StrEnum):
 
     AUTO = "auto"
     TOKEN = "token"
+    FAST = "fast"
     SENTENCE = "sentence"
     RECURSIVE = "recursive"
+    TABLE = "table"
+    MARKDOWN = "markdown"
+    SEMANTIC = "semantic"
+    CODE = "code"
+    NEURAL = "neural"
+    LATE = "late"
+    SLUMBER = "slumber"
 
 
 class ChunkingSpec(BaseModel):
@@ -63,12 +77,19 @@ class ChunkingPipelineInfo:
     config_defaults: dict[str, Any] = field(default_factory=dict)
 
 
+# Core chunkers (always available)
 _CHUNKER_CONFIG: dict[ChunkingPipeline, _ChunkerEntry] = {
     ChunkingPipeline.TOKEN: _ChunkerEntry(
         chunker_class=TokenDocumentChunker,
         label="Token",
         description="Fixed token-count chunks for uniform processing",
         config_model=TokenChunkerConfig,
+    ),
+    ChunkingPipeline.FAST: _ChunkerEntry(
+        chunker_class=FastDocumentChunker,
+        label="Fast",
+        description="High-throughput delimiter-based splitting",
+        config_model=FastChunkerConfig,
     ),
     ChunkingPipeline.SENTENCE: _ChunkerEntry(
         chunker_class=SentenceDocumentChunker,
@@ -82,53 +103,96 @@ _CHUNKER_CONFIG: dict[ChunkingPipeline, _ChunkerEntry] = {
         description="Hierarchical splitting by headings, paragraphs, and sentences",
         config_model=RecursiveChunkerConfig,
     ),
+    ChunkingPipeline.TABLE: _ChunkerEntry(
+        chunker_class=TableDocumentChunker,
+        label="Table",
+        description="Row-based splitting for tabular data",
+        config_model=TableChunkerConfig,
+    ),
+    ChunkingPipeline.MARKDOWN: _ChunkerEntry(
+        chunker_class=MarkdownDocumentChunker,
+        label="Markdown",
+        description="Parses markdown into semantic elements (text, tables, code)",
+        config_model=MarkdownChunkerConfig,
+    ),
+    ChunkingPipeline.NEURAL: _ChunkerEntry(
+        chunker_class=NeuralDocumentChunker,
+        label="Neural",
+        description="Neural model-based chunk boundary detection",
+        config_model=NeuralChunkerConfig,
+    ),
+    ChunkingPipeline.LATE: _ChunkerEntry(
+        chunker_class=LateDocumentChunker,
+        label="Late",
+        description="Late-interaction embedding-aware chunk boundaries",
+        config_model=LateChunkerConfig,
+    ),
+    ChunkingPipeline.SLUMBER: _ChunkerEntry(
+        chunker_class=SlumberDocumentChunker,
+        label="Slumber",
+        description="LLM-guided intelligent chunk boundary decisions",
+        config_model=SlumberChunkerConfig,
+    ),
 }
 
-_AUTO_MAPPING: dict[str, ChunkingPipeline] = {
-    ".md": ChunkingPipeline.RECURSIVE,
-    ".html": ChunkingPipeline.RECURSIVE,
-    ".xml": ChunkingPipeline.RECURSIVE,
-    ".adoc": ChunkingPipeline.RECURSIVE,
-    ".txt": ChunkingPipeline.SENTENCE,
-    ".csv": ChunkingPipeline.TOKEN,
-}
+# Optional chunkers (registered only when their dependencies are installed)
+with optional_dependencies():
+    from .semantic import SemanticChunkerConfig, SemanticDocumentChunker
 
-_AUTO_DEFAULT = ChunkingPipeline.RECURSIVE
+    _CHUNKER_CONFIG[ChunkingPipeline.SEMANTIC] = _ChunkerEntry(
+        chunker_class=SemanticDocumentChunker,
+        label="Semantic",
+        description="Splits by semantic similarity using embeddings",
+        config_model=SemanticChunkerConfig,
+    )
+
+with optional_dependencies():
+    from .code import CodeChunkerConfig, CodeDocumentChunker
+
+    _CHUNKER_CONFIG[ChunkingPipeline.CODE] = _ChunkerEntry(
+        chunker_class=CodeDocumentChunker,
+        label="Code",
+        description="Syntax-aware splitting using tree-sitter",
+        config_model=CodeChunkerConfig,
+    )
+
+_AUTO_FAST_THRESHOLD = 500_000
+"""Content length (in characters) above which AUTO uses Fast instead of Recursive."""
 
 
-def resolve_auto_pipeline(filename: str) -> ChunkingPipeline:
-    """Resolve the AUTO pipeline to a concrete pipeline based on file extension.
-
-    Args:
-        filename: The filename to determine the pipeline for.
-
-    Returns:
-        The concrete chunking pipeline to use.
-    """
-    suffix = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    return _AUTO_MAPPING.get(suffix, _AUTO_DEFAULT)
+def _resolve_auto(content_length: int) -> ChunkingPipeline:
+    if content_length > _AUTO_FAST_THRESHOLD:
+        return ChunkingPipeline.FAST
+    return ChunkingPipeline.RECURSIVE
 
 
 def get_chunker(
     pipeline: ChunkingPipeline,
-    filename: str = "",
+    content_length: int = 0,
 ) -> DocumentChunker:
     """Get a chunker instance for the specified pipeline.
 
     Args:
         pipeline: The chunking pipeline to use.
-        filename: The filename (used for AUTO resolution).
+        content_length: Length of the document content in characters.
+            Only used when *pipeline* is ``AUTO``.
 
     Returns:
         A configured DocumentChunker instance.
 
     Raises:
+        ImportError: If the chunker's dependencies are not installed.
         ValueError: If the pipeline is not recognized.
     """
     if pipeline == ChunkingPipeline.AUTO:
-        pipeline = resolve_auto_pipeline(filename)
+        pipeline = _resolve_auto(content_length)
 
     if pipeline not in _CHUNKER_CONFIG:
+        if pipeline in ChunkingPipeline:
+            raise ImportError(
+                f"Chunking pipeline '{pipeline.value}' is not available. "
+                f"Install its dependencies to enable it."
+            )
         raise ValueError(f"Unknown chunking pipeline: {pipeline}")
 
     entry = _CHUNKER_CONFIG[pipeline]

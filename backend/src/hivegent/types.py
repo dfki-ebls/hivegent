@@ -256,7 +256,6 @@ class ChunkedDocument(BaseModel):
     """A document that has been chunked, with metadata."""
 
     pipeline: str = Field(description="The chunking pipeline used")
-    chunk_size: int = Field(description="The target chunk size in tokens")
     created_at: datetime = Field(description="When the chunks were created")
     chunks: list[ChunkInfo] = Field(description="The document chunks")
 

@@ -517,7 +517,6 @@ export function DocumentDialog({
               {showMetadata && managedData && (
                 <>
                   <Badge variant="secondary">Chunking: {managedData.pipeline}</Badge>
-                  <Badge variant="secondary">Chunk size: {managedData.chunk_size} tokens</Badge>
                   <Badge variant="secondary">{managedData.chunks.length} chunks</Badge>
                   <Badge variant="outline">Created: {formatDate(managedData.created_at)}</Badge>
                 </>

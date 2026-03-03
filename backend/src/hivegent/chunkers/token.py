@@ -4,14 +4,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from chonkie import TokenChunker
-from pydantic import BaseModel, Field
+from pydantic import Field
 
-from .base import ChunkData, DocumentChunker
+from .base import BaseChonkieConfig, ChunkData, DocumentChunker, apply_chonkie
 
 __all__ = ["TokenChunkerConfig", "TokenDocumentChunker"]
 
 
-class TokenChunkerConfig(BaseModel):
+class TokenChunkerConfig(BaseChonkieConfig):
     """Configuration for the Token chunking pipeline."""
 
     chunk_size: int = Field(
@@ -36,7 +36,6 @@ class TokenDocumentChunker(DocumentChunker):
     """
 
     name = "token"
-    chunk_size = 2048
 
     def __call__(
         self,
@@ -58,13 +57,4 @@ class TokenDocumentChunker(DocumentChunker):
             chunk_size=parsed.chunk_size,
             chunk_overlap=parsed.chunk_overlap,
         ).chunk(text)
-        return [
-            ChunkData(
-                text=c.text,
-                token_count=c.token_count,
-                start_index=c.start_index,
-                end_index=c.end_index,
-                index=i,
-            )
-            for i, c in enumerate(chunks)
-        ]
+        return apply_chonkie(chunks, parsed.refineries)

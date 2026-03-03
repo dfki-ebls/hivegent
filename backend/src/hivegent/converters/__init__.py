@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 from cbrkit.helpers import optional_dependencies
 
 from .base import DocumentConverter
+from .chonkie_text import ChonkieTextConverter
 from .llm import LLMConverter, LlmConverterConfig
 from .pandoc import PandocConverter, PandocConverterConfig
 
@@ -38,6 +39,8 @@ class ConversionPipeline(StrEnum):
     PANDOC = "pandoc"
     MARKITDOWN = "markitdown"
     KREUZBERG = "kreuzberg"
+    TABLE_CHEF = "table-chef"
+    TEXT_CHEF = "text-chef"
 
 
 class ConversionSpec(BaseModel):
@@ -136,6 +139,21 @@ with optional_dependencies():
         description="Text extraction from 75+ formats with OCR support",
         config_model=KreuzbergConverterConfig,
     )
+
+with optional_dependencies():
+    from .chonkie_table import ChonkieTableConverter
+
+    _CONVERTER_CONFIG[ConversionPipeline.TABLE_CHEF] = _ConverterEntry(
+        converter_class=ChonkieTableConverter,
+        label="Table Chef",
+        description="CSV/Excel to markdown tables via pandas",
+    )
+
+_CONVERTER_CONFIG[ConversionPipeline.TEXT_CHEF] = _ConverterEntry(
+    converter_class=ChonkieTextConverter,
+    label="Text Chef",
+    description="Plain text files as-is",
+)
 
 _AUTO_MAPPING: dict[str, ConversionPipeline] = {
     # Text formats (converted to clean markdown via pandoc)

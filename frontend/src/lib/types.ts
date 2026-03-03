@@ -23,14 +23,24 @@ export enum ConversionPipeline {
   PANDOC = "pandoc",
   MARKITDOWN = "markitdown",
   KREUZBERG = "kreuzberg",
+  TABLE_CHEF = "table-chef",
+  TEXT_CHEF = "text-chef",
 }
 
 /** Available chunking pipelines. */
 export enum ChunkingPipeline {
   AUTO = "auto",
   TOKEN = "token",
+  FAST = "fast",
   SENTENCE = "sentence",
   RECURSIVE = "recursive",
+  TABLE = "table",
+  MARKDOWN = "markdown",
+  SEMANTIC = "semantic",
+  CODE = "code",
+  NEURAL = "neural",
+  LATE = "late",
+  SLUMBER = "slumber",
 }
 
 // Zod v4: z.enum() accepts TS enums directly (replaces deprecated nativeEnum)
@@ -122,7 +132,6 @@ export type ChunkInfo = z.infer<typeof ChunkInfoSchema>;
 /** Response from the chunks endpoint. */
 export const ChunkedDocumentResponseSchema = z.object({
   pipeline: z.string(),
-  chunk_size: z.number(),
   created_at: z.string(),
   chunks: z.array(ChunkInfoSchema),
 });

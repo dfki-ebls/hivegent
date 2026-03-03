@@ -59,7 +59,7 @@ def chunk_document(
         The chunked document with metadata.
     """
     spec = chunking or ChunkingSpec()
-    chunker = get_chunker(spec.pipeline, filename=filename)
+    chunker = get_chunker(spec.pipeline, content_length=len(content))
     raw_chunks = chunker(content, config=spec.config)
 
     chunks = [
@@ -74,7 +74,6 @@ def chunk_document(
 
     doc = ChunkedDocument(
         pipeline=chunker.name,
-        chunk_size=chunker.chunk_size,
         created_at=datetime.now(tz=timezone.utc),
         chunks=chunks,
     )

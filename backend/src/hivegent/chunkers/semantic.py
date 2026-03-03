@@ -1,18 +1,20 @@
-"""Sentence-based document chunker using chonkie."""
+"""Semantic document chunker using chonkie."""
 
 from dataclasses import dataclass
 from typing import Any
 
-from chonkie import SentenceChunker
+from chonkie import SemanticChunker
 from pydantic import Field
 
 from .base import BaseChonkieConfig, ChunkData, DocumentChunker, apply_chonkie
 
-__all__ = ["SentenceChunkerConfig", "SentenceDocumentChunker"]
+__all__ = ["SemanticChunkerConfig", "SemanticDocumentChunker"]
+
+_DEFAULT_EMBEDDING_MODEL = "minishlab/potion-base-32M"
 
 
-class SentenceChunkerConfig(BaseChonkieConfig):
-    """Configuration for the Sentence chunking pipeline."""
+class SemanticChunkerConfig(BaseChonkieConfig):
+    """Configuration for the Semantic chunking pipeline."""
 
     chunk_size: int = Field(
         default=2048,
@@ -20,10 +22,16 @@ class SentenceChunkerConfig(BaseChonkieConfig):
         le=32768,
         description="Target chunk size in tokens.",
     )
-    chunk_overlap: int = Field(
-        default=0,
+    threshold: float = Field(
+        default=0.8,
         ge=0,
-        description="Number of overlapping tokens between consecutive chunks.",
+        le=1,
+        description="Similarity threshold for chunk boundaries.",
+    )
+    similarity_window: int = Field(
+        default=3,
+        ge=1,
+        description="Number of sentences to compare for similarity.",
     )
     min_sentences_per_chunk: int = Field(
         default=1,
@@ -31,21 +39,22 @@ class SentenceChunkerConfig(BaseChonkieConfig):
         description="Minimum number of sentences per chunk.",
     )
     min_characters_per_sentence: int = Field(
-        default=12,
+        default=24,
         ge=1,
         description="Minimum character count for a text span to be considered a sentence.",
     )
 
 
 @dataclass(slots=True, frozen=True)
-class SentenceDocumentChunker(DocumentChunker):
-    """Chunker that splits text respecting sentence boundaries.
+class SemanticDocumentChunker(DocumentChunker):
+    """Chunker that splits text based on semantic similarity.
 
-    Uses chonkie's SentenceChunker to keep sentences intact.
-    Best suited for prose and plain text documents.
+    Uses chonkie's SemanticChunker with a lightweight embedding model.
+    Best suited for documents where topical coherence within chunks matters.
+    Requires ``chonkie[semantic]`` (model2vec).
     """
 
-    name = "sentence"
+    name = "semantic"
 
     def __call__(
         self,
@@ -53,7 +62,7 @@ class SentenceDocumentChunker(DocumentChunker):
         /,
         config: dict[str, Any] | None = None,
     ) -> list[ChunkData]:
-        """Split text into sentence-boundary-respecting chunks.
+        """Split text using semantic similarity boundaries.
 
         Args:
             text: The document text to chunk.
@@ -62,10 +71,12 @@ class SentenceDocumentChunker(DocumentChunker):
         Returns:
             List of ChunkData objects.
         """
-        parsed = SentenceChunkerConfig(**(config or {}))
-        chunks = SentenceChunker(
+        parsed = SemanticChunkerConfig(**(config or {}))
+        chunks = SemanticChunker(
+            embedding_model=_DEFAULT_EMBEDDING_MODEL,
+            threshold=parsed.threshold,
             chunk_size=parsed.chunk_size,
-            chunk_overlap=parsed.chunk_overlap,
+            similarity_window=parsed.similarity_window,
             min_sentences_per_chunk=parsed.min_sentences_per_chunk,
             min_characters_per_sentence=parsed.min_characters_per_sentence,
         ).chunk(text)

@@ -1,18 +1,20 @@
-"""Recursive document chunker using chonkie."""
+"""Late-interaction document chunker using chonkie."""
 
 from dataclasses import dataclass
 from typing import Any
 
-from chonkie import RecursiveChunker
+from chonkie import LateChunker
 from pydantic import Field
 
 from .base import BaseChonkieConfig, ChunkData, DocumentChunker, apply_chonkie
 
-__all__ = ["RecursiveChunkerConfig", "RecursiveDocumentChunker"]
+__all__ = ["LateChunkerConfig", "LateDocumentChunker"]
+
+_DEFAULT_EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
 
 
-class RecursiveChunkerConfig(BaseChonkieConfig):
-    """Configuration for the Recursive chunking pipeline."""
+class LateChunkerConfig(BaseChonkieConfig):
+    """Configuration for the Late chunking pipeline."""
 
     chunk_size: int = Field(
         default=2048,
@@ -28,15 +30,14 @@ class RecursiveChunkerConfig(BaseChonkieConfig):
 
 
 @dataclass(slots=True, frozen=True)
-class RecursiveDocumentChunker(DocumentChunker):
-    """Chunker that splits text hierarchically.
+class LateDocumentChunker(DocumentChunker):
+    """Chunker that uses late-interaction embeddings for chunking.
 
-    Uses chonkie's RecursiveChunker for structured splitting by headings,
-    paragraphs, and sentences.
-    Best suited for markdown and other structured documents.
+    Uses chonkie's LateChunker with a ModernBERT embedding model.
+    Best suited for documents needing embedding-aware chunk boundaries.
     """
 
-    name = "recursive"
+    name = "late"
 
     def __call__(
         self,
@@ -44,7 +45,7 @@ class RecursiveDocumentChunker(DocumentChunker):
         /,
         config: dict[str, Any] | None = None,
     ) -> list[ChunkData]:
-        """Split text using hierarchical recursive splitting.
+        """Split text using late-interaction chunking.
 
         Args:
             text: The document text to chunk.
@@ -53,8 +54,9 @@ class RecursiveDocumentChunker(DocumentChunker):
         Returns:
             List of ChunkData objects.
         """
-        parsed = RecursiveChunkerConfig(**(config or {}))
-        chunks = RecursiveChunker(
+        parsed = LateChunkerConfig(**(config or {}))
+        chunks = LateChunker(
+            embedding_model=_DEFAULT_EMBEDDING_MODEL,
             chunk_size=parsed.chunk_size,
             min_characters_per_chunk=parsed.min_characters_per_chunk,
         ).chunk(text)
