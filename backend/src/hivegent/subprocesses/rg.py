@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._base import run
+from .base import run
 
 __all__ = ["RgMatch", "RgSubMatch", "rg_search"]
 

@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from ._base import SubprocessError, run
+from .base import SubprocessError, run
 
 __all__ = ["jq_filter"]
 

@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from pathlib import Path
 
-from ._base import run
+from .base import run
 
 __all__ = ["pandoc_convert"]
 
