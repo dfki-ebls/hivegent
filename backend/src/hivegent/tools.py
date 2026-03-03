@@ -411,38 +411,23 @@ class WriteDocumentTool:
 
 @dataclass(slots=True, frozen=True)
 class JqTool:
-    """Run a jq filter against JSON files in a directory."""
+    """Run a jq filter against a JSON file."""
 
     path: Path
-    extension: str = ".json"
 
-    async def __call__(self, filter: str, filename: str | None = None) -> str:
-        """Run a jq filter expression against JSON files.
+    async def __call__(self, filter: str, filename: str) -> str:
+        """Run a jq filter expression against a JSON file.
 
         Args:
             filter: A jq filter expression.
-            filename: Query a specific file.  If omitted, all files
-                are collected into an array (each enriched with an
-                ``"id"`` field from the filename stem).
+            filename: The file to query.
         """
-        if filename is not None:
-            file_path = (self.path / filename).resolve()
-            if not file_path.is_relative_to(self.path.resolve()):
-                return "Error: path traversal detected."
-            if not file_path.is_file():
-                return f"Error: file '{filename}' not found."
-            data = json.loads(file_path.read_text(encoding="utf-8"))
-        elif not self.path.exists():
-            return "[]"
-        else:
-            items: list[object] = []
-            for f in sorted(self.path.glob(f"*{self.extension}")):
-                if f.is_file():
-                    entry = json.loads(f.read_text(encoding="utf-8"))
-                    if isinstance(entry, dict):
-                        entry["id"] = f.stem
-                    items.append(entry)
-            data = items
+        file_path = (self.path / filename).resolve()
+        if not file_path.is_relative_to(self.path.resolve()):
+            return "Error: path traversal detected."
+        if not file_path.is_file():
+            return f"Error: file '{filename}' not found."
+        data = json.loads(file_path.read_text(encoding="utf-8"))
 
         try:
             result = await jq_filter(filter, data)

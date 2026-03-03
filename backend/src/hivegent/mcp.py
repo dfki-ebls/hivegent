@@ -264,17 +264,14 @@ def list_conversations(
 @mcp_app.tool()
 async def query_conversations(
     filter: str,
-    filename: str | None = None,
+    filename: str,
     factory: ToolFactory = Depends(_get_mcp_tool_factory),
 ) -> str:
-    """Run a jq filter on conversation JSON files.
-
-    When no filename is given, all conversations are collected into
-    an array with an "id" field injected from each filename stem.
+    """Run a jq filter on a conversation JSON file.
 
     Args:
         filter: A jq filter expression.
-        filename: Query a specific conversation file. If omitted, all are queried.
+        filename: The conversation file to query.
     """
     return await factory.query_conversations(filter, filename)
 

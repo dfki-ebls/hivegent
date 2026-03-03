@@ -199,9 +199,9 @@ def list_conversations(
 async def query_conversations(
     ctx: RunContext[UserDeps],
     filter: str,
-    filename: str | None = None,
+    filename: str,
 ) -> str:
-    """Run a jq filter on conversation JSON files.
+    """Run a jq filter on a conversation JSON file.
 
     Each conversation file has this schema::
 
@@ -218,21 +218,15 @@ async def query_conversations(
             ]
         }
 
-    When no ``filename`` is given, all conversations are collected into
-    an array with an ``"id"`` field injected from each filename stem.
-
     Example filters:
 
-    - ``.[].title`` — list all conversation titles.
-    - ``[.[] | select(.title | test("budget"; "i"))]`` — find
-      conversations whose title mentions "budget".
+    - ``.title`` — get the conversation title.
     - ``.messages[].parts[] | select(.content | test("deadline"))``
-      — search message content for "deadline" (single-file mode).
+      — search message content for "deadline".
 
     Args:
         filter: A jq filter expression.
-        filename: Query a specific conversation file (e.g. ``"abc123.json"``).
-            If omitted, all conversations are queried.
+        filename: The conversation file to query (e.g. ``"abc123.json"``).
     """
     return await ctx.deps.tool_factory.query_conversations(filter, filename)
 
