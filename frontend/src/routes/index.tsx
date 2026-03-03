@@ -1,28 +1,25 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { FileSearch, Loader2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { FileSearch, LogIn } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
-import { SignInButton } from "../components/SignInButton";
+import { Button } from "../components/ui/button";
+import { Spinner } from "../components/ui/spinner";
 import { createConversation } from "../lib/api";
-import { useAuth } from "../lib/auth-context";
+import { useOidc } from "../oidc";
 
 export const Route = createFileRoute("/")({
   component: IndexPage,
 });
 
 function IndexPage() {
-  const auth = useAuth();
+  const { isUserLoggedIn, login } = useOidc();
   const navigate = useNavigate();
   const redirectingRef = useRef(false);
-
-  const handlePostSignIn = async () => {
-    const id = await createConversation();
-    await navigate({ to: "/conversations/$id", params: { id } });
-  };
+  const [isSigningIn, setIsSigningIn] = useState(false);
 
   // Auto-redirect authenticated users to a new conversation
   useEffect(() => {
-    if (!auth.isAuthenticated || auth.isLoading || redirectingRef.current) return;
+    if (!isUserLoggedIn || redirectingRef.current) return;
     redirectingRef.current = true;
     createConversation()
       .then((id) => {
@@ -32,13 +29,13 @@ function IndexPage() {
         console.error("Failed to create conversation:", error);
         redirectingRef.current = false;
       });
-  }, [auth.isAuthenticated, auth.isLoading, navigate]);
+  }, [isUserLoggedIn, navigate]);
 
-  // Show loading while auth is initializing or redirecting
-  if (auth.isLoading || auth.isAuthenticated) {
+  // Show loading while redirecting
+  if (isUserLoggedIn) {
     return (
       <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <Spinner className="h-8 w-8 text-muted-foreground" />
       </div>
     );
   }
@@ -55,7 +52,17 @@ function IndexPage() {
           Your intelligent document assistant powered by RAG. Upload documents and chat with your
           knowledge base.
         </p>
-        <SignInButton onSignedIn={handlePostSignIn} />
+        <Button
+          size="lg"
+          disabled={isSigningIn}
+          onClick={() => {
+            setIsSigningIn(true);
+            login().catch(() => setIsSigningIn(false));
+          }}
+        >
+          {isSigningIn ? <Spinner className="mr-2 h-4 w-4" /> : <LogIn className="mr-2 h-4 w-4" />}
+          Sign In
+        </Button>
       </div>
     </div>
   );

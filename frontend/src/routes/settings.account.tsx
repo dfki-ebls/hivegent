@@ -8,6 +8,7 @@ import {
   UserCogIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { Button } from "../components/ui/button";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,19 +19,20 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
-import { Button } from "../components/ui/button";
 import {
   deleteAllConversations,
   deleteAllDocuments,
   deleteAllUserData,
   revokeAllTokens,
 } from "../lib/api";
+import { enforceLogin } from "../oidc";
 import { useConversationsStore } from "../stores/conversations-store";
 import { useSettingsStore } from "../stores/settings-store";
 import { clearAllStorage } from "../stores/storage";
 import { useUserDocumentsStore } from "../stores/user-documents-store";
 
 export const Route = createFileRoute("/settings/account")({
+  beforeLoad: enforceLogin,
   component: AccountPage,
 });
 

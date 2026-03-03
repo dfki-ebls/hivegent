@@ -47,11 +47,7 @@ interface UserDocumentsStore {
   rechunk: (filename: string, spec?: PipelineSpec) => Promise<void>;
   reconvert: (filename: string, options?: ReconvertDocumentOptions) => Promise<void>;
   bulkRechunk: (files: string[], spec?: PipelineSpec) => Promise<void>;
-  bulkReconvert: (
-    files: string[],
-    spec?: PipelineSpec,
-    llm?: LlmConfig,
-  ) => Promise<void>;
+  bulkReconvert: (files: string[], spec?: PipelineSpec, llm?: LlmConfig) => Promise<void>;
   bulkDelete: (files: string[]) => Promise<void>;
   move: (filepath: string, destination: string) => Promise<void>;
   createDir: (path: string) => Promise<void>;

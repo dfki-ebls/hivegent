@@ -17,8 +17,10 @@ import {
 } from "../components/ui/alert-dialog";
 import { createToken, listTokens, revokeToken } from "../lib/api";
 import type { TokenInfo } from "../lib/types";
+import { enforceLogin } from "../oidc";
 
 export const Route = createFileRoute("/settings/tokens")({
+  beforeLoad: enforceLogin,
   component: TokensPage,
 });
 

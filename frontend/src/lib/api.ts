@@ -53,26 +53,9 @@ import {
   UploadDocumentResponseSchema,
 } from "./types";
 
+import { getOidc } from "@/oidc";
+
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-
-// Token provider function set by AuthProvider
-let getAccessToken: (() => Promise<string>) | null = null;
-
-/**
- * Set the auth token provider function.
- * Called by AuthProvider when user is authenticated.
- */
-export function setAuthTokenProvider(provider: () => Promise<string>) {
-  getAccessToken = provider;
-}
-
-/**
- * Clear the auth token provider.
- * Called on logout.
- */
-export function clearAuthTokenProvider() {
-  getAccessToken = null;
-}
 
 /**
  * Make an authenticated fetch request.
@@ -80,9 +63,8 @@ export function clearAuthTokenProvider() {
 async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const headers = new Headers(options.headers);
 
-  if (getAccessToken) {
-    const token = await getAccessToken();
-    headers.set("Authorization", `Bearer ${token}`);
+  for (const [key, value] of Object.entries(await getAuthHeaders())) {
+    headers.set(key, value);
   }
 
   return fetch(url, { ...options, headers });
@@ -92,8 +74,9 @@ async function authFetch(url: string, options: RequestInit = {}): Promise<Respon
  * Get the current auth headers for use with external transports.
  */
 export async function getAuthHeaders(): Promise<Record<string, string>> {
-  if (getAccessToken) {
-    const token = await getAccessToken();
+  const oidc = await getOidc();
+  if (oidc.isUserLoggedIn) {
+    const token = await oidc.getAccessToken();
     return { Authorization: `Bearer ${token}` };
   }
   return {};
@@ -397,7 +380,12 @@ async function parseSseProgressStream<TEvent extends { type: string }, TComplete
       }
 
       if (event.type === "progress") {
-        const p = event as TEvent & { file: string; current: number; total: number; status: string };
+        const p = event as TEvent & {
+          file: string;
+          current: number;
+          total: number;
+          status: string;
+        };
         if (p.status === "failed") {
           failedFiles.push(p.file);
         }

@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/oidc", () => ({
+  getOidc: vi.fn().mockResolvedValue({ isUserLoggedIn: false }),
+}));
+
 vi.mock("@/lib/api", () => ({
   listConversations: vi.fn(),
   deleteConversation: vi.fn(),
   updateConversationTitle: vi.fn(),
   generateConversationTitle: vi.fn(),
-  clearAuthTokenProvider: vi.fn(),
 }));
 
 import { deleteConversation, listConversations } from "@/lib/api";

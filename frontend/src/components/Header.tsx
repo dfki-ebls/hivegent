@@ -1,7 +1,6 @@
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { FileSearch, Key, LogOut, User, UserCog } from "lucide-react";
-import { isOidcConfigured } from "../lib/auth-config";
-import { useAuth } from "../lib/auth-context";
+import { useOidc } from "../oidc";
 import { Button } from "./ui/button";
 import {
   DropdownMenu,
@@ -12,23 +11,15 @@ import {
 } from "./ui/dropdown-menu";
 
 function UserMenu() {
-  const auth = useAuth();
-  const navigate = useNavigate();
+  const oidc = useOidc();
 
-  if (!auth.isAuthenticated) {
+  if (!oidc.isUserLoggedIn) {
     return null;
   }
 
-  const userName = auth.user?.name || auth.user?.email || "User";
-
-  const handleLogout = async () => {
-    await auth.signOut();
-    // For local auth, navigate to home after sign out
-    // For OIDC, signOut triggers a redirect
-    if (!isOidcConfigured()) {
-      await navigate({ to: "/" });
-    }
-  };
+  const { decodedIdToken, logout } = oidc;
+  const userName =
+    decodedIdToken.name ?? decodedIdToken.preferred_username ?? decodedIdToken.email ?? "User";
 
   return (
     <DropdownMenu>
@@ -52,7 +43,10 @@ function UserMenu() {
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleLogout} className="flex items-center gap-2">
+        <DropdownMenuItem
+          onClick={() => logout({ redirectTo: "home" })}
+          className="flex items-center gap-2"
+        >
           <LogOut className="h-4 w-4" />
           Sign out
         </DropdownMenuItem>

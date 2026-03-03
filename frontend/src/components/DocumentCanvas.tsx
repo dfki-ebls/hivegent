@@ -856,10 +856,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     }
   }, [allSelected, visibleFilePaths, clearSelection]);
 
-  const docsByFilename = useMemo(
-    () => new Map(documents.map((d) => [d.filename, d])),
-    [documents],
-  );
+  const docsByFilename = useMemo(() => new Map(documents.map((d) => [d.filename, d])), [documents]);
 
   const selectedReconvertable = useMemo(
     () => [...selectedFiles].filter((f) => docsByFilename.get(f)?.has_original === true),
@@ -977,7 +974,14 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         baseUrl: llmSettings.baseUrl,
       }),
     );
-  }, [selectedReconvertable, clearSelection, storeBulkReconvert, pipelineSpec, visionModel, llmSettings]);
+  }, [
+    selectedReconvertable,
+    clearSelection,
+    storeBulkReconvert,
+    pipelineSpec,
+    visionModel,
+    llmSettings,
+  ]);
 
   const handleBulkDelete = useCallback(() => {
     setPendingDelete({ kind: "bulk", files: [...selectedFiles] });
@@ -1238,9 +1242,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
               <span className="truncate text-sm">{bulkProgress.currentFile}</span>
               <Progress
                 value={
-                  bulkProgress.total > 0
-                    ? (bulkProgress.current / bulkProgress.total) * 100
-                    : 0
+                  bulkProgress.total > 0 ? (bulkProgress.current / bulkProgress.total) * 100 : 0
                 }
                 className="w-24 shrink-0"
               />
@@ -1285,7 +1287,12 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
                 <Trash2 className="h-4 w-4 mr-1" />
                 Delete
               </Button>
-              <Button variant="ghost" size="icon" className="ml-auto h-7 w-7" onClick={clearSelection}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="ml-auto h-7 w-7"
+                onClick={clearSelection}
+              >
                 <X className="h-4 w-4" />
               </Button>
             </>
@@ -1321,9 +1328,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
 
         {!isSearching && getAllGroups().length > 0 && (
           <>
-            <h3 className="mt-6 mb-3 text-sm font-medium text-muted-foreground">
-              Group Knowledge
-            </h3>
+            <h3 className="mt-6 mb-3 text-sm font-medium text-muted-foreground">Group Knowledge</h3>
             <div className="space-y-0.5">
               {getAllGroups().map((groupId) => (
                 <GroupDocumentsSection
@@ -1376,7 +1381,10 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         onCreate={createDir}
       />
 
-      <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
