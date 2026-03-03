@@ -1331,6 +1331,7 @@ all = [
     { name = "kreuzberg" },
     { name = "marker-pdf", extra = ["full"] },
     { name = "markitdown", extra = ["all"] },
+    { name = "pdf-oxide" },
 ]
 code = [
     { name = "chonkie", extra = ["code"] },
@@ -1346,6 +1347,9 @@ marker = [
 ]
 markitdown = [
     { name = "markitdown", extra = ["all"] },
+]
+pdf-oxide = [
+    { name = "pdf-oxide" },
 ]
 semantic = [
     { name = "chonkie", extra = ["semantic"] },
@@ -1371,7 +1375,7 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.120,<1" },
     { name = "fastmcp", specifier = ">=3,<4" },
     { name = "frozendict", specifier = ">=2.4.7" },
-    { name = "hivegent", extras = ["marker", "docling", "kreuzberg", "markitdown", "semantic", "code"], marker = "extra == 'all'" },
+    { name = "hivegent", extras = ["marker", "docling", "kreuzberg", "markitdown", "pdf-oxide", "semantic", "code"], marker = "extra == 'all'" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "joserfc", specifier = ">=1,<2" },
     { name = "kreuzberg", marker = "extra == 'kreuzberg'", specifier = ">=4,<5" },
@@ -1381,13 +1385,14 @@ requires-dist = [
     { name = "markitdown", extras = ["all"], marker = "extra == 'markitdown'", specifier = ">=0.1,<1" },
     { name = "nanoid", specifier = ">=2,<3" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.60b1" },
+    { name = "pdf-oxide", marker = "extra == 'pdf-oxide'", specifier = ">=0.3,<1" },
     { name = "pydantic-ai-slim", extras = ["ui", "openai", "mcp"], specifier = ">=1,<2" },
     { name = "pydantic-settings", specifier = ">=2,<3" },
     { name = "sentence-transformers", specifier = ">=5,<6" },
     { name = "typer", specifier = ">=0.21,<1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.40,<1" },
 ]
-provides-extras = ["marker", "docling", "markitdown", "kreuzberg", "semantic", "code", "all"]
+provides-extras = ["marker", "docling", "markitdown", "kreuzberg", "pdf-oxide", "semantic", "code", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2809,6 +2814,17 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/55/b748445cb4ea6b125626f15379be7c96d1035d4fa3e8fee362fa92298abf/pathable-0.5.0.tar.gz", hash = "sha256:d81938348a1cacb525e7c75166270644782c0fb9c8cecc16be033e71427e0ef1", size = 16655, upload-time = "2026-02-20T08:47:00.748Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/52/96/5a770e5c461462575474468e5af931cff9de036e7c2b4fea23c1c58d2cbe/pathable-0.5.0-py3-none-any.whl", hash = "sha256:646e3d09491a6351a0c82632a09c02cdf70a252e73196b36d8a15ba0a114f0a6", size = 16867, upload-time = "2026-02-20T08:46:59.536Z" },
+]
+
+[[package]]
+name = "pdf-oxide"
+version = "0.3.13"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/6f/27d38715588ad855bd45fffd25b84b89614bd8222cf06d5252862c6c7af8/pdf_oxide-0.3.13-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:5ddee170cb9887b5f9fa6e9cba46219c924ee0907387836c54a1f2d6d4f4bb93", size = 3045214, upload-time = "2026-03-03T03:22:36.484Z" },
+    { url = "https://files.pythonhosted.org/packages/47/f8/b436539d3c88aa0b57d03dbe456204a6eaaec23e949259c7b1a7ca3570ca/pdf_oxide-0.3.13-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:cf8aa3ac39546886d0946fb68988ba8d11cb33517485908c8e8dcecb33c347d3", size = 2878034, upload-time = "2026-03-03T03:22:38.179Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/66/645d507c49fae51a8b9bddcb6ee5ec3b44907592beb94eea737e9a19d3e3/pdf_oxide-0.3.13-cp38-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:8b471c3242c7c6fb4a797e9cbc5838bde1e43b7bfa9990c15347f27b6c7c6ed8", size = 3129369, upload-time = "2026-03-03T03:22:39.625Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/83/26ec095ff656bba694ae1a02a911e08e5c3f3d4d5e6e357235aae9ede974/pdf_oxide-0.3.13-cp38-abi3-win_amd64.whl", hash = "sha256:d4b28b80d24bc6894d402307daaf493fa3a3aa894c72421078786eb8bd2545a9", size = 3152587, upload-time = "2026-03-03T03:22:40.832Z" },
 ]
 
 [[package]]

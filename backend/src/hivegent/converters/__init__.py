@@ -39,6 +39,7 @@ class ConversionPipeline(StrEnum):
     PANDOC = "pandoc"
     MARKITDOWN = "markitdown"
     KREUZBERG = "kreuzberg"
+    PDF_OXIDE = "pdf-oxide"
     TABLE_CHEF = "table-chef"
     TEXT_CHEF = "text-chef"
 
@@ -138,6 +139,16 @@ with optional_dependencies():
         label="Kreuzberg",
         description="Text extraction from 75+ formats with OCR support",
         config_model=KreuzbergConverterConfig,
+    )
+
+with optional_dependencies():
+    from .pdf_oxide import PdfOxideConverter, PdfOxideConverterConfig
+
+    _CONVERTER_CONFIG[ConversionPipeline.PDF_OXIDE] = _ConverterEntry(
+        converter_class=PdfOxideConverter,
+        label="pdf_oxide",
+        description="High-performance Rust-based PDF to markdown converter",
+        config_model=PdfOxideConverterConfig,
     )
 
 with optional_dependencies():
