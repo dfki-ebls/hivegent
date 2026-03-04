@@ -1,6 +1,6 @@
-import { FileText, Loader2, Pencil, RefreshCw } from "lucide-react";
+import { FileText, Pencil, RefreshCw } from "lucide-react";
+import Markdown from "markdown-to-jsx";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Streamdown } from "streamdown";
 
 import { getDocumentChunks, getDocumentContent } from "@/lib/api";
 import {
@@ -22,6 +22,7 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { ScrollArea } from "./ui/scroll-area";
+import { Spinner } from "./ui/spinner";
 import { Textarea } from "./ui/textarea";
 
 interface DocumentDialogProps {
@@ -129,9 +130,9 @@ export function DocumentDialog({
       setViewMode(initialFullDoc || chunk.position.type === "full_document" ? "full-doc" : "chunk");
     } else {
       setActiveChunkId(null);
-      setViewMode(editable ? "full-doc" : "full-doc");
+      setViewMode("full-doc");
     }
-  }, [open, chunk, initialFullDoc, isNew, filenameProp, editable]);
+  }, [open, chunk, initialFullDoc, isNew, filenameProp]);
 
   // --- Fetch managed chunks ---
   const fetchManagedChunks = useCallback(() => {
@@ -183,12 +184,9 @@ export function DocumentDialog({
           if (!isManagedMode) {
             markFullDocument(filename, content, "preview");
           }
-          // Defer the heavy Streamdown render so the main thread stays responsive.
-          startTransition(() => {
-            setFullContent(content);
-            setEditContent(content);
-            setIsLoading(false);
-          });
+          setFullContent(content);
+          setEditContent(content);
+          startTransition(() => setIsLoading(false));
         }
       })
       .catch(() => {
@@ -244,8 +242,8 @@ export function DocumentDialog({
   const hasSidebar = isNew
     ? false
     : isManagedMode
-      ? !managedLoading && managedData != null && managedData.chunks.length > 0
-      : siblingChunks.length > 0 || true; // always show sidebar in fetched mode for full-doc toggle
+      ? managedLoading || (managedData?.chunks.length ?? 0) > 0
+      : true;
 
   // --- Render helpers ---
 
@@ -299,14 +297,14 @@ export function DocumentDialog({
                 if (isNew) {
                   onOpenChange(false);
                 } else {
-                  setViewMode("full-doc");
+                  startTransition(() => setViewMode("full-doc"));
                 }
               }}
             >
               Cancel
             </Button>
             <Button onClick={handleSave} disabled={isSaving || !editFilename.trim()}>
-              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
+              {isSaving ? <Spinner /> : "Save"}
             </Button>
           </DialogFooter>
         </div>
@@ -316,7 +314,7 @@ export function DocumentDialog({
     if (isLoading) {
       return (
         <div className="flex flex-1 items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <Spinner className="size-8 text-muted-foreground" />
         </div>
       );
     }
@@ -324,7 +322,7 @@ export function DocumentDialog({
     // Full-doc markdown view
     if (viewMode === "full-doc") {
       if (!fullContent) {
-        const isBinary = filename && !filename.toLowerCase().endsWith(".md");
+        const isBinary = !filename.toLowerCase().endsWith(".md");
         return (
           <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
             {isBinary ? "Binary file — preview not available" : "Document content unavailable"}
@@ -334,7 +332,7 @@ export function DocumentDialog({
       return (
         <ScrollArea className="flex-1 min-h-0">
           <div className="prose prose-sm dark:prose-invert max-w-none p-4">
-            <Streamdown>{fullContent}</Streamdown>
+            <Markdown>{fullContent}</Markdown>
           </div>
         </ScrollArea>
       );
@@ -384,7 +382,7 @@ export function DocumentDialog({
       if (managedLoading) {
         return (
           <div className="w-56 shrink-0 border-r flex items-center justify-center">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <Spinner className="size-5 text-muted-foreground" />
           </div>
         );
       }
@@ -407,7 +405,7 @@ export function DocumentDialog({
             }`}
             onClick={() => {
               setManagedActiveIndex(null);
-              setViewMode("full-doc");
+              startTransition(() => setViewMode("full-doc"));
             }}
           >
             <FileText className="h-3 w-3 shrink-0" />
@@ -458,7 +456,7 @@ export function DocumentDialog({
           className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
             viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
           }`}
-          onClick={() => setViewMode("full-doc")}
+          onClick={() => startTransition(() => setViewMode("full-doc"))}
         >
           <FileText className="h-3 w-3 shrink-0" />
           <span className="font-medium">Full document</span>
