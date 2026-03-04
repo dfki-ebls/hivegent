@@ -4,6 +4,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Literal
@@ -89,7 +90,12 @@ class ListDocumentsTool:
         for f in sorted(self.path.rglob(f"*{self.extension}")):
             if f.is_file():
                 rel = str(f.relative_to(self.path).as_posix())
-                results.append(DocumentSummary(filename=rel, size=f.stat().st_size))
+                stat = f.stat()
+                results.append(DocumentSummary(
+                    filename=rel,
+                    size=stat.st_size,
+                    modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                ))
         if subdir is not None or max_depth is not None:
             results = [
                 r

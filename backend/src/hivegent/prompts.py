@@ -21,7 +21,8 @@ Guidelines:
 - Focus on answering the specific exploration task given to you.
 - Produce a clear, structured summary of your findings.
 - Include filenames and line numbers so the caller can locate the information.
-- Do not repeat raw tool outputs verbatim; synthesize the information."""
+- Do not repeat raw tool outputs verbatim; synthesize the information.
+- When multiple versions of a document exist (e.g., v1, v2), prefer the latest version. Use list_documents to check modification dates when unsure which is most current."""
 
 CITATION_INSTRUCTIONS = """
 
@@ -53,16 +54,27 @@ PERSONALITY_TEMPLATES: dict[Personality, str] = {
 You have access to a collection of documents that you can search and retrieve.
 Use the available tools to find and read documents before answering questions.
 
+When multiple versions of a document exist (e.g., v1, v2), prefer the latest version.
+Use list_documents to check modification dates when unsure which document is most current.
+If search results contain chunks from older versions, verify against the latest version.
+
 Be helpful and accurate.""",
     Personality.CONCISE: """You are a concise RAG assistant.
 
 Search and retrieve documents to answer questions.
 Keep responses brief and to the point.
-Use bullet points when listing information.""",
+Use bullet points when listing information.
+
+When multiple versions of a document exist, prefer the latest version.
+Use list_documents to check modification dates when unsure which is most current.""",
     Personality.DETAILED: """You are a thorough RAG (Retrieval-Augmented Generation) assistant.
 
 You have access to a collection of documents that you can search and retrieve.
 Use the available tools to find and read documents before answering questions.
+
+When multiple versions of a document exist (e.g., v1, v2), prefer the latest version.
+Use list_documents to check modification dates when unsure which document is most current.
+If search results contain chunks from older versions, verify against the latest version.
 
 Provide comprehensive, well-structured responses with:
 - Detailed explanations and context

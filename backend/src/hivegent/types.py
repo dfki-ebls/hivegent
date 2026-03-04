@@ -233,6 +233,7 @@ class DocumentSummary(BaseModel):
 
     filename: str
     size: int
+    modified_at: datetime | None = None
 
 
 class GrepMatch(BaseModel):
