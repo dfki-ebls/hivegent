@@ -29,7 +29,7 @@ export const { bootstrapOidc, useOidc, getOidc, enforceLogin, OidcInitialization
 const useMock =
   import.meta.env.VITE_OIDC_USE_MOCK === "true" || !import.meta.env.VITE_OIDC_ISSUER_URI;
 
-bootstrapOidc(
+void bootstrapOidc(
   useMock
     ? {
         implementation: "mock",
