@@ -1,5 +1,5 @@
 import { FileText, Loader2, Pencil, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 
 import { getDocumentChunks, getDocumentContent } from "@/lib/api";
@@ -180,12 +180,15 @@ export function DocumentDialog({
     fetcher(filename)
       .then((content) => {
         if (!cancelled) {
-          setFullContent(content);
-          setEditContent(content);
           if (!isManagedMode) {
             markFullDocument(filename, content, "preview");
           }
-          setIsLoading(false);
+          // Defer the heavy Streamdown render so the main thread stays responsive.
+          startTransition(() => {
+            setFullContent(content);
+            setEditContent(content);
+            setIsLoading(false);
+          });
         }
       })
       .catch(() => {

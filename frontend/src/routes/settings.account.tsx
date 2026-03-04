@@ -74,8 +74,7 @@ function DangerZoneSection() {
   const [confirmAction, setConfirmAction] = useState<DangerAction | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const fetchConversations = useConversationsStore((s) => s.fetchConversations);
-  const fetchDocuments = useUserDocumentsStore((s) => s.fetchDocuments);
-  const fetchDirectoryTree = useUserDocumentsStore((s) => s.fetchDirectoryTree);
+  const refreshDocuments = useUserDocumentsStore((s) => s.refresh);
 
   const actionInfo = confirmAction ? DANGER_ACTIONS[confirmAction] : null;
 
@@ -90,8 +89,7 @@ function DangerZoneSection() {
           break;
         case "documents":
           await deleteAllDocuments();
-          await fetchDocuments();
-          await fetchDirectoryTree();
+          await refreshDocuments();
           break;
         case "tokens":
           await revokeAllTokens();

@@ -70,6 +70,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Progress } from "./ui/progress";
 import { ScrollArea } from "./ui/scroll-area";
+import { Spinner } from "./ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 // --- Utility functions ---
@@ -314,7 +315,7 @@ function ErrorBanner({ message, onDismiss }: ErrorBannerProps) {
 
 interface UploadAreaProps {
   isDragging: boolean;
-  isLoading: boolean;
+  isUploading: boolean;
   uploadProgress: UploadProgress | null;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   directoryInputRef: React.RefObject<HTMLInputElement | null>;
@@ -334,7 +335,7 @@ interface UploadAreaProps {
 
 function UploadArea({
   isDragging,
-  isLoading,
+  isUploading,
   uploadProgress,
   fileInputRef,
   directoryInputRef,
@@ -420,15 +421,15 @@ function UploadArea({
           onChange={onZipInputChange}
         />
         <div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={isLoading}>
+          <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={isUploading}>
             <Paperclip className="h-4 w-4 mr-1" />
             Select Files
           </Button>
-          <Button variant="secondary" size="sm" onClick={onSelectDirectory} disabled={isLoading}>
+          <Button variant="secondary" size="sm" onClick={onSelectDirectory} disabled={isUploading}>
             <FolderOpen className="h-4 w-4 mr-1" />
             Upload Folder
           </Button>
-          <Button variant="secondary" size="sm" onClick={onSelectZip} disabled={isLoading}>
+          <Button variant="secondary" size="sm" onClick={onSelectZip} disabled={isUploading}>
             <Archive className="h-4 w-4 mr-1" />
             Upload ZIP
           </Button>
@@ -438,11 +439,11 @@ function UploadArea({
             Or create and edit documents directly in the browser
           </p>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={onNewDocument} disabled={isLoading}>
+            <Button variant="outline" size="sm" onClick={onNewDocument} disabled={isUploading}>
               <Plus className="h-4 w-4 mr-1" />
               New Document
             </Button>
-            <Button variant="outline" size="sm" onClick={onNewFolder} disabled={isLoading}>
+            <Button variant="outline" size="sm" onClick={onNewFolder} disabled={isUploading}>
               <FolderPlus className="h-4 w-4 mr-1" />
               New Folder
             </Button>
@@ -456,7 +457,7 @@ function UploadArea({
 interface PipelineSettingsBarProps {
   conversionPipeline: ConversionPipeline;
   chunkingPipeline: ChunkingPipeline;
-  isLoading: boolean;
+  isBulkOperating: boolean;
   onConversionPipelineChange: (pipeline: ConversionPipeline) => void;
   onChunkingPipelineChange: (pipeline: ChunkingPipeline) => void;
 }
@@ -464,7 +465,7 @@ interface PipelineSettingsBarProps {
 function PipelineSettingsBar({
   conversionPipeline,
   chunkingPipeline,
-  isLoading,
+  isBulkOperating,
   onConversionPipelineChange,
   onChunkingPipelineChange,
 }: PipelineSettingsBarProps) {
@@ -473,12 +474,12 @@ function PipelineSettingsBar({
       <ConversionPipelineSelector
         value={conversionPipeline}
         onChange={onConversionPipelineChange}
-        disabled={isLoading}
+        disabled={isBulkOperating}
       />
       <ChunkingPipelineSelector
         value={chunkingPipeline}
         onChange={onChunkingPipelineChange}
-        disabled={isLoading}
+        disabled={isBulkOperating}
       />
     </div>
   );
@@ -486,7 +487,7 @@ function PipelineSettingsBar({
 
 interface DocumentListItemProps {
   doc: DocumentInfo;
-  isLoading: boolean;
+  isMutating: boolean;
   onEdit: () => void;
   onIncludeDocument: () => void;
   onExcludeDocument: () => void;
@@ -498,7 +499,7 @@ interface DocumentListItemProps {
 
 function DocumentListItem({
   doc,
-  isLoading,
+  isMutating,
   onEdit,
   onIncludeDocument,
   onExcludeDocument,
@@ -525,6 +526,7 @@ function DocumentListItem({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <p className="truncate font-medium text-sm">{doc.filename}</p>
+          {isMutating && <Spinner className="size-3 shrink-0 text-muted-foreground" />}
           {doc.chunk_count != null && (
             <Badge variant="outline" className="shrink-0 text-xs gap-1">
               <Scissors className="h-3 w-3" />
@@ -545,7 +547,7 @@ function DocumentListItem({
             e.stopPropagation();
             onReconvert();
           }}
-          disabled={isLoading}
+          disabled={isMutating}
         >
           <RotateCcw className="h-4 w-4" />
         </Button>
@@ -558,7 +560,6 @@ function DocumentListItem({
           e.stopPropagation();
           onIncludeDocument();
         }}
-        disabled={isLoading}
       >
         <Eye className="h-4 w-4" />
       </Button>
@@ -570,7 +571,6 @@ function DocumentListItem({
           e.stopPropagation();
           onExcludeDocument();
         }}
-        disabled={isLoading}
       >
         <EyeOff className="h-4 w-4" />
       </Button>
@@ -582,7 +582,7 @@ function DocumentListItem({
           e.stopPropagation();
           onRemove();
         }}
-        disabled={isLoading}
+        disabled={isMutating}
       >
         <Trash2 className="h-4 w-4 text-destructive" />
       </Button>
@@ -699,7 +699,6 @@ function GroupDocumentsSection({
           <div className="ml-4">
             <DirectoryTreeView
               entry={tree.root}
-              isLoading={false}
               onEditFile={(path) => onViewFile(groupId, path)}
               onInclude={handleInclude}
               onExclude={handleExclude}
@@ -756,12 +755,13 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const {
     documents,
     directoryTree,
-    isLoading,
+    mutatingPaths,
+    isUploading,
+    hasFetched,
     uploadProgress,
     bulkProgress,
     error,
-    fetchDocuments,
-    fetchDirectoryTree,
+    refresh,
     upload,
     uploadMultiple,
     uploadCol,
@@ -878,9 +878,8 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   );
 
   useEffect(() => {
-    void fetchDocuments();
-    void fetchDirectoryTree();
-  }, [fetchDocuments, fetchDirectoryTree]);
+    void refresh();
+  }, [refresh]);
 
   // --- Dialog handlers ---
 
@@ -916,10 +915,9 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     async (filename: string, content: string) => {
       const file = new File([content], filename, { type: "text/plain" });
       await uploadDocument(filename, file, { spec: pipelineSpec });
-      await fetchDocuments();
-      await fetchDirectoryTree();
+      await refresh();
     },
-    [fetchDocuments, fetchDirectoryTree, pipelineSpec],
+    [refresh, pipelineSpec],
   );
 
   // --- Include / exclude handlers ---
@@ -1161,7 +1159,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
           <DocumentListItem
             key={doc.filename}
             doc={doc}
-            isLoading={isLoading}
+            isMutating={mutatingPaths.has(doc.filename)}
             onEdit={() => handleEdit(doc.filename)}
             onIncludeDocument={() => handleInclude(doc.filename)}
             onExcludeDocument={() => handleExclude(doc.filename)}
@@ -1202,7 +1200,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     return (
       <DirectoryTreeView
         entry={directoryTree.root}
-        isLoading={isLoading}
+        mutatingPaths={mutatingPaths}
         onEditFile={handleEdit}
         onInclude={handleInclude}
         onExclude={handleExclude}
@@ -1224,7 +1222,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
 
       <UploadArea
         isDragging={isDragging}
-        isLoading={isLoading}
+        isUploading={isUploading}
         uploadProgress={uploadProgress}
         fileInputRef={fileInputRef}
         directoryInputRef={directoryInputRef}
@@ -1245,7 +1243,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       <PipelineSettingsBar
         conversionPipeline={conversionPipeline}
         chunkingPipeline={chunkingPipeline}
-        isLoading={isLoading}
+        isBulkOperating={bulkProgress !== null}
         onConversionPipelineChange={setConversionPipeline}
         onChunkingPipelineChange={setChunkingPipeline}
       />
@@ -1280,7 +1278,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
                     variant="secondary"
                     size="sm"
                     onClick={() => void handleBulkReconvert()}
-                    disabled={isLoading}
+                    disabled={bulkProgress !== null || isUploading}
                   >
                     <RotateCcw className="h-4 w-4 mr-1" />
                     Reconvert
@@ -1290,7 +1288,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
                   variant="secondary"
                   size="sm"
                   onClick={() => void handleBulkRechunk()}
-                  disabled={isLoading}
+                  disabled={bulkProgress !== null || isUploading}
                 >
                   <Scissors className="h-4 w-4 mr-1" />
                   Rechunk
@@ -1299,7 +1297,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
                   variant="destructive"
                   size="sm"
                   onClick={handleBulkDelete}
-                  disabled={isLoading}
+                  disabled={bulkProgress !== null || isUploading}
                 >
                   <Trash2 className="h-4 w-4 mr-1" />
                   Delete
@@ -1324,34 +1322,44 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       </div>
 
       <div className="px-4 pb-4">
-        <div className="mb-3 flex items-center gap-2">
-          <Checkbox
-            checked={allSelected ? true : someSelected ? "indeterminate" : false}
-            onCheckedChange={toggleSelectAll}
-          />
-          <h3 className="text-sm font-medium text-muted-foreground">
-            {isSearching
-              ? `Found ${filteredDocuments.length} of ${documents.length}`
-              : `Your Documents (${documents.length})`}
-          </h3>
-        </div>
-        {isSearching ? renderFlatList() : renderTreeView()}
-
-        {!isSearching && getAllGroups().length > 0 && (
+        {!hasFetched ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
           <>
-            <h3 className="mt-6 mb-3 text-sm font-medium text-muted-foreground">Group Knowledge</h3>
-            <div className="space-y-0.5">
-              {getAllGroups().map((groupId) => (
-                <GroupDocumentsSection
-                  key={groupId}
-                  groupId={groupId}
-                  canWrite={canWriteGroup(groupId)}
-                  onInclude={handleInclude}
-                  onExclude={handleExclude}
-                  onViewFile={handleViewGroupFile}
-                />
-              ))}
+            <div className="mb-3 flex items-center gap-2">
+              <Checkbox
+                checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                onCheckedChange={toggleSelectAll}
+              />
+              <h3 className="text-sm font-medium text-muted-foreground">
+                {isSearching
+                  ? `Found ${filteredDocuments.length} of ${documents.length}`
+                  : `Your Documents (${documents.length})`}
+              </h3>
             </div>
+            {isSearching ? renderFlatList() : renderTreeView()}
+
+            {!isSearching && getAllGroups().length > 0 && (
+              <>
+                <h3 className="mt-6 mb-3 text-sm font-medium text-muted-foreground">
+                  Group Knowledge
+                </h3>
+                <div className="space-y-0.5">
+                  {getAllGroups().map((groupId) => (
+                    <GroupDocumentsSection
+                      key={groupId}
+                      groupId={groupId}
+                      canWrite={canWriteGroup(groupId)}
+                      onInclude={handleInclude}
+                      onExclude={handleExclude}
+                      onViewFile={handleViewGroupFile}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
           </>
         )}
       </div>

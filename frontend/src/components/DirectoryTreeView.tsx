@@ -20,6 +20,7 @@ import { useSettingsStore } from "../stores/settings-store";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
+import { Spinner } from "./ui/spinner";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -29,7 +30,7 @@ function formatFileSize(bytes: number): string {
 
 interface DirectoryTreeViewProps {
   entry: DirectoryEntry;
-  isLoading: boolean;
+  mutatingPaths?: Set<string>;
   onEditFile: (path: string) => void;
   onInclude: (path: string) => void;
   onExclude: (path: string) => void;
@@ -46,7 +47,7 @@ interface DirectoryTreeViewProps {
 
 function FileRow({
   entry,
-  isLoading,
+  isMutating,
   depth,
   onEdit,
   onInclude,
@@ -59,7 +60,7 @@ function FileRow({
   onToggleSelect,
 }: {
   entry: DirectoryEntry;
-  isLoading: boolean;
+  isMutating: boolean;
   depth: number;
   onEdit: () => void;
   onInclude: () => void;
@@ -92,6 +93,7 @@ function FileRow({
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 truncate text-sm">{entry.name}</span>
         </button>
+        {isMutating && <Spinner className="size-3 shrink-0 text-muted-foreground" />}
       </div>
       <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
         <Button
@@ -100,7 +102,6 @@ function FileRow({
           className="h-6 w-6"
           title="Include in chat"
           onClick={onInclude}
-          disabled={isLoading}
         >
           <Eye className="h-3 w-3" />
         </Button>
@@ -110,7 +111,6 @@ function FileRow({
           className="h-6 w-6"
           title="Exclude from chat"
           onClick={onExclude}
-          disabled={isLoading}
         >
           <EyeOff className="h-3 w-3" />
         </Button>
@@ -121,7 +121,7 @@ function FileRow({
             className="h-6 w-6"
             title="Reconvert from original"
             onClick={onReconvert}
-            disabled={isLoading}
+            disabled={isMutating}
           >
             <RotateCcw className="h-3 w-3" />
           </Button>
@@ -133,7 +133,7 @@ function FileRow({
             className="h-6 w-6"
             title="Download original"
             onClick={onDownloadOriginal}
-            disabled={isLoading}
+            disabled={isMutating}
           >
             <Download className="h-3 w-3" />
           </Button>
@@ -145,7 +145,7 @@ function FileRow({
             className="h-6 w-6"
             title="Move"
             onClick={onMove}
-            disabled={isLoading}
+            disabled={isMutating}
           >
             <Move className="h-3 w-3" />
           </Button>
@@ -157,7 +157,7 @@ function FileRow({
             className="h-6 w-6"
             title="Delete"
             onClick={onRemove}
-            disabled={isLoading}
+            disabled={isMutating}
           >
             <Trash2 className="h-3 w-3 text-destructive" />
           </Button>
@@ -181,7 +181,7 @@ function FileRow({
 function DirectoryRow({
   entry,
   isExpanded,
-  isLoading,
+  isMutating,
   depth,
   fileCount,
   onToggle,
@@ -192,7 +192,7 @@ function DirectoryRow({
 }: {
   entry: DirectoryEntry;
   isExpanded: boolean;
-  isLoading: boolean;
+  isMutating: boolean;
   depth: number;
   fileCount: number;
   onToggle: () => void;
@@ -209,15 +209,18 @@ function DirectoryRow({
       className="grid w-full grid-cols-[minmax(0,1fr)_8rem_4rem_3.5rem] items-center gap-x-2 rounded-md px-2 py-1.5 hover:bg-muted/50 group"
       style={{ paddingLeft: `${depth * 20 + 8}px` }}
     >
-      <button
-        type="button"
-        className="flex items-center gap-2 min-w-0 text-left cursor-pointer"
-        onClick={onToggle}
-      >
-        <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 truncate text-sm font-medium">{entry.name}</span>
-      </button>
+      <div className="flex items-center gap-2 min-w-0">
+        <button
+          type="button"
+          className="flex items-center gap-2 min-w-0 text-left cursor-pointer"
+          onClick={onToggle}
+        >
+          <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate text-sm font-medium">{entry.name}</span>
+        </button>
+        {isMutating && <Spinner className="size-3 shrink-0 text-muted-foreground" />}
+      </div>
       <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
         <Button
           variant="ghost"
@@ -225,7 +228,6 @@ function DirectoryRow({
           className="h-6 w-6"
           title="Include directory in chat"
           onClick={onIncludeDir}
-          disabled={isLoading}
         >
           <Eye className="h-3 w-3" />
         </Button>
@@ -235,7 +237,6 @@ function DirectoryRow({
           className="h-6 w-6"
           title="Exclude directory from chat"
           onClick={onExcludeDir}
-          disabled={isLoading}
         >
           <EyeOff className="h-3 w-3" />
         </Button>
@@ -246,7 +247,7 @@ function DirectoryRow({
             className="h-6 w-6"
             title="Create subdirectory"
             onClick={onCreateSubdir}
-            disabled={isLoading}
+            disabled={isMutating}
           >
             <FolderPlus className="h-3 w-3" />
           </Button>
@@ -258,7 +259,7 @@ function DirectoryRow({
             className="h-6 w-6"
             title="Delete directory"
             onClick={onDeleteDir}
-            disabled={isLoading}
+            disabled={isMutating}
           >
             <Trash2 className="h-3 w-3 text-destructive" />
           </Button>
@@ -281,9 +282,11 @@ function countFiles(entry: DirectoryEntry): number {
   return (entry.children ?? []).reduce((sum, child) => sum + countFiles(child), 0);
 }
 
+const EMPTY_SET = new Set<string>();
+
 export function DirectoryTreeView({
   entry,
-  isLoading,
+  mutatingPaths = EMPTY_SET,
   onEditFile,
   onInclude,
   onExclude,
@@ -314,7 +317,7 @@ export function DirectoryTreeView({
         <FileRow
           key={child.path}
           entry={child}
-          isLoading={isLoading}
+          isMutating={mutatingPaths.has(child.path)}
           depth={currentDepth}
           onEdit={() => onEditFile(child.path)}
           onInclude={() => onInclude(child.path)}
@@ -337,7 +340,7 @@ export function DirectoryTreeView({
         <DirectoryRow
           entry={child}
           isExpanded={isExpanded}
-          isLoading={isLoading}
+          isMutating={mutatingPaths.has(child.path)}
           depth={currentDepth}
           fileCount={countFiles(child)}
           onToggle={() => toggleDir(child.path)}
