@@ -32,6 +32,7 @@ class ConversionPipeline(StrEnum):
     """Available conversion pipelines."""
 
     AUTO = "auto"
+    NONE = "none"
     LLM = "llm"
     MARKER = "marker"
     DOCLING = "docling"
@@ -298,6 +299,12 @@ def get_conversion_pipelines_info() -> list[ConversionPipelineInfo]:
             label="Auto",
             description="Automatically selects the best pipeline for each file",
             extensions=all_extensions,
+        ),
+        ConversionPipelineInfo(
+            value=ConversionPipeline.NONE.value,
+            label="None",
+            description="Store file as-is without conversion",
+            extensions=[],
         ),
     ]
     for pipeline, entry in _CONVERTER_CONFIG.items():

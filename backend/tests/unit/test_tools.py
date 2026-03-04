@@ -66,6 +66,15 @@ class TestListDocumentsTool:
         assert "a.md" in filenames
         assert "b.md" not in filenames
 
+    def test_empty_extension_lists_all(self, tmp_path: Path) -> None:
+        (tmp_path / "a.md").write_text("hello")
+        (tmp_path / "b.txt").write_text("world")
+        (tmp_path / "c.png").write_bytes(b"\x89PNG")
+        tool = ListDocumentsTool(path=tmp_path, extension="")
+        result = tool()
+        filenames = {r.filename for r in result}
+        assert filenames == {"a.md", "b.txt", "c.png"}
+
     def test_nonexistent_dir(self, tmp_path: Path) -> None:
         tool = ListDocumentsTool(path=tmp_path / "nonexistent", extension=".md")
         assert tool() == []
@@ -144,6 +153,13 @@ class TestGlobDocumentsTool:
         tool = GlobDocumentsTool(path=tmp_path, extension=".txt")
         result = tool("*")
         assert result == ["data.txt"]
+
+    def test_empty_extension_matches_all(self, tmp_path: Path) -> None:
+        (tmp_path / "a.md").write_text("a")
+        (tmp_path / "b.txt").write_text("b")
+        tool = GlobDocumentsTool(path=tmp_path, extension="")
+        result = tool("*")
+        assert set(result) == {"a.md", "b.txt"}
 
 
 class TestSearchTool:
@@ -282,6 +298,12 @@ class TestWriteDocumentTool:
         tool = WriteDocumentTool(path=tmp_path, extension=".md")
         result = await tool("doc.txt", "content")
         assert "Error" in result
+
+    async def test_empty_extension_allows_any(self, tmp_path: Path) -> None:
+        tool = WriteDocumentTool(path=tmp_path, extension="")
+        result = await tool("data.txt", "content")
+        assert "Wrote" in result
+        assert (tmp_path / "data.txt").read_text() == "content"
 
     async def test_calls_on_write(self, tmp_path: Path) -> None:
         written: list[str] = []

@@ -954,6 +954,21 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     [storeReconvert, pipelineSpec, visionModel, llmSettings],
   );
 
+  const handleDownloadOriginal = useCallback(async (filepath: string) => {
+    try {
+      const { downloadOriginal } = await import("../lib/api");
+      const blob = await downloadOriginal(filepath);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filepath.split("/").pop() ?? "original";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // silently ignore download errors
+    }
+  }, []);
+
   // --- Bulk operation handlers ---
 
   const handleBulkRechunk = useCallback(async () => {
@@ -1192,6 +1207,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         onInclude={handleInclude}
         onExclude={handleExclude}
         onReconvert={handleReconvert}
+        onDownloadOriginal={handleDownloadOriginal}
         onRemoveFile={(path) => setPendingDelete({ kind: "file", path })}
         onMoveFile={(path) => setMoveFilePath(path)}
         onCreateSubdir={handleCreateSubdir}

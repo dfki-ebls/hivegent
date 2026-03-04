@@ -58,7 +58,7 @@ def check_store_consistency(store: Casebase) -> ConsistencyReport:
     """
     subdir = "users" if store.kind == "user" else "groups"
     base = settings.data_dir / subdir / store.id
-    docs_dir = base / "documents"
+    docs_dir = base / "workspace"
     chunks_dir = base / "chunks"
 
     # Collect document relative paths and their mtimes.
@@ -108,7 +108,7 @@ async def fix_store_consistency(report: ConsistencyReport) -> None:
         return
 
     store = report.store
-    docs_dir = store.documents_dir(settings.data_dir)
+    docs_dir = store.workspace_dir(settings.data_dir)
 
     for path in report.orphaned_chunks:
         try:
@@ -187,8 +187,8 @@ async def check_and_fix_all_stores() -> None:
             except ValueError:
                 logger.debug("Skipping invalid user directory: %s", entry.name)
                 continue
-            if not (entry / "documents").is_dir():
-                logger.debug("Skipping user without documents: %s", entry.name)
+            if not (entry / "workspace").is_dir():
+                logger.debug("Skipping user without workspace: %s", entry.name)
                 continue
             await _check_and_fix_store(Casebase(kind="user", id=entry.name))
 
@@ -203,8 +203,8 @@ async def check_and_fix_all_stores() -> None:
             except ValueError:
                 logger.debug("Skipping invalid group directory: %s", entry.name)
                 continue
-            if not (entry / "documents").is_dir():
-                logger.debug("Skipping group without documents: %s", entry.name)
+            if not (entry / "workspace").is_dir():
+                logger.debug("Skipping group without workspace: %s", entry.name)
                 continue
             await _check_and_fix_store(Casebase(kind="group", id=entry.name))
 

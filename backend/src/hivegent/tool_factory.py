@@ -11,7 +11,7 @@ from pydantic_ai.mcp import MCPServerStreamableHTTP
 from pydantic_ai.toolsets import AbstractToolset
 
 from .chunks import load_chunked_document, rechunk_document
-from .config import DOCUMENT_EXTENSION, settings
+from .config import settings
 from .messages import list_conversations as _list_conversations
 from .retrieval import search_multi
 from .store import Casebase
@@ -53,8 +53,8 @@ class ToolFactory:
     def list_documents(self) -> ListDocumentsTool:
         """Create a ListDocumentsTool for the user's document directory."""
         return ListDocumentsTool(
-            path=self.store.documents_dir(settings.data_dir),
-            extension=DOCUMENT_EXTENSION,
+            path=self.store.workspace_dir(settings.data_dir),
+            extension="",
             document_filter=self.document_filter,
         )
 
@@ -62,7 +62,7 @@ class ToolFactory:
     def get_document(self) -> GetDocumentTool:
         """Create a GetDocumentTool for the user's document directory."""
         return GetDocumentTool(
-            path=self.store.documents_dir(settings.data_dir),
+            path=self.store.workspace_dir(settings.data_dir),
             document_filter=self.document_filter,
         )
 
@@ -70,7 +70,7 @@ class ToolFactory:
     def get_document_lines(self) -> GetDocumentLinesTool:
         """Create a GetDocumentLinesTool for the user's document directory."""
         return GetDocumentLinesTool(
-            path=self.store.documents_dir(settings.data_dir),
+            path=self.store.workspace_dir(settings.data_dir),
             document_filter=self.document_filter,
         )
 
@@ -78,8 +78,8 @@ class ToolFactory:
     def glob_documents(self) -> GlobDocumentsTool:
         """Create a GlobDocumentsTool for the user's document directory."""
         return GlobDocumentsTool(
-            path=self.store.documents_dir(settings.data_dir),
-            extension=DOCUMENT_EXTENSION,
+            path=self.store.workspace_dir(settings.data_dir),
+            extension="",
             document_filter=self.document_filter,
         )
 
@@ -87,7 +87,7 @@ class ToolFactory:
     def grep(self) -> GrepTool:
         """Create a GrepTool for the user's document directory."""
         return GrepTool(
-            path=self.store.documents_dir(settings.data_dir),
+            path=self.store.workspace_dir(settings.data_dir),
             document_filter=self.document_filter,
         )
 
@@ -167,7 +167,7 @@ class ToolFactory:
             await rechunk_document(store, filename)
 
         return EditDocumentTool(
-            path=store.documents_dir(settings.data_dir),
+            path=store.workspace_dir(settings.data_dir),
             document_filter=self.document_filter,
             on_write=_on_write,
         )
@@ -181,8 +181,8 @@ class ToolFactory:
             await rechunk_document(store, filename)
 
         return WriteDocumentTool(
-            path=store.documents_dir(settings.data_dir),
-            extension=DOCUMENT_EXTENSION,
+            path=store.workspace_dir(settings.data_dir),
+            extension="",
             document_filter=self.document_filter,
             on_write=_on_write,
         )

@@ -21,7 +21,7 @@ async def _seed_and_get_deps(
     annotations: list[dict[str, Any]],
 ) -> UserDeps:
     """Seed documents and return UserDeps."""
-    docs_dir = user_store.documents_dir(data_dir)
+    docs_dir = user_store.workspace_dir(data_dir)
 
     for ann in annotations:
         for doc_name in ann["relevant_documents"]:

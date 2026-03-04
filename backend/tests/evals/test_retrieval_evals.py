@@ -18,7 +18,7 @@ async def _seed_store(
     annotations: list[dict[str, Any]],
 ) -> None:
     """Seed documents and chunks from annotations fixture."""
-    docs_dir = store.documents_dir(data_dir)
+    docs_dir = store.workspace_dir(data_dir)
 
     # Build document content from annotations
     doc_contents: dict[str, str] = {}

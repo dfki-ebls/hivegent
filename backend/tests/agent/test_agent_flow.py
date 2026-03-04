@@ -35,7 +35,7 @@ async def test_explore_agent_calls_tools(data_dir: Path) -> None:
     deps = _make_deps(data_dir)
 
     # Create a document so list_documents has something to return
-    docs_dir = deps.store.documents_dir(data_dir)
+    docs_dir = deps.store.workspace_dir(data_dir)
     (docs_dir / "test.md").write_text("hello world")
 
     with capture_run_messages() as messages:

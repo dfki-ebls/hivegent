@@ -190,8 +190,8 @@ async def rechunk_document(
         filename: The relative document path.
         chunking: Optional chunking spec (pipeline + config).
     """
-    docs_dir = store.documents_dir(settings.data_dir)
-    file_path = docs_dir / filename
+    workspace = store.workspace_dir(settings.data_dir)
+    file_path = workspace / filename
     try:
         text_content = file_path.read_text(encoding="utf-8")
         await chunk_document(store, filename, text_content, chunking)

@@ -223,19 +223,19 @@ class Settings(BaseSettings):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def get_user_documents_dir(self, user_id: str) -> Path:
-        """Get the documents directory for a specific user.
+    def get_user_workspace_dir(self, user_id: str) -> Path:
+        """Get the workspace directory for a specific user.
 
         Args:
             user_id: The user ID.
 
         Returns:
-            Path to the user's documents directory.
+            Path to the user's workspace directory.
 
         Raises:
             ValueError: If the user ID is invalid.
         """
-        path = self.get_user_dir(user_id) / "documents"
+        path = self.get_user_dir(user_id) / "workspace"
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -341,19 +341,19 @@ class Settings(BaseSettings):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def get_group_documents_dir(self, group_id: str) -> Path:
-        """Get the documents directory for a specific group.
+    def get_group_workspace_dir(self, group_id: str) -> Path:
+        """Get the workspace directory for a specific group.
 
         Args:
             group_id: The group ID.
 
         Returns:
-            Path to the group's documents directory.
+            Path to the group's workspace directory.
 
         Raises:
             ValueError: If the group ID is invalid.
         """
-        path = self.get_group_dir(group_id) / "documents"
+        path = self.get_group_dir(group_id) / "workspace"
         path.mkdir(parents=True, exist_ok=True)
         return path
 

@@ -773,11 +773,39 @@ async def _upload_file_internal(
     basename = filepath.rsplit("/", 1)[-1] if "/" in filepath else filepath
     suffix = "." + basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
 
-    documents_dir = store.documents_dir(settings.data_dir)
+    workspace_dir = store.workspace_dir(settings.data_dir)
+
+    # NONE pipeline: store file as-is, chunk only if markdown
+    if spec.conversion.pipeline == ConversionPipeline.NONE:
+        file_path = workspace_dir / filepath
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(content)
+
+        chunk_count = None
+        chunking_used = None
+        if _is_markdown(suffix):
+            try:
+                text_content = content.decode("utf-8")
+                chunked = await chunk_document(
+                    store, filepath, text_content, spec.chunking
+                )
+                chunk_count = len(chunked.chunks)
+                chunking_used = chunked.pipeline
+                sync_index(store)
+            except Exception as e:
+                logger.warning("Chunking failed for %s: %s", filepath, e)
+
+        return UploadDocumentResponse(
+            filename=filepath,
+            size_bytes=len(content),
+            chunk_count=chunk_count,
+            chunking_pipeline_used=chunking_used,
+            message="Document uploaded successfully",
+        )
 
     # Markdown files are stored directly without conversion
     if _is_markdown(suffix):
-        file_path = documents_dir / filepath
+        file_path = workspace_dir / filepath
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(content)
 
@@ -845,7 +873,7 @@ async def _upload_file_internal(
         converted_relpath = f"{parent_dir}/{base_name}.md"
     else:
         converted_relpath = f"{base_name}.md"
-    converted_path = documents_dir / converted_relpath
+    converted_path = workspace_dir / converted_relpath
     converted_path.parent.mkdir(parents=True, exist_ok=True)
     converted_path.write_text(markdown_content, encoding="utf-8")
 
@@ -883,7 +911,7 @@ async def list_documents(
     Uses recursive search to include files in subdirectories.
     """
     store = _user_store(user)
-    data_dir = store.documents_dir(settings.data_dir)
+    workspace = store.workspace_dir(settings.data_dir)
     originals_dir = store.originals_dir(settings.data_dir)
     documents: list[DocumentInfo] = []
     chunk_counts = list_chunked_documents(store)
@@ -896,11 +924,11 @@ async def list_documents(
                 rel = orig.relative_to(originals_dir)
                 original_stems.add(str((rel.parent / rel.stem).as_posix()))
 
-    if data_dir.exists():
-        for file_path in sorted(data_dir.rglob(f"*{DOCUMENT_EXTENSION}")):
+    if workspace.exists():
+        for file_path in sorted(workspace.rglob("*")):
             if file_path.is_file():
-                rel_path = str(file_path.relative_to(data_dir).as_posix())
-                rel = file_path.relative_to(data_dir)
+                rel_path = str(file_path.relative_to(workspace).as_posix())
+                rel = file_path.relative_to(workspace)
                 doc_stem = str((rel.parent / rel.stem).as_posix())
                 stat = file_path.stat()
                 documents.append(
@@ -1035,6 +1063,7 @@ async def _process_collection(
             )
 
         # Preprocess markdown files to discover binary attachments
+        is_none_pipeline = spec.conversion.pipeline == ConversionPipeline.NONE
         all_binaries: set[str] = set()
         preprocessed: dict[str, str] = {}
         for rel_path in sorted(collection_files):
@@ -1046,7 +1075,10 @@ async def _process_collection(
                 logger.warning("Failed to read %s: %s", rel_path, e)
                 failed.append(rel_path)
                 continue
-            result = preprocess_markdown(text, rel_path, collection_files)
+            result = preprocess_markdown(
+                text, rel_path, collection_files,
+                convert_binaries=not is_none_pipeline,
+            )
             preprocessed[rel_path] = result.content
             all_binaries.update(result.binary_attachments)
 
@@ -1249,7 +1281,7 @@ async def delete_all_documents(
     data_dir = settings.data_dir
 
     for dir_fn in (
-        store.documents_dir,
+        store.workspace_dir,
         store.chunks_dir,
         store.originals_dir,
         store.lancedb_dir,
@@ -1291,7 +1323,7 @@ async def _reconvert_single(
     conversion_pipeline = spec.conversion.pipeline
 
     originals_dir = store.originals_dir(settings.data_dir)
-    documents_dir = store.documents_dir(settings.data_dir)
+    workspace_dir = store.workspace_dir(settings.data_dir)
 
     safe_path = Path(safe)
     target_stem = safe_path.stem
@@ -1342,7 +1374,7 @@ async def _reconvert_single(
             detail=f"Conversion failed: {e!s}",
         )
 
-    converted_path = documents_dir / safe
+    converted_path = workspace_dir / safe
     converted_path.parent.mkdir(parents=True, exist_ok=True)
     converted_path.write_text(markdown_content, encoding="utf-8")
     stat = converted_path.stat()
@@ -1423,12 +1455,12 @@ async def bulk_rechunk_stream(
         request: Bulk rechunk request with file paths and pipeline spec.
     """
     store = _user_store(user)
-    data_dir = store.documents_dir(settings.data_dir)
+    workspace = store.workspace_dir(settings.data_dir)
     spec = request.pipeline
 
     async def _rechunk_one(filepath: str) -> None:
         safe = _safe_path(filepath)
-        text_content = (data_dir / safe).read_text(encoding="utf-8")
+        text_content = (workspace / safe).read_text(encoding="utf-8")
         await chunk_document(store, safe, text_content, spec.chunking)
 
     return _sse_stream_response(
@@ -1526,8 +1558,8 @@ async def rechunk_document(
     """
     safe = _safe_path(filepath)
     store = _user_store(user)
-    data_dir = store.documents_dir(settings.data_dir)
-    file_path = data_dir / safe
+    workspace = store.workspace_dir(settings.data_dir)
+    file_path = workspace / safe
 
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Document not found")
@@ -1597,22 +1629,22 @@ async def move_document(
         )
 
     store = _user_store(user)
-    documents_dir = store.documents_dir(settings.data_dir)
+    workspace_dir = store.workspace_dir(settings.data_dir)
     chunks_dir = store.chunks_dir(settings.data_dir)
     originals_dir = store.originals_dir(settings.data_dir)
 
-    src_doc = documents_dir / src
+    src_doc = workspace_dir / src
     if not src_doc.exists() or not src_doc.is_file():
         raise HTTPException(status_code=404, detail="Document not found")
 
-    dst_doc = documents_dir / dst
+    dst_doc = workspace_dir / dst
     if dst_doc.exists():
         raise HTTPException(status_code=409, detail="Destination already exists")
 
     # Move the document file
     dst_doc.parent.mkdir(parents=True, exist_ok=True)
     src_doc.rename(dst_doc)
-    _cleanup_empty_parents(src_doc, documents_dir)
+    _cleanup_empty_parents(src_doc, workspace_dir)
 
     # Move chunks if they exist
     src_chunks = chunks_dir / f"{src}.json"
@@ -1656,6 +1688,107 @@ async def move_document(
     )
 
 
+# --- Original file endpoints ---
+
+
+def _find_original(store: Casebase, safe: str) -> Path:
+    """Find the original binary file by stem-matching from a workspace path.
+
+    Args:
+        store: The casebase.
+        safe: Sanitized relative workspace path (e.g. ``report.md``).
+
+    Returns:
+        Path to the original file.
+
+    Raises:
+        HTTPException: If no matching original exists.
+    """
+    originals_dir = store.originals_dir(settings.data_dir)
+    safe_path = Path(safe)
+    target_stem = safe_path.stem
+    parent = str(safe_path.parent)
+    search_dir = originals_dir / parent if parent != "." else originals_dir
+
+    if search_dir.exists():
+        for candidate in search_dir.iterdir():
+            if candidate.is_file() and candidate.stem == target_stem:
+                return candidate
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"No original file found for '{safe}'",
+    )
+
+
+@api_router.get("/documents/original/{filepath:path}")
+async def download_original(
+    filepath: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    """Download the original binary file for a document.
+
+    Finds the original by stem-matching from the workspace path.
+
+    Args:
+        filepath: The workspace-relative path (e.g. ``report.md``).
+    """
+    safe = _safe_path(filepath)
+    original = _find_original(_user_store(user), safe)
+    content = original.read_bytes()
+
+    import mimetypes
+
+    media_type = mimetypes.guess_type(original.name)[0] or "application/octet-stream"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{original.name}"',
+        },
+    )
+
+
+@api_router.put("/documents/original/{filepath:path}")
+async def replace_original(
+    filepath: str,
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+    pipeline_spec: str = Form(default="{}"),
+    llm_config: str = Form(default="{}"),
+) -> UploadDocumentResponse:
+    """Replace the original binary file and reconvert the document.
+
+    Args:
+        filepath: The workspace-relative path (e.g. ``report.md``).
+        file: The new binary file.
+        pipeline_spec: JSON-encoded PipelineSpec for conversion and chunking.
+        llm_config: JSON-encoded LLM configuration for conversion.
+    """
+    safe = _safe_path(filepath)
+    store = _user_store(user)
+    original = _find_original(store, safe)
+
+    content = await file.read()
+    if len(content) > settings.max_file_size_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
+        )
+
+    # Overwrite the original file
+    original.write_bytes(content)
+
+    # Reconvert using the existing path
+    spec = _parse_pipeline_spec(pipeline_spec)
+    llm = LlmConfig.model_validate_json(llm_config)
+    resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
+
+    result = await _reconvert_single(store, safe, spec, resolved)
+    sync_index(store)
+    return result
+
+
 # --- Catch-all document content routes ---
 # These use {filepath:path} which is greedy.  FastAPI matches routes in
 # declaration order, so static-prefix routes (/documents/chunks/,
@@ -1676,8 +1809,8 @@ async def get_document_content(
     """
     safe = _safe_path(filepath)
     store = _user_store(user)
-    data_dir = store.documents_dir(settings.data_dir)
-    file_path = data_dir / safe
+    workspace = store.workspace_dir(settings.data_dir)
+    file_path = workspace / safe
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Document not found")
@@ -1685,7 +1818,12 @@ async def get_document_content(
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
-    return PlainTextResponse(file_path.read_text(encoding="utf-8"))
+    try:
+        return PlainTextResponse(file_path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=415, detail="Binary file cannot be read as text"
+        )
 
 
 def _delete_single(store: Casebase, safe: str) -> None:
@@ -1700,8 +1838,8 @@ def _delete_single(store: Casebase, safe: str) -> None:
     Raises:
         HTTPException: If the document is not found or the path is not a file.
     """
-    data_dir = store.documents_dir(settings.data_dir)
-    file_path = data_dir / safe
+    workspace = store.workspace_dir(settings.data_dir)
+    file_path = workspace / safe
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Document not found")
@@ -1710,7 +1848,7 @@ def _delete_single(store: Casebase, safe: str) -> None:
         raise HTTPException(status_code=400, detail="Path is not a file")
 
     file_path.unlink()
-    _cleanup_empty_parents(file_path, data_dir)
+    _cleanup_empty_parents(file_path, workspace)
     delete_chunks(store, safe)
 
     # Also delete the original if it exists
@@ -1782,7 +1920,7 @@ def _build_directory_tree(
                 children.append(
                     _build_directory_tree(item, root_path, chunk_counts, original_stems)
                 )
-            elif item.is_file() and item.suffix.lower() == DOCUMENT_EXTENSION:
+            elif item.is_file():
                 file_rel = str(item.relative_to(root_path).as_posix())
                 item_rel = item.relative_to(root_path)
                 doc_stem = str((item_rel.parent / item_rel.stem).as_posix())
@@ -1811,7 +1949,7 @@ def _build_directory_tree(
 
 def _build_tree_response(store: Casebase) -> DirectoryTreeResponse:
     """Build a directory tree response for any casebase."""
-    documents_dir = store.documents_dir(settings.data_dir)
+    workspace_dir = store.workspace_dir(settings.data_dir)
     originals_dir = store.originals_dir(settings.data_dir)
     chunk_counts = list_chunked_documents(store)
 
@@ -1824,7 +1962,7 @@ def _build_tree_response(store: Casebase) -> DirectoryTreeResponse:
                 original_stems.add(str((rel.parent / rel.stem).as_posix()))
 
     root = _build_directory_tree(
-        documents_dir, documents_dir, chunk_counts, original_stems
+        workspace_dir, workspace_dir, chunk_counts, original_stems
     )
 
     # Count totals
@@ -1870,8 +2008,8 @@ async def create_directory(
     """
     safe = _safe_path(request.path)
     store = _user_store(user)
-    documents_dir = store.documents_dir(settings.data_dir)
-    dir_path = documents_dir / safe
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    dir_path = workspace_dir / safe
 
     if dir_path.exists():
         raise HTTPException(status_code=409, detail="Directory already exists")
@@ -1898,22 +2036,20 @@ async def delete_directory(
     """
     safe = _safe_path(request.path)
     store = _user_store(user)
-    documents_dir = store.documents_dir(settings.data_dir)
+    workspace_dir = store.workspace_dir(settings.data_dir)
     chunks_dir = store.chunks_dir(settings.data_dir)
     originals_dir = store.originals_dir(settings.data_dir)
 
-    dir_path = documents_dir / safe
+    dir_path = workspace_dir / safe
     if not dir_path.exists() or not dir_path.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
 
-    # Count documents before deletion
-    files_deleted = sum(
-        1 for f in dir_path.rglob(f"*{DOCUMENT_EXTENSION}") if f.is_file()
-    )
+    # Count files before deletion
+    files_deleted = sum(1 for f in dir_path.rglob("*") if f.is_file())
 
     # Delete the directory and all contents
     shutil.rmtree(dir_path)
-    _cleanup_empty_parents(dir_path, documents_dir)
+    _cleanup_empty_parents(dir_path, workspace_dir)
 
     # Delete matching chunks subdirectory
     chunks_subdir = chunks_dir / safe
@@ -2093,15 +2229,20 @@ async def get_group_document_content(
     safe_id = _require_group_member(user, group_id)
     safe = _safe_path(filepath)
     store = Casebase(kind="group", id=safe_id)
-    data_dir = store.documents_dir(settings.data_dir)
-    file_path = data_dir / safe
+    workspace = store.workspace_dir(settings.data_dir)
+    file_path = workspace / safe
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Document not found")
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
-    return PlainTextResponse(file_path.read_text(encoding="utf-8"))
+    try:
+        return PlainTextResponse(file_path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=415, detail="Binary file cannot be read as text"
+        )
 
 
 @api_router.get("/groups/{group_id}/documents")
@@ -2112,7 +2253,7 @@ async def list_group_documents(
     """List all documents in a group's data directory."""
     safe_id = _require_group_member(user, group_id)
     store = Casebase(kind="group", id=safe_id)
-    data_dir = store.documents_dir(settings.data_dir)
+    workspace = store.workspace_dir(settings.data_dir)
     originals_dir = store.originals_dir(settings.data_dir)
     documents: list[DocumentInfo] = []
     chunk_counts = list_chunked_documents(store)
@@ -2124,11 +2265,11 @@ async def list_group_documents(
                 rel = orig.relative_to(originals_dir)
                 original_stems.add(str((rel.parent / rel.stem).as_posix()))
 
-    if data_dir.exists():
-        for file_path in sorted(data_dir.rglob(f"*{DOCUMENT_EXTENSION}")):
+    if workspace.exists():
+        for file_path in sorted(workspace.rglob("*")):
             if file_path.is_file():
-                rel_path = str(file_path.relative_to(data_dir).as_posix())
-                rel = file_path.relative_to(data_dir)
+                rel_path = str(file_path.relative_to(workspace).as_posix())
+                rel = file_path.relative_to(workspace)
                 doc_stem = str((rel.parent / rel.stem).as_posix())
                 stat = file_path.stat()
                 documents.append(
@@ -2259,8 +2400,8 @@ async def delete_group_document(
     safe_id = _require_group_write(user, group_id)
     safe = _safe_path(filepath)
     store = Casebase(kind="group", id=safe_id)
-    data_dir = store.documents_dir(settings.data_dir)
-    file_path = data_dir / safe
+    workspace = store.workspace_dir(settings.data_dir)
+    file_path = workspace / safe
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Document not found")
@@ -2269,7 +2410,7 @@ async def delete_group_document(
         raise HTTPException(status_code=400, detail="Path is not a file")
 
     file_path.unlink()
-    _cleanup_empty_parents(file_path, data_dir)
+    _cleanup_empty_parents(file_path, workspace)
     delete_chunks(store, safe)
     sync_index(store)
 
@@ -2307,8 +2448,8 @@ async def create_group_directory(
     safe_id = _require_group_write(user, group_id)
     safe = _safe_path(request.path)
     store = Casebase(kind="group", id=safe_id)
-    documents_dir = store.documents_dir(settings.data_dir)
-    dir_path = documents_dir / safe
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    dir_path = workspace_dir / safe
 
     if dir_path.exists():
         raise HTTPException(status_code=409, detail="Directory already exists")
@@ -2334,20 +2475,18 @@ async def delete_group_directory(
     safe_id = _require_group_write(user, group_id)
     safe = _safe_path(request.path)
     store = Casebase(kind="group", id=safe_id)
-    documents_dir = store.documents_dir(settings.data_dir)
+    workspace_dir = store.workspace_dir(settings.data_dir)
     chunks_dir = store.chunks_dir(settings.data_dir)
     originals_dir = store.originals_dir(settings.data_dir)
 
-    dir_path = documents_dir / safe
+    dir_path = workspace_dir / safe
     if not dir_path.exists() or not dir_path.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
 
-    files_deleted = sum(
-        1 for f in dir_path.rglob(f"*{DOCUMENT_EXTENSION}") if f.is_file()
-    )
+    files_deleted = sum(1 for f in dir_path.rglob("*") if f.is_file())
 
     shutil.rmtree(dir_path)
-    _cleanup_empty_parents(dir_path, documents_dir)
+    _cleanup_empty_parents(dir_path, workspace_dir)
 
     chunks_subdir = chunks_dir / safe
     if chunks_subdir.exists() and chunks_subdir.is_dir():
@@ -2393,7 +2532,7 @@ async def reconvert_group_document(
     conversion_pipeline = spec.conversion.pipeline
 
     originals_dir = store.originals_dir(settings.data_dir)
-    documents_dir = store.documents_dir(settings.data_dir)
+    workspace_dir = store.workspace_dir(settings.data_dir)
 
     safe_path = Path(safe)
     target_stem = safe_path.stem
@@ -2441,7 +2580,7 @@ async def reconvert_group_document(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Conversion failed: {e!s}")
 
-    converted_path = documents_dir / safe
+    converted_path = workspace_dir / safe
     converted_path.parent.mkdir(parents=True, exist_ok=True)
     converted_path.write_text(markdown_content, encoding="utf-8")
     stat = converted_path.stat()
@@ -2493,21 +2632,21 @@ async def move_group_document(
         )
 
     store = Casebase(kind="group", id=safe_id)
-    documents_dir = store.documents_dir(settings.data_dir)
+    workspace_dir = store.workspace_dir(settings.data_dir)
     chunks_dir = store.chunks_dir(settings.data_dir)
     originals_dir = store.originals_dir(settings.data_dir)
 
-    src_doc = documents_dir / src
+    src_doc = workspace_dir / src
     if not src_doc.exists() or not src_doc.is_file():
         raise HTTPException(status_code=404, detail="Document not found")
 
-    dst_doc = documents_dir / dst
+    dst_doc = workspace_dir / dst
     if dst_doc.exists():
         raise HTTPException(status_code=409, detail="Destination already exists")
 
     dst_doc.parent.mkdir(parents=True, exist_ok=True)
     src_doc.rename(dst_doc)
-    _cleanup_empty_parents(src_doc, documents_dir)
+    _cleanup_empty_parents(src_doc, workspace_dir)
 
     src_chunks = chunks_dir / f"{src}.json"
     if src_chunks.exists():

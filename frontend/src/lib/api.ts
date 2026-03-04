@@ -12,6 +12,7 @@ import type {
 import {
   type BackendSettings,
   BackendSettingsSchema,
+  ConversionPipeline,
   BulkOperationStreamEventSchema,
   type ChunkedDocumentResponse,
   ChunkedDocumentResponseSchema,
@@ -91,7 +92,11 @@ function encodeFilePath(filepath: string): string {
 }
 
 /** Check if a file requires conversion (anything that is not already markdown). */
-export function requiresConversion(filename: string): boolean {
+export function requiresConversion(
+  filename: string,
+  pipeline?: ConversionPipeline,
+): boolean {
+  if (pipeline === ConversionPipeline.NONE) return false;
   const ext = `.${filename.split(".").pop()?.toLowerCase() ?? ""}`;
   return ext !== ".md";
 }
@@ -234,7 +239,7 @@ export async function uploadDocument(
   if (options?.spec) {
     formData.append("pipeline_spec", JSON.stringify(options.spec));
   }
-  if (requiresConversion(filename) && options?.llm) {
+  if (requiresConversion(filename, options?.spec?.conversion?.pipeline) && options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
   }
 
@@ -436,6 +441,46 @@ export async function getDocumentContent(filename: string): Promise<string> {
   }
 
   return res.text();
+}
+
+/** Download the original binary file for a document. */
+export async function downloadOriginal(filepath: string): Promise<Blob> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/documents/original/${encodeFilePath(filepath)}`,
+  );
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Download failed" }));
+    throw new Error(error.detail || "Download failed");
+  }
+
+  return res.blob();
+}
+
+/** Replace the original binary file and reconvert the document. */
+export async function replaceOriginal(
+  filepath: string,
+  file: File,
+  spec?: PipelineSpec,
+  llm?: LlmConfig,
+): Promise<UploadDocumentResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (spec) formData.append("pipeline_spec", JSON.stringify(spec));
+  if (llm) formData.append("llm_config", JSON.stringify(llm));
+
+  const res = await authFetch(
+    `${API_BASE_URL}/api/documents/original/${encodeFilePath(filepath)}`,
+    { method: "PUT", body: formData },
+  );
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Replace failed" }));
+    throw new Error(error.detail || "Replace failed");
+  }
+
+  const data: unknown = await res.json();
+  return UploadDocumentResponseSchema.parse(data);
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {
@@ -906,7 +951,7 @@ export async function uploadGroupDocument(
   if (options?.spec) {
     formData.append("pipeline_spec", JSON.stringify(options.spec));
   }
-  if (requiresConversion(filename) && options?.llm) {
+  if (requiresConversion(filename, options?.spec?.conversion?.pipeline) && options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
   }
 

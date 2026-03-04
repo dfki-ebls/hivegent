@@ -321,9 +321,10 @@ export function DocumentDialog({
     // Full-doc markdown view
     if (viewMode === "full-doc") {
       if (!fullContent) {
+        const isBinary = filename && !filename.toLowerCase().endsWith(".md");
         return (
           <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
-            Document content unavailable
+            {isBinary ? "Binary file — preview not available" : "Document content unavailable"}
           </div>
         );
       }

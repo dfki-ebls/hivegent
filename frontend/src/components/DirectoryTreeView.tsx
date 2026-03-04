@@ -1,6 +1,7 @@
 import {
   ChevronDown,
   ChevronRight,
+  Download,
   Eye,
   EyeOff,
   FileText,
@@ -33,6 +34,7 @@ interface DirectoryTreeViewProps {
   onInclude: (path: string) => void;
   onExclude: (path: string) => void;
   onReconvert?: (path: string) => void;
+  onDownloadOriginal?: (path: string) => void;
   onRemoveFile?: (path: string) => void;
   onMoveFile?: (path: string) => void;
   onCreateSubdir?: (parentPath: string) => void;
@@ -50,6 +52,7 @@ function FileRow({
   onInclude,
   onExclude,
   onReconvert,
+  onDownloadOriginal,
   onRemove,
   onMove,
   selected,
@@ -62,6 +65,7 @@ function FileRow({
   onInclude: () => void;
   onExclude: () => void;
   onReconvert?: () => void;
+  onDownloadOriginal?: () => void;
   onRemove?: () => void;
   onMove?: () => void;
   selected?: boolean;
@@ -120,6 +124,18 @@ function FileRow({
             disabled={isLoading}
           >
             <RotateCcw className="h-3 w-3" />
+          </Button>
+        )}
+        {entry.has_original && onDownloadOriginal && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            title="Download original"
+            onClick={onDownloadOriginal}
+            disabled={isLoading}
+          >
+            <Download className="h-3 w-3" />
           </Button>
         )}
         {onMove && (
@@ -272,6 +288,7 @@ export function DirectoryTreeView({
   onInclude,
   onExclude,
   onReconvert,
+  onDownloadOriginal,
   onRemoveFile,
   onMoveFile,
   onCreateSubdir,
@@ -303,6 +320,7 @@ export function DirectoryTreeView({
           onInclude={() => onInclude(child.path)}
           onExclude={() => onExclude(child.path)}
           onReconvert={onReconvert ? () => onReconvert(child.path) : undefined}
+          onDownloadOriginal={onDownloadOriginal ? () => onDownloadOriginal(child.path) : undefined}
           onRemove={onRemoveFile ? () => onRemoveFile(child.path) : undefined}
           onMove={onMoveFile ? () => onMoveFile(child.path) : undefined}
           selected={selectedFiles?.has(child.path)}

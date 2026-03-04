@@ -80,17 +80,21 @@ def _rewrite_link(
     source_dir: PurePosixPath,
     collection_files: Set[str],
     binary_attachments: set[str],
+    *,
+    convert_binaries: bool = True,
 ) -> str:
     """Resolve a link target and return a standard markdown link.
 
-    Binary targets are recorded in *binary_attachments* and the link
-    is rewritten to point to the future ``.md`` conversion output.
+    When *convert_binaries* is True (default), binary targets are recorded
+    in *binary_attachments* and the link is rewritten to point to the
+    future ``.md`` conversion output.  When False, links are normalized
+    but binary files are not collected or rewritten.
     """
     resolved = _resolve_target(target, source_dir, collection_files)
     if resolved is None:
         return f"[{alias}]"
 
-    if PurePosixPath(resolved).suffix.lower() != DOCUMENT_EXTENSION:
+    if convert_binaries and PurePosixPath(resolved).suffix.lower() != DOCUMENT_EXTENSION:
         binary_attachments.add(resolved)
         resolved = str(PurePosixPath(resolved).with_suffix(".md"))
 
@@ -113,6 +117,8 @@ def preprocess_markdown(
     content: str,
     source_path: str,
     collection_files: Set[str],
+    *,
+    convert_binaries: bool = True,
 ) -> PreprocessedMarkdown:
     """Preprocess markdown by normalizing wikilinks and detecting attachments.
 
@@ -120,10 +126,15 @@ def preprocess_markdown(
     detects binary references, and rewrites them to point to the future
     ``.md`` conversion output.
 
+    When *convert_binaries* is False, wikilinks are still normalized to
+    standard markdown links but binary files are not collected or rewritten.
+    This is used for the NONE pipeline where files are stored as-is.
+
     Args:
         content: The raw markdown content.
         source_path: Relative path of this file within the collection.
         collection_files: Set of all file paths in the collection.
+        convert_binaries: Whether to detect and rewrite binary attachments.
 
     Returns:
         A :class:`PreprocessedMarkdown` with rewritten content and binary
@@ -136,13 +147,19 @@ def preprocess_markdown(
         parsed = _parse_pipe(m.group(1), lambda t: PurePosixPath(t).stem)
         if not parsed:
             return m.group(0)
-        return _rewrite_link(*parsed, source_dir, collection_files, binaries)
+        return _rewrite_link(
+            *parsed, source_dir, collection_files, binaries,
+            convert_binaries=convert_binaries,
+        )
 
     def _on_wikilink(m: re.Match[str]) -> str:
         parsed = _parse_pipe(m.group(1), lambda t: t)
         if not parsed:
             return m.group(0)
-        return _rewrite_link(*parsed, source_dir, collection_files, binaries)
+        return _rewrite_link(
+            *parsed, source_dir, collection_files, binaries,
+            convert_binaries=convert_binaries,
+        )
 
     def _on_md_image(m: re.Match[str]) -> str:
         alt, path = m.group(1), m.group(2)
@@ -150,9 +167,10 @@ def preprocess_markdown(
             return m.group(0)
         resolved = _resolve_target(path, source_dir, collection_files)
         if resolved and PurePosixPath(resolved).suffix.lower() != DOCUMENT_EXTENSION:
-            binaries.add(resolved)
-            md_path = str(PurePosixPath(resolved).with_suffix(".md"))
-            return f"[{alt or PurePosixPath(resolved).stem}]({_relative_link(md_path, source_dir)})"
+            if convert_binaries:
+                binaries.add(resolved)
+                md_path = str(PurePosixPath(resolved).with_suffix(".md"))
+                return f"[{alt or PurePosixPath(resolved).stem}]({_relative_link(md_path, source_dir)})"
         return m.group(0)
 
     result = _EMBED_RE.sub(_on_embed, content)

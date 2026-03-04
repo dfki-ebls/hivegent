@@ -87,7 +87,8 @@ class ListDocumentsTool:
         if not self.path.exists():
             return []
         results: list[DocumentSummary] = []
-        for f in sorted(self.path.rglob(f"*{self.extension}")):
+        pattern = f"*{self.extension}" if self.extension else "*"
+        for f in sorted(self.path.rglob(pattern)):
             if f.is_file():
                 rel = str(f.relative_to(self.path).as_posix())
                 stat = f.stat()
@@ -189,7 +190,8 @@ class GlobDocumentsTool:
         if not self.path.exists():
             return []
         results: list[str] = []
-        for f in sorted(self.path.rglob(f"*{self.extension}")):
+        ext_glob = f"*{self.extension}" if self.extension else "*"
+        for f in sorted(self.path.rglob(ext_glob)):
             if f.is_file():
                 rel = str(f.relative_to(self.path).as_posix())
                 if fnmatch(rel, pattern):
@@ -392,7 +394,7 @@ class WriteDocumentTool:
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
             return "Error: path traversal detected."
-        if not filename.endswith(self.extension):
+        if self.extension and not filename.endswith(self.extension):
             return f"Error: only '{self.extension}' files are supported."
 
         if mode == "replace":
