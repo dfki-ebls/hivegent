@@ -646,7 +646,7 @@ function GroupDocumentsSection({
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <div className="grid grid-cols-[minmax(0,1fr)_8rem_4rem_3.5rem] items-center gap-x-2 rounded-md px-2 py-1.5 hover:bg-muted/50 group">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-3 rounded-md px-2 py-1.5 hover:bg-muted/50 group">
         <div className="flex items-center gap-2 min-w-0">
           <CollapsibleTrigger asChild>
             <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">

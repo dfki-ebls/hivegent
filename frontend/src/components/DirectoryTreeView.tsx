@@ -13,7 +13,7 @@ import {
   Scissors,
   Trash2,
 } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import type { DirectoryEntry } from "../lib/types";
 import { useSettingsStore } from "../stores/settings-store";
@@ -45,6 +45,43 @@ interface DirectoryTreeViewProps {
   depth?: number;
 }
 
+interface FlatRow {
+  entry: DirectoryEntry;
+  depth: number;
+  isExpanded?: boolean;
+  fileCount?: number;
+}
+
+function countFiles(entry: DirectoryEntry): number {
+  if (entry.type === "file") return 1;
+  return (entry.children ?? []).reduce((sum, child) => sum + countFiles(child), 0);
+}
+
+function flattenEntries(
+  entry: DirectoryEntry,
+  expandedDirs: Set<string>,
+  depth: number,
+): FlatRow[] {
+  if (entry.type === "file") {
+    return [{ entry, depth }];
+  }
+
+  const rows: FlatRow[] = [];
+
+  // Skip the root directory row (rendered externally)
+  if (depth > 0) {
+    const isExpanded = expandedDirs.has(entry.path);
+    rows.push({ entry, depth, isExpanded, fileCount: countFiles(entry) });
+    if (!isExpanded) return rows;
+  }
+
+  for (const child of entry.children ?? []) {
+    rows.push(...flattenEntries(child, expandedDirs, depth > 0 ? depth + 1 : depth));
+  }
+
+  return rows;
+}
+
 function FileRow({
   entry,
   isMutating,
@@ -74,7 +111,7 @@ function FileRow({
 }) {
   return (
     <div
-      className="grid w-full grid-cols-[minmax(0,1fr)_8rem_4rem_3.5rem] items-center gap-x-2 rounded-md px-2 py-1.5 hover:bg-muted/50 group"
+      className="col-span-full grid grid-cols-[subgrid] items-center rounded-md px-2 py-1.5 hover:bg-muted/50 group"
       style={{ paddingLeft: `${depth * 20 + 8}px` }}
     >
       <div className="flex items-center gap-2 min-w-0">
@@ -87,7 +124,7 @@ function FileRow({
         )}
         <button
           type="button"
-          className="flex items-center gap-2 min-w-0 text-left cursor-pointer"
+          className="flex flex-1 items-center gap-2 min-w-0 text-left cursor-pointer"
           onClick={onEdit}
         >
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -163,12 +200,12 @@ function FileRow({
           </Button>
         )}
       </div>
-      <span className="text-right text-xs text-muted-foreground">
+      <span className="text-right text-xs text-muted-foreground whitespace-nowrap">
         {entry.size_bytes != null ? formatFileSize(entry.size_bytes) : ""}
       </span>
       <div className="flex justify-end">
         {entry.chunk_count != null && (
-          <Badge variant="outline" className="text-xs gap-1">
+          <Badge variant="outline" className="text-xs gap-1 whitespace-nowrap">
             <Scissors className="h-3 w-3" />
             {entry.chunk_count}
           </Badge>
@@ -206,13 +243,13 @@ function DirectoryRow({
 
   return (
     <div
-      className="grid w-full grid-cols-[minmax(0,1fr)_8rem_4rem_3.5rem] items-center gap-x-2 rounded-md px-2 py-1.5 hover:bg-muted/50 group"
+      className="col-span-full grid grid-cols-[subgrid] items-center rounded-md px-2 py-1.5 hover:bg-muted/50 group"
       style={{ paddingLeft: `${depth * 20 + 8}px` }}
     >
       <div className="flex items-center gap-2 min-w-0">
         <button
           type="button"
-          className="flex items-center gap-2 min-w-0 text-left cursor-pointer"
+          className="flex flex-1 items-center gap-2 min-w-0 text-left cursor-pointer"
           onClick={onToggle}
         >
           <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -268,18 +305,13 @@ function DirectoryRow({
       <span />
       <div className="flex justify-end">
         {fileCount > 0 && (
-          <Badge variant="secondary" className="text-xs">
+          <Badge variant="secondary" className="text-xs whitespace-nowrap">
             {fileCount}
           </Badge>
         )}
       </div>
     </div>
   );
-}
-
-function countFiles(entry: DirectoryEntry): number {
-  if (entry.type === "file") return 1;
-  return (entry.children ?? []).reduce((sum, child) => sum + countFiles(child), 0);
 }
 
 const EMPTY_SET = new Set<string>();
@@ -302,7 +334,7 @@ export function DirectoryTreeView({
 }: DirectoryTreeViewProps) {
   const expandedDirsArray = useSettingsStore((state) => state.expandedDirs);
   const toggleExpandedDir = useSettingsStore((state) => state.toggleExpandedDir);
-  const expandedDirs = new Set(expandedDirsArray);
+  const expandedDirs = useMemo(() => new Set(expandedDirsArray), [expandedDirsArray]);
 
   const toggleDir = useCallback(
     (path: string) => {
@@ -311,58 +343,58 @@ export function DirectoryTreeView({
     [toggleExpandedDir],
   );
 
-  const renderEntry = (child: DirectoryEntry, currentDepth: number) => {
-    if (child.type === "file") {
+  const flatRows = useMemo(
+    () => flattenEntries(entry, expandedDirs, depth),
+    [entry, expandedDirs, depth],
+  );
+
+  const renderRow = (row: FlatRow) => {
+    if (row.entry.type === "file") {
       return (
         <FileRow
-          key={child.path}
-          entry={child}
-          isMutating={mutatingPaths.has(child.path)}
-          depth={currentDepth}
-          onEdit={() => onEditFile(child.path)}
-          onInclude={() => onInclude(child.path)}
-          onExclude={() => onExclude(child.path)}
-          onReconvert={onReconvert ? () => onReconvert(child.path) : undefined}
-          onDownloadOriginal={onDownloadOriginal ? () => onDownloadOriginal(child.path) : undefined}
-          onRemove={onRemoveFile ? () => onRemoveFile(child.path) : undefined}
-          onMove={onMoveFile ? () => onMoveFile(child.path) : undefined}
-          selected={selectedFiles?.has(child.path)}
-          onToggleSelect={onToggleSelectFile ? () => onToggleSelectFile(child.path) : undefined}
+          key={row.entry.path}
+          entry={row.entry}
+          isMutating={mutatingPaths.has(row.entry.path)}
+          depth={row.depth}
+          onEdit={() => onEditFile(row.entry.path)}
+          onInclude={() => onInclude(row.entry.path)}
+          onExclude={() => onExclude(row.entry.path)}
+          onReconvert={onReconvert ? () => onReconvert(row.entry.path) : undefined}
+          onDownloadOriginal={
+            onDownloadOriginal ? () => onDownloadOriginal(row.entry.path) : undefined
+          }
+          onRemove={onRemoveFile ? () => onRemoveFile(row.entry.path) : undefined}
+          onMove={onMoveFile ? () => onMoveFile(row.entry.path) : undefined}
+          selected={selectedFiles?.has(row.entry.path)}
+          onToggleSelect={
+            onToggleSelectFile ? () => onToggleSelectFile(row.entry.path) : undefined
+          }
         />
       );
     }
 
-    const isExpanded = expandedDirs.has(child.path);
-    const dirPath = child.path ? `${child.path}/` : "";
+    const dirPath = row.entry.path ? `${row.entry.path}/` : "";
 
     return (
-      <div key={child.path}>
-        <DirectoryRow
-          entry={child}
-          isExpanded={isExpanded}
-          isMutating={mutatingPaths.has(child.path)}
-          depth={currentDepth}
-          fileCount={countFiles(child)}
-          onToggle={() => toggleDir(child.path)}
-          onIncludeDir={() => onInclude(dirPath)}
-          onExcludeDir={() => onExclude(dirPath)}
-          onCreateSubdir={onCreateSubdir ? () => onCreateSubdir(child.path) : undefined}
-          onDeleteDir={onDeleteDir ? () => onDeleteDir(child.path) : undefined}
-        />
-        {isExpanded &&
-          (child.children ?? []).map((grandchild) => renderEntry(grandchild, currentDepth + 1))}
-      </div>
+      <DirectoryRow
+        key={row.entry.path}
+        entry={row.entry}
+        isExpanded={row.isExpanded ?? false}
+        isMutating={mutatingPaths.has(row.entry.path)}
+        depth={row.depth}
+        fileCount={row.fileCount ?? 0}
+        onToggle={() => toggleDir(row.entry.path)}
+        onIncludeDir={() => onInclude(dirPath)}
+        onExcludeDir={() => onExclude(dirPath)}
+        onCreateSubdir={onCreateSubdir ? () => onCreateSubdir(row.entry.path) : undefined}
+        onDeleteDir={onDeleteDir ? () => onDeleteDir(row.entry.path) : undefined}
+      />
     );
   };
 
-  // For the root entry, render its children directly
-  if (entry.type === "directory") {
-    return (
-      <div className="space-y-0.5">
-        {(entry.children ?? []).map((child) => renderEntry(child, depth))}
-      </div>
-    );
-  }
-
-  return renderEntry(entry, depth);
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-3 gap-y-0.5">
+      {flatRows.map(renderRow)}
+    </div>
+  );
 }
