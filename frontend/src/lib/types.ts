@@ -16,7 +16,6 @@ import { z } from "zod";
 /** Available conversion pipelines for document conversion. */
 export enum ConversionPipeline {
   AUTO = "auto",
-  NONE = "none",
   LLM = "llm",
   MARKER = "marker",
   DOCLING = "docling",
@@ -24,6 +23,7 @@ export enum ConversionPipeline {
   PANDOC = "pandoc",
   MARKITDOWN = "markitdown",
   KREUZBERG = "kreuzberg",
+  PDF_OXIDE = "pdf-oxide",
   TABLE_CHEF = "table-chef",
   TEXT_CHEF = "text-chef",
 }

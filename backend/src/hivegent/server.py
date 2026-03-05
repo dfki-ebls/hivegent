@@ -848,34 +848,6 @@ async def _upload_file_internal(
 
     workspace_dir = store.workspace_dir(settings.data_dir)
 
-    # NONE pipeline: store file as-is, chunk only if markdown
-    if spec.conversion.pipeline == ConversionPipeline.NONE:
-        file_path = workspace_dir / filepath
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_bytes(content)
-
-        chunk_count = None
-        chunking_used = None
-        if _is_markdown(suffix):
-            try:
-                text_content = content.decode("utf-8")
-                chunked = await chunk_document(
-                    store, filepath, text_content, spec.chunking
-                )
-                chunk_count = len(chunked.chunks)
-                chunking_used = chunked.pipeline
-                sync_index(store)
-            except Exception as e:
-                logger.warning("Chunking failed for %s: %s", filepath, e)
-
-        return UploadDocumentResponse(
-            filename=filepath,
-            size_bytes=len(content),
-            chunk_count=chunk_count,
-            chunking_pipeline_used=chunking_used,
-            message="Document uploaded successfully",
-        )
-
     # Markdown files are stored directly without conversion
     if _is_markdown(suffix):
         file_path = workspace_dir / filepath
@@ -1218,7 +1190,6 @@ async def _process_collection(
             )
 
         # Preprocess markdown files to discover binary and image attachments
-        is_none_pipeline = spec.conversion.pipeline == ConversionPipeline.NONE
         all_binaries: set[str] = set()
         all_images: set[str] = set()
         preprocessed: dict[str, str] = {}
@@ -1231,10 +1202,7 @@ async def _process_collection(
                 logger.warning("Failed to read %s: %s", rel_path, e)
                 failed.append(rel_path)
                 continue
-            result = preprocess_markdown(
-                text, rel_path, collection_files,
-                convert_binaries=not is_none_pipeline,
-            )
+            result = preprocess_markdown(text, rel_path, collection_files)
             preprocessed[rel_path] = result.content
             all_binaries.update(result.binary_attachments)
             all_images.update(result.image_attachments)

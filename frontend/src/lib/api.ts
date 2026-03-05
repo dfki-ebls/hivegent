@@ -12,7 +12,6 @@ import type {
 import {
   type BackendSettings,
   BackendSettingsSchema,
-  ConversionPipeline,
   BulkOperationStreamEventSchema,
   type ChunkedDocumentResponse,
   ChunkedDocumentResponseSchema,
@@ -92,11 +91,7 @@ function encodeFilePath(filepath: string): string {
 }
 
 /** Check if a file requires conversion (anything that is not already markdown). */
-export function requiresConversion(
-  filename: string,
-  pipeline?: ConversionPipeline,
-): boolean {
-  if (pipeline === ConversionPipeline.NONE) return false;
+export function requiresConversion(filename: string): boolean {
   const ext = `.${filename.split(".").pop()?.toLowerCase() ?? ""}`;
   return ext !== ".md";
 }
@@ -239,7 +234,7 @@ export async function uploadDocument(
   if (options?.spec) {
     formData.append("pipeline_spec", JSON.stringify(options.spec));
   }
-  if (requiresConversion(filename, options?.spec?.conversion?.pipeline) && options?.llm) {
+  if (requiresConversion(filename) && options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
   }
 
@@ -979,7 +974,7 @@ export async function uploadGroupDocument(
   if (options?.spec) {
     formData.append("pipeline_spec", JSON.stringify(options.spec));
   }
-  if (requiresConversion(filename, options?.spec?.conversion?.pipeline) && options?.llm) {
+  if (requiresConversion(filename) && options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
   }
 
