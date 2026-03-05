@@ -3,6 +3,7 @@ import Markdown from "markdown-to-jsx";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getDocumentChunks, getDocumentContent } from "@/lib/api";
+import { WorkspaceImage } from "./WorkspaceImage";
 import {
   type ChunkedDocumentResponse,
   type FetchedChunk,
@@ -50,6 +51,8 @@ interface DocumentDialogProps {
   onSave?: (filename: string, content: string) => Promise<void>;
   /** Custom content fetcher (defaults to getDocumentContent). */
   getContent?: (filename: string) => Promise<string>;
+  /** Group ID when viewing a group document (for authenticated image fetching). */
+  groupId?: string;
 }
 
 type ViewMode = "full-doc" | "chunk" | "edit";
@@ -71,6 +74,7 @@ export function DocumentDialog({
   isNew = false,
   onSave,
   getContent,
+  groupId,
 }: DocumentDialogProps) {
   // --- State ---
   const [fullContent, setFullContent] = useState<string | null>(null);
@@ -332,7 +336,25 @@ export function DocumentDialog({
       return (
         <ScrollArea className="flex-1 min-h-0">
           <div className="prose prose-sm dark:prose-invert max-w-none p-4">
-            <Markdown>{fullContent}</Markdown>
+            <Markdown
+              options={{
+                overrides: {
+                  img: {
+                    component: ({ src, alt, ...props }: React.ComponentProps<"img">) => (
+                      <WorkspaceImage
+                        src={src}
+                        alt={alt ?? undefined}
+                        documentPath={filename}
+                        groupId={groupId}
+                        {...props}
+                      />
+                    ),
+                  },
+                },
+              }}
+            >
+              {fullContent}
+            </Markdown>
           </div>
         </ScrollArea>
       );

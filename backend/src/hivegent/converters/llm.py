@@ -10,7 +10,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..agent import base_agent
 from ..types import LlmConfig
-from .base import DocumentConverter
+from .base import ConversionResult, DocumentConverter
 
 __all__ = ["LLMConverter", "LlmConverterConfig"]
 
@@ -71,14 +71,14 @@ class LLMConverter(DocumentConverter):
         self,
         path: Path,
         /,
-    ) -> str:
+    ) -> ConversionResult:
         """Convert a document to markdown using an LLM with vision capabilities.
 
         Args:
             path: Path to the document to convert.
 
         Returns:
-            The document content converted to markdown.
+            The conversion result with markdown content.
         """
         if not self.llm_options.model:
             raise ValueError(
@@ -106,4 +106,4 @@ class LLMConverter(DocumentConverter):
             ),
         )
 
-        return str(result.output)
+        return ConversionResult(markdown=str(result.output))

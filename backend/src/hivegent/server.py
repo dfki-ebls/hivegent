@@ -3,11 +3,13 @@
 import io
 import json
 import logging
+import mimetypes
 import shutil
 import tempfile
 import zipfile
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
@@ -44,9 +46,10 @@ from .chunkers import (
 )
 from .chunks import (
     chunk_document,
-    delete_chunks,
-    get_chunks,
+    delete_metadata,
+    get_metadata,
     list_chunked_documents,
+    load_document_metadata,
 )
 from .compaction import compact_conversation
 from .config import (
@@ -59,11 +62,13 @@ from .consistency import check_and_fix_all_stores
 from .converters import (
     ConversionPipeline,
     ConversionPipelineInfo,
+    ConversionResult,
     ConversionSpec,
     get_converter,
     get_conversion_pipelines_info,
     resolve_auto_pipeline,
 )
+from .converters.alt_text import MD_IMAGE_RE, describe_image, generate_alt_texts
 from .memory import clear_memory
 from .memory import load_memory
 from .mcp import mcp_app
@@ -96,7 +101,6 @@ from .types import (
     BulkOperationProgressEvent,
     BulkRevokeTokensResponse,
     ChatRequestConfig,
-    ChunkedDocument,
     ClearMemoryResponse,
     CollectionCompleteEvent,
     CollectionProgressEvent,
@@ -118,6 +122,7 @@ from .types import (
     DirectoryTreeResponse,
     DocumentFilter,
     DocumentInfo,
+    DocumentMetadata,
     DocumentListResponse,
     GenerateTitleRequest,
     GenerateTitleResponse,
@@ -135,7 +140,7 @@ from .types import (
     UploadDocumentResponse,
     UserResponse,
 )
-from .wikilinks import preprocess_markdown
+from .wikilinks import IMAGE_EXTENSIONS, preprocess_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -742,6 +747,74 @@ def _is_markdown(suffix: str) -> bool:
     return suffix.lower() == DOCUMENT_EXTENSION
 
 
+def _is_image(suffix: str) -> bool:
+    """Check if a file extension is a known image format."""
+    return suffix.lower() in IMAGE_EXTENSIONS
+
+
+def _resolve_vision_config(llm_config: LlmConfig) -> LlmConfig | None:
+    """Build an LLM config for the vision model, or ``None`` if unavailable."""
+    resolved = resolve_llm_config(llm_config, default_model=settings.llm.vision_model)
+    return resolved if resolved.model else None
+
+
+@dataclass(slots=True, frozen=True)
+class _ImageStoreResult:
+    """Result of storing extracted images from a conversion."""
+
+    markdown: str
+    workspace_paths: list[str]
+    alt_text_images: dict[str, bytes]
+
+
+def _store_conversion_images(
+    result: ConversionResult,
+    workspace_dir: Path,
+    doc_relpath: str,
+) -> _ImageStoreResult:
+    """Store extracted images in workspace and rewrite markdown paths.
+
+    Args:
+        result: The conversion result containing markdown and images.
+        workspace_dir: Workspace root directory.
+        doc_relpath: Relative path of the document (e.g. ``"sub/report.md"``).
+
+    Returns:
+        Updated markdown, workspace-relative image paths, and image bytes
+        keyed by their rewritten (workspace-relative) basenames.
+    """
+    markdown = result.markdown
+    if not result.images:
+        return _ImageStoreResult(markdown=markdown, workspace_paths=[], alt_text_images={})
+
+    doc_path = PurePosixPath(doc_relpath)
+    base_name = doc_path.stem
+    parent_str = str(doc_path.parent)
+    assets_prefix = f"{base_name}_assets"
+    if parent_str != ".":
+        assets_prefix = f"{parent_str}/{base_name}_assets"
+
+    workspace_paths: list[str] = []
+    alt_text_images: dict[str, bytes] = {}
+
+    for img_rel, img_data in result.images.items():
+        img_filename = PurePosixPath(img_rel).name
+        ws_img_path = f"{assets_prefix}/{img_filename}"
+        ws_img_full = workspace_dir / ws_img_path
+        ws_img_full.parent.mkdir(parents=True, exist_ok=True)
+        ws_img_full.write_bytes(img_data)
+        workspace_paths.append(ws_img_path)
+        local_path = f"{base_name}_assets/{img_filename}"
+        markdown = markdown.replace(img_rel, local_path)
+        alt_text_images[local_path] = img_data
+
+    return _ImageStoreResult(
+        markdown=markdown,
+        workspace_paths=workspace_paths,
+        alt_text_images=alt_text_images,
+    )
+
+
 # --- Document endpoints ---
 
 
@@ -828,6 +901,65 @@ async def _upload_file_internal(
             message="Document uploaded successfully",
         )
 
+    # Direct image upload: store as-is and create a wrapper markdown file
+    if _is_image(suffix):
+        img_workspace = workspace_dir / filepath
+        img_workspace.parent.mkdir(parents=True, exist_ok=True)
+        img_workspace.write_bytes(content)
+
+        # Also store in originals for reconversion support
+        originals_dir = store.originals_dir(settings.data_dir)
+        original_path = originals_dir / filepath
+        original_path.parent.mkdir(parents=True, exist_ok=True)
+        original_path.write_bytes(content)
+
+        # Generate alt text
+        vision = _resolve_vision_config(llm_config)
+        alt_text = PurePosixPath(filepath).stem
+        if vision:
+            media_type = mimetypes.guess_type(filepath)[0]
+            if media_type and media_type.startswith("image/"):
+                try:
+                    alt_text = await describe_image(content, media_type, vision)
+                except Exception:
+                    logger.warning("Alt text generation failed for %s", filepath)
+
+        # Create wrapper markdown
+        base_name = basename.rsplit(".", 1)[0]
+        if "/" in filepath:
+            parent_dir = filepath.rsplit("/", 1)[0]
+            converted_relpath = f"{parent_dir}/{base_name}.md"
+        else:
+            converted_relpath = f"{base_name}.md"
+
+        wrapper_content = f"![{alt_text}]({basename})\n"
+        converted_path = workspace_dir / converted_relpath
+        converted_path.parent.mkdir(parents=True, exist_ok=True)
+        converted_path.write_text(wrapper_content, encoding="utf-8")
+
+        # Chunk with image tracking
+        chunk_count = None
+        chunking_used = None
+        try:
+            chunked = await chunk_document(
+                store, converted_relpath, wrapper_content, spec.chunking,
+                images=[filepath],
+            )
+            chunk_count = len(chunked.chunks)
+            chunking_used = chunked.pipeline
+            sync_index(store)
+        except Exception as e:
+            logger.warning("Chunking failed for %s: %s", converted_relpath, e)
+
+        return UploadDocumentResponse(
+            filename=filepath,
+            converted_filename=converted_relpath,
+            size_bytes=len(content),
+            chunk_count=chunk_count,
+            chunking_pipeline_used=chunking_used,
+            message="Image uploaded with wrapper markdown",
+        )
+
     # Handle binary files - store original and convert to markdown
     originals_dir = store.originals_dir(settings.data_dir)
     original_path = originals_dir / filepath
@@ -855,7 +987,7 @@ async def _upload_file_internal(
 
     # Convert the document
     try:
-        markdown_content = await converter(original_path)
+        result = await converter(original_path)
     except ImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -873,16 +1005,29 @@ async def _upload_file_internal(
         converted_relpath = f"{parent_dir}/{base_name}.md"
     else:
         converted_relpath = f"{base_name}.md"
+
+    # Store extracted images and generate alt text
+    img_result = _store_conversion_images(result, workspace_dir, converted_relpath)
+    markdown_content = img_result.markdown
+    vision = _resolve_vision_config(llm_config)
+    try:
+        markdown_content = await generate_alt_texts(
+            markdown_content, img_result.alt_text_images, vision,
+        )
+    except Exception:
+        logger.warning("Alt text generation failed for %s", converted_relpath)
+
     converted_path = workspace_dir / converted_relpath
     converted_path.parent.mkdir(parents=True, exist_ok=True)
     converted_path.write_text(markdown_content, encoding="utf-8")
 
-    # Chunk the converted document
+    # Chunk the converted document with image tracking
     chunk_count = None
     chunking_used = None
     try:
         chunked = await chunk_document(
-            store, converted_relpath, markdown_content, spec.chunking
+            store, converted_relpath, markdown_content, spec.chunking,
+            images=img_result.workspace_paths,
         )
         chunk_count = len(chunked.chunks)
         chunking_used = chunked.pipeline
@@ -901,22 +1046,13 @@ async def _upload_file_internal(
     )
 
 
-@api_router.get("/documents")
-async def list_documents(
-    user: Annotated[User, Depends(get_current_user)],
-) -> DocumentListResponse:
-    """List all documents in the user's data directory.
-
-    Returns only text-based files (including converted markdown files).
-    Uses recursive search to include files in subdirectories.
-    """
-    store = _user_store(user)
+def _list_documents_for_store(store: Casebase) -> DocumentListResponse:
+    """Build document listing for a single store."""
     workspace = store.workspace_dir(settings.data_dir)
     originals_dir = store.originals_dir(settings.data_dir)
     documents: list[DocumentInfo] = []
     chunk_counts = list_chunked_documents(store)
 
-    # Build set of relative stems that have originals for reconversion
     original_stems: set[str] = set()
     if originals_dir.exists():
         for orig in originals_dir.rglob("*"):
@@ -931,6 +1067,11 @@ async def list_documents(
                 rel = file_path.relative_to(workspace)
                 doc_stem = str((rel.parent / rel.stem).as_posix())
                 stat = file_path.stat()
+                kind: Literal["document", "asset"] = "document"
+                for part in rel.parts[:-1]:
+                    if part.endswith("_assets"):
+                        kind = "asset"
+                        break
                 documents.append(
                     DocumentInfo(
                         filename=rel_path,
@@ -940,10 +1081,24 @@ async def list_documents(
                         ),
                         chunk_count=chunk_counts.get(rel_path),
                         has_original=doc_stem in original_stems,
+                        kind=kind,
                     )
                 )
 
     return DocumentListResponse(documents=documents, total_count=len(documents))
+
+
+@api_router.get("/documents")
+async def list_documents(
+    user: Annotated[User, Depends(get_current_user)],
+) -> DocumentListResponse:
+    """List all documents in the user's data directory.
+
+    Returns only text-based files (including converted markdown files).
+    Uses recursive search to include files in subdirectories.
+    """
+    store = _user_store(user)
+    return _list_documents_for_store(store)
 
 
 @api_router.put("/documents/{filepath:path}")
@@ -1062,9 +1217,10 @@ async def _process_collection(
                 f"Maximum: {_MAX_COLLECTION_FILES}",
             )
 
-        # Preprocess markdown files to discover binary attachments
+        # Preprocess markdown files to discover binary and image attachments
         is_none_pipeline = spec.conversion.pipeline == ConversionPipeline.NONE
         all_binaries: set[str] = set()
+        all_images: set[str] = set()
         preprocessed: dict[str, str] = {}
         for rel_path in sorted(collection_files):
             if PurePosixPath(rel_path).suffix.lower() != ".md":
@@ -1081,39 +1237,64 @@ async def _process_collection(
             )
             preprocessed[rel_path] = result.content
             all_binaries.update(result.binary_attachments)
+            all_images.update(result.image_attachments)
 
-        # Build upload plan (paths only, bytes read on demand to avoid
-        # buffering the entire collection in memory).
-        # Each entry: (rel_path, is_markdown)
-        upload_plan: list[tuple[str, bool]] = []
+        # Build upload plan with three categories:
+        # 1. Binary attachments (converted via _upload_file_internal)
+        # 2. Image attachments (stored as-is in workspace)
+        # 3. Markdown files (stored with preprocessed content)
+        # Category: "binary" | "image" | "markdown"
+        upload_plan: list[tuple[str, str]] = []
         for path in sorted(all_binaries):
             source = extract_root / path
             if not source.exists():
                 failed.append(path)
                 continue
-            upload_plan.append((path, False))
+            upload_plan.append((path, "binary"))
+
+        for path in sorted(all_images):
+            source = extract_root / path
+            if not source.exists():
+                failed.append(path)
+                continue
+            upload_plan.append((path, "image"))
 
         for rel_path in sorted(collection_files):
-            if rel_path in all_binaries:
+            if rel_path in all_binaries or rel_path in all_images:
                 continue
             suffix = PurePosixPath(rel_path).suffix.lower()
             if suffix == DOCUMENT_EXTENSION and rel_path in preprocessed:
-                upload_plan.append((rel_path, True))
-            else:
-                upload_plan.append((rel_path, False))
+                upload_plan.append((rel_path, "markdown"))
+            elif rel_path not in preprocessed:
+                upload_plan.append((rel_path, "binary"))
 
         total = len(upload_plan)
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        image_count = 0
 
-        for rel_path, is_markdown in upload_plan:
-            if is_markdown:
+        for rel_path, category in upload_plan:
+            ok = True
+            if category == "image":
+                # Store image as-is in workspace (no conversion).
+                try:
+                    safe = sanitize_document_path(rel_path)
+                    img_dest = workspace_dir / safe
+                    img_dest.parent.mkdir(parents=True, exist_ok=True)
+                    img_dest.write_bytes((extract_root / rel_path).read_bytes())
+                    image_count += 1
+                except Exception as e:
+                    logger.warning("Failed to store image %s: %s", rel_path, e)
+                    failed.append(rel_path)
+                    ok = False
+            elif category == "markdown":
                 content_bytes = preprocessed[rel_path].encode("utf-8")
+                ok = await _try_upload(rel_path, content_bytes)
+                if ok:
+                    markdown_count += 1
             else:
                 content_bytes = (extract_root / rel_path).read_bytes()
-            ok = await _try_upload(rel_path, content_bytes)
-            if ok:
-                if is_markdown:
-                    markdown_count += 1
-                else:
+                ok = await _try_upload(rel_path, content_bytes)
+                if ok:
                     converted_count += 1
             current += 1
             yield CollectionProgressEvent(
@@ -1123,14 +1304,60 @@ async def _process_collection(
                 status="ok" if ok else "failed",
             )
 
-    total_ok = markdown_count + converted_count
+        # Post-process: generate alt text for images referenced in markdown
+        vision = _resolve_vision_config(resolved)
+        for rel_path in sorted(preprocessed):
+            try:
+                safe = sanitize_document_path(rel_path)
+            except ValueError:
+                continue
+            ws_md_path = workspace_dir / safe
+            if not ws_md_path.exists():
+                continue
+            md_content = ws_md_path.read_text(encoding="utf-8")
+
+            # Collect image bytes for this markdown file
+            img_refs: dict[str, bytes] = {}
+            for m in MD_IMAGE_RE.finditer(md_content):
+                alt, img_path = m.group(1), m.group(2)
+                if alt or img_path.startswith(("http://", "https://", "data:")):
+                    continue
+                # Resolve relative to the markdown file's directory
+                md_dir = PurePosixPath(rel_path).parent
+                resolved_img = str((md_dir / img_path).as_posix()) if not img_path.startswith("/") else img_path
+                img_ws_path = workspace_dir / resolved_img
+                if img_ws_path.exists() and img_ws_path.is_file():
+                    img_refs[img_path] = img_ws_path.read_bytes()
+
+            if img_refs:
+                try:
+                    new_content = await generate_alt_texts(md_content, img_refs, vision)
+                    if new_content != md_content:
+                        ws_md_path.write_text(new_content, encoding="utf-8")
+                        # Re-chunk with updated content and track images
+                        image_paths = [
+                            str((PurePosixPath(rel_path).parent / p).as_posix())
+                            for p in img_refs
+                        ]
+                        await chunk_document(
+                            store, safe, new_content, spec.chunking,
+                            images=image_paths,
+                        )
+                except Exception:
+                    logger.warning("Alt text generation failed for %s", rel_path)
+
+        # Sync index once after all files are processed
+        sync_index(store)
+
+    total_ok = markdown_count + converted_count + image_count
     yield CollectionCompleteEvent(
         total_files=total_ok,
         markdown_files=markdown_count,
         converted_attachments=converted_count,
         failed_files=failed,
         message=f"Collection uploaded: {markdown_count} markdown, "
-        f"{converted_count} attachments converted"
+        f"{converted_count} attachments converted, "
+        f"{image_count} images stored"
         + (f", {len(failed)} failed" if failed else ""),
     )
 
@@ -1282,7 +1509,7 @@ async def delete_all_documents(
 
     for dir_fn in (
         store.workspace_dir,
-        store.chunks_dir,
+        store.metadata_dir,
         store.originals_dir,
         store.lancedb_dir,
     ):
@@ -1362,8 +1589,17 @@ async def _reconvert_single(
     if conversion_pipeline == ConversionPipeline.AUTO:
         resolved_conversion = resolve_auto_pipeline(original_path.name)
 
+    # Delete old companion images before reconversion.
+    existing_meta = get_metadata(store, safe)
+    if existing_meta and existing_meta.images:
+        for img_path in existing_meta.images:
+            img_full = workspace_dir / img_path
+            if img_full.exists():
+                img_full.unlink()
+                _cleanup_empty_parents(img_full, workspace_dir)
+
     try:
-        markdown_content = await converter(original_path)
+        result = await converter(original_path)
     except ImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -1374,6 +1610,17 @@ async def _reconvert_single(
             detail=f"Conversion failed: {e!s}",
         )
 
+    # Store extracted images and generate alt text.
+    img_result = _store_conversion_images(result, workspace_dir, safe)
+    markdown_content = img_result.markdown
+    vision = _resolve_vision_config(resolved)
+    try:
+        markdown_content = await generate_alt_texts(
+            markdown_content, img_result.alt_text_images, vision,
+        )
+    except Exception:
+        logger.warning("Alt text generation failed for %s", safe)
+
     converted_path = workspace_dir / safe
     converted_path.parent.mkdir(parents=True, exist_ok=True)
     converted_path.write_text(markdown_content, encoding="utf-8")
@@ -1382,7 +1629,10 @@ async def _reconvert_single(
     chunk_count = None
     chunking_used = None
     try:
-        chunked = await chunk_document(store, safe, markdown_content, spec.chunking)
+        chunked = await chunk_document(
+            store, safe, markdown_content, spec.chunking,
+            images=img_result.workspace_paths,
+        )
         chunk_count = len(chunked.chunks)
         chunking_used = chunked.pipeline
     except Exception as e:
@@ -1531,14 +1781,14 @@ async def list_chunking_pipelines() -> list[ChunkingPipelineInfo]:
 async def get_document_chunks(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
-) -> ChunkedDocument:
+) -> DocumentMetadata:
     """Get chunks for a document.
 
     Args:
         filepath: The relative document path.
     """
     safe = _safe_path(filepath)
-    chunked = get_chunks(_user_store(user), safe)
+    chunked = get_metadata(_user_store(user), safe)
     if not chunked:
         raise HTTPException(status_code=404, detail="No chunks found for this document")
     return chunked
@@ -1549,7 +1799,7 @@ async def rechunk_document(
     filepath: str,
     request: PipelineSpec,
     user: Annotated[User, Depends(get_current_user)],
-) -> ChunkedDocument:
+) -> DocumentMetadata:
     """Re-chunk a document with different settings.
 
     Args:
@@ -1605,32 +1855,24 @@ async def reconvert_document(
 # --- Document move endpoint ---
 
 
-@api_router.post("/documents/move/{filepath:path}")
-async def move_document(
-    filepath: str,
-    request: MoveDocumentRequest,
-    user: Annotated[User, Depends(get_current_user)],
+def _move_document_internal(
+    store: Casebase, src: str, dst: str,
 ) -> MoveDocumentResponse:
-    """Move a document to a new location.
-
-    Moves the document file, its chunks JSON, and its original (if any)
-    to the new destination path.
+    """Move a document, its metadata, companion images, and original.
 
     Args:
-        filepath: The current relative path of the document.
-        request: The move destination.
+        store: The casebase containing the document.
+        src: Sanitized source relative path.
+        dst: Sanitized destination relative path.
+
+    Returns:
+        Move response with source and destination.
+
+    Raises:
+        HTTPException: If the document is not found or destination exists.
     """
-    src = _safe_path(filepath)
-    dst = _safe_path(request.destination)
-
-    if src == dst:
-        raise HTTPException(
-            status_code=400, detail="Source and destination are the same"
-        )
-
-    store = _user_store(user)
     workspace_dir = store.workspace_dir(settings.data_dir)
-    chunks_dir = store.chunks_dir(settings.data_dir)
+    metadata_dir = store.metadata_dir(settings.data_dir)
     originals_dir = store.originals_dir(settings.data_dir)
 
     src_doc = workspace_dir / src
@@ -1646,30 +1888,86 @@ async def move_document(
     src_doc.rename(dst_doc)
     _cleanup_empty_parents(src_doc, workspace_dir)
 
-    # Move chunks if they exist
-    src_chunks = chunks_dir / f"{src}.json"
-    if src_chunks.exists():
-        dst_chunks = chunks_dir / f"{dst}.json"
-        dst_chunks.parent.mkdir(parents=True, exist_ok=True)
-        src_chunks.rename(dst_chunks)
-        _cleanup_empty_parents(src_chunks, chunks_dir)
+    # Move metadata if it exists (stem-only naming: report.json for report.md)
+    src_meta_stem = src.removesuffix(DOCUMENT_EXTENSION)
+    src_meta = metadata_dir / f"{src_meta_stem}.json"
+    dst_meta_stem = dst.removesuffix(DOCUMENT_EXTENSION)
+    dst_meta = metadata_dir / f"{dst_meta_stem}.json"
+    if src_meta.exists():
+        dst_meta.parent.mkdir(parents=True, exist_ok=True)
+        src_meta.rename(dst_meta)
+        _cleanup_empty_parents(src_meta, metadata_dir)
+
+    # Move companion images (_assets/ directory) and rewrite references
+    src_path = Path(src)
+    dst_path = Path(dst)
+    src_base = src_path.stem
+    dst_base = dst_path.stem
+    src_parent_str = str(src_path.parent)
+    dst_parent_str = str(dst_path.parent)
+
+    old_assets_name = f"{src_base}_assets"
+    new_assets_name = f"{dst_base}_assets"
+    old_assets_dir = (
+        workspace_dir / src_parent_str / old_assets_name
+        if src_parent_str != "."
+        else workspace_dir / old_assets_name
+    )
+
+    if old_assets_dir.is_dir():
+        new_assets_dir = (
+            workspace_dir / dst_parent_str / new_assets_name
+            if dst_parent_str != "."
+            else workspace_dir / new_assets_name
+        )
+        new_assets_dir.parent.mkdir(parents=True, exist_ok=True)
+        old_assets_dir.rename(new_assets_dir)
+        _cleanup_empty_parents(old_assets_dir, workspace_dir)
+
+        # Rewrite image references in the moved markdown
+        content = dst_doc.read_text(encoding="utf-8")
+        content = content.replace(f"]({old_assets_name}/", f"]({new_assets_name}/")
+        dst_doc.write_text(content, encoding="utf-8")
+
+        # Update images list in metadata via model to stay consistent
+        if dst_meta.exists():
+            meta = load_document_metadata(metadata_dir, dst)
+            if meta and meta.images:
+                updated_images = [
+                    img.replace(f"{old_assets_name}/", f"{new_assets_name}/")
+                    for img in meta.images
+                ]
+                if src_parent_str != dst_parent_str:
+                    old_prefix = (
+                        f"{src_parent_str}/{old_assets_name}/"
+                        if src_parent_str != "."
+                        else f"{old_assets_name}/"
+                    )
+                    new_prefix = (
+                        f"{dst_parent_str}/{new_assets_name}/"
+                        if dst_parent_str != "."
+                        else f"{new_assets_name}/"
+                    )
+                    updated_images = [
+                        img.replace(old_prefix, new_prefix) for img in updated_images
+                    ]
+                updated = meta.model_copy(update={"images": updated_images})
+                dst_meta.write_text(
+                    updated.model_dump_json(indent=2), encoding="utf-8"
+                )
 
     # Move original if it exists (search by stem)
-    src_path = Path(src)
     src_stem = src_path.stem
-    src_parent = str(src_path.parent)
-    if src_parent != ".":
-        orig_search_dir = originals_dir / src_parent
+    if src_parent_str != ".":
+        orig_search_dir = originals_dir / src_parent_str
     else:
         orig_search_dir = originals_dir
 
     if orig_search_dir.exists():
         for candidate in orig_search_dir.iterdir():
             if candidate.is_file() and candidate.stem == src_stem:
-                dst_path = Path(dst)
-                dst_parent = str(dst_path.parent)
-                if dst_parent != ".":
-                    dst_orig_dir = originals_dir / dst_parent
+                if dst_parent_str != ".":
+                    dst_orig_dir = originals_dir / dst_parent_str
                 else:
                     dst_orig_dir = originals_dir
                 dst_orig_dir.mkdir(parents=True, exist_ok=True)
@@ -1678,7 +1976,6 @@ async def move_document(
                 _cleanup_empty_parents(candidate, originals_dir)
                 break
 
-    # Update LanceDB index to reflect new filenames in metadata.
     sync_index(store)
 
     return MoveDocumentResponse(
@@ -1686,6 +1983,22 @@ async def move_document(
         destination=dst,
         message="Document moved successfully",
     )
+
+
+@api_router.post("/documents/move/{filepath:path}")
+async def move_document(
+    filepath: str,
+    request: MoveDocumentRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> MoveDocumentResponse:
+    """Move a document to a new location."""
+    src = _safe_path(filepath)
+    dst = _safe_path(request.destination)
+    if src == dst:
+        raise HTTPException(
+            status_code=400, detail="Source and destination are the same"
+        )
+    return _move_document_internal(_user_store(user), src, dst)
 
 
 # --- Original file endpoints ---
@@ -1799,10 +2112,11 @@ async def replace_original(
 async def get_document_content(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
-) -> PlainTextResponse:
-    """Get the content of a document.
+) -> Response:
+    """Get the content of a document or asset.
 
-    Only text-based documents can be read directly.
+    Text files are returned as plain text.  Binary files (images, etc.)
+    are returned with their proper MIME type.
 
     Args:
         filepath: The relative path to the document.
@@ -1818,16 +2132,22 @@ async def get_document_content(
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
+    media_type = mimetypes.guess_type(file_path.name)[0]
+    if media_type and not media_type.startswith("text/"):
+        return Response(content=file_path.read_bytes(), media_type=media_type)
+
     try:
         return PlainTextResponse(file_path.read_text(encoding="utf-8"))
     except UnicodeDecodeError:
-        raise HTTPException(
-            status_code=415, detail="Binary file cannot be read as text"
+        # Fallback: serve as binary with guessed type.
+        return Response(
+            content=file_path.read_bytes(),
+            media_type=media_type or "application/octet-stream",
         )
 
 
 def _delete_single(store: Casebase, safe: str) -> None:
-    """Delete a single document, its chunks, and its original file.
+    """Delete a single document, its metadata, companion images, and original.
 
     Does **not** call ``sync_index``; the caller is responsible for that.
 
@@ -1847,9 +2167,18 @@ def _delete_single(store: Casebase, safe: str) -> None:
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
+    # Delete companion images listed in metadata (before deleting metadata).
+    meta = get_metadata(store, safe)
+    if meta and meta.images:
+        for img_path in meta.images:
+            img_full = workspace / img_path
+            if img_full.exists():
+                img_full.unlink()
+                _cleanup_empty_parents(img_full, workspace)
+
     file_path.unlink()
     _cleanup_empty_parents(file_path, workspace)
-    delete_chunks(store, safe)
+    delete_metadata(store, safe)
 
     # Also delete the original if it exists
     originals_dir = store.originals_dir(settings.data_dir)
@@ -2037,7 +2366,7 @@ async def delete_directory(
     safe = _safe_path(request.path)
     store = _user_store(user)
     workspace_dir = store.workspace_dir(settings.data_dir)
-    chunks_dir = store.chunks_dir(settings.data_dir)
+    metadata_dir = store.metadata_dir(settings.data_dir)
     originals_dir = store.originals_dir(settings.data_dir)
 
     dir_path = workspace_dir / safe
@@ -2052,10 +2381,10 @@ async def delete_directory(
     _cleanup_empty_parents(dir_path, workspace_dir)
 
     # Delete matching chunks subdirectory
-    chunks_subdir = chunks_dir / safe
-    if chunks_subdir.exists() and chunks_subdir.is_dir():
-        shutil.rmtree(chunks_subdir)
-        _cleanup_empty_parents(chunks_subdir, chunks_dir)
+    meta_subdir = metadata_dir / safe
+    if meta_subdir.exists() and meta_subdir.is_dir():
+        shutil.rmtree(meta_subdir)
+        _cleanup_empty_parents(meta_subdir, metadata_dir)
 
     # Delete matching originals subdirectory
     originals_subdir = originals_dir / safe
@@ -2224,8 +2553,8 @@ async def get_group_document_content(
     group_id: str,
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
-) -> PlainTextResponse:
-    """Get content of a group document the user has access to."""
+) -> Response:
+    """Get content of a group document or asset the user has access to."""
     safe_id = _require_group_member(user, group_id)
     safe = _safe_path(filepath)
     store = Casebase(kind="group", id=safe_id)
@@ -2237,11 +2566,16 @@ async def get_group_document_content(
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
+    media_type = mimetypes.guess_type(file_path.name)[0]
+    if media_type and not media_type.startswith("text/"):
+        return Response(content=file_path.read_bytes(), media_type=media_type)
+
     try:
         return PlainTextResponse(file_path.read_text(encoding="utf-8"))
     except UnicodeDecodeError:
-        raise HTTPException(
-            status_code=415, detail="Binary file cannot be read as text"
+        return Response(
+            content=file_path.read_bytes(),
+            media_type=media_type or "application/octet-stream",
         )
 
 
@@ -2253,38 +2587,7 @@ async def list_group_documents(
     """List all documents in a group's data directory."""
     safe_id = _require_group_member(user, group_id)
     store = Casebase(kind="group", id=safe_id)
-    workspace = store.workspace_dir(settings.data_dir)
-    originals_dir = store.originals_dir(settings.data_dir)
-    documents: list[DocumentInfo] = []
-    chunk_counts = list_chunked_documents(store)
-
-    original_stems: set[str] = set()
-    if originals_dir.exists():
-        for orig in originals_dir.rglob("*"):
-            if orig.is_file():
-                rel = orig.relative_to(originals_dir)
-                original_stems.add(str((rel.parent / rel.stem).as_posix()))
-
-    if workspace.exists():
-        for file_path in sorted(workspace.rglob("*")):
-            if file_path.is_file():
-                rel_path = str(file_path.relative_to(workspace).as_posix())
-                rel = file_path.relative_to(workspace)
-                doc_stem = str((rel.parent / rel.stem).as_posix())
-                stat = file_path.stat()
-                documents.append(
-                    DocumentInfo(
-                        filename=rel_path,
-                        size_bytes=stat.st_size,
-                        modified_at=datetime.fromtimestamp(
-                            stat.st_mtime, tz=timezone.utc
-                        ),
-                        chunk_count=chunk_counts.get(rel_path),
-                        has_original=doc_stem in original_stems,
-                    )
-                )
-
-    return DocumentListResponse(documents=documents, total_count=len(documents))
+    return _list_documents_for_store(store)
 
 
 @api_router.put("/groups/{group_id}/documents/{filepath:path}")
@@ -2409,9 +2712,18 @@ async def delete_group_document(
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
+    # Delete companion images tracked in metadata.
+    existing_meta = get_metadata(store, safe)
+    if existing_meta and existing_meta.images:
+        for img_path in existing_meta.images:
+            img_full = workspace / img_path
+            if img_full.exists():
+                img_full.unlink()
+                _cleanup_empty_parents(img_full, workspace)
+
     file_path.unlink()
     _cleanup_empty_parents(file_path, workspace)
-    delete_chunks(store, safe)
+    delete_metadata(store, safe)
     sync_index(store)
 
     # Also delete the original if it exists
@@ -2476,7 +2788,7 @@ async def delete_group_directory(
     safe = _safe_path(request.path)
     store = Casebase(kind="group", id=safe_id)
     workspace_dir = store.workspace_dir(settings.data_dir)
-    chunks_dir = store.chunks_dir(settings.data_dir)
+    metadata_dir = store.metadata_dir(settings.data_dir)
     originals_dir = store.originals_dir(settings.data_dir)
 
     dir_path = workspace_dir / safe
@@ -2488,10 +2800,10 @@ async def delete_group_directory(
     shutil.rmtree(dir_path)
     _cleanup_empty_parents(dir_path, workspace_dir)
 
-    chunks_subdir = chunks_dir / safe
-    if chunks_subdir.exists() and chunks_subdir.is_dir():
-        shutil.rmtree(chunks_subdir)
-        _cleanup_empty_parents(chunks_subdir, chunks_dir)
+    meta_subdir = metadata_dir / safe
+    if meta_subdir.exists() and meta_subdir.is_dir():
+        shutil.rmtree(meta_subdir)
+        _cleanup_empty_parents(meta_subdir, metadata_dir)
 
     originals_subdir = originals_dir / safe
     if originals_subdir.exists() and originals_subdir.is_dir():
@@ -2528,82 +2840,7 @@ async def reconvert_group_document(
     store = Casebase(kind="group", id=safe_id)
     spec = request.pipeline
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
-
-    conversion_pipeline = spec.conversion.pipeline
-
-    originals_dir = store.originals_dir(settings.data_dir)
-    workspace_dir = store.workspace_dir(settings.data_dir)
-
-    safe_path = Path(safe)
-    target_stem = safe_path.stem
-    parent = str(safe_path.parent)
-    if parent != ".":
-        orig_search_dir = originals_dir / parent
-    else:
-        orig_search_dir = originals_dir
-
-    original_path = None
-    if orig_search_dir.exists():
-        for candidate in orig_search_dir.iterdir():
-            if candidate.is_file() and candidate.stem == target_stem:
-                original_path = candidate
-                break
-
-    if not original_path:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No original file found for '{safe}'",
-        )
-
-    try:
-        converter = get_converter(
-            conversion_pipeline,
-            filename=original_path.name,
-            config=spec.conversion.config,
-            llm_options=resolved,
-        )
-    except ValidationError as e:
-        raise HTTPException(status_code=422, detail=e.errors())
-    except (ImportError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    resolved_conversion = conversion_pipeline
-    if conversion_pipeline == ConversionPipeline.AUTO:
-        resolved_conversion = resolve_auto_pipeline(original_path.name)
-
-    try:
-        markdown_content = await converter(original_path)
-    except ImportError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Conversion failed: {e!s}")
-
-    converted_path = workspace_dir / safe
-    converted_path.parent.mkdir(parents=True, exist_ok=True)
-    converted_path.write_text(markdown_content, encoding="utf-8")
-    stat = converted_path.stat()
-
-    chunk_count = None
-    chunking_used = None
-    try:
-        chunked = await chunk_document(store, safe, markdown_content, spec.chunking)
-        chunk_count = len(chunked.chunks)
-        chunking_used = chunked.pipeline
-        sync_index(store)
-    except Exception as e:
-        logger.warning("Chunking failed for %s: %s", safe, e)
-
-    return UploadDocumentResponse(
-        filename=original_path.name,
-        converted_filename=safe,
-        size_bytes=stat.st_size,
-        conversion_pipeline_used=resolved_conversion.value,
-        chunk_count=chunk_count,
-        chunking_pipeline_used=chunking_used,
-        message="Document reconverted successfully",
-    )
+    return await _reconvert_single(store, safe, spec, resolved)
 
 
 @api_router.post("/groups/{group_id}/documents/move/{filepath:path}")
@@ -2616,75 +2853,15 @@ async def move_group_document(
     """Move a group document to a new location.
 
     Requires write access to the group.
-
-    Args:
-        group_id: The group identifier.
-        filepath: The current relative path of the document.
-        request: The move destination.
     """
     safe_id = _require_group_write(user, group_id)
     src = _safe_path(filepath)
     dst = _safe_path(request.destination)
-
     if src == dst:
         raise HTTPException(
             status_code=400, detail="Source and destination are the same"
         )
-
-    store = Casebase(kind="group", id=safe_id)
-    workspace_dir = store.workspace_dir(settings.data_dir)
-    chunks_dir = store.chunks_dir(settings.data_dir)
-    originals_dir = store.originals_dir(settings.data_dir)
-
-    src_doc = workspace_dir / src
-    if not src_doc.exists() or not src_doc.is_file():
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    dst_doc = workspace_dir / dst
-    if dst_doc.exists():
-        raise HTTPException(status_code=409, detail="Destination already exists")
-
-    dst_doc.parent.mkdir(parents=True, exist_ok=True)
-    src_doc.rename(dst_doc)
-    _cleanup_empty_parents(src_doc, workspace_dir)
-
-    src_chunks = chunks_dir / f"{src}.json"
-    if src_chunks.exists():
-        dst_chunks = chunks_dir / f"{dst}.json"
-        dst_chunks.parent.mkdir(parents=True, exist_ok=True)
-        src_chunks.rename(dst_chunks)
-        _cleanup_empty_parents(src_chunks, chunks_dir)
-
-    src_path = Path(src)
-    src_stem = src_path.stem
-    src_parent = str(src_path.parent)
-    if src_parent != ".":
-        orig_search_dir = originals_dir / src_parent
-    else:
-        orig_search_dir = originals_dir
-
-    if orig_search_dir.exists():
-        for candidate in orig_search_dir.iterdir():
-            if candidate.is_file() and candidate.stem == src_stem:
-                dst_path = Path(dst)
-                dst_parent = str(dst_path.parent)
-                if dst_parent != ".":
-                    dst_orig_dir = originals_dir / dst_parent
-                else:
-                    dst_orig_dir = originals_dir
-                dst_orig_dir.mkdir(parents=True, exist_ok=True)
-                dst_orig = dst_orig_dir / (dst_path.stem + candidate.suffix)
-                candidate.rename(dst_orig)
-                _cleanup_empty_parents(candidate, originals_dir)
-                break
-
-    sync_index(store)
-
-    return MoveDocumentResponse(
-        source=src,
-        destination=dst,
-        message="Document moved successfully",
-    )
+    return _move_document_internal(Casebase(kind="group", id=safe_id), src, dst)
 
 
 app.include_router(api_router)

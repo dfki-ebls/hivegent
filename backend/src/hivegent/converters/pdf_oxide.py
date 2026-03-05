@@ -7,7 +7,7 @@ from pathlib import Path
 from pdf_oxide import PdfDocument
 from pydantic import BaseModel
 
-from .base import DocumentConverter
+from .base import ConversionResult, DocumentConverter
 
 __all__ = ["PdfOxideConverter", "PdfOxideConverterConfig"]
 
@@ -28,23 +28,23 @@ class PdfOxideConverter(DocumentConverter):
     extensions = frozenset({".pdf"})
     config: PdfOxideConverterConfig = field(default_factory=PdfOxideConverterConfig)
 
-    def _convert_sync(self, path: Path) -> str:
+    def _convert_sync(self, path: Path) -> ConversionResult:
         """Run the synchronous pdf_oxide conversion."""
         doc = PdfDocument(str(path))
         pages = [doc.to_markdown(page) for page in range(doc.page_count())]
-        return "\n\n".join(pages)
+        return ConversionResult(markdown="\n\n".join(pages))
 
     async def __call__(
         self,
         path: Path,
         /,
-    ) -> str:
+    ) -> ConversionResult:
         """Convert a PDF document to markdown using pdf_oxide.
 
         Args:
             path: Path to the PDF document to convert.
 
         Returns:
-            The document content converted to markdown.
+            The conversion result with markdown content.
         """
         return await asyncio.to_thread(self._convert_sync, path)

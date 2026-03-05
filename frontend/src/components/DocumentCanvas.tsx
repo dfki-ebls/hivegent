@@ -732,6 +732,8 @@ interface DialogState {
   isNew: boolean;
   /** Custom content fetcher (for group documents). */
   getContent?: (filename: string) => Promise<string>;
+  /** Group ID for group documents (used by WorkspaceImage). */
+  groupId?: string;
 }
 
 interface ManageDocumentsProps {
@@ -908,6 +910,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       editable: false,
       isNew: false,
       getContent: (f) => getGroupDocumentContent(groupId, f),
+      groupId,
     });
   }, []);
 
@@ -1380,6 +1383,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
             : undefined
         }
         getContent={dialogState?.getContent}
+        groupId={dialogState?.groupId}
       />
 
       <MoveDocumentDialog

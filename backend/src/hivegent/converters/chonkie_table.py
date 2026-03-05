@@ -7,7 +7,7 @@ from typing import ClassVar
 
 from chonkie import TableChef
 
-from .base import DocumentConverter
+from .base import ConversionResult, DocumentConverter
 
 __all__ = ["ChonkieTableConverter"]
 
@@ -27,14 +27,14 @@ class ChonkieTableConverter(DocumentConverter):
         self,
         path: Path,
         /,
-    ) -> str:
+    ) -> ConversionResult:
         """Convert a tabular file to markdown.
 
         Args:
             path: Path to the CSV or Excel file.
 
         Returns:
-            Markdown table content.
+            The conversion result with markdown table content.
         """
         doc = await asyncio.to_thread(TableChef().process, path)
-        return doc.content
+        return ConversionResult(markdown=doc.content)

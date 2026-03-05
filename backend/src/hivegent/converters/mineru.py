@@ -9,7 +9,7 @@ from magic_pdf.data.data_reader_writer import FileBasedDataWriter  # type: ignor
 from magic_pdf.pipe.UNIPipe import UNIPipe  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
 from pydantic import BaseModel
 
-from .base import DocumentConverter
+from .base import ConversionResult, DocumentConverter, collect_dir_images
 
 __all__ = ["MinerUConverter", "MinerUConverterConfig"]
 
@@ -41,7 +41,7 @@ class MinerUConverter(DocumentConverter):
     )
     config: MinerUConverterConfig = field(default_factory=MinerUConverterConfig)
 
-    def _convert_sync(self, path: Path) -> str:
+    def _convert_sync(self, path: Path) -> ConversionResult:
         """Run the synchronous MinerU conversion."""
         pdf_bytes = path.read_bytes()
 
@@ -65,19 +65,21 @@ class MinerUConverter(DocumentConverter):
                 drop_mode="none",
             )
 
-            return str(md_content)
+            # Collect extracted images before the temp dir is cleaned up.
+            image_data = collect_dir_images(temp_path / "images", temp_path)
+            return ConversionResult(markdown=str(md_content), images=image_data)
 
     async def __call__(
         self,
         path: Path,
         /,
-    ) -> str:
+    ) -> ConversionResult:
         """Convert a document to markdown using MinerU.
 
         Args:
             path: Path to the document to convert.
 
         Returns:
-            The document content converted to markdown.
+            The conversion result with markdown and extracted images.
         """
         return await asyncio.to_thread(self._convert_sync, path)

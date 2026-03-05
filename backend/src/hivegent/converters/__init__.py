@@ -10,7 +10,7 @@ from pydantic import BaseModel, ValidationError
 from cbrkit.helpers import optional_dependencies
 
 from ..types import LlmConfig
-from .base import DocumentConverter
+from .base import ConversionResult, DocumentConverter
 from .chonkie_text import ChonkieTextConverter
 from .llm import LLMConverter, LlmConverterConfig
 from .pandoc import PandocConverter, PandocConverterConfig
@@ -18,6 +18,7 @@ from .pandoc import PandocConverter, PandocConverterConfig
 __all__ = [
     "ConversionPipeline",
     "ConversionPipelineInfo",
+    "ConversionResult",
     "ConversionSpec",
     "DocumentConverter",
     "get_converter",

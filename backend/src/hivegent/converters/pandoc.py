@@ -1,12 +1,13 @@
 """Pandoc-based document converter for miscellaneous document formats."""
 
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from ..subprocesses import pandoc_convert
-from .base import DocumentConverter
+from .base import ConversionResult, DocumentConverter, collect_dir_images
 
 __all__ = ["PandocConverter", "PandocConverterConfig"]
 
@@ -84,19 +85,36 @@ class PandocConverter(DocumentConverter):
         self,
         path: Path,
         /,
-    ) -> str:
+    ) -> ConversionResult:
         """Convert a document to markdown using pandoc.
 
         Args:
             path: Path to the document to convert.
 
         Returns:
-            The document content converted to markdown.
+            The conversion result with markdown and extracted images.
         """
         suffix = path.suffix.lower()
-        return await pandoc_convert(
+        use_sandbox = suffix not in _SANDBOX_INCOMPATIBLE
+
+        # Formats with embedded media benefit from --extract-media.
+        if suffix in _SANDBOX_INCOMPATIBLE:
+            with tempfile.TemporaryDirectory() as media_dir:
+                media_path = Path(media_dir)
+                extra = [*self.config.extra_args, f"--extract-media={media_path}"]
+                markdown = await pandoc_convert(
+                    path,
+                    from_format=_FORMAT_OVERRIDES.get(suffix),
+                    sandbox=use_sandbox,
+                    extra_args=extra,
+                )
+                image_data = collect_dir_images(media_path, media_path)
+                return ConversionResult(markdown=markdown, images=image_data)
+
+        markdown = await pandoc_convert(
             path,
             from_format=_FORMAT_OVERRIDES.get(suffix),
-            sandbox=suffix not in _SANDBOX_INCOMPATIBLE,
+            sandbox=use_sandbox,
             extra_args=self.config.extra_args,
         )
+        return ConversionResult(markdown=markdown)

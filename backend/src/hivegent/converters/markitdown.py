@@ -7,7 +7,7 @@ from pathlib import Path
 from markitdown import MarkItDown
 from pydantic import BaseModel
 
-from .base import DocumentConverter
+from .base import ConversionResult, DocumentConverter
 
 __all__ = ["MarkItDownConverter", "MarkItDownConverterConfig"]
 
@@ -60,23 +60,23 @@ class MarkItDownConverter(DocumentConverter):
     )
     config: MarkItDownConverterConfig = field(default_factory=MarkItDownConverterConfig)
 
-    def _convert_sync(self, path: Path) -> str:
+    def _convert_sync(self, path: Path) -> ConversionResult:
         """Run the synchronous MarkItDown conversion."""
         md = MarkItDown()
         result = md.convert(str(path))
-        return str(result.text_content)
+        return ConversionResult(markdown=str(result.text_content))
 
     async def __call__(
         self,
         path: Path,
         /,
-    ) -> str:
+    ) -> ConversionResult:
         """Convert a document to markdown using MarkItDown.
 
         Args:
             path: Path to the document to convert.
 
         Returns:
-            The document content converted to markdown.
+            The conversion result with markdown content.
         """
         return await asyncio.to_thread(self._convert_sync, path)

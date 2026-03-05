@@ -269,21 +269,21 @@ class Settings(BaseSettings):
         """
         return self.get_user_dir(user_id) / "tokens.json"
 
-    def get_user_chunks_dir(self, user_id: str) -> Path:
-        """Get the chunks directory for a specific user.
+    def get_user_metadata_dir(self, user_id: str) -> Path:
+        """Get the metadata directory for a specific user.
 
-        Chunk JSON files are stored here after documents are chunked.
+        Per-document metadata JSON files are stored here.
 
         Args:
             user_id: The user ID.
 
         Returns:
-            Path to the user's chunks directory.
+            Path to the user's metadata directory.
 
         Raises:
             ValueError: If the user ID is invalid.
         """
-        path = self.get_user_dir(user_id) / "chunks"
+        path = self.get_user_dir(user_id) / "metadata"
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -357,19 +357,19 @@ class Settings(BaseSettings):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def get_group_chunks_dir(self, group_id: str) -> Path:
-        """Get the chunks directory for a specific group.
+    def get_group_metadata_dir(self, group_id: str) -> Path:
+        """Get the metadata directory for a specific group.
 
         Args:
             group_id: The group ID.
 
         Returns:
-            Path to the group's chunks directory.
+            Path to the group's metadata directory.
 
         Raises:
             ValueError: If the group ID is invalid.
         """
-        path = self.get_group_dir(group_id) / "chunks"
+        path = self.get_group_dir(group_id) / "metadata"
         path.mkdir(parents=True, exist_ok=True)
         return path
 

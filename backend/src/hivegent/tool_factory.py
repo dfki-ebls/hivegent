@@ -10,7 +10,7 @@ from pydantic_ai import FilteredToolset, FunctionToolset
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 from pydantic_ai.toolsets import AbstractToolset
 
-from .chunks import load_chunked_document, rechunk_document
+from .chunks import load_document_metadata, rechunk_document
 from .config import settings
 from .messages import list_conversations as _list_conversations
 from .retrieval import search_multi
@@ -119,12 +119,12 @@ class ToolFactory:
 
     @property
     def list_chunks(self) -> ListChunksTool:
-        """Create a ListChunksTool for the user's chunks directory."""
-        chunks_dir = self.store.chunks_dir(settings.data_dir)
+        """Create a ListChunksTool for the user's metadata directory."""
+        metadata_dir = self.store.metadata_dir(settings.data_dir)
 
         def _loader(filename: str) -> Sequence[ChunkSummary] | None:
-            chunked = load_chunked_document(chunks_dir, filename)
-            if not chunked:
+            meta = load_document_metadata(metadata_dir, filename)
+            if not meta:
                 return None
             return [
                 ChunkSummary(
@@ -132,7 +132,7 @@ class ToolFactory:
                     start_index=c.start_index,
                     end_index=c.end_index,
                 )
-                for c in chunked.chunks
+                for c in meta.chunks
             ]
 
         return ListChunksTool(
@@ -142,15 +142,15 @@ class ToolFactory:
 
     @property
     def get_chunk(self) -> GetChunkTool:
-        """Create a GetChunkTool for the user's chunks directory."""
-        chunks_dir = self.store.chunks_dir(settings.data_dir)
+        """Create a GetChunkTool for the user's metadata directory."""
+        metadata_dir = self.store.metadata_dir(settings.data_dir)
 
         def _loader(filename: str, chunk_index: int) -> str | None:
-            chunked = load_chunked_document(chunks_dir, filename)
-            if not chunked:
+            meta = load_document_metadata(metadata_dir, filename)
+            if not meta:
                 return None
-            if 0 <= chunk_index < len(chunked.chunks):
-                return chunked.chunks[chunk_index].text
+            if 0 <= chunk_index < len(meta.chunks):
+                return meta.chunks[chunk_index].text
             return None
 
         return GetChunkTool(

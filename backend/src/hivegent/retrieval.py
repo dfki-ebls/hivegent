@@ -13,7 +13,7 @@ import cbrkit
 
 from .config import settings
 from .store import Casebase
-from .types import ChunkedDocument, DocumentFilter, RetrievedChunk
+from .types import DocumentFilter, DocumentMetadata, RetrievedChunk
 
 __all__ = [
     "invalidate_store",
@@ -211,29 +211,36 @@ def _metadata_func(key: str, value: str) -> dict[str, Any]:
     return {METADATA_FILENAME_COLUMN: filename}
 
 
-def _load_all_chunks_from_dir(chunks_dir: Path) -> dict[str, str]:
-    """Load all chunks from a chunks directory as a casebase mapping.
+def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, str]:
+    """Load all chunks from a metadata directory as a casebase mapping.
+
+    Metadata filenames use the stem-only convention (``report.json`` for
+    ``report.md``), so the document extension is re-appended when building
+    chunk keys.
 
     Args:
-        chunks_dir: The directory containing chunk JSON files.
+        metadata_dir: The directory containing metadata JSON files.
 
     Returns:
         Dict mapping chunk keys to chunk text.
     """
-    if not chunks_dir.exists():
+    from .config import DOCUMENT_EXTENSION
+
+    if not metadata_dir.exists():
         return {}
 
     casebase: dict[str, str] = {}
 
-    for chunk_file in sorted(chunks_dir.rglob("*.json")):
-        doc_filename = str(chunk_file.relative_to(chunks_dir).as_posix()).removesuffix(
+    for meta_file in sorted(metadata_dir.rglob("*.json")):
+        stem = str(meta_file.relative_to(metadata_dir).as_posix()).removesuffix(
             ".json"
         )
+        doc_filename = stem + DOCUMENT_EXTENSION
         try:
-            data = json.loads(chunk_file.read_text(encoding="utf-8"))
-            doc = ChunkedDocument.model_validate(data)
+            data = json.loads(meta_file.read_text(encoding="utf-8"))
+            doc = DocumentMetadata.model_validate(data)
         except (json.JSONDecodeError, Exception) as exc:
-            logger.warning("Failed to load chunks for %s: %s", doc_filename, exc)
+            logger.warning("Failed to load metadata for %s: %s", doc_filename, exc)
             continue
 
         for i, chunk in enumerate(doc.chunks):
@@ -269,7 +276,7 @@ def sync_index(store: Casebase) -> None:
     """
     _state._pending_reindex.discard(store.store_key)
     storage = _state.get_storage(store)
-    casebase = _load_all_chunks_from_dir(store.chunks_dir(settings.data_dir))
+    casebase = _load_all_chunks_from_dir(store.metadata_dir(settings.data_dir))
     logger.info(
         "Syncing LanceDB index for %s (%d chunks)", store.store_key, len(casebase)
     )

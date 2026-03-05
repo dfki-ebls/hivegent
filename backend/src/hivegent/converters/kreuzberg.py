@@ -6,7 +6,7 @@ from pathlib import Path
 from kreuzberg import ExtractionConfig, extract_file
 from pydantic import BaseModel, Field
 
-from .base import DocumentConverter
+from .base import ConversionResult, DocumentConverter
 
 __all__ = ["KreuzbergConverter", "KreuzbergConverterConfig"]
 
@@ -89,14 +89,14 @@ class KreuzbergConverter(DocumentConverter):
         self,
         path: Path,
         /,
-    ) -> str:
+    ) -> ConversionResult:
         """Convert a document to plain text using Kreuzberg.
 
         Args:
             path: Path to the document to convert.
 
         Returns:
-            The extracted text content.
+            The conversion result with extracted text content.
         """
         extraction_config = ExtractionConfig(
             force_ocr=self.config.force_ocr,
@@ -105,4 +105,4 @@ class KreuzbergConverter(DocumentConverter):
             include_document_structure=self.config.include_document_structure,
         )
         result = await extract_file(path, config=extraction_config)
-        return str(result.content)
+        return ConversionResult(markdown=str(result.content))

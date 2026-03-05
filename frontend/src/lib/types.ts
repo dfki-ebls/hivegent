@@ -135,6 +135,7 @@ export const ChunkedDocumentResponseSchema = z.object({
   pipeline: z.string(),
   created_at: z.string(),
   chunks: z.array(ChunkInfoSchema),
+  images: z.array(z.string()).optional().default([]),
 });
 export type ChunkedDocumentResponse = z.infer<typeof ChunkedDocumentResponseSchema>;
 
@@ -144,6 +145,7 @@ export const DocumentInfoSchema = z.object({
   modified_at: z.string(),
   chunk_count: z.number().nullable().optional(),
   has_original: z.boolean(),
+  kind: z.enum(["document", "asset"]).optional().default("document"),
 });
 export type DocumentInfo = z.infer<typeof DocumentInfoSchema>;
 

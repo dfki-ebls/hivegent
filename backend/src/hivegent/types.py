@@ -129,7 +129,7 @@ __all__ = [
     "BulkRevokeTokensResponse",
     "ChatRequestConfig",
     "ClearMemoryResponse",
-    "ChunkedDocument",
+    "DocumentMetadata",
     "ChunkInfo",
     "ChunkSummary",
     "CollectionCompleteEvent",
@@ -253,12 +253,17 @@ class ChunkInfo(BaseModel):
     end_index: int = Field(description="End character index in original document")
 
 
-class ChunkedDocument(BaseModel):
-    """A document that has been chunked, with metadata."""
+class DocumentMetadata(BaseModel):
+    """Metadata for a processed document, including chunks and companion images."""
 
     pipeline: str = Field(description="The chunking pipeline used")
-    created_at: datetime = Field(description="When the chunks were created")
+    created_at: datetime = Field(description="When the metadata was created")
     chunks: list[ChunkInfo] = Field(description="The document chunks")
+    images: list[str] = Field(
+        default_factory=list,
+        description="Workspace-relative paths of companion images",
+    )
+
 
 
 class ChunkSummary(BaseModel):
@@ -295,6 +300,10 @@ class DocumentInfo(BaseModel):
     has_original: bool = Field(
         default=False,
         description="Whether an original binary file exists for reconversion",
+    )
+    kind: Literal["document", "asset"] = Field(
+        default="document",
+        description="Whether this is a document or a companion asset (e.g. extracted image)",
     )
 
 

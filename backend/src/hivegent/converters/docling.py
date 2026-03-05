@@ -10,9 +10,10 @@ from docling.datamodel.pipeline_options import (
     ThreadedPdfPipelineOptions,
 )
 from docling.document_converter import DocumentConverter as DoclingDocumentConverter
+from docling_core.types.doc import ImageRefMode, PictureItem
 from pydantic import BaseModel, Field
 
-from .base import DocumentConverter
+from .base import ConversionResult, DocumentConverter, pil_to_png_bytes
 
 __all__ = ["DoclingConverter", "DoclingConverterConfig"]
 
@@ -55,7 +56,7 @@ class DoclingConverter(DocumentConverter):
     )
     config: DoclingConverterConfig = field(default_factory=DoclingConverterConfig)
 
-    def _convert_sync(self, path: Path) -> str:
+    def _convert_sync(self, path: Path) -> ConversionResult:
         """Run the synchronous Docling conversion."""
         # Start from default format options (which include the correct backend
         # and pipeline_cls) and only override pipeline_options.
@@ -63,24 +64,40 @@ class DoclingConverter(DocumentConverter):
         for fmt in converter.format_to_options:
             default = converter.format_to_options[fmt]
             opts = self.config.pdf_options if fmt in _PDF_FORMATS else self.config.convert_options
+            if fmt in _PDF_FORMATS:
+                opts = opts.model_copy(update={"generate_picture_images": True})
             converter.format_to_options[fmt] = default.model_copy(
                 update={"pipeline_options": opts}
             )
 
         result = converter.convert(str(path))
-        return str(result.document.export_to_markdown())
+        doc = result.document
+
+        # Export markdown with image references (not embedded base64).
+        markdown = str(doc.export_to_markdown(image_mode=ImageRefMode.REFERENCED))
+
+        # Collect picture images from the document.
+        image_data: dict[str, bytes] = {}
+        for item, _level in doc.iterate_items():
+            if isinstance(item, PictureItem) and item.image is not None:
+                pil_img = item.get_image(doc)
+                if pil_img is not None:
+                    img_name = f"picture_{item.self_ref}.png"
+                    image_data[img_name] = pil_to_png_bytes(pil_img)
+
+        return ConversionResult(markdown=markdown, images=image_data)
 
     async def __call__(
         self,
         path: Path,
         /,
-    ) -> str:
+    ) -> ConversionResult:
         """Convert a document to markdown using Docling.
 
         Args:
             path: Path to the document to convert.
 
         Returns:
-            The document content converted to markdown.
+            The conversion result with markdown and extracted images.
         """
         return await asyncio.to_thread(self._convert_sync, path)

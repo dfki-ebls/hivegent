@@ -3,7 +3,7 @@
 import logging
 from dataclasses import dataclass, field
 
-from .chunks import chunk_document, delete_chunks
+from .chunks import chunk_document, delete_metadata
 from .config import DOCUMENT_EXTENSION, sanitize_group_id, sanitize_user_id, settings
 from .retrieval import sync_index
 from .store import Casebase
@@ -59,7 +59,7 @@ def check_store_consistency(store: Casebase) -> ConsistencyReport:
     subdir = "users" if store.kind == "user" else "groups"
     base = settings.data_dir / subdir / store.id
     docs_dir = base / "workspace"
-    chunks_dir = base / "chunks"
+    metadata_dir = base / "metadata"
 
     # Collect document relative paths and their mtimes.
     doc_mtimes: dict[str, float] = {}
@@ -69,13 +69,15 @@ def check_store_consistency(store: Casebase) -> ConsistencyReport:
                 rel = str(path.relative_to(docs_dir).as_posix())
                 doc_mtimes[rel] = path.stat().st_mtime
 
-    # Collect chunk relative paths (strip .json suffix) and their mtimes.
+    # Collect metadata relative paths and their mtimes.
+    # Metadata files use stem-only naming: ``report.json`` for ``report.md``.
     chunk_mtimes: dict[str, float] = {}
-    if chunks_dir.exists():
-        for path in chunks_dir.rglob("*.json"):
+    if metadata_dir.exists():
+        for path in metadata_dir.rglob("*.json"):
             if path.is_file():
-                rel = str(path.relative_to(chunks_dir).as_posix()).removesuffix(".json")
-                chunk_mtimes[rel] = path.stat().st_mtime
+                stem = str(path.relative_to(metadata_dir).as_posix()).removesuffix(".json")
+                doc_key = stem + DOCUMENT_EXTENSION
+                chunk_mtimes[doc_key] = path.stat().st_mtime
 
     doc_keys = set(doc_mtimes)
     chunk_keys = set(chunk_mtimes)
@@ -112,7 +114,7 @@ async def fix_store_consistency(report: ConsistencyReport) -> None:
 
     for path in report.orphaned_chunks:
         try:
-            delete_chunks(store, path)
+            delete_metadata(store, path)
             logger.info("Deleted orphaned chunks: %s/%s", store.store_key, path)
         except Exception:
             logger.warning(

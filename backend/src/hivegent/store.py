@@ -16,7 +16,7 @@ class Casebase:
     """Identifies a casebase namespace (user or group).
 
     Each casebase maps to a filesystem directory under
-    ``data/{users,groups}/<id>/`` containing a workspace, chunks,
+    ``data/{users,groups}/<id>/`` containing a workspace, metadata,
     a LanceDB index, and optionally original binary files.
     """
 
@@ -63,16 +63,18 @@ class Casebase:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def chunks_dir(self, data_dir: Path) -> Path:
-        """Return the chunks directory for this store.
+    def metadata_dir(self, data_dir: Path) -> Path:
+        """Return the metadata directory for this store.
+
+        Contains per-document JSON files with chunk data and image references.
 
         Args:
             data_dir: The application data root directory.
 
         Returns:
-            Path to the store's chunks directory.
+            Path to the store's metadata directory.
         """
-        path = self.root_dir(data_dir) / "chunks"
+        path = self.root_dir(data_dir) / "metadata"
         path.mkdir(parents=True, exist_ok=True)
         return path
 

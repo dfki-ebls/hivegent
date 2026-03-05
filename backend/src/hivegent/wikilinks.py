@@ -11,15 +11,20 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
 from .config import DOCUMENT_EXTENSION
+from .converters.alt_text import MD_IMAGE_RE
 
 __all__ = [
+    "IMAGE_EXTENSIONS",
     "PreprocessedMarkdown",
     "preprocess_markdown",
 ]
 
 _EMBED_RE = re.compile(r"!\[\[(.+?)\]\]")
 _WIKILINK_RE = re.compile(r"(?<!!)\[\[(.+?)\]\]")
-_MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+IMAGE_EXTENSIONS = frozenset({
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+    ".bmp", ".tiff", ".tif", ".ico",
+})
 
 
 @dataclass(slots=True, frozen=True)
@@ -30,10 +35,13 @@ class PreprocessedMarkdown:
         content: The rewritten markdown with normalized links.
         binary_attachments: Set of relative paths (from collection root) to
             binary files that need conversion.
+        image_attachments: Set of relative paths to image files that should
+            be stored as-is in the workspace.
     """
 
     content: str
     binary_attachments: frozenset[str] = field(default_factory=frozenset)
+    image_attachments: frozenset[str] = field(default_factory=frozenset)
 
 
 def _resolve_target(
@@ -80,6 +88,7 @@ def _rewrite_link(
     source_dir: PurePosixPath,
     collection_files: Set[str],
     binary_attachments: set[str],
+    image_attachments: set[str],
     *,
     convert_binaries: bool = True,
 ) -> str:
@@ -87,14 +96,21 @@ def _rewrite_link(
 
     When *convert_binaries* is True (default), binary targets are recorded
     in *binary_attachments* and the link is rewritten to point to the
-    future ``.md`` conversion output.  When False, links are normalized
-    but binary files are not collected or rewritten.
+    future ``.md`` conversion output.  Image files are recorded in
+    *image_attachments* instead and keep ``![]()`` syntax.
+    When False, links are normalized but binary files are not collected
+    or rewritten.
     """
     resolved = _resolve_target(target, source_dir, collection_files)
     if resolved is None:
         return f"[{alias}]"
 
-    if convert_binaries and PurePosixPath(resolved).suffix.lower() != DOCUMENT_EXTENSION:
+    suffix = PurePosixPath(resolved).suffix.lower()
+    if convert_binaries and suffix != DOCUMENT_EXTENSION:
+        if suffix in IMAGE_EXTENSIONS:
+            image_attachments.add(resolved)
+            rel = _relative_link(resolved, source_dir)
+            return f"![{alias}]({rel})"
         binary_attachments.add(resolved)
         resolved = str(PurePosixPath(resolved).with_suffix(".md"))
 
@@ -142,13 +158,14 @@ def preprocess_markdown(
     """
     source_dir = PurePosixPath(source_path).parent
     binaries: set[str] = set()
+    images: set[str] = set()
 
     def _on_embed(m: re.Match[str]) -> str:
         parsed = _parse_pipe(m.group(1), lambda t: PurePosixPath(t).stem)
         if not parsed:
             return m.group(0)
         return _rewrite_link(
-            *parsed, source_dir, collection_files, binaries,
+            *parsed, source_dir, collection_files, binaries, images,
             convert_binaries=convert_binaries,
         )
 
@@ -157,7 +174,7 @@ def preprocess_markdown(
         if not parsed:
             return m.group(0)
         return _rewrite_link(
-            *parsed, source_dir, collection_files, binaries,
+            *parsed, source_dir, collection_files, binaries, images,
             convert_binaries=convert_binaries,
         )
 
@@ -168,6 +185,10 @@ def preprocess_markdown(
         resolved = _resolve_target(path, source_dir, collection_files)
         if resolved and PurePosixPath(resolved).suffix.lower() != DOCUMENT_EXTENSION:
             if convert_binaries:
+                suffix = PurePosixPath(resolved).suffix.lower()
+                if suffix in IMAGE_EXTENSIONS:
+                    images.add(resolved)
+                    return f"![{alt}]({_relative_link(resolved, source_dir)})"
                 binaries.add(resolved)
                 md_path = str(PurePosixPath(resolved).with_suffix(".md"))
                 return f"[{alt or PurePosixPath(resolved).stem}]({_relative_link(md_path, source_dir)})"
@@ -175,6 +196,10 @@ def preprocess_markdown(
 
     result = _EMBED_RE.sub(_on_embed, content)
     result = _WIKILINK_RE.sub(_on_wikilink, result)
-    result = _MD_IMAGE_RE.sub(_on_md_image, result)
+    result = MD_IMAGE_RE.sub(_on_md_image, result)
 
-    return PreprocessedMarkdown(content=result, binary_attachments=frozenset(binaries))
+    return PreprocessedMarkdown(
+        content=result,
+        binary_attachments=frozenset(binaries),
+        image_attachments=frozenset(images),
+    )

@@ -7,7 +7,7 @@ from typing import ClassVar
 
 from chonkie import TextChef
 
-from .base import DocumentConverter
+from .base import ConversionResult, DocumentConverter
 
 __all__ = ["ChonkieTextConverter"]
 
@@ -26,14 +26,14 @@ class ChonkieTextConverter(DocumentConverter):
         self,
         path: Path,
         /,
-    ) -> str:
+    ) -> ConversionResult:
         """Convert a plain text file to markdown.
 
         Args:
             path: Path to the text file.
 
         Returns:
-            The text content.
+            The conversion result with text content.
         """
         doc = await asyncio.to_thread(TextChef().process, path)
-        return doc.content
+        return ConversionResult(markdown=doc.content)

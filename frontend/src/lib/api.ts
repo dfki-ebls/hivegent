@@ -443,6 +443,20 @@ export async function getDocumentContent(filename: string): Promise<string> {
   return res.text();
 }
 
+/** Fetch a workspace asset (e.g. image) as a blob URL for display. */
+export async function fetchDocumentAsset(filepath: string): Promise<string> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`,
+  );
+
+  if (!res.ok) {
+    throw new Error("Failed to fetch document asset");
+  }
+
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 /** Download the original binary file for a document. */
 export async function downloadOriginal(filepath: string): Promise<Blob> {
   const res = await authFetch(
@@ -932,6 +946,20 @@ export async function getGroupDocumentContent(groupId: string, filename: string)
     throw new Error("Failed to fetch group document content");
   }
   return res.text();
+}
+
+/** Fetch a group workspace asset (e.g. image) as a blob URL for display. */
+export async function fetchGroupDocumentAsset(groupId: string, filepath: string): Promise<string> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/${encodeFilePath(filepath)}`,
+  );
+
+  if (!res.ok) {
+    throw new Error("Failed to fetch group document asset");
+  }
+
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
 }
 
 /** Upload a document to a group (write access required). */
