@@ -311,9 +311,7 @@ class TestWriteDocumentTool:
         async def _on_write(filename: str) -> None:
             written.append(filename)
 
-        tool = WriteDocumentTool(
-            path=tmp_path, extension=".md", on_write=_on_write
-        )
+        tool = WriteDocumentTool(path=tmp_path, extension=".md", on_write=_on_write)
         await tool("doc.md", "content")
         assert written == ["doc.md"]
 

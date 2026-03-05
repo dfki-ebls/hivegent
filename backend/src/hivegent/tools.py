@@ -92,11 +92,15 @@ class ListDocumentsTool:
             if f.is_file():
                 rel = str(f.relative_to(self.path).as_posix())
                 stat = f.stat()
-                results.append(DocumentSummary(
-                    filename=rel,
-                    size=stat.st_size,
-                    modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
-                ))
+                results.append(
+                    DocumentSummary(
+                        filename=rel,
+                        size=stat.st_size,
+                        modified_at=datetime.fromtimestamp(
+                            stat.st_mtime, tz=timezone.utc
+                        ),
+                    )
+                )
         if subdir is not None or max_depth is not None:
             results = [
                 r

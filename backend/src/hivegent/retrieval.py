@@ -232,9 +232,7 @@ def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, str]:
     casebase: dict[str, str] = {}
 
     for meta_file in sorted(metadata_dir.rglob("*.json")):
-        stem = str(meta_file.relative_to(metadata_dir).as_posix()).removesuffix(
-            ".json"
-        )
+        stem = str(meta_file.relative_to(metadata_dir).as_posix()).removesuffix(".json")
         doc_filename = stem + DOCUMENT_EXTENSION
         try:
             data = json.loads(meta_file.read_text(encoding="utf-8"))

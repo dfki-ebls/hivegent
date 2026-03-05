@@ -440,9 +440,7 @@ export async function getDocumentContent(filename: string): Promise<string> {
 
 /** Fetch a workspace asset (e.g. image) as a blob URL for display. */
 export async function fetchDocumentAsset(filepath: string): Promise<string> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`,
-  );
+  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`);
 
   if (!res.ok) {
     throw new Error("Failed to fetch document asset");
@@ -454,9 +452,7 @@ export async function fetchDocumentAsset(filepath: string): Promise<string> {
 
 /** Download the original binary file for a document. */
 export async function downloadOriginal(filepath: string): Promise<Blob> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/documents/original/${encodeFilePath(filepath)}`,
-  );
+  const res = await authFetch(`${API_BASE_URL}/api/documents/original/${encodeFilePath(filepath)}`);
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Download failed" }));

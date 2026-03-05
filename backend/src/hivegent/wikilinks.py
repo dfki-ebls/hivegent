@@ -21,10 +21,20 @@ __all__ = [
 
 _EMBED_RE = re.compile(r"!\[\[(.+?)\]\]")
 _WIKILINK_RE = re.compile(r"(?<!!)\[\[(.+?)\]\]")
-IMAGE_EXTENSIONS = frozenset({
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
-    ".bmp", ".tiff", ".tif", ".ico",
-})
+IMAGE_EXTENSIONS = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".svg",
+        ".bmp",
+        ".tiff",
+        ".tif",
+        ".ico",
+    }
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -154,7 +164,11 @@ def preprocess_markdown(
         if not parsed:
             return m.group(0)
         return _rewrite_link(
-            *parsed, source_dir, collection_files, binaries, images,
+            *parsed,
+            source_dir,
+            collection_files,
+            binaries,
+            images,
         )
 
     def _on_wikilink(m: re.Match[str]) -> str:
@@ -162,7 +176,11 @@ def preprocess_markdown(
         if not parsed:
             return m.group(0)
         return _rewrite_link(
-            *parsed, source_dir, collection_files, binaries, images,
+            *parsed,
+            source_dir,
+            collection_files,
+            binaries,
+            images,
         )
 
     def _on_md_image(m: re.Match[str]) -> str:

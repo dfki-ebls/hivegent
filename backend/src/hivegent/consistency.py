@@ -75,7 +75,9 @@ def check_store_consistency(store: Casebase) -> ConsistencyReport:
     if metadata_dir.exists():
         for path in metadata_dir.rglob("*.json"):
             if path.is_file():
-                stem = str(path.relative_to(metadata_dir).as_posix()).removesuffix(".json")
+                stem = str(path.relative_to(metadata_dir).as_posix()).removesuffix(
+                    ".json"
+                )
                 doc_key = stem + DOCUMENT_EXTENSION
                 chunk_mtimes[doc_key] = path.stat().st_mtime
 

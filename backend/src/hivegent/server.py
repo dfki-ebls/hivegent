@@ -785,7 +785,9 @@ def _store_conversion_images(
     """
     markdown = result.markdown
     if not result.images:
-        return _ImageStoreResult(markdown=markdown, workspace_paths=[], alt_text_images={})
+        return _ImageStoreResult(
+            markdown=markdown, workspace_paths=[], alt_text_images={}
+        )
 
     doc_path = PurePosixPath(doc_relpath)
     base_name = doc_path.stem
@@ -914,7 +916,10 @@ async def _upload_file_internal(
         chunking_used = None
         try:
             chunked = await chunk_document(
-                store, converted_relpath, wrapper_content, spec.chunking,
+                store,
+                converted_relpath,
+                wrapper_content,
+                spec.chunking,
                 images=[filepath],
             )
             chunk_count = len(chunked.chunks)
@@ -984,7 +989,9 @@ async def _upload_file_internal(
     vision = _resolve_vision_config(llm_config)
     try:
         markdown_content = await generate_alt_texts(
-            markdown_content, img_result.alt_text_images, vision,
+            markdown_content,
+            img_result.alt_text_images,
+            vision,
         )
     except Exception:
         logger.warning("Alt text generation failed for %s", converted_relpath)
@@ -998,7 +1005,10 @@ async def _upload_file_internal(
     chunking_used = None
     try:
         chunked = await chunk_document(
-            store, converted_relpath, markdown_content, spec.chunking,
+            store,
+            converted_relpath,
+            markdown_content,
+            spec.chunking,
             images=img_result.workspace_paths,
         )
         chunk_count = len(chunked.chunks)
@@ -1292,7 +1302,11 @@ async def _process_collection(
                     continue
                 # Resolve relative to the markdown file's directory
                 md_dir = PurePosixPath(rel_path).parent
-                resolved_img = str((md_dir / img_path).as_posix()) if not img_path.startswith("/") else img_path
+                resolved_img = (
+                    str((md_dir / img_path).as_posix())
+                    if not img_path.startswith("/")
+                    else img_path
+                )
                 img_ws_path = workspace_dir / resolved_img
                 if img_ws_path.exists() and img_ws_path.is_file():
                     img_refs[img_path] = img_ws_path.read_bytes()
@@ -1308,7 +1322,10 @@ async def _process_collection(
                             for p in img_refs
                         ]
                         await chunk_document(
-                            store, safe, new_content, spec.chunking,
+                            store,
+                            safe,
+                            new_content,
+                            spec.chunking,
                             images=image_paths,
                         )
                 except Exception:
@@ -1325,8 +1342,7 @@ async def _process_collection(
         failed_files=failed,
         message=f"Collection uploaded: {markdown_count} markdown, "
         f"{converted_count} attachments converted, "
-        f"{image_count} images stored"
-        + (f", {len(failed)} failed" if failed else ""),
+        f"{image_count} images stored" + (f", {len(failed)} failed" if failed else ""),
     )
 
 
@@ -1584,7 +1600,9 @@ async def _reconvert_single(
     vision = _resolve_vision_config(resolved)
     try:
         markdown_content = await generate_alt_texts(
-            markdown_content, img_result.alt_text_images, vision,
+            markdown_content,
+            img_result.alt_text_images,
+            vision,
         )
     except Exception:
         logger.warning("Alt text generation failed for %s", safe)
@@ -1598,7 +1616,10 @@ async def _reconvert_single(
     chunking_used = None
     try:
         chunked = await chunk_document(
-            store, safe, markdown_content, spec.chunking,
+            store,
+            safe,
+            markdown_content,
+            spec.chunking,
             images=img_result.workspace_paths,
         )
         chunk_count = len(chunked.chunks)
@@ -1824,7 +1845,9 @@ async def reconvert_document(
 
 
 def _move_document_internal(
-    store: Casebase, src: str, dst: str,
+    store: Casebase,
+    src: str,
+    dst: str,
 ) -> MoveDocumentResponse:
     """Move a document, its metadata, companion images, and original.
 
@@ -1920,9 +1943,7 @@ def _move_document_internal(
                         img.replace(old_prefix, new_prefix) for img in updated_images
                     ]
                 updated = meta.model_copy(update={"images": updated_images})
-                dst_meta.write_text(
-                    updated.model_dump_json(indent=2), encoding="utf-8"
-                )
+                dst_meta.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
 
     # Move original if it exists (search by stem)
     src_stem = src_path.stem

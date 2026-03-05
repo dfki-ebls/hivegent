@@ -9,7 +9,12 @@ from io import BytesIO
 
 from PIL import Image
 
-__all__ = ["ConversionResult", "DocumentConverter", "collect_dir_images", "pil_to_png_bytes"]
+__all__ = [
+    "ConversionResult",
+    "DocumentConverter",
+    "collect_dir_images",
+    "pil_to_png_bytes",
+]
 
 
 @dataclass(slots=True, frozen=True)

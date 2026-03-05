@@ -265,7 +265,6 @@ class DocumentMetadata(BaseModel):
     )
 
 
-
 class ChunkSummary(BaseModel):
     """Summary metadata for a single chunk (used by agent tools)."""
 

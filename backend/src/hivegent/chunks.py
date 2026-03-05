@@ -68,7 +68,9 @@ async def chunk_document(
         The document metadata with chunks.
     """
     spec = chunking or ChunkingSpec()
-    chunker = get_chunker(spec.pipeline, content_length=len(content), config=spec.config)
+    chunker = get_chunker(
+        spec.pipeline, content_length=len(content), config=spec.config
+    )
     raw_chunks = await chunker(content)
 
     chunks = [
@@ -95,7 +97,8 @@ async def chunk_document(
 
 
 def load_document_metadata(
-    metadata_dir: Path, filename: str,
+    metadata_dir: Path,
+    filename: str,
 ) -> DocumentMetadata | None:
     """Load document metadata from a directory by document filename.
 
@@ -118,7 +121,6 @@ def load_document_metadata(
         return None
 
 
-
 def get_metadata(store: Casebase, filename: str) -> DocumentMetadata | None:
     """Load metadata for a document from disk.
 
@@ -130,7 +132,6 @@ def get_metadata(store: Casebase, filename: str) -> DocumentMetadata | None:
         The document metadata, or ``None`` if not found.
     """
     return load_document_metadata(store.metadata_dir(settings.data_dir), filename)
-
 
 
 def delete_metadata(store: Casebase, filepath: str) -> bool:
@@ -162,7 +163,6 @@ def delete_metadata(store: Casebase, filepath: str) -> bool:
         parent = parent.parent
 
     return True
-
 
 
 def list_chunked_documents(store: Casebase) -> dict[str, int]:
@@ -218,7 +218,11 @@ async def rechunk_document(
         existing = get_metadata(store, filename)
         existing_images = existing.images if existing else []
         await chunk_document(
-            store, filename, text_content, chunking, images=existing_images,
+            store,
+            filename,
+            text_content,
+            chunking,
+            images=existing_images,
         )
         sync_index(store)
     except Exception:

@@ -63,7 +63,11 @@ class DoclingConverter(DocumentConverter):
         converter = DoclingDocumentConverter()
         for fmt in converter.format_to_options:
             default = converter.format_to_options[fmt]
-            opts = self.config.pdf_options if fmt in _PDF_FORMATS else self.config.convert_options
+            opts = (
+                self.config.pdf_options
+                if fmt in _PDF_FORMATS
+                else self.config.convert_options
+            )
             if fmt in _PDF_FORMATS:
                 opts = opts.model_copy(update={"generate_picture_images": True})
             converter.format_to_options[fmt] = default.model_copy(

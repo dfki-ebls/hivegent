@@ -21,12 +21,7 @@ interface WorkspaceImageProps {
  * fetched via the authenticated documents API, and displayed
  * using a temporary blob URL.
  */
-export function WorkspaceImage({
-  src,
-  alt,
-  documentPath,
-  groupId,
-}: WorkspaceImageProps) {
+export function WorkspaceImage({ src, alt, documentPath, groupId }: WorkspaceImageProps) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
@@ -77,19 +72,11 @@ export function WorkspaceImage({
   }, [blobUrl]);
 
   if (error || !src) {
-    return (
-      <span className="text-muted-foreground text-xs">
-        [{alt || "image"}]
-      </span>
-    );
+    return <span className="text-muted-foreground text-xs">[{alt || "image"}]</span>;
   }
 
   if (!blobUrl) {
-    return (
-      <span className="text-muted-foreground text-xs animate-pulse">
-        Loading image...
-      </span>
-    );
+    return <span className="text-muted-foreground text-xs animate-pulse">Loading image...</span>;
   }
 
   return (
