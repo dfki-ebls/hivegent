@@ -8,7 +8,7 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..subprocesses import jq_filter
-from .typing import Tool
+from .base import Tool
 
 __all__ = ["JqFilenameArg", "JqFilterArg", "JqTool"]
 

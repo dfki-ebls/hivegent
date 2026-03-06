@@ -1,28 +1,20 @@
-"""Retrieval tools using cbrkit indexed backends.
-
-Provides :class:`SearchTool`, a protocol for search tools backed by
-cbrkit indexed retrieval, and :class:`LanceDBSearchTool`, a concrete
-implementation for LanceDB storages.
-
-To add another backend (e.g. ChromaDB), subclass :class:`SearchTool`
-and implement :meth:`__call__`.
-"""
+"""Retrieval tools using cbrkit indexed backends."""
 
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Annotated, Literal, Protocol, cast, override, runtime_checkable
+from typing import Annotated, Literal, cast, override
 
 import cbrkit
 from pydantic import Field
 
-from .typing import SearchResult
+from .base import Tool
 
 __all__ = [
     "LanceDBSearchTool",
     "SearchQueryArg",
+    "SearchResult",
     "SearchTopKArg",
-    "SearchTool",
     "SearchType",
     "SearchTypeArg",
 ]
@@ -30,6 +22,15 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 type SearchType = Literal["dense", "sparse", "hybrid"]
+
+
+@dataclass(slots=True, frozen=True)
+class SearchResult[K: (int, str)]:
+    """A single search result with key, text, and relevance score."""
+
+    key: K
+    text: str
+    score: float
 
 SearchQueryArg = Annotated[
     str,
@@ -50,34 +51,8 @@ SearchTypeArg = Annotated[
 ]
 
 
-@runtime_checkable
-class SearchTool[K: (int, str)](Protocol):
-    """Protocol for cbrkit-based search tools.
-
-    Each implementation wraps one or more cbrkit indexable backends
-    and implements :meth:`__call__` to search them.
-    """
-
-    def __call__(
-        self,
-        query: SearchQueryArg,
-        top_k: SearchTopKArg,
-    ) -> list[SearchResult[K]]:
-        """Search and return the top results by score.
-
-        Returns:
-            List of results sorted by score descending.
-        """
-        ...
-
-
-# ---------------------------------------------------------------------------
-# LanceDB implementation
-# ---------------------------------------------------------------------------
-
-
 @dataclass(slots=True, frozen=True)
-class LanceDBSearchTool[K: (int, str)](SearchTool[K]):
+class LanceDBSearchTool[K: (int, str)](Tool):
     """Search one or more LanceDB storages using cbrkit indexed retrieval.
 
     Builds a ``cbrkit.retrieval.lancedb`` retriever per storage, combines

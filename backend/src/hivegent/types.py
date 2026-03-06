@@ -8,6 +8,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_serializer, field_validator
 from pydantic_ai import ModelMessage, ModelMessagesTypeAdapter
 
+from .chunkers.base import ChunkData, ChunkSummary, DocumentMetadata, RetrievedChunk
+
 
 @dataclass(slots=True, frozen=True)
 class DocumentFilter:
@@ -130,7 +132,7 @@ __all__ = [
     "ChatRequestConfig",
     "ClearMemoryResponse",
     "DocumentMetadata",
-    "ChunkInfo",
+    "ChunkData",
     "ChunkSummary",
     "CollectionCompleteEvent",
     "CollectionProgressEvent",
@@ -214,49 +216,6 @@ class CreateConversationResponse(BaseModel):
     """Response for conversation creation."""
 
     id: str = Field(description="The unique conversation ID")
-
-
-class ChunkInfo(BaseModel):
-    """A single chunk within a chunked document."""
-
-    text: str = Field(description="The chunk text content")
-    token_count: int = Field(description="Number of tokens in the chunk")
-    start_index: int = Field(description="Start character index in original document")
-    end_index: int = Field(description="End character index in original document")
-
-
-class DocumentMetadata(BaseModel):
-    """Metadata for a processed document, including chunks and companion images."""
-
-    pipeline: str = Field(description="The chunking pipeline used")
-    created_at: datetime = Field(description="When the metadata was created")
-    chunks: list[ChunkInfo] = Field(description="The document chunks")
-    images: list[str] = Field(
-        default_factory=list,
-        description="Workspace-relative paths of companion images",
-    )
-
-
-class ChunkSummary(BaseModel):
-    """Summary metadata for a single chunk (used by agent tools)."""
-
-    token_count: int = Field(description="Number of tokens in the chunk")
-    start_index: int = Field(description="Start character index in original document")
-    end_index: int = Field(description="End character index in original document")
-
-
-class RetrievedChunk(BaseModel):
-    """A chunk retrieved from search."""
-
-    store_key: str | None = Field(
-        default=None,
-        description="Source store identifier (e.g. 'user:alice', 'group:eng')",
-    )
-    filename: str = Field(description="The document filename")
-    chunk_index: int = Field(description="Chunk index within the document")
-    text: str = Field(description="The chunk text content")
-    token_count: int = Field(description="Number of tokens in the chunk")
-    score: float = Field(description="The relevance score")
 
 
 class DocumentInfo(BaseModel):

@@ -8,7 +8,8 @@ from hivegent.tools.documents import (
     ListDocumentsTool,
 )
 from hivegent.tools.grep import ContextLinesArg, GrepPatternArg, GrepTool
-from hivegent.tools.typing import tool_description
+from hivegent.tools.retrieval import SearchTypeArg
+from hivegent.tools.base import tool_description
 
 
 def _description(annotation: object) -> str | None:
@@ -28,8 +29,20 @@ def test_agent_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
     )
 
 
+def test_agent_search_tool_uses_consistent_search_type_name() -> None:
+    tool = explore_toolset.tools["semantic_search"]
+    schema = tool.function_schema.json_schema
+
+    assert "search_type" in schema["properties"]
+    assert "type" not in schema["properties"]
+    assert schema["properties"]["search_type"]["description"] == _description(
+        SearchTypeArg
+    )
+
+
 async def test_mcp_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
     tool = await mcp_app.get_tool("grep")
+    assert tool is not None
 
     assert tool.description == tool_description(GrepTool)
     assert tool.parameters["properties"]["pattern"]["description"] == _description(
@@ -38,4 +51,15 @@ async def test_mcp_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
     assert (
         tool.parameters["properties"]["context_lines"]["description"]
         == _description(ContextLinesArg)
+    )
+
+
+async def test_mcp_search_tool_uses_consistent_search_type_name() -> None:
+    tool = await mcp_app.get_tool("semantic_search")
+    assert tool is not None
+
+    assert "search_type" in tool.parameters["properties"]
+    assert "type" not in tool.parameters["properties"]
+    assert tool.parameters["properties"]["search_type"]["description"] == _description(
+        SearchTypeArg
     )

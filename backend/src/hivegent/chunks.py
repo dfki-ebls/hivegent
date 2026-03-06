@@ -3,17 +3,25 @@
 import json
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Annotated, override
+
+from pydantic import Field
 
 from .chunkers import ChunkingSpec, get_chunker
+from .chunkers.base import ChunkData, ChunkSummary, DocumentMetadata
 from .config import DOCUMENT_EXTENSION, settings
 from .store import Casebase
-from .types import ChunkInfo, DocumentMetadata
+from .tools.base import Tool
 
 __all__ = [
-    "ChunkInfo",
+    "ChunkIndexArg",
+    "ChunkData",
     "DocumentMetadata",
+    "GetChunkTool",
+    "ListChunksTool",
     "chunk_document",
     "delete_metadata",
     "get_metadata",
@@ -23,6 +31,54 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+ChunkIndexArg = Annotated[
+    int,
+    Field(description="Zero-based index of the chunk to retrieve.", ge=0),
+]
+
+
+@dataclass(slots=True, frozen=True)
+class ListChunksTool(Tool):
+    """List chunk metadata for a document."""
+
+    metadata_dir: Path
+
+    @override
+    def __call__(self, filename: str) -> list[ChunkSummary] | None:
+        """List chunk metadata for a document."""
+        metadata = load_document_metadata(self.metadata_dir, filename)
+        if not metadata:
+            return None
+        return [
+            ChunkSummary(
+                token_count=chunk.token_count,
+                start_index=chunk.start_index,
+                end_index=chunk.end_index,
+            )
+            for chunk in metadata.chunks
+        ]
+
+
+@dataclass(slots=True, frozen=True)
+class GetChunkTool(Tool):
+    """Get the content of a specific chunk."""
+
+    metadata_dir: Path
+
+    @override
+    def __call__(
+        self,
+        filename: str,
+        chunk_index: ChunkIndexArg,
+    ) -> str | None:
+        """Get the content of a specific chunk."""
+        metadata = load_document_metadata(self.metadata_dir, filename)
+        if not metadata:
+            return None
+        if 0 <= chunk_index < len(metadata.chunks):
+            return metadata.chunks[chunk_index].text
+        return None
 
 
 def _get_metadata_path(store: Casebase, filepath: str) -> Path:
@@ -72,25 +128,18 @@ async def chunk_document(
     )
     raw_chunks = await chunker(content)
 
-    chunks = [
-        ChunkInfo(
-            text=c.text,
-            token_count=c.token_count,
-            start_index=c.start_index,
-            end_index=c.end_index,
-        )
-        for c in raw_chunks
-    ]
-
     doc = DocumentMetadata(
         pipeline=chunker.name,
         created_at=datetime.now(tz=timezone.utc),
-        chunks=chunks,
+        chunks=raw_chunks,
         images=list(images) if images else [],
     )
 
     meta_path = _get_metadata_path(store, filename)
-    meta_path.write_text(doc.model_dump_json(indent=2), encoding="utf-8")
+    meta_path.write_text(
+        doc.model_dump_json(indent=2, exclude_none=True),
+        encoding="utf-8",
+    )
 
     return doc
 

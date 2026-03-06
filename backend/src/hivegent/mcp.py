@@ -17,38 +17,26 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from .agents import UserDeps, explore_toolset, user_agent
 from .auth import auth_settings
+from .chunks import ChunkIndexArg, GetChunkTool, ListChunksTool
+from .chunkers.base import ChunkSummary, RetrievedChunk
 from .config import settings
 from .prompts import EXPLORE_INSTRUCTIONS
 from .store import Casebase
-from .tool_runtime import (
-    edit_document_text,
-    get_document_chunk,
-    get_document_lines as get_document_lines_for_store,
-    get_document_text,
-    glob_documents as glob_documents_for_store,
-    grep_documents,
-    list_document_chunks,
-    list_document_summaries,
-    semantic_search_documents,
-    write_document_text,
-)
+from . import tool_runtime
 from .retrieval import build_search_tool
 from .tools import (
     DocumentRange,
     DocumentSummary,
     EditDocumentTool,
-    GetChunkTool,
     GetDocumentLinesTool,
     GetDocumentTool,
     GlobDocumentsTool,
     GrepMatch,
     GrepTool,
     LanceDBSearchTool,
-    ListChunksTool,
     ListDocumentsTool,
     WriteDocumentTool,
 )
-from .tools.chunks import ChunkIndexArg
 from .tools.documents import (
     DocumentEndLineArg,
     DocumentFilenameArg,
@@ -65,8 +53,8 @@ from .tools.mutations import (
     WriteModeArg,
 )
 from .tools.retrieval import SearchQueryArg, SearchTopKArg, SearchTypeArg
-from .tools.typing import tool_description
-from .types import ChunkSummary, McpServerConfig, RetrievedChunk
+from .tools.base import tool_description
+from .types import McpServerConfig
 
 __all__ = ["build_mcp_server", "mcp_app"]
 
@@ -164,7 +152,7 @@ def list_documents(
     max_depth: DocumentMaxDepthArg = None,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[DocumentSummary]:
-    return list_document_summaries(
+    return tool_runtime.list_documents(
         store,
         subdir=subdir,
         max_depth=max_depth,
@@ -176,7 +164,7 @@ def get_document(
     filename: DocumentFilenameArg,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> str | None:
-    return get_document_text(store, filename)
+    return tool_runtime.get_document(store, filename)
 
 
 @mcp_app.tool(description=tool_description(GetDocumentLinesTool))
@@ -186,7 +174,7 @@ def get_document_lines(
     end: DocumentEndLineArg = None,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> DocumentRange | None:
-    return get_document_lines_for_store(
+    return tool_runtime.get_document_lines(
         store,
         filename,
         start=start,
@@ -199,7 +187,7 @@ def glob_documents(
     pattern: GlobPatternArg,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[str]:
-    return glob_documents_for_store(store, pattern)
+    return tool_runtime.glob_documents(store, pattern)
 
 
 @mcp_app.tool(description=tool_description(GrepTool))
@@ -209,7 +197,7 @@ async def grep(
     context_lines: ContextLinesArg = 0,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[GrepMatch]:
-    return await grep_documents(
+    return await tool_runtime.grep(
         store,
         pattern,
         glob=glob,
@@ -220,15 +208,15 @@ async def grep(
 @mcp_app.tool(description=tool_description(LanceDBSearchTool))
 def semantic_search(
     query: SearchQueryArg,
-    type: SearchTypeArg = "hybrid",
+    search_type: SearchTypeArg = "hybrid",
     top_k: SearchTopKArg = 5,
     store: Casebase = Depends(_get_mcp_user_store),
     group_stores: tuple[Casebase, ...] = Depends(_get_mcp_group_stores),
 ) -> list[RetrievedChunk]:
-    return semantic_search_documents(
+    return tool_runtime.semantic_search(
         store,
         query,
-        type=type,
+        search_type=search_type,
         top_k=top_k,
         group_stores=group_stores,
     )
@@ -239,7 +227,7 @@ def list_chunks(
     filename: DocumentFilenameArg,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[ChunkSummary] | None:
-    return list_document_chunks(store, filename)
+    return tool_runtime.list_chunks(store, filename)
 
 
 @mcp_app.tool(description=tool_description(GetChunkTool))
@@ -248,7 +236,7 @@ def get_chunk(
     chunk_index: ChunkIndexArg,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> str | None:
-    return get_document_chunk(store, filename, chunk_index)
+    return tool_runtime.get_chunk(store, filename, chunk_index)
 
 
 @mcp_app.tool()
@@ -322,7 +310,12 @@ async def edit_document(
     if response.action != "accept":
         return "Edit denied by user."
 
-    return await edit_document_text(store, filename, old_string, new_string)
+    return await tool_runtime.edit_document(
+        store,
+        filename,
+        old_string,
+        new_string,
+    )
 
 
 @mcp_app.tool(description=tool_description(WriteDocumentTool))
@@ -341,7 +334,12 @@ async def write_document(
     if response.action != "accept":
         return "Write denied by user."
 
-    return await write_document_text(store, filename, content, mode=mode)
+    return await tool_runtime.write_document(
+        store,
+        filename,
+        content,
+        mode=mode,
+    )
 
 
 # ---------------------------------------------------------------------------

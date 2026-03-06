@@ -9,12 +9,14 @@ from typing import Annotated, override
 
 from pydantic import Field
 
-from .typing import DocumentRange, DocumentSummary, Tool
+from .base import Tool
 
 __all__ = [
     "DocumentEndLineArg",
     "DocumentFilenameArg",
+    "DocumentRange",
     "DocumentMaxDepthArg",
+    "DocumentSummary",
     "DocumentStartLineArg",
     "DocumentSubdirArg",
     "GetDocumentLinesTool",
@@ -25,6 +27,25 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True, frozen=True)
+class DocumentSummary:
+    """Summary of a document."""
+
+    filename: str
+    size: int
+    modified_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class DocumentRange:
+    """A range of lines from a document."""
+
+    start_line: int
+    end_line: int
+    total_lines: int
+    content: str
 
 DocumentSubdirArg = Annotated[
     str | None,

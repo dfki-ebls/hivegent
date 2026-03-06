@@ -1,30 +1,24 @@
 """Tools subpackage — self-contained, framework-free tool implementations."""
 
-from .chunks import GetChunkTool, ListChunksTool
 from .documents import (
+    DocumentRange,
+    DocumentSummary,
     GetDocumentLinesTool,
     GetDocumentTool,
     GlobDocumentsTool,
     ListDocumentsTool,
 )
-from .grep import GrepTool
+from .grep import GrepMatch, GrepTool
 from .jq import JqTool
 from .mutations import EditDocumentTool, WriteDocumentTool
-from .retrieval import LanceDBSearchTool, SearchTool, SearchType
-from .typing import (
-    DocumentRange,
-    DocumentSummary,
-    GrepMatch,
-    SearchResult,
-    Tool,
-)
+from .retrieval import LanceDBSearchTool, SearchResult, SearchType
+from .base import Tool
 from .web import WebFetch, WebSearch
 
 __all__ = [
     "DocumentRange",
     "DocumentSummary",
     "EditDocumentTool",
-    "GetChunkTool",
     "GetDocumentLinesTool",
     "GetDocumentTool",
     "GlobDocumentsTool",
@@ -32,10 +26,8 @@ __all__ = [
     "GrepTool",
     "JqTool",
     "LanceDBSearchTool",
-    "ListChunksTool",
     "ListDocumentsTool",
     "SearchResult",
-    "SearchTool",
     "SearchType",
     "Tool",
     "WebFetch",

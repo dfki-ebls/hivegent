@@ -10,7 +10,7 @@ import httpx
 from ddgs import DDGS
 from pydantic import Field
 
-from .typing import Tool
+from .base import Tool
 
 __all__ = [
     "WebFetch",

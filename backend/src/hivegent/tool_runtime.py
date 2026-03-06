@@ -3,7 +3,13 @@
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from .chunks import load_document_metadata, rechunk_document
+from .chunks import (
+    ChunkIndexArg,
+    GetChunkTool,
+    ListChunksTool,
+    rechunk_document,
+)
+from .chunkers.base import ChunkSummary, RetrievedChunk
 from .config import settings
 from .retrieval import apply_search_tool, mark_dirty
 from .store import Casebase
@@ -11,17 +17,14 @@ from .tools import (
     DocumentRange,
     DocumentSummary,
     EditDocumentTool,
-    GetChunkTool,
     GetDocumentLinesTool,
     GetDocumentTool,
     GlobDocumentsTool,
     GrepMatch,
     GrepTool,
-    ListChunksTool,
     ListDocumentsTool,
     WriteDocumentTool,
 )
-from .tools.chunks import ChunkIndexArg
 from .tools.documents import (
     DocumentEndLineArg,
     DocumentFilenameArg,
@@ -38,19 +41,19 @@ from .tools.mutations import (
     WriteModeArg,
 )
 from .tools.retrieval import SearchQueryArg, SearchTopKArg, SearchTypeArg
-from .types import ChunkSummary, DocumentFilter, RetrievedChunk
+from .types import DocumentFilter
 
 __all__ = [
-    "edit_document_text",
-    "get_document_chunk",
+    "edit_document",
+    "get_chunk",
     "get_document_lines",
-    "get_document_text",
+    "get_document",
     "glob_documents",
-    "grep_documents",
-    "list_document_chunks",
-    "list_document_summaries",
-    "semantic_search_documents",
-    "write_document_text",
+    "grep",
+    "list_chunks",
+    "list_documents",
+    "semantic_search",
+    "write_document",
 ]
 
 
@@ -62,7 +65,7 @@ def _metadata_dir(store: Casebase) -> Path:
     return store.metadata_dir(settings.data_dir)
 
 
-def list_document_summaries(
+def list_documents(
     store: Casebase,
     *,
     subdir: DocumentSubdirArg = None,
@@ -84,14 +87,17 @@ def glob_documents(
     document_filter: DocumentFilter | None = None,
 ) -> list[str]:
     """Expand a glob pattern within a store."""
-    tool = GlobDocumentsTool(path=_workspace_dir(store), extension="")
+    tool = GlobDocumentsTool(
+        path=_workspace_dir(store),
+        extension="",
+    )
     results = tool(pattern)
     if document_filter:
         results = [result for result in results if document_filter(result)]
     return results
 
 
-async def grep_documents(
+async def grep(
     store: Casebase,
     pattern: GrepPatternArg,
     *,
@@ -107,11 +113,11 @@ async def grep_documents(
     return matches
 
 
-def semantic_search_documents(
+def semantic_search(
     store: Casebase,
     query: SearchQueryArg,
     *,
-    type: SearchTypeArg = "hybrid",
+    search_type: SearchTypeArg = "hybrid",
     top_k: SearchTopKArg = 5,
     group_stores: Sequence[Casebase] = (),
     filter_for_store: Callable[[Casebase], DocumentFilter | None] | None = None,
@@ -120,7 +126,7 @@ def semantic_search_documents(
     resolved_filter = filter_for_store or (lambda _store: None)
     return apply_search_tool(
         (store, *group_stores),
-        type,
+        search_type,
         query,
         top_k,
         filter_for_store=resolved_filter,
@@ -142,7 +148,7 @@ def get_document_lines(
     return tool(filename, start, end)
 
 
-def get_document_text(
+def get_document(
     store: Casebase,
     filename: DocumentFilenameArg,
     *,
@@ -155,7 +161,7 @@ def get_document_text(
     return tool(filename)
 
 
-def list_document_chunks(
+def list_chunks(
     store: Casebase,
     filename: DocumentFilenameArg,
     *,
@@ -164,25 +170,11 @@ def list_document_chunks(
     """List chunk metadata for a document."""
     if document_filter and not document_filter(filename):
         return None
-
-    def _loader(fn: str) -> Sequence[ChunkSummary] | None:
-        metadata = load_document_metadata(_metadata_dir(store), fn)
-        if not metadata:
-            return None
-        return [
-            ChunkSummary(
-                token_count=chunk.token_count,
-                start_index=chunk.start_index,
-                end_index=chunk.end_index,
-            )
-            for chunk in metadata.chunks
-        ]
-
-    tool = ListChunksTool(loader=_loader)
+    tool = ListChunksTool(metadata_dir=_metadata_dir(store))
     return tool(filename)
 
 
-def get_document_chunk(
+def get_chunk(
     store: Casebase,
     filename: DocumentFilenameArg,
     chunk_index: ChunkIndexArg,
@@ -192,20 +184,11 @@ def get_document_chunk(
     """Load one chunk from document metadata."""
     if document_filter and not document_filter(filename):
         return None
-
-    def _loader(fn: str, idx: int) -> str | None:
-        metadata = load_document_metadata(_metadata_dir(store), fn)
-        if not metadata:
-            return None
-        if 0 <= idx < len(metadata.chunks):
-            return metadata.chunks[idx].text
-        return None
-
-    tool = GetChunkTool(loader=_loader)
+    tool = GetChunkTool(metadata_dir=_metadata_dir(store))
     return tool(filename, chunk_index)
 
 
-async def edit_document_text(
+async def edit_document(
     store: Casebase,
     filename: DocumentFilenameArg,
     old_string: EditOldStringArg,
@@ -217,15 +200,18 @@ async def edit_document_text(
     if document_filter and not document_filter(filename):
         return f"Error: '{filename}' is not accessible."
 
-    async def _on_write(changed_filename: str) -> None:
-        await rechunk_document(store, changed_filename)
+    async def _on_write(filename: str) -> None:
+        await rechunk_document(store, filename)
         mark_dirty(store)
 
-    tool = EditDocumentTool(path=_workspace_dir(store), on_write=_on_write)
+    tool = EditDocumentTool(
+        path=_workspace_dir(store),
+        on_write=_on_write,
+    )
     return await tool(filename, old_string, new_string)
 
 
-async def write_document_text(
+async def write_document(
     store: Casebase,
     filename: DocumentFilenameArg,
     content: DocumentContentArg,
@@ -237,8 +223,8 @@ async def write_document_text(
     if document_filter and not document_filter(filename):
         return f"Error: '{filename}' is not accessible."
 
-    async def _on_write(changed_filename: str) -> None:
-        await rechunk_document(store, changed_filename)
+    async def _on_write(filename: str) -> None:
+        await rechunk_document(store, filename)
         mark_dirty(store)
 
     tool = WriteDocumentTool(

@@ -10,28 +10,17 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.toolsets import AbstractToolset
 
+from .chunks import ChunkIndexArg, GetChunkTool, ListChunksTool
 from .config import settings
 from .memory import save_memory as _save_memory
 from .messages import list_conversations as _list_conversations
 from .prompts import EXPLORE_INSTRUCTIONS
 from .store import Casebase
-from .tool_runtime import (
-    edit_document_text,
-    get_document_chunk,
-    get_document_lines as get_document_lines_for_store,
-    get_document_text,
-    glob_documents as glob_documents_for_store,
-    grep_documents,
-    list_document_chunks,
-    list_document_summaries,
-    semantic_search_documents,
-    write_document_text,
-)
+from . import tool_runtime
 from .tools import (
     DocumentRange,
     DocumentSummary,
     EditDocumentTool,
-    GetChunkTool,
     GetDocumentLinesTool,
     GetDocumentTool,
     GlobDocumentsTool,
@@ -39,13 +28,11 @@ from .tools import (
     GrepTool,
     JqTool,
     LanceDBSearchTool,
-    ListChunksTool,
     ListDocumentsTool,
     WebFetch,
     WebSearch,
     WriteDocumentTool,
 )
-from .tools.chunks import ChunkIndexArg
 from .tools.documents import (
     DocumentEndLineArg,
     DocumentFilenameArg,
@@ -63,7 +50,7 @@ from .tools.mutations import (
     WriteModeArg,
 )
 from .tools.retrieval import SearchQueryArg, SearchTopKArg, SearchTypeArg
-from .tools.typing import tool_description
+from .tools.base import tool_description
 from .tools.web import WebMaxResultsArg, WebQueryArg, WebUrlArg
 from .types import (
     ChunkSummary,
@@ -149,7 +136,7 @@ def list_documents(
     subdir: DocumentSubdirArg = None,
     max_depth: DocumentMaxDepthArg = None,
 ) -> list[DocumentSummary]:
-    return list_document_summaries(
+    return tool_runtime.list_documents(
         ctx.deps.store,
         subdir=subdir,
         max_depth=max_depth,
@@ -162,7 +149,7 @@ def glob_documents(
     ctx: RunContext[UserDeps],
     pattern: GlobPatternArg,
 ) -> list[str]:
-    return glob_documents_for_store(
+    return tool_runtime.glob_documents(
         ctx.deps.store,
         pattern,
         document_filter=ctx.deps.document_filter,
@@ -176,7 +163,7 @@ async def grep(
     glob: GrepGlobArg = None,
     context_lines: ContextLinesArg = 0,
 ) -> list[GrepMatch]:
-    return await grep_documents(
+    return await tool_runtime.grep(
         ctx.deps.store,
         pattern,
         glob=glob,
@@ -189,13 +176,13 @@ async def grep(
 def semantic_search(
     ctx: RunContext[UserDeps],
     query: SearchQueryArg,
-    type: SearchTypeArg = "hybrid",
+    search_type: SearchTypeArg = "hybrid",
     top_k: SearchTopKArg = 5,
 ) -> list[RetrievedChunk]:
-    return semantic_search_documents(
+    return tool_runtime.semantic_search(
         ctx.deps.store,
         query,
-        type=type,
+        search_type=search_type,
         top_k=top_k,
         group_stores=ctx.deps.group_stores,
         filter_for_store=ctx.deps.filter_for_store,
@@ -209,7 +196,7 @@ def get_document_lines(
     start: DocumentStartLineArg = 1,
     end: DocumentEndLineArg = None,
 ) -> DocumentRange | None:
-    return get_document_lines_for_store(
+    return tool_runtime.get_document_lines(
         ctx.deps.store,
         filename,
         start=start,
@@ -222,7 +209,7 @@ def get_document_lines(
 def get_document(
     ctx: RunContext[UserDeps], filename: DocumentFilenameArg
 ) -> str | None:
-    return get_document_text(
+    return tool_runtime.get_document(
         ctx.deps.store,
         filename,
         document_filter=ctx.deps.document_filter,
@@ -234,7 +221,7 @@ def list_chunks(
     ctx: RunContext[UserDeps],
     filename: DocumentFilenameArg,
 ) -> list[ChunkSummary] | None:
-    return list_document_chunks(
+    return tool_runtime.list_chunks(
         ctx.deps.store,
         filename,
         document_filter=ctx.deps.document_filter,
@@ -247,7 +234,7 @@ def get_chunk(
     filename: DocumentFilenameArg,
     chunk_index: ChunkIndexArg,
 ) -> str | None:
-    return get_document_chunk(
+    return tool_runtime.get_chunk(
         ctx.deps.store,
         filename,
         chunk_index,
@@ -360,7 +347,7 @@ async def edit_document(
     old_string: EditOldStringArg,
     new_string: EditNewStringArg,
 ) -> str:
-    return await edit_document_text(
+    return await tool_runtime.edit_document(
         ctx.deps.store,
         filename,
         old_string,
@@ -379,7 +366,7 @@ async def write_document(
     content: DocumentContentArg,
     mode: WriteModeArg = "replace",
 ) -> str:
-    return await write_document_text(
+    return await tool_runtime.write_document(
         ctx.deps.store,
         filename,
         content,

@@ -11,11 +11,11 @@ from typing import Any
 
 import cbrkit
 
+from .chunkers.base import DocumentMetadata, RetrievedChunk
 from .config import settings
 from .store import Casebase
 from .tools.retrieval import LanceDBSearchTool, SearchType
 from .types import DocumentFilter
-from .types import DocumentMetadata, RetrievedChunk
 
 __all__ = [
     "apply_search_tool",
@@ -378,7 +378,7 @@ def apply_search_tool(
     Returns:
         List of retrieved chunks sorted by score descending.
     """
-    tool = build_search_tool(stores)
+    tool: LanceDBSearchTool[str] = build_search_tool(stores)
     where_clauses = [
         build_where_clause(filter_for_store(s), METADATA_FILENAME_COLUMN)
         for s in stores

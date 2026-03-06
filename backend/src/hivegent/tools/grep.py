@@ -8,11 +8,26 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..subprocesses import rg_search
-from .typing import GrepMatch, Tool
+from .base import Tool
 
-__all__ = ["ContextLinesArg", "GrepGlobArg", "GrepPatternArg", "GrepTool"]
+__all__ = [
+    "ContextLinesArg",
+    "GrepMatch",
+    "GrepGlobArg",
+    "GrepPatternArg",
+    "GrepTool",
+]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True, frozen=True)
+class GrepMatch:
+    """A pattern match in a document with a path relative to the search root."""
+
+    filename: str
+    line_number: int
+    line_text: str
 
 GrepPatternArg = Annotated[
     str,

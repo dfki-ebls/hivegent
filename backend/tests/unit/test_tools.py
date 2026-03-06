@@ -1,9 +1,10 @@
 """Unit tests for shared tool classes and ToolFactory."""
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
-from hivegent.tools.chunks import GetChunkTool, ListChunksTool
+from hivegent.chunks import ChunkData, DocumentMetadata, GetChunkTool, ListChunksTool
 from hivegent.tools.documents import (
     GetDocumentLinesTool,
     GetDocumentTool,
@@ -144,36 +145,76 @@ class TestGlobDocumentsTool:
 class TestListChunksTool:
     """Tests for ListChunksTool."""
 
-    def test_returns_chunks(self) -> None:
+    def test_returns_chunks(self, tmp_path: Path) -> None:
         chunks = [ChunkSummary(token_count=10, start_index=0, end_index=50)]
-
-        def loader(filename: str) -> list[ChunkSummary] | None:
-            if filename == "doc.md":
-                return chunks
-            return None
-
-        tool = ListChunksTool(loader=loader)
+        created_at = datetime(2024, 1, 1, tzinfo=UTC)
+        metadata_dir = tmp_path / "metadata"
+        metadata_dir.mkdir()
+        (metadata_dir / "doc.json").write_text(
+            DocumentMetadata(
+                pipeline="test",
+                created_at=created_at,
+                chunks=[
+                    ChunkData(
+                        text="chunk content",
+                        token_count=10,
+                        start_index=0,
+                        end_index=50,
+                    )
+                ],
+            ).model_dump_json()
+        )
+        tool = ListChunksTool(metadata_dir=metadata_dir)
         assert tool("doc.md") == chunks
 
-    def test_returns_none_for_missing(self) -> None:
-        tool = ListChunksTool(loader=lambda _: None)
+    def test_returns_none_for_missing(self, tmp_path: Path) -> None:
+        tool = ListChunksTool(metadata_dir=tmp_path)
         assert tool("missing.md") is None
 
 
 class TestGetChunkTool:
     """Tests for GetChunkTool."""
 
-    def test_returns_chunk_text(self) -> None:
-        def loader(filename: str, chunk_index: int) -> str | None:
-            if filename == "doc.md" and chunk_index == 0:
-                return "chunk content"
-            return None
-
-        tool = GetChunkTool(loader=loader)
+    def test_returns_chunk_text(self, tmp_path: Path) -> None:
+        created_at = datetime(2024, 1, 1, tzinfo=UTC)
+        metadata_dir = tmp_path / "metadata"
+        metadata_dir.mkdir()
+        (metadata_dir / "doc.json").write_text(
+            DocumentMetadata(
+                pipeline="test",
+                created_at=created_at,
+                chunks=[
+                    ChunkData(
+                        text="chunk content",
+                        token_count=10,
+                        start_index=0,
+                        end_index=50,
+                    )
+                ],
+            ).model_dump_json()
+        )
+        tool = GetChunkTool(metadata_dir=metadata_dir)
         assert tool("doc.md", 0) == "chunk content"
 
-    def test_returns_none_for_invalid_index(self) -> None:
-        tool = GetChunkTool(loader=lambda _f, _i: None)
+    def test_returns_none_for_invalid_index(self, tmp_path: Path) -> None:
+        created_at = datetime(2024, 1, 1, tzinfo=UTC)
+        metadata_dir = tmp_path / "metadata"
+        metadata_dir.mkdir()
+        (metadata_dir / "doc.json").write_text(
+            DocumentMetadata(
+                pipeline="test",
+                created_at=created_at,
+                chunks=[
+                    ChunkData(
+                        text="chunk content",
+                        token_count=10,
+                        start_index=0,
+                        end_index=50,
+                    )
+                ],
+            ).model_dump_json()
+        )
+        tool = GetChunkTool(metadata_dir=metadata_dir)
         assert tool("doc.md", 99) is None
 
 

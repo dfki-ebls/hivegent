@@ -3,12 +3,12 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Literal, override
+from typing import Annotated, Literal, override
 
 from pydantic import Field
 
 from .documents import DocumentFilenameArg
-from .typing import Tool
+from .base import Tool
 
 __all__ = [
     "DocumentContentArg",
@@ -47,7 +47,7 @@ class EditDocumentTool(Tool):
     """Edit a document by replacing an exact string with a new string."""
 
     path: Path
-    on_write: Callable[[str], Awaitable[Any]] | None = None
+    on_write: Callable[[DocumentFilenameArg], Awaitable[None]] | None = None
 
     @override
     async def __call__(
@@ -90,7 +90,7 @@ class WriteDocumentTool(Tool):
 
     path: Path
     extension: str = ".md"
-    on_write: Callable[[str], Awaitable[Any]] | None = None
+    on_write: Callable[[DocumentFilenameArg], Awaitable[None]] | None = None
 
     @override
     async def __call__(
