@@ -8,7 +8,6 @@ from pathlib import Path
 
 from .chunkers import ChunkingSpec, get_chunker
 from .config import DOCUMENT_EXTENSION, settings
-from .retrieval import sync_index
 from .store import Casebase
 from .types import ChunkInfo, DocumentMetadata
 
@@ -199,11 +198,12 @@ async def rechunk_document(
     filename: str,
     chunking: ChunkingSpec | None = None,
 ) -> None:
-    """Re-chunk a document and sync the search index.
+    """Re-chunk a document and persist metadata.
 
     Reads the file from the store's documents directory, re-chunks it,
-    and rebuilds the LanceDB index.  Preserves the existing images list
-    from the metadata.
+    and writes the metadata JSON.  Preserves the existing images list.
+    Does **not** sync the search index; the caller should mark the store
+    dirty via :func:`~hivegent.retrieval.mark_dirty`.
 
     Args:
         store: The casebase.
@@ -224,6 +224,5 @@ async def rechunk_document(
             chunking,
             images=existing_images,
         )
-        sync_index(store)
     except Exception:
         logger.warning("Re-chunking failed for %s after write", filename)

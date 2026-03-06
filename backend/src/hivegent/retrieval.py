@@ -18,10 +18,11 @@ from .types import DocumentFilter
 from .types import DocumentMetadata, RetrievedChunk
 
 __all__ = [
+    "apply_search_tool",
     "build_search_tool",
     "build_where_clause",
     "invalidate_store",
-    "apply_search_tool",
+    "mark_dirty",
     "sync_index",
 ]
 
@@ -80,6 +81,33 @@ class _RetrievalState:
 
             return self._embedding_func
 
+    def mark_dirty(self, store_key: str) -> None:
+        """Mark a store's search index as needing a rebuild.
+
+        Args:
+            store_key: The store key to mark.
+        """
+        self._pending_reindex.add(store_key)
+
+    def is_dirty(self, store_key: str) -> bool:
+        """Check whether a store's search index needs a rebuild.
+
+        Args:
+            store_key: The store key to check.
+
+        Returns:
+            True if the store is pending reindexing.
+        """
+        return store_key in self._pending_reindex
+
+    def clear_dirty(self, store_key: str) -> None:
+        """Clear the dirty flag for a store.
+
+        Args:
+            store_key: The store key to clear.
+        """
+        self._pending_reindex.discard(store_key)
+
     def _validate_fingerprint(self, store_key: str, lancedb_dir: Path) -> None:
         """Check the embedding fingerprint and wipe stale vector data.
 
@@ -112,7 +140,7 @@ class _RetrievalState:
             self._embedding_func = None
             shutil.rmtree(lancedb_dir)
             lancedb_dir.mkdir(parents=True, exist_ok=True)
-            self._pending_reindex.add(store_key)
+            self.mark_dirty(store_key)
 
         fp_path.write_text(json.dumps(current), encoding="utf-8")
 
@@ -277,7 +305,19 @@ def invalidate_store(store: Casebase) -> None:
     key = store.store_key
     with _state._lock:
         _state._storage_cache.pop(key, None)
-        _state._pending_reindex.discard(key)
+        _state.clear_dirty(key)
+
+
+def mark_dirty(store: Casebase) -> None:
+    """Mark a store's search index as needing a rebuild.
+
+    The next call to :func:`build_search_tool` will resolve the pending
+    reindex before performing any search.
+
+    Args:
+        store: The casebase to mark.
+    """
+    _state.mark_dirty(store.store_key)
 
 
 def sync_index(store: Casebase) -> None:
@@ -289,7 +329,7 @@ def sync_index(store: Casebase) -> None:
     Args:
         store: The casebase to sync.
     """
-    _state._pending_reindex.discard(store.store_key)
+    _state.clear_dirty(store.store_key)
     storage = _state.get_storage(store)
     casebase = _load_all_chunks_from_dir(store.metadata_dir(settings.data_dir))
     logger.info(
@@ -312,7 +352,7 @@ def build_search_tool(
         A configured :class:`LanceDBSearchTool` ready to use.
     """
     for store in stores:
-        if store.store_key in _state._pending_reindex:
+        if _state.is_dirty(store.store_key):
             sync_index(store)
     return LanceDBSearchTool(
         storages=[_state.get_storage(s) for s in stores],

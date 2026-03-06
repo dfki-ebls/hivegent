@@ -34,8 +34,8 @@ class Casebase:
         """Stable opaque key for caching and identification."""
         return f"{self.kind}:{self.id}"
 
-    def root_dir(self, data_dir: Path) -> Path:
-        """Return the root directory for this store.
+    def root_path(self, data_dir: Path) -> Path:
+        """Return the root path for this store without creating directories.
 
         Args:
             data_dir: The application data root directory.
@@ -44,12 +44,34 @@ class Casebase:
             Path to the store's root directory.
         """
         subdir = "users" if self.kind == "user" else "groups"
-        path = data_dir / subdir / self.id
+        return data_dir / subdir / self.id
+
+    def root_dir(self, data_dir: Path) -> Path:
+        """Return the root directory for this store, creating it if needed.
+
+        Args:
+            data_dir: The application data root directory.
+
+        Returns:
+            Path to the store's root directory.
+        """
+        path = self.root_path(data_dir)
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def workspace_path(self, data_dir: Path) -> Path:
+        """Return the workspace path without creating directories.
+
+        Args:
+            data_dir: The application data root directory.
+
+        Returns:
+            Path to the store's workspace directory.
+        """
+        return self.root_path(data_dir) / "workspace"
+
     def workspace_dir(self, data_dir: Path) -> Path:
-        """Return the workspace directory for this store.
+        """Return the workspace directory for this store, creating it if needed.
 
         Contains markdown files, attachments, and unconverted files.
 
@@ -59,12 +81,23 @@ class Casebase:
         Returns:
             Path to the store's workspace directory.
         """
-        path = self.root_dir(data_dir) / "workspace"
+        path = self.workspace_path(data_dir)
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def metadata_path(self, data_dir: Path) -> Path:
+        """Return the metadata path without creating directories.
+
+        Args:
+            data_dir: The application data root directory.
+
+        Returns:
+            Path to the store's metadata directory.
+        """
+        return self.root_path(data_dir) / "metadata"
+
     def metadata_dir(self, data_dir: Path) -> Path:
-        """Return the metadata directory for this store.
+        """Return the metadata directory for this store, creating it if needed.
 
         Contains per-document JSON files with chunk data and image references.
 
@@ -74,7 +107,7 @@ class Casebase:
         Returns:
             Path to the store's metadata directory.
         """
-        path = self.root_dir(data_dir) / "metadata"
+        path = self.metadata_path(data_dir)
         path.mkdir(parents=True, exist_ok=True)
         return path
 

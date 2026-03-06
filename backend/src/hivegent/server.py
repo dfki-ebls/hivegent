@@ -84,7 +84,7 @@ from .prompts import (
     MEMORY_INSTRUCTIONS_EMPTY,
     PERSONALITY_TEMPLATES,
 )
-from .retrieval import invalidate_store, sync_index
+from .retrieval import invalidate_store, mark_dirty
 from .store import Casebase
 from .tokens import token_store
 from .agents import build_toolsets, collect_tool_info
@@ -860,7 +860,7 @@ async def _upload_file_internal(
             chunked = await chunk_document(store, filepath, text_content, spec.chunking)
             chunk_count = len(chunked.chunks)
             chunking_used = chunked.pipeline
-            sync_index(store)
+            mark_dirty(store)
         except Exception as e:
             logger.warning("Chunking failed for %s: %s", filepath, e)
 
@@ -921,7 +921,7 @@ async def _upload_file_internal(
             )
             chunk_count = len(chunked.chunks)
             chunking_used = chunked.pipeline
-            sync_index(store)
+            mark_dirty(store)
         except Exception as e:
             logger.warning("Chunking failed for %s: %s", converted_relpath, e)
 
@@ -1010,7 +1010,7 @@ async def _upload_file_internal(
         )
         chunk_count = len(chunked.chunks)
         chunking_used = chunked.pipeline
-        sync_index(store)
+        mark_dirty(store)
     except Exception as e:
         logger.warning("Chunking failed for %s: %s", converted_relpath, e)
 
@@ -1329,7 +1329,7 @@ async def _process_collection(
                     logger.warning("Alt text generation failed for %s", rel_path)
 
         # Sync index once after all files are processed
-        sync_index(store)
+        mark_dirty(store)
 
     total_ok = markdown_count + converted_count + image_count
     yield CollectionCompleteEvent(
@@ -1644,7 +1644,7 @@ async def _process_bulk_operation(
     """Run a per-file operation over multiple documents, yielding SSE progress.
 
     Args:
-        store: The casebase (used for ``sync_index`` at the end).
+        store: The casebase (marked dirty at the end).
         files: List of relative file paths to process.
         process_one: Async callback that processes a single sanitized file path.
         label: Human-readable verb for the completion message (e.g. "Rechunked").
@@ -1671,7 +1671,7 @@ async def _process_bulk_operation(
             status=status,
         )
 
-    sync_index(store)
+    mark_dirty(store)
 
     yield BulkOperationCompleteEvent(
         total_files=total,
@@ -1804,7 +1804,7 @@ async def rechunk_document(
 
     try:
         result = await chunk_document(store, safe, text_content, request.chunking)
-        sync_index(store)
+        mark_dirty(store)
         return result
     except Exception as e:
         raise HTTPException(
@@ -1834,7 +1834,7 @@ async def reconvert_document(
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
 
     result = await _reconvert_single(store, safe, spec, resolved)
-    sync_index(store)
+    mark_dirty(store)
     return result
 
 
@@ -1962,7 +1962,7 @@ def _move_document_internal(
                 _cleanup_empty_parents(candidate, originals_dir)
                 break
 
-    sync_index(store)
+    mark_dirty(store)
 
     return MoveDocumentResponse(
         source=src,
@@ -2084,7 +2084,7 @@ async def replace_original(
     resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
 
     result = await _reconvert_single(store, safe, spec, resolved)
-    sync_index(store)
+    mark_dirty(store)
     return result
 
 
@@ -2135,10 +2135,10 @@ async def get_document_content(
 def _delete_single(store: Casebase, safe: str) -> None:
     """Delete a single document, its metadata, companion images, and original.
 
-    Does **not** call ``sync_index``; the caller is responsible for that.
+    Does **not** mark the store dirty; the caller is responsible for that.
 
     Args:
-        store: The user's casebase.
+        store: The casebase.
         safe: Sanitized relative document path.
 
     Raises:
@@ -2182,6 +2182,47 @@ def _delete_single(store: Casebase, safe: str) -> None:
                 break
 
 
+def _delete_directory_internal(store: Casebase, safe: str) -> int:
+    """Delete a directory tree from workspace, metadata, and originals.
+
+    Does **not** call ``mark_dirty``; the caller is responsible for that.
+
+    Args:
+        store: The casebase.
+        safe: Sanitized relative directory path.
+
+    Returns:
+        Number of files deleted from the workspace.
+
+    Raises:
+        HTTPException: If the directory is not found.
+    """
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    metadata_dir = store.metadata_dir(settings.data_dir)
+    originals_dir = store.originals_dir(settings.data_dir)
+
+    dir_path = workspace_dir / safe
+    if not dir_path.exists() or not dir_path.is_dir():
+        raise HTTPException(status_code=404, detail="Directory not found")
+
+    files_deleted = sum(1 for f in dir_path.rglob("*") if f.is_file())
+
+    shutil.rmtree(dir_path)
+    _cleanup_empty_parents(dir_path, workspace_dir)
+
+    meta_subdir = metadata_dir / safe
+    if meta_subdir.exists() and meta_subdir.is_dir():
+        shutil.rmtree(meta_subdir)
+        _cleanup_empty_parents(meta_subdir, metadata_dir)
+
+    originals_subdir = originals_dir / safe
+    if originals_subdir.exists() and originals_subdir.is_dir():
+        shutil.rmtree(originals_subdir)
+        _cleanup_empty_parents(originals_subdir, originals_dir)
+
+    return files_deleted
+
+
 @api_router.delete("/documents/{filepath:path}")
 async def delete_document(
     filepath: str,
@@ -2195,7 +2236,7 @@ async def delete_document(
     safe = _safe_path(filepath)
     store = _user_store(user)
     _delete_single(store, safe)
-    sync_index(store)
+    mark_dirty(store)
 
     return DeleteDocumentResponse(
         filename=safe,
@@ -2351,35 +2392,8 @@ async def delete_directory(
     """
     safe = _safe_path(request.path)
     store = _user_store(user)
-    workspace_dir = store.workspace_dir(settings.data_dir)
-    metadata_dir = store.metadata_dir(settings.data_dir)
-    originals_dir = store.originals_dir(settings.data_dir)
-
-    dir_path = workspace_dir / safe
-    if not dir_path.exists() or not dir_path.is_dir():
-        raise HTTPException(status_code=404, detail="Directory not found")
-
-    # Count files before deletion
-    files_deleted = sum(1 for f in dir_path.rglob("*") if f.is_file())
-
-    # Delete the directory and all contents
-    shutil.rmtree(dir_path)
-    _cleanup_empty_parents(dir_path, workspace_dir)
-
-    # Delete matching chunks subdirectory
-    meta_subdir = metadata_dir / safe
-    if meta_subdir.exists() and meta_subdir.is_dir():
-        shutil.rmtree(meta_subdir)
-        _cleanup_empty_parents(meta_subdir, metadata_dir)
-
-    # Delete matching originals subdirectory
-    originals_subdir = originals_dir / safe
-    if originals_subdir.exists() and originals_subdir.is_dir():
-        shutil.rmtree(originals_subdir)
-        _cleanup_empty_parents(originals_subdir, originals_dir)
-
-    # Update LanceDB index to remove deleted chunks.
-    sync_index(store)
+    files_deleted = _delete_directory_internal(store, safe)
+    mark_dirty(store)
 
     return DeleteDirectoryResponse(
         path=safe,
@@ -2689,43 +2703,8 @@ async def delete_group_document(
     safe_id = _require_group_write(user, group_id)
     safe = _safe_path(filepath)
     store = Casebase(kind="group", id=safe_id)
-    workspace = store.workspace_dir(settings.data_dir)
-    file_path = workspace / safe
-
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    if not file_path.is_file():
-        raise HTTPException(status_code=400, detail="Path is not a file")
-
-    # Delete companion images tracked in metadata.
-    existing_meta = get_metadata(store, safe)
-    if existing_meta and existing_meta.images:
-        for img_path in existing_meta.images:
-            img_full = workspace / img_path
-            if img_full.exists():
-                img_full.unlink()
-                _cleanup_empty_parents(img_full, workspace)
-
-    file_path.unlink()
-    _cleanup_empty_parents(file_path, workspace)
-    delete_metadata(store, safe)
-    sync_index(store)
-
-    # Also delete the original if it exists
-    originals_dir = store.originals_dir(settings.data_dir)
-    stem = Path(safe).stem
-    parent = str(Path(safe).parent)
-    if parent != ".":
-        orig_dir = originals_dir / parent
-    else:
-        orig_dir = originals_dir
-    if orig_dir.exists():
-        for candidate in orig_dir.iterdir():
-            if candidate.is_file() and candidate.stem == stem:
-                candidate.unlink()
-                _cleanup_empty_parents(candidate, originals_dir)
-                break
+    _delete_single(store, safe)
+    mark_dirty(store)
 
     return DeleteDocumentResponse(
         filename=safe,
@@ -2773,30 +2752,8 @@ async def delete_group_directory(
     safe_id = _require_group_write(user, group_id)
     safe = _safe_path(request.path)
     store = Casebase(kind="group", id=safe_id)
-    workspace_dir = store.workspace_dir(settings.data_dir)
-    metadata_dir = store.metadata_dir(settings.data_dir)
-    originals_dir = store.originals_dir(settings.data_dir)
-
-    dir_path = workspace_dir / safe
-    if not dir_path.exists() or not dir_path.is_dir():
-        raise HTTPException(status_code=404, detail="Directory not found")
-
-    files_deleted = sum(1 for f in dir_path.rglob("*") if f.is_file())
-
-    shutil.rmtree(dir_path)
-    _cleanup_empty_parents(dir_path, workspace_dir)
-
-    meta_subdir = metadata_dir / safe
-    if meta_subdir.exists() and meta_subdir.is_dir():
-        shutil.rmtree(meta_subdir)
-        _cleanup_empty_parents(meta_subdir, metadata_dir)
-
-    originals_subdir = originals_dir / safe
-    if originals_subdir.exists() and originals_subdir.is_dir():
-        shutil.rmtree(originals_subdir)
-        _cleanup_empty_parents(originals_subdir, originals_dir)
-
-    sync_index(store)
+    files_deleted = _delete_directory_internal(store, safe)
+    mark_dirty(store)
 
     return DeleteDirectoryResponse(
         path=safe,
@@ -2826,7 +2783,9 @@ async def reconvert_group_document(
     store = Casebase(kind="group", id=safe_id)
     spec = request.pipeline
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
-    return await _reconvert_single(store, safe, spec, resolved)
+    result = await _reconvert_single(store, safe, spec, resolved)
+    mark_dirty(store)
+    return result
 
 
 @api_router.post("/groups/{group_id}/documents/move/{filepath:path}")

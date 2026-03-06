@@ -15,7 +15,7 @@ from .config import settings
 from .memory import save_memory as _save_memory
 from .messages import list_conversations as _list_conversations
 from .prompts import EXPLORE_INSTRUCTIONS
-from .retrieval import apply_search_tool
+from .retrieval import apply_search_tool, mark_dirty
 from .store import Casebase
 from .tools import (
     DocumentRange,
@@ -382,6 +382,7 @@ async def edit_document(
 
     async def _on_write(fn: str) -> None:
         await rechunk_document(store, fn)
+        mark_dirty(store)
 
     doc_filter = ctx.deps.document_filter
     if doc_filter and not doc_filter(filename):
@@ -406,6 +407,7 @@ async def write_document(
 
     async def _on_write(fn: str) -> None:
         await rechunk_document(store, fn)
+        mark_dirty(store)
 
     doc_filter = ctx.deps.document_filter
     if doc_filter and not doc_filter(filename):

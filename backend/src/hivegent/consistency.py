@@ -56,10 +56,8 @@ def check_store_consistency(store: Casebase) -> ConsistencyReport:
     Returns:
         A report describing any inconsistencies found.
     """
-    subdir = "users" if store.kind == "user" else "groups"
-    base = settings.data_dir / subdir / store.id
-    docs_dir = base / "workspace"
-    metadata_dir = base / "metadata"
+    docs_dir = store.workspace_path(settings.data_dir)
+    metadata_dir = store.metadata_path(settings.data_dir)
 
     # Collect document relative paths and their mtimes.
     doc_mtimes: dict[str, float] = {}
