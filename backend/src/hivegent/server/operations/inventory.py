@@ -7,7 +7,12 @@ from typing import Literal
 from ...chunks import list_chunked_documents
 from ...config import settings
 from ...store import Casebase
-from ...types import DirectoryEntry, DirectoryTreeResponse, DocumentInfo, DocumentListResponse
+from ...types import (
+    DirectoryEntry,
+    DirectoryTreeResponse,
+    DocumentInfo,
+    DocumentListResponse,
+)
 
 __all__ = ["build_tree_response", "list_documents_for_store"]
 
@@ -80,7 +85,9 @@ def _build_directory_tree(
             elif item.is_file():
                 file_relative = str(item.relative_to(root_path).as_posix())
                 item_relative = item.relative_to(root_path)
-                document_stem = str((item_relative.parent / item_relative.stem).as_posix())
+                document_stem = str(
+                    (item_relative.parent / item_relative.stem).as_posix()
+                )
                 stat = item.stat()
                 children.append(
                     DirectoryEntry(
@@ -88,7 +95,9 @@ def _build_directory_tree(
                         name=item.name,
                         path=file_relative,
                         size_bytes=stat.st_size,
-                        modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                        modified_at=datetime.fromtimestamp(
+                            stat.st_mtime, tz=timezone.utc
+                        ),
                         chunk_count=chunk_counts.get(file_relative),
                         has_original=document_stem in original_stems,
                     )

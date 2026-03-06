@@ -226,7 +226,9 @@ def _get_config_model(entry: _ConverterEntry) -> type[BaseModel] | None:
     return _load_module_attr(entry.module_name, entry.config_model_name)
 
 
-def _get_available_converter_classes() -> dict[ConversionPipeline, type[DocumentConverter]]:
+def _get_available_converter_classes() -> dict[
+    ConversionPipeline, type[DocumentConverter]
+]:
     """Return registry entries whose converter classes can be imported."""
     available: dict[ConversionPipeline, type[DocumentConverter]] = {}
     for pipeline, entry in _CONVERTER_CONFIG.items():

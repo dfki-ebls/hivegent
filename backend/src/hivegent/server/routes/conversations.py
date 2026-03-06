@@ -225,7 +225,9 @@ async def delete_all_conversations(
 ) -> BulkDeleteConversationsResponse:
     """Delete all conversations for the authenticated user."""
     conversations_dir = user_store(user).conversations_dir(settings.data_dir)
-    count = sum(1 for file_path in conversations_dir.glob("*.json") if file_path.is_file())
+    count = sum(
+        1 for file_path in conversations_dir.glob("*.json") if file_path.is_file()
+    )
     if conversations_dir.exists():
         shutil.rmtree(conversations_dir)
     return BulkDeleteConversationsResponse(

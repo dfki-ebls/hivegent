@@ -47,6 +47,7 @@ class DocumentRange:
     total_lines: int
     content: str
 
+
 DocumentSubdirArg = Annotated[
     str | None,
     Field(description="Relative subdirectory to limit document listing to."),

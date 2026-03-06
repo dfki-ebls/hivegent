@@ -48,10 +48,9 @@ async def test_mcp_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
     assert tool.parameters["properties"]["pattern"]["description"] == _description(
         GrepPatternArg
     )
-    assert (
-        tool.parameters["properties"]["context_lines"]["description"]
-        == _description(ContextLinesArg)
-    )
+    assert tool.parameters["properties"]["context_lines"][
+        "description"
+    ] == _description(ContextLinesArg)
 
 
 async def test_mcp_search_tool_uses_consistent_search_type_name() -> None:

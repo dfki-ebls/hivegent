@@ -10,7 +10,12 @@ from pydantic import ValidationError
 
 from ...chunks import chunk_document, get_metadata
 from ...config import settings
-from ...converters import ConversionPipeline, ConversionResult, get_converter, resolve_auto_pipeline
+from ...converters import (
+    ConversionPipeline,
+    ConversionResult,
+    get_converter,
+    resolve_auto_pipeline,
+)
 from ...converters.alt_text import describe_image, generate_alt_texts
 from ...converters.base import DOCUMENT_EXTENSION, IMAGE_EXTENSIONS
 from ...retrieval import mark_dirty

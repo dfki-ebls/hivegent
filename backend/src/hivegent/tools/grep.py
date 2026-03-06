@@ -29,6 +29,7 @@ class GrepMatch:
     line_number: int
     line_text: str
 
+
 GrepPatternArg = Annotated[
     str,
     Field(description="Text or regular expression pattern to search for."),

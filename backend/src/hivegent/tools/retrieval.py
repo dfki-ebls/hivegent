@@ -32,6 +32,7 @@ class SearchResult[K: (int, str)]:
     text: str
     score: float
 
+
 SearchQueryArg = Annotated[
     str,
     Field(description="Natural language search query."),

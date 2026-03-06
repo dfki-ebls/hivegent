@@ -148,7 +148,9 @@ async def process_collection(
                     safe = sanitize_document_path(relative_path)
                     image_destination = workspace_dir / safe
                     image_destination.parent.mkdir(parents=True, exist_ok=True)
-                    image_destination.write_bytes((extract_root / relative_path).read_bytes())
+                    image_destination.write_bytes(
+                        (extract_root / relative_path).read_bytes()
+                    )
                     image_count += 1
                 except Exception as exc:
                     logger.warning("Failed to store image %s: %s", relative_path, exc)

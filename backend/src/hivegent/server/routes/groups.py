@@ -243,5 +243,7 @@ async def move_group_document(
     src = safe_path(filepath)
     dst = safe_path(request.destination)
     if src == dst:
-        raise HTTPException(status_code=400, detail="Source and destination are the same")
+        raise HTTPException(
+            status_code=400, detail="Source and destination are the same"
+        )
     return move_document_internal(group_store(safe_id), src, dst)

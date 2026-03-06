@@ -20,6 +20,7 @@ from hivegent.tools.documents import (
 from hivegent.tools.jq import JqTool
 from hivegent.tools.mutations import EditDocumentTool, WriteDocumentTool
 
+
 class TestListDocumentsTool:
     """Tests for ListDocumentsTool."""
 

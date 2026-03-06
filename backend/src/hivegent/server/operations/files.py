@@ -113,7 +113,9 @@ def move_document_internal(
                 )
 
     src_stem = src_path.stem
-    search_dir = originals_dir / src_parent_str if src_parent_str != "." else originals_dir
+    search_dir = (
+        originals_dir / src_parent_str if src_parent_str != "." else originals_dir
+    )
     if search_dir.exists():
         for candidate in search_dir.iterdir():
             if candidate.is_file() and candidate.stem == src_stem:
@@ -222,7 +224,9 @@ def delete_directory_internal(store: Casebase, safe: str) -> int:
     if not directory_path.exists() or not directory_path.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
 
-    files_deleted = sum(1 for file_path in directory_path.rglob("*") if file_path.is_file())
+    files_deleted = sum(
+        1 for file_path in directory_path.rglob("*") if file_path.is_file()
+    )
 
     shutil.rmtree(directory_path)
     cleanup_empty_parents(directory_path, workspace_dir)

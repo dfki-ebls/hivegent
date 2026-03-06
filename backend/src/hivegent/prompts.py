@@ -20,6 +20,7 @@ class Personality(StrEnum):
     DETAILED = "detailed"
     CUSTOM = "custom"
 
+
 EXPLORE_INSTRUCTIONS = """\
 You are a document exploration assistant.
 Your task is to survey a collection of documents and produce a concise summary of your findings.

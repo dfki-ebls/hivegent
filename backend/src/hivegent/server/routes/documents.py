@@ -38,7 +38,13 @@ from ..operations import (
     upload_file_internal,
     validate_collection_upload,
 )
-from ..models import BulkDeleteRequest, BulkRechunkRequest, BulkReconvertRequest, PipelineSpec, ReconvertRequest
+from ..models import (
+    BulkDeleteRequest,
+    BulkRechunkRequest,
+    BulkReconvertRequest,
+    PipelineSpec,
+    ReconvertRequest,
+)
 
 __all__ = ["router"]
 
@@ -310,7 +316,9 @@ async def move_document(
     src = safe_path(filepath)
     dst = safe_path(request.destination)
     if src == dst:
-        raise HTTPException(status_code=400, detail="Source and destination are the same")
+        raise HTTPException(
+            status_code=400, detail="Source and destination are the same"
+        )
     return move_document_internal(user_store(user), src, dst)
 
 
