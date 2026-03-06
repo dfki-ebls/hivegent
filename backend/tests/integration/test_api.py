@@ -67,6 +67,25 @@ def test_download_original_not_found(app_client, data_dir: Path) -> None:  # noq
     assert response.status_code == 404
 
 
+def test_replace_original_route_is_not_captured_by_upload(
+    app_client,
+    data_dir: Path,
+) -> None:  # noqa: ANN001
+    """PUT /api/documents/original/ targets original replacement, not document upload."""
+    store = Casebase(kind="user", id="localhost")
+    workspace = store.workspace_dir(data_dir)
+    (workspace / "report.md").write_text("# Converted report")
+
+    response = app_client.put(
+        "/api/documents/original/report.md",
+        files={"file": ("report.pdf", b"%PDF-updated", "application/pdf")},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No original file found for 'report.md'"
+    assert not (workspace / "original" / "report.md").exists()
+
+
 def test_create_conversation(app_client) -> None:  # noqa: ANN001
     """POST /api/conversations creates a new conversation."""
     response = app_client.post("/api/conversations")
