@@ -10,8 +10,8 @@ from collections.abc import Callable, Set
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from .config import DOCUMENT_EXTENSION
-from .converters.alt_text import MD_IMAGE_RE
+from .alt_text import MD_IMAGE_RE
+from .base import DOCUMENT_EXTENSION, IMAGE_EXTENSIONS
 
 __all__ = [
     "IMAGE_EXTENSIONS",
@@ -21,20 +21,6 @@ __all__ = [
 
 _EMBED_RE = re.compile(r"!\[\[(.+?)\]\]")
 _WIKILINK_RE = re.compile(r"(?<!!)\[\[(.+?)\]\]")
-IMAGE_EXTENSIONS = frozenset(
-    {
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".gif",
-        ".webp",
-        ".svg",
-        ".bmp",
-        ".tiff",
-        ".tif",
-        ".ico",
-    }
-)
 
 
 @dataclass(slots=True, frozen=True)

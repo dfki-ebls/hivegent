@@ -12,7 +12,8 @@ from pydantic import Field
 
 from .chunkers import ChunkingSpec, get_chunker
 from .chunkers.base import ChunkData, ChunkSummary, DocumentMetadata
-from .config import DOCUMENT_EXTENSION, settings
+from .config import settings
+from .converters.base import DOCUMENT_EXTENSION
 from .store import Casebase
 from .tools.base import Tool
 

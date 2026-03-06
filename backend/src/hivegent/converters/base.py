@@ -1,20 +1,45 @@
-"""Base class for document converters."""
+"""Base helpers and shared constants for document converters."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import ClassVar
-
 from io import BytesIO
-
-from PIL import Image
+from pathlib import Path
+from typing import ClassVar, Protocol
 
 __all__ = [
     "ConversionResult",
+    "DOCUMENT_EXTENSION",
     "DocumentConverter",
+    "IMAGE_EXTENSIONS",
     "collect_dir_images",
     "pil_to_png_bytes",
 ]
+
+
+# All converted documents are stored as markdown.
+DOCUMENT_EXTENSION = ".md"
+
+IMAGE_EXTENSIONS = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".svg",
+        ".bmp",
+        ".tiff",
+        ".tif",
+        ".ico",
+    }
+)
+
+
+class _PngSerializable(Protocol):
+    """Image-like object that can serialize itself into PNG bytes."""
+
+    def save(self, fp: BytesIO, format: str) -> object:
+        """Write the image to a file-like object."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -31,7 +56,7 @@ class ConversionResult:
     images: dict[str, bytes] = field(default_factory=dict)
 
 
-def pil_to_png_bytes(img: Image.Image) -> bytes:
+def pil_to_png_bytes(img: _PngSerializable) -> bytes:
     """Serialize a PIL image to PNG bytes.
 
     Args:

@@ -4,7 +4,8 @@ import logging
 from dataclasses import dataclass, field
 
 from .chunks import chunk_document, delete_metadata
-from .config import DOCUMENT_EXTENSION, sanitize_group_id, sanitize_user_id, settings
+from .config import sanitize_group_id, sanitize_user_id, settings
+from .converters.base import DOCUMENT_EXTENSION
 from .retrieval import sync_index
 from .store import Casebase
 

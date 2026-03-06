@@ -13,6 +13,7 @@ import cbrkit
 
 from .chunkers.base import DocumentMetadata, RetrievedChunk
 from .config import settings
+from .converters.base import DOCUMENT_EXTENSION
 from .store import Casebase
 from .tools.retrieval import LanceDBSearchTool, SearchType
 from .types import DocumentFilter
@@ -269,8 +270,6 @@ def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, str]:
     Returns:
         Dict mapping chunk keys to chunk text.
     """
-    from .config import DOCUMENT_EXTENSION
-
     if not metadata_dir.exists():
         return {}
 

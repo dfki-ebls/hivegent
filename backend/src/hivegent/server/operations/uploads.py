@@ -9,13 +9,13 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from ...chunks import chunk_document, get_metadata
-from ...config import DOCUMENT_EXTENSION, settings
+from ...config import settings
 from ...converters import ConversionPipeline, ConversionResult, get_converter, resolve_auto_pipeline
 from ...converters.alt_text import describe_image, generate_alt_texts
+from ...converters.base import DOCUMENT_EXTENSION, IMAGE_EXTENSIONS
 from ...retrieval import mark_dirty
 from ...store import Casebase
 from ...types import LlmConfig, UploadDocumentResponse
-from ...wikilinks import IMAGE_EXTENSIONS
 from ..common import cleanup_empty_parents, resolve_llm_config
 from ..models import PipelineSpec
 

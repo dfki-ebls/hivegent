@@ -11,12 +11,13 @@ from fastapi import HTTPException, UploadFile
 from starlette.responses import StreamingResponse
 
 from ...chunks import chunk_document
-from ...config import DOCUMENT_EXTENSION, sanitize_document_path, settings
+from ...config import sanitize_document_path, settings
 from ...converters.alt_text import MD_IMAGE_RE, generate_alt_texts
+from ...converters.base import DOCUMENT_EXTENSION
 from ...retrieval import mark_dirty
 from ...store import Casebase
 from ...types import CollectionCompleteEvent, CollectionProgressEvent, LlmConfig
-from ...wikilinks import preprocess_markdown
+from ...converters.wikilinks import preprocess_markdown
 from ..common import parse_pipeline_spec, resolve_llm_config
 from ..models import PipelineSpec
 from .streaming import sse_stream_response

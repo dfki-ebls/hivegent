@@ -8,7 +8,8 @@ from fastapi import HTTPException
 from starlette.responses import PlainTextResponse, Response
 
 from ...chunks import delete_metadata, get_metadata, load_document_metadata
-from ...config import DOCUMENT_EXTENSION, settings
+from ...config import settings
+from ...converters.base import DOCUMENT_EXTENSION
 from ...retrieval import mark_dirty
 from ...store import Casebase
 from ...types import MoveDocumentResponse

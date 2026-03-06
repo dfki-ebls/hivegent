@@ -7,6 +7,8 @@ from typing import Literal
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .converters.base import DOCUMENT_EXTENSION
+
 __all__ = [
     "DOCUMENT_EXTENSION",
     "EmbeddingSettings",
@@ -20,10 +22,6 @@ __all__ = [
     "sanitize_user_id",
     "settings",
 ]
-
-
-# All documents are converted and stored as markdown.
-DOCUMENT_EXTENSION = ".md"
 
 # Reserved top-level directory names in the data directory.
 _RESERVED_NAMES = frozenset({"users", "groups", "traces"})
