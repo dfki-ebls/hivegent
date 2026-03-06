@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic_ai import capture_run_messages
 from pydantic_ai.models.test import TestModel
 
-from hivegent.agent import UserDeps, explore_agent, explore_toolset, user_agent
+from hivegent.agents import UserDeps, explore_toolset, user_agent
 from hivegent.store import Casebase
 
 
@@ -14,12 +14,12 @@ def _make_deps(data_dir: Path) -> UserDeps:
     return UserDeps(user_id="testuser", store=store)
 
 
-async def test_explore_agent_runs_without_error(data_dir: Path) -> None:
-    """Explore agent with TestModel runs without raising."""
+async def test_explore_runs_without_error(data_dir: Path) -> None:
+    """User agent with explore toolset runs without raising."""
     deps = _make_deps(data_dir)
 
     with capture_run_messages() as messages:
-        result = await explore_agent.run(
+        result = await user_agent.run(
             "List available documents",
             model=TestModel(),
             deps=deps,
@@ -30,8 +30,8 @@ async def test_explore_agent_runs_without_error(data_dir: Path) -> None:
     assert len(messages) > 0
 
 
-async def test_explore_agent_calls_tools(data_dir: Path) -> None:
-    """Explore agent with TestModel calls at least one tool."""
+async def test_explore_calls_tools(data_dir: Path) -> None:
+    """User agent with explore toolset calls at least one tool."""
     deps = _make_deps(data_dir)
 
     # Create a document so list_documents has something to return
@@ -39,7 +39,7 @@ async def test_explore_agent_calls_tools(data_dir: Path) -> None:
     (docs_dir / "test.md").write_text("hello world")
 
     with capture_run_messages() as messages:
-        await explore_agent.run(
+        await user_agent.run(
             "List available documents",
             model=TestModel(custom_output_text="Done exploring"),
             deps=deps,

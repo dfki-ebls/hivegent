@@ -32,12 +32,7 @@ from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response, StreamingResponse
 
-from .agent import (
-    TOOLSET_GROUPS,
-    UserDeps,
-    base_agent,
-    user_agent,
-)
+from .agents import TOOLSET_GROUPS, UserDeps, base_agent, user_agent
 from .auth import User, get_current_user
 from .chunkers import (
     ChunkingPipelineInfo,
@@ -92,7 +87,8 @@ from .prompts import (
 from .retrieval import invalidate_store, sync_index
 from .store import Casebase
 from .tokens import token_store
-from .tool_factory import build_mcp_server, build_toolsets, collect_tool_info
+from .agents import build_toolsets, collect_tool_info
+from .mcp import build_mcp_server
 from .types import (
     BulkDeleteConversationsResponse,
     BulkDeleteDocumentsResponse,
@@ -735,6 +731,7 @@ async def create_conversation_chat(
         toolsets=build_toolsets(
             list(TOOLSET_GROUPS.values()),
             config.tools,
+            extra=[build_mcp_server(s) for s in config.tools.mcp_servers],
         ),
         instructions=instructions,
         model_settings=model_settings,

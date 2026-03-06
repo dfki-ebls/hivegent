@@ -10,6 +10,43 @@ from pydantic_ai import ModelMessage, ModelMessagesTypeAdapter
 
 
 @dataclass(slots=True, frozen=True)
+class DocumentFilter:
+    """Include/exclude filter applied to document-level tool operations.
+
+    If ``included`` is non-empty the filepath must match an entry.
+    If ``excluded`` is non-empty the filepath must *not* match.
+    When both are set, ``included`` is checked first.
+
+    Entries ending with ``/`` are treated as directory prefixes:
+    ``"projects/"`` matches ``"projects/report.md"`` and
+    ``"projects/sub/file.txt"``.
+    Entries without a trailing ``/`` are exact file matches.
+    """
+
+    included: frozenset[str] = field(default_factory=frozenset)
+    excluded: frozenset[str] = field(default_factory=frozenset)
+
+    @staticmethod
+    def _matches(entry: str, filepath: str) -> bool:
+        """Check if a filter entry matches a filepath."""
+        if entry.endswith("/"):
+            return filepath.startswith(entry)
+        return filepath == entry
+
+    def __call__(self, filepath: str) -> bool:
+        """Return whether *filepath* passes the filter."""
+        if self.included and not any(
+            self._matches(entry, filepath) for entry in self.included
+        ):
+            return False
+        if self.excluded and any(
+            self._matches(entry, filepath) for entry in self.excluded
+        ):
+            return False
+        return True
+
+
+@dataclass(slots=True, frozen=True)
 class User:
     """Authenticated user information with group membership.
 
@@ -45,43 +82,6 @@ class LlmConfig(BaseModel):
     model: str = ""
     api_key: str = ""
     base_url: str | None = None
-
-
-@dataclass(slots=True, frozen=True)
-class DocumentFilter:
-    """Include/exclude filter applied to document-level tool operations.
-
-    If ``included`` is non-empty the filepath must match an entry.
-    If ``excluded`` is non-empty the filepath must *not* match.
-    When both are set, ``included`` is checked first.
-
-    Entries ending with ``/`` are treated as directory prefixes:
-    ``"projects/"`` matches ``"projects/report.md"`` and
-    ``"projects/sub/file.txt"``.
-    Entries without a trailing ``/`` are exact file matches.
-    """
-
-    included: frozenset[str] = field(default_factory=frozenset)
-    excluded: frozenset[str] = field(default_factory=frozenset)
-
-    @staticmethod
-    def _matches(entry: str, filepath: str) -> bool:
-        """Check if a filter entry matches a filepath."""
-        if entry.endswith("/"):
-            return filepath.startswith(entry)
-        return filepath == entry
-
-    def __call__(self, filepath: str) -> bool:
-        """Return whether *filepath* passes the filter."""
-        if self.included and not any(
-            self._matches(entry, filepath) for entry in self.included
-        ):
-            return False
-        if self.excluded and any(
-            self._matches(entry, filepath) for entry in self.excluded
-        ):
-            return False
-        return True
 
 
 class McpOAuth2Config(BaseModel):
@@ -153,11 +153,8 @@ __all__ = [
     "DirectoryTreeResponse",
     "DocumentInfo",
     "DocumentListResponse",
-    "DocumentRange",
-    "DocumentSummary",
     "GenerateTitleRequest",
     "GenerateTitleResponse",
-    "GrepMatch",
     "GroupInfo",
     "GroupListResponse",
     "LlmConfig",
@@ -217,31 +214,6 @@ class CreateConversationResponse(BaseModel):
     """Response for conversation creation."""
 
     id: str = Field(description="The unique conversation ID")
-
-
-class DocumentRange(BaseModel):
-    """A range of lines from a document."""
-
-    start_line: int
-    end_line: int
-    total_lines: int
-    content: str
-
-
-class DocumentSummary(BaseModel):
-    """Summary of a document."""
-
-    filename: str
-    size: int
-    modified_at: datetime | None = None
-
-
-class GrepMatch(BaseModel):
-    """A pattern match in a document."""
-
-    filename: str = Field(description="The filename containing the match")
-    line: int = Field(description="Line number of the match (1-indexed)")
-    content: str | None = Field(default=None, description="The matching line content")
 
 
 class ChunkInfo(BaseModel):

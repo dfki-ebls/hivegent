@@ -5,12 +5,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic_ai.models.test import TestModel
-
-from hivegent.agent import UserDeps, explore_toolset, rag_toolset, user_agent
+from hivegent.agents import (
+    UserDeps,
+    explore_toolset,
+    user_agent,
+)
 from hivegent.chunks import chunk_document
 from hivegent.retrieval import sync_index
 from hivegent.store import Casebase
+from pydantic_ai.models.test import TestModel
 
 pytestmark = pytest.mark.slow
 
@@ -44,7 +47,7 @@ async def test_response_with_test_model(
     deps = await _seed_and_get_deps(data_dir, user_store, annotations)
 
     for ann in annotations:
-        # Use explore_toolset to avoid explore_documents calling a real LLM.
+        # Use explore_toolset to avoid subagent tools calling a real LLM.
         result = await user_agent.run(
             ann["question"],
             model=TestModel(custom_output_text=ann["expected_answer"]),
@@ -65,10 +68,9 @@ async def test_response_contains_expected_text(
     annotations: list[dict[str, Any]],
 ) -> None:
     """Real LLM response contains keywords from the expected answer."""
+    from hivegent.config import settings
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
-
-    from hivegent.config import settings
 
     deps = await _seed_and_get_deps(data_dir, user_store, annotations)
 
@@ -85,7 +87,7 @@ async def test_response_contains_expected_text(
             ann["question"],
             model=model,
             deps=deps,
-            toolsets=[rag_toolset],
+            toolsets=[explore_toolset],
         )
         output_lower = result.output.lower()
         # Check that at least some key words from expected answer appear

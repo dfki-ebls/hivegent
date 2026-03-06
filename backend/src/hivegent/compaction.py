@@ -19,7 +19,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from .agent import base_agent
+from .agents import base_agent
 from .config import settings
 from .messages import load_conversation
 from .types import ConversationData, LlmConfig

@@ -9,6 +9,7 @@ dependencies = [
   "argon2-cffi>=25,<26",
   "cbrkit>=1.2,<2",
   "chonkie>=1,<2",
+  "ddgs>=9,<10",
   "fastapi[standard]>=0.120,<1",
   "fastmcp>=3,<4",
   "frozendict>=2.4.7",

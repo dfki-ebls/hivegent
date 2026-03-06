@@ -10,7 +10,7 @@ __all__ = ["jq_filter"]
 
 async def jq_filter(
     filter_expr: str,
-    data: object,
+    data: Any,
     *,
     raw_output: bool = False,
 ) -> list[Any]:

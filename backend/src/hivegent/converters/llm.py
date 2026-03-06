@@ -8,7 +8,7 @@ from pydantic_ai import BinaryContent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from ..agent import base_agent
+from ..agents import base_agent
 from ..types import LlmConfig
 from .base import ConversionResult, DocumentConverter
 

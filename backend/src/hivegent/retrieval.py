@@ -4,44 +4,34 @@ import json
 import logging
 import shutil
 import threading
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import cbrkit
 
 from .config import settings
 from .store import Casebase
-from .types import DocumentFilter, DocumentMetadata, RetrievedChunk
+from .tools.retrieval import LanceDBSearchTool, SearchType
+from .types import DocumentFilter
+from .types import DocumentMetadata, RetrievedChunk
 
 __all__ = [
+    "build_search_tool",
+    "build_where_clause",
     "invalidate_store",
-    "parse_chunk_key",
-    "search_dense",
-    "search_multi",
-    "search_sparse",
+    "apply_search_tool",
     "sync_index",
 ]
 
+CHUNK_KEY_SEPARATOR = "::"
+
 logger = logging.getLogger(__name__)
 
-CHUNK_KEY_SEPARATOR = "::"
 EMBEDDING_FINGERPRINT_FILE = "embedding_config.json"
 LANCEDB_TABLE = "chunks"
 METADATA_FILENAME_COLUMN = "filename"
-
-
-def _escape_sql(value: str) -> str:
-    """Escape single quotes for SQL string literals.
-
-    Args:
-        value: The raw string value.
-
-    Returns:
-        The escaped string safe for embedding in SQL.
-    """
-    return value.replace("'", "''")
 
 
 @dataclass(slots=True)
@@ -163,31 +153,58 @@ class _RetrievalState:
 _state = _RetrievalState()
 
 
-def _build_chunk_key(filename: str, chunk_index: int) -> str:
-    """Build a chunk key from filename and index.
+def _escape_sql(value: str) -> str:
+    """Escape single quotes for SQL string literals."""
+    return value.replace("'", "''")
+
+
+def build_where_clause(
+    document_filter: DocumentFilter | None,
+    filter_column: str = "filename",
+) -> str | None:
+    """Build a LanceDB SQL WHERE clause from a document filter.
 
     Args:
-        filename: The document filename.
-        chunk_index: The chunk index within the document.
+        document_filter: Optional include/exclude filter.
+        filter_column: Metadata column name used for SQL WHERE clauses.
 
     Returns:
-        A string key like ``"report.md::3"``.
+        A SQL WHERE string, or ``None`` if no filtering is needed.
     """
+    if not document_filter:
+        return None
+
+    conditions: list[str] = []
+
+    if document_filter.included:
+        include_parts: list[str] = []
+        for entry in sorted(document_filter.included):
+            escaped = _escape_sql(entry)
+            if entry.endswith("/"):
+                include_parts.append(f"{filter_column} LIKE '{escaped}%'")
+            else:
+                include_parts.append(f"{filter_column} = '{escaped}'")
+        conditions.append(f"({' OR '.join(include_parts)})")
+
+    if document_filter.excluded:
+        for entry in sorted(document_filter.excluded):
+            escaped = _escape_sql(entry)
+            if entry.endswith("/"):
+                conditions.append(f"{filter_column} NOT LIKE '{escaped}%'")
+            else:
+                conditions.append(f"{filter_column} != '{escaped}'")
+
+    if not conditions:
+        return None
+
+    return " AND ".join(conditions)
+
+
+def _build_chunk_key(filename: str, chunk_index: int) -> str:
     return f"{filename}{CHUNK_KEY_SEPARATOR}{chunk_index}"
 
 
-def parse_chunk_key(key: str) -> tuple[str, int]:
-    """Parse a chunk key back to filename and index.
-
-    Args:
-        key: A chunk key like ``"report.md::3"``.
-
-    Returns:
-        Tuple of ``(filename, chunk_index)``.
-
-    Raises:
-        ValueError: If the key format is invalid.
-    """
+def _parse_chunk_key(key: str) -> tuple[str, int]:
     try:
         filename, index_str = key.rsplit(CHUNK_KEY_SEPARATOR, maxsplit=1)
         return filename, int(index_str)
@@ -207,7 +224,7 @@ def _metadata_func(key: str, value: str) -> dict[str, Any]:
     Returns:
         Dict with the filename column.
     """
-    filename, _ = parse_chunk_key(key)
+    filename, _ = _parse_chunk_key(key)
     return {METADATA_FILENAME_COLUMN: filename}
 
 
@@ -281,210 +298,64 @@ def sync_index(store: Casebase) -> None:
     storage.create_index(casebase)
 
 
-def _build_where_clause(
-    document_filter: DocumentFilter | None,
-) -> str | None:
-    """Build a LanceDB SQL WHERE clause for document filtering.
-
-    Args:
-        document_filter: Optional include/exclude filter.
-
-    Returns:
-        A SQL WHERE string, or ``None`` if no filtering is needed.
-    """
-    conditions: list[str] = []
-
-    if not document_filter:
-        return None
-
-    if document_filter.included:
-        include_parts: list[str] = []
-        for entry in sorted(document_filter.included):
-            escaped = _escape_sql(entry)
-            if entry.endswith("/"):
-                include_parts.append(f"{METADATA_FILENAME_COLUMN} LIKE '{escaped}%'")
-            else:
-                include_parts.append(f"{METADATA_FILENAME_COLUMN} = '{escaped}'")
-        conditions.append(f"({' OR '.join(include_parts)})")
-
-    if document_filter.excluded:
-        for entry in sorted(document_filter.excluded):
-            escaped = _escape_sql(entry)
-            if entry.endswith("/"):
-                conditions.append(f"{METADATA_FILENAME_COLUMN} NOT LIKE '{escaped}%'")
-            else:
-                conditions.append(f"{METADATA_FILENAME_COLUMN} != '{escaped}'")
-
-    if not conditions:
-        return None
-
-    return " AND ".join(conditions)
-
-
-def _search_storage(
-    storage: cbrkit.indexable.lancedb[str],
-    store_key: str,
-    query: str,
-    search_type: Literal["dense", "sparse"],
-    top_k: int,
-    document_filter: DocumentFilter | None,
-) -> Sequence[tuple[str, str, float]]:
-    """Run a search against a single LanceDB storage instance.
-
-    Args:
-        storage: The LanceDB storage to search.
-        store_key: Store key for pending reindex check.
-        query: The search query.
-        search_type: ``"dense"`` or ``"sparse"``.
-        top_k: Maximum number of results.
-        document_filter: Optional document filter.
-
-    Returns:
-        List of ``(chunk_key, text, score)`` tuples sorted by score.
-    """
-    if not storage.has_index():
-        return []
-
-    where = _build_where_clause(document_filter)
-
-    retriever = cbrkit.retrieval.dropout(
-        cbrkit.retrieval.lancedb(
-            storage=storage,
-            search_type=search_type,
-            where=where,
-            normalize_scores=True,
-        ),
-        limit=top_k,
-    )
-
-    result = cbrkit.retrieval.apply_query_indexed(query, retriever)
-    step = result.final_step.queries["default"]
-
-    return [
-        (key, step.casebase[key], float(step.similarities[key])) for key in step.ranking
-    ]
-
-
-def _search(
-    store: Casebase,
-    query: str,
-    search_type: Literal["dense", "sparse"],
-    top_k: int,
-    document_filter: DocumentFilter | None,
-) -> Sequence[tuple[str, str, float]]:
-    """Run a search against a casebase's LanceDB index.
-
-    Args:
-        store: The casebase to search.
-        query: The search query.
-        search_type: ``"dense"`` or ``"sparse"``.
-        top_k: Maximum number of results.
-        document_filter: Optional document filter.
-
-    Returns:
-        List of ``(chunk_key, text, score)`` tuples sorted by score.
-    """
-    if store.store_key in _state._pending_reindex:
-        sync_index(store)
-
-    storage = _state.get_storage(store)
-    return _search_storage(
-        storage, store.store_key, query, search_type, top_k, document_filter
-    )
-
-
-def search_dense(
-    store: Casebase,
-    query: str,
-    top_k: int = 5,
-    document_filter: DocumentFilter | None = None,
-) -> Sequence[tuple[str, str, float]]:
-    """Dense vector search over a store's chunks.
-
-    Args:
-        store: The casebase to search.
-        query: Natural language search query.
-        top_k: Maximum number of results.
-        document_filter: Optional document include/exclude filter.
-
-    Returns:
-        List of ``(chunk_key, text, score)`` tuples.
-    """
-    return _search(store, query, "dense", top_k, document_filter)
-
-
-def search_sparse(
-    store: Casebase,
-    query: str,
-    top_k: int = 5,
-    document_filter: DocumentFilter | None = None,
-) -> Sequence[tuple[str, str, float]]:
-    """Sparse BM25/FTS search over a store's chunks.
-
-    Args:
-        store: The casebase to search.
-        query: Natural language search query.
-        top_k: Maximum number of results.
-        document_filter: Optional document include/exclude filter.
-
-    Returns:
-        List of ``(chunk_key, text, score)`` tuples.
-    """
-    return _search(store, query, "sparse", top_k, document_filter)
-
-
-def search_multi(
+def build_search_tool(
     stores: Sequence[Casebase],
-    search_type: Literal["dense", "sparse"],
-    query: str,
-    top_k: int = 5,
-    document_filter: DocumentFilter | None = None,
-    group_filters: dict[str, DocumentFilter] | None = None,
-) -> list[RetrievedChunk]:
-    """Search across multiple casebases and merge results.
+) -> LanceDBSearchTool[str]:
+    """Build a :class:`LanceDBSearchTool` spanning one or more casebases.
 
-    Results are merged by score. Returns at most ``top_k`` results
-    sorted by score descending.
+    Syncs any pending re-indexes and creates LanceDB storages as needed.
 
     Args:
-        stores: Sequence of casebases to search.
-        search_type: ``"dense"`` or ``"sparse"``.
-        query: Natural language search query.
-        top_k: Maximum number of merged results.
-        document_filter: Optional document filter for user stores.
-        group_filters: Optional per-group document filters, keyed by
-            group ID.  Group stores without an entry are unfiltered.
+        stores: Casebases to search across.
 
     Returns:
-        List of :class:`RetrievedChunk` results.
+        A configured :class:`LanceDBSearchTool` ready to use.
     """
-    all_results: list[tuple[float, RetrievedChunk]] = []
-
     for store in stores:
-        if store.kind == "user":
-            store_filter = document_filter
-        else:
-            store_filter = (group_filters or {}).get(store.id)
-        try:
-            results = _search(store, query, search_type, top_k, store_filter)
-        except Exception:
-            logger.warning("Search failed for store %s", store.store_key, exc_info=True)
-            continue
-        for chunk_key, text, score in results:
-            filename, chunk_index = parse_chunk_key(chunk_key)
-            all_results.append(
-                (
-                    score,
-                    RetrievedChunk(
-                        store_key=store.store_key,
-                        filename=filename,
-                        chunk_index=chunk_index,
-                        text=text,
-                        token_count=len(text.split()),
-                        score=round(score, 4),
-                    ),
-                )
-            )
+        if store.store_key in _state._pending_reindex:
+            sync_index(store)
+    return LanceDBSearchTool(
+        storages=[_state.get_storage(s) for s in stores],
+    )
 
-    all_results.sort(key=lambda x: x[0], reverse=True)
-    return [chunk for _, chunk in all_results[:top_k]]
+
+def apply_search_tool(
+    stores: Sequence[Casebase],
+    search_type: SearchType,
+    query: str,
+    top_k: int,
+    filter_for_store: Callable[[Casebase], DocumentFilter | None] = lambda _: None,
+) -> list[RetrievedChunk]:
+    """Search across one or more casebases and return merged results.
+
+    Args:
+        stores: Casebases to search across.
+        search_type: ``"dense"``, ``"sparse"``, or ``"hybrid"``.
+        query: Natural language search query.
+        top_k: Maximum number of results.
+        filter_for_store: Callback returning the document filter for a store.
+
+    Returns:
+        List of retrieved chunks sorted by score descending.
+    """
+    tool = build_search_tool(stores)
+    where_clauses = [
+        build_where_clause(filter_for_store(s), METADATA_FILENAME_COLUMN)
+        for s in stores
+    ]
+    return [
+        RetrievedChunk(
+            filename=filename,
+            chunk_index=chunk_index,
+            text=r.text,
+            token_count=len(r.text.split()),
+            score=round(r.score, 4),
+        )
+        for r in tool(
+            query,
+            top_k=top_k,
+            search_type=search_type,
+            where_clauses=where_clauses,
+        )
+        for filename, chunk_index in [_parse_chunk_key(r.key)]
+    ]

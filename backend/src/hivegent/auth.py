@@ -1,7 +1,7 @@
 """OIDC authentication and JWT validation."""
 
 import time
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 from fastapi import Depends, HTTPException, status
@@ -129,7 +129,7 @@ def _build_claims_registry() -> JWTClaimsRegistry:
 
 
 def _extract_group_permissions(
-    claims: dict[str, object],
+    claims: dict[str, Any],
 ) -> tuple[frozenset[str], frozenset[str]]:
     """Extract group memberships and permissions from JWT claims.
 

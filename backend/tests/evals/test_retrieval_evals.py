@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from hivegent.chunks import chunk_document
-from hivegent.retrieval import parse_chunk_key, search_sparse, sync_index
+from hivegent.retrieval import apply_search_tool, sync_index
 from hivegent.store import Casebase
 
 pytestmark = pytest.mark.slow
@@ -48,8 +48,8 @@ async def test_sparse_search_finds_relevant_chunks(
     await _seed_store(data_dir, user_store, annotations)
 
     for ann in annotations:
-        results = search_sparse(user_store, ann["question"], top_k=10)
-        result_filenames = {parse_chunk_key(key)[0] for key, _, _ in results}
+        results = apply_search_tool([user_store], "sparse", ann["question"], top_k=10)
+        result_filenames = {chunk.filename for chunk in results}
 
         for expected_doc in ann["relevant_documents"]:
             assert expected_doc in result_filenames, (
@@ -67,5 +67,5 @@ async def test_sparse_search_returns_nonempty(
     await _seed_store(data_dir, user_store, annotations)
 
     for ann in annotations:
-        results = search_sparse(user_store, ann["question"], top_k=5)
+        results = apply_search_tool([user_store], "sparse", ann["question"], top_k=5)
         assert len(results) > 0, f"No results for query {ann['question']!r}"

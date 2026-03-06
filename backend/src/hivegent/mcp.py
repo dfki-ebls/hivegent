@@ -1,36 +1,55 @@
 """FastMCP server with OIDCProxy auth and explicit typed tool wrappers."""
 
 import logging
+from collections.abc import Sequence
 from typing import Literal
 
+import httpx
 from fastmcp import Context, FastMCP
 from fastmcp.dependencies import (
     CurrentAccessToken,
     Depends,  # pyright: ignore[reportAttributeAccessIssue]
 )
 from fastmcp.server.auth import AccessToken, OIDCProxy
+from pydantic_ai.mcp import MCPServerStreamableHTTP
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from .agent import UserDeps, explore_agent, explore_toolset
+from .agents import UserDeps, explore_toolset, user_agent
 from .auth import auth_settings
+from .chunks import load_document_metadata
 from .config import settings
 from .prompts import EXPLORE_INSTRUCTIONS
+from .retrieval import apply_search_tool, build_search_tool
 from .store import Casebase
-from .tool_factory import ToolFactory
-from .types import (
-    ChunkSummary,
-    ConversationSummary,
+from .tools import (
     DocumentRange,
     DocumentSummary,
+    EditDocumentTool,
+    GetChunkTool,
+    GetDocumentLinesTool,
+    GetDocumentTool,
+    GlobDocumentsTool,
     GrepMatch,
+    GrepTool,
+    ListChunksTool,
+    ListDocumentsTool,
+    WriteDocumentTool,
+)
+from .types import (
+    ChunkSummary,
+    McpServerConfig,
     RetrievedChunk,
 )
 
-__all__ = ["mcp_app"]
+__all__ = ["build_mcp_server", "mcp_app"]
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# MCP auth setup
+# ---------------------------------------------------------------------------
 
 mcp_auth: OIDCProxy | None = None
 
@@ -43,6 +62,11 @@ if not auth_settings.disabled:
     )
 
 mcp_app = FastMCP("Hivegent", auth=mcp_auth)
+
+
+# ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
 
 
 def _get_mcp_user_id(
@@ -98,104 +122,137 @@ def _get_mcp_group_stores(
     return tuple(stores)
 
 
-def _get_mcp_tool_factory(
-    store: Casebase = Depends(_get_mcp_user_store),
-    group_stores: tuple[Casebase, ...] = Depends(_get_mcp_group_stores),
-) -> ToolFactory:
-    """Build a ToolFactory from the MCP auth context."""
-    return ToolFactory(store=store, group_stores=group_stores)
+# ---------------------------------------------------------------------------
+# MCP tool endpoints
+# ---------------------------------------------------------------------------
 
 
-@mcp_app.tool()
+@mcp_app.tool(description=ListDocumentsTool.__call__.__doc__)
 def list_documents(
     subdir: str | None = None,
     max_depth: int | None = None,
-    factory: ToolFactory = Depends(_get_mcp_tool_factory),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[DocumentSummary]:
-    """List all available documents with their sizes in bytes."""
-    return factory.list_documents(subdir=subdir, max_depth=max_depth)
+    tool = ListDocumentsTool(
+        path=store.workspace_dir(settings.data_dir),
+        extension="",
+    )
+    return tool(subdir=subdir, max_depth=max_depth)
 
 
-@mcp_app.tool()
+@mcp_app.tool(description=GetDocumentTool.__call__.__doc__)
 def get_document(
     filename: str,
-    factory: ToolFactory = Depends(_get_mcp_tool_factory),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> str | None:
-    """Get the full content of a specific document by relative path."""
-    return factory.get_document(filename)
+    tool = GetDocumentTool(
+        path=store.workspace_dir(settings.data_dir),
+    )
+    return tool(filename)
 
 
-@mcp_app.tool()
+@mcp_app.tool(description=GetDocumentLinesTool.__call__.__doc__)
 def get_document_lines(
     filename: str,
     start: int = 1,
     end: int | None = None,
-    factory: ToolFactory = Depends(_get_mcp_tool_factory),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> DocumentRange | None:
-    """Get a range of lines from a document by relative path."""
-    return factory.get_document_lines(filename, start, end)
+    tool = GetDocumentLinesTool(
+        path=store.workspace_dir(settings.data_dir),
+    )
+    return tool(filename, start, end)
 
 
-@mcp_app.tool()
+@mcp_app.tool(description=GlobDocumentsTool.__call__.__doc__)
 def glob_documents(
     pattern: str,
-    factory: ToolFactory = Depends(_get_mcp_tool_factory),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[str]:
-    """Find documents matching a glob pattern."""
-    return factory.glob_documents(pattern)
+    tool = GlobDocumentsTool(
+        path=store.workspace_dir(settings.data_dir),
+        extension="",
+    )
+    return tool(pattern)
 
 
-@mcp_app.tool()
+@mcp_app.tool(description=GrepTool.__call__.__doc__)
 async def grep(
     pattern: str,
     glob: str | None = None,
     context_lines: int = 0,
-    include_content: bool = True,
-    factory: ToolFactory = Depends(_get_mcp_tool_factory),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[GrepMatch]:
-    """Search documents for a pattern."""
-    return await factory.grep(
+    tool = GrepTool(
+        path=store.workspace_dir(settings.data_dir),
+    )
+    return await tool(
         pattern,
         glob=glob,
         context_lines=context_lines,
-        include_content=include_content,
     )
 
 
 @mcp_app.tool()
 def semantic_search(
     query: str,
-    type: Literal["dense", "sparse"] = "dense",
+    type: Literal["dense", "sparse", "hybrid"] = "hybrid",
     top_k: int = 5,
-    factory: ToolFactory = Depends(_get_mcp_tool_factory),
+    store: Casebase = Depends(_get_mcp_user_store),
+    group_stores: tuple[Casebase, ...] = Depends(_get_mcp_group_stores),
 ) -> list[RetrievedChunk]:
     """Search chunks using semantic similarity or keyword matching.
 
     Searches across personal documents and all group casebases.
     Use "dense" for vector embeddings (conceptual queries),
-    "sparse" for BM25/FTS (keyword queries).
+    "sparse" for BM25/FTS (keyword queries),
+    "hybrid" for combined vector + keyword search.
     """
-    search = factory.dense_search if type == "dense" else factory.sparse_search
-    return search(query, top_k)
+    return apply_search_tool((store, *group_stores), type, query, top_k)
 
 
-@mcp_app.tool()
+@mcp_app.tool(description=ListChunksTool.__call__.__doc__)
 def list_chunks(
     filename: str,
-    factory: ToolFactory = Depends(_get_mcp_tool_factory),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[ChunkSummary] | None:
-    """List chunk metadata for a document by relative path."""
-    return factory.list_chunks(filename)
+    metadata_dir = store.metadata_dir(settings.data_dir)
+
+    def _loader(fn: str) -> Sequence[ChunkSummary] | None:
+        meta = load_document_metadata(metadata_dir, fn)
+        if not meta:
+            return None
+        return [
+            ChunkSummary(
+                token_count=c.token_count,
+                start_index=c.start_index,
+                end_index=c.end_index,
+            )
+            for c in meta.chunks
+        ]
+
+    tool = ListChunksTool(loader=_loader)
+    return tool(filename)
 
 
-@mcp_app.tool()
+@mcp_app.tool(description=GetChunkTool.__call__.__doc__)
 def get_chunk(
     filename: str,
     chunk_index: int,
-    factory: ToolFactory = Depends(_get_mcp_tool_factory),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> str | None:
-    """Get the text content of a specific chunk by relative document path."""
-    return factory.get_chunk(filename, chunk_index)
+    metadata_dir = store.metadata_dir(settings.data_dir)
+
+    def _loader(fn: str, idx: int) -> str | None:
+        meta = load_document_metadata(metadata_dir, fn)
+        if not meta:
+            return None
+        if 0 <= idx < len(meta.chunks):
+            return meta.chunks[idx].text
+        return None
+
+    tool = GetChunkTool(loader=_loader)
+    return tool(filename, chunk_index)
 
 
 @mcp_app.tool()
@@ -218,7 +275,7 @@ async def explore_documents(
     model_name = settings.llm.small_model or settings.llm.model
 
     if model_name:
-        result = await explore_agent.run(
+        result = await user_agent.run(
             task,
             model=OpenAIResponsesModel(
                 model_name,
@@ -237,43 +294,20 @@ async def explore_documents(
         )
         return result.output
 
-    factory = ToolFactory(store=store, group_stores=group_stores)
+    workspace = store.workspace_dir(settings.data_dir)
+    all_stores = (store, *group_stores)
     result = await ctx.sample(
         task,
         system_prompt=EXPLORE_INSTRUCTIONS,
         tools=[
-            factory.list_documents,
-            factory.glob_documents,
-            factory.grep,
-            factory.dense_search,
-            factory.sparse_search,
-            factory.get_document_lines,
+            ListDocumentsTool(path=workspace, extension=""),
+            GlobDocumentsTool(path=workspace, extension=""),
+            GrepTool(path=workspace),
+            build_search_tool(all_stores),
+            GetDocumentLinesTool(path=workspace),
         ],
     )
     return result.text
-
-
-@mcp_app.tool()
-def list_conversations(
-    factory: ToolFactory = Depends(_get_mcp_tool_factory),
-) -> list[ConversationSummary]:
-    """List past conversations with titles, dates, and message counts."""
-    return factory.list_conversations()
-
-
-@mcp_app.tool()
-async def query_conversations(
-    filter: str,
-    filename: str,
-    factory: ToolFactory = Depends(_get_mcp_tool_factory),
-) -> str:
-    """Run a jq filter on a conversation JSON file.
-
-    Args:
-        filter: A jq filter expression.
-        filename: The conversation file to query.
-    """
-    return await factory.query_conversations(filter, filename)
 
 
 @mcp_app.tool()
@@ -282,7 +316,7 @@ async def edit_document(
     old_string: str,
     new_string: str,
     ctx: Context,
-    factory: ToolFactory = Depends(_get_mcp_tool_factory),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> str:
     """Edit a document by replacing an exact string.
 
@@ -304,7 +338,16 @@ async def edit_document(
     if response.action != "accept":
         return "Edit denied by user."
 
-    return await factory.edit_document(filename, old_string, new_string)
+    from .chunks import rechunk_document
+
+    async def _on_write(fn: str) -> None:
+        await rechunk_document(store, fn)
+
+    tool = EditDocumentTool(
+        path=store.workspace_dir(settings.data_dir),
+        on_write=_on_write,
+    )
+    return await tool(filename, old_string, new_string)
 
 
 @mcp_app.tool()
@@ -313,7 +356,7 @@ async def write_document(
     content: str,
     ctx: Context,
     mode: Literal["prepend", "append", "replace"] = "replace",
-    factory: ToolFactory = Depends(_get_mcp_tool_factory),
+    store: Casebase = Depends(_get_mcp_user_store),
 ) -> str:
     """Write content to a document (prepend, append, or replace).
 
@@ -333,4 +376,66 @@ async def write_document(
     if response.action != "accept":
         return "Write denied by user."
 
-    return await factory.write_document(filename, content, mode)
+    from .chunks import rechunk_document
+
+    async def _on_write(fn: str) -> None:
+        await rechunk_document(store, fn)
+
+    tool = WriteDocumentTool(
+        path=store.workspace_dir(settings.data_dir),
+        extension="",
+        on_write=_on_write,
+    )
+    return await tool(filename, content, mode)
+
+
+# ---------------------------------------------------------------------------
+# MCP server builder (for user-provided external MCP servers)
+# ---------------------------------------------------------------------------
+
+
+def build_mcp_server(server_cfg: McpServerConfig) -> MCPServerStreamableHTTP:
+    """Build an MCP server toolset from a user-provided config.
+
+    Uses Streamable HTTP transport.  When OAuth2 client credentials are
+    configured, the connection is authenticated via
+    ``ClientCredentialsOAuthProvider``.
+
+    Args:
+        server_cfg: User-provided MCP server configuration.
+
+    Returns:
+        A configured ``MCPServerStreamableHTTP`` instance.
+    """
+    if server_cfg.oauth2:
+        import warnings
+
+        from fastmcp.client.auth.oauth import TokenStorageAdapter
+        from key_value.aio.stores.memory import MemoryStore
+        from mcp.client.auth.extensions.client_credentials import (
+            ClientCredentialsOAuthProvider,
+        )
+
+        store = MemoryStore()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            storage = TokenStorageAdapter(store, server_url=server_cfg.url)
+        oauth_provider = ClientCredentialsOAuthProvider(
+            server_url=server_cfg.url,
+            storage=storage,
+            client_id=server_cfg.oauth2.client_id,
+            client_secret=server_cfg.oauth2.client_secret,
+            scopes=server_cfg.oauth2.scopes,
+        )
+        http_client = httpx.AsyncClient(auth=oauth_provider)
+        return MCPServerStreamableHTTP(
+            url=server_cfg.url,
+            http_client=http_client,
+            tool_prefix=server_cfg.tool_prefix,
+        )
+
+    return MCPServerStreamableHTTP(
+        url=server_cfg.url,
+        headers=server_cfg.headers or {},
+        tool_prefix=server_cfg.tool_prefix,
+    )

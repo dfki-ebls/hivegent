@@ -3,19 +3,16 @@
 import json
 from pathlib import Path
 
-from hivegent.tools import (
-    EditDocumentTool,
-    GetChunkTool,
+from hivegent.tools.chunks import GetChunkTool, ListChunksTool
+from hivegent.tools.documents import (
     GetDocumentLinesTool,
     GetDocumentTool,
     GlobDocumentsTool,
-    JqTool,
-    ListChunksTool,
     ListDocumentsTool,
-    SearchTool,
-    WriteDocumentTool,
 )
-from hivegent.types import ChunkSummary, DocumentFilter, RetrievedChunk
+from hivegent.tools.jq import JqTool
+from hivegent.tools.mutations import EditDocumentTool, WriteDocumentTool
+from hivegent.types import ChunkSummary
 
 
 class TestListDocumentsTool:
@@ -54,18 +51,6 @@ class TestListDocumentsTool:
         assert "notes/n.md" in filenames
         assert "top.md" not in filenames
 
-    def test_document_filter(self, tmp_path: Path) -> None:
-        (tmp_path / "a.md").write_text("a")
-        (tmp_path / "b.md").write_text("b")
-        doc_filter = DocumentFilter(excluded=frozenset({"b.md"}))
-        tool = ListDocumentsTool(
-            path=tmp_path, extension=".md", document_filter=doc_filter
-        )
-        result = tool()
-        filenames = [r.filename for r in result]
-        assert "a.md" in filenames
-        assert "b.md" not in filenames
-
     def test_empty_extension_lists_all(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("hello")
         (tmp_path / "b.txt").write_text("world")
@@ -91,12 +76,6 @@ class TestGetDocumentTool:
     def test_returns_none_for_nonexistent(self, tmp_path: Path) -> None:
         tool = GetDocumentTool(path=tmp_path)
         assert tool("missing.md") is None
-
-    def test_returns_none_for_filtered(self, tmp_path: Path) -> None:
-        (tmp_path / "secret.md").write_text("secret")
-        doc_filter = DocumentFilter(excluded=frozenset({"secret.md"}))
-        tool = GetDocumentTool(path=tmp_path, document_filter=doc_filter)
-        assert tool("secret.md") is None
 
     def test_rejects_path_traversal(self, tmp_path: Path) -> None:
         tool = GetDocumentTool(path=tmp_path)
@@ -162,28 +141,6 @@ class TestGlobDocumentsTool:
         assert set(result) == {"a.md", "b.txt"}
 
 
-class TestSearchTool:
-    """Tests for SearchTool."""
-
-    def test_delegates_to_search_fn(self) -> None:
-        expected = [
-            RetrievedChunk(
-                store_key="user:test",
-                filename="doc.md",
-                chunk_index=0,
-                text="hello",
-                token_count=1,
-                score=0.9,
-            )
-        ]
-
-        def mock_search(query: str, top_k: int) -> list[RetrievedChunk]:
-            return expected
-
-        tool = SearchTool(search_fn=mock_search)
-        assert tool("hello", 5) == expected
-
-
 class TestListChunksTool:
     """Tests for ListChunksTool."""
 
@@ -202,14 +159,6 @@ class TestListChunksTool:
         tool = ListChunksTool(loader=lambda _: None)
         assert tool("missing.md") is None
 
-    def test_respects_filter(self) -> None:
-        doc_filter = DocumentFilter(excluded=frozenset({"secret.md"}))
-        tool = ListChunksTool(
-            loader=lambda _: [ChunkSummary(token_count=1, start_index=0, end_index=1)],
-            document_filter=doc_filter,
-        )
-        assert tool("secret.md") is None
-
 
 class TestGetChunkTool:
     """Tests for GetChunkTool."""
@@ -226,14 +175,6 @@ class TestGetChunkTool:
     def test_returns_none_for_invalid_index(self) -> None:
         tool = GetChunkTool(loader=lambda _f, _i: None)
         assert tool("doc.md", 99) is None
-
-    def test_respects_filter(self) -> None:
-        doc_filter = DocumentFilter(excluded=frozenset({"secret.md"}))
-        tool = GetChunkTool(
-            loader=lambda _f, _i: "text",
-            document_filter=doc_filter,
-        )
-        assert tool("secret.md", 0) is None
 
 
 class TestEditDocumentTool:
