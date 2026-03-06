@@ -73,14 +73,14 @@ flowchart LR
 - The retrieval layer is an internal backend subsystem rather than a separate service.
 - The built-in toolsets are grouped into stable categories that shape how the agent operates.
 
-| Category | Role | Available tools |
-| --- | --- | --- |
-| `explore` | Read-only access to user and group documents, chunks, and search. | `list_documents`, `glob_documents`, `grep`, `semantic_search`, `get_document_lines`, `get_document`, `list_chunks`, `get_chunk` |
-| `subagent` | Lightweight delegated exploration over documents, conversations, or the web. | `explore_documents`, `explore_conversations`, `explore_web` |
-| `write` | User-approved document modification in the workspace. | `edit_document`, `write_document` |
-| `memory` | Persistent cross-conversation memory updates. | `save_memory` |
-| `web` | Direct web lookup and page retrieval. | `web_search`, `web_fetch` |
-| `conversation` | Access to persisted conversation history. | `list_conversations_tool`, `query_conversations` |
+| Category       | Role                                                                         | Available tools                                                                                                                 |
+| -------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `explore`      | Read-only access to user and group documents, chunks, and search.            | `list_documents`, `glob_documents`, `grep`, `semantic_search`, `get_document_lines`, `get_document`, `list_chunks`, `get_chunk` |
+| `subagent`     | Lightweight delegated exploration over documents, conversations, or the web. | `explore_documents`, `explore_conversations`, `explore_web`                                                                     |
+| `write`        | User-approved document modification in the workspace.                        | `edit_document`, `write_document`                                                                                               |
+| `memory`       | Persistent cross-conversation memory updates.                                | `save_memory`                                                                                                                   |
+| `web`          | Direct web lookup and page retrieval.                                        | `web_search`, `web_fetch`                                                                                                       |
+| `conversation` | Access to persisted conversation history.                                    | `list_conversations_tool`, `query_conversations`                                                                                |
 
 ## Communication Flow
 
