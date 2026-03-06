@@ -366,9 +366,7 @@ export function DirectoryTreeView({
           onRemove={onRemoveFile ? () => onRemoveFile(row.entry.path) : undefined}
           onMove={onMoveFile ? () => onMoveFile(row.entry.path) : undefined}
           selected={selectedFiles?.has(row.entry.path)}
-          onToggleSelect={
-            onToggleSelectFile ? () => onToggleSelectFile(row.entry.path) : undefined
-          }
+          onToggleSelect={onToggleSelectFile ? () => onToggleSelectFile(row.entry.path) : undefined}
         />
       );
     }
