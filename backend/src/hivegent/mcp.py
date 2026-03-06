@@ -1,7 +1,6 @@
 """FastMCP server with OIDCProxy auth and explicit typed tool wrappers."""
 
 import logging
-from collections.abc import Sequence
 from typing import Literal
 
 import httpx
@@ -17,15 +16,25 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from .agents import UserDeps, explore_toolset, user_agent
 from .auth import auth_settings
-from .chunks import load_document_metadata
 from .config import settings
 from .prompts import EXPLORE_INSTRUCTIONS
-from .retrieval import apply_search_tool, build_search_tool
 from .store import Casebase
+from .tool_runtime import (
+    edit_document_text,
+    get_document_chunk,
+    get_document_lines as get_document_lines_for_store,
+    get_document_text,
+    glob_documents as glob_documents_for_store,
+    grep_documents,
+    list_document_chunks,
+    list_document_summaries,
+    semantic_search_documents,
+    write_document_text,
+)
+from .retrieval import build_search_tool
 from .tools import (
     DocumentRange,
     DocumentSummary,
-    EditDocumentTool,
     GetChunkTool,
     GetDocumentLinesTool,
     GetDocumentTool,
@@ -34,13 +43,8 @@ from .tools import (
     GrepTool,
     ListChunksTool,
     ListDocumentsTool,
-    WriteDocumentTool,
 )
-from .types import (
-    ChunkSummary,
-    McpServerConfig,
-    RetrievedChunk,
-)
+from .types import ChunkSummary, McpServerConfig, RetrievedChunk
 
 __all__ = ["build_mcp_server", "mcp_app"]
 
@@ -133,11 +137,11 @@ def list_documents(
     max_depth: int | None = None,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[DocumentSummary]:
-    tool = ListDocumentsTool(
-        path=store.workspace_dir(settings.data_dir),
-        extension="",
+    return list_document_summaries(
+        store,
+        subdir=subdir,
+        max_depth=max_depth,
     )
-    return tool(subdir=subdir, max_depth=max_depth)
 
 
 @mcp_app.tool(description=GetDocumentTool.__call__.__doc__)
@@ -145,10 +149,7 @@ def get_document(
     filename: str,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> str | None:
-    tool = GetDocumentTool(
-        path=store.workspace_dir(settings.data_dir),
-    )
-    return tool(filename)
+    return get_document_text(store, filename)
 
 
 @mcp_app.tool(description=GetDocumentLinesTool.__call__.__doc__)
@@ -158,10 +159,12 @@ def get_document_lines(
     end: int | None = None,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> DocumentRange | None:
-    tool = GetDocumentLinesTool(
-        path=store.workspace_dir(settings.data_dir),
+    return get_document_lines_for_store(
+        store,
+        filename,
+        start=start,
+        end=end,
     )
-    return tool(filename, start, end)
 
 
 @mcp_app.tool(description=GlobDocumentsTool.__call__.__doc__)
@@ -169,11 +172,7 @@ def glob_documents(
     pattern: str,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[str]:
-    tool = GlobDocumentsTool(
-        path=store.workspace_dir(settings.data_dir),
-        extension="",
-    )
-    return tool(pattern)
+    return glob_documents_for_store(store, pattern)
 
 
 @mcp_app.tool(description=GrepTool.__call__.__doc__)
@@ -183,10 +182,8 @@ async def grep(
     context_lines: int = 0,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[GrepMatch]:
-    tool = GrepTool(
-        path=store.workspace_dir(settings.data_dir),
-    )
-    return await tool(
+    return await grep_documents(
+        store,
         pattern,
         glob=glob,
         context_lines=context_lines,
@@ -208,7 +205,13 @@ def semantic_search(
     "sparse" for BM25/FTS (keyword queries),
     "hybrid" for combined vector + keyword search.
     """
-    return apply_search_tool((store, *group_stores), type, query, top_k)
+    return semantic_search_documents(
+        store,
+        query,
+        type=type,
+        top_k=top_k,
+        group_stores=group_stores,
+    )
 
 
 @mcp_app.tool(description=ListChunksTool.__call__.__doc__)
@@ -216,23 +219,7 @@ def list_chunks(
     filename: str,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[ChunkSummary] | None:
-    metadata_dir = store.metadata_dir(settings.data_dir)
-
-    def _loader(fn: str) -> Sequence[ChunkSummary] | None:
-        meta = load_document_metadata(metadata_dir, fn)
-        if not meta:
-            return None
-        return [
-            ChunkSummary(
-                token_count=c.token_count,
-                start_index=c.start_index,
-                end_index=c.end_index,
-            )
-            for c in meta.chunks
-        ]
-
-    tool = ListChunksTool(loader=_loader)
-    return tool(filename)
+    return list_document_chunks(store, filename)
 
 
 @mcp_app.tool(description=GetChunkTool.__call__.__doc__)
@@ -241,18 +228,7 @@ def get_chunk(
     chunk_index: int,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> str | None:
-    metadata_dir = store.metadata_dir(settings.data_dir)
-
-    def _loader(fn: str, idx: int) -> str | None:
-        meta = load_document_metadata(metadata_dir, fn)
-        if not meta:
-            return None
-        if 0 <= idx < len(meta.chunks):
-            return meta.chunks[idx].text
-        return None
-
-    tool = GetChunkTool(loader=_loader)
-    return tool(filename, chunk_index)
+    return get_document_chunk(store, filename, chunk_index)
 
 
 @mcp_app.tool()
@@ -338,16 +314,7 @@ async def edit_document(
     if response.action != "accept":
         return "Edit denied by user."
 
-    from .chunks import rechunk_document
-
-    async def _on_write(fn: str) -> None:
-        await rechunk_document(store, fn)
-
-    tool = EditDocumentTool(
-        path=store.workspace_dir(settings.data_dir),
-        on_write=_on_write,
-    )
-    return await tool(filename, old_string, new_string)
+    return await edit_document_text(store, filename, old_string, new_string)
 
 
 @mcp_app.tool()
@@ -376,17 +343,7 @@ async def write_document(
     if response.action != "accept":
         return "Write denied by user."
 
-    from .chunks import rechunk_document
-
-    async def _on_write(fn: str) -> None:
-        await rechunk_document(store, fn)
-
-    tool = WriteDocumentTool(
-        path=store.workspace_dir(settings.data_dir),
-        extension="",
-        on_write=_on_write,
-    )
-    return await tool(filename, content, mode)
+    return await write_document_text(store, filename, content, mode=mode)
 
 
 # ---------------------------------------------------------------------------

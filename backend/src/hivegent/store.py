@@ -23,6 +23,16 @@ class Casebase:
     kind: Literal["user", "group"]
     id: str
 
+    @classmethod
+    def for_user(cls, user_id: str) -> "Casebase":
+        """Build a user-scoped casebase."""
+        return cls(kind="user", id=user_id)
+
+    @classmethod
+    def for_group(cls, group_id: str) -> "Casebase":
+        """Build a group-scoped casebase."""
+        return cls(kind="group", id=group_id)
+
     def __post_init__(self) -> None:
         if self.kind == "user":
             sanitize_user_id(self.id)
@@ -137,6 +147,10 @@ class Casebase:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def conversation_path(self, data_dir: Path, conversation_id: str) -> Path:
+        """Return the path to a conversation JSON file for this store."""
+        return self.conversations_dir(data_dir) / f"{conversation_id}.json"
+
     def originals_dir(self, data_dir: Path) -> Path:
         """Return the originals directory for this store.
 
@@ -149,3 +163,11 @@ class Casebase:
         path = self.root_dir(data_dir) / "originals"
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def tokens_path(self, data_dir: Path) -> Path:
+        """Return the tokens JSON path for this store."""
+        return self.root_dir(data_dir) / "tokens.json"
+
+    def memory_path(self, data_dir: Path) -> Path:
+        """Return the memory markdown path for this store."""
+        return self.root_dir(data_dir) / "memory.md"

@@ -7,6 +7,7 @@ on each save.
 from pathlib import Path
 
 from .config import settings
+from .store import Casebase
 
 __all__ = ["clear_memory", "load_memory", "save_memory"]
 
@@ -20,7 +21,7 @@ def _memory_path(user_id: str) -> Path:
     Returns:
         Absolute path to ``data/users/<user_id>/memory.md``.
     """
-    return settings.get_user_dir(user_id) / "memory.md"
+    return Casebase.for_user(user_id).memory_path(settings.data_dir)
 
 
 def load_memory(user_id: str) -> str | None:

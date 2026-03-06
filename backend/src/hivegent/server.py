@@ -533,7 +533,7 @@ async def delete_all_conversations(
     user: Annotated[User, Depends(get_current_user)],
 ) -> BulkDeleteConversationsResponse:
     """Delete all conversations for the authenticated user."""
-    conversations_dir = settings.get_user_conversations_dir(user.id)
+    conversations_dir = _user_store(user).conversations_dir(settings.data_dir)
     count = sum(1 for f in conversations_dir.glob("*.json") if f.is_file())
     if conversations_dir.exists():
         shutil.rmtree(conversations_dir)
@@ -2452,7 +2452,7 @@ async def revoke_all_tokens(
     user: Annotated[User, Depends(get_current_user)],
 ) -> BulkRevokeTokensResponse:
     """Revoke all personal access tokens for the authenticated user."""
-    tokens_path = settings.get_user_tokens_path(user.id)
+    tokens_path = _user_store(user).tokens_path(settings.data_dir)
     count = len(token_store.list_tokens(user.id))
     if tokens_path.exists():
         tokens_path.unlink()
@@ -2486,7 +2486,7 @@ async def delete_all_user_data(
     store = _user_store(user)
     invalidate_store(store)
 
-    user_dir = settings.get_user_dir(user.id)
+    user_dir = _user_store(user).root_dir(settings.data_dir)
     if user_dir.exists():
         shutil.rmtree(user_dir)
 

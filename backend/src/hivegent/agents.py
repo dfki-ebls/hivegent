@@ -2,7 +2,6 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Literal
 
 from pydantic_ai import Agent, FilteredToolset, FunctionToolset, RunContext
@@ -10,13 +9,23 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.toolsets import AbstractToolset
 
-from .chunks import load_document_metadata, rechunk_document
 from .config import settings
 from .memory import save_memory as _save_memory
 from .messages import list_conversations as _list_conversations
 from .prompts import EXPLORE_INSTRUCTIONS
-from .retrieval import apply_search_tool, mark_dirty
 from .store import Casebase
+from .tool_runtime import (
+    edit_document_text,
+    get_document_chunk,
+    get_document_lines as get_document_lines_for_store,
+    get_document_text,
+    glob_documents as glob_documents_for_store,
+    grep_documents,
+    list_document_chunks,
+    list_document_summaries,
+    semantic_search_documents,
+    write_document_text,
+)
 from .tools import (
     DocumentRange,
     DocumentSummary,
@@ -97,15 +106,6 @@ user_agent: Agent[UserDeps, str] = Agent(deps_type=UserDeps)
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _workspace_dir(deps: UserDeps) -> Path:
-    return deps.store.workspace_dir(settings.data_dir)
-
-
-# ---------------------------------------------------------------------------
 # Explore toolset
 # ---------------------------------------------------------------------------
 
@@ -118,15 +118,12 @@ def list_documents(
     subdir: str | None = None,
     max_depth: int | None = None,
 ) -> list[DocumentSummary]:
-    tool = ListDocumentsTool(
-        path=_workspace_dir(ctx.deps),
-        extension="",
+    return list_document_summaries(
+        ctx.deps.store,
+        subdir=subdir,
+        max_depth=max_depth,
+        document_filter=ctx.deps.document_filter,
     )
-    results = tool(subdir=subdir, max_depth=max_depth)
-    doc_filter = ctx.deps.document_filter
-    if doc_filter:
-        results = [r for r in results if doc_filter(r.filename)]
-    return results
 
 
 @explore_toolset.tool(description=GlobDocumentsTool.__call__.__doc__)
@@ -134,15 +131,11 @@ def glob_documents(
     ctx: RunContext[UserDeps],
     pattern: str,
 ) -> list[str]:
-    tool = GlobDocumentsTool(
-        path=_workspace_dir(ctx.deps),
-        extension="",
+    return glob_documents_for_store(
+        ctx.deps.store,
+        pattern,
+        document_filter=ctx.deps.document_filter,
     )
-    results = tool(pattern)
-    doc_filter = ctx.deps.document_filter
-    if doc_filter:
-        results = [r for r in results if doc_filter(r)]
-    return results
 
 
 @explore_toolset.tool(description=GrepTool.__call__.__doc__)
@@ -152,16 +145,13 @@ async def grep(
     glob: str | None = None,
     context_lines: int = 0,
 ) -> list[GrepMatch]:
-    tool = GrepTool(path=_workspace_dir(ctx.deps))
-    matches = await tool(
+    return await grep_documents(
+        ctx.deps.store,
         pattern,
         glob=glob,
         context_lines=context_lines,
+        document_filter=ctx.deps.document_filter,
     )
-    doc_filter = ctx.deps.document_filter
-    if doc_filter:
-        matches = [m for m in matches if doc_filter(m.filename)]
-    return matches
 
 
 @explore_toolset.tool
@@ -187,11 +177,12 @@ def semantic_search(
             ``"hybrid"`` for combined.
         top_k: Maximum results to return.
     """
-    return apply_search_tool(
-        ctx.deps.all_stores,
-        type,
+    return semantic_search_documents(
+        ctx.deps.store,
         query,
-        top_k,
+        type=type,
+        top_k=top_k,
+        group_stores=ctx.deps.group_stores,
         filter_for_store=ctx.deps.filter_for_store,
     )
 
@@ -203,20 +194,22 @@ def get_document_lines(
     start: int = 1,
     end: int | None = None,
 ) -> DocumentRange | None:
-    doc_filter = ctx.deps.document_filter
-    if doc_filter and not doc_filter(filename):
-        return None
-    tool = GetDocumentLinesTool(path=_workspace_dir(ctx.deps))
-    return tool(filename, start, end)
+    return get_document_lines_for_store(
+        ctx.deps.store,
+        filename,
+        start=start,
+        end=end,
+        document_filter=ctx.deps.document_filter,
+    )
 
 
 @explore_toolset.tool(description=GetDocumentTool.__call__.__doc__)
 def get_document(ctx: RunContext[UserDeps], filename: str) -> str | None:
-    doc_filter = ctx.deps.document_filter
-    if doc_filter and not doc_filter(filename):
-        return None
-    tool = GetDocumentTool(path=_workspace_dir(ctx.deps))
-    return tool(filename)
+    return get_document_text(
+        ctx.deps.store,
+        filename,
+        document_filter=ctx.deps.document_filter,
+    )
 
 
 @explore_toolset.tool(description=ListChunksTool.__call__.__doc__)
@@ -224,26 +217,11 @@ def list_chunks(
     ctx: RunContext[UserDeps],
     filename: str,
 ) -> list[ChunkSummary] | None:
-    metadata_dir = ctx.deps.store.metadata_dir(settings.data_dir)
-
-    def _loader(fn: str) -> Sequence[ChunkSummary] | None:
-        meta = load_document_metadata(metadata_dir, fn)
-        if not meta:
-            return None
-        return [
-            ChunkSummary(
-                token_count=c.token_count,
-                start_index=c.start_index,
-                end_index=c.end_index,
-            )
-            for c in meta.chunks
-        ]
-
-    doc_filter = ctx.deps.document_filter
-    if doc_filter and not doc_filter(filename):
-        return None
-    tool = ListChunksTool(loader=_loader)
-    return tool(filename)
+    return list_document_chunks(
+        ctx.deps.store,
+        filename,
+        document_filter=ctx.deps.document_filter,
+    )
 
 
 @explore_toolset.tool(description=GetChunkTool.__call__.__doc__)
@@ -252,21 +230,12 @@ def get_chunk(
     filename: str,
     chunk_index: int,
 ) -> str | None:
-    metadata_dir = ctx.deps.store.metadata_dir(settings.data_dir)
-
-    def _loader(fn: str, idx: int) -> str | None:
-        meta = load_document_metadata(metadata_dir, fn)
-        if not meta:
-            return None
-        if 0 <= idx < len(meta.chunks):
-            return meta.chunks[idx].text
-        return None
-
-    doc_filter = ctx.deps.document_filter
-    if doc_filter and not doc_filter(filename):
-        return None
-    tool = GetChunkTool(loader=_loader)
-    return tool(filename, chunk_index)
+    return get_document_chunk(
+        ctx.deps.store,
+        filename,
+        chunk_index,
+        document_filter=ctx.deps.document_filter,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -378,20 +347,13 @@ async def edit_document(
     old_string: str,
     new_string: str,
 ) -> str:
-    store = ctx.deps.store
-
-    async def _on_write(fn: str) -> None:
-        await rechunk_document(store, fn)
-        mark_dirty(store)
-
-    doc_filter = ctx.deps.document_filter
-    if doc_filter and not doc_filter(filename):
-        return f"Error: '{filename}' is not accessible."
-    tool = EditDocumentTool(
-        path=_workspace_dir(ctx.deps),
-        on_write=_on_write,
+    return await edit_document_text(
+        ctx.deps.store,
+        filename,
+        old_string,
+        new_string,
+        document_filter=ctx.deps.document_filter,
     )
-    return await tool(filename, old_string, new_string)
 
 
 @write_toolset.tool(
@@ -403,21 +365,13 @@ async def write_document(
     content: str,
     mode: Literal["prepend", "append", "replace"] = "replace",
 ) -> str:
-    store = ctx.deps.store
-
-    async def _on_write(fn: str) -> None:
-        await rechunk_document(store, fn)
-        mark_dirty(store)
-
-    doc_filter = ctx.deps.document_filter
-    if doc_filter and not doc_filter(filename):
-        return f"Error: '{filename}' is not accessible."
-    tool = WriteDocumentTool(
-        path=_workspace_dir(ctx.deps),
-        extension="",
-        on_write=_on_write,
+    return await write_document_text(
+        ctx.deps.store,
+        filename,
+        content,
+        mode=mode,
+        document_filter=ctx.deps.document_filter,
     )
-    return await tool(filename, content, mode)
 
 
 # ---------------------------------------------------------------------------

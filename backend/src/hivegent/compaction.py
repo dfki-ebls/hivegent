@@ -22,6 +22,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from .agents import base_agent
 from .config import settings
 from .messages import load_conversation
+from .store import Casebase
 from .types import ConversationData, LlmConfig
 
 __all__ = [
@@ -98,8 +99,7 @@ async def compact_conversation(
         compacted_from=conversation_id,
     )
 
-    conversations_dir = settings.get_user_conversations_dir(user_id)
-    path = conversations_dir / f"{new_id}.json"
+    path = Casebase.for_user(user_id).conversation_path(settings.data_dir, new_id)
     path.write_bytes(new_conversation.model_dump_json(indent=2).encode())
 
     logger.info(

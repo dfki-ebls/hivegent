@@ -1,5 +1,3 @@
-import Fuse from "fuse.js";
-import JSZip from "jszip";
 import {
   AlertCircle,
   Archive,
@@ -792,6 +790,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const [isDragging, setIsDragging] = useState(false);
   const [dialogState, setDialogState] = useState<DialogState | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [filteredDocuments, setFilteredDocuments] = useState(documents);
   const [moveFilePath, setMoveFilePath] = useState<string | null>(null);
   const [createDirParent, setCreateDirParent] = useState<string | undefined>(undefined);
   const [showCreateDir, setShowCreateDir] = useState(false);
@@ -817,15 +816,28 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
 
   const clearSelection = useCallback(() => setSelectedFiles(new Set()), []);
 
-  const fuse = useMemo(
-    () => new Fuse(documents, { keys: ["filename"], threshold: 0.4 }),
-    [documents],
-  );
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setFilteredDocuments(documents);
+      return;
+    }
 
-  const filteredDocuments = useMemo(() => {
-    if (!searchQuery.trim()) return documents;
-    return fuse.search(searchQuery).map((result) => result.item);
-  }, [documents, searchQuery, fuse]);
+    let cancelled = false;
+
+    void import("fuse.js").then(({ default: Fuse }) => {
+      if (cancelled) return;
+
+      const fuse = new Fuse(documents, {
+        keys: ["filename"],
+        threshold: 0.4,
+      });
+      setFilteredDocuments(fuse.search(searchQuery).map((result) => result.item));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [documents, searchQuery]);
 
   const isSearching = searchQuery.trim().length > 0;
 
@@ -1087,6 +1099,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       };
 
       // Bundle directory files into a ZIP using JSZip
+      const { default: JSZip } = await import("jszip");
       const zip = new JSZip();
       for (const file of Array.from(files)) {
         const relativePath = file.webkitRelativePath || file.name;

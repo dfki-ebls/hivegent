@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pydantic_ai.messages import ModelMessage, UserPromptPart
 
 from .config import settings
+from .store import Casebase
 from .types import ConversationData, ConversationSummary
 
 __all__ = [
@@ -31,8 +32,9 @@ def load_conversation(user_id: str, conversation_id: str) -> ConversationData | 
     Returns:
         The conversation data or None if not found.
     """
-    user_dir = settings.get_user_conversations_dir(user_id)
-    path = user_dir / f"{conversation_id}.json"
+    path = Casebase.for_user(user_id).conversation_path(
+        settings.data_dir, conversation_id
+    )
     if not path.exists():
         return None
 
@@ -66,8 +68,9 @@ def save_messages(
         conversation_id: The conversation ID.
         messages: The messages to save.
     """
-    user_dir = settings.get_user_conversations_dir(user_id)
-    path = user_dir / f"{conversation_id}.json"
+    path = Casebase.for_user(user_id).conversation_path(
+        settings.data_dir, conversation_id
+    )
     now = datetime.now(timezone.utc)
 
     existing = load_conversation(user_id, conversation_id)
@@ -122,7 +125,7 @@ def find_empty_conversation(user_id: str) -> str | None:
     Returns:
         The conversation ID if an empty one exists, otherwise None.
     """
-    user_dir = settings.get_user_conversations_dir(user_id)
+    user_dir = Casebase.for_user(user_id).conversations_dir(settings.data_dir)
     if not user_dir.exists():
         return None
 
@@ -144,9 +147,9 @@ def persist_conversation(user_id: str, conversation_id: str) -> None:
         user_id: The user ID that owns the conversation.
         conversation_id: The conversation ID to create.
     """
-    user_dir = settings.get_user_conversations_dir(user_id)
-    user_dir.mkdir(parents=True, exist_ok=True)
-    path = user_dir / f"{conversation_id}.json"
+    path = Casebase.for_user(user_id).conversation_path(
+        settings.data_dir, conversation_id
+    )
     now = datetime.now(timezone.utc)
     conversation = ConversationData(
         id=conversation_id,
@@ -167,7 +170,7 @@ def list_conversations(user_id: str) -> list[ConversationSummary]:
     Returns:
         List of conversation summaries.
     """
-    user_dir = settings.get_user_conversations_dir(user_id)
+    user_dir = Casebase.for_user(user_id).conversations_dir(settings.data_dir)
     if not user_dir.exists():
         return []
 
@@ -203,8 +206,9 @@ def remove_conversation(user_id: str, conversation_id: str) -> bool:
     Returns:
         True if deleted, False if not found.
     """
-    user_dir = settings.get_user_conversations_dir(user_id)
-    path = user_dir / f"{conversation_id}.json"
+    path = Casebase.for_user(user_id).conversation_path(
+        settings.data_dir, conversation_id
+    )
     if path.exists():
         path.unlink()
         return True
@@ -222,8 +226,9 @@ def set_conversation_title(user_id: str, conversation_id: str, title: str) -> bo
     Returns:
         True if updated, False if not found.
     """
-    user_dir = settings.get_user_conversations_dir(user_id)
-    path = user_dir / f"{conversation_id}.json"
+    path = Casebase.for_user(user_id).conversation_path(
+        settings.data_dir, conversation_id
+    )
     if not path.exists():
         return False
 

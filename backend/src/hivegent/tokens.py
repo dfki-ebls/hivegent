@@ -9,6 +9,7 @@ from argon2.exceptions import VerifyMismatchError
 from pydantic import BaseModel, TypeAdapter
 
 from .config import settings
+from .store import Casebase
 from .types import TokenInfo, User
 
 __all__ = [
@@ -62,14 +63,14 @@ class TokenStore:
 
     def _load_user_tokens(self, user_id: str) -> list[_StoredToken]:
         """Load all tokens for a user."""
-        path = settings.get_user_tokens_path(user_id)
+        path = Casebase.for_user(user_id).tokens_path(settings.data_dir)
         if not path.exists():
             return []
         return _StoredTokenListAdapter.validate_json(path.read_bytes())
 
     def _save_user_tokens(self, user_id: str, tokens: list[_StoredToken]) -> None:
         """Save all tokens for a user."""
-        path = settings.get_user_tokens_path(user_id)
+        path = Casebase.for_user(user_id).tokens_path(settings.data_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(_StoredTokenListAdapter.dump_json(tokens, indent=2))
 
