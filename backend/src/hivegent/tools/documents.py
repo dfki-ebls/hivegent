@@ -5,19 +5,54 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Annotated, override
 
-from typing import override
+from pydantic import Field
 
 from .typing import DocumentRange, DocumentSummary, Tool
 
 __all__ = [
+    "DocumentEndLineArg",
+    "DocumentFilenameArg",
+    "DocumentMaxDepthArg",
+    "DocumentStartLineArg",
+    "DocumentSubdirArg",
     "GetDocumentLinesTool",
     "GetDocumentTool",
+    "GlobPatternArg",
     "GlobDocumentsTool",
     "ListDocumentsTool",
 ]
 
 logger = logging.getLogger(__name__)
+
+DocumentSubdirArg = Annotated[
+    str | None,
+    Field(description="Relative subdirectory to limit document listing to."),
+]
+DocumentMaxDepthArg = Annotated[
+    int | None,
+    Field(
+        description="Maximum nesting depth relative to the selected directory.",
+        ge=1,
+    ),
+]
+DocumentFilenameArg = Annotated[
+    str,
+    Field(description="Relative file path within the tool workspace."),
+]
+DocumentStartLineArg = Annotated[
+    int,
+    Field(description="First 1-based line number to include.", ge=1),
+]
+DocumentEndLineArg = Annotated[
+    int | None,
+    Field(description="Last 1-based line number to include.", ge=1),
+]
+GlobPatternArg = Annotated[
+    str,
+    Field(description="Glob pattern to match against relative document paths."),
+]
 
 
 def _matches_subdir_and_depth(
@@ -60,15 +95,10 @@ class ListDocumentsTool(Tool):
     @override
     def __call__(
         self,
-        subdir: str | None = None,
-        max_depth: int | None = None,
+        subdir: DocumentSubdirArg = None,
+        max_depth: DocumentMaxDepthArg = None,
     ) -> list[DocumentSummary]:
-        """List all available documents with their sizes in bytes.
-
-        Args:
-            subdir: Only include documents under this subdirectory.
-            max_depth: Maximum nesting depth relative to *subdir* (or root).
-        """
+        """List all available documents with their sizes in bytes."""
         if not self.path.exists():
             return []
         results: list[DocumentSummary] = []
@@ -102,12 +132,8 @@ class GetDocumentTool(Tool):
     path: Path
 
     @override
-    def __call__(self, filename: str) -> str | None:
-        """Get the full content of a specific document.
-
-        Args:
-            filename: The exact filename to retrieve.
-        """
+    def __call__(self, filename: DocumentFilenameArg) -> str | None:
+        """Get the full content of a specific document."""
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
             return None
@@ -125,17 +151,11 @@ class GetDocumentLinesTool(Tool):
     @override
     def __call__(
         self,
-        filename: str,
-        start: int = 1,
-        end: int | None = None,
+        filename: DocumentFilenameArg,
+        start: DocumentStartLineArg = 1,
+        end: DocumentEndLineArg = None,
     ) -> DocumentRange | None:
-        """Get a range of lines from a document.
-
-        Args:
-            filename: The document filename.
-            start: First line to include (1-indexed, default: 1).
-            end: Last line to include (1-indexed, default: end of file).
-        """
+        """Get a range of lines from a document."""
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
             return None
@@ -163,12 +183,8 @@ class GlobDocumentsTool(Tool):
     extension: str = ".md"
 
     @override
-    def __call__(self, pattern: str) -> list[str]:
-        """Find documents matching a glob pattern.
-
-        Args:
-            pattern: Glob pattern to match (e.g., "*.md", "notes/*.txt", "**/*.py").
-        """
+    def __call__(self, pattern: GlobPatternArg) -> list[str]:
+        """Find documents matching a glob pattern."""
         if not self.path.exists():
             return []
         results: list[str] = []

@@ -4,14 +4,21 @@ import ipaddress
 import logging
 import socket
 from dataclasses import dataclass
-from typing import override
+from typing import Annotated, override
 
 import httpx
 from ddgs import DDGS
+from pydantic import Field
 
 from .typing import Tool
 
-__all__ = ["WebFetch", "WebSearch"]
+__all__ = [
+    "WebFetch",
+    "WebMaxResultsArg",
+    "WebQueryArg",
+    "WebSearch",
+    "WebUrlArg",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +36,19 @@ _PRIVATE_NETWORKS = [
     ipaddress.ip_network("::1/128"),
     ipaddress.ip_network("fc00::/7"),
     ipaddress.ip_network("fe80::/10"),
+]
+
+WebQueryArg = Annotated[
+    str,
+    Field(description="Search query string."),
+]
+WebMaxResultsArg = Annotated[
+    int,
+    Field(description="Maximum number of search results to return.", ge=1, le=20),
+]
+WebUrlArg = Annotated[
+    str,
+    Field(description="HTTP or HTTPS URL to fetch."),
 ]
 
 
@@ -67,14 +87,14 @@ class WebSearch(Tool):
     """Search the web using DuckDuckGo."""
 
     @override
-    def __call__(self, query: str, max_results: int = 5) -> list[dict[str, str]]:
+    def __call__(
+        self,
+        query: WebQueryArg,
+        max_results: WebMaxResultsArg = 5,
+    ) -> list[dict[str, str]]:
         """Search the web using DuckDuckGo for up-to-date information.
 
         Returns a list of results with ``title``, ``href``, and ``body`` fields.
-
-        Args:
-            query: The search query string.
-            max_results: Maximum number of results to return (default: 5, max: 20).
         """
         max_results = min(max(1, max_results), 20)
         try:
@@ -98,14 +118,11 @@ class WebFetch(Tool):
     """Fetch web page content as plain text."""
 
     @override
-    async def __call__(self, url: str) -> str:
+    async def __call__(self, url: WebUrlArg) -> str:
         """Fetch the content of a web page as plain text.
 
         Follows redirects.
         Limited to 1 MB response size and 10 second timeout.
-
-        Args:
-            url: The URL to fetch (must be http or https).
         """
         error = _validate_url(url)
         if error:

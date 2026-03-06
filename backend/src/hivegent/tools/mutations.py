@@ -3,11 +3,43 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, override
+from typing import Annotated, Any, Literal, override
 
+from pydantic import Field
+
+from .documents import DocumentFilenameArg
 from .typing import Tool
 
-__all__ = ["EditDocumentTool", "WriteDocumentTool"]
+__all__ = [
+    "DocumentContentArg",
+    "EditDocumentTool",
+    "EditNewStringArg",
+    "EditOldStringArg",
+    "WriteDocumentTool",
+    "WriteModeArg",
+]
+
+EditOldStringArg = Annotated[
+    str,
+    Field(description="Exact text to replace, which must occur exactly once."),
+]
+EditNewStringArg = Annotated[
+    str,
+    Field(description="Replacement text."),
+]
+DocumentContentArg = Annotated[
+    str,
+    Field(description="Text content to write to the document."),
+]
+WriteModeArg = Annotated[
+    Literal["prepend", "append", "replace"],
+    Field(
+        description=(
+            "Write mode: `replace` overwrites or creates the file, `append` "
+            "adds to the end, and `prepend` adds to the start."
+        ),
+    ),
+]
 
 
 @dataclass(slots=True, frozen=True)
@@ -20,19 +52,14 @@ class EditDocumentTool(Tool):
     @override
     async def __call__(
         self,
-        filename: str,
-        old_string: str,
-        new_string: str,
+        filename: DocumentFilenameArg,
+        old_string: EditOldStringArg,
+        new_string: EditNewStringArg,
     ) -> str:
         """Replace an exact string in a document.
 
         Fails if the string does not exist or appears more than once,
         ensuring unambiguous edits.
-
-        Args:
-            filename: The relative document path.
-            old_string: The exact text to replace. Must appear exactly once.
-            new_string: The replacement text.
         """
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
@@ -68,19 +95,11 @@ class WriteDocumentTool(Tool):
     @override
     async def __call__(
         self,
-        filename: str,
-        content: str,
-        mode: Literal["prepend", "append", "replace"] = "replace",
+        filename: DocumentFilenameArg,
+        content: DocumentContentArg,
+        mode: WriteModeArg = "replace",
     ) -> str:
-        """Write content to a document.
-
-        Args:
-            filename: The relative document path.
-            content: The text content to write.
-            mode: ``"replace"`` overwrites (creates if absent),
-                ``"append"`` adds to the end,
-                ``"prepend"`` adds to the start.
-        """
+        """Write content to a document."""
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
             return "Error: path traversal detected."

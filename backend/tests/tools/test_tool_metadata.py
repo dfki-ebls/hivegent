@@ -1,0 +1,41 @@
+from pydantic import TypeAdapter
+
+from hivegent.agents import explore_toolset
+from hivegent.mcp import mcp_app
+from hivegent.tools.documents import (
+    DocumentMaxDepthArg,
+    DocumentSubdirArg,
+    ListDocumentsTool,
+)
+from hivegent.tools.grep import ContextLinesArg, GrepPatternArg, GrepTool
+from hivegent.tools.typing import tool_description
+
+
+def _description(annotation: object) -> str | None:
+    return TypeAdapter(annotation).json_schema().get("description")
+
+
+def test_agent_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
+    tool = explore_toolset.tools["list_documents"]
+    schema = tool.function_schema.json_schema
+
+    assert tool.description == tool_description(ListDocumentsTool)
+    assert schema["properties"]["subdir"]["description"] == _description(
+        DocumentSubdirArg
+    )
+    assert schema["properties"]["max_depth"]["description"] == _description(
+        DocumentMaxDepthArg
+    )
+
+
+async def test_mcp_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
+    tool = await mcp_app.get_tool("grep")
+
+    assert tool.description == tool_description(GrepTool)
+    assert tool.parameters["properties"]["pattern"]["description"] == _description(
+        GrepPatternArg
+    )
+    assert (
+        tool.parameters["properties"]["context_lines"]["description"]
+        == _description(ContextLinesArg)
+    )

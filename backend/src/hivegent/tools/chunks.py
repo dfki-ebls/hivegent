@@ -2,12 +2,19 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Annotated, override
 
-from typing import override
+from pydantic import Field
 
+from .documents import DocumentFilenameArg
 from .typing import Tool
 
-__all__ = ["GetChunkTool", "ListChunksTool"]
+__all__ = ["ChunkIndexArg", "GetChunkTool", "ListChunksTool"]
+
+ChunkIndexArg = Annotated[
+    int,
+    Field(description="Zero-based index of the chunk to retrieve.", ge=0),
+]
 
 
 @dataclass(slots=True, frozen=True)
@@ -17,12 +24,8 @@ class ListChunksTool[T](Tool):
     loader: Callable[[str], Sequence[T] | None]
 
     @override
-    def __call__(self, filename: str) -> list[T] | None:
-        """List chunk metadata for a document.
-
-        Args:
-            filename: The document filename.
-        """
+    def __call__(self, filename: DocumentFilenameArg) -> list[T] | None:
+        """List chunk metadata for a document."""
         result = self.loader(filename)
         return list(result) if result is not None else None
 
@@ -36,13 +39,8 @@ class GetChunkTool[T](Tool):
     @override
     def __call__(
         self,
-        filename: str,
-        chunk_index: int,
+        filename: DocumentFilenameArg,
+        chunk_index: ChunkIndexArg,
     ) -> T | None:
-        """Get the content of a specific chunk.
-
-        Args:
-            filename: The document filename.
-            chunk_index: The index of the chunk to retrieve.
-        """
+        """Get the content of a specific chunk."""
         return self.loader(filename, chunk_index)

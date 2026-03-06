@@ -2,7 +2,6 @@
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Literal
 
 from .chunks import load_document_metadata, rechunk_document
 from .config import settings
@@ -22,6 +21,23 @@ from .tools import (
     ListDocumentsTool,
     WriteDocumentTool,
 )
+from .tools.chunks import ChunkIndexArg
+from .tools.documents import (
+    DocumentEndLineArg,
+    DocumentFilenameArg,
+    DocumentMaxDepthArg,
+    DocumentStartLineArg,
+    DocumentSubdirArg,
+    GlobPatternArg,
+)
+from .tools.grep import ContextLinesArg, GrepGlobArg, GrepPatternArg
+from .tools.mutations import (
+    DocumentContentArg,
+    EditNewStringArg,
+    EditOldStringArg,
+    WriteModeArg,
+)
+from .tools.retrieval import SearchQueryArg, SearchTopKArg, SearchTypeArg
 from .types import ChunkSummary, DocumentFilter, RetrievedChunk
 
 __all__ = [
@@ -49,8 +65,8 @@ def _metadata_dir(store: Casebase) -> Path:
 def list_document_summaries(
     store: Casebase,
     *,
-    subdir: str | None = None,
-    max_depth: int | None = None,
+    subdir: DocumentSubdirArg = None,
+    max_depth: DocumentMaxDepthArg = None,
     document_filter: DocumentFilter | None = None,
 ) -> list[DocumentSummary]:
     """List documents in a store with optional filtering."""
@@ -63,7 +79,7 @@ def list_document_summaries(
 
 def glob_documents(
     store: Casebase,
-    pattern: str,
+    pattern: GlobPatternArg,
     *,
     document_filter: DocumentFilter | None = None,
 ) -> list[str]:
@@ -77,10 +93,10 @@ def glob_documents(
 
 async def grep_documents(
     store: Casebase,
-    pattern: str,
+    pattern: GrepPatternArg,
     *,
-    glob: str | None = None,
-    context_lines: int = 0,
+    glob: GrepGlobArg = None,
+    context_lines: ContextLinesArg = 0,
     document_filter: DocumentFilter | None = None,
 ) -> list[GrepMatch]:
     """Search document content with ripgrep and optional filtering."""
@@ -93,10 +109,10 @@ async def grep_documents(
 
 def semantic_search_documents(
     store: Casebase,
-    query: str,
+    query: SearchQueryArg,
     *,
-    type: Literal["dense", "sparse", "hybrid"] = "hybrid",
-    top_k: int = 5,
+    type: SearchTypeArg = "hybrid",
+    top_k: SearchTopKArg = 5,
     group_stores: Sequence[Casebase] = (),
     filter_for_store: Callable[[Casebase], DocumentFilter | None] | None = None,
 ) -> list[RetrievedChunk]:
@@ -113,10 +129,10 @@ def semantic_search_documents(
 
 def get_document_lines(
     store: Casebase,
-    filename: str,
+    filename: DocumentFilenameArg,
     *,
-    start: int = 1,
-    end: int | None = None,
+    start: DocumentStartLineArg = 1,
+    end: DocumentEndLineArg = None,
     document_filter: DocumentFilter | None = None,
 ) -> DocumentRange | None:
     """Load a line range from a document."""
@@ -128,7 +144,7 @@ def get_document_lines(
 
 def get_document_text(
     store: Casebase,
-    filename: str,
+    filename: DocumentFilenameArg,
     *,
     document_filter: DocumentFilter | None = None,
 ) -> str | None:
@@ -141,7 +157,7 @@ def get_document_text(
 
 def list_document_chunks(
     store: Casebase,
-    filename: str,
+    filename: DocumentFilenameArg,
     *,
     document_filter: DocumentFilter | None = None,
 ) -> list[ChunkSummary] | None:
@@ -168,8 +184,8 @@ def list_document_chunks(
 
 def get_document_chunk(
     store: Casebase,
-    filename: str,
-    chunk_index: int,
+    filename: DocumentFilenameArg,
+    chunk_index: ChunkIndexArg,
     *,
     document_filter: DocumentFilter | None = None,
 ) -> str | None:
@@ -191,9 +207,9 @@ def get_document_chunk(
 
 async def edit_document_text(
     store: Casebase,
-    filename: str,
-    old_string: str,
-    new_string: str,
+    filename: DocumentFilenameArg,
+    old_string: EditOldStringArg,
+    new_string: EditNewStringArg,
     *,
     document_filter: DocumentFilter | None = None,
 ) -> str:
@@ -211,10 +227,10 @@ async def edit_document_text(
 
 async def write_document_text(
     store: Casebase,
-    filename: str,
-    content: str,
+    filename: DocumentFilenameArg,
+    content: DocumentContentArg,
     *,
-    mode: Literal["prepend", "append", "replace"] = "replace",
+    mode: WriteModeArg = "replace",
     document_filter: DocumentFilter | None = None,
 ) -> str:
     """Write a document and refresh chunks/search state."""

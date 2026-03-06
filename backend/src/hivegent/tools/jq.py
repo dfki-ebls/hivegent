@@ -3,13 +3,23 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated, override
 
-from typing import override
+from pydantic import Field
 
 from ..subprocesses import jq_filter
 from .typing import Tool
 
-__all__ = ["JqTool"]
+__all__ = ["JqFilenameArg", "JqFilterArg", "JqTool"]
+
+JqFilterArg = Annotated[
+    str,
+    Field(description="jq filter expression to apply."),
+]
+JqFilenameArg = Annotated[
+    str,
+    Field(description="Relative JSON file path within the tool workspace."),
+]
 
 
 @dataclass(slots=True, frozen=True)
@@ -19,13 +29,12 @@ class JqTool(Tool):
     path: Path
 
     @override
-    async def __call__(self, filter: str, filename: str) -> str:
-        """Run a jq filter expression against a JSON file.
-
-        Args:
-            filter: A jq filter expression.
-            filename: The file to query.
-        """
+    async def __call__(
+        self,
+        filter: JqFilterArg,
+        filename: JqFilenameArg,
+    ) -> str:
+        """Run a jq filter expression against a JSON file."""
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
             return "Error: path traversal detected."

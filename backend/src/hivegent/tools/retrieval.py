@@ -11,21 +11,43 @@ and implement :meth:`__call__`.
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol, cast, override, runtime_checkable
+from typing import Annotated, Literal, Protocol, cast, override, runtime_checkable
 
 import cbrkit
+from pydantic import Field
 
 from .typing import SearchResult
 
 __all__ = [
     "LanceDBSearchTool",
+    "SearchQueryArg",
+    "SearchTopKArg",
     "SearchTool",
     "SearchType",
+    "SearchTypeArg",
 ]
 
 logger = logging.getLogger(__name__)
 
 type SearchType = Literal["dense", "sparse", "hybrid"]
+
+SearchQueryArg = Annotated[
+    str,
+    Field(description="Natural language search query."),
+]
+SearchTopKArg = Annotated[
+    int,
+    Field(description="Maximum number of results to return.", ge=1),
+]
+SearchTypeArg = Annotated[
+    SearchType,
+    Field(
+        description=(
+            "Retrieval strategy: `dense` for semantic similarity, `sparse` "
+            "for keyword matching, and `hybrid` to combine both."
+        ),
+    ),
+]
 
 
 @runtime_checkable
@@ -38,14 +60,10 @@ class SearchTool[K: (int, str)](Protocol):
 
     def __call__(
         self,
-        query: str,
-        top_k: int,
+        query: SearchQueryArg,
+        top_k: SearchTopKArg,
     ) -> list[SearchResult[K]]:
         """Search and return the top results by score.
-
-        Args:
-            query: Natural language search query.
-            top_k: Maximum results to return.
 
         Returns:
             List of results sorted by score descending.
@@ -75,20 +93,12 @@ class LanceDBSearchTool[K: (int, str)](SearchTool[K]):
     @override
     def __call__(
         self,
-        query: str,
-        top_k: int = 5,
-        search_type: SearchType = "hybrid",
+        query: SearchQueryArg,
+        top_k: SearchTopKArg = 5,
+        search_type: SearchTypeArg = "hybrid",
         where_clauses: Sequence[str | None] = (),
     ) -> list[SearchResult[K]]:
-        """Search across all storages and return the top results by score.
-
-        Args:
-            query: Natural language search query.
-            top_k: Maximum results to return.
-            search_type: ``"dense"`` for vector embeddings, ``"sparse"``
-                for BM25/FTS keyword search, ``"hybrid"`` for combined.
-            where_clauses: Optional per-storage SQL WHERE clauses, passed
-                directly to the ``cbrkit.retrieval.lancedb`` constructor.
+        """Search indexed chunks using dense, sparse, or hybrid retrieval.
 
         Returns:
             List of results sorted by score descending.

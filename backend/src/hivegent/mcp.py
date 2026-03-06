@@ -1,7 +1,7 @@
 """FastMCP server with OIDCProxy auth and explicit typed tool wrappers."""
 
 import logging
-from typing import Literal
+from typing import Annotated
 
 import httpx
 from fastmcp import Context, FastMCP
@@ -10,6 +10,7 @@ from fastmcp.dependencies import (
     Depends,  # pyright: ignore[reportAttributeAccessIssue]
 )
 from fastmcp.server.auth import AccessToken, OIDCProxy
+from pydantic import Field
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -35,20 +36,46 @@ from .retrieval import build_search_tool
 from .tools import (
     DocumentRange,
     DocumentSummary,
+    EditDocumentTool,
     GetChunkTool,
     GetDocumentLinesTool,
     GetDocumentTool,
     GlobDocumentsTool,
     GrepMatch,
     GrepTool,
+    LanceDBSearchTool,
     ListChunksTool,
     ListDocumentsTool,
+    WriteDocumentTool,
 )
+from .tools.chunks import ChunkIndexArg
+from .tools.documents import (
+    DocumentEndLineArg,
+    DocumentFilenameArg,
+    DocumentMaxDepthArg,
+    DocumentStartLineArg,
+    DocumentSubdirArg,
+    GlobPatternArg,
+)
+from .tools.grep import ContextLinesArg, GrepGlobArg, GrepPatternArg
+from .tools.mutations import (
+    DocumentContentArg,
+    EditNewStringArg,
+    EditOldStringArg,
+    WriteModeArg,
+)
+from .tools.retrieval import SearchQueryArg, SearchTopKArg, SearchTypeArg
+from .tools.typing import tool_description
 from .types import ChunkSummary, McpServerConfig, RetrievedChunk
 
 __all__ = ["build_mcp_server", "mcp_app"]
 
 logger = logging.getLogger(__name__)
+
+ExploreTaskArg = Annotated[
+    str,
+    Field(description="Natural language description of what to explore or find."),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -131,10 +158,10 @@ def _get_mcp_group_stores(
 # ---------------------------------------------------------------------------
 
 
-@mcp_app.tool(description=ListDocumentsTool.__call__.__doc__)
+@mcp_app.tool(description=tool_description(ListDocumentsTool))
 def list_documents(
-    subdir: str | None = None,
-    max_depth: int | None = None,
+    subdir: DocumentSubdirArg = None,
+    max_depth: DocumentMaxDepthArg = None,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[DocumentSummary]:
     return list_document_summaries(
@@ -144,19 +171,19 @@ def list_documents(
     )
 
 
-@mcp_app.tool(description=GetDocumentTool.__call__.__doc__)
+@mcp_app.tool(description=tool_description(GetDocumentTool))
 def get_document(
-    filename: str,
+    filename: DocumentFilenameArg,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> str | None:
     return get_document_text(store, filename)
 
 
-@mcp_app.tool(description=GetDocumentLinesTool.__call__.__doc__)
+@mcp_app.tool(description=tool_description(GetDocumentLinesTool))
 def get_document_lines(
-    filename: str,
-    start: int = 1,
-    end: int | None = None,
+    filename: DocumentFilenameArg,
+    start: DocumentStartLineArg = 1,
+    end: DocumentEndLineArg = None,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> DocumentRange | None:
     return get_document_lines_for_store(
@@ -167,19 +194,19 @@ def get_document_lines(
     )
 
 
-@mcp_app.tool(description=GlobDocumentsTool.__call__.__doc__)
+@mcp_app.tool(description=tool_description(GlobDocumentsTool))
 def glob_documents(
-    pattern: str,
+    pattern: GlobPatternArg,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[str]:
     return glob_documents_for_store(store, pattern)
 
 
-@mcp_app.tool(description=GrepTool.__call__.__doc__)
+@mcp_app.tool(description=tool_description(GrepTool))
 async def grep(
-    pattern: str,
-    glob: str | None = None,
-    context_lines: int = 0,
+    pattern: GrepPatternArg,
+    glob: GrepGlobArg = None,
+    context_lines: ContextLinesArg = 0,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[GrepMatch]:
     return await grep_documents(
@@ -190,21 +217,14 @@ async def grep(
     )
 
 
-@mcp_app.tool()
+@mcp_app.tool(description=tool_description(LanceDBSearchTool))
 def semantic_search(
-    query: str,
-    type: Literal["dense", "sparse", "hybrid"] = "hybrid",
-    top_k: int = 5,
+    query: SearchQueryArg,
+    type: SearchTypeArg = "hybrid",
+    top_k: SearchTopKArg = 5,
     store: Casebase = Depends(_get_mcp_user_store),
     group_stores: tuple[Casebase, ...] = Depends(_get_mcp_group_stores),
 ) -> list[RetrievedChunk]:
-    """Search chunks using semantic similarity or keyword matching.
-
-    Searches across personal documents and all group casebases.
-    Use "dense" for vector embeddings (conceptual queries),
-    "sparse" for BM25/FTS (keyword queries),
-    "hybrid" for combined vector + keyword search.
-    """
     return semantic_search_documents(
         store,
         query,
@@ -214,18 +234,18 @@ def semantic_search(
     )
 
 
-@mcp_app.tool(description=ListChunksTool.__call__.__doc__)
+@mcp_app.tool(description=tool_description(ListChunksTool))
 def list_chunks(
-    filename: str,
+    filename: DocumentFilenameArg,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> list[ChunkSummary] | None:
     return list_document_chunks(store, filename)
 
 
-@mcp_app.tool(description=GetChunkTool.__call__.__doc__)
+@mcp_app.tool(description=tool_description(GetChunkTool))
 def get_chunk(
-    filename: str,
-    chunk_index: int,
+    filename: DocumentFilenameArg,
+    chunk_index: ChunkIndexArg,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> str | None:
     return get_document_chunk(store, filename, chunk_index)
@@ -233,7 +253,7 @@ def get_chunk(
 
 @mcp_app.tool()
 async def explore_documents(
-    task: str,
+    task: ExploreTaskArg,
     ctx: Context,
     user_id: str = Depends(_get_mcp_user_id),
     store: Casebase = Depends(_get_mcp_user_store),
@@ -244,10 +264,8 @@ async def explore_documents(
     Delegates to a subagent that can list, search, and read documents.
     Returns a summary of findings. Uses the server's LLM when configured,
     otherwise falls back to MCP client sampling.
-
-    Args:
-        task: Natural language description of what to explore or find.
     """
+
     model_name = settings.llm.small_model or settings.llm.model
 
     if model_name:
@@ -286,24 +304,14 @@ async def explore_documents(
     return result.text
 
 
-@mcp_app.tool()
+@mcp_app.tool(description=tool_description(EditDocumentTool))
 async def edit_document(
-    filename: str,
-    old_string: str,
-    new_string: str,
+    filename: DocumentFilenameArg,
+    old_string: EditOldStringArg,
+    new_string: EditNewStringArg,
     ctx: Context,
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> str:
-    """Edit a document by replacing an exact string.
-
-    Asks the user for confirmation before modifying the file.
-    The old_string must appear exactly once in the file.
-
-    Args:
-        filename: The relative document path.
-        old_string: The exact text to replace. Must appear exactly once.
-        new_string: The replacement text.
-    """
     response = await ctx.elicit(
         message=(
             f"Allow edit to '{filename}'?\n\n"
@@ -317,24 +325,14 @@ async def edit_document(
     return await edit_document_text(store, filename, old_string, new_string)
 
 
-@mcp_app.tool()
+@mcp_app.tool(description=tool_description(WriteDocumentTool))
 async def write_document(
-    filename: str,
-    content: str,
+    filename: DocumentFilenameArg,
+    content: DocumentContentArg,
     ctx: Context,
-    mode: Literal["prepend", "append", "replace"] = "replace",
+    mode: WriteModeArg = "replace",
     store: Casebase = Depends(_get_mcp_user_store),
 ) -> str:
-    """Write content to a document (prepend, append, or replace).
-
-    Asks the user for confirmation before modifying the file.
-
-    Args:
-        filename: The relative document path.
-        content: The text content to write.
-        mode: "replace" overwrites (creates if absent), "append" adds to end,
-            "prepend" adds to start.
-    """
     action = "Create/overwrite" if mode == "replace" else mode.capitalize()
     response = await ctx.elicit(
         message=f"Allow {action} '{filename}' ({len(content)} chars)?",

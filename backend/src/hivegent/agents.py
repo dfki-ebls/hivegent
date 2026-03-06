@@ -2,8 +2,9 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Annotated
 
+from pydantic import Field
 from pydantic_ai import Agent, FilteredToolset, FunctionToolset, RunContext
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -37,12 +38,33 @@ from .tools import (
     GrepMatch,
     GrepTool,
     JqTool,
+    LanceDBSearchTool,
     ListChunksTool,
     ListDocumentsTool,
     WebFetch,
     WebSearch,
     WriteDocumentTool,
 )
+from .tools.chunks import ChunkIndexArg
+from .tools.documents import (
+    DocumentEndLineArg,
+    DocumentFilenameArg,
+    DocumentMaxDepthArg,
+    DocumentStartLineArg,
+    DocumentSubdirArg,
+    GlobPatternArg,
+)
+from .tools.grep import ContextLinesArg, GrepGlobArg, GrepPatternArg
+from .tools.jq import JqFilenameArg, JqFilterArg
+from .tools.mutations import (
+    DocumentContentArg,
+    EditNewStringArg,
+    EditOldStringArg,
+    WriteModeArg,
+)
+from .tools.retrieval import SearchQueryArg, SearchTopKArg, SearchTypeArg
+from .tools.typing import tool_description
+from .tools.web import WebMaxResultsArg, WebQueryArg, WebUrlArg
 from .types import (
     ChunkSummary,
     ConversationSummary,
@@ -61,6 +83,15 @@ __all__ = [
     "collect_tool_info",
     "explore_toolset",
     "user_agent",
+]
+
+ExploreTaskArg = Annotated[
+    str,
+    Field(description="Natural language description of what to explore or find."),
+]
+MemoryContentArg = Annotated[
+    str,
+    Field(description="Full markdown content to persist as memory."),
 ]
 
 
@@ -112,11 +143,11 @@ user_agent: Agent[UserDeps, str] = Agent(deps_type=UserDeps)
 explore_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
-@explore_toolset.tool(description=ListDocumentsTool.__call__.__doc__)
+@explore_toolset.tool(description=tool_description(ListDocumentsTool))
 def list_documents(
     ctx: RunContext[UserDeps],
-    subdir: str | None = None,
-    max_depth: int | None = None,
+    subdir: DocumentSubdirArg = None,
+    max_depth: DocumentMaxDepthArg = None,
 ) -> list[DocumentSummary]:
     return list_document_summaries(
         ctx.deps.store,
@@ -126,10 +157,10 @@ def list_documents(
     )
 
 
-@explore_toolset.tool(description=GlobDocumentsTool.__call__.__doc__)
+@explore_toolset.tool(description=tool_description(GlobDocumentsTool))
 def glob_documents(
     ctx: RunContext[UserDeps],
-    pattern: str,
+    pattern: GlobPatternArg,
 ) -> list[str]:
     return glob_documents_for_store(
         ctx.deps.store,
@@ -138,12 +169,12 @@ def glob_documents(
     )
 
 
-@explore_toolset.tool(description=GrepTool.__call__.__doc__)
+@explore_toolset.tool(description=tool_description(GrepTool))
 async def grep(
     ctx: RunContext[UserDeps],
-    pattern: str,
-    glob: str | None = None,
-    context_lines: int = 0,
+    pattern: GrepPatternArg,
+    glob: GrepGlobArg = None,
+    context_lines: ContextLinesArg = 0,
 ) -> list[GrepMatch]:
     return await grep_documents(
         ctx.deps.store,
@@ -154,29 +185,13 @@ async def grep(
     )
 
 
-@explore_toolset.tool
+@explore_toolset.tool(description=tool_description(LanceDBSearchTool))
 def semantic_search(
     ctx: RunContext[UserDeps],
-    query: str,
-    type: Literal["dense", "sparse", "hybrid"] = "hybrid",
-    top_k: int = 5,
+    query: SearchQueryArg,
+    type: SearchTypeArg = "hybrid",
+    top_k: SearchTopKArg = 5,
 ) -> list[RetrievedChunk]:
-    """Search chunks using semantic similarity or keyword matching.
-
-    Searches across your personal documents and all group casebases
-    you have access to.  Results include a ``store_key`` indicating the
-    source (e.g. ``"user:alice"`` or ``"group:engineering"``).
-
-    Use ``"dense"`` for conceptual queries where exact keywords
-    may not appear.  Use ``"sparse"`` for queries with specific terms that
-    should appear verbatim.  Use ``"hybrid"`` to combine both approaches.
-
-    Args:
-        query: Natural language search query.
-        type: ``"dense"`` for vector embeddings, ``"sparse"`` for BM25/FTS,
-            ``"hybrid"`` for combined.
-        top_k: Maximum results to return.
-    """
     return semantic_search_documents(
         ctx.deps.store,
         query,
@@ -187,12 +202,12 @@ def semantic_search(
     )
 
 
-@explore_toolset.tool(description=GetDocumentLinesTool.__call__.__doc__)
+@explore_toolset.tool(description=tool_description(GetDocumentLinesTool))
 def get_document_lines(
     ctx: RunContext[UserDeps],
-    filename: str,
-    start: int = 1,
-    end: int | None = None,
+    filename: DocumentFilenameArg,
+    start: DocumentStartLineArg = 1,
+    end: DocumentEndLineArg = None,
 ) -> DocumentRange | None:
     return get_document_lines_for_store(
         ctx.deps.store,
@@ -203,8 +218,10 @@ def get_document_lines(
     )
 
 
-@explore_toolset.tool(description=GetDocumentTool.__call__.__doc__)
-def get_document(ctx: RunContext[UserDeps], filename: str) -> str | None:
+@explore_toolset.tool(description=tool_description(GetDocumentTool))
+def get_document(
+    ctx: RunContext[UserDeps], filename: DocumentFilenameArg
+) -> str | None:
     return get_document_text(
         ctx.deps.store,
         filename,
@@ -212,10 +229,10 @@ def get_document(ctx: RunContext[UserDeps], filename: str) -> str | None:
     )
 
 
-@explore_toolset.tool(description=ListChunksTool.__call__.__doc__)
+@explore_toolset.tool(description=tool_description(ListChunksTool))
 def list_chunks(
     ctx: RunContext[UserDeps],
-    filename: str,
+    filename: DocumentFilenameArg,
 ) -> list[ChunkSummary] | None:
     return list_document_chunks(
         ctx.deps.store,
@@ -224,11 +241,11 @@ def list_chunks(
     )
 
 
-@explore_toolset.tool(description=GetChunkTool.__call__.__doc__)
+@explore_toolset.tool(description=tool_description(GetChunkTool))
 def get_chunk(
     ctx: RunContext[UserDeps],
-    filename: str,
-    chunk_index: int,
+    filename: DocumentFilenameArg,
+    chunk_index: ChunkIndexArg,
 ) -> str | None:
     return get_document_chunk(
         ctx.deps.store,
@@ -269,16 +286,15 @@ def _subagent_model(
 
 
 @subagent_toolset.tool
-async def explore_documents(ctx: RunContext[UserDeps], task: str) -> str:
+async def explore_documents(
+    ctx: RunContext[UserDeps], task: ExploreTaskArg
+) -> str:
     """Explore the document collection using a lightweight model.
 
     Delegates to a subagent that can list, search, and read documents.
     Returns a summary of findings. Use this for broad exploration tasks
     like surveying available documents, finding patterns across files,
     or answering questions that require checking multiple sources.
-
-    Args:
-        task: Natural language description of what to explore or find.
     """
     result = await user_agent.run(
         task,
@@ -292,14 +308,13 @@ async def explore_documents(ctx: RunContext[UserDeps], task: str) -> str:
 
 
 @subagent_toolset.tool
-async def explore_conversations(ctx: RunContext[UserDeps], task: str) -> str:
+async def explore_conversations(
+    ctx: RunContext[UserDeps], task: ExploreTaskArg
+) -> str:
     """Explore past conversations using a lightweight model.
 
     Delegates to a subagent that can list and query conversation history.
     Returns a summary of findings.
-
-    Args:
-        task: Natural language description of what to find in conversations.
     """
     result = await user_agent.run(
         task,
@@ -312,14 +327,11 @@ async def explore_conversations(ctx: RunContext[UserDeps], task: str) -> str:
 
 
 @subagent_toolset.tool
-async def explore_web(ctx: RunContext[UserDeps], task: str) -> str:
+async def explore_web(ctx: RunContext[UserDeps], task: ExploreTaskArg) -> str:
     """Research a topic on the web using a lightweight model.
 
     Delegates to a subagent that can search and fetch web pages.
     Returns a summary of findings.
-
-    Args:
-        task: Natural language description of what to research on the web.
     """
     result = await user_agent.run(
         task,
@@ -339,13 +351,14 @@ write_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
 @write_toolset.tool(
-    requires_approval=True, description=EditDocumentTool.__call__.__doc__
+    requires_approval=True,
+    description=tool_description(EditDocumentTool),
 )
 async def edit_document(
     ctx: RunContext[UserDeps],
-    filename: str,
-    old_string: str,
-    new_string: str,
+    filename: DocumentFilenameArg,
+    old_string: EditOldStringArg,
+    new_string: EditNewStringArg,
 ) -> str:
     return await edit_document_text(
         ctx.deps.store,
@@ -357,13 +370,14 @@ async def edit_document(
 
 
 @write_toolset.tool(
-    requires_approval=True, description=WriteDocumentTool.__call__.__doc__
+    requires_approval=True,
+    description=tool_description(WriteDocumentTool),
 )
 async def write_document(
     ctx: RunContext[UserDeps],
-    filename: str,
-    content: str,
-    mode: Literal["prepend", "append", "replace"] = "replace",
+    filename: DocumentFilenameArg,
+    content: DocumentContentArg,
+    mode: WriteModeArg = "replace",
 ) -> str:
     return await write_document_text(
         ctx.deps.store,
@@ -382,14 +396,11 @@ memory_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
 @memory_toolset.tool
-def save_memory(ctx: RunContext[UserDeps], content: str) -> str:
+def save_memory(ctx: RunContext[UserDeps], content: MemoryContentArg) -> str:
     """Save information to persistent memory that is preserved across conversations.
 
     Overwrites the entire memory, so always include previously saved information
     you want to retain.
-
-    Args:
-        content: The full markdown content for the memory file.
     """
     _save_memory(ctx.deps.user_id, content)
     return "Memory saved successfully."
@@ -416,8 +427,8 @@ def list_conversations_tool(
 @conversation_toolset.tool
 async def query_conversations(
     ctx: RunContext[UserDeps],
-    filter: str,
-    filename: str,
+    filter: JqFilterArg,
+    filename: JqFilenameArg,
 ) -> str:
     """Run a jq filter on a conversation JSON file.
 
@@ -442,9 +453,6 @@ async def query_conversations(
     - ``.messages[].parts[] | select(.content | test("deadline"))``
       — search message content for "deadline".
 
-    Args:
-        filter: A jq filter expression.
-        filename: The conversation file to query (e.g. ``"abc123.json"``).
     """
     tool = JqTool(
         path=ctx.deps.store.conversations_dir(settings.data_dir),
@@ -459,20 +467,20 @@ async def query_conversations(
 web_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
-@web_toolset.tool(description=WebSearch.__call__.__doc__)
+@web_toolset.tool(description=tool_description(WebSearch))
 def web_search(
     ctx: RunContext[UserDeps],
-    query: str,
-    max_results: int = 5,
+    query: WebQueryArg,
+    max_results: WebMaxResultsArg = 5,
 ) -> list[dict[str, str]]:
     tool = WebSearch()
     return tool(query, max_results)
 
 
-@web_toolset.tool(description=WebFetch.__call__.__doc__)
+@web_toolset.tool(description=tool_description(WebFetch))
 async def web_fetch(
     ctx: RunContext[UserDeps],
-    url: str,
+    url: WebUrlArg,
 ) -> str:
     tool = WebFetch()
     return await tool(url)

@@ -3,15 +3,32 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated, override
 
-from typing import override
+from pydantic import Field
 
 from ..subprocesses import rg_search
 from .typing import GrepMatch, Tool
 
-__all__ = ["GrepTool"]
+__all__ = ["ContextLinesArg", "GrepGlobArg", "GrepPatternArg", "GrepTool"]
 
 logger = logging.getLogger(__name__)
+
+GrepPatternArg = Annotated[
+    str,
+    Field(description="Text or regular expression pattern to search for."),
+]
+GrepGlobArg = Annotated[
+    str | None,
+    Field(description="Optional glob pattern that limits which files are searched."),
+]
+ContextLinesArg = Annotated[
+    int,
+    Field(
+        description="Number of context lines to include before and after a match.",
+        ge=0,
+    ),
+]
 
 
 @dataclass(slots=True, frozen=True)
@@ -23,19 +40,14 @@ class GrepTool(Tool):
     @override
     async def __call__(
         self,
-        pattern: str,
-        glob: str | None = None,
-        context_lines: int = 0,
+        pattern: GrepPatternArg,
+        glob: GrepGlobArg = None,
+        context_lines: ContextLinesArg = 0,
     ) -> list[GrepMatch]:
         """Search documents for a pattern.
 
         Uses smart case matching: case-insensitive unless the pattern contains
         uppercase letters.
-
-        Args:
-            pattern: Text or regex pattern to search for.
-            glob: Only search files matching this pattern (e.g., "*.md", "notes/*").
-            context_lines: Number of lines to show before and after each match.
         """
         if not self.path.exists():
             return []
