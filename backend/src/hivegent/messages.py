@@ -3,14 +3,18 @@
 import json
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from typing import Any
 
+from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import ModelMessage, UserPromptPart
 
 from .config import settings
 from .store import Casebase
-from .types import ConversationData, ConversationSummary
 
 __all__ = [
+    "ConversationData",
+    "ConversationSummary",
     "persist_conversation",
     "find_empty_conversation",
     "list_conversations",
@@ -20,6 +24,47 @@ __all__ = [
     "save_messages",
     "set_conversation_title",
 ]
+
+
+class ConversationData(BaseModel):
+    """Full conversation data including messages and metadata."""
+
+    id: str = Field(description="Derived from filename, not persisted", exclude=True)
+    title: str = Field(description="Conversation title")
+    created_at: datetime = Field(description="When the conversation was created")
+    updated_at: datetime = Field(description="When the conversation was last updated")
+    messages: list[ModelMessage] = Field(
+        default_factory=list,
+        description="Conversation messages",
+    )
+    compacted_from: str | None = Field(
+        default=None,
+        description="ID of the conversation this was compacted from",
+    )
+
+    @field_validator("messages", mode="before")
+    @classmethod
+    def _validate_messages(cls, v: Any) -> list[ModelMessage]:
+        return ModelMessagesTypeAdapter.validate_python(v)
+
+    @field_serializer("messages")
+    @classmethod
+    def _serialize_messages(cls, v: list[ModelMessage]) -> Any:
+        return ModelMessagesTypeAdapter.dump_python(v, mode="json")
+
+
+class ConversationSummary(BaseModel):
+    """Summary information for listing conversations."""
+
+    id: str = Field(description="Unique conversation ID")
+    title: str = Field(description="Conversation title")
+    created_at: datetime = Field(description="When the conversation was created")
+    updated_at: datetime = Field(description="When the conversation was last updated")
+    message_count: int = Field(description="Number of messages in the conversation")
+    compacted_from: str | None = Field(
+        default=None,
+        description="ID of the conversation this was compacted from",
+    )
 
 
 def load_conversation(user_id: str, conversation_id: str) -> ConversationData | None:

@@ -11,9 +11,10 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.toolsets import AbstractToolset
 
 from .chunks import ChunkIndexArg, GetChunkTool, ListChunksTool
+from .chunkers.base import ChunkSummary, RetrievedChunk
 from .config import settings
 from .memory import save_memory as _save_memory
-from .messages import list_conversations as _list_conversations
+from .messages import ConversationSummary, list_conversations as _list_conversations
 from .prompts import EXPLORE_INSTRUCTIONS
 from .store import Casebase
 from . import tool_runtime
@@ -53,11 +54,8 @@ from .tools.retrieval import SearchQueryArg, SearchTopKArg, SearchTypeArg
 from .tools.base import tool_description
 from .tools.web import WebMaxResultsArg, WebQueryArg, WebUrlArg
 from .types import (
-    ChunkSummary,
-    ConversationSummary,
     DocumentFilter,
     LlmConfig,
-    RetrievedChunk,
     ToolInfo,
     ToolsSpec,
 )

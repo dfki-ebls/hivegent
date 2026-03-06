@@ -19,6 +19,7 @@ from .tools.base import Tool
 __all__ = [
     "ChunkIndexArg",
     "ChunkData",
+    "ChunkSummary",
     "DocumentMetadata",
     "GetChunkTool",
     "ListChunksTool",

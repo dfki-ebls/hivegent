@@ -4,7 +4,13 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from hivegent.chunks import ChunkData, DocumentMetadata, GetChunkTool, ListChunksTool
+from hivegent.chunks import (
+    ChunkData,
+    ChunkSummary,
+    DocumentMetadata,
+    GetChunkTool,
+    ListChunksTool,
+)
 from hivegent.tools.documents import (
     GetDocumentLinesTool,
     GetDocumentTool,
@@ -13,8 +19,6 @@ from hivegent.tools.documents import (
 )
 from hivegent.tools.jq import JqTool
 from hivegent.tools.mutations import EditDocumentTool, WriteDocumentTool
-from hivegent.types import ChunkSummary
-
 
 class TestListDocumentsTool:
     """Tests for ListDocumentsTool."""

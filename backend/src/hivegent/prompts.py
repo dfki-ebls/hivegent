@@ -1,14 +1,24 @@
 """System prompt templates for different assistant personalities."""
 
-from .types import Personality
+from enum import StrEnum
 
 __all__ = [
     "CITATION_INSTRUCTIONS",
     "EXPLORE_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS_EMPTY",
+    "Personality",
     "PERSONALITY_TEMPLATES",
 ]
+
+
+class Personality(StrEnum):
+    """Available assistant personalities."""
+
+    DEFAULT = "default"
+    CONCISE = "concise"
+    DETAILED = "detailed"
+    CUSTOM = "custom"
 
 EXPLORE_INSTRUCTIONS = """\
 You are a document exploration assistant.

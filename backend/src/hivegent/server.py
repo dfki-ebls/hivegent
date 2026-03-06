@@ -32,7 +32,12 @@ from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response, StreamingResponse
 
-from .agents import TOOLSET_GROUPS, UserDeps, base_agent, user_agent
+from .agents import (
+    TOOLSET_GROUPS,
+    UserDeps,
+    base_agent,
+    user_agent,
+)
 from .auth import User, get_current_user
 from .chunkers import (
     ChunkingPipelineInfo,
@@ -40,6 +45,7 @@ from .chunkers import (
     get_chunking_pipelines_info,
 )
 from .chunks import (
+    DocumentMetadata,
     chunk_document,
     delete_metadata,
     get_metadata,
@@ -68,6 +74,7 @@ from .memory import clear_memory
 from .memory import load_memory
 from .mcp import mcp_app
 from .messages import (
+    ConversationSummary,
     persist_conversation,
     find_empty_conversation,
     list_conversations,
@@ -83,6 +90,7 @@ from .prompts import (
     MEMORY_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS_EMPTY,
     PERSONALITY_TEMPLATES,
+    Personality,
 )
 from .retrieval import invalidate_store, mark_dirty
 from .store import Casebase
@@ -104,7 +112,6 @@ from .types import (
     CompactConversationRequest,
     CompactConversationResponse,
     ConversationListResponse,
-    ConversationSummary,
     CreateConversationResponse,
     CreateDirectoryRequest,
     CreateDirectoryResponse,
@@ -118,16 +125,14 @@ from .types import (
     DirectoryTreeResponse,
     DocumentFilter,
     DocumentInfo,
-    DocumentMetadata,
     DocumentListResponse,
     GenerateTitleRequest,
     GenerateTitleResponse,
-    LlmConfig,
     McpServerConfig,
+    LlmConfig,
     McpTestResponse,
     MoveDocumentRequest,
     MoveDocumentResponse,
-    Personality,
     SettingsResponse,
     TokenInfo,
     ToolInfo,

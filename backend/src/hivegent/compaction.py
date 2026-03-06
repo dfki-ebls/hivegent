@@ -21,9 +21,9 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from .agents import base_agent
 from .config import settings
-from .messages import load_conversation
+from .messages import ConversationData, load_conversation
 from .store import Casebase
-from .types import ConversationData, LlmConfig
+from .types import LlmConfig
 
 __all__ = [
     "CompactionResult",

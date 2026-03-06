@@ -1,42 +1,80 @@
-"""Shared types for the RAG application."""
+"""Shared types and server-facing schemas for Hivegent."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
-from typing import Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
-from pydantic_ai import ModelMessage, ModelMessagesTypeAdapter
+from pydantic import BaseModel, Field
 
-from .chunkers.base import ChunkData, ChunkSummary, DocumentMetadata, RetrievedChunk
+from .messages import ConversationSummary
+from .prompts import Personality
+
+__all__ = [
+    "BulkDeleteConversationsResponse",
+    "BulkDeleteDocumentsResponse",
+    "BulkDeleteUserDataResponse",
+    "BulkOperationCompleteEvent",
+    "BulkOperationProgressEvent",
+    "BulkRevokeTokensResponse",
+    "ChatRequestConfig",
+    "ClearMemoryResponse",
+    "CollectionCompleteEvent",
+    "CollectionProgressEvent",
+    "CollectionUploadResponse",
+    "CompactConversationRequest",
+    "CompactConversationResponse",
+    "ConversationListResponse",
+    "CreateConversationResponse",
+    "CreateDirectoryRequest",
+    "CreateDirectoryResponse",
+    "CreateTokenRequest",
+    "CreateTokenResponse",
+    "DeleteConversationResponse",
+    "DeleteDirectoryRequest",
+    "DeleteDirectoryResponse",
+    "DeleteDocumentResponse",
+    "DirectoryEntry",
+    "DirectoryTreeResponse",
+    "DocumentFilter",
+    "DocumentInfo",
+    "DocumentListResponse",
+    "GenerateTitleRequest",
+    "GenerateTitleResponse",
+    "GroupInfo",
+    "GroupListResponse",
+    "LlmConfig",
+    "McpOAuth2Config",
+    "McpServerConfig",
+    "McpTestResponse",
+    "MoveDocumentRequest",
+    "MoveDocumentResponse",
+    "SettingsResponse",
+    "TokenInfo",
+    "ToolInfo",
+    "ToolsSpec",
+    "UpdateTitleRequest",
+    "UploadDocumentResponse",
+    "User",
+    "UserResponse",
+]
 
 
 @dataclass(slots=True, frozen=True)
 class DocumentFilter:
-    """Include/exclude filter applied to document-level tool operations.
-
-    If ``included`` is non-empty the filepath must match an entry.
-    If ``excluded`` is non-empty the filepath must *not* match.
-    When both are set, ``included`` is checked first.
-
-    Entries ending with ``/`` are treated as directory prefixes:
-    ``"projects/"`` matches ``"projects/report.md"`` and
-    ``"projects/sub/file.txt"``.
-    Entries without a trailing ``/`` are exact file matches.
-    """
+    """Include and exclude filter applied to document-level operations."""
 
     included: frozenset[str] = field(default_factory=frozenset)
     excluded: frozenset[str] = field(default_factory=frozenset)
 
     @staticmethod
     def _matches(entry: str, filepath: str) -> bool:
-        """Check if a filter entry matches a filepath."""
+        """Check whether a filter entry matches a filepath."""
         if entry.endswith("/"):
             return filepath.startswith(entry)
         return filepath == entry
 
     def __call__(self, filepath: str) -> bool:
-        """Return whether *filepath* passes the filter."""
+        """Return whether the filepath passes the filter."""
         if self.included and not any(
             self._matches(entry, filepath) for entry in self.included
         ):
@@ -50,12 +88,7 @@ class DocumentFilter:
 
 @dataclass(slots=True, frozen=True)
 class User:
-    """Authenticated user information with group membership.
-
-    Groups are split by permission level:
-    - ``read_groups``: groups with at least read access
-    - ``write_groups``: groups with write (and implicit read) access
-    """
+    """Authenticated user information with group membership."""
 
     id: str
     email: str | None = None
@@ -65,17 +98,8 @@ class User:
 
     @property
     def all_groups(self) -> frozenset[str]:
-        """Return all groups the user belongs to (read + write)."""
+        """Return all groups the user belongs to."""
         return self.read_groups | self.write_groups
-
-
-class Personality(StrEnum):
-    """Available assistant personalities."""
-
-    DEFAULT = "default"
-    CONCISE = "concise"
-    DETAILED = "detailed"
-    CUSTOM = "custom"
 
 
 class LlmConfig(BaseModel):
@@ -95,7 +119,7 @@ class McpOAuth2Config(BaseModel):
 
 
 class McpServerConfig(BaseModel):
-    """User-provided MCP server (HTTP transport only)."""
+    """User-provided MCP server configuration."""
 
     url: str
     headers: dict[str, str] = Field(default_factory=dict)
@@ -103,79 +127,35 @@ class McpServerConfig(BaseModel):
     oauth2: McpOAuth2Config | None = None
 
 
-class McpTestResponse(BaseModel):
-    """Response from testing an MCP server connection."""
-
-    ok: bool = Field(description="Whether the connection test succeeded")
-    tool_count: int | None = Field(
-        default=None, description="Number of tools discovered"
-    )
-    error: str | None = Field(
-        default=None, description="Error message if the test failed"
-    )
-
-
 class ToolsSpec(BaseModel):
-    """Bundled tool configuration: disabled built-in tools and custom MCP servers."""
+    """Built-in tool configuration and custom MCP servers."""
 
     disabled_tools: list[str] = Field(default_factory=list)
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
 
 
-__all__ = [
-    "BulkDeleteConversationsResponse",
-    "BulkDeleteDocumentsResponse",
-    "BulkDeleteUserDataResponse",
-    "BulkOperationCompleteEvent",
-    "BulkOperationProgressEvent",
-    "BulkRevokeTokensResponse",
-    "ChatRequestConfig",
-    "ClearMemoryResponse",
-    "DocumentMetadata",
-    "ChunkData",
-    "ChunkSummary",
-    "CollectionCompleteEvent",
-    "CollectionProgressEvent",
-    "CollectionUploadResponse",
-    "CompactConversationResponse",
-    "ConversationData",
-    "ConversationListResponse",
-    "ConversationSummary",
-    "CreateConversationResponse",
-    "CreateDirectoryRequest",
-    "CreateDirectoryResponse",
-    "CreateTokenRequest",
-    "CreateTokenResponse",
-    "DeleteConversationResponse",
-    "DeleteDirectoryRequest",
-    "DeleteDirectoryResponse",
-    "DeleteDocumentResponse",
-    "DirectoryEntry",
-    "DocumentFilter",
-    "DirectoryTreeResponse",
-    "DocumentInfo",
-    "DocumentListResponse",
-    "GenerateTitleRequest",
-    "GenerateTitleResponse",
-    "GroupInfo",
-    "GroupListResponse",
-    "LlmConfig",
-    "McpOAuth2Config",
-    "McpServerConfig",
-    "McpTestResponse",
-    "MoveDocumentRequest",
-    "MoveDocumentResponse",
-    "Personality",
-    "RetrievedChunk",
-    "SettingsResponse",
-    "TokenInfo",
-    "ToolInfo",
-    "ToolsSpec",
-    "UpdateTitleRequest",
-    "UploadDocumentResponse",
-    "User",
-    "UserResponse",
-]
+class ToolInfo(BaseModel):
+    """Metadata about an available agent tool."""
+
+    name: str
+    description: str
+    group: str
+
+
+class TokenInfo(BaseModel):
+    """Information about a personal access token without the token value."""
+
+    id: str = Field(description="The token ID")
+    name: str = Field(description="The token name")
+    created_at: datetime = Field(description="When the token was created")
+    expires_at: datetime | None = Field(
+        default=None,
+        description="When the token expires",
+    )
+    last_used_at: datetime | None = Field(
+        default=None,
+        description="When the token was last used",
+    )
 
 
 class ChatRequestConfig(BaseModel):
@@ -204,14 +184,6 @@ class ClearMemoryResponse(BaseModel):
     message: str = Field(description="Status message")
 
 
-class ToolInfo(BaseModel):
-    """Metadata about an available agent tool."""
-
-    name: str
-    description: str
-    group: str
-
-
 class CreateConversationResponse(BaseModel):
     """Response for conversation creation."""
 
@@ -225,7 +197,8 @@ class DocumentInfo(BaseModel):
     size_bytes: int = Field(description="File size in bytes")
     modified_at: datetime = Field(description="Last modification timestamp")
     chunk_count: int | None = Field(
-        default=None, description="Number of chunks, if chunked"
+        default=None,
+        description="Number of chunks, if chunked",
     )
     has_original: bool = Field(
         default=False,
@@ -249,17 +222,21 @@ class UploadDocumentResponse(BaseModel):
 
     filename: str = Field(description="The uploaded filename")
     converted_filename: str | None = Field(
-        default=None, description="The converted markdown filename (for binary files)"
+        default=None,
+        description="The converted markdown filename (for binary files)",
     )
     size_bytes: int = Field(description="File size in bytes")
     conversion_pipeline_used: str | None = Field(
-        default=None, description="The conversion pipeline used (for binary files)"
+        default=None,
+        description="The conversion pipeline used (for binary files)",
     )
     chunk_count: int | None = Field(
-        default=None, description="Number of chunks created"
+        default=None,
+        description="Number of chunks created",
     )
     chunking_pipeline_used: str | None = Field(
-        default=None, description="The chunking pipeline used"
+        default=None,
+        description="The chunking pipeline used",
     )
     message: str = Field(description="Status message")
 
@@ -271,51 +248,11 @@ class DeleteDocumentResponse(BaseModel):
     message: str = Field(description="Status message")
 
 
-class ConversationData(BaseModel):
-    """Full conversation data including messages and metadata."""
-
-    id: str = Field(description="Derived from filename, not persisted", exclude=True)
-    title: str = Field(description="Conversation title")
-    created_at: datetime = Field(description="When the conversation was created")
-    updated_at: datetime = Field(description="When the conversation was last updated")
-    messages: list[ModelMessage] = Field(
-        default_factory=list, description="Conversation messages"
-    )
-    compacted_from: str | None = Field(
-        default=None,
-        description="ID of the conversation this was compacted from",
-    )
-
-    @field_validator("messages", mode="before")
-    @classmethod
-    def _validate_messages(cls, v: Any) -> list[ModelMessage]:
-        return ModelMessagesTypeAdapter.validate_python(v)
-
-    @field_serializer("messages")
-    @classmethod
-    def _serialize_messages(cls, v: list[ModelMessage]) -> Any:
-        return ModelMessagesTypeAdapter.dump_python(v, mode="json")
-
-
-class ConversationSummary(BaseModel):
-    """Summary information for listing conversations."""
-
-    id: str = Field(description="Unique conversation ID")
-    title: str = Field(description="Conversation title")
-    created_at: datetime = Field(description="When the conversation was created")
-    updated_at: datetime = Field(description="When the conversation was last updated")
-    message_count: int = Field(description="Number of messages in the conversation")
-    compacted_from: str | None = Field(
-        default=None,
-        description="ID of the conversation this was compacted from",
-    )
-
-
 class ConversationListResponse(BaseModel):
     """Response for listing conversations."""
 
     conversations: list[ConversationSummary] = Field(
-        description="List of conversation summaries"
+        description="List of conversation summaries",
     )
     total_count: int = Field(description="Total number of conversations")
 
@@ -329,7 +266,9 @@ class CompactConversationRequest(BaseModel):
 class CompactConversationResponse(BaseModel):
     """Response for conversation compaction."""
 
-    new_conversation_id: str = Field(description="ID of the new compacted conversation")
+    new_conversation_id: str = Field(
+        description="ID of the new compacted conversation",
+    )
     summary: str = Field(description="Summary of the original conversation")
     message: str = Field(description="Status message")
 
@@ -354,22 +293,18 @@ class UserResponse(BaseModel):
     email: str | None = Field(default=None, description="User email address")
     name: str | None = Field(default=None, description="User display name")
     read_groups: list[str] = Field(
-        default_factory=list, description="Groups with read access"
+        default_factory=list,
+        description="Groups with read access",
     )
     write_groups: list[str] = Field(
-        default_factory=list, description="Groups with write access"
+        default_factory=list,
+        description="Groups with write access",
     )
 
     @staticmethod
-    def from_user(user: "User") -> "UserResponse":
-        """Create a UserResponse from a User dataclass.
+    def from_user(user: User) -> "UserResponse":
+        """Create a serializable response from an authenticated user."""
 
-        Args:
-            user: The authenticated user.
-
-        Returns:
-            A serializable user response.
-        """
         return UserResponse(
             id=user.id,
             email=user.email,
@@ -380,7 +315,7 @@ class UserResponse(BaseModel):
 
 
 class SettingsResponse(BaseModel):
-    """LLM settings (API key masked as boolean) and user context."""
+    """LLM settings with user context."""
 
     model: str = Field(description="Default chat model")
     vision_model: str = Field(description="Default vision model for conversion")
@@ -407,7 +342,8 @@ class CreateTokenRequest(BaseModel):
 
     name: str = Field(description="A name for the token")
     expires_in_days: int | None = Field(
-        default=None, description="Optional expiration in days"
+        default=None,
+        description="Optional expiration in days",
     )
 
 
@@ -419,21 +355,8 @@ class CreateTokenResponse(BaseModel):
     name: str = Field(description="The token name")
     created_at: datetime = Field(description="When the token was created")
     expires_at: datetime | None = Field(
-        default=None, description="When the token expires"
-    )
-
-
-class TokenInfo(BaseModel):
-    """Information about a personal access token (without the token value)."""
-
-    id: str = Field(description="The token ID")
-    name: str = Field(description="The token name")
-    created_at: datetime = Field(description="When the token was created")
-    expires_at: datetime | None = Field(
-        default=None, description="When the token expires"
-    )
-    last_used_at: datetime | None = Field(
-        default=None, description="When the token was last used"
+        default=None,
+        description="When the token expires",
     )
 
 
@@ -445,16 +368,20 @@ class DirectoryEntry(BaseModel):
     path: str = Field(description="Relative path from documents root")
     size_bytes: int | None = Field(default=None, description="File size in bytes")
     modified_at: datetime | None = Field(
-        default=None, description="Last modification timestamp"
+        default=None,
+        description="Last modification timestamp",
     )
     chunk_count: int | None = Field(
-        default=None, description="Number of chunks, if chunked"
+        default=None,
+        description="Number of chunks, if chunked",
     )
     has_original: bool = Field(
-        default=False, description="Whether an original binary file exists"
+        default=False,
+        description="Whether an original binary file exists",
     )
     children: list["DirectoryEntry"] | None = Field(
-        default=None, description="Child entries for directories"
+        default=None,
+        description="Child entries for directories",
     )
 
 
@@ -534,15 +461,16 @@ class BulkDeleteUserDataResponse(BaseModel):
 
 
 class CollectionUploadResponse(BaseModel):
-    """Response for collection (directory/ZIP) upload."""
+    """Response for collection (directory or ZIP) upload."""
 
     total_files: int = Field(description="Total files processed")
     markdown_files: int = Field(description="Number of markdown files uploaded")
     converted_attachments: int = Field(
-        description="Number of binary attachments converted"
+        description="Number of binary attachments converted",
     )
     failed_files: list[str] = Field(
-        default_factory=list, description="Files that failed to process"
+        default_factory=list,
+        description="Files that failed to process",
     )
     message: str = Field(description="Status message")
 
@@ -555,7 +483,7 @@ class CollectionProgressEvent(BaseModel):
     current: int = Field(description="Number of files processed so far")
     total: int = Field(description="Total number of files to process")
     status: Literal["ok", "failed"] = Field(
-        description="Whether this file succeeded or failed"
+        description="Whether this file succeeded or failed",
     )
 
 
@@ -566,14 +494,14 @@ class CollectionCompleteEvent(CollectionUploadResponse):
 
 
 class BulkOperationProgressEvent(BaseModel):
-    """SSE progress event emitted during a bulk rechunk/reconvert operation."""
+    """SSE progress event emitted during a bulk rechunk or reconvert operation."""
 
     type: Literal["progress"] = "progress"
     file: str = Field(description="File currently being processed")
     current: int = Field(description="Number of files processed so far")
     total: int = Field(description="Total number of files to process")
     status: Literal["ok", "failed"] = Field(
-        description="Whether this file succeeded or failed"
+        description="Whether this file succeeded or failed",
     )
 
 
@@ -583,7 +511,8 @@ class BulkOperationCompleteEvent(BaseModel):
     type: Literal["complete"] = "complete"
     total_files: int = Field(description="Total files processed")
     failed_files: list[str] = Field(
-        default_factory=list, description="Files that failed to process"
+        default_factory=list,
+        description="Files that failed to process",
     )
     message: str = Field(description="Status message")
 
@@ -599,3 +528,17 @@ class GroupListResponse(BaseModel):
     """Response for listing casebase groups."""
 
     groups: list[GroupInfo] = Field(description="List of group summaries")
+
+
+class McpTestResponse(BaseModel):
+    """Response from testing an MCP server connection."""
+
+    ok: bool = Field(description="Whether the connection test succeeded")
+    tool_count: int | None = Field(
+        default=None,
+        description="Number of tools discovered",
+    )
+    error: str | None = Field(
+        default=None,
+        description="Error message if the test failed",
+    )
