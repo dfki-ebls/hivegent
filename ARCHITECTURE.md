@@ -43,14 +43,14 @@
 ```mermaid
 flowchart LR
     end_user[User]
-    frontend_spa[Frontend SPA\nReact + Vite + TanStack Router]
+    frontend_spa[Frontend SPA: React + Vite + TanStack Router]
     oidc_provider[OIDC Provider]
     fastapi_backend[FastAPI Backend]
     pydantic_ai_agent_runtime[Pydantic AI Agent Runtime]
     built_in_toolsets[Built-in Toolsets]
     external_mcp_servers[External MCP Servers]
     built_in_mcp_server[Built-in MCP Server]
-    retrieval_layer[Retrieval Layer\ncbrkit + LanceDB]
+    retrieval_layer[Retrieval Layer: cbrkit + LanceDB]
     conversation_memory_storage[Conversation and Memory Storage]
     llm_provider[LLM Provider]
 
