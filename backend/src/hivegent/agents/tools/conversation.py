@@ -8,13 +8,12 @@ from ...messages import (
     list_conversations as _list_conversations,
 )
 from ...tools import JqTool
-from ...tools.jq import JqFilenameArg, JqFilterArg
 from ..common import UserDeps
+from ...tools.pydantic_ai import for_pydantic_ai
 
 __all__ = [
     "conversation_toolset",
     "list_conversations_tool",
-    "query_conversations",
 ]
 
 conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset()
@@ -31,36 +30,11 @@ def list_conversations_tool(
     return _list_conversations(ctx.deps.store.id)
 
 
-@conversation_toolset.tool
-async def query_conversations(
-    ctx: RunContext[UserDeps],
-    filter: JqFilterArg,
-    filename: JqFilenameArg,
-) -> str:
-    """Run a jq filter on a conversation JSON file.
+def _jq_factory(deps: UserDeps) -> JqTool:
+    return JqTool(path=deps.store.conversations_dir(settings.data_dir))
 
-    Each conversation file has this schema::
 
-        {
-            "title": str,
-            "created_at": str (ISO datetime),
-            "updated_at": str (ISO datetime),
-            "messages": [
-                {
-                    "kind": "request" | "response",
-                    "parts": [{"part_kind": "user-prompt", "content": str}, ...]
-                },
-                ...
-            ]
-        }
-
-    Example filters:
-
-    - ``.title`` -- get the conversation title.
-    - ``.messages[].parts[] | select(.content | test("deadline"))``
-      -- search message content for "deadline".
-    """
-    tool = JqTool(
-        path=ctx.deps.store.conversations_dir(settings.data_dir),
-    )
-    return await tool(filter, filename)
+conversation_toolset.add_function(
+    for_pydantic_ai(_jq_factory, UserDeps),
+    name="query_conversations",
+)

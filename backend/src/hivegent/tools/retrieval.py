@@ -1,7 +1,7 @@
 """Retrieval tools using cbrkit indexed backends."""
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Literal, cast, override
 
@@ -25,10 +25,10 @@ type SearchType = Literal["dense", "sparse", "hybrid"]
 
 
 @dataclass(slots=True, frozen=True)
-class SearchResult[K: (int, str)]:
+class SearchResult:
     """A single search result with key, text, and relevance score."""
 
-    key: K
+    key: str
     text: str
     score: float
 
@@ -53,7 +53,7 @@ SearchTypeArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class LanceDBSearchTool[K: (int, str)](Tool):
+class LanceDBSearchTool[R = SearchResult](Tool):
     """Search one or more LanceDB storages using cbrkit indexed retrieval.
 
     Builds a ``cbrkit.retrieval.lancedb`` retriever per storage, combines
@@ -62,9 +62,16 @@ class LanceDBSearchTool[K: (int, str)](Tool):
 
     Args:
         storages: One or more cbrkit LanceDB storage instances.
+        key_filter: Optional predicate on result keys.  When ``None``,
+            all keys are accepted.
+        result_mapper: Optional callable that transforms each
+            :class:`SearchResult` before it is returned.  When ``None``,
+            raw :class:`SearchResult` objects are returned.
     """
 
-    storages: Sequence[cbrkit.indexable.lancedb[K]]
+    storages: Sequence[cbrkit.indexable.lancedb[str]]
+    key_filter: Callable[[str], bool] | None = None
+    result_mapper: Callable[[SearchResult], R] | None = None
 
     @override
     def __call__(
@@ -72,25 +79,22 @@ class LanceDBSearchTool[K: (int, str)](Tool):
         query: SearchQueryArg,
         top_k: SearchTopKArg = 5,
         search_type: SearchTypeArg = "hybrid",
-        where_clauses: Sequence[str | None] = (),
-    ) -> list[SearchResult[K]]:
+    ) -> list[R]:
         """Search indexed chunks using dense, sparse, or hybrid retrieval.
 
         Returns:
             List of results sorted by score descending.
         """
-        lancedb_retrievers: list[cbrkit.retrieval.lancedb[K]] = []
+        lancedb_retrievers: list[cbrkit.retrieval.lancedb[str]] = []
 
-        for i, storage in enumerate(self.storages):
+        for storage in self.storages:
             if not storage.has_index():
                 continue
 
-            where = where_clauses[i] if i < len(where_clauses) else None
             lancedb_retrievers.append(
                 cbrkit.retrieval.lancedb(
                     storage=storage,
                     search_type=search_type,
-                    where=where,
                 )
             )
 
@@ -104,11 +108,17 @@ class LanceDBSearchTool[K: (int, str)](Tool):
         result = cbrkit.retrieval.apply_query_indexed(query, combined)
         step = result.final_step.queries["default"]
 
-        return [
+        results = [
             SearchResult(
-                key=cast(K, key),
+                key=cast(str, key),
                 text=step.casebase[key],
                 score=float(step.similarities[key]),
             )
             for key in step.ranking
+            if self.key_filter is None or self.key_filter(str(key))
         ]
+
+        if self.result_mapper is not None:
+            return [self.result_mapper(r) for r in results]
+
+        return cast(list[R], results)

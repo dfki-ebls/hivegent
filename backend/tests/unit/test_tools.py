@@ -25,22 +25,22 @@ class TestListDocumentsTool:
     """Tests for ListDocumentsTool."""
 
     def test_empty_dir(self, tmp_path: Path) -> None:
-        tool = ListDocumentsTool(path=tmp_path, extension=".md")
+        tool = ListDocumentsTool(path=tmp_path, glob="*.md")
         assert tool() == []
 
     def test_lists_md_files(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("hello")
         (tmp_path / "b.txt").write_text("world")  # not .md, should be ignored
-        tool = ListDocumentsTool(path=tmp_path, extension=".md")
+        tool = ListDocumentsTool(path=tmp_path, glob="*.md")
         result = tool()
         filenames = [r.filename for r in result]
         assert "a.md" in filenames
         assert "b.txt" not in filenames
 
-    def test_custom_extension(self, tmp_path: Path) -> None:
+    def test_custom_glob(self, tmp_path: Path) -> None:
         (tmp_path / "a.txt").write_text("hello")
         (tmp_path / "b.md").write_text("world")
-        tool = ListDocumentsTool(path=tmp_path, extension=".txt")
+        tool = ListDocumentsTool(path=tmp_path, glob="*.txt")
         result = tool()
         filenames = [r.filename for r in result]
         assert "a.txt" in filenames
@@ -51,23 +51,23 @@ class TestListDocumentsTool:
         sub.mkdir()
         (sub / "n.md").write_text("note")
         (tmp_path / "top.md").write_text("top")
-        tool = ListDocumentsTool(path=tmp_path, extension=".md")
+        tool = ListDocumentsTool(path=tmp_path, glob="*.md")
         result = tool(subdir="notes")
         filenames = [r.filename for r in result]
         assert "notes/n.md" in filenames
         assert "top.md" not in filenames
 
-    def test_empty_extension_lists_all(self, tmp_path: Path) -> None:
+    def test_none_glob_lists_all(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("hello")
         (tmp_path / "b.txt").write_text("world")
         (tmp_path / "c.png").write_bytes(b"\x89PNG")
-        tool = ListDocumentsTool(path=tmp_path, extension="")
+        tool = ListDocumentsTool(path=tmp_path)
         result = tool()
         filenames = {r.filename for r in result}
         assert filenames == {"a.md", "b.txt", "c.png"}
 
     def test_nonexistent_dir(self, tmp_path: Path) -> None:
-        tool = ListDocumentsTool(path=tmp_path / "nonexistent", extension=".md")
+        tool = ListDocumentsTool(path=tmp_path / "nonexistent", glob="*.md")
         assert tool() == []
 
 
@@ -128,21 +128,21 @@ class TestGlobDocumentsTool:
     def test_matches_pattern(self, tmp_path: Path) -> None:
         (tmp_path / "notes.md").write_text("a")
         (tmp_path / "readme.md").write_text("b")
-        tool = GlobDocumentsTool(path=tmp_path, extension=".md")
+        tool = GlobDocumentsTool(path=tmp_path, glob="*.md")
         result = tool("note*")
         assert result == ["notes.md"]
 
-    def test_custom_extension(self, tmp_path: Path) -> None:
+    def test_custom_glob(self, tmp_path: Path) -> None:
         (tmp_path / "data.txt").write_text("a")
         (tmp_path / "data.md").write_text("b")
-        tool = GlobDocumentsTool(path=tmp_path, extension=".txt")
+        tool = GlobDocumentsTool(path=tmp_path, glob="*.txt")
         result = tool("*")
         assert result == ["data.txt"]
 
-    def test_empty_extension_matches_all(self, tmp_path: Path) -> None:
+    def test_none_glob_matches_all(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("a")
         (tmp_path / "b.txt").write_text("b")
-        tool = GlobDocumentsTool(path=tmp_path, extension="")
+        tool = GlobDocumentsTool(path=tmp_path)
         result = tool("*")
         assert set(result) == {"a.md", "b.txt"}
 
@@ -262,32 +262,32 @@ class TestWriteDocumentTool:
     """Tests for WriteDocumentTool."""
 
     async def test_replace_creates_file(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(path=tmp_path, extension=".md")
+        tool = WriteDocumentTool(path=tmp_path, glob="*.md")
         result = await tool("new.md", "content")
         assert "Wrote" in result
         assert (tmp_path / "new.md").read_text() == "content"
 
     async def test_append(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("start")
-        tool = WriteDocumentTool(path=tmp_path, extension=".md")
+        tool = WriteDocumentTool(path=tmp_path, glob="*.md")
         result = await tool("doc.md", " end", mode="append")
         assert "Appended" in result
         assert (tmp_path / "doc.md").read_text() == "start end"
 
     async def test_prepend(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("end")
-        tool = WriteDocumentTool(path=tmp_path, extension=".md")
+        tool = WriteDocumentTool(path=tmp_path, glob="*.md")
         result = await tool("doc.md", "start ", mode="prepend")
         assert "Prepended" in result
         assert (tmp_path / "doc.md").read_text() == "start end"
 
-    async def test_rejects_wrong_extension(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(path=tmp_path, extension=".md")
+    async def test_rejects_non_matching_glob(self, tmp_path: Path) -> None:
+        tool = WriteDocumentTool(path=tmp_path, glob="*.md")
         result = await tool("doc.txt", "content")
         assert "Error" in result
 
-    async def test_empty_extension_allows_any(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(path=tmp_path, extension="")
+    async def test_none_glob_allows_any(self, tmp_path: Path) -> None:
+        tool = WriteDocumentTool(path=tmp_path)
         result = await tool("data.txt", "content")
         assert "Wrote" in result
         assert (tmp_path / "data.txt").read_text() == "content"
@@ -298,7 +298,7 @@ class TestWriteDocumentTool:
         async def _on_write(filename: str) -> None:
             written.append(filename)
 
-        tool = WriteDocumentTool(path=tmp_path, extension=".md", on_write=_on_write)
+        tool = WriteDocumentTool(path=tmp_path, glob="*.md", on_write=_on_write)
         await tool("doc.md", "content")
         assert written == ["doc.md"]
 

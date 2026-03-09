@@ -1,0 +1,162 @@
+"""Unit tests for tool adapter utilities."""
+
+import inspect
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Annotated, Any, cast, override
+
+from pydantic import Field
+from pydantic_ai import FunctionToolset
+
+from hivegent.tools.pydantic_ai import (
+    for_pydantic_ai,
+    register_agent_tools,
+)
+from hivegent.tools.fastmcp import for_fastmcp
+from hivegent.tools.base import Tool, tool_description
+
+
+# -- Fixtures ----------------------------------------------------------------
+
+QueryArg = Annotated[str, Field(description="A search query.")]
+LimitArg = Annotated[int, Field(description="Max results.", ge=1)]
+
+
+@dataclass(slots=True, frozen=True)
+class SyncTool(Tool):
+    """A sync tool for testing."""
+
+    prefix: str = ""
+
+    @override
+    def __call__(self, query: QueryArg, limit: LimitArg = 5) -> str:
+        """Search for things."""
+        return f"{self.prefix}{query}:{limit}"
+
+
+@dataclass(slots=True, frozen=True)
+class AsyncTool(Tool):
+    """An async tool for testing."""
+
+    path: Path = Path(".")
+
+    @override
+    async def __call__(self, query: QueryArg) -> list[str]:
+        """Fetch results asynchronously."""
+        return [str(self.path), query]
+
+
+@dataclass(slots=True, frozen=True)
+class _Deps:
+    value: str = "test"
+
+
+def _sync_with_prefix(d: _Deps) -> SyncTool:
+    return SyncTool(prefix=d.value)
+
+
+def _sync_default(_d: _Deps) -> SyncTool:
+    return SyncTool()
+
+
+def _async_default(_d: _Deps) -> AsyncTool:
+    return AsyncTool()
+
+
+def _sync_mcp() -> SyncTool:
+    return SyncTool()
+
+
+def _async_mcp() -> AsyncTool:
+    return AsyncTool()
+
+
+# -- for_pydantic_ai ---------------------------------------------------------
+
+
+class TestForPydanticAI:
+    """Tests for for_pydantic_ai."""
+
+    def test_sync_wrapper_signature(self) -> None:
+        fn = for_pydantic_ai(_sync_with_prefix, _Deps)
+        sig = inspect.signature(fn)
+        params = list(sig.parameters.keys())
+        assert params[0] == "ctx"
+        assert "query" in params
+        assert "limit" in params
+
+    def test_sync_wrapper_name(self) -> None:
+        fn = for_pydantic_ai(_sync_default, _Deps)
+        assert cast(Any, fn).__name__ == "sync_default"
+
+    def test_sync_wrapper_doc(self) -> None:
+        fn = for_pydantic_ai(_sync_default, _Deps)
+        assert fn.__doc__ == tool_description(SyncTool)
+
+    def test_async_wrapper_is_coroutine(self) -> None:
+        fn = for_pydantic_ai(_async_default, _Deps)
+        assert inspect.iscoroutinefunction(fn)
+
+    def test_async_wrapper_name(self) -> None:
+        fn = for_pydantic_ai(_async_default, _Deps)
+        assert cast(Any, fn).__name__ == "async_default"
+
+    def test_annotations_include_return(self) -> None:
+        fn = for_pydantic_ai(_sync_default, _Deps)
+        assert "return" in fn.__annotations__
+
+
+# -- register_agent_tools -----------------------------------------------------
+
+
+class TestRegisterAgentTools:
+    """Tests for register_agent_tools."""
+
+    def test_registers_tools(self) -> None:
+        toolset: FunctionToolset[_Deps] = FunctionToolset()
+        register_agent_tools(toolset, _Deps, [
+            _sync_default,
+            _async_default,
+        ])
+        assert "sync_default" in toolset.tools
+        assert "async_default" in toolset.tools
+
+    def test_requires_approval(self) -> None:
+        toolset: FunctionToolset[_Deps] = FunctionToolset()
+        register_agent_tools(toolset, _Deps, [
+            _sync_default,
+        ], requires_approval=True)
+        tool = toolset.tools["sync_default"]
+        assert tool.requires_approval is True
+
+
+# -- for_fastmcp --------------------------------------------------------------
+
+
+class TestForFastMCP:
+    """Tests for for_fastmcp."""
+
+    def test_appends_tool_param(self) -> None:
+        fn = for_fastmcp(_sync_mcp)
+        sig = inspect.signature(fn)
+        assert "_tool_" in sig.parameters
+        param = sig.parameters["_tool_"]
+        assert param.kind == inspect.Parameter.KEYWORD_ONLY
+
+    def test_preserves_call_params(self) -> None:
+        fn = for_fastmcp(_sync_mcp)
+        sig = inspect.signature(fn)
+        assert "query" in sig.parameters
+        assert "limit" in sig.parameters
+
+    def test_name(self) -> None:
+        fn = for_fastmcp(_sync_mcp)
+        assert cast(Any, fn).__name__ == "sync_mcp"
+
+    def test_doc(self) -> None:
+        fn = for_fastmcp(_sync_mcp)
+        assert fn.__doc__ == tool_description(SyncTool)
+
+    def test_async_wrapper(self) -> None:
+        fn = for_fastmcp(_async_mcp)
+        assert inspect.iscoroutinefunction(fn)

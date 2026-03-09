@@ -9,7 +9,7 @@ from typing import Annotated, override
 
 from pydantic import Field
 
-from .base import Tool
+from .base import FileFilter, Tool, file_allowed
 
 __all__ = [
     "DocumentEndLineArg",
@@ -112,7 +112,8 @@ class ListDocumentsTool(Tool):
     """List all available documents with their sizes in bytes."""
 
     path: Path
-    extension: str = ".md"
+    glob: str | None = None
+    file_filter: FileFilter = None
 
     @override
     def __call__(
@@ -124,8 +125,7 @@ class ListDocumentsTool(Tool):
         if not self.path.exists():
             return []
         results: list[DocumentSummary] = []
-        pattern = f"*{self.extension}" if self.extension else "*"
-        for f in sorted(self.path.rglob(pattern)):
+        for f in sorted(self.path.rglob(self.glob or "*")):
             if f.is_file():
                 rel = str(f.relative_to(self.path).as_posix())
                 stat = f.stat()
@@ -144,6 +144,8 @@ class ListDocumentsTool(Tool):
                 for r in results
                 if _matches_subdir_and_depth(r.filename, subdir, max_depth)
             ]
+        if self.file_filter is not None:
+            results = [r for r in results if file_allowed(self.file_filter, r.filename)]
         return results
 
 
@@ -152,10 +154,13 @@ class GetDocumentTool(Tool):
     """Get the full content of a specific document."""
 
     path: Path
+    file_filter: FileFilter = None
 
     @override
     def __call__(self, filename: DocumentFilenameArg) -> str | None:
         """Get the full content of a specific document."""
+        if not file_allowed(self.file_filter, filename):
+            return None
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
             return None
@@ -169,6 +174,7 @@ class GetDocumentLinesTool(Tool):
     """Get a range of lines from a document."""
 
     path: Path
+    file_filter: FileFilter = None
 
     @override
     def __call__(
@@ -178,6 +184,8 @@ class GetDocumentLinesTool(Tool):
         end: DocumentEndLineArg = None,
     ) -> DocumentRange | None:
         """Get a range of lines from a document."""
+        if not file_allowed(self.file_filter, filename):
+            return None
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
             return None
@@ -202,7 +210,8 @@ class GlobDocumentsTool(Tool):
     """Find documents matching a glob pattern."""
 
     path: Path
-    extension: str = ".md"
+    glob: str | None = None
+    file_filter: FileFilter = None
 
     @override
     def __call__(self, pattern: GlobPatternArg) -> list[str]:
@@ -210,10 +219,11 @@ class GlobDocumentsTool(Tool):
         if not self.path.exists():
             return []
         results: list[str] = []
-        ext_glob = f"*{self.extension}" if self.extension else "*"
-        for f in sorted(self.path.rglob(ext_glob)):
+        for f in sorted(self.path.rglob(self.glob or "*")):
             if f.is_file():
                 rel = str(f.relative_to(self.path).as_posix())
                 if fnmatch(rel, pattern):
                     results.append(rel)
+        if self.file_filter is not None:
+            results = [r for r in results if file_allowed(self.file_filter, r)]
         return results

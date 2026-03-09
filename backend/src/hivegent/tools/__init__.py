@@ -12,12 +12,13 @@ from .grep import GrepMatch, GrepTool
 from .jq import JqTool
 from .mutations import EditDocumentTool, WriteDocumentTool
 from .retrieval import LanceDBSearchTool, SearchResult, SearchType
-from .base import Tool
+from .base import FileFilter, Tool, file_allowed, tool_name
 from .web import WebFetch, WebSearch
 
 __all__ = [
     "DocumentRange",
     "DocumentSummary",
+    "FileFilter",
     "EditDocumentTool",
     "GetDocumentLinesTool",
     "GetDocumentTool",
@@ -30,6 +31,8 @@ __all__ = [
     "SearchResult",
     "SearchType",
     "Tool",
+    "file_allowed",
+    "tool_name",
     "WebFetch",
     "WebSearch",
     "WriteDocumentTool",

@@ -15,7 +15,7 @@ from .chunkers.base import ChunkData, ChunkSummary, DocumentMetadata
 from .config import settings
 from .converters.base import DOCUMENT_EXTENSION
 from .store import Casebase
-from .tools.base import Tool
+from .tools.base import FileFilter, Tool, file_allowed
 
 __all__ = [
     "ChunkIndexArg",
@@ -29,6 +29,7 @@ __all__ = [
     "get_metadata",
     "list_chunked_documents",
     "load_document_metadata",
+    "on_document_write",
     "rechunk_document",
 ]
 
@@ -45,10 +46,13 @@ class ListChunksTool(Tool):
     """List chunk metadata for a document."""
 
     metadata_dir: Path
+    file_filter: FileFilter = None
 
     @override
     def __call__(self, filename: str) -> list[ChunkSummary] | None:
         """List chunk metadata for a document."""
+        if not file_allowed(self.file_filter, filename):
+            return None
         metadata = load_document_metadata(self.metadata_dir, filename)
         if not metadata:
             return None
@@ -67,6 +71,7 @@ class GetChunkTool(Tool):
     """Get the content of a specific chunk."""
 
     metadata_dir: Path
+    file_filter: FileFilter = None
 
     @override
     def __call__(
@@ -75,6 +80,8 @@ class GetChunkTool(Tool):
         chunk_index: ChunkIndexArg,
     ) -> str | None:
         """Get the content of a specific chunk."""
+        if not file_allowed(self.file_filter, filename):
+            return None
         metadata = load_document_metadata(self.metadata_dir, filename)
         if not metadata:
             return None
@@ -277,3 +284,18 @@ async def rechunk_document(
         )
     except Exception:
         logger.warning("Re-chunking failed for %s after write", filename)
+
+
+async def on_document_write(store: Casebase, filename: str) -> None:
+    """Re-chunk a document and mark the search index dirty.
+
+    Intended as the ``on_write`` callback for mutation tools.
+
+    Args:
+        store: The casebase the document belongs to.
+        filename: The relative document path that was written.
+    """
+    from .retrieval import mark_dirty
+
+    await rechunk_document(store, filename)
+    mark_dirty(store)

@@ -3,8 +3,9 @@
 import pytest
 from inline_snapshot import snapshot
 
-from hivegent.retrieval import _parse_chunk_key, build_where_clause
-from hivegent.types import DocumentFilter
+from hivegent.chunkers.base import RetrievedChunk
+from hivegent.retrieval import _parse_chunk_key, _to_retrieved_chunk
+from hivegent.tools.retrieval import SearchResult
 
 
 class TestParseChunkKey:
@@ -29,49 +30,48 @@ class TestParseChunkKey:
             _parse_chunk_key("report.md::abc")
 
 
-class TestBuildWhereClause:
-    """Tests for build_where_clause."""
+class TestToRetrievedChunk:
+    """Tests for the _to_retrieved_chunk result mapper."""
 
-    def test_no_filter(self) -> None:
-        assert build_where_clause(None) is None
-
-    def test_empty_filter(self) -> None:
-        assert build_where_clause(DocumentFilter()) is None
-
-    def test_include_exact(self) -> None:
-        f = DocumentFilter(included=frozenset({"report.md"}))
-        assert build_where_clause(f) == snapshot("(filename = 'report.md')")
-
-    def test_include_directory(self) -> None:
-        f = DocumentFilter(included=frozenset({"projects/"}))
-        assert build_where_clause(f) == snapshot("(filename LIKE 'projects/%')")
-
-    def test_exclude_exact(self) -> None:
-        f = DocumentFilter(excluded=frozenset({"secret.md"}))
-        assert build_where_clause(f) == snapshot("filename != 'secret.md'")
-
-    def test_exclude_directory(self) -> None:
-        f = DocumentFilter(excluded=frozenset({"private/"}))
-        assert build_where_clause(f) == snapshot("filename NOT LIKE 'private/%'")
-
-    def test_include_and_exclude(self) -> None:
-        f = DocumentFilter(
-            included=frozenset({"docs/"}),
-            excluded=frozenset({"docs/secret.md"}),
+    def test_transforms_result(self) -> None:
+        result = SearchResult(key="report.md::0", text="hello world", score=0.95)
+        chunk = _to_retrieved_chunk(result)
+        assert chunk == snapshot(
+            RetrievedChunk(
+                filename="report.md",
+                chunk_index=0,
+                text="hello world",
+                token_count=2,
+                score=0.95,
+            )
         )
-        result = build_where_clause(f)
-        assert result is not None
-        assert "LIKE 'docs/%'" in result
-        assert "!= 'docs/secret.md'" in result
 
-    def test_sql_escaping(self) -> None:
-        f = DocumentFilter(included=frozenset({"it's.md"}))
-        result = build_where_clause(f)
-        assert result is not None
-        assert "it''s.md" in result
-
-    def test_custom_filter_column(self) -> None:
-        f = DocumentFilter(included=frozenset({"report.md"}))
-        assert build_where_clause(f, filter_column="path") == snapshot(
-            "(path = 'report.md')"
+    def test_nested_path(self) -> None:
+        result = SearchResult(key="docs/notes.md::2", text="foo bar baz", score=0.80)
+        chunk = _to_retrieved_chunk(result)
+        assert chunk == snapshot(
+            RetrievedChunk(
+                filename="docs/notes.md",
+                chunk_index=2,
+                text="foo bar baz",
+                token_count=3,
+                score=0.8,
+            )
         )
+
+    def test_explicit_token_count(self) -> None:
+        result = SearchResult(key="report.md::0", text="hello world", score=0.95)
+        chunk = _to_retrieved_chunk(result, token_count=42)
+        assert chunk == snapshot(
+            RetrievedChunk(
+                filename="report.md",
+                chunk_index=0,
+                text="hello world",
+                token_count=42,
+                score=0.95,
+            )
+        )
+
+    def test_rounds_score(self) -> None:
+        result = SearchResult(key="a.md::1", text="x", score=0.123456789)
+        assert _to_retrieved_chunk(result).score == snapshot(0.1235)

@@ -8,7 +8,7 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..subprocesses import rg_search
-from .base import Tool
+from .base import FileFilter, Tool, file_allowed
 
 __all__ = [
     "ContextLinesArg",
@@ -52,6 +52,7 @@ class GrepTool(Tool):
     """Search documents for a pattern."""
 
     path: Path
+    file_filter: FileFilter = None
 
     @override
     async def __call__(
@@ -87,4 +88,6 @@ class GrepTool(Tool):
         except Exception:
             logger.warning("Grep failed for pattern %r in %s", pattern, self.path)
 
+        if self.file_filter is not None:
+            matches = [m for m in matches if file_allowed(self.file_filter, m.filename)]
         return matches

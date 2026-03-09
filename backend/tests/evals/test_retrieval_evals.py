@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from hivegent.chunks import chunk_document
-from hivegent.retrieval import apply_search_tool, sync_index
+from hivegent.retrieval import build_search_tool, sync_index
 from hivegent.store import Casebase
 
 pytestmark = pytest.mark.slow
@@ -47,8 +47,9 @@ async def test_sparse_search_finds_relevant_chunks(
     """BM25 search returns relevant chunks in top-k for each annotation."""
     await _seed_store(data_dir, user_store, annotations)
 
+    tool = build_search_tool([user_store])
     for ann in annotations:
-        results = apply_search_tool([user_store], "sparse", ann["question"], top_k=10)
+        results = tool(ann["question"], search_type="sparse", top_k=10)
         result_filenames = {chunk.filename for chunk in results}
 
         for expected_doc in ann["relevant_documents"]:
@@ -66,6 +67,7 @@ async def test_sparse_search_returns_nonempty(
     """Each annotation query returns at least one result."""
     await _seed_store(data_dir, user_store, annotations)
 
+    tool = build_search_tool([user_store])
     for ann in annotations:
-        results = apply_search_tool([user_store], "sparse", ann["question"], top_k=5)
+        results = tool(ann["question"], search_type="sparse", top_k=5)
         assert len(results) > 0, f"No results for query {ann['question']!r}"

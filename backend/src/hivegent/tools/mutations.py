@@ -2,13 +2,13 @@
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal, override
 
 from pydantic import Field
 
+from .base import FileFilter, Tool, file_allowed
 from .documents import DocumentFilenameArg
-from .base import Tool
 
 __all__ = [
     "DocumentContentArg",
@@ -47,6 +47,7 @@ class EditDocumentTool(Tool):
     """Edit a document by replacing an exact string with a new string."""
 
     path: Path
+    file_filter: FileFilter = None
     on_write: Callable[[DocumentFilenameArg], Awaitable[None]] | None = None
 
     @override
@@ -61,6 +62,8 @@ class EditDocumentTool(Tool):
         Fails if the string does not exist or appears more than once,
         ensuring unambiguous edits.
         """
+        if not file_allowed(self.file_filter, filename):
+            return f"Error: '{filename}' is not accessible."
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
             return "Error: path traversal detected."
@@ -89,7 +92,8 @@ class WriteDocumentTool(Tool):
     """Write content to a document using prepend, append, or replace mode."""
 
     path: Path
-    extension: str = ".md"
+    glob: str | None = None
+    file_filter: FileFilter = None
     on_write: Callable[[DocumentFilenameArg], Awaitable[None]] | None = None
 
     @override
@@ -100,11 +104,13 @@ class WriteDocumentTool(Tool):
         mode: WriteModeArg = "replace",
     ) -> str:
         """Write content to a document."""
+        if not file_allowed(self.file_filter, filename):
+            return f"Error: '{filename}' is not accessible."
         file_path = (self.path / filename).resolve()
         if not file_path.is_relative_to(self.path.resolve()):
             return "Error: path traversal detected."
-        if self.extension and not filename.endswith(self.extension):
-            return f"Error: only '{self.extension}' files are supported."
+        if self.glob and not PurePosixPath(filename).match(self.glob):
+            return f"Error: '{filename}' does not match pattern '{self.glob}'."
 
         if mode == "replace":
             file_path.parent.mkdir(parents=True, exist_ok=True)

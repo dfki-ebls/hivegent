@@ -5,10 +5,9 @@ from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAcces
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from ... import tool_runtime
 from ...agents import UserDeps, explore_toolset, user_agent
-from ...chunkers.base import ChunkSummary, RetrievedChunk
-from ...chunks import ChunkIndexArg, GetChunkTool, ListChunksTool
+from ...chunkers.base import RetrievedChunk
+from ...chunks import GetChunkTool, ListChunksTool
 from ...config import settings
 from ...prompts import EXPLORE_INSTRUCTIONS
 from ...retrieval import build_search_tool
@@ -20,9 +19,7 @@ from ...tools import (
     LanceDBSearchTool,
     ListDocumentsTool,
 )
-from ...tools.base import tool_description
-from ...tools.documents import DocumentFilenameArg
-from ...tools.retrieval import SearchQueryArg, SearchTopKArg, SearchTypeArg
+from ...tools.fastmcp import register_mcp_tools
 from ..app import mcp_app
 from ..common import (
     ExploreTaskArg,
@@ -33,44 +30,33 @@ from ..common import (
 
 __all__ = [
     "explore_documents",
-    "get_chunk",
-    "list_chunks",
-    "semantic_search",
 ]
 
 
-@mcp_app.tool(description=tool_description(LanceDBSearchTool))
-def semantic_search(
-    query: SearchQueryArg,
-    search_type: SearchTypeArg = "hybrid",
-    top_k: SearchTopKArg = 5,
+def _list_chunks(
+    store: Casebase = Depends(get_mcp_user_store),
+) -> ListChunksTool:
+    return ListChunksTool(metadata_dir=store.metadata_dir(settings.data_dir))
+
+
+def _get_chunk(
+    store: Casebase = Depends(get_mcp_user_store),
+) -> GetChunkTool:
+    return GetChunkTool(metadata_dir=store.metadata_dir(settings.data_dir))
+
+
+def _semantic_search(
     store: Casebase = Depends(get_mcp_user_store),
     group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
-) -> list[RetrievedChunk]:
-    return tool_runtime.semantic_search(
-        store,
-        query,
-        search_type=search_type,
-        top_k=top_k,
-        group_stores=group_stores,
-    )
+) -> LanceDBSearchTool[RetrievedChunk]:
+    return build_search_tool((store, *group_stores))
 
 
-@mcp_app.tool(description=tool_description(ListChunksTool))
-def list_chunks(
-    filename: DocumentFilenameArg,
-    store: Casebase = Depends(get_mcp_user_store),
-) -> list[ChunkSummary] | None:
-    return tool_runtime.list_chunks(store, filename)
-
-
-@mcp_app.tool(description=tool_description(GetChunkTool))
-def get_chunk(
-    filename: DocumentFilenameArg,
-    chunk_index: ChunkIndexArg,
-    store: Casebase = Depends(get_mcp_user_store),
-) -> str | None:
-    return tool_runtime.get_chunk(store, filename, chunk_index)
+register_mcp_tools(mcp_app, [
+    _list_chunks,
+    _get_chunk,
+    _semantic_search,
+])
 
 
 @mcp_app.tool()
@@ -110,8 +96,8 @@ async def explore_documents(
         task,
         system_prompt=EXPLORE_INSTRUCTIONS,
         tools=[
-            ListDocumentsTool(path=workspace, extension=""),
-            GlobDocumentsTool(path=workspace, extension=""),
+            ListDocumentsTool(path=workspace),
+            GlobDocumentsTool(path=workspace),
             GrepTool(path=workspace),
             build_search_tool(all_stores),
             GetDocumentLinesTool(path=workspace),

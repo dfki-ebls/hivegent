@@ -1,9 +1,12 @@
 """Mutation-oriented MCP tool registrations."""
 
+from functools import partial
+
 from fastmcp import Context
 from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAccessIssue]
 
-from ... import tool_runtime
+from ...chunks import on_document_write
+from ...config import settings
 from ...store import Casebase
 from ...tools import EditDocumentTool, WriteDocumentTool
 from ...tools.base import tool_description
@@ -38,12 +41,11 @@ async def edit_document(
     if response.action != "accept":
         return "Edit denied by user."
 
-    return await tool_runtime.edit_document(
-        store,
-        filename,
-        old_string,
-        new_string,
+    tool = EditDocumentTool(
+        path=store.workspace_dir(settings.data_dir),
+        on_write=partial(on_document_write, store),
     )
+    return await tool(filename, old_string, new_string)
 
 
 @mcp_app.tool(description=tool_description(WriteDocumentTool))
@@ -62,9 +64,8 @@ async def write_document(
     if response.action != "accept":
         return "Write denied by user."
 
-    return await tool_runtime.write_document(
-        store,
-        filename,
-        content,
-        mode=mode,
+    tool = WriteDocumentTool(
+        path=store.workspace_dir(settings.data_dir),
+        on_write=partial(on_document_write, store),
     )
+    return await tool(filename, content, mode)

@@ -1,57 +1,37 @@
 """Write-oriented agent tool registrations."""
 
-from pydantic_ai import FunctionToolset, RunContext
+from functools import partial
 
-from ... import tool_runtime
+from pydantic_ai import FunctionToolset
+
+from ...chunks import on_document_write
+from ...config import settings
 from ...tools import EditDocumentTool, WriteDocumentTool
-from ...tools.base import tool_description
-from ...tools.documents import DocumentFilenameArg
-from ...tools.mutations import (
-    DocumentContentArg,
-    EditNewStringArg,
-    EditOldStringArg,
-    WriteModeArg,
-)
 from ..common import UserDeps
+from ...tools.pydantic_ai import register_agent_tools
 
-__all__ = ["edit_document", "write_document", "write_toolset"]
+__all__ = ["write_toolset"]
+
+
+def _edit_document(deps: UserDeps) -> EditDocumentTool:
+    return EditDocumentTool(
+        path=deps.store.workspace_dir(settings.data_dir),
+        file_filter=deps.document_filter,
+        on_write=partial(on_document_write, deps.store),
+    )
+
+
+def _write_document(deps: UserDeps) -> WriteDocumentTool:
+    return WriteDocumentTool(
+        path=deps.store.workspace_dir(settings.data_dir),
+        file_filter=deps.document_filter,
+        on_write=partial(on_document_write, deps.store),
+    )
+
 
 write_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
-
-@write_toolset.tool(
-    requires_approval=True,
-    description=tool_description(EditDocumentTool),
-)
-async def edit_document(
-    ctx: RunContext[UserDeps],
-    filename: DocumentFilenameArg,
-    old_string: EditOldStringArg,
-    new_string: EditNewStringArg,
-) -> str:
-    return await tool_runtime.edit_document(
-        ctx.deps.store,
-        filename,
-        old_string,
-        new_string,
-        document_filter=ctx.deps.document_filter,
-    )
-
-
-@write_toolset.tool(
-    requires_approval=True,
-    description=tool_description(WriteDocumentTool),
-)
-async def write_document(
-    ctx: RunContext[UserDeps],
-    filename: DocumentFilenameArg,
-    content: DocumentContentArg,
-    mode: WriteModeArg = "replace",
-) -> str:
-    return await tool_runtime.write_document(
-        ctx.deps.store,
-        filename,
-        content,
-        mode=mode,
-        document_filter=ctx.deps.document_filter,
-    )
+register_agent_tools(write_toolset, UserDeps, [
+    _edit_document,
+    _write_document,
+], requires_approval=True)
