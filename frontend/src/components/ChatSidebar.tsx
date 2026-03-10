@@ -13,6 +13,7 @@ import {
   FileText,
   Folder,
   HistoryIcon,
+  MessageSquarePlusIcon,
   MessageSquareIcon,
   Minimize2,
   Paperclip,
@@ -21,6 +22,7 @@ import {
   SquarePen,
   X,
 } from "lucide-react";
+import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Components } from "streamdown";
 import { getToolPartInfo, processToolOutput, ToolPartDisplay, type ToolPart } from "./ToolParts";
@@ -45,6 +47,17 @@ import {
   ConversationScrollButton,
 } from "./ai-elements/conversation";
 import { Loader } from "./ai-elements/loader";
+import {
+  Queue,
+  QueueItem,
+  QueueItemContent,
+  QueueItemIndicator,
+  QueueList,
+  QueueSection,
+  QueueSectionContent,
+  QueueSectionLabel,
+  QueueSectionTrigger,
+} from "./ai-elements/queue";
 import {
   Message,
   MessageAction,
@@ -310,6 +323,11 @@ function MessagePart({
   return null;
 }
 
+interface SteeringMessage {
+  id: string;
+  text: string;
+}
+
 interface ChatSidebarProps {
   id: string;
   includedDocuments: string[];
@@ -346,6 +364,7 @@ export function ChatSidebar({
   const [isCompacting, setIsCompacting] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [conversationError, setConversationError] = useState(false);
+  const [steeringQueue, setSteeringQueue] = useState<SteeringMessage[]>([]);
   const pendingRetryRef = useRef<string | null>(null);
 
   const hasDocumentFilters = includedDocuments.length > 0 || excludedDocuments.length > 0;
@@ -391,6 +410,8 @@ export function ChatSidebar({
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
   });
+
+  const isStreaming = status === "submitted" || status === "streaming";
 
   // Clear editing state when a response starts streaming
   useEffect(() => {
@@ -464,6 +485,31 @@ export function ChatSidebar({
       onClearDocuments,
     ],
   );
+
+  const handleSteer = useCallback(
+    (text: string) => {
+      if (!text.trim()) return;
+      setSteeringQueue((prev) => [...prev, { id: nanoid(), text: text.trim() }]);
+      setInputValue("");
+    },
+    [],
+  );
+
+  // Auto-send queued steering messages when the stream finishes
+  const steeringQueueRef = useRef(steeringQueue);
+  steeringQueueRef.current = steeringQueue;
+  const handleSendMessageRef = useRef(handleSendMessage);
+  handleSendMessageRef.current = handleSendMessage;
+  const prevStreamingRef = useRef(isStreaming);
+  useEffect(() => {
+    const wasStreaming = prevStreamingRef.current;
+    prevStreamingRef.current = isStreaming;
+    if (!isStreaming && wasStreaming && steeringQueueRef.current.length > 0) {
+      const text = steeringQueueRef.current.map((m) => m.text).join("\n\n");
+      setSteeringQueue([]);
+      void handleSendMessageRef.current(text);
+    }
+  }, [isStreaming]);
 
   const handleEditMessage = useCallback(
     async (messageId: string, newText: string) => {
@@ -809,9 +855,38 @@ export function ChatSidebar({
               ))}
             </Suggestions>
           )}
+          {steeringQueue.length > 0 && (
+            <Queue>
+              <QueueSection>
+                <QueueSectionTrigger>
+                  <QueueSectionLabel
+                    count={steeringQueue.length}
+                    label={steeringQueue.length === 1 ? "queued message" : "queued messages"}
+                    icon={<MessageSquarePlusIcon className="size-4" />}
+                  />
+                </QueueSectionTrigger>
+                <QueueSectionContent>
+                  <QueueList>
+                    {steeringQueue.map((msg) => (
+                      <QueueItem key={msg.id}>
+                        <div className="flex items-center gap-2">
+                          <QueueItemIndicator />
+                          <QueueItemContent>{msg.text}</QueueItemContent>
+                        </div>
+                      </QueueItem>
+                    ))}
+                  </QueueList>
+                </QueueSectionContent>
+              </QueueSection>
+            </Queue>
+          )}
           <PromptInput
             onSubmit={(msg) => {
-              void handleSendMessage(msg.text, msg.files);
+              if (isStreaming) {
+                handleSteer(msg.text);
+              } else {
+                void handleSendMessage(msg.text, msg.files);
+              }
             }}
           >
             {hasDocumentFilters && (
@@ -873,7 +948,7 @@ export function ChatSidebar({
               <PromptInputTextarea
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder="Ask about your documents..."
+                placeholder={isStreaming ? "Steer the conversation..." : "Ask about your documents..."}
               />
             </PromptInputBody>
             <PromptInputFooter>
