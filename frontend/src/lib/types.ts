@@ -433,7 +433,8 @@ export type ChunkPosition =
   | { type: "chunk_index"; chunkIndex: number }
   | { type: "line"; line: number }
   | { type: "line_range"; startLine: number; endLine: number }
-  | { type: "full_document" };
+  | { type: "full_document" }
+  | { type: "web_result"; url: string };
 
 /** A single fetched chunk (search result, grep match, line range, etc.). */
 export interface FetchedChunk {
@@ -470,6 +471,9 @@ export function makeChunkId(filename: string, source: string, position: ChunkPos
     case "full_document":
       positionKey = "full";
       break;
+    case "web_result":
+      positionKey = "web";
+      break;
   }
   return `${filename}::${source}::${positionKey}`;
 }
@@ -482,6 +486,8 @@ export function chunkSortKey(position: ChunkPosition): number {
   switch (position.type) {
     case "full_document":
       return -1;
+    case "web_result":
+      return 0;
     case "chunk_index":
       return position.chunkIndex;
     case "line":
@@ -502,6 +508,13 @@ export function chunkPositionLabel(position: ChunkPosition): string {
       return `Lines ${position.startLine}-${position.endLine}`;
     case "full_document":
       return "Full document";
+    case "web_result": {
+      try {
+        return new URL(position.url).hostname;
+      } catch {
+        return position.url;
+      }
+    }
   }
 }
 

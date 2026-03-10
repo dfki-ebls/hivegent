@@ -8,6 +8,7 @@ import {
   FileText,
   FolderOpen,
   FolderPlus,
+  Globe,
   Loader2,
   Paperclip,
   Plus,
@@ -41,6 +42,7 @@ import {
   chunkPositionLabel,
   sortChunks,
 } from "../lib/types";
+import { formatWebUrl, isWebUrl } from "../lib/utils";
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
 import { useUserDocumentsStore } from "../stores/user-documents-store";
 import { canWriteGroup, getAllGroups, useSettingsStore } from "../stores/settings-store";
@@ -151,6 +153,7 @@ interface DocumentGroupProps {
 
 function DocumentGroup({ doc, chunks, onChunkClick, onFilenameClick }: DocumentGroupProps) {
   const [open, setOpen] = useState(true);
+  const isWeb = isWebUrl(doc.filename);
 
   // Include all chunks except user-initiated "preview" full-document fetches.
   // Model-fetched full documents appear as regular chunk cards (sorted first).
@@ -166,16 +169,23 @@ function DocumentGroup({ doc, chunks, onChunkClick, onFilenameClick }: DocumentG
       <div className="flex items-center gap-2 px-1 py-2">
         <CollapsibleTrigger asChild>
           <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
-            <ChevronRight className={`h-4 w-4 transition-transform ${open ? "rotate-90" : ""}`} />
+            {isWeb && <Globe className="h-4 w-4" />}
+            {!isWeb && <ChevronRight className={`h-4 w-4 transition-transform ${open ? "rotate-90" : ""}`} />}
           </Button>
         </CollapsibleTrigger>
         <button
           type="button"
           className="truncate text-sm font-medium hover:underline text-left min-w-0"
-          onClick={() => onFilenameClick(doc.filename)}
+          onClick={() => {
+            if (isWeb) {
+              window.open(doc.filename, "_blank", "noopener,noreferrer");
+            } else {
+              onFilenameClick(doc.filename);
+            }
+          }}
           title={doc.filename}
         >
-          {doc.filename}
+          {isWeb ? formatWebUrl(doc.filename) : doc.filename}
         </button>
         {contentChunks.length > 0 && (
           <Badge variant="outline" className="shrink-0 text-xs">

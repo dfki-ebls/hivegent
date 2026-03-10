@@ -1,4 +1,5 @@
-import { FileText, Pencil, RefreshCw } from "lucide-react";
+import { ExternalLink, FileText, Pencil, RefreshCw } from "lucide-react";
+import { isWebUrl } from "@/lib/utils";
 import Markdown from "markdown-to-jsx";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -166,6 +167,8 @@ export function DocumentDialog({
     }
   }, [isManagedMode, documents, filename]);
 
+  const isWeb = isWebUrl(filename);
+
   // --- Fetch full document content ---
   useEffect(() => {
     if (!open || !filename || isNew) return;
@@ -177,6 +180,12 @@ export function DocumentDialog({
         setFullContent(doc.fullContent);
         return;
       }
+    }
+
+    // Don't fetch from backend for web URLs — content comes from the store only
+    if (isWebUrl(filename)) {
+      setIsLoading(false);
+      return;
     }
 
     let cancelled = false;
@@ -530,7 +539,20 @@ export function DocumentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="h-[85vh] w-[90vw] max-w-5xl! flex flex-col overflow-hidden p-0">
         <DialogHeader className="px-6 pt-6 pb-3 space-y-2">
-          <DialogTitle className="truncate pr-8">{filename}</DialogTitle>
+          <DialogTitle className="truncate pr-8 flex items-center gap-2">
+            {filename}
+            {isWeb && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0"
+                onClick={() => window.open(filename, "_blank", "noopener,noreferrer")}
+                title="Open in browser"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </DialogTitle>
           <DialogDescription className="sr-only">
             Document content and chunk context for {filename}
           </DialogDescription>

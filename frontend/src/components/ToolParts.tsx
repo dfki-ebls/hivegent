@@ -170,6 +170,30 @@ export function processToolOutput(
       }
       return;
     }
+    case "web_search": {
+      const results = output as { title: string; href: string; body: string }[];
+      if (!results?.length) return;
+      const query = input.query as string;
+      const source = `web: ${query ?? "search"}`;
+      for (const r of results) {
+        if (!r.href) continue;
+        addChunk({
+          filename: r.href,
+          content: r.body || r.title,
+          source,
+          position: { type: "web_result", url: r.href },
+        });
+      }
+      return;
+    }
+    case "web_fetch": {
+      const url = input.url as string;
+      const content = typeof output === "string" ? output : null;
+      if (url && content && !content.startsWith("Error:")) {
+        markFullDocument(url, content, "web_fetch");
+      }
+      return;
+    }
   }
 }
 

@@ -52,6 +52,7 @@ import {
   MessageContent,
   MessageResponse,
 } from "./ai-elements/message";
+import { Reasoning, ReasoningContent, ReasoningTrigger } from "./ai-elements/reasoning";
 import {
   PromptInput,
   PromptInputBody,
@@ -278,6 +279,19 @@ function MessagePart({
         onRegenerate={onRegenerate}
       />
     );
+  }
+
+  if (part.type === "reasoning") {
+    return (
+      <Reasoning key={partIndex} isStreaming={part.state === "streaming"}>
+        <ReasoningTrigger />
+        <ReasoningContent>{part.text}</ReasoningContent>
+      </Reasoning>
+    );
+  }
+
+  if (part.type === "step-start") {
+    return null;
   }
 
   const info = getToolPartInfo(part);
