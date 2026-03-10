@@ -367,6 +367,7 @@ export function ChatSidebar({
     sendMessage,
     status,
     error,
+    clearError,
     regenerate,
     stop,
     setMessages,
@@ -516,6 +517,42 @@ export function ChatSidebar({
     regenerate,
   ]);
 
+  const handleRetry = useCallback(async () => {
+    const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
+    if (!lastUserMessage) return;
+    const text = lastUserMessage.parts
+      ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join("\n");
+    if (!text) return;
+    const authHeaders = await getAuthHeaders();
+    await sendMessage(
+      { text, messageId: lastUserMessage.id },
+      {
+        headers: authHeaders,
+        body: {
+          personality,
+          system_message: personality === "custom" ? customSystemMessage : undefined,
+          reasoning_effort: reasoningEffort,
+          llm: buildLlmConfig(llm),
+          included_documents: includedDocuments,
+          excluded_documents: excludedDocuments,
+          tools: buildToolsPayload(toolsSpec),
+        },
+      },
+    );
+  }, [
+    messages,
+    personality,
+    customSystemMessage,
+    reasoningEffort,
+    llm,
+    includedDocuments,
+    excludedDocuments,
+    toolsSpec,
+    sendMessage,
+  ]);
+
   const handleCompact = useCallback(
     async (retryMessageText?: string) => {
       setIsCompacting(true);
@@ -656,7 +693,8 @@ export function ChatSidebar({
               const showActions = isAssistant && isLastMessage && status === "ready";
 
               const isUser = message.role === "user";
-              const canEdit = isUser && status === "ready" && editingMessageId !== message.id;
+              const canEdit =
+                isUser && (status === "ready" || status === "error") && editingMessageId !== message.id;
 
               return (
                 <Message key={message.id} from={message.role}>
@@ -724,8 +762,18 @@ export function ChatSidebar({
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Error</AlertTitle>
-                <AlertDescription>
-                  {error.message || "An error occurred while processing your request."}
+                <AlertDescription className="flex items-start justify-between gap-2">
+                  <span>{error.message || "An error occurred while processing your request."}</span>
+                  <span className="flex shrink-0 gap-1">
+                    <Button variant="outline" size="sm" onClick={handleRetry}>
+                      <RefreshCcwIcon className="mr-1 h-3 w-3" />
+                      Retry
+                    </Button>
+                    <Button variant="ghost" size="icon-sm" onClick={clearError}>
+                      <X className="h-3 w-3" />
+                      <span className="sr-only">Dismiss</span>
+                    </Button>
+                  </span>
                 </AlertDescription>
               </Alert>
             )}
