@@ -36,9 +36,7 @@ def for_fastmcp(
     hints = get_type_hints(call, include_extras=True)
 
     # __call__ params minus 'self'
-    call_params = [
-        p for name, p in sig.parameters.items() if name != "self"
-    ]
+    call_params = [p for name, p in sig.parameters.items() if name != "self"]
 
     # Append _tool_ as KEYWORD_ONLY with Depends default
     tool_param = inspect.Parameter(
@@ -59,11 +57,13 @@ def for_fastmcp(
         new_annotations["return"] = hints["return"]
 
     if is_async:
+
         @wraps(call)
         async def wrapper(**kwargs: Any) -> Any:  # noqa: ANN401
             tool = kwargs.pop("_tool_")
             return await tool(**kwargs)
     else:
+
         @wraps(call)
         def wrapper(**kwargs: Any) -> Any:  # noqa: ANN401
             tool = kwargs.pop("_tool_")

@@ -41,9 +41,7 @@ def for_pydantic_ai[D](
         inspect.Parameter.POSITIONAL_OR_KEYWORD,
         annotation=ctx_annotation,
     )
-    call_params = [
-        p for name, p in sig.parameters.items() if name != "self"
-    ]
+    call_params = [p for name, p in sig.parameters.items() if name != "self"]
     new_params = [ctx_param, *call_params]
     new_sig = sig.replace(parameters=new_params)
 
@@ -56,11 +54,13 @@ def for_pydantic_ai[D](
         new_annotations["return"] = hints["return"]
 
     if is_async:
+
         @wraps(call)
         async def wrapper(ctx: Any, **kwargs: Any) -> Any:  # noqa: ANN401
             tool = factory(ctx.deps)
             return await tool(**kwargs)
     else:
+
         @wraps(call)
         def wrapper(ctx: Any, **kwargs: Any) -> Any:  # noqa: ANN401
             tool = factory(ctx.deps)

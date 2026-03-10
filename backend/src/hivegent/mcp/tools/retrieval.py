@@ -52,11 +52,14 @@ def _semantic_search(
     return build_search_tool((store, *group_stores))
 
 
-register_mcp_tools(mcp_app, [
-    _list_chunks,
-    _get_chunk,
-    _semantic_search,
-])
+register_mcp_tools(
+    mcp_app,
+    [
+        _list_chunks,
+        _get_chunk,
+        _semantic_search,
+    ],
+)
 
 
 @mcp_app.tool()

@@ -48,10 +48,13 @@ def _grep(
     return GrepTool(path=store.workspace_dir(settings.data_dir))
 
 
-register_mcp_tools(mcp_app, [
-    _list_documents,
-    _get_document,
-    _get_document_lines,
-    _glob_documents,
-    _grep,
-])
+register_mcp_tools(
+    mcp_app,
+    [
+        _list_documents,
+        _get_document,
+        _get_document_lines,
+        _glob_documents,
+        _grep,
+    ],
+)

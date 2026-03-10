@@ -31,7 +31,12 @@ def _write_document(deps: UserDeps) -> WriteDocumentTool:
 
 write_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
-register_agent_tools(write_toolset, UserDeps, [
-    _edit_document,
-    _write_document,
-], requires_approval=True)
+register_agent_tools(
+    write_toolset,
+    UserDeps,
+    [
+        _edit_document,
+        _write_document,
+    ],
+    requires_approval=True,
+)

@@ -321,7 +321,9 @@ def _to_retrieved_chunk(
         filename=filename,
         chunk_index=chunk_index,
         text=result.text,
-        token_count=token_count if token_count is not None else len(result.text.split()),
+        token_count=token_count
+        if token_count is not None
+        else len(result.text.split()),
         score=round(result.score, 4),
     )
 

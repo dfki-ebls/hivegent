@@ -75,13 +75,17 @@ def _semantic_search(deps: UserDeps) -> LanceDBSearchTool[RetrievedChunk]:
 
 explore_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
-register_agent_tools(explore_toolset, UserDeps, [
-    _list_documents,
-    _glob_documents,
-    _grep,
-    _get_document_lines,
-    _get_document,
-    _list_chunks,
-    _get_chunk,
-    _semantic_search,
-])
+register_agent_tools(
+    explore_toolset,
+    UserDeps,
+    [
+        _list_documents,
+        _glob_documents,
+        _grep,
+        _get_document_lines,
+        _get_document,
+        _list_chunks,
+        _get_chunk,
+        _semantic_search,
+    ],
+)

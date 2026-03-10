@@ -19,7 +19,11 @@ def _web_fetch(_deps: UserDeps) -> WebFetch:
 
 web_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
-register_agent_tools(web_toolset, UserDeps, [
-    _web_search,
-    _web_fetch,
-])
+register_agent_tools(
+    web_toolset,
+    UserDeps,
+    [
+        _web_search,
+        _web_fetch,
+    ],
+)

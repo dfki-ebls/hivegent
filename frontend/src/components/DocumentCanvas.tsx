@@ -170,7 +170,9 @@ function DocumentGroup({ doc, chunks, onChunkClick, onFilenameClick }: DocumentG
         <CollapsibleTrigger asChild>
           <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
             {isWeb && <Globe className="h-4 w-4" />}
-            {!isWeb && <ChevronRight className={`h-4 w-4 transition-transform ${open ? "rotate-90" : ""}`} />}
+            {!isWeb && (
+              <ChevronRight className={`h-4 w-4 transition-transform ${open ? "rotate-90" : ""}`} />
+            )}
           </Button>
         </CollapsibleTrigger>
         <button

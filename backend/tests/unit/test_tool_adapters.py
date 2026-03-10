@@ -114,18 +114,27 @@ class TestRegisterAgentTools:
 
     def test_registers_tools(self) -> None:
         toolset: FunctionToolset[_Deps] = FunctionToolset()
-        register_agent_tools(toolset, _Deps, [
-            _sync_default,
-            _async_default,
-        ])
+        register_agent_tools(
+            toolset,
+            _Deps,
+            [
+                _sync_default,
+                _async_default,
+            ],
+        )
         assert "sync_default" in toolset.tools
         assert "async_default" in toolset.tools
 
     def test_requires_approval(self) -> None:
         toolset: FunctionToolset[_Deps] = FunctionToolset()
-        register_agent_tools(toolset, _Deps, [
-            _sync_default,
-        ], requires_approval=True)
+        register_agent_tools(
+            toolset,
+            _Deps,
+            [
+                _sync_default,
+            ],
+            requires_approval=True,
+        )
         tool = toolset.tools["sync_default"]
         assert tool.requires_approval is True
 

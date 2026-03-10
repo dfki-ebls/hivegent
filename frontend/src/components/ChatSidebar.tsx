@@ -708,7 +708,9 @@ export function ChatSidebar({
 
               const isUser = message.role === "user";
               const canEdit =
-                isUser && (status === "ready" || status === "error") && editingMessageId !== message.id;
+                isUser &&
+                (status === "ready" || status === "error") &&
+                editingMessageId !== message.id;
 
               return (
                 <Message key={message.id} from={message.role}>
