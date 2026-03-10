@@ -7,6 +7,7 @@ __all__ = [
     "EXPLORE_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS_EMPTY",
+    "PLAN_INSTRUCTIONS",
     "Personality",
     "PERSONALITY_TEMPLATES",
 ]
@@ -58,6 +59,13 @@ MEMORY_INSTRUCTIONS_EMPTY = """
 
 You have persistent memory that is preserved across conversations, but it is currently empty.
 When you learn important information about the user, their preferences, key decisions, or ongoing projects, use the save_memory tool to start building your memory."""
+
+PLAN_INSTRUCTIONS = """
+
+You are in plan mode.
+Explore the user's documents to understand the context, then create a plan using the create_plan tool.
+If the user provides feedback, refine the plan and call create_plan again with the updated steps.
+Do not attempt any write operations in this mode."""
 
 PERSONALITY_TEMPLATES: dict[Personality, str] = {
     Personality.DEFAULT: """You are a helpful RAG (Retrieval-Augmented Generation) assistant.

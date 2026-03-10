@@ -1,6 +1,7 @@
 """Toolset grouping and metadata helpers for agents."""
 
 from collections.abc import Sequence
+from typing import Literal
 
 from pydantic_ai import FilteredToolset, FunctionToolset
 from pydantic_ai.toolsets import AbstractToolset
@@ -11,6 +12,7 @@ from .tools import (
     conversation_toolset,
     explore_toolset,
     memory_toolset,
+    plan_toolset,
     subagent_toolset,
     web_toolset,
     write_toolset,
@@ -25,25 +27,52 @@ TOOLSET_GROUPS: dict[str, FunctionToolset[UserDeps]] = {
     "memory": memory_toolset,
     "web": web_toolset,
     "conversation": conversation_toolset,
+    "plan": plan_toolset,
 }
 
+PLAN_MODE_GROUPS: frozenset[str] = frozenset(
+    {
+        "explore",
+        "subagent",
+        "web",
+        "conversation",
+        "plan",
+    }
+)
 
-def build_toolsets[T](
-    toolsets: Sequence[FunctionToolset[T]],
+EXECUTE_MODE_GROUPS: frozenset[str] = frozenset(
+    {
+        "explore",
+        "subagent",
+        "write",
+        "memory",
+        "web",
+        "conversation",
+    }
+)
+
+
+def build_toolsets(
+    toolset_groups: dict[str, FunctionToolset[UserDeps]],
     tools_spec: ToolsSpec,
-    extra: Sequence[AbstractToolset[T]] = (),
-) -> Sequence[AbstractToolset[T]]:
-    """Apply disabled-tool filtering and append extra toolsets.
+    extra: Sequence[AbstractToolset[UserDeps]] = (),
+    mode: Literal["plan", "execute"] = "execute",
+) -> Sequence[AbstractToolset[UserDeps]]:
+    """Filter toolsets by mode, apply disabled-tool filtering, and append extras.
 
     Args:
-        toolsets: Built-in agent toolsets.
+        toolset_groups: Mapping of group name to toolset.
         tools_spec: Combined tool configuration from the chat request.
         extra: Additional toolsets to append (e.g. MCP servers).
+        mode: Agent mode controlling which toolset groups are included.
 
     Returns:
         Sequence of toolsets ready to pass to the agent.
     """
-    result: list[AbstractToolset[T]] = []
+    allowed = PLAN_MODE_GROUPS if mode == "plan" else EXECUTE_MODE_GROUPS
+    toolsets = [ts for name, ts in toolset_groups.items() if name in allowed]
+
+    result: list[AbstractToolset[UserDeps]] = []
 
     if tools_spec.disabled_tools:
         disabled = frozenset(tools_spec.disabled_tools)

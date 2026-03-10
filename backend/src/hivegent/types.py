@@ -171,6 +171,10 @@ class ChatRequestConfig(BaseModel):
         default="auto",
         description="Reasoning effort level ('auto' means unset/provider default)",
     )
+    mode: Literal["plan", "execute"] = Field(
+        default="execute",
+        description="Agent mode: 'plan' for planning only, 'execute' for full execution",
+    )
     llm: LlmConfig = Field(default_factory=LlmConfig)
     included_documents: list[str] = Field(default_factory=list)
     excluded_documents: list[str] = Field(default_factory=list)

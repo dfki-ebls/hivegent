@@ -17,7 +17,18 @@ import {
   ConfirmationRequest,
 } from "@/components/ai-elements/confirmation";
 import { CodeBlock } from "@/components/ai-elements/code-block";
+import {
+  Plan,
+  PlanAction,
+  PlanContent,
+  PlanDescription,
+  PlanFooter,
+  PlanHeader,
+  PlanTitle,
+  PlanTrigger,
+} from "@/components/ai-elements/plan";
 import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
+import { Button } from "@/components/ui/button";
 import {
   ToolError,
   ToolKeyValue,
@@ -40,6 +51,7 @@ interface ToolPartDisplayProps {
   part: ToolPart;
   onApprove?: (id: string) => void;
   onDeny?: (id: string) => void;
+  onExecutePlan?: () => void;
 }
 
 function getToolName(part: { type: string; toolName?: string }): string | null {
@@ -366,6 +378,37 @@ function WriteDocumentToolDisplay({ part, onApprove, onDeny }: ToolPartDisplayPr
   );
 }
 
+function CreatePlanToolDisplay({ part, onExecutePlan }: ToolPartDisplayProps) {
+  const state: ToolPart["state"] = part.state ?? "output-available";
+  const input = parseJson<{ title?: string; description?: string; steps?: string[] }>(part.input);
+
+  return (
+    <Plan defaultOpen isStreaming={state === "input-streaming"}>
+      <PlanHeader>
+        <div>
+          <PlanTitle>{input?.title ?? "Plan"}</PlanTitle>
+          {input?.description && <PlanDescription>{input.description}</PlanDescription>}
+        </div>
+        <PlanAction>
+          <PlanTrigger />
+        </PlanAction>
+      </PlanHeader>
+      <PlanContent>
+        <ol className="list-decimal pl-5 space-y-1 text-sm">
+          {input?.steps?.map((step, i) => (
+            <li key={i}>{step}</li>
+          ))}
+        </ol>
+      </PlanContent>
+      {state === "output-available" && onExecutePlan && (
+        <PlanFooter>
+          <Button onClick={onExecutePlan}>Execute Plan</Button>
+        </PlanFooter>
+      )}
+    </Plan>
+  );
+}
+
 function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
   const input = parseJson<Record<string, unknown>>(part.input);
@@ -386,7 +429,16 @@ function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
   );
 }
 
-export function ToolPartDisplay({ toolName, part, onApprove, onDeny }: ToolPartDisplayProps) {
+export function ToolPartDisplay({
+  toolName,
+  part,
+  onApprove,
+  onDeny,
+  onExecutePlan,
+}: ToolPartDisplayProps) {
+  if (toolName === "create_plan") {
+    return <CreatePlanToolDisplay toolName={toolName} part={part} onExecutePlan={onExecutePlan} />;
+  }
   if (toolName === "semantic_search") {
     return <SearchToolDisplay toolName={toolName} part={part} />;
   }

@@ -44,6 +44,7 @@ from ...prompts import (
     MEMORY_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS_EMPTY,
     PERSONALITY_TEMPLATES,
+    PLAN_INSTRUCTIONS,
     Personality,
 )
 from ...types import (
@@ -292,12 +293,15 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     included_documents: list[str] = body.get("included_documents") or []
     excluded_documents: list[str] = body.get("excluded_documents") or []
     tools = ToolsSpec(**(body.get("tools") or {}))
+    raw_mode = body.get("mode", "execute")
+    mode = raw_mode if raw_mode in ("plan", "execute") else "execute"
 
     return ChatRequestConfig(
         conversation_id=body.get("conversation_id", ""),
         personality=personality,
         system_message=system_message,
         reasoning_effort=reasoning_effort,
+        mode=mode,
         llm=llm,
         included_documents=included_documents,
         excluded_documents=excluded_documents,
@@ -334,6 +338,9 @@ async def create_conversation_chat(
             )
             + CITATION_INSTRUCTIONS
         )
+
+    if config.mode == "plan":
+        instructions += PLAN_INSTRUCTIONS
 
     memory_enabled = "save_memory" not in (config.tools.disabled_tools or [])
     if memory_enabled:
@@ -377,9 +384,10 @@ async def create_conversation_chat(
             ),
         ),
         toolsets=build_toolsets(
-            list(TOOLSET_GROUPS.values()),
+            TOOLSET_GROUPS,
             config.tools,
             extra=[build_mcp_server(server) for server in config.tools.mcp_servers],
+            mode=config.mode,
         ),
         instructions=instructions,
         model_settings=model_settings,

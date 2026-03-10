@@ -13,6 +13,7 @@ import {
   FileText,
   Folder,
   HistoryIcon,
+  ListChecksIcon,
   MessageSquarePlusIcon,
   MessageSquareIcon,
   Minimize2,
@@ -36,7 +37,12 @@ import {
   getConversation,
   getConversationMessages,
 } from "../lib/api";
-import { REASONING_EFFORT_OPTIONS, type ReasoningEffort } from "../lib/types";
+import {
+  AGENT_MODE_OPTIONS,
+  type AgentMode,
+  REASONING_EFFORT_OPTIONS,
+  type ReasoningEffort,
+} from "../lib/types";
 import { useConversationsStore } from "../stores/conversations-store";
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
 import { useSettingsStore } from "../stores/settings-store";
@@ -254,6 +260,7 @@ interface MessagePartProps {
   onRegenerate: () => void;
   onApprove: (id: string) => void;
   onDeny: (id: string) => void;
+  onExecutePlan?: () => void;
 }
 
 function MessagePart({
@@ -269,6 +276,7 @@ function MessagePart({
   onRegenerate,
   onApprove,
   onDeny,
+  onExecutePlan,
 }: MessagePartProps) {
   if (part.type === "text" && isUserMessage) {
     return (
@@ -316,6 +324,7 @@ function MessagePart({
         part={part as ToolPart}
         onApprove={onApprove}
         onDeny={onDeny}
+        onExecutePlan={info.toolName === "create_plan" ? onExecutePlan : undefined}
       />
     );
   }
@@ -359,6 +368,7 @@ export function ChatSidebar({
   const [inputValue, setInputValue] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [activeTab, setActiveTab] = useState("chat");
+  const [agentMode, setAgentMode] = useState<AgentMode>("execute");
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("auto");
   const [compactedFrom, setCompactedFrom] = useState<string | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
@@ -450,50 +460,45 @@ export function ChatSidebar({
     };
   }, [id, setMessages]);
 
-  const handleSendMessage = useCallback(
-    async (text: string, files?: FileUIPart[]) => {
-      if (!text.trim() && (!files || files.length === 0)) return;
-      const authHeaders = await getAuthHeaders();
-      await sendMessage(
-        { text, files },
-        {
-          headers: authHeaders,
-          body: {
-            personality,
-            system_message: personality === "custom" ? customSystemMessage : undefined,
-            reasoning_effort: reasoningEffort,
-            llm: buildLlmConfig(llm),
-            included_documents: includedDocuments,
-            excluded_documents: excludedDocuments,
-            tools: buildToolsPayload(toolsSpec),
-          },
-        },
-      );
-      setInputValue("");
-      onClearDocuments();
-    },
+  const buildRequestBody = useCallback(
+    (modeOverride?: AgentMode) => ({
+      personality,
+      system_message: personality === "custom" ? customSystemMessage : undefined,
+      reasoning_effort: reasoningEffort,
+      mode: modeOverride ?? agentMode,
+      llm: buildLlmConfig(llm),
+      included_documents: includedDocuments,
+      excluded_documents: excludedDocuments,
+      tools: buildToolsPayload(toolsSpec),
+    }),
     [
       personality,
       customSystemMessage,
       reasoningEffort,
+      agentMode,
       llm,
       includedDocuments,
       excludedDocuments,
       toolsSpec,
-
-      sendMessage,
-      onClearDocuments,
     ],
   );
 
-  const handleSteer = useCallback(
-    (text: string) => {
-      if (!text.trim()) return;
-      setSteeringQueue((prev) => [...prev, { id: nanoid(), text: text.trim() }]);
+  const handleSendMessage = useCallback(
+    async (text: string, files?: FileUIPart[]) => {
+      if (!text.trim() && (!files || files.length === 0)) return;
+      const authHeaders = await getAuthHeaders();
+      await sendMessage({ text, files }, { headers: authHeaders, body: buildRequestBody() });
       setInputValue("");
+      onClearDocuments();
     },
-    [],
+    [buildRequestBody, sendMessage, onClearDocuments],
   );
+
+  const handleSteer = useCallback((text: string) => {
+    if (!text.trim()) return;
+    setSteeringQueue((prev) => [...prev, { id: nanoid(), text: text.trim() }]);
+    setInputValue("");
+  }, []);
 
   // Auto-send queued steering messages when the stream finishes
   const steeringQueueRef = useRef(steeringQueue);
@@ -517,31 +522,10 @@ export function ChatSidebar({
       const authHeaders = await getAuthHeaders();
       await sendMessage(
         { text: newText, messageId },
-        {
-          headers: authHeaders,
-          body: {
-            personality,
-            system_message: personality === "custom" ? customSystemMessage : undefined,
-            reasoning_effort: reasoningEffort,
-            llm: buildLlmConfig(llm),
-            included_documents: includedDocuments,
-            excluded_documents: excludedDocuments,
-            tools: buildToolsPayload(toolsSpec),
-          },
-        },
+        { headers: authHeaders, body: buildRequestBody() },
       );
     },
-    [
-      personality,
-      customSystemMessage,
-      reasoningEffort,
-      llm,
-      includedDocuments,
-      excludedDocuments,
-      toolsSpec,
-
-      sendMessage,
-    ],
+    [buildRequestBody, sendMessage],
   );
 
   // Re-send the pending message after navigating to a compacted conversation
@@ -556,26 +540,9 @@ export function ChatSidebar({
     const authHeaders = await getAuthHeaders();
     await regenerate({
       headers: authHeaders,
-      body: {
-        personality,
-        system_message: personality === "custom" ? customSystemMessage : undefined,
-        reasoning_effort: reasoningEffort,
-        llm: buildLlmConfig(llm),
-        included_documents: includedDocuments,
-        excluded_documents: excludedDocuments,
-        tools: buildToolsPayload(toolsSpec),
-      },
+      body: buildRequestBody(),
     });
-  }, [
-    personality,
-    customSystemMessage,
-    reasoningEffort,
-    llm,
-    includedDocuments,
-    excludedDocuments,
-    toolsSpec,
-    regenerate,
-  ]);
+  }, [buildRequestBody, regenerate]);
 
   const handleRetry = useCallback(async () => {
     const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
@@ -588,30 +555,9 @@ export function ChatSidebar({
     const authHeaders = await getAuthHeaders();
     await sendMessage(
       { text, messageId: lastUserMessage.id },
-      {
-        headers: authHeaders,
-        body: {
-          personality,
-          system_message: personality === "custom" ? customSystemMessage : undefined,
-          reasoning_effort: reasoningEffort,
-          llm: buildLlmConfig(llm),
-          included_documents: includedDocuments,
-          excluded_documents: excludedDocuments,
-          tools: buildToolsPayload(toolsSpec),
-        },
-      },
+      { headers: authHeaders, body: buildRequestBody() },
     );
-  }, [
-    messages,
-    personality,
-    customSystemMessage,
-    reasoningEffort,
-    llm,
-    includedDocuments,
-    excludedDocuments,
-    toolsSpec,
-    sendMessage,
-  ]);
+  }, [messages, buildRequestBody, sendMessage]);
 
   const handleCompact = useCallback(
     async (retryMessageText?: string) => {
@@ -641,6 +587,16 @@ export function ChatSidebar({
     },
     [id, llm, smallModel, clearAll, navigate],
   );
+
+  const handleExecutePlan = useCallback(async () => {
+    setAgentMode("execute");
+    const authHeaders = await getAuthHeaders();
+    await sendMessage(
+      { text: "Execute the plan." },
+      { headers: authHeaders, body: buildRequestBody("execute") },
+    );
+    onClearDocuments();
+  }, [buildRequestBody, sendMessage, onClearDocuments]);
 
   // Auto-compact when context window is exceeded
   useEffect(() => {
@@ -792,6 +748,11 @@ export function ChatSidebar({
                               id: approvalId,
                               approved: false,
                             })
+                          }
+                          onExecutePlan={
+                            agentMode === "plan" && isAssistant && isLastMessage
+                              ? handleExecutePlan
+                              : undefined
                           }
                         />
                       );
@@ -948,7 +909,9 @@ export function ChatSidebar({
               <PromptInputTextarea
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder={isStreaming ? "Steer the conversation..." : "Ask about your documents..."}
+                placeholder={
+                  isStreaming ? "Steer the conversation..." : "Ask about your documents..."
+                }
               />
             </PromptInputBody>
             <PromptInputFooter>
@@ -960,6 +923,22 @@ export function ChatSidebar({
                   disabled={status !== "ready"}
                   onTranscriptionChange={handleTranscriptionChange}
                 />
+                <PromptInputSelect
+                  value={agentMode}
+                  onValueChange={(v) => setAgentMode(v as AgentMode)}
+                >
+                  <PromptInputSelectTrigger className="h-8 w-auto min-w-20">
+                    <ListChecksIcon className="h-4 w-4" />
+                    <PromptInputSelectValue placeholder="Mode" />
+                  </PromptInputSelectTrigger>
+                  <PromptInputSelectContent>
+                    {AGENT_MODE_OPTIONS.map((option) => (
+                      <PromptInputSelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </PromptInputSelectItem>
+                    ))}
+                  </PromptInputSelectContent>
+                </PromptInputSelect>
                 <PromptInputSelect
                   value={reasoningEffort}
                   onValueChange={(v) => setReasoningEffort(v as ReasoningEffort)}

@@ -598,6 +598,21 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
   },
 ];
 
+/** Agent mode controlling available tools. */
+export type AgentMode = "plan" | "execute";
+
+/** Agent mode option for display in UI. */
+export interface AgentModeOption {
+  value: AgentMode;
+  label: string;
+}
+
+/** Available agent mode options. */
+export const AGENT_MODE_OPTIONS: AgentModeOption[] = [
+  { value: "execute", label: "Execute" },
+  { value: "plan", label: "Plan" },
+];
+
 /** Reasoning effort level for the LLM. */
 export type ReasoningEffort = "auto" | "none" | "low" | "medium" | "high";
 

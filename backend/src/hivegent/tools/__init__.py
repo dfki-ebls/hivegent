@@ -11,11 +11,13 @@ from .documents import (
 from .grep import GrepMatch, GrepTool
 from .jq import JqTool
 from .mutations import EditDocumentTool, WriteDocumentTool
+from .plan import CreatePlanTool
 from .retrieval import LanceDBSearchTool, SearchResult, SearchType
 from .base import FileFilter, Tool, file_allowed, tool_name
 from .web import WebFetch, WebSearch
 
 __all__ = [
+    "CreatePlanTool",
     "DocumentRange",
     "DocumentSummary",
     "FileFilter",
