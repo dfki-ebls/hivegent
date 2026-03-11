@@ -18,6 +18,9 @@ export default defineConfig({
     viteReact(),
     tailwindcss(),
   ],
+  build: {
+    chunkSizeWarningLimit: 5000,
+  },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
