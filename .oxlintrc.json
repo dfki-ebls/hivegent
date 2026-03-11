@@ -16,6 +16,7 @@
   "ignorePatterns": [
     "frontend/src/components/ai-elements/**/*.tsx",
     "frontend/src/components/ui/**/*.tsx",
+    "frontend/src/hooks/**/*.tsx",
     "frontend/src/**/*.gen.ts"
   ]
 }

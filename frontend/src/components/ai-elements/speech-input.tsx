@@ -306,7 +306,9 @@ export const SpeechInput = ({
       <Button
         className={cn(
           "relative z-10 rounded-full transition-all duration-300",
-          isListening && "text-destructive hover:text-destructive",
+          isListening
+            ? "bg-destructive text-white hover:bg-destructive/80 hover:text-white"
+            : "bg-primary text-primary-foreground hover:bg-primary/80 hover:text-primary-foreground",
           className
         )}
         disabled={isDisabled}
