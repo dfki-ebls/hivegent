@@ -919,26 +919,12 @@ export function ChatSidebar({
                 <FileSelectButton />
                 <SpeechInput
                   variant="ghost"
-                  size="icon-sm"
+                  size="icon"
+                  className="bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md"
                   disabled={status !== "ready"}
                   onTranscriptionChange={handleTranscriptionChange}
                 />
-                <PromptInputSelect
-                  value={agentMode}
-                  onValueChange={(v) => setAgentMode(v as AgentMode)}
-                >
-                  <PromptInputSelectTrigger className="h-8 w-auto min-w-20">
-                    <ListChecksIcon className="h-4 w-4" />
-                    <PromptInputSelectValue placeholder="Mode" />
-                  </PromptInputSelectTrigger>
-                  <PromptInputSelectContent>
-                    {AGENT_MODE_OPTIONS.map((option) => (
-                      <PromptInputSelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </PromptInputSelectItem>
-                    ))}
-                  </PromptInputSelectContent>
-                </PromptInputSelect>
+                <SettingsDialog />
                 <PromptInputSelect
                   value={reasoningEffort}
                   onValueChange={(v) => setReasoningEffort(v as ReasoningEffort)}
@@ -955,7 +941,22 @@ export function ChatSidebar({
                     ))}
                   </PromptInputSelectContent>
                 </PromptInputSelect>
-                <SettingsDialog />
+                <PromptInputSelect
+                  value={agentMode}
+                  onValueChange={(v) => setAgentMode(v as AgentMode)}
+                >
+                  <PromptInputSelectTrigger className="h-8 w-auto min-w-20">
+                    <ListChecksIcon className="h-4 w-4" />
+                    <PromptInputSelectValue placeholder="Mode" />
+                  </PromptInputSelectTrigger>
+                  <PromptInputSelectContent>
+                    {AGENT_MODE_OPTIONS.map((option) => (
+                      <PromptInputSelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </PromptInputSelectItem>
+                    ))}
+                  </PromptInputSelectContent>
+                </PromptInputSelect>
               </PromptInputTools>
               <PromptInputSubmit status={status} onStop={stop} />
             </PromptInputFooter>
