@@ -42,7 +42,10 @@ from ..operations import (
     process_collection,
     read_collection_zip,
     reconvert_single,
-    upload_file_internal,
+    reconvert_single_stream,
+    sse_stream_response,
+    upload_file,
+    upload_file_stream,
     validate_collection_upload,
 )
 from ..models import ReconvertRequest
@@ -109,12 +112,65 @@ async def upload_group_document(
             detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
         )
 
-    return await upload_file_internal(
+    return await upload_file(
         store=group_store(safe_id),
         filepath=safe,
         content=content,
         spec=spec,
         llm_config=llm_config_model,
+    )
+
+
+@router.put("/groups/{group_id}/documents/stream/{filepath:path}")
+async def upload_group_document_stream(
+    group_id: str,
+    filepath: str,
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+    pipeline_spec: str = Form(default="{}"),
+    llm_config: str = Form(default="{}"),
+) -> StreamingResponse:
+    """Upload a document to a group with streaming progress events."""
+    safe_id = require_group_write(user, group_id)
+    safe = safe_path(filepath)
+    spec = parse_pipeline_spec(pipeline_spec)
+    llm_config_model = resolve_llm_config(
+        LlmConfig.model_validate_json(llm_config),
+        default_model=settings.llm.vision_model,
+    )
+
+    content = await file.read()
+    if len(content) > settings.max_file_size_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
+        )
+
+    return sse_stream_response(
+        upload_file_stream(
+            store=group_store(safe_id),
+            filepath=safe,
+            content=content,
+            spec=spec,
+            llm_config=llm_config_model,
+        )
+    )
+
+
+@router.post("/groups/{group_id}/documents/reconvert/stream/{filepath:path}")
+async def reconvert_group_document_stream(
+    group_id: str,
+    filepath: str,
+    request: ReconvertRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> StreamingResponse:
+    """Re-convert a group document with streaming progress events."""
+    safe_id = require_group_write(user, group_id)
+    safe = safe_path(filepath)
+    store = group_store(safe_id)
+    resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
+    return sse_stream_response(
+        reconvert_single_stream(store, safe, request.pipeline, resolved)
     )
 
 

@@ -12,7 +12,7 @@ from ...config import settings
 from ...converters.base import DOCUMENT_EXTENSION
 from ...retrieval import mark_dirty
 from ...store import Casebase
-from ...types import MoveDocumentResponse
+from ...types import MoveDirectoryResponse, MoveDocumentResponse
 from ..common import cleanup_empty_parents
 
 __all__ = [
@@ -20,6 +20,7 @@ __all__ = [
     "delete_single",
     "find_original",
     "get_document_response",
+    "move_directory_internal",
     "move_document_internal",
 ]
 
@@ -135,6 +136,53 @@ def move_document_internal(
         source=src,
         destination=dst,
         message="Document moved successfully",
+    )
+
+
+def move_directory_internal(
+    store: Casebase,
+    src: str,
+    dst: str,
+) -> MoveDirectoryResponse:
+    """Move/rename a directory in workspace, metadata, and originals."""
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    metadata_dir = store.metadata_dir(settings.data_dir)
+    originals_dir = store.originals_dir(settings.data_dir)
+
+    src_dir = workspace_dir / src
+    if not src_dir.exists() or not src_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Directory not found")
+
+    dst_dir = workspace_dir / dst
+    if dst_dir.exists():
+        raise HTTPException(status_code=409, detail="Destination already exists")
+
+    files_moved = sum(1 for f in src_dir.rglob("*") if f.is_file())
+
+    dst_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src_dir), str(dst_dir))
+    cleanup_empty_parents(src_dir, workspace_dir)
+
+    src_meta = metadata_dir / src
+    if src_meta.exists() and src_meta.is_dir():
+        dst_meta = metadata_dir / dst
+        dst_meta.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src_meta), str(dst_meta))
+        cleanup_empty_parents(src_meta, metadata_dir)
+
+    src_orig = originals_dir / src
+    if src_orig.exists() and src_orig.is_dir():
+        dst_orig = originals_dir / dst
+        dst_orig.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src_orig), str(dst_orig))
+        cleanup_empty_parents(src_orig, originals_dir)
+
+    mark_dirty(store)
+    return MoveDirectoryResponse(
+        source=src,
+        destination=dst,
+        files_moved=files_moved,
+        message="Directory moved successfully",
     )
 
 

@@ -48,11 +48,15 @@ __all__ = [
     "McpTestResponse",
     "MoveDocumentRequest",
     "MoveDocumentResponse",
+    "OperationErrorEvent",
+    "OperationStageEvent",
+    "RechunkCompleteEvent",
     "SettingsResponse",
     "TokenInfo",
     "ToolInfo",
     "ToolsSpec",
     "UpdateTitleRequest",
+    "UploadCompleteEvent",
     "UploadDocumentResponse",
     "User",
     "UserResponse",
@@ -424,6 +428,22 @@ class MoveDocumentResponse(BaseModel):
     message: str = Field(description="Status message")
 
 
+class MoveDirectoryRequest(BaseModel):
+    """Request to move/rename a directory."""
+
+    source: str = Field(description="Current relative path of the directory")
+    destination: str = Field(description="New relative path for the directory")
+
+
+class MoveDirectoryResponse(BaseModel):
+    """Response for directory move."""
+
+    source: str = Field(description="Original relative path")
+    destination: str = Field(description="New relative path")
+    files_moved: int = Field(description="Number of files moved")
+    message: str = Field(description="Status message")
+
+
 class DeleteDirectoryRequest(BaseModel):
     """Request to delete a directory."""
 
@@ -519,6 +539,35 @@ class BulkOperationCompleteEvent(BaseModel):
         description="Files that failed to process",
     )
     message: str = Field(description="Status message")
+
+
+class OperationStageEvent(BaseModel):
+    """SSE stage event emitted during a single-document operation."""
+
+    type: Literal["stage"] = "stage"
+    stage: str = Field(description="Current processing stage label")
+    detail: str = Field(default="", description="Optional extra detail")
+
+
+class UploadCompleteEvent(UploadDocumentResponse):
+    """SSE completion event for upload and reconvert operations."""
+
+    type: Literal["complete"] = "complete"
+
+
+class RechunkCompleteEvent(BaseModel):
+    """SSE completion event for rechunk operations."""
+
+    type: Literal["complete"] = "complete"
+    pipeline: str = Field(description="Chunking pipeline used")
+    chunk_count: int = Field(description="Number of chunks created")
+
+
+class OperationErrorEvent(BaseModel):
+    """SSE error event emitted when a single-document operation fails."""
+
+    type: Literal["error"] = "error"
+    detail: str = Field(description="Error description")
 
 
 class GroupInfo(BaseModel):

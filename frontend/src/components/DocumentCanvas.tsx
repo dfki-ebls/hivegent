@@ -29,20 +29,21 @@ import {
   getGroupDocumentContent,
   uploadDocument,
 } from "../lib/api";
+import { DOCUMENT_ACTIONS } from "../lib/document-actions";
 import {
   type ChunkingPipeline,
   type ConversionPipeline,
-  type DirectoryEntry,
   type DirectoryTreeResponse,
   type DocumentInfo,
   type FetchedChunk,
   type FetchedDocument,
+  type OperationStage,
   type PipelineSpec,
   type UploadProgress,
   chunkPositionLabel,
   sortChunks,
 } from "../lib/types";
-import { formatWebUrl, isWebUrl } from "../lib/utils";
+import { collectFilePaths, formatFileSize, formatWebUrl, isWebUrl } from "../lib/utils";
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
 import { useUserDocumentsStore } from "../stores/user-documents-store";
 import { canWriteGroup, getAllGroups, useSettingsStore } from "../stores/settings-store";
@@ -74,12 +75,6 @@ import { Spinner } from "./ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 // --- Utility functions ---
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function formatRelativeDate(dateString: string): string {
   const date = new Date(dateString);
@@ -327,6 +322,7 @@ interface UploadAreaProps {
   isDragging: boolean;
   isUploading: boolean;
   uploadProgress: UploadProgress | null;
+  operationStage: OperationStage | null;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   directoryInputRef: React.RefObject<HTMLInputElement | null>;
   zipInputRef: React.RefObject<HTMLInputElement | null>;
@@ -347,6 +343,7 @@ function UploadArea({
   isDragging,
   isUploading,
   uploadProgress,
+  operationStage,
   fileInputRef,
   directoryInputRef,
   zipInputRef,
@@ -397,6 +394,11 @@ function UploadArea({
             {uploadProgress.failedFiles.length > 0 && (
               <p className="text-xs text-destructive">{uploadProgress.failedFiles.length} failed</p>
             )}
+          </div>
+        ) : isUploading && operationStage ? (
+          <div className="flex w-full flex-col items-center gap-2">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-sm font-medium">{operationStage.stage}...</p>
           </div>
         ) : (
           <>
@@ -498,6 +500,7 @@ function PipelineSettingsBar({
 interface DocumentListItemProps {
   doc: DocumentInfo;
   isMutating: boolean;
+  operationStage: OperationStage | null;
   onEdit: () => void;
   onIncludeDocument: () => void;
   onExcludeDocument: () => void;
@@ -510,6 +513,7 @@ interface DocumentListItemProps {
 function DocumentListItem({
   doc,
   isMutating,
+  operationStage,
   onEdit,
   onIncludeDocument,
   onExcludeDocument,
@@ -537,6 +541,11 @@ function DocumentListItem({
         <div className="flex items-center gap-2">
           <p className="truncate font-medium text-sm">{doc.filename}</p>
           {isMutating && <Spinner className="size-3 shrink-0 text-muted-foreground" />}
+          {isMutating && operationStage && (
+            <span className="truncate text-xs text-muted-foreground">
+              {operationStage.stage}...
+            </span>
+          )}
           {doc.chunk_count != null && (
             <Badge variant="outline" className="shrink-0 text-xs gap-1">
               <Scissors className="h-3 w-3" />
@@ -712,8 +721,12 @@ function GroupDocumentsSection({
               onEditFile={(path) => onViewFile(groupId, path)}
               onInclude={handleInclude}
               onExclude={handleExclude}
-              onRemoveFile={
-                canWrite && onRemoveFile ? (path) => onRemoveFile(groupId, path) : undefined
+              onFileAction={
+                canWrite && onRemoveFile
+                  ? (path, actionId) => {
+                      if (actionId === "delete") onRemoveFile(groupId, path);
+                    }
+                  : undefined
               }
               onCreateSubdir={
                 canWrite && onCreateSubdir ? (path) => onCreateSubdir(groupId, path) : undefined
@@ -752,17 +765,6 @@ interface ManageDocumentsProps {
 }
 
 /** Recursively collect all file paths from a directory entry. */
-function collectFilePaths(entry: DirectoryEntry, out: string[] = []): string[] {
-  if (entry.type === "file") {
-    out.push(entry.path);
-  } else {
-    for (const child of entry.children ?? []) {
-      collectFilePaths(child, out);
-    }
-  }
-  return out;
-}
-
 function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumentsProps) {
   const {
     documents,
@@ -772,6 +774,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     hasFetched,
     uploadProgress,
     bulkProgress,
+    operationStage,
     error,
     refresh,
     upload,
@@ -786,6 +789,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     move: storeMove,
     createDir,
     deleteDir,
+    moveDir: storeMoveDir,
     clearError,
   } = useUserDocumentsStore();
   const llmSettings = useSettingsStore((state) => state.llm);
@@ -804,6 +808,8 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const [searchQuery, setSearchQuery] = useState("");
   const [filteredDocuments, setFilteredDocuments] = useState(documents);
   const [moveFilePath, setMoveFilePath] = useState<string | null>(null);
+  const [moveDirPath, setMoveDirPath] = useState<string | null>(null);
+  const [bulkMoveFiles, setBulkMoveFiles] = useState<string[] | null>(null);
   const [createDirParent, setCreateDirParent] = useState<string | undefined>(undefined);
   const [showCreateDir, setShowCreateDir] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
@@ -827,6 +833,21 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   }, []);
 
   const clearSelection = useCallback(() => setSelectedFiles(new Set()), []);
+
+  const toggleDirFiles = useCallback((paths: string[]) => {
+    setSelectedFiles((prev) => {
+      const allSelected = paths.every((p) => prev.has(p));
+      const next = new Set(prev);
+      for (const p of paths) {
+        if (allSelected) {
+          next.delete(p);
+        } else {
+          next.add(p);
+        }
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -1027,6 +1048,41 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     setPendingDelete({ kind: "bulk", files: [...selectedFiles] });
   }, [selectedFiles]);
 
+  const handleBulkDownload = useCallback(async () => {
+    for (const filepath of selectedReconvertable) {
+      await handleDownloadOriginal(filepath);
+    }
+  }, [selectedReconvertable, handleDownloadOriginal]);
+
+  const handleBulkMove = useCallback(() => {
+    setBulkMoveFiles([...selectedFiles]);
+  }, [selectedFiles]);
+
+  const handleBulkMoveConfirm = useCallback(
+    async (destinationDir: string) => {
+      const files = bulkMoveFiles ?? [];
+      setBulkMoveFiles(null);
+      clearSelection();
+      for (const filepath of files) {
+        const filename = filepath.split("/").pop() ?? filepath;
+        const destination = destinationDir ? `${destinationDir}/${filename}` : filename;
+        await storeMove(filepath, destination);
+      }
+    },
+    [bulkMoveFiles, clearSelection, storeMove],
+  );
+
+  const bulkHandlers = useMemo<Record<string, () => void>>(
+    () => ({
+      rechunk: () => void handleBulkRechunk(),
+      reconvert: () => void handleBulkReconvert(),
+      download: () => void handleBulkDownload(),
+      move: handleBulkMove,
+      delete: handleBulkDelete,
+    }),
+    [handleBulkRechunk, handleBulkReconvert, handleBulkDownload, handleBulkMove, handleBulkDelete],
+  );
+
   const confirmDelete = useCallback(async () => {
     if (!pendingDelete) return;
     setPendingDelete(null);
@@ -1183,20 +1239,24 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
 
     return (
       <div className="space-y-2">
-        {filteredDocuments.map((doc) => (
-          <DocumentListItem
-            key={doc.filename}
-            doc={doc}
-            isMutating={mutatingPaths.has(doc.filename)}
-            onEdit={() => handleEdit(doc.filename)}
-            onIncludeDocument={() => handleInclude(doc.filename)}
-            onExcludeDocument={() => handleExclude(doc.filename)}
-            onReconvert={() => handleReconvert(doc.filename)}
-            onRemove={() => setPendingDelete({ kind: "file", path: doc.filename })}
-            selected={selectedFiles.has(doc.filename)}
-            onToggleSelect={() => toggleFile(doc.filename)}
-          />
-        ))}
+        {filteredDocuments.map((doc) => {
+          const docMutating = mutatingPaths.has(doc.filename);
+          return (
+            <DocumentListItem
+              key={doc.filename}
+              doc={doc}
+              isMutating={docMutating}
+              operationStage={docMutating ? operationStage : null}
+              onEdit={() => handleEdit(doc.filename)}
+              onIncludeDocument={() => handleInclude(doc.filename)}
+              onExcludeDocument={() => handleExclude(doc.filename)}
+              onReconvert={() => handleReconvert(doc.filename)}
+              onRemove={() => setPendingDelete({ kind: "file", path: doc.filename })}
+              selected={selectedFiles.has(doc.filename)}
+              onToggleSelect={() => toggleFile(doc.filename)}
+            />
+          );
+        })}
       </div>
     );
   };
@@ -1229,17 +1289,35 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       <DirectoryTreeView
         entry={directoryTree.root}
         mutatingPaths={mutatingPaths}
+        operationStage={operationStage}
         onEditFile={handleEdit}
         onInclude={handleInclude}
         onExclude={handleExclude}
-        onReconvert={handleReconvert}
-        onDownloadOriginal={handleDownloadOriginal}
-        onRemoveFile={(path) => setPendingDelete({ kind: "file", path })}
-        onMoveFile={(path) => setMoveFilePath(path)}
+        onFileAction={(path, actionId) => {
+          switch (actionId) {
+            case "rechunk":
+              void storeRechunk(path, pipelineSpec);
+              break;
+            case "reconvert":
+              void handleReconvert(path);
+              break;
+            case "download":
+              void handleDownloadOriginal(path);
+              break;
+            case "move":
+              setMoveFilePath(path);
+              break;
+            case "delete":
+              setPendingDelete({ kind: "file", path });
+              break;
+          }
+        }}
         onCreateSubdir={handleCreateSubdir}
         onDeleteDir={(path) => setPendingDelete({ kind: "directory", path })}
+        onMoveDir={(path) => setMoveDirPath(path)}
         selectedFiles={selectedFiles}
         onToggleSelectFile={toggleFile}
+        onToggleSelectDir={toggleDirFiles}
       />
     );
   };
@@ -1252,6 +1330,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         isDragging={isDragging}
         isUploading={isUploading}
         uploadProgress={uploadProgress}
+        operationStage={operationStage}
         fileInputRef={fileInputRef}
         directoryInputRef={directoryInputRef}
         zipInputRef={zipInputRef}
@@ -1301,35 +1380,22 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
             ) : (
               <>
                 <span className="text-sm font-medium">{selectedFiles.size} selected</span>
-                {selectedReconvertable.length > 0 && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void handleBulkReconvert()}
-                    disabled={bulkProgress !== null || isUploading}
-                  >
-                    <RotateCcw className="h-4 w-4 mr-1" />
-                    Reconvert
-                  </Button>
-                )}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void handleBulkRechunk()}
-                  disabled={bulkProgress !== null || isUploading}
-                >
-                  <Scissors className="h-4 w-4 mr-1" />
-                  Rechunk
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={handleBulkDelete}
-                  disabled={bulkProgress !== null || isUploading}
-                >
-                  <Trash2 className="h-4 w-4 mr-1" />
-                  Delete
-                </Button>
+                {DOCUMENT_ACTIONS.map((action) => {
+                  if (action.requiresOriginal && selectedReconvertable.length === 0) return null;
+                  const Icon = action.icon;
+                  return (
+                    <Button
+                      key={action.id}
+                      variant={action.variant}
+                      size="sm"
+                      onClick={bulkHandlers[action.id]}
+                      disabled={bulkProgress !== null || isUploading}
+                    >
+                      <Icon className="h-4 w-4 mr-1" />
+                      {action.label}
+                    </Button>
+                  );
+                })}
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={clearSelection}>
                   <X className="h-4 w-4" />
                 </Button>
@@ -1420,6 +1486,25 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
             void storeMove(moveFilePath, destination);
           }
         }}
+      />
+
+      <MoveDocumentDialog
+        open={moveDirPath !== null}
+        onOpenChange={(open) => !open && setMoveDirPath(null)}
+        currentPath={moveDirPath ?? ""}
+        isDirectory
+        onMove={(destination) => {
+          if (moveDirPath) {
+            void storeMoveDir(moveDirPath, destination);
+          }
+        }}
+      />
+
+      <MoveDocumentDialog
+        open={bulkMoveFiles !== null}
+        onOpenChange={(open) => !open && setBulkMoveFiles(null)}
+        bulkFileCount={bulkMoveFiles?.length ?? 0}
+        onMove={(dir) => void handleBulkMoveConfirm(dir)}
       />
 
       <CreateDirectoryDialog

@@ -21,7 +21,7 @@ from ...converters.wikilinks import preprocess_markdown
 from ..common import parse_pipeline_spec, resolve_llm_config
 from ..models import PipelineSpec
 from .streaming import sse_stream_response
-from .uploads import _resolve_vision_config, upload_file_internal
+from .uploads import _resolve_vision_config, upload_file
 
 __all__ = [
     "collection_stream_response",
@@ -51,7 +51,7 @@ async def process_collection(
     async def _try_upload(relative_path: str, content_bytes: bytes) -> bool:
         try:
             safe = sanitize_document_path(relative_path)
-            await upload_file_internal(store, safe, content_bytes, spec, resolved)
+            await upload_file(store, safe, content_bytes, spec, resolved)
             return True
         except Exception as exc:
             logger.warning("Failed to process %s: %s", relative_path, exc)

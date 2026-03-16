@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   ReconvertDocumentOptions,
+  StreamingOperationOptions,
   UploadCollectionOptions,
   UploadDocumentOptions,
 } from "../lib/api";
@@ -11,19 +12,22 @@ import {
   createDirectory,
   deleteDirectory,
   deleteDocument,
+  moveDirectory,
   getDirectories,
   listDocuments,
   moveDocument,
-  rechunkDocument,
-  reconvertDocument,
+  rechunkDocumentStream,
+  reconvertDocumentStream,
   uploadCollectionStream,
   uploadDocument,
+  uploadDocumentStream,
 } from "../lib/api";
 import type {
   CollectionUploadResponse,
   DirectoryTreeResponse,
   DocumentInfo,
   LlmConfig,
+  OperationStage,
   PipelineSpec,
   UploadProgress,
 } from "../lib/types";
@@ -36,6 +40,7 @@ interface UserDocumentsStore {
   hasFetched: boolean;
   uploadProgress: UploadProgress | null;
   bulkProgress: UploadProgress | null;
+  operationStage: OperationStage | null;
   error: string | null;
   refresh: () => Promise<void>;
   upload: (file: File, options?: UploadDocumentOptions) => Promise<void>;
@@ -53,6 +58,7 @@ interface UserDocumentsStore {
   move: (filepath: string, destination: string) => Promise<void>;
   createDir: (path: string) => Promise<void>;
   deleteDir: (path: string) => Promise<void>;
+  moveDir: (source: string, destination: string) => Promise<void>;
   clearError: () => void;
 }
 
@@ -61,6 +67,13 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => {
     const [documents, directoryTree] = await Promise.all([listDocuments(), getDirectories()]);
     set({ documents, directoryTree, hasFetched: true });
   }
+
+  const onStage = (stage: OperationStage) => {
+    const current = get().operationStage;
+    if (current?.stage === stage.stage && current?.detail === stage.detail) return;
+    set({ operationStage: stage });
+  };
+  const stageOpts: StreamingOperationOptions = { onStage };
 
   async function withMutating(
     path: string,
@@ -85,7 +98,7 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => {
     } catch (err) {
       set({ error: err instanceof Error ? err.message : errorMsg });
     } finally {
-      set({ mutatingPaths: removePath(get().mutatingPaths) });
+      set({ mutatingPaths: removePath(get().mutatingPaths), operationStage: null });
     }
   }
 
@@ -97,21 +110,25 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => {
     hasFetched: false,
     uploadProgress: null,
     bulkProgress: null,
+    operationStage: null,
     error: null,
 
     refresh: silentRefresh,
 
     upload: async (file: File, options?: UploadDocumentOptions) => {
-      set({ isUploading: true, error: null });
+      set({ isUploading: true, operationStage: null, error: null });
       try {
-        await uploadDocument(file.name, file, options);
+        await uploadDocumentStream(file.name, file, {
+          ...options,
+          ...stageOpts,
+        });
         await silentRefresh();
       } catch (err) {
         set({
           error: err instanceof Error ? err.message : "Upload failed",
         });
       } finally {
-        set({ isUploading: false });
+        set({ isUploading: false, operationStage: null });
       }
     },
 
@@ -164,10 +181,14 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => {
     remove: (filename) => withMutating(filename, "Delete failed", () => deleteDocument(filename)),
 
     rechunk: (filename, spec) =>
-      withMutating(filename, "Rechunk failed", () => rechunkDocument(filename, spec)),
+      withMutating(filename, "Rechunk failed", () =>
+        rechunkDocumentStream(filename, spec, stageOpts),
+      ),
 
     reconvert: (filename, options) =>
-      withMutating(filename, "Reconvert failed", () => reconvertDocument(filename, options)),
+      withMutating(filename, "Reconvert failed", () =>
+        reconvertDocumentStream(filename, { ...options, ...stageOpts }),
+      ),
 
     bulkRechunk: async (files: string[], spec?: PipelineSpec) => {
       set({ bulkProgress: null, error: null });
@@ -225,6 +246,9 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => {
 
     deleteDir: (path) =>
       withMutating(path, "Failed to delete directory", () => deleteDirectory(path)),
+
+    moveDir: (source, destination) =>
+      withMutating(source, "Failed to move directory", () => moveDirectory(source, destination)),
 
     clearError: () => set({ error: null }),
   };

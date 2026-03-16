@@ -1,8 +1,29 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
+import type { DirectoryEntry } from "./types";
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/** Format a byte count as a human-readable file size. */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Collect all file paths under a directory entry (recursive). */
+export function collectFilePaths(entry: DirectoryEntry, out: string[] = []): string[] {
+  if (entry.type === "file") {
+    out.push(entry.path);
+  } else {
+    for (const child of entry.children ?? []) {
+      collectFilePaths(child, out);
+    }
+  }
+  return out;
 }
 
 /** Check whether a filename is an external web URL. */

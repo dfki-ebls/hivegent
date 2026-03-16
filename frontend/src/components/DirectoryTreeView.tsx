@@ -1,7 +1,6 @@
 import {
   ChevronDown,
   ChevronRight,
-  Download,
   Eye,
   EyeOff,
   FileText,
@@ -9,39 +8,35 @@ import {
   FolderOpen,
   FolderPlus,
   Move,
-  RotateCcw,
   Scissors,
   Trash2,
 } from "lucide-react";
 import { useCallback, useMemo } from "react";
 
-import type { DirectoryEntry } from "../lib/types";
-import { useSettingsStore } from "../stores/settings-store";
+import { DOCUMENT_ACTIONS, type DocumentActionId } from "@/lib/document-actions";
+import type { DirectoryEntry, OperationStage } from "@/lib/types";
+import { collectFilePaths, formatFileSize } from "@/lib/utils";
+import { useSettingsStore } from "@/stores/settings-store";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Spinner } from "./ui/spinner";
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 interface DirectoryTreeViewProps {
   entry: DirectoryEntry;
   mutatingPaths?: Set<string>;
+  operationStage?: OperationStage | null;
   onEditFile: (path: string) => void;
   onInclude: (path: string) => void;
   onExclude: (path: string) => void;
-  onReconvert?: (path: string) => void;
-  onDownloadOriginal?: (path: string) => void;
-  onRemoveFile?: (path: string) => void;
-  onMoveFile?: (path: string) => void;
+  /** Dispatched for file-operation actions (rechunk, reconvert, download, move, delete). */
+  onFileAction?: (path: string, actionId: DocumentActionId) => void;
   onCreateSubdir?: (parentPath: string) => void;
   onDeleteDir?: (path: string) => void;
+  onMoveDir?: (path: string) => void;
   selectedFiles?: Set<string>;
   onToggleSelectFile?: (path: string) => void;
+  onToggleSelectDir?: (paths: string[]) => void;
   depth?: number;
 }
 
@@ -69,14 +64,14 @@ function flattenEntries(
   const rows: FlatRow[] = [];
 
   // Skip the root directory row (rendered externally)
-  if (depth > 0) {
+  if (entry.path) {
     const isExpanded = expandedDirs.has(entry.path);
     rows.push({ entry, depth, isExpanded, fileCount: countFiles(entry) });
     if (!isExpanded) return rows;
   }
 
   for (const child of entry.children ?? []) {
-    rows.push(...flattenEntries(child, expandedDirs, depth > 0 ? depth + 1 : depth));
+    rows.push(...flattenEntries(child, expandedDirs, entry.path ? depth + 1 : depth));
   }
 
   return rows;
@@ -85,27 +80,23 @@ function flattenEntries(
 function FileRow({
   entry,
   isMutating,
+  operationStage,
   depth,
   onEdit,
   onInclude,
   onExclude,
-  onReconvert,
-  onDownloadOriginal,
-  onRemove,
-  onMove,
+  onAction,
   selected,
   onToggleSelect,
 }: {
   entry: DirectoryEntry;
   isMutating: boolean;
+  operationStage?: OperationStage | null;
   depth: number;
   onEdit: () => void;
   onInclude: () => void;
   onExclude: () => void;
-  onReconvert?: () => void;
-  onDownloadOriginal?: () => void;
-  onRemove?: () => void;
-  onMove?: () => void;
+  onAction?: (actionId: DocumentActionId) => void;
   selected?: boolean;
   onToggleSelect?: () => void;
 }) {
@@ -131,6 +122,9 @@ function FileRow({
           <span className="min-w-0 truncate text-sm">{entry.name}</span>
         </button>
         {isMutating && <Spinner className="size-3 shrink-0 text-muted-foreground" />}
+        {isMutating && operationStage && (
+          <span className="truncate text-xs text-muted-foreground">{operationStage.stage}...</span>
+        )}
       </div>
       <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
         <Button
@@ -151,54 +145,26 @@ function FileRow({
         >
           <EyeOff className="h-3 w-3" />
         </Button>
-        {entry.has_original && onReconvert && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            title="Reconvert from original"
-            onClick={onReconvert}
-            disabled={isMutating}
-          >
-            <RotateCcw className="h-3 w-3" />
-          </Button>
-        )}
-        {entry.has_original && onDownloadOriginal && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            title="Download original"
-            onClick={onDownloadOriginal}
-            disabled={isMutating}
-          >
-            <Download className="h-3 w-3" />
-          </Button>
-        )}
-        {onMove && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            title="Move"
-            onClick={onMove}
-            disabled={isMutating}
-          >
-            <Move className="h-3 w-3" />
-          </Button>
-        )}
-        {onRemove && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            title="Delete"
-            onClick={onRemove}
-            disabled={isMutating}
-          >
-            <Trash2 className="h-3 w-3 text-destructive" />
-          </Button>
-        )}
+        {onAction &&
+          DOCUMENT_ACTIONS.map((action) => {
+            if (action.requiresOriginal && !entry.has_original) return null;
+            const Icon = action.icon;
+            return (
+              <Button
+                key={action.id}
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                title={action.label}
+                onClick={() => onAction(action.id)}
+                disabled={isMutating}
+              >
+                <Icon
+                  className={`h-3 w-3${action.variant === "destructive" ? " text-destructive" : ""}`}
+                />
+              </Button>
+            );
+          })}
       </div>
       <span className="text-right text-xs text-muted-foreground whitespace-nowrap">
         {entry.size_bytes != null ? formatFileSize(entry.size_bytes) : ""}
@@ -221,22 +187,28 @@ function DirectoryRow({
   isMutating,
   depth,
   fileCount,
+  selectionState,
   onToggle,
   onIncludeDir,
   onExcludeDir,
   onCreateSubdir,
   onDeleteDir,
+  onMoveDir,
+  onToggleSelect,
 }: {
   entry: DirectoryEntry;
   isExpanded: boolean;
   isMutating: boolean;
   depth: number;
   fileCount: number;
+  selectionState: boolean | "indeterminate";
   onToggle: () => void;
   onIncludeDir: () => void;
   onExcludeDir: () => void;
   onCreateSubdir?: () => void;
   onDeleteDir?: () => void;
+  onMoveDir?: () => void;
+  onToggleSelect?: () => void;
 }) {
   const FolderIcon = isExpanded ? FolderOpen : Folder;
   const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
@@ -247,6 +219,13 @@ function DirectoryRow({
       style={{ paddingLeft: `${depth * 20 + 8}px` }}
     >
       <div className="flex items-center gap-2 min-w-0">
+        {onToggleSelect && (
+          <Checkbox
+            checked={selectionState}
+            onCheckedChange={() => onToggleSelect()}
+            className="shrink-0"
+          />
+        )}
         <button
           type="button"
           className="flex flex-1 items-center gap-2 min-w-0 text-left cursor-pointer"
@@ -289,6 +268,18 @@ function DirectoryRow({
             <FolderPlus className="h-3 w-3" />
           </Button>
         )}
+        {onMoveDir && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            title="Move directory"
+            onClick={onMoveDir}
+            disabled={isMutating}
+          >
+            <Move className="h-3 w-3" />
+          </Button>
+        )}
         {onDeleteDir && (
           <Button
             variant="ghost"
@@ -319,17 +310,17 @@ const EMPTY_SET = new Set<string>();
 export function DirectoryTreeView({
   entry,
   mutatingPaths = EMPTY_SET,
+  operationStage,
   onEditFile,
   onInclude,
   onExclude,
-  onReconvert,
-  onDownloadOriginal,
-  onRemoveFile,
-  onMoveFile,
+  onFileAction,
   onCreateSubdir,
   onDeleteDir,
+  onMoveDir,
   selectedFiles,
   onToggleSelectFile,
+  onToggleSelectDir,
   depth = 0,
 }: DirectoryTreeViewProps) {
   const expandedDirsArray = useSettingsStore((state) => state.expandedDirs);
@@ -348,23 +339,31 @@ export function DirectoryTreeView({
     [entry, expandedDirs, depth],
   );
 
+  // Pre-compute file paths per directory so we walk each subtree once.
+  const dirFilePaths = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const row of flatRows) {
+      if (row.entry.type === "directory") {
+        map.set(row.entry.path, collectFilePaths(row.entry));
+      }
+    }
+    return map;
+  }, [flatRows]);
+
   const renderRow = (row: FlatRow) => {
     if (row.entry.type === "file") {
+      const fileMutating = mutatingPaths.has(row.entry.path);
       return (
         <FileRow
           key={row.entry.path}
           entry={row.entry}
-          isMutating={mutatingPaths.has(row.entry.path)}
+          isMutating={fileMutating}
+          operationStage={fileMutating ? operationStage : null}
           depth={row.depth}
           onEdit={() => onEditFile(row.entry.path)}
           onInclude={() => onInclude(row.entry.path)}
           onExclude={() => onExclude(row.entry.path)}
-          onReconvert={onReconvert ? () => onReconvert(row.entry.path) : undefined}
-          onDownloadOriginal={
-            onDownloadOriginal ? () => onDownloadOriginal(row.entry.path) : undefined
-          }
-          onRemove={onRemoveFile ? () => onRemoveFile(row.entry.path) : undefined}
-          onMove={onMoveFile ? () => onMoveFile(row.entry.path) : undefined}
+          onAction={onFileAction ? (actionId) => onFileAction(row.entry.path, actionId) : undefined}
           selected={selectedFiles?.has(row.entry.path)}
           onToggleSelect={onToggleSelectFile ? () => onToggleSelectFile(row.entry.path) : undefined}
         />
@@ -372,6 +371,16 @@ export function DirectoryTreeView({
     }
 
     const dirPath = row.entry.path ? `${row.entry.path}/` : "";
+    const paths = dirFilePaths.get(row.entry.path) ?? [];
+
+    let selectionState: boolean | "indeterminate" = false;
+    if (selectedFiles && paths.length > 0) {
+      let count = 0;
+      for (const p of paths) {
+        if (selectedFiles.has(p)) count++;
+      }
+      selectionState = count === 0 ? false : count === paths.length ? true : "indeterminate";
+    }
 
     return (
       <DirectoryRow
@@ -381,11 +390,14 @@ export function DirectoryTreeView({
         isMutating={mutatingPaths.has(row.entry.path)}
         depth={row.depth}
         fileCount={row.fileCount ?? 0}
+        selectionState={selectionState}
         onToggle={() => toggleDir(row.entry.path)}
         onIncludeDir={() => onInclude(dirPath)}
         onExcludeDir={() => onExclude(dirPath)}
         onCreateSubdir={onCreateSubdir ? () => onCreateSubdir(row.entry.path) : undefined}
         onDeleteDir={onDeleteDir ? () => onDeleteDir(row.entry.path) : undefined}
+        onMoveDir={onMoveDir ? () => onMoveDir(row.entry.path) : undefined}
+        onToggleSelect={onToggleSelectDir ? () => onToggleSelectDir(paths) : undefined}
       />
     );
   };

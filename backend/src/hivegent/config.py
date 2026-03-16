@@ -190,7 +190,7 @@ class Settings(BaseSettings):
     groups: GroupSettings = GroupSettings()
 
     data_dir: Path = Path("data")
-    max_file_size_bytes: int = 10 * 1024 * 1024  # 10 MB
+    max_file_size_bytes: int = 50 * 1024 * 1024  # 50 MB
     cors_origins: list[str] = ["http://localhost:3000"]
 
     def get_traces_dir(self) -> Path:

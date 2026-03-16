@@ -288,6 +288,15 @@ export const MoveDocumentResponseSchema = z.object({
 });
 export type MoveDocumentResponse = z.infer<typeof MoveDocumentResponseSchema>;
 
+/** Response from moving a directory. */
+export const MoveDirectoryResponseSchema = z.object({
+  source: z.string(),
+  destination: z.string(),
+  files_moved: z.number(),
+  message: z.string(),
+});
+export type MoveDirectoryResponse = z.infer<typeof MoveDirectoryResponseSchema>;
+
 /** Response from deleting a directory. */
 export const DeleteDirectoryResponseSchema = z.object({
   path: z.string(),
@@ -373,6 +382,57 @@ export interface UploadProgress {
   total: number;
   currentFile: string;
   failedFiles: string[];
+}
+
+/** SSE stage event from a single-document operation. */
+export const OperationStageEventSchema = z.object({
+  type: z.literal("stage"),
+  stage: z.string(),
+  detail: z.string().default(""),
+});
+export type OperationStageEvent = z.infer<typeof OperationStageEventSchema>;
+
+/** SSE error event from a single-document operation. */
+export const OperationErrorEventSchema = z.object({
+  type: z.literal("error"),
+  detail: z.string(),
+});
+export type OperationErrorEvent = z.infer<typeof OperationErrorEventSchema>;
+
+/** SSE completion event for upload/reconvert operations. */
+export const UploadCompleteEventSchema = UploadDocumentResponseSchema.extend({
+  type: z.literal("complete"),
+});
+export type UploadCompleteEvent = z.infer<typeof UploadCompleteEventSchema>;
+
+/** Discriminated union of SSE events from a single upload/reconvert stream. */
+export const UploadStreamEventSchema = z.discriminatedUnion("type", [
+  OperationStageEventSchema,
+  OperationErrorEventSchema,
+  UploadCompleteEventSchema,
+]);
+export type UploadStreamEvent = z.infer<typeof UploadStreamEventSchema>;
+
+/** SSE completion event for rechunk operations. */
+export const RechunkCompleteEventSchema = z.object({
+  type: z.literal("complete"),
+  pipeline: z.string(),
+  chunk_count: z.number(),
+});
+export type RechunkCompleteEvent = z.infer<typeof RechunkCompleteEventSchema>;
+
+/** Discriminated union of SSE events from a rechunk stream. */
+export const RechunkStreamEventSchema = z.discriminatedUnion("type", [
+  OperationStageEventSchema,
+  OperationErrorEventSchema,
+  RechunkCompleteEventSchema,
+]);
+export type RechunkStreamEvent = z.infer<typeof RechunkStreamEventSchema>;
+
+/** Current processing stage for a single-document operation. */
+export interface OperationStage {
+  stage: string;
+  detail: string;
 }
 
 /** Metadata about an available agent tool. */

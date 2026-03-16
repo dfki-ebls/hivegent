@@ -20,6 +20,9 @@ from ...types import (
     LlmConfig,
     MoveDocumentRequest,
     MoveDocumentResponse,
+    OperationErrorEvent,
+    OperationStageEvent,
+    RechunkCompleteEvent,
     UploadDocumentResponse,
 )
 from ..common import parse_pipeline_spec, resolve_llm_config, safe_path, user_store
@@ -34,8 +37,10 @@ from ..operations import (
     process_collection,
     read_collection_zip,
     reconvert_single,
+    reconvert_single_stream,
     sse_stream_response,
-    upload_file_internal,
+    upload_file,
+    upload_file_stream,
     validate_collection_upload,
 )
 from ..models import (
@@ -130,13 +135,92 @@ async def upload_document(
             detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
         )
 
-    return await upload_file_internal(
+    return await upload_file(
         store=user_store(user),
         filepath=safe,
         content=content,
         spec=spec,
         llm_config=llm_config_model,
     )
+
+
+@router.put("/documents/stream/{filepath:path}")
+async def upload_document_stream(
+    filepath: str,
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+    pipeline_spec: str = Form(default="{}"),
+    llm_config: str = Form(default="{}"),
+) -> StreamingResponse:
+    """Upload or replace a document with streaming progress events."""
+    safe = safe_path(filepath)
+    spec = parse_pipeline_spec(pipeline_spec)
+    llm_config_model = resolve_llm_config(
+        LlmConfig.model_validate_json(llm_config),
+        default_model=settings.llm.vision_model,
+    )
+
+    content = await file.read()
+    if len(content) > settings.max_file_size_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
+        )
+
+    return sse_stream_response(
+        upload_file_stream(
+            store=user_store(user),
+            filepath=safe,
+            content=content,
+            spec=spec,
+            llm_config=llm_config_model,
+        )
+    )
+
+
+@router.post("/documents/reconvert/stream/{filepath:path}")
+async def reconvert_document_stream(
+    filepath: str,
+    request: ReconvertRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> StreamingResponse:
+    """Re-convert a document with streaming progress events."""
+    safe = safe_path(filepath)
+    store = user_store(user)
+    resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
+    return sse_stream_response(
+        reconvert_single_stream(store, safe, request.pipeline, resolved)
+    )
+
+
+@router.post("/documents/rechunk/stream/{filepath:path}")
+async def rechunk_document_stream(
+    filepath: str,
+    request: PipelineSpec,
+    user: Annotated[User, Depends(get_current_user)],
+) -> StreamingResponse:
+    """Re-chunk a document with streaming progress events."""
+    safe = safe_path(filepath)
+    store = user_store(user)
+    file_path = store.workspace_dir(settings.data_dir) / safe
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    text_content = file_path.read_text(encoding="utf-8")
+
+    async def _rechunk_stream():  # type: ignore[return]
+        yield OperationStageEvent(stage="Chunking document")
+        try:
+            result = await chunk_document(store, safe, text_content, request.chunking)
+            mark_dirty(store)
+            yield RechunkCompleteEvent(
+                pipeline=result.pipeline,
+                chunk_count=len(result.chunks),
+            )
+        except Exception as exc:
+            yield OperationErrorEvent(detail=f"Chunking failed: {exc!s}")
+
+    return sse_stream_response(_rechunk_stream())
 
 
 @router.post("/documents/collections")

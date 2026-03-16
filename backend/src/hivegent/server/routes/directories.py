@@ -13,9 +13,15 @@ from ...types import (
     DeleteDirectoryRequest,
     DeleteDirectoryResponse,
     DirectoryTreeResponse,
+    MoveDirectoryRequest,
+    MoveDirectoryResponse,
 )
 from ..common import safe_path, user_store
-from ..operations import build_tree_response, delete_directory_internal
+from ..operations import (
+    build_tree_response,
+    delete_directory_internal,
+    move_directory_internal,
+)
 
 __all__ = ["router"]
 
@@ -46,6 +52,17 @@ async def create_directory(
         path=safe,
         message="Directory created successfully",
     )
+
+
+@router.post("/directories/move")
+async def move_directory(
+    request: MoveDirectoryRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> MoveDirectoryResponse:
+    """Move/rename a directory within the user's documents directory."""
+    safe_src = safe_path(request.source)
+    safe_dst = safe_path(request.destination)
+    return move_directory_internal(user_store(user), safe_src, safe_dst)
 
 
 @router.delete("/directories")

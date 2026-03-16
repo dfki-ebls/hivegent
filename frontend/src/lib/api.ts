@@ -6,6 +6,7 @@ import type {
   BulkOperationStreamEvent,
   CollectionStreamEvent,
   McpServerEntry,
+  OperationStage,
   ToolsSpec,
   UploadProgress,
 } from "./types";
@@ -37,6 +38,8 @@ import {
   DeleteDirectoryResponseSchema,
   type DirectoryTreeResponse,
   DirectoryTreeResponseSchema,
+  type MoveDirectoryResponse,
+  MoveDirectoryResponseSchema,
   type DocumentInfo,
   DocumentListResponseSchema,
   type GenerateTitleResponse,
@@ -47,10 +50,13 @@ import {
   ToolInfoSchema,
   MoveDocumentResponseSchema,
   type PipelineSpec,
+  type RechunkCompleteEvent,
+  RechunkStreamEventSchema,
   type TokenInfo,
   TokenInfoSchema,
   type UploadDocumentResponse,
   UploadDocumentResponseSchema,
+  UploadStreamEventSchema,
 } from "./types";
 
 import { getOidc } from "@/oidc";
@@ -340,24 +346,22 @@ export function uploadGroupCollectionStream(
 }
 
 /**
- * Generic SSE stream parser for progress + completion event protocols.
- *
- * Works with any discriminated union where progress events have
- * `type: "progress"` with `file`, `current`, `total`, `status` fields,
- * and completion events have `type: "complete"`.
+ * Shared SSE stream reader.  Reads `data:` lines from a streaming response,
+ * validates each against `schema`, and calls `onEvent` for every parsed event.
+ * Returns the value stored by `onEvent` via its return value (non-undefined
+ * means "this is the final result").
  */
-async function parseSseProgressStream<TEvent extends { type: string }, TComplete>(
+async function readSseEvents<TEvent extends { type: string }, TResult>(
   res: Response,
   schema: z.ZodType<TEvent>,
-  onProgress?: (progress: UploadProgress) => void,
-): Promise<TComplete> {
+  onEvent: (event: TEvent) => TResult | undefined,
+): Promise<TResult> {
   const reader = res.body?.getReader();
   if (!reader) throw new Error("No response body");
 
   const decoder = new TextDecoder();
   let buffer = "";
-  let result: TComplete | null = null;
-  const failedFiles: string[] = [];
+  let result: TResult | undefined;
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -379,30 +383,50 @@ async function parseSseProgressStream<TEvent extends { type: string }, TComplete
         continue;
       }
 
-      if (event.type === "progress") {
-        const p = event as TEvent & {
-          file: string;
-          current: number;
-          total: number;
-          status: string;
-        };
-        if (p.status === "failed") {
-          failedFiles.push(p.file);
-        }
-        onProgress?.({
-          current: p.current,
-          total: p.total,
-          currentFile: p.file,
-          failedFiles: [...failedFiles],
-        });
-      } else {
-        result = event as unknown as TComplete;
-      }
+      const r = onEvent(event);
+      if (r !== undefined) result = r;
     }
   }
 
-  if (!result) throw new Error("Stream ended without completion event");
+  if (result === undefined) throw new Error("Stream ended without completion event");
   return result;
+}
+
+/**
+ * Generic SSE stream parser for progress + completion event protocols.
+ *
+ * Works with any discriminated union where progress events have
+ * `type: "progress"` with `file`, `current`, `total`, `status` fields,
+ * and completion events have `type: "complete"`.
+ */
+async function parseSseProgressStream<TEvent extends { type: string }, TComplete>(
+  res: Response,
+  schema: z.ZodType<TEvent>,
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<TComplete> {
+  const failedFiles: string[] = [];
+
+  return readSseEvents(res, schema, (event) => {
+    if (event.type === "progress") {
+      const p = event as TEvent & {
+        file: string;
+        current: number;
+        total: number;
+        status: string;
+      };
+      if (p.status === "failed") {
+        failedFiles.push(p.file);
+      }
+      onProgress?.({
+        current: p.current,
+        total: p.total,
+        currentFile: p.file,
+        failedFiles: [...failedFiles],
+      });
+      return undefined;
+    }
+    return event as unknown as TComplete;
+  });
 }
 
 /** Parse an SSE response from a streaming collection upload. */
@@ -708,6 +732,127 @@ export async function rechunkDocument(
   return ChunkedDocumentResponseSchema.parse(data);
 }
 
+// --- SSE stage-based stream parser ---
+
+/**
+ * Parse an SSE stream that emits stage, error, and complete events.
+ * Calls `onStage` for each stage event, throws on error events,
+ * and returns the complete event payload.
+ */
+async function parseSseStageStream<TComplete>(
+  res: Response,
+  schema: z.ZodType<{ type: string }>,
+  onStage?: (stage: OperationStage) => void,
+): Promise<TComplete> {
+  return readSseEvents(res, schema, (event) => {
+    if (event.type === "stage") {
+      const s = event as { type: "stage"; stage: string; detail: string };
+      onStage?.({ stage: s.stage, detail: s.detail });
+      return undefined;
+    }
+    if (event.type === "error") {
+      const e = event as { type: "error"; detail: string };
+      throw new Error(e.detail);
+    }
+    return event as unknown as TComplete;
+  });
+}
+
+/** Options for streaming single-document operations. */
+export interface StreamingOperationOptions {
+  onStage?: (stage: OperationStage) => void;
+  signal?: AbortSignal;
+}
+
+/** Upload a document with streaming progress events via SSE. */
+export async function uploadDocumentStream(
+  filename: string,
+  file: File,
+  options?: UploadDocumentOptions & StreamingOperationOptions,
+): Promise<UploadDocumentResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const filepath = options?.targetDirectory ? `${options.targetDirectory}/${filename}` : filename;
+  const url = `${API_BASE_URL}/api/documents/stream/${encodeFilePath(filepath)}`;
+
+  if (options?.spec) {
+    formData.append("pipeline_spec", JSON.stringify(options.spec));
+  }
+  if (requiresConversion(filename) && options?.llm) {
+    formData.append("llm_config", JSON.stringify(options.llm));
+  }
+
+  const res = await authFetch(url, {
+    method: "PUT",
+    body: formData,
+    signal: options?.signal,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Upload failed" }));
+    throw new Error(error.detail || "Upload failed");
+  }
+
+  return parseSseStageStream<UploadDocumentResponse>(
+    res,
+    UploadStreamEventSchema,
+    options?.onStage,
+  );
+}
+
+/** Reconvert a document with streaming progress events via SSE. */
+export async function reconvertDocumentStream(
+  filename: string,
+  options?: ReconvertDocumentOptions & StreamingOperationOptions,
+): Promise<UploadDocumentResponse> {
+  const url = `${API_BASE_URL}/api/documents/reconvert/stream/${encodeFilePath(filename)}`;
+
+  const res = await authFetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      pipeline: options?.spec ?? {},
+      llm: options?.llm ?? {},
+    }),
+    signal: options?.signal,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Reconvert failed" }));
+    throw new Error(error.detail || "Reconvert failed");
+  }
+
+  return parseSseStageStream<UploadDocumentResponse>(
+    res,
+    UploadStreamEventSchema,
+    options?.onStage,
+  );
+}
+
+/** Rechunk a document with streaming progress events via SSE. */
+export async function rechunkDocumentStream(
+  filename: string,
+  spec?: PipelineSpec,
+  options?: StreamingOperationOptions,
+): Promise<RechunkCompleteEvent> {
+  const url = `${API_BASE_URL}/api/documents/rechunk/stream/${encodeFilePath(filename)}`;
+
+  const res = await authFetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(spec ?? {}),
+    signal: options?.signal,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Rechunk failed" }));
+    throw new Error(error.detail || "Rechunk failed");
+  }
+
+  return parseSseStageStream<RechunkCompleteEvent>(res, RechunkStreamEventSchema, options?.onStage);
+}
+
 // --- Bulk operation API functions ---
 
 /** Options for streaming bulk operations. */
@@ -832,6 +977,25 @@ export async function deleteDirectory(dirpath: string): Promise<DeleteDirectoryR
 
   const data: unknown = await res.json();
   return DeleteDirectoryResponseSchema.parse(data);
+}
+
+export async function moveDirectory(
+  source: string,
+  destination: string,
+): Promise<MoveDirectoryResponse> {
+  const res = await authFetch(`${API_BASE_URL}/api/directories/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, destination }),
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to move directory" }));
+    throw new Error(error.detail || "Failed to move directory");
+  }
+
+  const data: unknown = await res.json();
+  return MoveDirectoryResponseSchema.parse(data);
 }
 
 export async function moveDocument(
