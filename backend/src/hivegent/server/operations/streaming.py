@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
-from ...retrieval import mark_dirty
+from ...retrieval import mark_dirty_and_sync
 from ...store import Casebase
 from ...types import BulkOperationCompleteEvent, BulkOperationProgressEvent
 
@@ -59,7 +59,7 @@ async def process_bulk_operation(
             status=status,
         )
 
-    mark_dirty(store)
+    mark_dirty_and_sync(store)
     yield BulkOperationCompleteEvent(
         total_files=total,
         failed_files=failed_files,

@@ -222,6 +222,7 @@ export interface UploadDocumentOptions {
   spec?: PipelineSpec;
   llm?: LlmConfig;
   targetDirectory?: string;
+  overwrite?: boolean;
 }
 
 export async function uploadDocument(
@@ -237,6 +238,9 @@ export async function uploadDocument(
 
   const url = `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`;
 
+  if (options?.overwrite) {
+    formData.append("overwrite", "true");
+  }
   if (options?.spec) {
     formData.append("pipeline_spec", JSON.stringify(options.spec));
   }
@@ -776,6 +780,9 @@ export async function uploadDocumentStream(
   const filepath = options?.targetDirectory ? `${options.targetDirectory}/${filename}` : filename;
   const url = `${API_BASE_URL}/api/documents/stream/${encodeFilePath(filepath)}`;
 
+  if (options?.overwrite) {
+    formData.append("overwrite", "true");
+  }
   if (options?.spec) {
     formData.append("pipeline_spec", JSON.stringify(options.spec));
   }
@@ -1131,6 +1138,9 @@ export async function uploadGroupDocument(
 
   const url = `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/${encodeFilePath(filepath)}`;
 
+  if (options?.overwrite) {
+    formData.append("overwrite", "true");
+  }
   if (options?.spec) {
     formData.append("pipeline_spec", JSON.stringify(options.spec));
   }

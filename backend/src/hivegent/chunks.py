@@ -295,7 +295,7 @@ async def on_document_write(store: Casebase, filename: str) -> None:
         store: The casebase the document belongs to.
         filename: The relative document path that was written.
     """
-    from .retrieval import mark_dirty
+    from .retrieval import mark_dirty_and_sync
 
     await rechunk_document(store, filename)
-    mark_dirty(store)
+    mark_dirty_and_sync(store)

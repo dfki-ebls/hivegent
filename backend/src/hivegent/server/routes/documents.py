@@ -2,6 +2,7 @@
 
 import mimetypes
 import shutil
+from pathlib import PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -10,7 +11,7 @@ from starlette.responses import Response, StreamingResponse
 from ...auth import User, get_current_user
 from ...chunks import DocumentMetadata, chunk_document, get_metadata
 from ...config import settings
-from ...retrieval import invalidate_store, mark_dirty
+from ...retrieval import invalidate_store, mark_dirty_and_sync
 from ...types import (
     BulkDeleteDocumentsResponse,
     CollectionCompleteEvent,
@@ -108,7 +109,7 @@ async def replace_original(
         default_model=settings.llm.vision_model,
     )
     result = await reconvert_single(store, safe, spec, llm_config_model)
-    mark_dirty(store)
+    mark_dirty_and_sync(store)
     return result
 
 
@@ -119,9 +120,15 @@ async def upload_document(
     user: Annotated[User, Depends(get_current_user)],
     pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
+    overwrite: bool = Form(default=False),
 ) -> UploadDocumentResponse:
     """Upload or replace a document."""
     safe = safe_path(filepath)
+    store = user_store(user)
+    target = store.workspace_dir(settings.data_dir) / str(PurePosixPath(safe).with_suffix(".md"))
+    if not overwrite and target.exists():
+        raise HTTPException(status_code=409, detail="Document already exists")
+
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
         LlmConfig.model_validate_json(llm_config),
@@ -136,7 +143,7 @@ async def upload_document(
         )
 
     return await upload_file(
-        store=user_store(user),
+        store=store,
         filepath=safe,
         content=content,
         spec=spec,
@@ -151,9 +158,15 @@ async def upload_document_stream(
     user: Annotated[User, Depends(get_current_user)],
     pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
+    overwrite: bool = Form(default=False),
 ) -> StreamingResponse:
     """Upload or replace a document with streaming progress events."""
     safe = safe_path(filepath)
+    store = user_store(user)
+    target = store.workspace_dir(settings.data_dir) / str(PurePosixPath(safe).with_suffix(".md"))
+    if not overwrite and target.exists():
+        raise HTTPException(status_code=409, detail="Document already exists")
+
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
         LlmConfig.model_validate_json(llm_config),
@@ -169,7 +182,7 @@ async def upload_document_stream(
 
     return sse_stream_response(
         upload_file_stream(
-            store=user_store(user),
+            store=store,
             filepath=safe,
             content=content,
             spec=spec,
@@ -212,7 +225,7 @@ async def rechunk_document_stream(
         yield OperationStageEvent(stage="Chunking document")
         try:
             result = await chunk_document(store, safe, text_content, request.chunking)
-            mark_dirty(store)
+            mark_dirty_and_sync(store)
             yield RechunkCompleteEvent(
                 pipeline=result.pipeline,
                 chunk_count=len(result.chunks),
@@ -366,7 +379,7 @@ async def rechunk_document(
     text_content = file_path.read_text(encoding="utf-8")
     try:
         result = await chunk_document(store, safe, text_content, request.chunking)
-        mark_dirty(store)
+        mark_dirty_and_sync(store)
         return result
     except Exception as exc:
         raise HTTPException(
@@ -386,7 +399,7 @@ async def reconvert_document(
     store = user_store(user)
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
     result = await reconvert_single(store, safe, request.pipeline, resolved)
-    mark_dirty(store)
+    mark_dirty_and_sync(store)
     return result
 
 
@@ -425,7 +438,7 @@ async def delete_document(
     safe = safe_path(filepath)
     store = user_store(user)
     delete_single(store, safe)
-    mark_dirty(store)
+    mark_dirty_and_sync(store)
     return DeleteDocumentResponse(
         filename=safe,
         message="Document deleted successfully",

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ...auth import User, get_current_user
 from ...config import settings
-from ...retrieval import mark_dirty
+from ...retrieval import mark_dirty_and_sync
 from ...types import (
     CreateDirectoryRequest,
     CreateDirectoryResponse,
@@ -74,7 +74,7 @@ async def delete_directory(
     safe = safe_path(request.path)
     store = user_store(user)
     files_deleted = delete_directory_internal(store, safe)
-    mark_dirty(store)
+    mark_dirty_and_sync(store)
     return DeleteDirectoryResponse(
         path=safe,
         files_deleted=files_deleted,

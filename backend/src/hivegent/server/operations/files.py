@@ -10,7 +10,7 @@ from starlette.responses import PlainTextResponse, Response
 from ...chunks import delete_metadata, get_metadata, load_document_metadata
 from ...config import settings
 from ...converters.base import DOCUMENT_EXTENSION
-from ...retrieval import mark_dirty
+from ...retrieval import mark_dirty_and_sync
 from ...store import Casebase
 from ...types import MoveDirectoryResponse, MoveDocumentResponse
 from ..common import cleanup_empty_parents
@@ -131,7 +131,7 @@ def move_document_internal(
                 cleanup_empty_parents(candidate, originals_dir)
                 break
 
-    mark_dirty(store)
+    mark_dirty_and_sync(store)
     return MoveDocumentResponse(
         source=src,
         destination=dst,
@@ -177,7 +177,7 @@ def move_directory_internal(
         shutil.move(str(src_orig), str(dst_orig))
         cleanup_empty_parents(src_orig, originals_dir)
 
-    mark_dirty(store)
+    mark_dirty_and_sync(store)
     return MoveDirectoryResponse(
         source=src,
         destination=dst,

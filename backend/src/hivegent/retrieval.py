@@ -1,5 +1,6 @@
 """Per-user and per-group LanceDB storage and retrieval using cbrkit."""
 
+import asyncio
 import json
 import logging
 import shutil
@@ -21,6 +22,7 @@ __all__ = [
     "build_search_tool",
     "invalidate_store",
     "mark_dirty",
+    "mark_dirty_and_sync",
     "sync_index",
 ]
 
@@ -263,6 +265,30 @@ def mark_dirty(store: Casebase) -> None:
         store: The casebase to mark.
     """
     _state.mark_dirty(store.store_key)
+
+
+async def _eager_sync(store: Casebase) -> None:
+    """Run :func:`sync_index` in a thread, swallowing errors."""
+    try:
+        await asyncio.to_thread(sync_index, store)
+    except Exception:
+        logger.warning("Eager sync failed for %s", store.store_key)
+
+
+def mark_dirty_and_sync(store: Casebase) -> None:
+    """Mark a store dirty and eagerly schedule a background index sync.
+
+    Falls back silently when no running event loop is available (e.g. in
+    tests or synchronous contexts).
+
+    Args:
+        store: The casebase to mark and sync.
+    """
+    mark_dirty(store)
+    try:
+        asyncio.get_running_loop().create_task(_eager_sync(store))
+    except RuntimeError:
+        pass
 
 
 def sync_index(store: Casebase) -> None:

@@ -19,7 +19,7 @@ from ...converters import (
 )
 from ...converters.alt_text import describe_image, generate_alt_texts
 from ...converters.base import DOCUMENT_EXTENSION, IMAGE_EXTENSIONS
-from ...retrieval import mark_dirty
+from ...retrieval import mark_dirty_and_sync
 from ...store import Casebase
 from ...types import (
     LlmConfig,
@@ -133,7 +133,7 @@ async def upload_file(
             chunked = await chunk_document(store, filepath, text_content, spec.chunking)
             chunk_count = len(chunked.chunks)
             chunking_used = chunked.pipeline
-            mark_dirty(store)
+            mark_dirty_and_sync(store)
         except Exception as exc:
             logger.warning("Chunking failed for %s: %s", filepath, exc)
 
@@ -189,7 +189,7 @@ async def upload_file(
             )
             chunk_count = len(chunked.chunks)
             chunking_used = chunked.pipeline
-            mark_dirty(store)
+            mark_dirty_and_sync(store)
         except Exception as exc:
             logger.warning("Chunking failed for %s: %s", converted_relpath, exc)
 
@@ -271,7 +271,7 @@ async def upload_file(
         )
         chunk_count = len(chunked.chunks)
         chunking_used = chunked.pipeline
-        mark_dirty(store)
+        mark_dirty_and_sync(store)
     except Exception as exc:
         logger.warning("Chunking failed for %s: %s", converted_relpath, exc)
 
@@ -504,7 +504,7 @@ async def upload_file_stream(
             )
             chunk_count = len(chunked.chunks)
             chunking_used = chunked.pipeline
-            mark_dirty(store)
+            mark_dirty_and_sync(store)
         except Exception as exc:
             logger.warning("Chunking failed for %s: %s", converted_relpath, exc)
 

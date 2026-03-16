@@ -1,5 +1,6 @@
 """Routes for group document and directory access."""
 
+from pathlib import PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -7,7 +8,7 @@ from starlette.responses import Response, StreamingResponse
 
 from ...auth import User, get_current_user
 from ...config import settings
-from ...retrieval import mark_dirty
+from ...retrieval import mark_dirty_and_sync
 from ...types import (
     CollectionCompleteEvent,
     CollectionUploadResponse,
@@ -95,10 +96,16 @@ async def upload_group_document(
     user: Annotated[User, Depends(get_current_user)],
     pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
+    overwrite: bool = Form(default=False),
 ) -> UploadDocumentResponse:
     """Upload a document to a group's knowledge base."""
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
+    store = group_store(safe_id)
+    target = store.workspace_dir(settings.data_dir) / str(PurePosixPath(safe).with_suffix(".md"))
+    if not overwrite and target.exists():
+        raise HTTPException(status_code=409, detail="Document already exists")
+
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
         LlmConfig.model_validate_json(llm_config),
@@ -113,7 +120,7 @@ async def upload_group_document(
         )
 
     return await upload_file(
-        store=group_store(safe_id),
+        store=store,
         filepath=safe,
         content=content,
         spec=spec,
@@ -129,10 +136,16 @@ async def upload_group_document_stream(
     user: Annotated[User, Depends(get_current_user)],
     pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
+    overwrite: bool = Form(default=False),
 ) -> StreamingResponse:
     """Upload a document to a group with streaming progress events."""
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
+    store = group_store(safe_id)
+    target = store.workspace_dir(settings.data_dir) / str(PurePosixPath(safe).with_suffix(".md"))
+    if not overwrite and target.exists():
+        raise HTTPException(status_code=409, detail="Document already exists")
+
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
         LlmConfig.model_validate_json(llm_config),
@@ -148,7 +161,7 @@ async def upload_group_document_stream(
 
     return sse_stream_response(
         upload_file_stream(
-            store=group_store(safe_id),
+            store=store,
             filepath=safe,
             content=content,
             spec=spec,
@@ -224,7 +237,7 @@ async def delete_group_document(
     safe = safe_path(filepath)
     store = group_store(safe_id)
     delete_single(store, safe)
-    mark_dirty(store)
+    mark_dirty_and_sync(store)
     return DeleteDocumentResponse(
         filename=safe,
         message="Document deleted successfully",
@@ -262,7 +275,7 @@ async def delete_group_directory(
     safe = safe_path(request.path)
     store = group_store(safe_id)
     files_deleted = delete_directory_internal(store, safe)
-    mark_dirty(store)
+    mark_dirty_and_sync(store)
     return DeleteDirectoryResponse(
         path=safe,
         files_deleted=files_deleted,
@@ -283,7 +296,7 @@ async def reconvert_group_document(
     store = group_store(safe_id)
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
     result = await reconvert_single(store, safe, request.pipeline, resolved)
-    mark_dirty(store)
+    mark_dirty_and_sync(store)
     return result
 
 

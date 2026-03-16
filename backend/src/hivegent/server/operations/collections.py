@@ -14,7 +14,7 @@ from ...chunks import chunk_document
 from ...config import sanitize_document_path, settings
 from ...converters.alt_text import MD_IMAGE_RE, generate_alt_texts
 from ...converters.base import DOCUMENT_EXTENSION
-from ...retrieval import mark_dirty
+from ...retrieval import mark_dirty_and_sync
 from ...store import Casebase
 from ...types import CollectionCompleteEvent, CollectionProgressEvent, LlmConfig
 from ...converters.wikilinks import preprocess_markdown
@@ -227,7 +227,7 @@ async def process_collection(
             except Exception:
                 logger.warning("Alt text generation failed for %s", relative_path)
 
-        mark_dirty(store)
+        mark_dirty_and_sync(store)
 
     total_ok = markdown_count + converted_count + image_count
     yield CollectionCompleteEvent(

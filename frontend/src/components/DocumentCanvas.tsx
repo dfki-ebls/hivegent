@@ -24,6 +24,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  type UploadDocumentOptions,
   buildLlmConfig,
   getGroupDirectories,
   getGroupDocumentContent,
@@ -75,6 +76,11 @@ import { Spinner } from "./ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 // --- Utility functions ---
+
+function fileStem(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(0, dot) : name;
+}
 
 function formatRelativeDate(dateString: string): string {
   const date = new Date(dateString);
@@ -819,6 +825,11 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     | { kind: "bulk"; files: string[] }
     | null
   >(null);
+  const [pendingOverwrite, setPendingOverwrite] = useState<{
+    files: File[];
+    options: UploadDocumentOptions;
+    conflicting: string[];
+  } | null>(null);
 
   const toggleFile = useCallback((path: string) => {
     setSelectedFiles((prev) => {
@@ -1100,12 +1111,24 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     }
   }, [pendingDelete, remove, deleteDir, clearSelection, storeBulkDelete]);
 
+  const confirmOverwrite = useCallback(async () => {
+    if (!pendingOverwrite) return;
+    const { files, options } = pendingOverwrite;
+    setPendingOverwrite(null);
+    const overwriteOptions = { ...options, overwrite: true };
+    if (files.length === 1) {
+      await upload(files[0], overwriteOptions);
+    } else {
+      await uploadMultiple(files, overwriteOptions);
+    }
+  }, [pendingOverwrite, upload, uploadMultiple]);
+
   // --- File upload handlers ---
 
   const handleFiles = useCallback(
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
-      const options = {
+      const options: UploadDocumentOptions = {
         spec: pipelineSpec,
         llm: buildLlmConfig({
           model: visionModel,
@@ -1114,13 +1137,35 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         }),
       };
       const fileArray = Array.from(files);
+
+      // Check for duplicate stems within the batch
+      const stems = fileArray.map((f) => fileStem(f.name));
+      const seen = new Set<string>();
+      for (const stem of stems) {
+        if (seen.has(stem)) {
+          useUserDocumentsStore.setState({
+            error: `Batch contains files with the same stem "${stem}"`,
+          });
+          return;
+        }
+        seen.add(stem);
+      }
+
+      // Check stems against existing documents
+      const existingStems = new Set(documents.map((d) => fileStem(d.filename)));
+      const conflicting = stems.filter((s) => existingStems.has(s));
+      if (conflicting.length > 0) {
+        setPendingOverwrite({ files: fileArray, options, conflicting });
+        return;
+      }
+
       if (fileArray.length === 1) {
         await upload(fileArray[0], options);
       } else {
         await uploadMultiple(fileArray, options);
       }
     },
-    [upload, uploadMultiple, pipelineSpec, visionModel, llmSettings],
+    [upload, uploadMultiple, pipelineSpec, visionModel, llmSettings, documents],
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -1539,6 +1584,27 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={() => void confirmDelete()}>
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingOverwrite !== null}
+        onOpenChange={(open) => !open && setPendingOverwrite(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Overwrite existing documents?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The following documents already exist and will be overwritten:{" "}
+              {pendingOverwrite?.conflicting.join(", ")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => void confirmOverwrite()}>
+              Overwrite
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
