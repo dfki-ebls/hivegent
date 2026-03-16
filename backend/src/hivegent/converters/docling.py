@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import PIL.Image
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
 from docling.datamodel.pipeline_options import (
     ConvertPipelineOptions,
@@ -14,6 +15,12 @@ from docling_core.types.doc import ImageRefMode, PictureItem
 from pydantic import BaseModel, Field
 
 from .base import ConversionResult, DocumentConverter, pil_to_png_bytes
+
+# Raise Pillow's decompression-bomb limit so that large embedded images/streams
+# inside PDFs (common with scanned pages) do not trigger DecompressionBombError.
+# The default ~178M pixels is too restrictive; 1 billion pixels (~3 GB
+# uncompressed) still guards against truly degenerate files.
+PIL.Image.MAX_IMAGE_PIXELS = 1_000_000_000
 
 __all__ = ["DoclingConverter", "DoclingConverterConfig"]
 
