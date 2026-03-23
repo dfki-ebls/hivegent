@@ -5,13 +5,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import PIL.Image
+import PIL.ImageFile
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
 from docling.datamodel.pipeline_options import (
     ConvertPipelineOptions,
     ThreadedPdfPipelineOptions,
 )
 from docling.document_converter import DocumentConverter as DoclingDocumentConverter
-from docling_core.types.doc import ImageRefMode, PictureItem
+from docling_core.types.doc import PictureItem
 from pydantic import BaseModel, Field
 
 from .base import ConversionResult, DocumentConverter, pil_to_png_bytes
@@ -21,6 +22,12 @@ from .base import ConversionResult, DocumentConverter, pil_to_png_bytes
 # The default ~178M pixels is too restrictive; 1 billion pixels (~3 GB
 # uncompressed) still guards against truly degenerate files.
 PIL.Image.MAX_IMAGE_PIXELS = 1_000_000_000
+
+# Raise the safe decompression block size for PNG text chunks (iTXt/zTXt).
+# The default 1 MB causes "Decompressed Data Too Large" for images with
+# large embedded metadata (common in Office documents). We are generous
+# while still guarding against decompression bombs.
+PIL.ImageFile.SAFEBLOCK = 32 * 1024 * 1024  # type: ignore[assignment]
 
 __all__ = ["DoclingConverter", "DoclingConverterConfig"]
 
@@ -84,17 +91,21 @@ class DoclingConverter(DocumentConverter):
         result = converter.convert(str(path))
         doc = result.document
 
-        # Export markdown with image references (not embedded base64).
-        markdown = str(doc.export_to_markdown(image_mode=ImageRefMode.REFERENCED))
+        # Export markdown with default placeholder mode (``<!-- image -->``).
+        markdown = str(doc.export_to_markdown())
 
-        # Collect picture images from the document.
+        # Replace each placeholder with a proper reference by iterating
+        # PictureItems in document order (same order as the placeholders).
         image_data: dict[str, bytes] = {}
-        for item, _level in doc.iterate_items():
-            if isinstance(item, PictureItem) and item.image is not None:
-                pil_img = item.get_image(doc)
-                if pil_img is not None:
-                    img_name = f"picture_{item.self_ref}.png"
-                    image_data[img_name] = pil_to_png_bytes(pil_img)
+        for item, _ in doc.iterate_items():
+            if not isinstance(item, PictureItem):
+                continue
+            pil_img = item.get_image(doc)
+            if pil_img is None:
+                continue
+            img_name = f"image_{len(image_data):06}.png"
+            image_data[img_name] = pil_to_png_bytes(pil_img)
+            markdown = markdown.replace("<!-- image -->", f"![]({img_name})", 1)
 
         return ConversionResult(markdown=markdown, images=image_data)
 
