@@ -10,6 +10,8 @@
   pandoc,
   ripgrep,
   lib,
+  libreoffice,
+  stdenv,
 }:
 mkShell {
   shellHook = ''
@@ -29,5 +31,7 @@ mkShell {
     jq
     pandoc
     ripgrep
-  ];
+  ]
+  # docling dependencies
+  ++ lib.optionals stdenv.hostPlatform.isLinux [ libreoffice ];
 }
