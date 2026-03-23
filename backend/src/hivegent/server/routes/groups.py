@@ -88,46 +88,6 @@ async def get_group_document_content(
     return get_document_response(group_store(safe_id), safe)
 
 
-@router.put("/groups/{group_id}/documents/{filepath:path}")
-async def upload_group_document(
-    group_id: str,
-    filepath: str,
-    file: UploadFile,
-    user: Annotated[User, Depends(get_current_user)],
-    pipeline_spec: str = Form(default="{}"),
-    llm_config: str = Form(default="{}"),
-    overwrite: bool = Form(default=False),
-) -> UploadDocumentResponse:
-    """Upload a document to a group's knowledge base."""
-    safe_id = require_group_write(user, group_id)
-    safe = safe_path(filepath)
-    store = group_store(safe_id)
-    target = store.workspace_dir(settings.data_dir) / str(PurePosixPath(safe).with_suffix(".md"))
-    if not overwrite and target.exists():
-        raise HTTPException(status_code=409, detail="Document already exists")
-
-    spec = parse_pipeline_spec(pipeline_spec)
-    llm_config_model = resolve_llm_config(
-        LlmConfig.model_validate_json(llm_config),
-        default_model=settings.llm.vision_model,
-    )
-
-    content = await file.read()
-    if len(content) > settings.max_file_size_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
-        )
-
-    return await upload_file(
-        store=store,
-        filepath=safe,
-        content=content,
-        spec=spec,
-        llm_config=llm_config_model,
-    )
-
-
 @router.put("/groups/{group_id}/documents/stream/{filepath:path}")
 async def upload_group_document_stream(
     group_id: str,
@@ -167,6 +127,46 @@ async def upload_group_document_stream(
             spec=spec,
             llm_config=llm_config_model,
         )
+    )
+
+
+@router.put("/groups/{group_id}/documents/{filepath:path}")
+async def upload_group_document(
+    group_id: str,
+    filepath: str,
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+    pipeline_spec: str = Form(default="{}"),
+    llm_config: str = Form(default="{}"),
+    overwrite: bool = Form(default=False),
+) -> UploadDocumentResponse:
+    """Upload a document to a group's knowledge base."""
+    safe_id = require_group_write(user, group_id)
+    safe = safe_path(filepath)
+    store = group_store(safe_id)
+    target = store.workspace_dir(settings.data_dir) / str(PurePosixPath(safe).with_suffix(".md"))
+    if not overwrite and target.exists():
+        raise HTTPException(status_code=409, detail="Document already exists")
+
+    spec = parse_pipeline_spec(pipeline_spec)
+    llm_config_model = resolve_llm_config(
+        LlmConfig.model_validate_json(llm_config),
+        default_model=settings.llm.vision_model,
+    )
+
+    content = await file.read()
+    if len(content) > settings.max_file_size_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
+        )
+
+    return await upload_file(
+        store=store,
+        filepath=safe,
+        content=content,
+        spec=spec,
+        llm_config=llm_config_model,
     )
 
 

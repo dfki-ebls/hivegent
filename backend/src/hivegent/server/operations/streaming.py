@@ -23,8 +23,13 @@ def sse_stream_response(
     """Wrap an async generator of Pydantic models in an SSE response."""
 
     async def _event_stream() -> AsyncGenerator[str, None]:
-        async for event in generator:
-            yield f"data: {json.dumps(event.model_dump())}\n\n"
+        try:
+            async for event in generator:
+                yield f"data: {json.dumps(event.model_dump())}\n\n"
+        except Exception as exc:
+            logger.exception("SSE stream error")
+            error = {"type": "error", "detail": str(exc)}
+            yield f"data: {json.dumps(error)}\n\n"
 
     return StreamingResponse(
         _event_stream(),

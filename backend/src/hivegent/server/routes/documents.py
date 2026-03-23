@@ -113,44 +113,6 @@ async def replace_original(
     return result
 
 
-@router.put("/documents/{filepath:path}")
-async def upload_document(
-    filepath: str,
-    file: UploadFile,
-    user: Annotated[User, Depends(get_current_user)],
-    pipeline_spec: str = Form(default="{}"),
-    llm_config: str = Form(default="{}"),
-    overwrite: bool = Form(default=False),
-) -> UploadDocumentResponse:
-    """Upload or replace a document."""
-    safe = safe_path(filepath)
-    store = user_store(user)
-    target = store.workspace_dir(settings.data_dir) / str(PurePosixPath(safe).with_suffix(".md"))
-    if not overwrite and target.exists():
-        raise HTTPException(status_code=409, detail="Document already exists")
-
-    spec = parse_pipeline_spec(pipeline_spec)
-    llm_config_model = resolve_llm_config(
-        LlmConfig.model_validate_json(llm_config),
-        default_model=settings.llm.vision_model,
-    )
-
-    content = await file.read()
-    if len(content) > settings.max_file_size_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
-        )
-
-    return await upload_file(
-        store=store,
-        filepath=safe,
-        content=content,
-        spec=spec,
-        llm_config=llm_config_model,
-    )
-
-
 @router.put("/documents/stream/{filepath:path}")
 async def upload_document_stream(
     filepath: str,
@@ -188,6 +150,44 @@ async def upload_document_stream(
             spec=spec,
             llm_config=llm_config_model,
         )
+    )
+
+
+@router.put("/documents/{filepath:path}")
+async def upload_document(
+    filepath: str,
+    file: UploadFile,
+    user: Annotated[User, Depends(get_current_user)],
+    pipeline_spec: str = Form(default="{}"),
+    llm_config: str = Form(default="{}"),
+    overwrite: bool = Form(default=False),
+) -> UploadDocumentResponse:
+    """Upload or replace a document."""
+    safe = safe_path(filepath)
+    store = user_store(user)
+    target = store.workspace_dir(settings.data_dir) / str(PurePosixPath(safe).with_suffix(".md"))
+    if not overwrite and target.exists():
+        raise HTTPException(status_code=409, detail="Document already exists")
+
+    spec = parse_pipeline_spec(pipeline_spec)
+    llm_config_model = resolve_llm_config(
+        LlmConfig.model_validate_json(llm_config),
+        default_model=settings.llm.vision_model,
+    )
+
+    content = await file.read()
+    if len(content) > settings.max_file_size_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
+        )
+
+    return await upload_file(
+        store=store,
+        filepath=safe,
+        content=content,
+        spec=spec,
+        llm_config=llm_config_model,
     )
 
 

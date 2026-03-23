@@ -3,6 +3,7 @@
 import io
 import logging
 import tempfile
+import zlib
 import zipfile
 from collections.abc import AsyncGenerator
 from pathlib import Path, PurePosixPath
@@ -74,9 +75,26 @@ async def process_collection(
                             status_code=400,
                             detail=f"ZIP contains unsafe path: {info.filename}",
                         )
+                    if (
+                        info.file_size > settings.max_file_size_bytes
+                        and not info.is_dir()
+                    ):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"File '{info.filename}' in ZIP is too large "
+                                f"({info.file_size} bytes decompressed). "
+                                f"Maximum: {settings.max_file_size_bytes} bytes"
+                            ),
+                        )
                 archive.extractall(extract_root)
         except zipfile.BadZipFile as exc:
             raise HTTPException(status_code=400, detail="Invalid ZIP file") from exc
+        except zlib.error as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to decompress ZIP: {exc!s}",
+            ) from exc
 
         top_items = list(extract_root.iterdir())
         if len(top_items) == 1 and top_items[0].is_dir():
