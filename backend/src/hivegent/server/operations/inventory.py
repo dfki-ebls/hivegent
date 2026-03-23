@@ -2,7 +2,6 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
 
 from ...chunks import list_chunked_documents
 from ...config import settings
@@ -28,6 +27,11 @@ def _collect_original_stems(originals_dir: Path) -> set[str]:
     return original_stems
 
 
+def _is_asset_path(relative: Path) -> bool:
+    """Check whether a workspace-relative path lives inside an ``_assets`` directory."""
+    return any(part.endswith("_assets") for part in relative.parts[:-1])
+
+
 def list_documents_for_store(store: Casebase) -> DocumentListResponse:
     """Build a document listing for a single casebase."""
     workspace = store.workspace_dir(settings.data_dir)
@@ -40,15 +44,13 @@ def list_documents_for_store(store: Casebase) -> DocumentListResponse:
             if not file_path.is_file():
                 continue
 
-            relative_path = str(file_path.relative_to(workspace).as_posix())
             relative = file_path.relative_to(workspace)
+            if _is_asset_path(relative):
+                continue
+
+            relative_path = str(relative.as_posix())
             document_stem = str((relative.parent / relative.stem).as_posix())
             stat = file_path.stat()
-            kind: Literal["document", "asset"] = "document"
-            for part in relative.parts[:-1]:
-                if part.endswith("_assets"):
-                    kind = "asset"
-                    break
 
             documents.append(
                 DocumentInfo(
@@ -57,7 +59,6 @@ def list_documents_for_store(store: Casebase) -> DocumentListResponse:
                     modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
                     chunk_count=chunk_counts.get(relative_path),
                     has_original=document_stem in original_stems,
-                    kind=kind,
                 )
             )
 
@@ -79,6 +80,8 @@ def _build_directory_tree(
     if dir_path.exists():
         for item in sorted(dir_path.iterdir()):
             if item.is_dir():
+                if item.name.endswith("_assets"):
+                    continue
                 children.append(
                     _build_directory_tree(item, root_path, chunk_counts, original_stems)
                 )
