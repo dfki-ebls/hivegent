@@ -401,10 +401,12 @@ function UploadArea({
               <p className="text-xs text-destructive">{uploadProgress.failedFiles.length} failed</p>
             )}
           </div>
-        ) : isUploading && operationStage ? (
+        ) : isUploading ? (
           <div className="flex w-full flex-col items-center gap-2">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-sm font-medium">{operationStage.stage}...</p>
+            <p className="text-sm font-medium">
+              {operationStage ? `${operationStage.stage}...` : "Uploading..."}
+            </p>
           </div>
         ) : (
           <>
