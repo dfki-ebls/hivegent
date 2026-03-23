@@ -24,7 +24,7 @@ dependencies = [
   "sentence_transformers>=5,<6",
   "typer>=0.21,<1",
   "uvicorn[standard]>=0.40,<1",
-  # "zvec>=0.2,<1",
+  "zvec>=0.2,<1",
 ]
 
 [project.scripts]
@@ -57,10 +57,7 @@ build-backend = "uv_build"
 [tool.pytest]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-markers = [
-  "slow: marks tests as slow (deselect with -m 'not slow')",
-]
+markers = ["slow: marks tests as slow (deselect with -m 'not slow')"]
 
 [tool.uv.sources]
 # cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }
-# zvec = { git = "https://github.com/alibaba/zvec", tag = "v0.2.0" }
