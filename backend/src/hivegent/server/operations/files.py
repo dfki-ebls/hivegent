@@ -2,14 +2,24 @@
 
 import mimetypes
 import shutil
-from pathlib import Path
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
 from starlette.responses import PlainTextResponse, Response
 
-from ...chunks import delete_metadata, get_metadata, load_document_metadata
+from ...chunkers.base import DocumentMetadata
+from ...chunks import delete_metadata, get_metadata
 from ...config import settings
-from ...converters.base import DOCUMENT_EXTENSION
+from ...entries import (
+    assets_dir_for_stem,
+    description_path_for_stem,
+    entry_exists,
+    metadata_path_for_reference,
+    resolve_entry_paths,
+    stem_path_from_reference,
+)
 from ...retrieval import mark_dirty_and_sync
 from ...store import Casebase
 from ...types import MoveDirectoryResponse, MoveDocumentResponse
@@ -18,6 +28,7 @@ from ..common import cleanup_empty_parents
 __all__ = [
     "delete_directory_internal",
     "delete_single",
+    "ensure_upload_slot",
     "find_original",
     "get_document_response",
     "move_directory_internal",
@@ -25,116 +36,188 @@ __all__ = [
 ]
 
 
+@dataclass(slots=True, frozen=True)
+class PathReplacement:
+    """Prefix replacement for metadata path fields."""
+
+    old: str
+    new: str
+
+
+def _replace_path_value(
+    value: str | None,
+    replacements: Sequence[PathReplacement],
+) -> str | None:
+    """Apply prefix replacements to a metadata path value."""
+    if value is None:
+        return None
+    updated_value = value
+    for replacement in replacements:
+        if updated_value == replacement.old or updated_value.startswith(
+            f"{replacement.old}/"
+        ):
+            updated_value = replacement.new + updated_value[len(replacement.old) :]
+    return updated_value
+
+
+def _rewrite_metadata_paths(
+    meta_path: Path,
+    replacements: Sequence[PathReplacement],
+) -> None:
+    """Rewrite path-like fields inside a metadata JSON file."""
+    try:
+        metadata = DocumentMetadata.model_validate_json(
+            meta_path.read_text(encoding="utf-8")
+        )
+    except Exception:
+        return
+
+    updated_metadata = metadata.model_copy(
+        update={
+            "stem_path": _replace_path_value(metadata.stem_path, replacements)
+            or metadata.stem_path,
+            "description_path": _replace_path_value(
+                metadata.description_path, replacements
+            )
+            or metadata.description_path,
+            "original_path": _replace_path_value(metadata.original_path, replacements),
+            "assets_dir": _replace_path_value(metadata.assets_dir, replacements),
+            "files": [
+                replaced
+                for f in metadata.files
+                if (replaced := _replace_path_value(f, replacements)) is not None
+            ],
+        }
+    )
+    meta_path.write_text(
+        updated_metadata.model_dump_json(indent=2, exclude_none=True),
+        encoding="utf-8",
+    )
+
+
+def _rewrite_metadata_tree(
+    metadata_root: Path,
+    replacements: Sequence[PathReplacement],
+) -> None:
+    """Rewrite path fields in all metadata files under a subtree."""
+    if metadata_root.is_file():
+        _rewrite_metadata_paths(metadata_root, replacements)
+        return
+    for meta_file in metadata_root.rglob("*.json"):
+        _rewrite_metadata_paths(meta_file, replacements)
+
+
+def find_original(store: Casebase, safe: str) -> Path:
+    """Find the original binary file for a logical entry."""
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    metadata = get_metadata(store, safe)
+    original_path = metadata.original_path if metadata else None
+    if not original_path:
+        original_path = resolve_entry_paths(workspace_dir, safe).original_path
+    if not original_path:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No original file found for '{safe}'",
+        )
+    full_path = workspace_dir / original_path
+    if not full_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No original file found for '{safe}'",
+        )
+    return full_path
+
+
 def move_document_internal(
     store: Casebase,
     src: str,
     dst: str,
 ) -> MoveDocumentResponse:
-    """Move a document, its metadata, companion images, and original."""
+    """Move a logical entry, its original, and its child-assets subtree."""
     workspace_dir = store.workspace_dir(settings.data_dir)
     metadata_dir = store.metadata_dir(settings.data_dir)
-    originals_dir = store.originals_dir(settings.data_dir)
 
-    src_doc = workspace_dir / src
-    if not src_doc.exists() or not src_doc.is_file():
+    metadata = get_metadata(store, src)
+    if not metadata:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    dst_doc = workspace_dir / dst
-    if dst_doc.exists():
+    src_stem = metadata.stem_path or stem_path_from_reference(src)
+    dst_stem = stem_path_from_reference(dst)
+    if src_stem != dst_stem and entry_exists(workspace_dir, metadata_dir, dst):
         raise HTTPException(status_code=409, detail="Destination already exists")
 
-    dst_doc.parent.mkdir(parents=True, exist_ok=True)
-    src_doc.rename(dst_doc)
-    cleanup_empty_parents(src_doc, workspace_dir)
+    src_description = metadata.description_path or description_path_for_stem(src_stem)
+    dst_description = description_path_for_stem(dst_stem)
+    src_description_path = workspace_dir / src_description
+    if not src_description_path.exists():
+        raise HTTPException(status_code=404, detail="Document not found")
 
-    src_meta_stem = src.removesuffix(DOCUMENT_EXTENSION)
-    src_meta = metadata_dir / f"{src_meta_stem}.json"
-    dst_meta_stem = dst.removesuffix(DOCUMENT_EXTENSION)
-    dst_meta = metadata_dir / f"{dst_meta_stem}.json"
-    if src_meta.exists():
-        dst_meta.parent.mkdir(parents=True, exist_ok=True)
-        src_meta.rename(dst_meta)
-        cleanup_empty_parents(src_meta, metadata_dir)
+    dst_description_path = workspace_dir / dst_description
+    dst_description_path.parent.mkdir(parents=True, exist_ok=True)
+    src_description_path.rename(dst_description_path)
+    cleanup_empty_parents(src_description_path, workspace_dir)
 
-    src_path = Path(src)
-    dst_path = Path(dst)
-    src_base = src_path.stem
-    dst_base = dst_path.stem
-    src_parent_str = str(src_path.parent)
-    dst_parent_str = str(dst_path.parent)
+    dst_original: str | None = None
+    if metadata.original_path:
+        src_original_path = workspace_dir / metadata.original_path
+        if src_original_path.exists():
+            dst_original = f"{dst_stem}{src_original_path.suffix}"
+            dst_original_path = workspace_dir / dst_original
+            dst_original_path.parent.mkdir(parents=True, exist_ok=True)
+            src_original_path.rename(dst_original_path)
+            cleanup_empty_parents(src_original_path, workspace_dir)
 
-    old_assets_name = f"{src_base}_assets"
-    new_assets_name = f"{dst_base}_assets"
-    old_assets_dir = (
-        workspace_dir / src_parent_str / old_assets_name
-        if src_parent_str != "."
-        else workspace_dir / old_assets_name
-    )
+    dst_assets_dir: str | None = None
+    src_assets_dir = metadata.assets_dir
+    if src_assets_dir:
+        src_assets_path = workspace_dir / src_assets_dir
+        if src_assets_path.exists():
+            dst_assets_dir = assets_dir_for_stem(dst_stem)
+            dst_assets_path = workspace_dir / dst_assets_dir
+            dst_assets_path.parent.mkdir(parents=True, exist_ok=True)
+            src_assets_path.rename(dst_assets_path)
+            cleanup_empty_parents(src_assets_path, workspace_dir)
 
-    if old_assets_dir.is_dir():
-        new_assets_dir = (
-            workspace_dir / dst_parent_str / new_assets_name
-            if dst_parent_str != "."
-            else workspace_dir / new_assets_name
+            src_assets_name = PurePosixPath(src_assets_dir).name
+            dst_assets_name = PurePosixPath(dst_assets_dir).name
+            content = dst_description_path.read_text(encoding="utf-8")
+            if src_assets_name != dst_assets_name:
+                content = content.replace(f"{src_assets_name}/", f"{dst_assets_name}/")
+                dst_description_path.write_text(content, encoding="utf-8")
+
+    src_meta_path = metadata_path_for_reference(store, src_stem)
+    dst_meta_path = metadata_path_for_reference(store, dst_stem)
+    if src_meta_path.exists():
+        dst_meta_path.parent.mkdir(parents=True, exist_ok=True)
+        src_meta_path.rename(dst_meta_path)
+        cleanup_empty_parents(src_meta_path, metadata_dir)
+
+    src_meta_assets = metadata_dir / assets_dir_for_stem(src_stem)
+    dst_meta_assets = metadata_dir / assets_dir_for_stem(dst_stem)
+    if src_meta_assets.exists():
+        dst_meta_assets.parent.mkdir(parents=True, exist_ok=True)
+        src_meta_assets.rename(dst_meta_assets)
+        cleanup_empty_parents(src_meta_assets, metadata_dir)
+
+    replacements = [
+        PathReplacement(old=src_stem, new=dst_stem),
+        PathReplacement(old=src_description, new=dst_description),
+    ]
+    if metadata.original_path and dst_original:
+        replacements.append(
+            PathReplacement(old=metadata.original_path, new=dst_original)
         )
-        new_assets_dir.parent.mkdir(parents=True, exist_ok=True)
-        old_assets_dir.rename(new_assets_dir)
-        cleanup_empty_parents(old_assets_dir, workspace_dir)
-
-        content = dst_doc.read_text(encoding="utf-8")
-        content = content.replace(f"]({old_assets_name}/", f"]({new_assets_name}/")
-        dst_doc.write_text(content, encoding="utf-8")
-
-        if dst_meta.exists():
-            meta = load_document_metadata(metadata_dir, dst)
-            if meta and meta.images:
-                updated_images = [
-                    image.replace(f"{old_assets_name}/", f"{new_assets_name}/")
-                    for image in meta.images
-                ]
-                if src_parent_str != dst_parent_str:
-                    old_prefix = (
-                        f"{src_parent_str}/{old_assets_name}/"
-                        if src_parent_str != "."
-                        else f"{old_assets_name}/"
-                    )
-                    new_prefix = (
-                        f"{dst_parent_str}/{new_assets_name}/"
-                        if dst_parent_str != "."
-                        else f"{new_assets_name}/"
-                    )
-                    updated_images = [
-                        image.replace(old_prefix, new_prefix)
-                        for image in updated_images
-                    ]
-                updated = meta.model_copy(update={"images": updated_images})
-                dst_meta.write_text(
-                    updated.model_dump_json(indent=2),
-                    encoding="utf-8",
-                )
-
-    src_stem = src_path.stem
-    search_dir = (
-        originals_dir / src_parent_str if src_parent_str != "." else originals_dir
-    )
-    if search_dir.exists():
-        for candidate in search_dir.iterdir():
-            if candidate.is_file() and candidate.stem == src_stem:
-                destination_dir = (
-                    originals_dir / dst_parent_str
-                    if dst_parent_str != "."
-                    else originals_dir
-                )
-                destination_dir.mkdir(parents=True, exist_ok=True)
-                destination = destination_dir / (dst_path.stem + candidate.suffix)
-                candidate.rename(destination)
-                cleanup_empty_parents(candidate, originals_dir)
-                break
+    if src_assets_dir and dst_assets_dir:
+        replacements.append(PathReplacement(old=src_assets_dir, new=dst_assets_dir))
+    if dst_meta_path.exists():
+        _rewrite_metadata_paths(dst_meta_path, replacements)
+    if dst_meta_assets.exists():
+        _rewrite_metadata_tree(dst_meta_assets, replacements)
 
     mark_dirty_and_sync(store)
     return MoveDocumentResponse(
         source=src,
-        destination=dst,
+        destination=dst_description,
         message="Document moved successfully",
     )
 
@@ -144,10 +227,9 @@ def move_directory_internal(
     src: str,
     dst: str,
 ) -> MoveDirectoryResponse:
-    """Move/rename a directory in workspace, metadata, and originals."""
+    """Move or rename a workspace directory and its metadata subtree."""
     workspace_dir = store.workspace_dir(settings.data_dir)
     metadata_dir = store.metadata_dir(settings.data_dir)
-    originals_dir = store.originals_dir(settings.data_dir)
 
     src_dir = workspace_dir / src
     if not src_dir.exists() or not src_dir.is_dir():
@@ -157,25 +239,21 @@ def move_directory_internal(
     if dst_dir.exists():
         raise HTTPException(status_code=409, detail="Destination already exists")
 
-    files_moved = sum(1 for f in src_dir.rglob("*") if f.is_file())
-
+    files_moved = sum(1 for file_path in src_dir.rglob("*") if file_path.is_file())
     dst_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src_dir), str(dst_dir))
     cleanup_empty_parents(src_dir, workspace_dir)
 
     src_meta = metadata_dir / src
-    if src_meta.exists() and src_meta.is_dir():
-        dst_meta = metadata_dir / dst
+    dst_meta = metadata_dir / dst
+    if src_meta.exists():
         dst_meta.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src_meta), str(dst_meta))
         cleanup_empty_parents(src_meta, metadata_dir)
-
-    src_orig = originals_dir / src
-    if src_orig.exists() and src_orig.is_dir():
-        dst_orig = originals_dir / dst
-        dst_orig.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src_orig), str(dst_orig))
-        cleanup_empty_parents(src_orig, originals_dir)
+        _rewrite_metadata_tree(
+            dst_meta,
+            [PathReplacement(old=src, new=dst)],
+        )
 
     mark_dirty_and_sync(store)
     return MoveDirectoryResponse(
@@ -183,25 +261,6 @@ def move_directory_internal(
         destination=dst,
         files_moved=files_moved,
         message="Directory moved successfully",
-    )
-
-
-def find_original(store: Casebase, safe: str) -> Path:
-    """Find the original binary file by stem-matching from a workspace path."""
-    originals_dir = store.originals_dir(settings.data_dir)
-    safe_path = Path(safe)
-    target_stem = safe_path.stem
-    parent = str(safe_path.parent)
-    search_dir = originals_dir / parent if parent != "." else originals_dir
-
-    if search_dir.exists():
-        for candidate in search_dir.iterdir():
-            if candidate.is_file() and candidate.stem == target_stem:
-                return candidate
-
-    raise HTTPException(
-        status_code=404,
-        detail=f"No original file found for '{safe}'",
     )
 
 
@@ -228,45 +287,73 @@ def get_document_response(store: Casebase, safe: str) -> Response:
         )
 
 
+def ensure_upload_slot(store: Casebase, reference: str, *, overwrite: bool) -> None:
+    """Check that an upload slot is free, deleting the existing entry on overwrite.
+
+    Args:
+        store: The casebase.
+        reference: Workspace-relative file reference.
+        overwrite: If ``True``, delete the existing entry instead of raising.
+
+    Raises:
+        HTTPException: 409 when the entry exists and *overwrite* is ``False``.
+    """
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    metadata_dir = store.metadata_dir(settings.data_dir)
+    if not entry_exists(workspace_dir, metadata_dir, reference):
+        return
+    if not overwrite:
+        raise HTTPException(status_code=409, detail="Document already exists")
+    delete_single(store, description_path_for_stem(stem_path_from_reference(reference)))
+
+
 def delete_single(store: Casebase, safe: str) -> None:
-    """Delete a single document, its metadata, companion images, and original."""
+    """Delete a logical entry, its original, and its child-assets subtree."""
     workspace = store.workspace_dir(settings.data_dir)
-    file_path = workspace / safe
+    metadata_dir = store.metadata_dir(settings.data_dir)
+    metadata = get_metadata(store, safe)
+    if not metadata:
+        description_path = workspace / safe
+        if not description_path.exists():
+            raise HTTPException(status_code=404, detail="Document not found")
+        if not description_path.is_file():
+            raise HTTPException(status_code=400, detail="Path is not a file")
+    resolved = resolve_entry_paths(workspace, safe)
+    description_rel = (
+        metadata.description_path
+        if metadata and metadata.description_path
+        else resolved.description_path
+    )
+    description_path = workspace / description_rel
+    if description_path.exists():
+        description_path.unlink()
+        cleanup_empty_parents(description_path, workspace)
 
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Document not found")
-    if not file_path.is_file():
-        raise HTTPException(status_code=400, detail="Path is not a file")
+    original_rel = metadata.original_path if metadata else resolved.original_path
+    if original_rel:
+        original_path = workspace / original_rel
+        if original_path.exists():
+            original_path.unlink()
+            cleanup_empty_parents(original_path, workspace)
 
-    meta = get_metadata(store, safe)
-    if meta and meta.images:
-        for image_path in meta.images:
-            image_full = workspace / image_path
-            if image_full.exists():
-                image_full.unlink()
-                cleanup_empty_parents(image_full, workspace)
+    assets_rel = metadata.assets_dir if metadata else resolved.assets_dir
+    if assets_rel:
+        assets_path = workspace / assets_rel
+        if assets_path.exists():
+            shutil.rmtree(assets_path)
+            cleanup_empty_parents(assets_path, workspace)
+        metadata_assets = metadata_dir / assets_rel
+        if metadata_assets.exists():
+            shutil.rmtree(metadata_assets)
+            cleanup_empty_parents(metadata_assets, metadata_dir)
 
-    file_path.unlink()
-    cleanup_empty_parents(file_path, workspace)
     delete_metadata(store, safe)
-
-    originals_dir = store.originals_dir(settings.data_dir)
-    stem = Path(safe).stem
-    parent = str(Path(safe).parent)
-    original_dir = originals_dir / parent if parent != "." else originals_dir
-    if original_dir.exists():
-        for candidate in original_dir.iterdir():
-            if candidate.is_file() and candidate.stem == stem:
-                candidate.unlink()
-                cleanup_empty_parents(candidate, originals_dir)
-                break
 
 
 def delete_directory_internal(store: Casebase, safe: str) -> int:
-    """Delete a directory tree from workspace, metadata, and originals."""
+    """Delete a directory tree from workspace and metadata."""
     workspace_dir = store.workspace_dir(settings.data_dir)
     metadata_dir = store.metadata_dir(settings.data_dir)
-    originals_dir = store.originals_dir(settings.data_dir)
 
     directory_path = workspace_dir / safe
     if not directory_path.exists() or not directory_path.is_dir():
@@ -280,13 +367,8 @@ def delete_directory_internal(store: Casebase, safe: str) -> int:
     cleanup_empty_parents(directory_path, workspace_dir)
 
     metadata_subdir = metadata_dir / safe
-    if metadata_subdir.exists() and metadata_subdir.is_dir():
+    if metadata_subdir.exists():
         shutil.rmtree(metadata_subdir)
         cleanup_empty_parents(metadata_subdir, metadata_dir)
-
-    originals_subdir = originals_dir / safe
-    if originals_subdir.exists() and originals_subdir.is_dir():
-        shutil.rmtree(originals_subdir)
-        cleanup_empty_parents(originals_subdir, originals_dir)
 
     return files_deleted

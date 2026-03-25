@@ -226,14 +226,16 @@ def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, tuple[str, int]]:
         stem = str(meta_file.relative_to(metadata_dir).as_posix()).removesuffix(".json")
         doc_filename = stem + DOCUMENT_EXTENSION
         try:
-            data = json.loads(meta_file.read_text(encoding="utf-8"))
-            doc = DocumentMetadata.model_validate(data)
+            doc = DocumentMetadata.model_validate_json(
+                meta_file.read_text(encoding="utf-8")
+            )
         except Exception as exc:
             logger.warning("Failed to load metadata for %s: %s", doc_filename, exc)
             continue
 
+        entry_filename = doc.description_path or doc_filename
         for i, chunk in enumerate(doc.chunks):
-            key = _build_chunk_key(doc_filename, i)
+            key = _build_chunk_key(entry_filename, i)
             chunks[key] = (chunk.text, chunk.token_count)
 
     return chunks

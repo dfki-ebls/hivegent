@@ -2,23 +2,33 @@
 
 import logging
 import mimetypes
+import shutil
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ValidationError
 
+from ...chunkers.base import (
+    EntryGeneratedBy,
+    EntryKind,
+    EntryMetadata,
+    EntryOrigin,
+)
 from ...chunks import chunk_document, get_metadata
 from ...config import settings
 from ...converters import (
     ConversionPipeline,
-    ConversionResult,
     get_converter,
     resolve_auto_pipeline,
 )
-from ...converters.alt_text import describe_image, generate_alt_texts
+from ...converters.alt_text import describe_image
 from ...converters.base import DOCUMENT_EXTENSION, IMAGE_EXTENSIONS
+from ...entries import (
+    assets_dir_for_stem,
+    description_path_for_stem,
+    stem_path_from_reference,
+)
 from ...retrieval import mark_dirty_and_sync
 from ...store import Casebase
 from ...types import (
@@ -29,7 +39,6 @@ from ...types import (
     UploadDocumentResponse,
 )
 from ..common import cleanup_empty_parents, resolve_llm_config
-from .files import find_original
 from ..models import PipelineSpec
 
 __all__ = [
@@ -58,156 +67,244 @@ def _resolve_vision_config(llm_config: LlmConfig) -> LlmConfig | None:
     return resolved if resolved.model else None
 
 
-@dataclass(slots=True, frozen=True)
-class _ImageStoreResult:
-    """Result of storing extracted images from a conversion."""
-
-    markdown: str
-    workspace_paths: list[str]
-    alt_text_images: dict[str, bytes]
-
-
-def _store_conversion_images(
-    result: ConversionResult,
-    workspace_dir: Path,
-    doc_relpath: str,
-) -> _ImageStoreResult:
-    """Store extracted images in the workspace and rewrite markdown paths."""
-    markdown = result.markdown
-    if not result.images:
-        return _ImageStoreResult(
-            markdown=markdown,
-            workspace_paths=[],
-            alt_text_images={},
-        )
-
-    doc_path = PurePosixPath(doc_relpath)
-    base_name = doc_path.stem
-    parent_str = str(doc_path.parent)
-    assets_prefix = f"{base_name}_assets"
-    if parent_str != ".":
-        assets_prefix = f"{parent_str}/{base_name}_assets"
-
-    workspace_paths: list[str] = []
-    alt_text_images: dict[str, bytes] = {}
-
-    for image_relpath, image_data in result.images.items():
-        image_filename = PurePosixPath(image_relpath).name
-        workspace_image_path = f"{assets_prefix}/{image_filename}"
-        workspace_image_full = workspace_dir / workspace_image_path
-        workspace_image_full.parent.mkdir(parents=True, exist_ok=True)
-        workspace_image_full.write_bytes(image_data)
-        workspace_paths.append(workspace_image_path)
-        local_path = f"{base_name}_assets/{image_filename}"
-        markdown = markdown.replace(image_relpath, local_path)
-        alt_text_images[local_path] = image_data
-
-    return _ImageStoreResult(
-        markdown=markdown,
-        workspace_paths=workspace_paths,
-        alt_text_images=alt_text_images,
+def _build_entry_metadata(
+    *,
+    stem_path: str,
+    description_path: str,
+    original_path: str | None,
+    assets_dir: str | None,
+    entry_kind: EntryKind,
+    origin: EntryOrigin,
+    generated_by: EntryGeneratedBy,
+) -> EntryMetadata:
+    """Build metadata for a logical entry."""
+    files = [description_path]
+    if original_path is not None:
+        files.append(original_path)
+    return EntryMetadata(
+        entry_kind=entry_kind,
+        stem_path=stem_path,
+        description_path=description_path,
+        original_path=original_path,
+        assets_dir=assets_dir,
+        mime=mimetypes.guess_type(original_path or description_path)[0],
+        origin=origin,
+        generated_by=generated_by,
+        files=files,
     )
 
 
-async def upload_file(
+def _write_original_file(workspace_dir: Path, filepath: str, content: bytes) -> Path:
+    """Write an original file into the workspace."""
+    full_path = workspace_dir / filepath
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    full_path.write_bytes(content)
+    return full_path
+
+
+async def _write_markdown_projection(
+    store: Casebase,
+    description_path: str,
+    content: str,
+    spec: PipelineSpec,
+    *,
+    entry_metadata: EntryMetadata,
+) -> tuple[int, str]:
+    """Write markdown content and persist chunk metadata."""
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    full_path = workspace_dir / description_path
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    full_path.write_text(content, encoding="utf-8")
+    chunked = await chunk_document(
+        store,
+        description_path,
+        content,
+        spec.chunking,
+        entry_metadata=entry_metadata,
+    )
+    return len(chunked.chunks), chunked.pipeline
+
+
+async def _build_image_description(
+    filepath: str,
+    content: bytes,
+    llm_config: LlmConfig,
+) -> str:
+    """Generate markdown text for an image description."""
+    vision = _resolve_vision_config(llm_config)
+    fallback = PurePosixPath(filepath).stem
+    if not vision:
+        return f"{fallback}\n"
+
+    media_type = mimetypes.guess_type(filepath)[0]
+    if not media_type or not media_type.startswith("image/"):
+        return f"{fallback}\n"
+
+    try:
+        description = await describe_image(content, media_type, vision)
+    except Exception:
+        logger.warning("Image description generation failed for %s", filepath)
+        description = fallback
+    return f"{description.strip() or fallback}\n"
+
+
+def _build_binary_stub(filepath: str, size_bytes: int) -> str:
+    """Build a minimal searchable markdown stub for an opaque binary file."""
+    name = PurePosixPath(filepath).name
+    mime = mimetypes.guess_type(filepath)[0] or "application/octet-stream"
+    return f"File name: {name}.\nMIME type: {mime}.\nSize: {size_bytes} bytes.\n"
+
+
+def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
+    """Delete an entry's child-assets subtree from workspace and metadata."""
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    metadata_dir = store.metadata_dir(settings.data_dir)
+    assets_dir = assets_dir_for_stem(stem_path)
+    workspace_assets = workspace_dir / assets_dir
+    if workspace_assets.exists():
+        shutil.rmtree(workspace_assets)
+        cleanup_empty_parents(workspace_assets, workspace_dir)
+    metadata_assets = metadata_dir / assets_dir
+    if metadata_assets.exists():
+        shutil.rmtree(metadata_assets)
+        cleanup_empty_parents(metadata_assets, metadata_dir)
+
+
+async def _upload_markdown(
+    store: Casebase,
+    filepath: str,
+    content: bytes,
+    spec: PipelineSpec,
+    *,
+    origin: EntryOrigin,
+) -> UploadDocumentResponse:
+    """Store a user-authored markdown file."""
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    text_content = content.decode("utf-8")
+    stem_path = stem_path_from_reference(filepath)
+    chunk_count, chunking_used = await _write_markdown_projection(
+        store,
+        filepath,
+        text_content,
+        spec,
+        entry_metadata=_build_entry_metadata(
+            stem_path=stem_path,
+            description_path=filepath,
+            original_path=None,
+            assets_dir=assets_dir_for_stem(stem_path)
+            if (workspace_dir / assets_dir_for_stem(stem_path)).exists()
+            else None,
+            entry_kind="user_markdown",
+            origin=origin,
+            generated_by="user",
+        ),
+    )
+    return UploadDocumentResponse(
+        filename=filepath,
+        converted_filename=None,
+        size_bytes=len(content),
+        chunk_count=chunk_count,
+        chunking_pipeline_used=chunking_used,
+        message="Document uploaded successfully",
+    )
+
+
+async def _upload_image(
     store: Casebase,
     filepath: str,
     content: bytes,
     spec: PipelineSpec,
     llm_config: LlmConfig,
+    *,
+    origin: EntryOrigin,
 ) -> UploadDocumentResponse:
-    """Upload a single file, converting binary files to markdown."""
-    basename = filepath.rsplit("/", 1)[-1] if "/" in filepath else filepath
-    suffix = "." + basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
+    """Store an image and generate a markdown description."""
     workspace_dir = store.workspace_dir(settings.data_dir)
+    _write_original_file(workspace_dir, filepath, content)
+    stem_path = stem_path_from_reference(filepath)
+    description_path = description_path_for_stem(stem_path)
+    markdown_content = await _build_image_description(filepath, content, llm_config)
+    chunk_count, chunking_used = await _write_markdown_projection(
+        store,
+        description_path,
+        markdown_content,
+        spec,
+        entry_metadata=_build_entry_metadata(
+            stem_path=stem_path,
+            description_path=description_path,
+            original_path=filepath,
+            assets_dir=None,
+            entry_kind="image",
+            origin=origin,
+            generated_by="vision",
+        ),
+    )
+    return UploadDocumentResponse(
+        filename=filepath,
+        converted_filename=description_path,
+        size_bytes=len(content),
+        chunk_count=chunk_count,
+        chunking_pipeline_used=chunking_used,
+        message="Image uploaded and described successfully",
+    )
 
-    if _is_markdown(suffix):
-        file_path = workspace_dir / filepath
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_bytes(content)
 
-        chunk_count = None
-        chunking_used = None
-        try:
-            text_content = content.decode("utf-8")
-            chunked = await chunk_document(store, filepath, text_content, spec.chunking)
-            chunk_count = len(chunked.chunks)
-            chunking_used = chunked.pipeline
-            mark_dirty_and_sync(store)
-        except Exception as exc:
-            logger.warning("Chunking failed for %s: %s", filepath, exc)
+async def _upload_binary_stub(
+    store: Casebase,
+    filepath: str,
+    content: bytes,
+    spec: PipelineSpec,
+    *,
+    origin: EntryOrigin,
+    original_written: bool = False,
+) -> UploadDocumentResponse:
+    """Store a non-convertible binary with a minimal markdown stub."""
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    if not original_written:
+        _write_original_file(workspace_dir, filepath, content)
+    stem_path = stem_path_from_reference(filepath)
+    description_path = description_path_for_stem(stem_path)
+    markdown_content = _build_binary_stub(filepath, len(content))
+    chunk_count, chunking_used = await _write_markdown_projection(
+        store,
+        description_path,
+        markdown_content,
+        spec,
+        entry_metadata=_build_entry_metadata(
+            stem_path=stem_path,
+            description_path=description_path,
+            original_path=filepath,
+            assets_dir=None,
+            entry_kind="binary_stub",
+            origin=origin,
+            generated_by="stub",
+        ),
+    )
+    return UploadDocumentResponse(
+        filename=filepath,
+        converted_filename=description_path,
+        size_bytes=len(content),
+        chunk_count=chunk_count,
+        chunking_pipeline_used=chunking_used,
+        message="Binary file uploaded with searchable stub",
+    )
 
-        return UploadDocumentResponse(
-            filename=filepath,
-            size_bytes=len(content),
-            chunk_count=chunk_count,
-            chunking_pipeline_used=chunking_used,
-            message="Document uploaded successfully",
-        )
 
-    if _is_image(suffix):
-        image_workspace = workspace_dir / filepath
-        image_workspace.parent.mkdir(parents=True, exist_ok=True)
-        image_workspace.write_bytes(content)
-
-        originals_dir = store.originals_dir(settings.data_dir)
-        original_path = originals_dir / filepath
-        original_path.parent.mkdir(parents=True, exist_ok=True)
-        original_path.write_bytes(content)
-
-        vision = _resolve_vision_config(llm_config)
-        alt_text = PurePosixPath(filepath).stem
-        if vision:
-            media_type = mimetypes.guess_type(filepath)[0]
-            if media_type and media_type.startswith("image/"):
-                try:
-                    alt_text = await describe_image(content, media_type, vision)
-                except Exception:
-                    logger.warning("Alt text generation failed for %s", filepath)
-
-        base_name = basename.rsplit(".", 1)[0]
-        if "/" in filepath:
-            parent_dir = filepath.rsplit("/", 1)[0]
-            converted_relpath = f"{parent_dir}/{base_name}.md"
-        else:
-            converted_relpath = f"{base_name}.md"
-
-        wrapper_content = f"![{alt_text}]({basename})\n"
-        converted_path = workspace_dir / converted_relpath
-        converted_path.parent.mkdir(parents=True, exist_ok=True)
-        converted_path.write_text(wrapper_content, encoding="utf-8")
-
-        chunk_count = None
-        chunking_used = None
-        try:
-            chunked = await chunk_document(
-                store,
-                converted_relpath,
-                wrapper_content,
-                spec.chunking,
-                images=[filepath],
-            )
-            chunk_count = len(chunked.chunks)
-            chunking_used = chunked.pipeline
-            mark_dirty_and_sync(store)
-        except Exception as exc:
-            logger.warning("Chunking failed for %s: %s", converted_relpath, exc)
-
-        return UploadDocumentResponse(
-            filename=filepath,
-            converted_filename=converted_relpath,
-            size_bytes=len(content),
-            chunk_count=chunk_count,
-            chunking_pipeline_used=chunking_used,
-            message="Image uploaded with wrapper markdown",
-        )
-
-    originals_dir = store.originals_dir(settings.data_dir)
-    original_path = originals_dir / filepath
-    original_path.parent.mkdir(parents=True, exist_ok=True)
-    original_path.write_bytes(content)
-
+async def _upload_convertible(
+    store: Casebase,
+    filepath: str,
+    content: bytes,
+    spec: PipelineSpec,
+    llm_config: LlmConfig,
+    *,
+    origin: EntryOrigin,
+) -> UploadDocumentResponse:
+    """Store a convertible binary, convert it, and process extracted assets."""
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    original_full_path = _write_original_file(workspace_dir, filepath, content)
+    basename = PurePosixPath(filepath).name
     conversion_pipeline = spec.conversion.pipeline
+
     try:
         converter = get_converter(
             conversion_pipeline,
@@ -218,6 +315,15 @@ async def upload_file(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
     except (ImportError, ValueError) as exc:
+        if conversion_pipeline == ConversionPipeline.AUTO:
+            return await _upload_binary_stub(
+                store,
+                filepath,
+                content,
+                spec,
+                origin=origin,
+                original_written=True,
+            )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     resolved_conversion = conversion_pipeline
@@ -225,59 +331,64 @@ async def upload_file(
         resolved_conversion = resolve_auto_pipeline(basename)
 
     try:
-        result = await converter(original_path)
-    except ImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        result = await converter(original_full_path)
     except Exception as exc:
+        if conversion_pipeline == ConversionPipeline.AUTO:
+            logger.warning("Falling back to stub markdown for %s: %s", filepath, exc)
+            return await _upload_binary_stub(
+                store,
+                filepath,
+                content,
+                spec,
+                origin=origin,
+                original_written=True,
+            )
         raise HTTPException(
             status_code=500,
             detail=f"Conversion failed: {exc!s}",
         ) from exc
 
-    base_name = basename.rsplit(".", 1)[0]
-    if "/" in filepath:
-        parent_dir = filepath.rsplit("/", 1)[0]
-        converted_relpath = f"{parent_dir}/{base_name}.md"
-    else:
-        converted_relpath = f"{base_name}.md"
+    stem_path = stem_path_from_reference(filepath)
+    description_path = description_path_for_stem(stem_path)
+    assets_dir = assets_dir_for_stem(stem_path)
+    markdown_content = result.markdown
+    has_assets = False
 
-    image_result = _store_conversion_images(result, workspace_dir, converted_relpath)
-    markdown_content = image_result.markdown
-    vision = _resolve_vision_config(llm_config)
-    try:
-        markdown_content = await generate_alt_texts(
-            markdown_content,
-            image_result.alt_text_images,
-            vision,
+    for image_relpath, image_data in sorted(result.images.items()):
+        child_path = str((PurePosixPath(assets_dir) / image_relpath).as_posix())
+        relative_from_doc = str(
+            PurePosixPath(PurePosixPath(assets_dir).name) / PurePosixPath(image_relpath)
         )
-    except Exception:
-        logger.warning("Alt text generation failed for %s", converted_relpath)
-
-    converted_path = workspace_dir / converted_relpath
-    converted_path.parent.mkdir(parents=True, exist_ok=True)
-    converted_path.write_text(markdown_content, encoding="utf-8")
-
-    chunk_count = None
-    chunking_used = None
-    try:
-        chunked = await chunk_document(
+        markdown_content = markdown_content.replace(image_relpath, relative_from_doc)
+        await upload_file(
             store,
-            converted_relpath,
-            markdown_content,
-            spec.chunking,
-            images=image_result.workspace_paths,
+            child_path,
+            image_data,
+            spec,
+            llm_config,
+            origin="extracted",
+            sync=False,
         )
-        chunk_count = len(chunked.chunks)
-        chunking_used = chunked.pipeline
-        mark_dirty_and_sync(store)
-    except Exception as exc:
-        logger.warning("Chunking failed for %s: %s", converted_relpath, exc)
+        has_assets = True
 
+    chunk_count, chunking_used = await _write_markdown_projection(
+        store,
+        description_path,
+        markdown_content,
+        spec,
+        entry_metadata=_build_entry_metadata(
+            stem_path=stem_path,
+            description_path=description_path,
+            original_path=filepath,
+            assets_dir=assets_dir if has_assets else None,
+            entry_kind="convertible",
+            origin=origin,
+            generated_by="converter",
+        ),
+    )
     return UploadDocumentResponse(
         filename=filepath,
-        converted_filename=converted_relpath,
+        converted_filename=description_path,
         size_bytes=len(content),
         conversion_pipeline_used=resolved_conversion.value,
         chunk_count=chunk_count,
@@ -286,112 +397,74 @@ async def upload_file(
     )
 
 
+async def upload_file(
+    store: Casebase,
+    filepath: str,
+    content: bytes,
+    spec: PipelineSpec,
+    llm_config: LlmConfig,
+    *,
+    origin: EntryOrigin = "upload",
+    sync: bool = True,
+) -> UploadDocumentResponse:
+    """Upload a single file using the recursive stem-entry model."""
+    suffix = PurePosixPath(filepath).suffix.lower()
+
+    if _is_markdown(suffix):
+        result = await _upload_markdown(store, filepath, content, spec, origin=origin)
+    elif _is_image(suffix):
+        result = await _upload_image(
+            store, filepath, content, spec, llm_config, origin=origin
+        )
+    else:
+        result = await _upload_convertible(
+            store,
+            filepath,
+            content,
+            spec,
+            llm_config,
+            origin=origin,
+        )
+
+    if sync:
+        mark_dirty_and_sync(store)
+    return result
+
+
 async def reconvert_single(
     store: Casebase,
     safe: str,
     spec: PipelineSpec,
     resolved: LlmConfig,
 ) -> UploadDocumentResponse:
-    """Reconvert a single document from its original binary file."""
-    conversion_pipeline = spec.conversion.pipeline
-    originals_dir = store.originals_dir(settings.data_dir)
-    workspace_dir = store.workspace_dir(settings.data_dir)
-
-    safe_path = Path(safe)
-    target_stem = safe_path.stem
-    parent = str(safe_path.parent)
-    search_dir = originals_dir / parent if parent != "." else originals_dir
-
-    original_path: Path | None = None
-    if search_dir.exists():
-        for candidate in search_dir.iterdir():
-            if candidate.is_file() and candidate.stem == target_stem:
-                original_path = candidate
-                break
-
-    if not original_path:
+    """Reprocess a logical entry from its original file."""
+    metadata = get_metadata(store, safe)
+    if not metadata or not metadata.original_path:
         raise HTTPException(
             status_code=404,
             detail=f"No original file found for '{safe}'",
         )
 
-    try:
-        converter = get_converter(
-            conversion_pipeline,
-            filename=original_path.name,
-            config=spec.conversion.config,
-            llm_options=resolved,
-        )
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.errors()) from exc
-    except (ImportError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    resolved_conversion = conversion_pipeline
-    if conversion_pipeline == ConversionPipeline.AUTO:
-        resolved_conversion = resolve_auto_pipeline(original_path.name)
-
-    existing_meta = get_metadata(store, safe)
-    if existing_meta and existing_meta.images:
-        for image_path in existing_meta.images:
-            image_full = workspace_dir / image_path
-            if image_full.exists():
-                image_full.unlink()
-                cleanup_empty_parents(image_full, workspace_dir)
-
-    try:
-        result = await converter(original_path)
-    except ImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    original_path = workspace_dir / metadata.original_path
+    if not original_path.exists():
         raise HTTPException(
-            status_code=500,
-            detail=f"Conversion failed: {exc!s}",
-        ) from exc
-
-    image_result = _store_conversion_images(result, workspace_dir, safe)
-    markdown_content = image_result.markdown
-    vision = _resolve_vision_config(resolved)
-    try:
-        markdown_content = await generate_alt_texts(
-            markdown_content,
-            image_result.alt_text_images,
-            vision,
+            status_code=404,
+            detail=f"No original file found for '{safe}'",
         )
-    except Exception:
-        logger.warning("Alt text generation failed for %s", safe)
 
-    converted_path = workspace_dir / safe
-    converted_path.parent.mkdir(parents=True, exist_ok=True)
-    converted_path.write_text(markdown_content, encoding="utf-8")
-    stat = converted_path.stat()
-
-    chunk_count = None
-    chunking_used = None
-    try:
-        chunked = await chunk_document(
-            store,
-            safe,
-            markdown_content,
-            spec.chunking,
-            images=image_result.workspace_paths,
-        )
-        chunk_count = len(chunked.chunks)
-        chunking_used = chunked.pipeline
-    except Exception as exc:
-        logger.warning("Chunking failed for %s: %s", safe, exc)
-
-    return UploadDocumentResponse(
-        filename=original_path.name,
-        converted_filename=safe,
-        size_bytes=stat.st_size,
-        conversion_pipeline_used=resolved_conversion.value,
-        chunk_count=chunk_count,
-        chunking_pipeline_used=chunking_used,
-        message="Document reconverted successfully",
+    _clear_assets_subtree(store, metadata.stem_path)
+    result = await upload_file(
+        store,
+        metadata.original_path,
+        original_path.read_bytes(),
+        spec,
+        resolved,
+        origin=metadata.origin,
+        sync=False,
     )
+    mark_dirty_and_sync(store)
+    return result
 
 
 async def upload_file_stream(
@@ -402,121 +475,18 @@ async def upload_file_stream(
     llm_config: LlmConfig,
 ) -> AsyncGenerator[BaseModel, None]:
     """Upload a single file with SSE stage events for progress."""
-    basename = filepath.rsplit("/", 1)[-1] if "/" in filepath else filepath
-    suffix = "." + basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
-    workspace_dir = store.workspace_dir(settings.data_dir)
-
-    # Markdown files: chunk only
-    if _is_markdown(suffix):
-        yield OperationStageEvent(stage="Chunking document")
-        try:
-            result = await upload_file(store, filepath, content, spec, llm_config)
-            yield UploadCompleteEvent(**result.model_dump())
-        except Exception as exc:
-            yield OperationErrorEvent(detail=str(exc))
-        return
-
-    # Image files: generate alt text + chunk
-    if _is_image(suffix):
-        vision = _resolve_vision_config(llm_config)
-        if vision:
-            yield OperationStageEvent(stage="Generating alt text")
-        else:
-            yield OperationStageEvent(stage="Uploading image")
-        try:
-            result = await upload_file(store, filepath, content, spec, llm_config)
-            yield UploadCompleteEvent(**result.model_dump())
-        except Exception as exc:
-            yield OperationErrorEvent(detail=str(exc))
-        return
-
-    # Binary files: convert -> extract images -> alt text -> chunk
+    suffix = PurePosixPath(filepath).suffix.lower()
     try:
-        yield OperationStageEvent(stage="Converting document")
-
-        originals_dir = store.originals_dir(settings.data_dir)
-        original_path = originals_dir / filepath
-        original_path.parent.mkdir(parents=True, exist_ok=True)
-        original_path.write_bytes(content)
-
-        conversion_pipeline = spec.conversion.pipeline
-        try:
-            converter = get_converter(
-                conversion_pipeline,
-                filename=basename,
-                config=spec.conversion.config,
-                llm_options=llm_config,
-            )
-        except (ValidationError, ImportError, ValueError) as exc:
-            yield OperationErrorEvent(detail=str(exc))
-            return
-
-        resolved_conversion = conversion_pipeline
-        if conversion_pipeline == ConversionPipeline.AUTO:
-            resolved_conversion = resolve_auto_pipeline(basename)
-
-        try:
-            conv_result = await converter(original_path)
-        except Exception as exc:
-            yield OperationErrorEvent(detail=f"Conversion failed: {exc!s}")
-            return
-
-        base_name = basename.rsplit(".", 1)[0]
-        if "/" in filepath:
-            parent_dir = filepath.rsplit("/", 1)[0]
-            converted_relpath = f"{parent_dir}/{base_name}.md"
+        if _is_markdown(suffix):
+            yield OperationStageEvent(stage="Chunking document")
+        elif _is_image(suffix):
+            yield OperationStageEvent(stage="Generating image description")
         else:
-            converted_relpath = f"{base_name}.md"
-
-        image_result = _store_conversion_images(
-            conv_result, workspace_dir, converted_relpath
-        )
-        markdown_content = image_result.markdown
-
-        if image_result.alt_text_images:
-            yield OperationStageEvent(stage="Extracting images")
-            vision = _resolve_vision_config(llm_config)
-            if vision:
-                yield OperationStageEvent(stage="Generating alt text")
-            try:
-                markdown_content = await generate_alt_texts(
-                    markdown_content,
-                    image_result.alt_text_images,
-                    vision,
-                )
-            except Exception:
-                logger.warning("Alt text generation failed for %s", converted_relpath)
-
-        converted_path = workspace_dir / converted_relpath
-        converted_path.parent.mkdir(parents=True, exist_ok=True)
-        converted_path.write_text(markdown_content, encoding="utf-8")
-
-        yield OperationStageEvent(stage="Chunking document")
-        chunk_count = None
-        chunking_used = None
-        try:
-            chunked = await chunk_document(
-                store,
-                converted_relpath,
-                markdown_content,
-                spec.chunking,
-                images=image_result.workspace_paths,
-            )
-            chunk_count = len(chunked.chunks)
-            chunking_used = chunked.pipeline
-            mark_dirty_and_sync(store)
-        except Exception as exc:
-            logger.warning("Chunking failed for %s: %s", converted_relpath, exc)
-
-        yield UploadCompleteEvent(
-            filename=filepath,
-            converted_filename=converted_relpath,
-            size_bytes=len(content),
-            conversion_pipeline_used=resolved_conversion.value,
-            chunk_count=chunk_count,
-            chunking_pipeline_used=chunking_used,
-            message="Document uploaded and converted successfully",
-        )
+            yield OperationStageEvent(stage="Processing document")
+        result = await upload_file(store, filepath, content, spec, llm_config)
+        yield UploadCompleteEvent.model_validate(result)
+    except HTTPException as exc:
+        yield OperationErrorEvent(detail=str(exc.detail))
     except Exception as exc:
         yield OperationErrorEvent(detail=str(exc))
 
@@ -529,92 +499,18 @@ async def reconvert_single_stream(
 ) -> AsyncGenerator[BaseModel, None]:
     """Reconvert a single document with SSE stage events for progress."""
     try:
-        yield OperationStageEvent(stage="Converting document")
-
-        conversion_pipeline = spec.conversion.pipeline
-        workspace_dir = store.workspace_dir(settings.data_dir)
-
-        try:
-            original_path = find_original(store, safe)
-        except HTTPException as exc:
-            yield OperationErrorEvent(detail=exc.detail)
-            return
-
-        try:
-            converter = get_converter(
-                conversion_pipeline,
-                filename=original_path.name,
-                config=spec.conversion.config,
-                llm_options=resolved,
-            )
-        except (ValidationError, ImportError, ValueError) as exc:
-            yield OperationErrorEvent(detail=str(exc))
-            return
-
-        resolved_conversion = conversion_pipeline
-        if conversion_pipeline == ConversionPipeline.AUTO:
-            resolved_conversion = resolve_auto_pipeline(original_path.name)
-
-        existing_meta = get_metadata(store, safe)
-        if existing_meta and existing_meta.images:
-            for image_path in existing_meta.images:
-                image_full = workspace_dir / image_path
-                if image_full.exists():
-                    image_full.unlink()
-                    cleanup_empty_parents(image_full, workspace_dir)
-
-        try:
-            conv_result = await converter(original_path)
-        except Exception as exc:
-            yield OperationErrorEvent(detail=f"Conversion failed: {exc!s}")
-            return
-
-        image_result = _store_conversion_images(conv_result, workspace_dir, safe)
-        markdown_content = image_result.markdown
-
-        if image_result.alt_text_images:
-            yield OperationStageEvent(stage="Extracting images")
-            vision = _resolve_vision_config(resolved)
-            if vision:
-                yield OperationStageEvent(stage="Generating alt text")
-            try:
-                markdown_content = await generate_alt_texts(
-                    markdown_content,
-                    image_result.alt_text_images,
-                    vision,
-                )
-            except Exception:
-                logger.warning("Alt text generation failed for %s", safe)
-
-        converted_path = workspace_dir / safe
-        converted_path.parent.mkdir(parents=True, exist_ok=True)
-        converted_path.write_text(markdown_content, encoding="utf-8")
-        stat = converted_path.stat()
-
-        yield OperationStageEvent(stage="Chunking document")
-        chunk_count = None
-        chunking_used = None
-        try:
-            chunked = await chunk_document(
-                store,
-                safe,
-                markdown_content,
-                spec.chunking,
-                images=image_result.workspace_paths,
-            )
-            chunk_count = len(chunked.chunks)
-            chunking_used = chunked.pipeline
-        except Exception as exc:
-            logger.warning("Chunking failed for %s: %s", safe, exc)
-
-        yield UploadCompleteEvent(
-            filename=original_path.name,
-            converted_filename=safe,
-            size_bytes=stat.st_size,
-            conversion_pipeline_used=resolved_conversion.value,
-            chunk_count=chunk_count,
-            chunking_pipeline_used=chunking_used,
-            message="Document reconverted successfully",
-        )
+        metadata = get_metadata(store, safe)
+        if metadata and metadata.original_path:
+            original_suffix = PurePosixPath(metadata.original_path).suffix.lower()
+            if _is_image(original_suffix):
+                yield OperationStageEvent(stage="Regenerating image description")
+            else:
+                yield OperationStageEvent(stage="Reprocessing document")
+        else:
+            yield OperationStageEvent(stage="Reprocessing document")
+        result = await reconvert_single(store, safe, spec, resolved)
+        yield UploadCompleteEvent.model_validate(result)
+    except HTTPException as exc:
+        yield OperationErrorEvent(detail=str(exc.detail))
     except Exception as exc:
         yield OperationErrorEvent(detail=str(exc))

@@ -22,7 +22,7 @@
 - Uses Pydantic and `pydantic-settings` for schemas and environment-driven configuration.
 - Enforces authentication through OIDC bearer tokens or personal access tokens.
 - Uses Pydantic AI to bind models, user-scoped dependencies, and toolsets into one runtime.
-- Converts uploaded files to markdown, chunks them, stores metadata, and refreshes retrieval indexes.
+- Processes uploaded files into recursive stem-based workspace entries, chunks searchable markdown companions, stores per-entry metadata, and refreshes retrieval indexes.
 - Uses LanceDB and cbrkit for dense, sparse, and hybrid retrieval.
 - Stores user and group data in separate casebases on disk.
 - Persists conversations and long-term memory separately from the retrieval index.
@@ -110,3 +110,34 @@ sequenceDiagram
 - Chat uses a streaming request-response loop between the frontend, backend, agent runtime, and LLM provider.
 - Ingestion uses REST plus SSE for incremental progress updates.
 - Ingested content feeds the same backend retrieval path that the agent uses during chat.
+
+## Asset Processing
+
+- Asset handling follows one recursive stem-based rule.
+- Markdown stays as `<stem>.md`.
+- Every non-markdown file keeps its original file as `<stem>.<ext>` and gets a markdown companion `<stem>.md`.
+- Convertible files may also create `<stem>.assets/`, and every extracted child file is processed the same way again.
+- The app shows one logical entry per stem, indexes markdown companions for retrieval, and keeps metadata outside the workspace.
+- Generated image and asset-description markdown always uses chunking pipeline `none`.
+
+```mermaid
+flowchart LR
+    input[File from upload or collection]
+    decide{Markdown?}
+    markdown[Keep or normalize<br/><stem>.md]
+    asset[Keep original<br/><stem>.<ext><br/>and create<br/><stem>.md]
+    extracted{Extracted child files?}
+    recurse[Process each child file<br/>with the same rule]
+    metadata[Write one metadata file<br/>for the stem]
+    index[Index markdown<br/>in LanceDB]
+
+    input --> decide
+    decide -->|yes| markdown
+    decide -->|no| asset
+    asset --> extracted
+    extracted -->|yes| recurse
+    extracted -->|no| metadata
+    recurse --> metadata
+    markdown --> metadata
+    metadata --> index
+```

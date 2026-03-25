@@ -159,6 +159,8 @@ class TestListChunksTool:
             DocumentMetadata(
                 pipeline="test",
                 created_at=created_at,
+                stem_path="doc",
+                description_path="doc.md",
                 chunks=[
                     ChunkData(
                         text="chunk content",
@@ -188,6 +190,8 @@ class TestGetChunkTool:
             DocumentMetadata(
                 pipeline="test",
                 created_at=created_at,
+                stem_path="doc",
+                description_path="doc.md",
                 chunks=[
                     ChunkData(
                         text="chunk content",
@@ -209,6 +213,8 @@ class TestGetChunkTool:
             DocumentMetadata(
                 pipeline="test",
                 created_at=created_at,
+                stem_path="doc",
+                description_path="doc.md",
                 chunks=[
                     ChunkData(
                         text="chunk content",

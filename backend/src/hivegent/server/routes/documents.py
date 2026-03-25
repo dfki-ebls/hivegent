@@ -11,6 +11,7 @@ from starlette.responses import Response, StreamingResponse
 from ...auth import User, get_current_user
 from ...chunks import DocumentMetadata, chunk_document, get_metadata
 from ...config import settings
+from ...entries import stem_path_from_reference
 from ...retrieval import invalidate_store, mark_dirty_and_sync
 from ...types import (
     BulkDeleteDocumentsResponse,
@@ -30,6 +31,7 @@ from ..common import parse_pipeline_spec, resolve_llm_config, safe_path, user_st
 from ..operations import (
     collection_stream_response,
     delete_single,
+    ensure_upload_slot,
     find_original,
     get_document_response,
     list_documents_for_store,
@@ -93,6 +95,7 @@ async def replace_original(
     """Replace the original binary file and reconvert the document."""
     safe = safe_path(filepath)
     store = user_store(user)
+    metadata = get_metadata(store, safe)
     original = find_original(store, safe)
 
     content = await file.read()
@@ -102,13 +105,32 @@ async def replace_original(
             detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
         )
 
-    original.write_bytes(content)
+    new_suffix = PurePosixPath(file.filename or original.name).suffix or original.suffix
+    new_original_relpath = f"{stem_path_from_reference(safe)}{new_suffix.lower()}"
+    new_original_path = store.workspace_dir(settings.data_dir) / new_original_relpath
+    if (
+        metadata
+        and metadata.original_path
+        and metadata.original_path != new_original_relpath
+    ):
+        original.unlink(missing_ok=True)
+        new_original_path.parent.mkdir(parents=True, exist_ok=True)
+    new_original_path.write_bytes(content)
+
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
         LlmConfig.model_validate_json(llm_config),
         default_model=settings.llm.vision_model,
     )
-    result = await reconvert_single(store, safe, spec, llm_config_model)
+    result = await upload_file(
+        store=store,
+        filepath=new_original_relpath,
+        content=content,
+        spec=spec,
+        llm_config=llm_config_model,
+        origin=metadata.origin if metadata else "upload",
+        sync=False,
+    )
     mark_dirty_and_sync(store)
     return result
 
@@ -125,9 +147,7 @@ async def upload_document_stream(
     """Upload or replace a document with streaming progress events."""
     safe = safe_path(filepath)
     store = user_store(user)
-    target = store.workspace_dir(settings.data_dir) / str(PurePosixPath(safe).with_suffix(".md"))
-    if not overwrite and target.exists():
-        raise HTTPException(status_code=409, detail="Document already exists")
+    ensure_upload_slot(store, safe, overwrite=overwrite)
 
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
@@ -165,9 +185,7 @@ async def upload_document(
     """Upload or replace a document."""
     safe = safe_path(filepath)
     store = user_store(user)
-    target = store.workspace_dir(settings.data_dir) / str(PurePosixPath(safe).with_suffix(".md"))
-    if not overwrite and target.exists():
-        raise HTTPException(status_code=409, detail="Document already exists")
+    ensure_upload_slot(store, safe, overwrite=overwrite)
 
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
@@ -281,7 +299,6 @@ async def delete_all_documents(
     for directory_fn in (
         store.workspace_dir,
         store.metadata_dir,
-        store.originals_dir,
         store.lancedb_dir,
     ):
         directory = directory_fn(data_dir)

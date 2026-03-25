@@ -1,10 +1,12 @@
 """Inventory and tree-building helpers for document stores."""
 
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from ...chunks import list_chunked_documents
 from ...config import settings
+from ...converters.base import DOCUMENT_EXTENSION
+from ...entries import is_assets_dir
 from ...store import Casebase
 from ...types import (
     DirectoryEntry,
@@ -16,51 +18,78 @@ from ...types import (
 __all__ = ["build_tree_response", "list_documents_for_store"]
 
 
-def _collect_original_stems(originals_dir: Path) -> set[str]:
-    """Collect relative stems for all original files in a store."""
-    original_stems: set[str] = set()
-    if originals_dir.exists():
-        for original_file in originals_dir.rglob("*"):
-            if original_file.is_file():
-                relative = original_file.relative_to(originals_dir)
-                original_stems.add(str((relative.parent / relative.stem).as_posix()))
-    return original_stems
+def _logical_entries_for_directory(
+    dir_path: Path,
+    root_path: Path,
+    chunk_counts: dict[str, int],
+) -> list[DocumentInfo]:
+    """Group sibling files into logical stem entries for one directory."""
+    grouped: dict[str, list[Path]] = {}
+    for item in sorted(dir_path.iterdir()):
+        if not item.is_file():
+            continue
+        relative = item.relative_to(root_path)
+        stem_path = str((relative.parent / item.stem).as_posix())
+        grouped.setdefault(stem_path, []).append(item)
 
+    entries: list[DocumentInfo] = []
+    for stem_path, files in sorted(grouped.items()):
+        description = next(
+            (file for file in files if file.suffix == DOCUMENT_EXTENSION), None
+        )
+        original = next(
+            (file for file in files if file.suffix != DOCUMENT_EXTENSION), None
+        )
+        primary = original or description
+        if primary is None:
+            continue
 
-def _is_asset_path(relative: Path) -> bool:
-    """Check whether a workspace-relative path lives inside an ``_assets`` directory."""
-    return any(part.endswith("_assets") for part in relative.parts[:-1])
+        entry_path = (
+            str(description.relative_to(root_path).as_posix())
+            if description is not None
+            else str(primary.relative_to(root_path).as_posix())
+        )
+        modified_at = max(file.stat().st_mtime for file in files)
+        size_bytes = primary.stat().st_size
+        entries.append(
+            DocumentInfo(
+                filename=entry_path,
+                display_name=PurePosixPath(stem_path).name,
+                size_bytes=size_bytes,
+                modified_at=datetime.fromtimestamp(modified_at, tz=timezone.utc),
+                chunk_count=chunk_counts.get(entry_path),
+                has_original=original is not None,
+                original_path=(
+                    str(original.relative_to(root_path).as_posix())
+                    if original is not None
+                    else None
+                ),
+                assets_dir=(
+                    f"{stem_path}.assets"
+                    if (root_path / f"{stem_path}.assets").exists()
+                    else None
+                ),
+            )
+        )
+    return entries
 
 
 def list_documents_for_store(store: Casebase) -> DocumentListResponse:
-    """Build a document listing for a single casebase."""
+    """Build a logical-entry listing for a single casebase."""
     workspace = store.workspace_dir(settings.data_dir)
-    original_stems = _collect_original_stems(store.originals_dir(settings.data_dir))
-    documents: list[DocumentInfo] = []
     chunk_counts = list_chunked_documents(store)
+    documents: list[DocumentInfo] = []
 
     if workspace.exists():
-        for file_path in sorted(workspace.rglob("*")):
-            if not file_path.is_file():
-                continue
-
-            relative = file_path.relative_to(workspace)
-            if _is_asset_path(relative):
-                continue
-
-            relative_path = str(relative.as_posix())
-            document_stem = str((relative.parent / relative.stem).as_posix())
-            stat = file_path.stat()
-
-            documents.append(
-                DocumentInfo(
-                    filename=relative_path,
-                    size_bytes=stat.st_size,
-                    modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
-                    chunk_count=chunk_counts.get(relative_path),
-                    has_original=document_stem in original_stems,
-                )
+        for dir_path in sorted(
+            p for p in workspace.rglob("*") if p.is_dir() and not is_assets_dir(p.name)
+        ):
+            documents.extend(
+                _logical_entries_for_directory(dir_path, workspace, chunk_counts)
             )
+        documents.extend(
+            _logical_entries_for_directory(workspace, workspace, chunk_counts)
+        )
 
     return DocumentListResponse(documents=documents, total_count=len(documents))
 
@@ -69,9 +98,8 @@ def _build_directory_tree(
     dir_path: Path,
     root_path: Path,
     chunk_counts: dict[str, int],
-    original_stems: set[str],
 ) -> DirectoryEntry:
-    """Recursively build a directory tree entry."""
+    """Recursively build a logical-entry directory tree."""
     relative = str(dir_path.relative_to(root_path).as_posix())
     name = dir_path.name if dir_path != root_path else ""
     entry_path = relative if relative != "." else ""
@@ -79,32 +107,25 @@ def _build_directory_tree(
 
     if dir_path.exists():
         for item in sorted(dir_path.iterdir()):
-            if item.is_dir():
-                if item.name.endswith("_assets"):
-                    continue
-                children.append(
-                    _build_directory_tree(item, root_path, chunk_counts, original_stems)
+            if item.is_dir() and not is_assets_dir(item.name):
+                children.append(_build_directory_tree(item, root_path, chunk_counts))
+
+        for file_entry in _logical_entries_for_directory(
+            dir_path, root_path, chunk_counts
+        ):
+            children.append(
+                DirectoryEntry(
+                    type="file",
+                    name=file_entry.display_name,
+                    path=file_entry.filename,
+                    size_bytes=file_entry.size_bytes,
+                    modified_at=file_entry.modified_at,
+                    chunk_count=file_entry.chunk_count,
+                    has_original=file_entry.has_original,
+                    original_path=file_entry.original_path,
+                    assets_dir=file_entry.assets_dir,
                 )
-            elif item.is_file():
-                file_relative = str(item.relative_to(root_path).as_posix())
-                item_relative = item.relative_to(root_path)
-                document_stem = str(
-                    (item_relative.parent / item_relative.stem).as_posix()
-                )
-                stat = item.stat()
-                children.append(
-                    DirectoryEntry(
-                        type="file",
-                        name=item.name,
-                        path=file_relative,
-                        size_bytes=stat.st_size,
-                        modified_at=datetime.fromtimestamp(
-                            stat.st_mtime, tz=timezone.utc
-                        ),
-                        chunk_count=chunk_counts.get(file_relative),
-                        has_original=document_stem in original_stems,
-                    )
-                )
+            )
 
     return DirectoryEntry(
         type="directory",
@@ -118,13 +139,11 @@ def build_tree_response(store: Casebase) -> DirectoryTreeResponse:
     """Build a directory tree response for any casebase."""
     workspace_dir = store.workspace_dir(settings.data_dir)
     chunk_counts = list_chunked_documents(store)
-    original_stems = _collect_original_stems(store.originals_dir(settings.data_dir))
 
     root = _build_directory_tree(
         workspace_dir,
         workspace_dir,
         chunk_counts,
-        original_stems,
     )
 
     total_files = 0

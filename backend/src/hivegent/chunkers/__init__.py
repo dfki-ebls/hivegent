@@ -13,6 +13,7 @@ from .fast import FastChunkerConfig, FastDocumentChunker
 from .late import LateChunkerConfig, LateDocumentChunker
 from .markdown import MarkdownChunkerConfig, MarkdownDocumentChunker
 from .neural import NeuralChunkerConfig, NeuralDocumentChunker
+from .none import NoneDocumentChunker
 from .recursive import RecursiveChunkerConfig, RecursiveDocumentChunker
 from .sentence import SentenceChunkerConfig, SentenceDocumentChunker
 from .slumber import SlumberChunkerConfig, SlumberDocumentChunker
@@ -35,6 +36,7 @@ class ChunkingPipeline(StrEnum):
     """Available chunking pipelines."""
 
     AUTO = "auto"
+    NONE = "none"
     TOKEN = "token"
     FAST = "fast"
     SENTENCE = "sentence"
@@ -78,6 +80,11 @@ class ChunkingPipelineInfo:
 
 # Core chunkers (always available)
 _CHUNKER_CONFIG: dict[ChunkingPipeline, _ChunkerEntry] = {
+    ChunkingPipeline.NONE: _ChunkerEntry(
+        chunker_class=NoneDocumentChunker,
+        label="None",
+        description="Keep the full document as a single chunk",
+    ),
     ChunkingPipeline.TOKEN: _ChunkerEntry(
         chunker_class=TokenDocumentChunker,
         label="Token",

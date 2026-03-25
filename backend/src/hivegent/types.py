@@ -199,9 +199,10 @@ class CreateConversationResponse(BaseModel):
 
 
 class DocumentInfo(BaseModel):
-    """Metadata about a document in the data directory."""
+    """Metadata about a logical workspace entry."""
 
     filename: str = Field(description="The filename of the document")
+    display_name: str = Field(description="User-facing basename of the logical entry")
     size_bytes: int = Field(description="File size in bytes")
     modified_at: datetime = Field(description="Last modification timestamp")
     chunk_count: int | None = Field(
@@ -212,9 +213,17 @@ class DocumentInfo(BaseModel):
         default=False,
         description="Whether an original binary file exists for reconversion",
     )
+    original_path: str | None = Field(
+        default=None,
+        description="Workspace-relative original file path when present",
+    )
+    assets_dir: str | None = Field(
+        default=None,
+        description="Workspace-relative child-assets directory when present",
+    )
     kind: Literal["document", "asset"] = Field(
         default="document",
-        description="Whether this is a document or a companion asset (e.g. extracted image)",
+        description="Whether this is a logical document entry or raw asset row",
     )
 
 
@@ -369,7 +378,7 @@ class CreateTokenResponse(BaseModel):
 
 
 class DirectoryEntry(BaseModel):
-    """A file or directory entry in the document tree."""
+    """A logical file or directory entry in the document tree."""
 
     type: Literal["file", "directory"]
     name: str = Field(description="Basename of the entry")
@@ -386,6 +395,14 @@ class DirectoryEntry(BaseModel):
     has_original: bool = Field(
         default=False,
         description="Whether an original binary file exists",
+    )
+    original_path: str | None = Field(
+        default=None,
+        description="Workspace-relative original file path when present",
+    )
+    assets_dir: str | None = Field(
+        default=None,
+        description="Workspace-relative child-assets directory when present",
     )
     children: list["DirectoryEntry"] | None = Field(
         default=None,

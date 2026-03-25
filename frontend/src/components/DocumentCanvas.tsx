@@ -547,7 +547,7 @@ function DocumentListItem({
       <FileText className="h-8 w-8 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <p className="truncate font-medium text-sm">{doc.filename}</p>
+          <p className="truncate font-medium text-sm">{doc.display_name}</p>
           {isMutating && <Spinner className="size-3 shrink-0 text-muted-foreground" />}
           {isMutating && operationStage && (
             <span className="truncate text-xs text-muted-foreground">
@@ -874,7 +874,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       if (cancelled) return;
 
       const fuse = new Fuse(documents, {
-        keys: ["filename"],
+        keys: ["display_name", "filename"],
         threshold: 0.4,
       });
       setFilteredDocuments(fuse.search(searchQuery).map((result) => result.item));
@@ -1013,20 +1013,23 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     [storeReconvert, pipelineSpec, visionModel, llmSettings],
   );
 
-  const handleDownloadOriginal = useCallback(async (filepath: string) => {
-    try {
-      const { downloadOriginal } = await import("../lib/api");
-      const blob = await downloadOriginal(filepath);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filepath.split("/").pop() ?? "original";
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      // silently ignore download errors
-    }
-  }, []);
+  const handleDownloadOriginal = useCallback(
+    async (filepath: string) => {
+      try {
+        const { downloadOriginal } = await import("../lib/api");
+        const blob = await downloadOriginal(filepath);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = docsByFilename.get(filepath)?.original_path?.split("/").pop() ?? "original";
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch {
+        // silently ignore download errors
+      }
+    },
+    [docsByFilename],
+  );
 
   // --- Bulk operation handlers ---
 

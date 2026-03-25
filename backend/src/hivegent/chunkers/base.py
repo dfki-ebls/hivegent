@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
@@ -10,6 +10,10 @@ __all__ = [
     "ChunkData",
     "ChunkSummary",
     "DocumentChunker",
+    "EntryGeneratedBy",
+    "EntryKind",
+    "EntryMetadata",
+    "EntryOrigin",
     "DocumentMetadata",
     "RetrievedChunk",
 ]
@@ -28,16 +32,66 @@ class ChunkData(BaseModel):
     )
 
 
-class DocumentMetadata(BaseModel):
-    """Metadata for a processed document, including chunks and companion images."""
+type EntryKind = Literal[
+    "user_markdown",
+    "image",
+    "convertible",
+    "binary_stub",
+]
+"""Logical entry kinds stored in document metadata."""
+
+type EntryOrigin = Literal["upload", "collection", "extracted"]
+"""Origin of a logical entry."""
+
+type EntryGeneratedBy = Literal["user", "converter", "vision", "stub"]
+"""How the markdown representation of an entry was produced."""
+
+
+class EntryMetadata(BaseModel):
+    """Filesystem metadata for a logical stem entry."""
+
+    entry_kind: EntryKind = Field(
+        default="user_markdown",
+        description="Logical entry kind for the chunked markdown",
+    )
+    stem_path: str = Field(
+        description="Workspace-relative logical stem path for the entry",
+    )
+    description_path: str = Field(
+        description="Workspace-relative markdown path for the entry",
+    )
+    original_path: str | None = Field(
+        default=None,
+        description="Workspace-relative original file path for the entry",
+    )
+    assets_dir: str | None = Field(
+        default=None,
+        description="Workspace-relative child-assets directory for the entry",
+    )
+    mime: str | None = Field(
+        default=None,
+        description="Detected MIME type for the original file when available",
+    )
+    origin: EntryOrigin = Field(
+        default="upload",
+        description="How the logical entry was created",
+    )
+    generated_by: EntryGeneratedBy = Field(
+        default="user",
+        description="How the markdown content was produced",
+    )
+    files: list[str] = Field(
+        default_factory=list,
+        description="Workspace-relative files that belong to the logical entry",
+    )
+
+
+class DocumentMetadata(EntryMetadata):
+    """Metadata for a processed logical entry."""
 
     pipeline: str = Field(description="The chunking pipeline used")
     created_at: datetime = Field(description="When the metadata was created")
     chunks: list[ChunkData] = Field(description="The document chunks")
-    images: list[str] = Field(
-        default_factory=list,
-        description="Workspace-relative paths of companion images",
-    )
 
 
 class ChunkSummary(BaseModel):

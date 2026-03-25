@@ -17,7 +17,7 @@ class Casebase:
 
     Each casebase maps to a filesystem directory under
     ``data/{users,groups}/<id>/`` containing a workspace, metadata,
-    a LanceDB index, and optionally original binary files.
+    a LanceDB index, and conversation state.
     """
 
     kind: Literal["user", "group"]
@@ -83,7 +83,7 @@ class Casebase:
     def workspace_dir(self, data_dir: Path) -> Path:
         """Return the workspace directory for this store, creating it if needed.
 
-        Contains markdown files, attachments, and unconverted files.
+        Contains source files, markdown companions, and recursive asset directories.
 
         Args:
             data_dir: The application data root directory.
@@ -109,7 +109,7 @@ class Casebase:
     def metadata_dir(self, data_dir: Path) -> Path:
         """Return the metadata directory for this store, creating it if needed.
 
-        Contains per-document JSON files with chunk data and image references.
+        Contains per-entry JSON files with chunk data and stem-entry metadata.
 
         Args:
             data_dir: The application data root directory.
@@ -150,19 +150,6 @@ class Casebase:
     def conversation_path(self, data_dir: Path, conversation_id: str) -> Path:
         """Return the path to a conversation JSON file for this store."""
         return self.conversations_dir(data_dir) / f"{conversation_id}.json"
-
-    def originals_dir(self, data_dir: Path) -> Path:
-        """Return the originals directory for this store.
-
-        Args:
-            data_dir: The application data root directory.
-
-        Returns:
-            Path to the store's originals directory.
-        """
-        path = self.root_dir(data_dir) / "originals"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
 
     def tokens_path(self, data_dir: Path) -> Path:
         """Return the tokens JSON path for this store."""

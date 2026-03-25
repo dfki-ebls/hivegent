@@ -9,6 +9,7 @@ from .collections import (
 from .files import (
     delete_directory_internal,
     delete_single,
+    ensure_upload_slot,
     find_original,
     get_document_response,
     move_directory_internal,
@@ -28,6 +29,7 @@ __all__ = [
     "collection_stream_response",
     "delete_directory_internal",
     "delete_single",
+    "ensure_upload_slot",
     "find_original",
     "get_document_response",
     "list_documents_for_store",

@@ -11,18 +11,17 @@ from pathlib import Path, PurePosixPath
 from fastapi import HTTPException, UploadFile
 from starlette.responses import StreamingResponse
 
-from ...chunks import chunk_document
 from ...config import sanitize_document_path, settings
-from ...converters.alt_text import MD_IMAGE_RE, generate_alt_texts
 from ...converters.base import DOCUMENT_EXTENSION
+from ...converters.wikilinks import preprocess_markdown
+from ...entries import entry_exists, stem_path_from_reference
 from ...retrieval import mark_dirty_and_sync
 from ...store import Casebase
 from ...types import CollectionCompleteEvent, CollectionProgressEvent, LlmConfig
-from ...converters.wikilinks import preprocess_markdown
 from ..common import parse_pipeline_spec, resolve_llm_config
 from ..models import PipelineSpec
 from .streaming import sse_stream_response
-from .uploads import _resolve_vision_config, upload_file
+from .uploads import upload_file
 
 __all__ = [
     "collection_stream_response",
@@ -48,16 +47,6 @@ async def process_collection(
     markdown_count = 0
     converted_count = 0
     current = 0
-
-    async def _try_upload(relative_path: str, content_bytes: bytes) -> bool:
-        try:
-            safe = sanitize_document_path(relative_path)
-            await upload_file(store, safe, content_bytes, spec, resolved)
-            return True
-        except Exception as exc:
-            logger.warning("Failed to process %s: %s", relative_path, exc)
-            failed.append(relative_path)
-            return False
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         extract_root = Path(tmp_dir)
@@ -100,11 +89,11 @@ async def process_collection(
         if len(top_items) == 1 and top_items[0].is_dir():
             extract_root = top_items[0]
 
-        collection_files = {
+        collection_files = sorted(
             str(path.relative_to(extract_root).as_posix())
             for path in extract_root.rglob("*")
             if path.is_file()
-        }
+        )
         if len(collection_files) > _MAX_COLLECTION_FILES:
             raise HTTPException(
                 status_code=400,
@@ -114,140 +103,117 @@ async def process_collection(
                 ),
             )
 
-        all_binaries: set[str] = set()
-        all_images: set[str] = set()
-        preprocessed: dict[str, str] = {}
-        for relative_path in sorted(collection_files):
-            if PurePosixPath(relative_path).suffix.lower() != ".md":
-                continue
-            try:
-                text = (extract_root / relative_path).read_text(encoding="utf-8")
-            except Exception as exc:
-                logger.warning("Failed to read %s: %s", relative_path, exc)
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        metadata_dir = store.metadata_dir(settings.data_dir)
+        preprocessed_markdown: dict[str, bytes] = {}
+        collection_stems: set[str] = set()
+        # Binary files whose stem already has a companion markdown description.
+        # These are written as originals alongside the markdown rather than
+        # processed independently.
+        companion_originals: set[str] = set()
+
+        for relative_path in collection_files:
+            safe = sanitize_document_path(relative_path)
+            suffix = PurePosixPath(safe).suffix.lower()
+            if suffix == DOCUMENT_EXTENSION:
+                try:
+                    text = (extract_root / relative_path).read_text(encoding="utf-8")
+                except Exception as exc:
+                    logger.warning("Failed to read %s: %s", relative_path, exc)
+                    failed.append(relative_path)
+                    continue
+                normalized = preprocess_markdown(
+                    text, safe, frozenset(collection_files)
+                )
+                preprocessed_markdown[safe] = normalized.content.encode("utf-8")
+
+            stem = stem_path_from_reference(safe)
+            if entry_exists(workspace_dir, metadata_dir, safe):
                 failed.append(relative_path)
                 continue
-            result = preprocess_markdown(text, relative_path, collection_files)
-            preprocessed[relative_path] = result.content
-            all_binaries.update(result.binary_attachments)
-            all_images.update(result.image_attachments)
-
-        upload_plan: list[tuple[str, str]] = []
-        for path in sorted(all_binaries):
-            source = extract_root / path
-            if not source.exists():
-                failed.append(path)
-                continue
-            upload_plan.append((path, "binary"))
-
-        for path in sorted(all_images):
-            source = extract_root / path
-            if not source.exists():
-                failed.append(path)
-                continue
-            upload_plan.append((path, "image"))
-
-        for relative_path in sorted(collection_files):
-            if relative_path in all_binaries or relative_path in all_images:
-                continue
-            suffix = PurePosixPath(relative_path).suffix.lower()
-            if suffix == DOCUMENT_EXTENSION and relative_path in preprocessed:
-                upload_plan.append((relative_path, "markdown"))
-            elif relative_path not in preprocessed:
-                upload_plan.append((relative_path, "binary"))
-
-        total = len(upload_plan)
-        workspace_dir = store.workspace_dir(settings.data_dir)
-        image_count = 0
-
-        for relative_path, category in upload_plan:
-            ok = True
-            if category == "image":
-                try:
-                    safe = sanitize_document_path(relative_path)
-                    image_destination = workspace_dir / safe
-                    image_destination.parent.mkdir(parents=True, exist_ok=True)
-                    image_destination.write_bytes(
-                        (extract_root / relative_path).read_bytes()
-                    )
-                    image_count += 1
-                except Exception as exc:
-                    logger.warning("Failed to store image %s: %s", relative_path, exc)
+            if stem in collection_stems:
+                if suffix != DOCUMENT_EXTENSION:
+                    # A markdown with this stem was already registered; keep the
+                    # binary as a companion original instead of failing it.
+                    companion_originals.add(relative_path)
+                else:
                     failed.append(relative_path)
-                    ok = False
-            elif category == "markdown":
-                content_bytes = preprocessed[relative_path].encode("utf-8")
-                ok = await _try_upload(relative_path, content_bytes)
-                if ok:
+                continue
+            collection_stems.add(stem)
+
+        total = len(collection_files)
+        for relative_path in collection_files:
+            safe = sanitize_document_path(relative_path)
+            if relative_path in failed:
+                current += 1
+                yield CollectionProgressEvent(
+                    file=relative_path,
+                    current=current,
+                    total=total,
+                    status="failed",
+                )
+                continue
+
+            if relative_path in companion_originals:
+                # Store the binary as the original for its markdown sibling.
+                try:
+                    original_bytes = (extract_root / relative_path).read_bytes()
+                    original_path = workspace_dir / safe
+                    original_path.parent.mkdir(parents=True, exist_ok=True)
+                    original_path.write_bytes(original_bytes)
+                    status = "ok"
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to write original %s: %s", relative_path, exc
+                    )
+                    failed.append(relative_path)
+                    status = "failed"
+                current += 1
+                yield CollectionProgressEvent(
+                    file=relative_path,
+                    current=current,
+                    total=total,
+                    status=status,
+                )
+                continue
+
+            try:
+                if safe in preprocessed_markdown:
+                    content_bytes = preprocessed_markdown[safe]
                     markdown_count += 1
-            else:
-                content_bytes = (extract_root / relative_path).read_bytes()
-                ok = await _try_upload(relative_path, content_bytes)
-                if ok:
+                else:
+                    content_bytes = (extract_root / relative_path).read_bytes()
                     converted_count += 1
+                await upload_file(
+                    store,
+                    safe,
+                    content_bytes,
+                    spec,
+                    resolved,
+                    origin="collection",
+                    sync=False,
+                )
+                status = "ok"
+            except Exception as exc:
+                logger.warning("Failed to process %s: %s", relative_path, exc)
+                if safe in preprocessed_markdown:
+                    markdown_count -= 1
+                else:
+                    converted_count -= 1
+                failed.append(relative_path)
+                status = "failed"
 
             current += 1
             yield CollectionProgressEvent(
                 file=relative_path,
                 current=current,
                 total=total,
-                status="ok" if ok else "failed",
+                status=status,
             )
-
-        vision = _resolve_vision_config(resolved)
-        for relative_path in sorted(preprocessed):
-            try:
-                safe = sanitize_document_path(relative_path)
-            except ValueError:
-                continue
-
-            workspace_markdown_path = workspace_dir / safe
-            if not workspace_markdown_path.exists():
-                continue
-
-            markdown_content = workspace_markdown_path.read_text(encoding="utf-8")
-            image_references: dict[str, bytes] = {}
-            for match in MD_IMAGE_RE.finditer(markdown_content):
-                alt_text, image_path = match.group(1), match.group(2)
-                if alt_text or image_path.startswith(("http://", "https://", "data:")):
-                    continue
-                markdown_dir = PurePosixPath(relative_path).parent
-                resolved_image = (
-                    str((markdown_dir / image_path).as_posix())
-                    if not image_path.startswith("/")
-                    else image_path
-                )
-                image_workspace_path = workspace_dir / resolved_image
-                if image_workspace_path.exists() and image_workspace_path.is_file():
-                    image_references[image_path] = image_workspace_path.read_bytes()
-
-            if not image_references:
-                continue
-
-            try:
-                new_content = await generate_alt_texts(
-                    markdown_content,
-                    image_references,
-                    vision,
-                )
-                if new_content != markdown_content:
-                    workspace_markdown_path.write_text(new_content, encoding="utf-8")
-                    image_paths = [
-                        str((PurePosixPath(relative_path).parent / path).as_posix())
-                        for path in image_references
-                    ]
-                    await chunk_document(
-                        store,
-                        safe,
-                        new_content,
-                        spec.chunking,
-                        images=image_paths,
-                    )
-            except Exception:
-                logger.warning("Alt text generation failed for %s", relative_path)
 
         mark_dirty_and_sync(store)
 
-    total_ok = markdown_count + converted_count + image_count
+    total_ok = markdown_count + converted_count
     yield CollectionCompleteEvent(
         total_files=total_ok,
         markdown_files=markdown_count,
@@ -255,8 +221,7 @@ async def process_collection(
         failed_files=failed,
         message=(
             f"Collection uploaded: {markdown_count} markdown, "
-            f"{converted_count} attachments converted, "
-            f"{image_count} images stored"
+            f"{converted_count} processed attachments"
             + (f", {len(failed)} failed" if failed else "")
         ),
     )

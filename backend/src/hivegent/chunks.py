@@ -1,8 +1,6 @@
 """Chunk persistence for chunked documents."""
 
-import json
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,10 +8,19 @@ from typing import Annotated, override
 
 from pydantic import Field
 
-from .chunkers import ChunkingSpec, get_chunker
-from .chunkers.base import ChunkData, ChunkSummary, DocumentMetadata
+from .chunkers import ChunkingPipeline, ChunkingSpec, get_chunker
+from .chunkers.base import (
+    ChunkData,
+    ChunkSummary,
+    DocumentMetadata,
+    EntryMetadata,
+)
 from .config import settings
-from .converters.base import DOCUMENT_EXTENSION
+from .entries import (
+    metadata_path_for_reference,
+    resolve_entry_paths,
+    stem_path_from_reference,
+)
 from .store import Casebase
 from .tools.base import FileFilter, Tool, file_allowed
 
@@ -90,25 +97,28 @@ class GetChunkTool(Tool):
         return None
 
 
-def _get_metadata_path(store: Casebase, filepath: str) -> Path:
-    """Get the path to a metadata JSON file.
+def _default_entry_metadata(
+    filename: str,
+    resolved_original_path: str | None,
+    resolved_assets_dir: str | None,
+) -> EntryMetadata:
+    """Build the default logical-entry metadata for a markdown file."""
+    import mimetypes
 
-    Strips the ``.md`` document extension before forming the path so that
-    ``report.md`` is stored as ``metadata/report.json`` rather than
-    ``metadata/report.md.json``.
-
-    Args:
-        store: The casebase.
-        filepath: The relative document path (e.g. ``"report.md"``).
-
-    Returns:
-        Path to the metadata JSON file.
-    """
-    metadata_dir = store.metadata_dir(settings.data_dir)
-    stem = filepath.removesuffix(DOCUMENT_EXTENSION)
-    meta_path = metadata_dir / f"{stem}.json"
-    meta_path.parent.mkdir(parents=True, exist_ok=True)
-    return meta_path
+    files = [filename]
+    if resolved_original_path is not None:
+        files.append(resolved_original_path)
+    return EntryMetadata(
+        entry_kind="user_markdown",
+        stem_path=stem_path_from_reference(filename),
+        description_path=filename,
+        original_path=resolved_original_path,
+        assets_dir=resolved_assets_dir,
+        mime=mimetypes.guess_type(resolved_original_path or filename)[0],
+        origin="upload",
+        generated_by="user",
+        files=files,
+    )
 
 
 async def chunk_document(
@@ -117,7 +127,7 @@ async def chunk_document(
     content: str,
     chunking: ChunkingSpec | None = None,
     *,
-    images: Sequence[str] | None = None,
+    entry_metadata: EntryMetadata | None = None,
 ) -> DocumentMetadata:
     """Chunk a document and persist the results to disk.
 
@@ -126,25 +136,49 @@ async def chunk_document(
         filename: The document filename.
         content: The document text content.
         chunking: The chunking spec (pipeline + config).
-        images: Optional workspace-relative paths to companion images.
+        entry_metadata: Optional logical-entry metadata.
 
     Returns:
         The document metadata with chunks.
     """
     spec = chunking or ChunkingSpec()
+
+    if entry_metadata is not None:
+        resolved_entry_metadata = entry_metadata
+    else:
+        existing = get_metadata(store, filename)
+        if existing is not None:
+            # DocumentMetadata is a subclass of EntryMetadata; extract base fields.
+            resolved_entry_metadata = EntryMetadata.model_validate(
+                existing.model_dump(include=set(EntryMetadata.model_fields))
+            )
+        else:
+            workspace_dir = store.workspace_dir(settings.data_dir)
+            resolved = resolve_entry_paths(workspace_dir, filename)
+            resolved_entry_metadata = _default_entry_metadata(
+                resolved.description_path,
+                resolved.original_path,
+                resolved.assets_dir,
+            )
+
+    # Generated descriptions are always stored as a single chunk.
+    if resolved_entry_metadata.generated_by in ("vision", "stub"):
+        spec = ChunkingSpec(pipeline=ChunkingPipeline.NONE)
     chunker = get_chunker(
-        spec.pipeline, content_length=len(content), config=spec.config
+        spec.pipeline,
+        content_length=len(content),
+        config=spec.config,
     )
     raw_chunks = await chunker(content)
 
     doc = DocumentMetadata(
+        **resolved_entry_metadata.model_dump(),
         pipeline=chunker.name,
         created_at=datetime.now(tz=timezone.utc),
         chunks=raw_chunks,
-        images=list(images) if images else [],
     )
 
-    meta_path = _get_metadata_path(store, filename)
+    meta_path = metadata_path_for_reference(store, filename)
     meta_path.write_text(
         doc.model_dump_json(indent=2, exclude_none=True),
         encoding="utf-8",
@@ -166,14 +200,15 @@ def load_document_metadata(
     Returns:
         The document metadata, or ``None`` if not found.
     """
-    stem = filename.removesuffix(DOCUMENT_EXTENSION)
+    stem = stem_path_from_reference(filename)
     meta_path = metadata_dir / f"{stem}.json"
     try:
-        data = json.loads(meta_path.read_text(encoding="utf-8"))
-        return DocumentMetadata.model_validate(data)
+        return DocumentMetadata.model_validate_json(
+            meta_path.read_text(encoding="utf-8")
+        )
     except FileNotFoundError:
         return None
-    except (json.JSONDecodeError, Exception) as e:
+    except Exception as e:
         logger.warning("Failed to load metadata for %s: %s", filename, e)
         return None
 
@@ -205,8 +240,7 @@ def delete_metadata(store: Casebase, filepath: str) -> bool:
         True if the metadata file was deleted, False if it didn't exist.
     """
     metadata_dir = store.metadata_dir(settings.data_dir)
-    stem = filepath.removesuffix(DOCUMENT_EXTENSION)
-    meta_path = metadata_dir / f"{stem}.json"
+    meta_path = metadata_path_for_reference(store, filepath)
     try:
         meta_path.unlink()
     except FileNotFoundError:
@@ -240,12 +274,12 @@ def list_chunked_documents(store: Casebase) -> dict[str, int]:
 
     result: dict[str, int] = {}
     for path in metadata_dir.rglob("*.json"):
-        stem = str(path.relative_to(metadata_dir).as_posix()).removesuffix(".json")
-        doc_filepath = stem + DOCUMENT_EXTENSION
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            result[doc_filepath] = len(data.get("chunks", []))
-        except (json.JSONDecodeError, Exception):
+            document = DocumentMetadata.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+            result[document.description_path] = len(document.chunks)
+        except Exception:
             continue
 
     return result
@@ -259,7 +293,7 @@ async def rechunk_document(
     """Re-chunk a document and persist metadata.
 
     Reads the file from the store's documents directory, re-chunks it,
-    and writes the metadata JSON.  Preserves the existing images list.
+    and writes the metadata JSON while preserving the logical entry fields.
     Does **not** sync the search index; the caller should mark the store
     dirty via :func:`~hivegent.retrieval.mark_dirty`.
 
@@ -272,16 +306,7 @@ async def rechunk_document(
     file_path = workspace / filename
     try:
         text_content = file_path.read_text(encoding="utf-8")
-        # Preserve existing image references.
-        existing = get_metadata(store, filename)
-        existing_images = existing.images if existing else []
-        await chunk_document(
-            store,
-            filename,
-            text_content,
-            chunking,
-            images=existing_images,
-        )
+        await chunk_document(store, filename, text_content, chunking)
     except Exception:
         logger.warning("Re-chunking failed for %s after write", filename)
 

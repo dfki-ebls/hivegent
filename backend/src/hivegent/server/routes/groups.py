@@ -1,6 +1,5 @@
 """Routes for group document and directory access."""
 
-from pathlib import PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -37,6 +36,7 @@ from ..operations import (
     collection_stream_response,
     delete_directory_internal,
     delete_single,
+    ensure_upload_slot,
     get_document_response,
     list_documents_for_store,
     move_document_internal,
@@ -102,9 +102,7 @@ async def upload_group_document_stream(
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
     store = group_store(safe_id)
-    target = store.workspace_dir(settings.data_dir) / str(PurePosixPath(safe).with_suffix(".md"))
-    if not overwrite and target.exists():
-        raise HTTPException(status_code=409, detail="Document already exists")
+    ensure_upload_slot(store, safe, overwrite=overwrite)
 
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
@@ -144,9 +142,7 @@ async def upload_group_document(
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
     store = group_store(safe_id)
-    target = store.workspace_dir(settings.data_dir) / str(PurePosixPath(safe).with_suffix(".md"))
-    if not overwrite and target.exists():
-        raise HTTPException(status_code=409, detail="Document already exists")
+    ensure_upload_slot(store, safe, overwrite=overwrite)
 
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(

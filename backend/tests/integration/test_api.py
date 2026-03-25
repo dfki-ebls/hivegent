@@ -41,15 +41,15 @@ def test_upload_and_list_document(app_client, data_dir: Path) -> None:  # noqa: 
     data = response.json()
     filenames = [d["filename"] for d in data["documents"]]
     assert "test.md" in filenames
+    listed = next(d for d in data["documents"] if d["filename"] == "test.md")
+    assert listed["display_name"] == "test"
 
 
 def test_download_original(app_client, data_dir: Path) -> None:  # noqa: ANN001
     """GET /api/documents/original/ returns the original file."""
-    # Seed an original file manually
     store = Casebase(kind="user", id="localhost")
-    originals = store.originals_dir(data_dir)
-    (originals / "report.pdf").write_bytes(b"%PDF-fake")
     workspace = store.workspace_dir(data_dir)
+    (workspace / "report.pdf").write_bytes(b"%PDF-fake")
     (workspace / "report.md").write_text("# Converted report")
 
     response = app_client.get("/api/documents/original/report.md")
@@ -83,7 +83,41 @@ def test_replace_original_route_is_not_captured_by_upload(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "No original file found for 'report.md'"
-    assert not (workspace / "original" / "report.md").exists()
+    assert not (workspace / "report.pdf").exists()
+
+
+def test_upload_image_creates_original_and_description(
+    app_client,
+    data_dir: Path,
+) -> None:  # noqa: ANN001
+    """PUT an image creates the original file and a markdown description."""
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde"
+        b"\x00\x00\x00\x0cIDATx\x9cc``\x00\x00\x00\x02\x00\x01"
+        b"\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    response = app_client.put(
+        "/api/documents/diagram.png",
+        files={"file": ("diagram.png", png_bytes, "image/png")},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["filename"] == "diagram.png"
+    assert data["converted_filename"] == "diagram.md"
+    assert data["chunk_count"] == 1
+    assert data["chunking_pipeline_used"] == "none"
+
+    store = Casebase(kind="user", id="localhost")
+    workspace = store.workspace_dir(data_dir)
+    assert (workspace / "diagram.png").exists()
+    assert (workspace / "diagram.md").exists()
+
+    meta = (store.metadata_dir(data_dir) / "diagram.json").read_text(encoding="utf-8")
+    assert '"original_path": "diagram.png"' in meta
+    assert '"entry_kind": "image"' in meta
 
 
 def test_create_conversation(app_client) -> None:  # noqa: ANN001

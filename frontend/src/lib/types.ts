@@ -31,6 +31,7 @@ export enum ConversionPipeline {
 /** Available chunking pipelines. */
 export enum ChunkingPipeline {
   AUTO = "auto",
+  NONE = "none",
   TOKEN = "token",
   FAST = "fast",
   SENTENCE = "sentence",
@@ -47,6 +48,10 @@ export enum ChunkingPipeline {
 // Zod v4: z.enum() accepts TS enums directly (replaces deprecated nativeEnum)
 export const ConversionPipelineSchema = z.enum(ConversionPipeline);
 export const ChunkingPipelineSchema = z.enum(ChunkingPipeline);
+
+const EntryKindSchema = z.enum(["user_markdown", "image", "convertible", "binary_stub"]);
+const EntryOriginSchema = z.enum(["upload", "collection", "extracted"]);
+const EntryGeneratedBySchema = z.enum(["user", "converter", "vision", "stub"]);
 
 // ============================================================
 // Persisted data schemas (localStorage)
@@ -135,16 +140,26 @@ export const ChunkedDocumentResponseSchema = z.object({
   pipeline: z.string(),
   created_at: z.string(),
   chunks: z.array(ChunkInfoSchema),
-  images: z.array(z.string()).optional().default([]),
+  entry_kind: EntryKindSchema.optional(),
+  stem_path: z.string().nullable().optional(),
+  description_path: z.string().nullable().optional(),
+  original_path: z.string().nullable().optional(),
+  assets_dir: z.string().nullable().optional(),
+  origin: EntryOriginSchema.optional(),
+  generated_by: EntryGeneratedBySchema.optional(),
+  files: z.array(z.string()).optional().default([]),
 });
 export type ChunkedDocumentResponse = z.infer<typeof ChunkedDocumentResponseSchema>;
 
 export const DocumentInfoSchema = z.object({
   filename: z.string(),
+  display_name: z.string(),
   size_bytes: z.number(),
   modified_at: z.string(),
   chunk_count: z.number().nullable().optional(),
   has_original: z.boolean(),
+  original_path: z.string().nullable().optional(),
+  assets_dir: z.string().nullable().optional(),
   kind: z.enum(["document", "asset"]).optional().default("document"),
 });
 export type DocumentInfo = z.infer<typeof DocumentInfoSchema>;
@@ -248,6 +263,8 @@ export interface DirectoryEntry {
   modified_at?: string | null;
   chunk_count?: number | null;
   has_original?: boolean;
+  original_path?: string | null;
+  assets_dir?: string | null;
   children?: DirectoryEntry[] | null;
 }
 
@@ -259,6 +276,8 @@ export const DirectoryEntrySchema: z.ZodType<DirectoryEntry> = z.object({
   modified_at: z.string().nullable().optional(),
   chunk_count: z.number().nullable().optional(),
   has_original: z.boolean().optional(),
+  original_path: z.string().nullable().optional(),
+  assets_dir: z.string().nullable().optional(),
   children: z
     .lazy(() => z.array(DirectoryEntrySchema))
     .nullable()
