@@ -12,6 +12,7 @@ from starlette.responses import PlainTextResponse, Response
 from ...chunkers.base import DocumentMetadata
 from ...chunks import delete_metadata, get_metadata
 from ...config import settings
+from ...converters.base import DOCUMENT_EXTENSION
 from ...entries import (
     assets_dir_for_stem,
     description_path_for_stem,
@@ -22,7 +23,12 @@ from ...entries import (
 )
 from ...retrieval import mark_dirty_and_sync
 from ...store import Casebase
-from ...types import MoveDirectoryResponse, MoveDocumentResponse
+from ...types import (
+    AssetEntry,
+    AssetListResponse,
+    MoveDirectoryResponse,
+    MoveDocumentResponse,
+)
 from ..common import cleanup_empty_parents
 
 __all__ = [
@@ -31,8 +37,10 @@ __all__ = [
     "ensure_upload_slot",
     "find_original",
     "get_document_response",
+    "list_assets",
     "move_directory_internal",
     "move_document_internal",
+    "update_asset_description",
 ]
 
 
@@ -285,6 +293,123 @@ def get_document_response(store: Casebase, safe: str) -> Response:
             content=file_path.read_bytes(),
             media_type=media_type or "application/octet-stream",
         )
+
+
+def _require_assets_dir(store: Casebase, safe: str) -> tuple[Path, str]:
+    """Resolve and validate the assets directory for a document.
+
+    Args:
+        store: The casebase.
+        safe: Workspace-relative document filepath.
+
+    Returns:
+        A tuple of (workspace root, assets directory relative path).
+
+    Raises:
+        HTTPException: 404 when no assets directory exists.
+    """
+    workspace = store.workspace_dir(settings.data_dir)
+    assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
+    assets_path = workspace / assets_dir
+    if not assets_path.exists() or not assets_path.is_dir():
+        raise HTTPException(status_code=404, detail="Document has no assets directory")
+    return workspace, assets_dir
+
+
+def list_assets(store: Casebase, safe: str) -> AssetListResponse:
+    """List files in a document's child-assets directory.
+
+    Groups files by stem: non-``.md`` files are returned as asset entries,
+    with the content of their companion ``.md`` file (if present) as the
+    description.
+
+    Args:
+        store: The casebase.
+        safe: Workspace-relative document filepath.
+
+    Returns:
+        An :class:`AssetListResponse` listing each asset file.
+    """
+    workspace, assets_dir = _require_assets_dir(store, safe)
+    assets_path = workspace / assets_dir
+
+    md_files: dict[str, Path] = {}
+    asset_files: list[Path] = []
+    for item in sorted(assets_path.iterdir()):
+        if not item.is_file():
+            continue
+        if item.suffix == DOCUMENT_EXTENSION:
+            md_files[item.stem] = item
+        else:
+            asset_files.append(item)
+
+    entries: list[AssetEntry] = []
+    for item in asset_files:
+        rel_path = str(item.relative_to(workspace).as_posix())
+        companion = md_files.get(item.stem)
+        description = ""
+        description_path: str | None = None
+        if companion is not None:
+            description_path = str(companion.relative_to(workspace).as_posix())
+            try:
+                description = companion.read_text(encoding="utf-8")
+            except Exception:
+                description = ""
+        entries.append(
+            AssetEntry(
+                name=item.name,
+                path=rel_path,
+                description_path=description_path,
+                description=description,
+                size_bytes=item.stat().st_size,
+                media_type=mimetypes.guess_type(item.name)[0],
+            )
+        )
+
+    return AssetListResponse(assets=entries, assets_dir=assets_dir)
+
+
+def update_asset_description(
+    store: Casebase,
+    safe: str,
+    asset_name: str,
+    content: str,
+) -> AssetEntry:
+    """Update the companion ``.md`` description for an asset file.
+
+    Creates the ``.md`` file if it does not exist yet.
+
+    Args:
+        store: The casebase.
+        safe: Workspace-relative document filepath.
+        asset_name: Filename of the asset (e.g. ``image_001.png``).
+        content: New text content for the companion ``.md`` file.
+
+    Returns:
+        The updated :class:`AssetEntry`.
+    """
+    workspace, assets_dir = _require_assets_dir(store, safe)
+
+    asset_path = workspace / assets_dir / asset_name
+    if not asset_path.exists() or not asset_path.is_file():
+        raise HTTPException(status_code=404, detail="Asset file not found")
+
+    md_path = asset_path.with_suffix(DOCUMENT_EXTENSION)
+    md_path.write_text(content, encoding="utf-8")
+
+    rel_path = str(asset_path.relative_to(workspace).as_posix())
+    description_path = str(md_path.relative_to(workspace).as_posix())
+
+    mark_dirty_and_sync(store)
+
+    return AssetEntry(
+        name=asset_name,
+        path=rel_path,
+        description_path=description_path,
+        description=content,
+        size_bytes=asset_path.stat().st_size,
+        media_type=mimetypes.guess_type(asset_name)[0],
+    )
 
 
 def ensure_upload_slot(store: Casebase, reference: str, *, overwrite: bool) -> None:

@@ -1,11 +1,13 @@
 """Alt text generation for images using a vision model."""
 
 import asyncio
+import io
 import logging
 import mimetypes
 import re
 from pathlib import PurePosixPath
 
+from PIL import Image
 from pydantic_ai import BinaryContent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -25,6 +27,31 @@ _ALT_TEXT_PROMPT = (
 )
 
 
+def _strip_png_metadata(image_bytes: bytes, media_type: str) -> bytes:
+    """Re-encode an image to strip metadata that may cause server errors.
+
+    Some PNG files extracted from PDFs contain oversized text chunks that
+    cause ``PngImagePlugin.MAX_TEXT_CHUNK`` errors on inference servers.
+    Re-saving through Pillow drops those chunks.
+
+    Args:
+        image_bytes: The raw image bytes.
+        media_type: The MIME type of the image.
+
+    Returns:
+        Clean image bytes, or the original bytes if re-encoding fails.
+    """
+    if media_type != "image/png":
+        return image_bytes
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+    except Exception:
+        return image_bytes
+
+
 async def describe_image(
     image_bytes: bytes,
     media_type: str,
@@ -40,7 +67,8 @@ async def describe_image(
     Returns:
         A concise description string.
     """
-    content = BinaryContent(data=image_bytes, media_type=media_type)
+    clean_bytes = _strip_png_metadata(image_bytes, media_type)
+    content = BinaryContent(data=clean_bytes, media_type=media_type)
     result = await base_agent.run(
         [_ALT_TEXT_PROMPT, content],
         model=OpenAIResponsesModel(

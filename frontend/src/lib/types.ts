@@ -151,6 +151,22 @@ export const ChunkedDocumentResponseSchema = z.object({
 });
 export type ChunkedDocumentResponse = z.infer<typeof ChunkedDocumentResponseSchema>;
 
+export const AssetEntrySchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  description_path: z.string().nullable(),
+  description: z.string(),
+  size_bytes: z.number(),
+  media_type: z.string().nullable().optional(),
+});
+export type AssetEntry = z.infer<typeof AssetEntrySchema>;
+
+export const AssetListResponseSchema = z.object({
+  assets: z.array(AssetEntrySchema),
+  assets_dir: z.string(),
+});
+export type AssetListResponse = z.infer<typeof AssetListResponseSchema>;
+
 export const DocumentInfoSchema = z.object({
   filename: z.string(),
   display_name: z.string(),

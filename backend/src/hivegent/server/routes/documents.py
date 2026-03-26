@@ -16,6 +16,8 @@ from ...config import settings
 from ...entries import stem_path_from_reference
 from ...retrieval import invalidate_store, mark_dirty_and_sync
 from ...types import (
+    AssetEntry,
+    AssetListResponse,
     BulkDeleteDocumentsResponse,
     BulkOperationCompleteEvent,
     BulkOperationProgressEvent,
@@ -30,6 +32,7 @@ from ...types import (
     OperationErrorEvent,
     OperationStageEvent,
     RechunkCompleteEvent,
+    UpdateAssetDescriptionRequest,
     UploadCompleteEvent,
     UploadDocumentResponse,
 )
@@ -39,6 +42,7 @@ from ..operations import (
     ensure_upload_slot,
     find_original,
     get_document_response,
+    list_assets,
     list_documents_for_store,
     move_document_internal,
     process_bulk_operation,
@@ -46,6 +50,7 @@ from ..operations import (
     read_collection_zip,
     reconvert_single,
     reconvert_single_stream,
+    update_asset_description,
     upload_file,
     upload_file_stream,
     validate_collection_upload,
@@ -436,6 +441,29 @@ async def move_document(
             status_code=400, detail="Source and destination are the same"
         )
     return move_document_internal(user_store(user), src, dst)
+
+
+@router.get("/documents/assets/{filepath:path}")
+async def list_document_assets(
+    filepath: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> AssetListResponse:
+    """List assets for a document."""
+    safe = safe_path(filepath)
+    return list_assets(user_store(user), safe)
+
+
+@router.patch("/documents/assets/{filepath:path}")
+async def patch_asset_description(
+    filepath: str,
+    request: UpdateAssetDescriptionRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> AssetEntry:
+    """Update an asset's companion .md description."""
+    safe = safe_path(filepath)
+    return update_asset_description(
+        user_store(user), safe, request.asset_name, request.content
+    )
 
 
 @router.get("/documents/{filepath:path}")

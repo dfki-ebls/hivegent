@@ -11,6 +11,8 @@ from ...auth import User, get_current_user
 from ...config import settings
 from ...retrieval import mark_dirty_and_sync
 from ...types import (
+    AssetEntry,
+    AssetListResponse,
     CollectionCompleteEvent,
     CollectionProgressEvent,
     CollectionUploadResponse,
@@ -26,6 +28,7 @@ from ...types import (
     MoveDocumentResponse,
     OperationErrorEvent,
     OperationStageEvent,
+    UpdateAssetDescriptionRequest,
     UploadCompleteEvent,
     UploadDocumentResponse,
 )
@@ -43,12 +46,14 @@ from ..operations import (
     delete_single,
     ensure_upload_slot,
     get_document_response,
+    list_assets,
     list_documents_for_store,
     move_document_internal,
     process_collection,
     read_collection_zip,
     reconvert_single,
     reconvert_single_stream,
+    update_asset_description,
     upload_file,
     upload_file_stream,
     validate_collection_upload,
@@ -78,6 +83,33 @@ async def list_group_documents(
     """List all documents in a group's data directory."""
     safe_id = require_group_member(user, group_id)
     return list_documents_for_store(group_store(safe_id))
+
+
+@router.get("/groups/{group_id}/documents/assets/{filepath:path}")
+async def list_group_document_assets(
+    group_id: str,
+    filepath: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> AssetListResponse:
+    """List assets for a group document."""
+    safe_id = require_group_member(user, group_id)
+    safe = safe_path(filepath)
+    return list_assets(group_store(safe_id), safe)
+
+
+@router.patch("/groups/{group_id}/documents/assets/{filepath:path}")
+async def patch_group_asset_description(
+    group_id: str,
+    filepath: str,
+    request: UpdateAssetDescriptionRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> AssetEntry:
+    """Update an asset's companion .md description in a group."""
+    safe_id = require_group_write(user, group_id)
+    safe = safe_path(filepath)
+    return update_asset_description(
+        group_store(safe_id), safe, request.asset_name, request.content
+    )
 
 
 @router.get("/groups/{group_id}/documents/{filepath:path}")

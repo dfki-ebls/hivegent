@@ -1,11 +1,19 @@
-import { ExternalLink, FileText, Pencil, RefreshCw } from "lucide-react";
+import { ExternalLink, FileText, ImageIcon, Pencil, RefreshCw } from "lucide-react";
 import { isWebUrl } from "@/lib/utils";
 import Markdown from "markdown-to-jsx";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { getDocumentChunks, getDocumentContent } from "@/lib/api";
+import {
+  getDocumentChunks,
+  getDocumentContent,
+  listDocumentAssets,
+  listGroupDocumentAssets,
+  updateAssetDescription,
+  updateGroupAssetDescription,
+} from "@/lib/api";
 import { WorkspaceImage } from "./WorkspaceImage";
 import {
+  type AssetListResponse,
   type ChunkedDocumentResponse,
   type FetchedChunk,
   chunkPositionLabel,
@@ -25,6 +33,7 @@ import {
 import { Input } from "./ui/input";
 import { ScrollArea } from "./ui/scroll-area";
 import { Spinner } from "./ui/spinner";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Textarea } from "./ui/textarea";
 
 interface DocumentDialogProps {
@@ -56,7 +65,8 @@ interface DocumentDialogProps {
   groupId?: string;
 }
 
-type ViewMode = "full-doc" | "chunk" | "edit";
+type ViewMode = "full-doc" | "chunk" | "edit" | "asset";
+type SidebarTab = "chunks" | "assets";
 
 function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleString();
@@ -96,6 +106,14 @@ export function DocumentDialog({
   const [editContent, setEditContent] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chunks");
+  const [assetsData, setAssetsData] = useState<AssetListResponse | null>(null);
+  const [assetsLoading, setAssetsLoading] = useState(false);
+  const [activeAssetIndex, setActiveAssetIndex] = useState<number | null>(null);
+  const [assetDescriptionDraft, setAssetDescriptionDraft] = useState("");
+  const [isEditingAssetDescription, setIsEditingAssetDescription] = useState(false);
+  const [isSavingAssetDescription, setIsSavingAssetDescription] = useState(false);
+
   // Fetched-mode store access
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
@@ -125,6 +143,10 @@ export function DocumentDialog({
     setManagedData(null);
     setManagedError(null);
     setManagedActiveIndex(null);
+    setSidebarTab("chunks");
+    setAssetsData(null);
+    setActiveAssetIndex(null);
+    setIsEditingAssetDescription(false);
 
     if (isNew) {
       setViewMode("edit");
@@ -237,6 +259,41 @@ export function DocumentDialog({
     }
   }, [onRechunk, fetchManagedChunks]);
 
+  useEffect(() => {
+    if (!open || !isManagedMode || !managedData?.assets_dir || !filename) return;
+    setAssetsLoading(true);
+    const fetcher = groupId
+      ? () => listGroupDocumentAssets(groupId, filename)
+      : () => listDocumentAssets(filename);
+    fetcher()
+      .then(setAssetsData)
+      .catch(() => setAssetsData(null))
+      .finally(() => setAssetsLoading(false));
+  }, [open, isManagedMode, managedData?.assets_dir, filename, groupId]);
+
+  const handleSaveAssetDescription = useCallback(async () => {
+    if (activeAssetIndex == null || !assetsData?.assets[activeAssetIndex]) return;
+    const asset = assetsData.assets[activeAssetIndex];
+    setIsSavingAssetDescription(true);
+    try {
+      const updater = groupId
+        ? () => updateGroupAssetDescription(groupId, filename, asset.name, assetDescriptionDraft)
+        : () => updateAssetDescription(filename, asset.name, assetDescriptionDraft);
+      const updated = await updater();
+      setAssetsData((prev) =>
+        prev
+          ? {
+              ...prev,
+              assets: prev.assets.map((a, i) => (i === activeAssetIndex ? updated : a)),
+            }
+          : prev,
+      );
+      setIsEditingAssetDescription(false);
+    } finally {
+      setIsSavingAssetDescription(false);
+    }
+  }, [activeAssetIndex, assetsData, assetDescriptionDraft, filename, groupId]);
+
   // --- Save handler ---
   const handleSave = async () => {
     if (!onSave || !editFilename.trim()) return;
@@ -252,10 +309,11 @@ export function DocumentDialog({
   if (!isNew && !chunk && !fallbackFilename && !filenameProp) return null;
 
   // --- Determine sidebar visibility ---
+  const hasAssets = (assetsData?.assets.length ?? 0) > 0 || assetsLoading;
   const hasSidebar = isNew
     ? false
     : isManagedMode
-      ? managedLoading || (managedData?.chunks.length ?? 0) > 0
+      ? managedLoading || (managedData?.chunks.length ?? 0) > 0 || hasAssets
       : true;
 
   // --- Render helpers ---
@@ -369,6 +427,97 @@ export function DocumentDialog({
       );
     }
 
+    // Asset view
+    if (viewMode === "asset" && activeAssetIndex != null && assetsData?.assets[activeAssetIndex]) {
+      const asset = assetsData.assets[activeAssetIndex];
+      // WorkspaceImage resolves src relative to the document's directory
+      const assetsBasename = assetsData.assets_dir.split("/").pop() ?? "";
+      const relativeSrc = `${assetsBasename}/${asset.name}`;
+
+      return (
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="p-4 space-y-4">
+            <div className="flex justify-center">
+              <WorkspaceImage
+                src={relativeSrc}
+                alt={asset.description}
+                documentPath={filename}
+                groupId={groupId}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium">Description</h3>
+                {editable && !isEditingAssetDescription && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setAssetDescriptionDraft(asset.description);
+                      setIsEditingAssetDescription(true);
+                    }}
+                  >
+                    <Pencil className="h-3 w-3 mr-1" />
+                    Edit
+                  </Button>
+                )}
+              </div>
+
+              {isEditingAssetDescription ? (
+                <div className="space-y-2">
+                  <Textarea
+                    value={assetDescriptionDraft}
+                    onChange={(e) => setAssetDescriptionDraft(e.target.value)}
+                    className="text-sm font-mono"
+                    rows={6}
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setIsEditingAssetDescription(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={isSavingAssetDescription}
+                      onClick={handleSaveAssetDescription}
+                    >
+                      {isSavingAssetDescription ? <Spinner /> : "Save"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  {asset.description ? (
+                    <Markdown>{asset.description}</Markdown>
+                  ) : (
+                    <p className="text-muted-foreground italic">No description</p>
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2 pt-2">
+                <Badge variant="outline" className="text-xs">
+                  {asset.name}
+                </Badge>
+                {asset.media_type && (
+                  <Badge variant="outline" className="text-xs">
+                    {asset.media_type}
+                  </Badge>
+                )}
+                <Badge variant="outline" className="text-xs">
+                  {(asset.size_bytes / 1024).toFixed(1)} KB
+                </Badge>
+              </div>
+            </div>
+          </div>
+        </ScrollArea>
+      );
+    }
+
     // Chunk-in-context view
     if (isManagedMode) {
       // Managed mode: use start_index / end_index
@@ -409,7 +558,7 @@ export function DocumentDialog({
     if (!hasSidebar) return null;
 
     if (isManagedMode) {
-      // Managed-mode sidebar: chunks from API
+      // Managed-mode sidebar: chunks from API + optional assets tab
       if (managedLoading) {
         return (
           <div className="w-56 shrink-0 border-r flex items-center justify-center">
@@ -424,56 +573,123 @@ export function DocumentDialog({
           </div>
         );
       }
-      if (!managedData || managedData.chunks.length === 0) return null;
+      if (!managedData || (managedData.chunks.length === 0 && !hasAssets)) return null;
 
       return (
-        <div className="w-56 shrink-0 border-r min-h-0 overflow-y-auto p-2 space-y-1">
-          {/* Full Document toggle */}
-          <button
-            type="button"
-            className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
-              viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
-            }`}
-            onClick={() => {
-              setManagedActiveIndex(null);
-              startTransition(() => setViewMode("full-doc"));
-            }}
-          >
-            <FileText className="h-3 w-3 shrink-0" />
-            <span className="font-medium">Full document</span>
-          </button>
-
-          <div className="border-t my-1" />
-
-          {managedData.chunks.map((chunkInfo, i) => (
+        <div className="w-56 shrink-0 border-r min-h-0 flex flex-col">
+          <div className="p-2 space-y-1 shrink-0">
+            {/* Full Document toggle */}
             <button
-              key={i}
               type="button"
-              className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
-                viewMode === "chunk" && managedActiveIndex === i
-                  ? "bg-accent text-accent-foreground"
-                  : "hover:bg-muted"
+              className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
+                viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
               }`}
               onClick={() => {
-                setManagedActiveIndex(i);
-                setViewMode("chunk");
+                setManagedActiveIndex(null);
+                setActiveAssetIndex(null);
+                setIsEditingAssetDescription(false);
+                startTransition(() => setViewMode("full-doc"));
               }}
             >
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <Badge
-                  variant={viewMode === "chunk" && managedActiveIndex === i ? "default" : "outline"}
-                  className="text-[10px] shrink-0"
-                >
-                  Chunk #{i}
-                </Badge>
-                <span className="text-muted-foreground">{chunkInfo.token_count} tokens</span>
-              </div>
-              <p className="truncate text-muted-foreground mt-0.5">
-                {chunkInfo.text.slice(0, 60)}
-                {chunkInfo.text.length > 60 ? "..." : ""}
-              </p>
+              <FileText className="h-3 w-3 shrink-0" />
+              <span className="font-medium">Full document</span>
             </button>
-          ))}
+          </div>
+
+          {hasAssets && (
+            <div className="px-2 shrink-0">
+              <Tabs
+                value={sidebarTab}
+                onValueChange={(v) => setSidebarTab(v as SidebarTab)}
+              >
+                <TabsList className="w-full">
+                  <TabsTrigger value="chunks" className="flex-1 text-xs">
+                    Chunks
+                  </TabsTrigger>
+                  <TabsTrigger value="assets" className="flex-1 text-xs">
+                    Assets
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+          )}
+
+          <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
+            {!hasAssets && managedData.chunks.length > 0 && <div className="border-t my-1" />}
+
+            {sidebarTab === "chunks" &&
+              managedData.chunks.map((chunkInfo, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
+                    viewMode === "chunk" && managedActiveIndex === i
+                      ? "bg-accent text-accent-foreground"
+                      : "hover:bg-muted"
+                  }`}
+                  onClick={() => {
+                    setManagedActiveIndex(i);
+                    setActiveAssetIndex(null);
+                    setIsEditingAssetDescription(false);
+                    setViewMode("chunk");
+                  }}
+                >
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <Badge
+                      variant={
+                        viewMode === "chunk" && managedActiveIndex === i ? "default" : "outline"
+                      }
+                      className="text-[10px] shrink-0"
+                    >
+                      Chunk #{i}
+                    </Badge>
+                    <span className="text-muted-foreground">
+                      {chunkInfo.token_count} tokens
+                    </span>
+                  </div>
+                  <p className="truncate text-muted-foreground mt-0.5">
+                    {chunkInfo.text.slice(0, 60)}
+                    {chunkInfo.text.length > 60 ? "..." : ""}
+                  </p>
+                </button>
+              ))}
+
+            {sidebarTab === "assets" &&
+              (assetsLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <Spinner className="size-4 text-muted-foreground" />
+                </div>
+              ) : (
+                assetsData?.assets.map((asset, i) => (
+                  <button
+                    key={asset.path}
+                    type="button"
+                    className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
+                      viewMode === "asset" && activeAssetIndex === i
+                        ? "bg-accent text-accent-foreground"
+                        : "hover:bg-muted"
+                    }`}
+                    onClick={() => {
+                      setActiveAssetIndex(i);
+                      setManagedActiveIndex(null);
+                      setIsEditingAssetDescription(false);
+                      setViewMode("asset");
+                    }}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <ImageIcon className="h-3 w-3 shrink-0" />
+                      <span className="truncate font-medium">{asset.name}</span>
+                    </div>
+                    <p className="truncate text-muted-foreground mt-0.5">
+                      {asset.description
+                        ? asset.description.slice(0, 60) +
+                          (asset.description.length > 60 ? "..." : "")
+                        : "No description"}
+                    </p>
+                  </button>
+                ))
+              ))}
+          </div>
         </div>
       );
     }

@@ -227,6 +227,40 @@ class DocumentInfo(BaseModel):
     )
 
 
+class AssetEntry(BaseModel):
+    """Information about a single file in a document's assets directory."""
+
+    name: str = Field(description="Filename within the assets directory")
+    path: str = Field(description="Workspace-relative path to the asset file")
+    description_path: str | None = Field(
+        default=None,
+        description="Workspace-relative path to the companion .md description file",
+    )
+    description: str = Field(
+        default="",
+        description="Content of the companion .md file",
+    )
+    size_bytes: int = Field(description="File size in bytes")
+    media_type: str | None = Field(
+        default=None,
+        description="MIME type of the asset file",
+    )
+
+
+class AssetListResponse(BaseModel):
+    """Response for listing a document's assets."""
+
+    assets: list[AssetEntry] = Field(description="Asset files in the directory")
+    assets_dir: str = Field(description="Workspace-relative assets directory path")
+
+
+class UpdateAssetDescriptionRequest(BaseModel):
+    """Request to update an asset's companion .md description."""
+
+    asset_name: str = Field(description="Filename of the asset to update")
+    content: str = Field(description="New content for the .md description file")
+
+
 class DocumentListResponse(BaseModel):
     """Response for listing documents."""
 

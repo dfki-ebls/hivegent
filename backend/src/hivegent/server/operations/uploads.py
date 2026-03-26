@@ -142,7 +142,7 @@ async def _build_image_description(
     try:
         description = await describe_image(content, media_type, vision)
     except Exception:
-        logger.warning("Image description generation failed for %s", filepath)
+        logger.warning("Image description generation failed for %s", filepath, exc_info=True)
         description = fallback
     return f"{description.strip() or fallback}\n"
 

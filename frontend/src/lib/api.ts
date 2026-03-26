@@ -11,6 +11,10 @@ import type {
   UploadProgress,
 } from "./types";
 import {
+  type AssetEntry,
+  AssetEntrySchema,
+  type AssetListResponse,
+  AssetListResponseSchema,
   type BackendSettings,
   BackendSettingsSchema,
   BulkOperationStreamEventSchema,
@@ -677,6 +681,77 @@ export async function getDocumentChunks(filename: string): Promise<ChunkedDocume
 
   const data: unknown = await res.json();
   return ChunkedDocumentResponseSchema.parse(data);
+}
+
+// Asset API functions
+
+/** List assets for a document. */
+export async function listDocumentAssets(filename: string): Promise<AssetListResponse> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to list assets" }));
+    throw new Error(error.detail || "Failed to list assets");
+  }
+  const data: unknown = await res.json();
+  return AssetListResponseSchema.parse(data);
+}
+
+/** Update an asset's companion .md description. */
+export async function updateAssetDescription(
+  filename: string,
+  assetName: string,
+  content: string,
+): Promise<AssetEntry> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ asset_name: assetName, content }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to update description" }));
+    throw new Error(error.detail || "Failed to update description");
+  }
+  const data: unknown = await res.json();
+  return AssetEntrySchema.parse(data);
+}
+
+/** List assets for a group document. */
+export async function listGroupDocumentAssets(
+  groupId: string,
+  filename: string,
+): Promise<AssetListResponse> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/assets/${encodeFilePath(filename)}`,
+  );
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to list assets" }));
+    throw new Error(error.detail || "Failed to list assets");
+  }
+  const data: unknown = await res.json();
+  return AssetListResponseSchema.parse(data);
+}
+
+/** Update an asset's companion .md description in a group. */
+export async function updateGroupAssetDescription(
+  groupId: string,
+  filename: string,
+  assetName: string,
+  content: string,
+): Promise<AssetEntry> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/assets/${encodeFilePath(filename)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asset_name: assetName, content }),
+    },
+  );
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to update description" }));
+    throw new Error(error.detail || "Failed to update description");
+  }
+  const data: unknown = await res.json();
+  return AssetEntrySchema.parse(data);
 }
 
 /** Options for document reconversion. */
