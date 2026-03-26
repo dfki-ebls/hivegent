@@ -1,15 +1,18 @@
 """Routes for group document and directory access."""
 
+from collections.abc import AsyncIterable
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
-from starlette.responses import Response, StreamingResponse
+from fastapi.sse import EventSourceResponse
+from starlette.responses import Response
 
 from ...auth import User, get_current_user
 from ...config import settings
 from ...retrieval import mark_dirty_and_sync
 from ...types import (
     CollectionCompleteEvent,
+    CollectionProgressEvent,
     CollectionUploadResponse,
     CreateDirectoryRequest,
     CreateDirectoryResponse,
@@ -21,6 +24,9 @@ from ...types import (
     LlmConfig,
     MoveDocumentRequest,
     MoveDocumentResponse,
+    OperationErrorEvent,
+    OperationStageEvent,
+    UploadCompleteEvent,
     UploadDocumentResponse,
 )
 from ..common import (
@@ -33,7 +39,6 @@ from ..common import (
 )
 from ..operations import (
     build_tree_response,
-    collection_stream_response,
     delete_directory_internal,
     delete_single,
     ensure_upload_slot,
@@ -44,7 +49,6 @@ from ..operations import (
     read_collection_zip,
     reconvert_single,
     reconvert_single_stream,
-    sse_stream_response,
     upload_file,
     upload_file_stream,
     validate_collection_upload,
@@ -88,7 +92,7 @@ async def get_group_document_content(
     return get_document_response(group_store(safe_id), safe)
 
 
-@router.put("/groups/{group_id}/documents/stream/{filepath:path}")
+@router.put("/groups/{group_id}/documents/stream/{filepath:path}", response_class=EventSourceResponse)
 async def upload_group_document_stream(
     group_id: str,
     filepath: str,
@@ -97,7 +101,7 @@ async def upload_group_document_stream(
     pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
     overwrite: bool = Form(default=False),
-) -> StreamingResponse:
+) -> AsyncIterable[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent]:
     """Upload a document to a group with streaming progress events."""
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
@@ -117,15 +121,14 @@ async def upload_group_document_stream(
             detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
         )
 
-    return sse_stream_response(
-        upload_file_stream(
-            store=store,
-            filepath=safe,
-            content=content,
-            spec=spec,
-            llm_config=llm_config_model,
-        )
-    )
+    async for event in upload_file_stream(
+        store=store,
+        filepath=safe,
+        content=content,
+        spec=spec,
+        llm_config=llm_config_model,
+    ):
+        yield event
 
 
 @router.put("/groups/{group_id}/documents/{filepath:path}")
@@ -166,21 +169,20 @@ async def upload_group_document(
     )
 
 
-@router.post("/groups/{group_id}/documents/reconvert/stream/{filepath:path}")
+@router.post("/groups/{group_id}/documents/reconvert/stream/{filepath:path}", response_class=EventSourceResponse)
 async def reconvert_group_document_stream(
     group_id: str,
     filepath: str,
     request: ReconvertRequest,
     user: Annotated[User, Depends(get_current_user)],
-) -> StreamingResponse:
+) -> AsyncIterable[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent]:
     """Re-convert a group document with streaming progress events."""
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
     store = group_store(safe_id)
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
-    return sse_stream_response(
-        reconvert_single_stream(store, safe, request.pipeline, resolved)
-    )
+    async for event in reconvert_single_stream(store, safe, request.pipeline, resolved):
+        yield event
 
 
 @router.post("/groups/{group_id}/documents/collections")
@@ -206,20 +208,21 @@ async def upload_group_collection(
     return result
 
 
-@router.post("/groups/{group_id}/documents/collections/stream")
+@router.post("/groups/{group_id}/documents/collections/stream", response_class=EventSourceResponse)
 async def upload_group_collection_stream(
     group_id: str,
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
     pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
-) -> StreamingResponse:
+) -> AsyncIterable[CollectionProgressEvent | CollectionCompleteEvent]:
     """Upload a collection to a group with streaming progress events."""
     safe_id = require_group_write(user, group_id)
     spec, resolved = validate_collection_upload(pipeline_spec, llm_config)
     store = group_store(safe_id)
     raw = await read_collection_zip(file)
-    return collection_stream_response(store, raw, spec, resolved)
+    async for event in process_collection(store, raw, spec, resolved):
+        yield event
 
 
 @router.delete("/groups/{group_id}/documents/{filepath:path}")

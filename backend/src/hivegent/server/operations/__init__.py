@@ -1,7 +1,6 @@
 """Shared document operations exposed as a small package."""
 
 from .collections import (
-    collection_stream_response,
     process_collection,
     read_collection_zip,
     validate_collection_upload,
@@ -16,7 +15,7 @@ from .files import (
     move_document_internal,
 )
 from .inventory import build_tree_response, list_documents_for_store
-from .streaming import process_bulk_operation, sse_stream_response
+from .streaming import process_bulk_operation
 from .uploads import (
     reconvert_single,
     reconvert_single_stream,
@@ -26,7 +25,6 @@ from .uploads import (
 
 __all__ = [
     "build_tree_response",
-    "collection_stream_response",
     "delete_directory_internal",
     "delete_single",
     "ensure_upload_slot",
@@ -40,7 +38,6 @@ __all__ = [
     "read_collection_zip",
     "reconvert_single",
     "reconvert_single_stream",
-    "sse_stream_response",
     "upload_file",
     "upload_file_stream",
     "validate_collection_upload",

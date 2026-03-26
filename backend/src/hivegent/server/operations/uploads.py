@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from ...chunkers.base import (
     EntryGeneratedBy,
@@ -36,7 +36,6 @@ from ...types import (
     OperationErrorEvent,
     OperationStageEvent,
     UploadCompleteEvent,
-    UploadDocumentResponse,
 )
 from ..common import cleanup_empty_parents, resolve_llm_config
 from ..models import PipelineSpec
@@ -177,7 +176,7 @@ async def _upload_markdown(
     spec: PipelineSpec,
     *,
     origin: EntryOrigin,
-) -> UploadDocumentResponse:
+) -> UploadCompleteEvent:
     """Store a user-authored markdown file."""
     workspace_dir = store.workspace_dir(settings.data_dir)
     text_content = content.decode("utf-8")
@@ -199,7 +198,7 @@ async def _upload_markdown(
             generated_by="user",
         ),
     )
-    return UploadDocumentResponse(
+    return UploadCompleteEvent(
         filename=filepath,
         converted_filename=None,
         size_bytes=len(content),
@@ -217,7 +216,7 @@ async def _upload_image(
     llm_config: LlmConfig,
     *,
     origin: EntryOrigin,
-) -> UploadDocumentResponse:
+) -> UploadCompleteEvent:
     """Store an image and generate a markdown description."""
     workspace_dir = store.workspace_dir(settings.data_dir)
     _write_original_file(workspace_dir, filepath, content)
@@ -239,7 +238,7 @@ async def _upload_image(
             generated_by="vision",
         ),
     )
-    return UploadDocumentResponse(
+    return UploadCompleteEvent(
         filename=filepath,
         converted_filename=description_path,
         size_bytes=len(content),
@@ -257,7 +256,7 @@ async def _upload_binary_stub(
     *,
     origin: EntryOrigin,
     original_written: bool = False,
-) -> UploadDocumentResponse:
+) -> UploadCompleteEvent:
     """Store a non-convertible binary with a minimal markdown stub."""
     workspace_dir = store.workspace_dir(settings.data_dir)
     if not original_written:
@@ -280,7 +279,7 @@ async def _upload_binary_stub(
             generated_by="stub",
         ),
     )
-    return UploadDocumentResponse(
+    return UploadCompleteEvent(
         filename=filepath,
         converted_filename=description_path,
         size_bytes=len(content),
@@ -298,7 +297,7 @@ async def _upload_convertible(
     llm_config: LlmConfig,
     *,
     origin: EntryOrigin,
-) -> UploadDocumentResponse:
+) -> UploadCompleteEvent:
     """Store a convertible binary, convert it, and process extracted assets."""
     workspace_dir = store.workspace_dir(settings.data_dir)
     original_full_path = _write_original_file(workspace_dir, filepath, content)
@@ -386,7 +385,7 @@ async def _upload_convertible(
             generated_by="converter",
         ),
     )
-    return UploadDocumentResponse(
+    return UploadCompleteEvent(
         filename=filepath,
         converted_filename=description_path,
         size_bytes=len(content),
@@ -406,7 +405,7 @@ async def upload_file(
     *,
     origin: EntryOrigin = "upload",
     sync: bool = True,
-) -> UploadDocumentResponse:
+) -> UploadCompleteEvent:
     """Upload a single file using the recursive stem-entry model."""
     suffix = PurePosixPath(filepath).suffix.lower()
 
@@ -436,7 +435,7 @@ async def reconvert_single(
     safe: str,
     spec: PipelineSpec,
     resolved: LlmConfig,
-) -> UploadDocumentResponse:
+) -> UploadCompleteEvent:
     """Reprocess a logical entry from its original file."""
     metadata = get_metadata(store, safe)
     if not metadata or not metadata.original_path:
@@ -473,7 +472,7 @@ async def upload_file_stream(
     content: bytes,
     spec: PipelineSpec,
     llm_config: LlmConfig,
-) -> AsyncGenerator[BaseModel, None]:
+) -> AsyncGenerator[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent, None]:
     """Upload a single file with SSE stage events for progress."""
     suffix = PurePosixPath(filepath).suffix.lower()
     try:
@@ -484,7 +483,7 @@ async def upload_file_stream(
         else:
             yield OperationStageEvent(stage="Processing document")
         result = await upload_file(store, filepath, content, spec, llm_config)
-        yield UploadCompleteEvent.model_validate(result)
+        yield result
     except HTTPException as exc:
         yield OperationErrorEvent(detail=str(exc.detail))
     except Exception as exc:
@@ -496,7 +495,7 @@ async def reconvert_single_stream(
     safe: str,
     spec: PipelineSpec,
     resolved: LlmConfig,
-) -> AsyncGenerator[BaseModel, None]:
+) -> AsyncGenerator[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent, None]:
     """Reconvert a single document with SSE stage events for progress."""
     try:
         metadata = get_metadata(store, safe)
@@ -509,7 +508,7 @@ async def reconvert_single_stream(
         else:
             yield OperationStageEvent(stage="Reprocessing document")
         result = await reconvert_single(store, safe, spec, resolved)
-        yield UploadCompleteEvent.model_validate(result)
+        yield result
     except HTTPException as exc:
         yield OperationErrorEvent(detail=str(exc.detail))
     except Exception as exc:

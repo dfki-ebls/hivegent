@@ -9,7 +9,6 @@ from collections.abc import AsyncGenerator
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException, UploadFile
-from starlette.responses import StreamingResponse
 
 from ...config import sanitize_document_path, settings
 from ...converters.base import DOCUMENT_EXTENSION
@@ -20,11 +19,9 @@ from ...store import Casebase
 from ...types import CollectionCompleteEvent, CollectionProgressEvent, LlmConfig
 from ..common import parse_pipeline_spec, resolve_llm_config
 from ..models import PipelineSpec
-from .streaming import sse_stream_response
 from .uploads import upload_file
 
 __all__ = [
-    "collection_stream_response",
     "process_collection",
     "read_collection_zip",
     "validate_collection_upload",
@@ -236,16 +233,6 @@ def validate_collection_upload(
     llm = LlmConfig.model_validate_json(llm_config)
     resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
     return spec, resolved
-
-
-def collection_stream_response(
-    store: Casebase,
-    raw: bytes,
-    spec: PipelineSpec,
-    resolved: LlmConfig,
-) -> StreamingResponse:
-    """Wrap ``process_collection`` in a streaming response."""
-    return sse_stream_response(process_collection(store, raw, spec, resolved))
 
 
 async def read_collection_zip(file: UploadFile) -> bytes:

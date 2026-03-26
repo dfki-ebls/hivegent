@@ -1,41 +1,16 @@
 """Streaming helpers for document operations."""
 
-import json
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Literal
-
-from pydantic import BaseModel
-from starlette.responses import StreamingResponse
 
 from ...retrieval import mark_dirty_and_sync
 from ...store import Casebase
 from ...types import BulkOperationCompleteEvent, BulkOperationProgressEvent
 
-__all__ = ["process_bulk_operation", "sse_stream_response"]
+__all__ = ["process_bulk_operation"]
 
 logger = logging.getLogger(__name__)
-
-
-def sse_stream_response(
-    generator: AsyncGenerator[BaseModel, None],
-) -> StreamingResponse:
-    """Wrap an async generator of Pydantic models in an SSE response."""
-
-    async def _event_stream() -> AsyncGenerator[str, None]:
-        try:
-            async for event in generator:
-                yield f"data: {json.dumps(event.model_dump())}\n\n"
-        except Exception as exc:
-            logger.exception("SSE stream error")
-            error = {"type": "error", "detail": str(exc)}
-            yield f"data: {json.dumps(error)}\n\n"
-
-    return StreamingResponse(
-        _event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
 
 
 async def process_bulk_operation(

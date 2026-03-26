@@ -325,7 +325,11 @@ async function postCollectionStream(
     throw new Error(error.detail || "Collection upload failed");
   }
 
-  return parseCollectionStream(res, options?.onProgress);
+  return parseSseProgressStream<CollectionStreamEvent, CollectionUploadResponse>(
+    res,
+    CollectionStreamEventSchema,
+    options?.onProgress,
+  );
 }
 
 /** Upload a collection with streaming progress events via SSE. */
@@ -431,18 +435,6 @@ async function parseSseProgressStream<TEvent extends { type: string }, TComplete
     }
     return event as unknown as TComplete;
   });
-}
-
-/** Parse an SSE response from a streaming collection upload. */
-function parseCollectionStream(
-  res: Response,
-  onProgress?: (progress: UploadProgress) => void,
-): Promise<CollectionUploadResponse> {
-  return parseSseProgressStream<CollectionStreamEvent, CollectionUploadResponse>(
-    res,
-    CollectionStreamEventSchema,
-    onProgress,
-  );
 }
 
 export async function deleteDocument(filename: string): Promise<void> {
@@ -868,18 +860,6 @@ export interface BulkOperationStreamOptions {
   signal?: AbortSignal;
 }
 
-/** Parse an SSE response from a streaming bulk operation. */
-function parseBulkOperationStream(
-  res: Response,
-  onProgress?: (progress: UploadProgress) => void,
-): Promise<BulkOperationCompleteEvent> {
-  return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
-    res,
-    BulkOperationStreamEventSchema,
-    onProgress,
-  );
-}
-
 /** Bulk rechunk multiple documents with streaming progress. */
 export async function bulkRechunkStream(
   files: string[],
@@ -898,7 +878,11 @@ export async function bulkRechunkStream(
     throw new Error(error.detail || "Bulk rechunk failed");
   }
 
-  return parseBulkOperationStream(res, options?.onProgress);
+  return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
+    res,
+    BulkOperationStreamEventSchema,
+    options?.onProgress,
+  );
 }
 
 /** Bulk reconvert multiple documents with streaming progress. */
@@ -920,7 +904,11 @@ export async function bulkReconvertStream(
     throw new Error(error.detail || "Bulk reconvert failed");
   }
 
-  return parseBulkOperationStream(res, options?.onProgress);
+  return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
+    res,
+    BulkOperationStreamEventSchema,
+    options?.onProgress,
+  );
 }
 
 /** Bulk delete multiple documents with streaming progress. */
@@ -940,7 +928,11 @@ export async function bulkDeleteStream(
     throw new Error(error.detail || "Bulk delete failed");
   }
 
-  return parseBulkOperationStream(res, options?.onProgress);
+  return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
+    res,
+    BulkOperationStreamEventSchema,
+    options?.onProgress,
+  );
 }
 
 // User directory management

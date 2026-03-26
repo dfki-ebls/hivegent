@@ -2,11 +2,13 @@
 
 import mimetypes
 import shutil
+from collections.abc import AsyncIterable
 from pathlib import PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
-from starlette.responses import Response, StreamingResponse
+from fastapi.sse import EventSourceResponse
+from starlette.responses import Response
 
 from ...auth import User, get_current_user
 from ...chunks import DocumentMetadata, chunk_document, get_metadata
@@ -15,7 +17,10 @@ from ...entries import stem_path_from_reference
 from ...retrieval import invalidate_store, mark_dirty_and_sync
 from ...types import (
     BulkDeleteDocumentsResponse,
+    BulkOperationCompleteEvent,
+    BulkOperationProgressEvent,
     CollectionCompleteEvent,
+    CollectionProgressEvent,
     CollectionUploadResponse,
     DeleteDocumentResponse,
     DocumentListResponse,
@@ -25,11 +30,11 @@ from ...types import (
     OperationErrorEvent,
     OperationStageEvent,
     RechunkCompleteEvent,
+    UploadCompleteEvent,
     UploadDocumentResponse,
 )
 from ..common import parse_pipeline_spec, resolve_llm_config, safe_path, user_store
 from ..operations import (
-    collection_stream_response,
     delete_single,
     ensure_upload_slot,
     find_original,
@@ -41,7 +46,6 @@ from ..operations import (
     read_collection_zip,
     reconvert_single,
     reconvert_single_stream,
-    sse_stream_response,
     upload_file,
     upload_file_stream,
     validate_collection_upload,
@@ -135,7 +139,7 @@ async def replace_original(
     return result
 
 
-@router.put("/documents/stream/{filepath:path}")
+@router.put("/documents/stream/{filepath:path}", response_class=EventSourceResponse)
 async def upload_document_stream(
     filepath: str,
     file: UploadFile,
@@ -143,7 +147,7 @@ async def upload_document_stream(
     pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
     overwrite: bool = Form(default=False),
-) -> StreamingResponse:
+) -> AsyncIterable[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent]:
     """Upload or replace a document with streaming progress events."""
     safe = safe_path(filepath)
     store = user_store(user)
@@ -162,15 +166,14 @@ async def upload_document_stream(
             detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
         )
 
-    return sse_stream_response(
-        upload_file_stream(
-            store=store,
-            filepath=safe,
-            content=content,
-            spec=spec,
-            llm_config=llm_config_model,
-        )
-    )
+    async for event in upload_file_stream(
+        store=store,
+        filepath=safe,
+        content=content,
+        spec=spec,
+        llm_config=llm_config_model,
+    ):
+        yield event
 
 
 @router.put("/documents/{filepath:path}")
@@ -209,27 +212,26 @@ async def upload_document(
     )
 
 
-@router.post("/documents/reconvert/stream/{filepath:path}")
+@router.post("/documents/reconvert/stream/{filepath:path}", response_class=EventSourceResponse)
 async def reconvert_document_stream(
     filepath: str,
     request: ReconvertRequest,
     user: Annotated[User, Depends(get_current_user)],
-) -> StreamingResponse:
+) -> AsyncIterable[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent]:
     """Re-convert a document with streaming progress events."""
     safe = safe_path(filepath)
     store = user_store(user)
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
-    return sse_stream_response(
-        reconvert_single_stream(store, safe, request.pipeline, resolved)
-    )
+    async for event in reconvert_single_stream(store, safe, request.pipeline, resolved):
+        yield event
 
 
-@router.post("/documents/rechunk/stream/{filepath:path}")
+@router.post("/documents/rechunk/stream/{filepath:path}", response_class=EventSourceResponse)
 async def rechunk_document_stream(
     filepath: str,
     request: PipelineSpec,
     user: Annotated[User, Depends(get_current_user)],
-) -> StreamingResponse:
+) -> AsyncIterable[OperationStageEvent | RechunkCompleteEvent | OperationErrorEvent]:
     """Re-chunk a document with streaming progress events."""
     safe = safe_path(filepath)
     store = user_store(user)
@@ -238,20 +240,16 @@ async def rechunk_document_stream(
         raise HTTPException(status_code=404, detail="Document not found")
 
     text_content = file_path.read_text(encoding="utf-8")
-
-    async def _rechunk_stream():  # type: ignore[return]
-        yield OperationStageEvent(stage="Chunking document")
-        try:
-            result = await chunk_document(store, safe, text_content, request.chunking)
-            mark_dirty_and_sync(store)
-            yield RechunkCompleteEvent(
-                pipeline=result.pipeline,
-                chunk_count=len(result.chunks),
-            )
-        except Exception as exc:
-            yield OperationErrorEvent(detail=f"Chunking failed: {exc!s}")
-
-    return sse_stream_response(_rechunk_stream())
+    yield OperationStageEvent(stage="Chunking document")
+    try:
+        result = await chunk_document(store, safe, text_content, request.chunking)
+        mark_dirty_and_sync(store)
+        yield RechunkCompleteEvent(
+            pipeline=result.pipeline,
+            chunk_count=len(result.chunks),
+        )
+    except Exception as exc:
+        yield OperationErrorEvent(detail=f"Chunking failed: {exc!s}")
 
 
 @router.post("/documents/collections")
@@ -275,18 +273,19 @@ async def upload_collection(
     return result
 
 
-@router.post("/documents/collections/stream")
+@router.post("/documents/collections/stream", response_class=EventSourceResponse)
 async def upload_collection_stream(
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
     pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
-) -> StreamingResponse:
+) -> AsyncIterable[CollectionProgressEvent | CollectionCompleteEvent]:
     """Upload a collection with streaming progress events."""
     spec, resolved = validate_collection_upload(pipeline_spec, llm_config)
     store = user_store(user)
     raw = await read_collection_zip(file)
-    return collection_stream_response(store, raw, spec, resolved)
+    async for event in process_collection(store, raw, spec, resolved):
+        yield event
 
 
 @router.delete("/documents")
@@ -311,11 +310,11 @@ async def delete_all_documents(
     )
 
 
-@router.post("/documents/rechunk/bulk/stream")
+@router.post("/documents/rechunk/bulk/stream", response_class=EventSourceResponse)
 async def bulk_rechunk_stream(
     request: BulkRechunkRequest,
     user: Annotated[User, Depends(get_current_user)],
-) -> StreamingResponse:
+) -> AsyncIterable[BulkOperationProgressEvent | BulkOperationCompleteEvent]:
     """Bulk rechunk multiple documents with streaming progress."""
     store = user_store(user)
     workspace = store.workspace_dir(settings.data_dir)
@@ -326,16 +325,17 @@ async def bulk_rechunk_stream(
         text_content = (workspace / safe).read_text(encoding="utf-8")
         await chunk_document(store, safe, text_content, spec.chunking)
 
-    return sse_stream_response(
-        process_bulk_operation(store, request.files, _rechunk_one, "Rechunked"),
-    )
+    async for event in process_bulk_operation(
+        store, request.files, _rechunk_one, "Rechunked"
+    ):
+        yield event
 
 
-@router.post("/documents/reconvert/bulk/stream")
+@router.post("/documents/reconvert/bulk/stream", response_class=EventSourceResponse)
 async def bulk_reconvert_stream(
     request: BulkReconvertRequest,
     user: Annotated[User, Depends(get_current_user)],
-) -> StreamingResponse:
+) -> AsyncIterable[BulkOperationProgressEvent | BulkOperationCompleteEvent]:
     """Bulk reconvert multiple documents with streaming progress."""
     store = user_store(user)
     spec = request.pipeline
@@ -345,16 +345,17 @@ async def bulk_reconvert_stream(
         safe = safe_path(filepath)
         await reconvert_single(store, safe, spec, resolved)
 
-    return sse_stream_response(
-        process_bulk_operation(store, request.files, _reconvert_one, "Reconverted"),
-    )
+    async for event in process_bulk_operation(
+        store, request.files, _reconvert_one, "Reconverted"
+    ):
+        yield event
 
 
-@router.post("/documents/delete/bulk/stream")
+@router.post("/documents/delete/bulk/stream", response_class=EventSourceResponse)
 async def bulk_delete_stream(
     request: BulkDeleteRequest,
     user: Annotated[User, Depends(get_current_user)],
-) -> StreamingResponse:
+) -> AsyncIterable[BulkOperationProgressEvent | BulkOperationCompleteEvent]:
     """Bulk delete multiple documents with streaming progress."""
     store = user_store(user)
 
@@ -362,9 +363,10 @@ async def bulk_delete_stream(
         safe = safe_path(filepath)
         delete_single(store, safe)
 
-    return sse_stream_response(
-        process_bulk_operation(store, request.files, _delete_one, "Deleted"),
-    )
+    async for event in process_bulk_operation(
+        store, request.files, _delete_one, "Deleted"
+    ):
+        yield event
 
 
 @router.get("/documents/chunks/{filepath:path}")
