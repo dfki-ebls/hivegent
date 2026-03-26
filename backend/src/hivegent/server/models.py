@@ -20,6 +20,7 @@ class PipelineSpec(BaseModel):
 
     conversion: ConversionSpec = Field(default_factory=ConversionSpec)
     chunking: ChunkingSpec = Field(default_factory=ChunkingSpec)
+    process_assets: bool = Field(default=True)
 
 
 class ReconvertRequest(BaseModel):

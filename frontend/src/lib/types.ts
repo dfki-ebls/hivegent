@@ -637,6 +637,7 @@ export interface PipelineSpec {
     pipeline?: ChunkingPipeline;
     config?: Record<string, unknown>;
   };
+  process_assets?: boolean;
 }
 
 /** LLM provider configuration sent to the backend. */

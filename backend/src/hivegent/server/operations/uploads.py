@@ -359,15 +359,18 @@ async def _upload_convertible(
             PurePosixPath(PurePosixPath(assets_dir).name) / PurePosixPath(image_relpath)
         )
         markdown_content = markdown_content.replace(image_relpath, relative_from_doc)
-        await upload_file(
-            store,
-            child_path,
-            image_data,
-            spec,
-            llm_config,
-            origin="extracted",
-            sync=False,
-        )
+        if spec.process_assets:
+            await upload_file(
+                store,
+                child_path,
+                image_data,
+                spec,
+                llm_config,
+                origin="extracted",
+                sync=False,
+            )
+        else:
+            _write_original_file(workspace_dir, child_path, image_data)
         has_assets = True
 
     chunk_count, chunking_used = await _write_markdown_projection(

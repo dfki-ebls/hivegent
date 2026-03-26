@@ -9,6 +9,7 @@ import {
   FolderOpen,
   FolderPlus,
   Globe,
+  Images,
   Loader2,
   Paperclip,
   Plus,
@@ -70,6 +71,8 @@ import {
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Switch } from "./ui/switch";
 import { Progress } from "./ui/progress";
 import { ScrollArea } from "./ui/scroll-area";
 import { Spinner } from "./ui/spinner";
@@ -477,17 +480,21 @@ function UploadArea({
 interface PipelineSettingsBarProps {
   conversionPipeline: ConversionPipeline;
   chunkingPipeline: ChunkingPipeline;
+  processAssets: boolean;
   isBulkOperating: boolean;
   onConversionPipelineChange: (pipeline: ConversionPipeline) => void;
   onChunkingPipelineChange: (pipeline: ChunkingPipeline) => void;
+  onProcessAssetsChange: (value: boolean) => void;
 }
 
 function PipelineSettingsBar({
   conversionPipeline,
   chunkingPipeline,
+  processAssets,
   isBulkOperating,
   onConversionPipelineChange,
   onChunkingPipelineChange,
+  onProcessAssetsChange,
 }: PipelineSettingsBarProps) {
   return (
     <div className="flex items-center justify-center gap-8 border-b px-4 py-3">
@@ -501,6 +508,21 @@ function PipelineSettingsBar({
         onChange={onChunkingPipelineChange}
         disabled={isBulkOperating}
       />
+      <div className="flex items-center gap-2">
+        <Label
+          htmlFor="process-assets-switch"
+          className="text-sm text-muted-foreground flex items-center gap-1.5"
+        >
+          <Images className="h-4 w-4" />
+          Process assets
+        </Label>
+        <Switch
+          id="process-assets-switch"
+          checked={processAssets}
+          onCheckedChange={onProcessAssetsChange}
+          disabled={isBulkOperating}
+        />
+      </div>
     </div>
   );
 }
@@ -808,6 +830,8 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const chunkingConfigs = useSettingsStore((state) => state.chunkingConfigs);
   const setConversionPipeline = useSettingsStore((state) => state.setConversionPipeline);
   const setChunkingPipeline = useSettingsStore((state) => state.setChunkingPipeline);
+  const processAssets = useSettingsStore((state) => state.processAssets);
+  const setProcessAssets = useSettingsStore((state) => state.setProcessAssets);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const directoryInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
@@ -933,8 +957,9 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         pipeline: chunkingPipeline,
         config: chunkingConfigs[chunkingPipeline],
       },
+      process_assets: processAssets,
     }),
-    [conversionPipeline, chunkingPipeline, conversionConfigs, chunkingConfigs],
+    [conversionPipeline, chunkingPipeline, conversionConfigs, chunkingConfigs, processAssets],
   );
 
   useEffect(() => {
@@ -1400,9 +1425,11 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       <PipelineSettingsBar
         conversionPipeline={conversionPipeline}
         chunkingPipeline={chunkingPipeline}
+        processAssets={processAssets}
         isBulkOperating={bulkProgress !== null}
         onConversionPipelineChange={setConversionPipeline}
         onChunkingPipelineChange={setChunkingPipeline}
+        onProcessAssetsChange={setProcessAssets}
       />
 
       <div className="p-4 pb-2">

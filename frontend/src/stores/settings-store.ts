@@ -55,6 +55,7 @@ const UI_DEFAULTS = {
   expandedDirs: [""] as string[],
   personality: "default" as Personality,
   customSystemMessage: "",
+  processAssets: true,
   conversionConfigs: {} as PipelineConfigs,
   chunkingConfigs: {} as PipelineConfigs,
   toolsSpec: { disabledTools: [], mcpServers: [] } as ToolsSpec,
@@ -71,6 +72,7 @@ interface SettingsState {
   documentTab: DocumentTab;
   conversionPipeline: ConversionPipeline;
   chunkingPipeline: ChunkingPipeline;
+  processAssets: boolean;
   expandedDirs: string[];
   personality: Personality;
   customSystemMessage: string;
@@ -99,6 +101,7 @@ interface SettingsState {
   setDocumentTab: (tab: DocumentTab) => void;
   setConversionPipeline: (pipeline: ConversionPipeline) => void;
   setChunkingPipeline: (pipeline: ChunkingPipeline) => void;
+  setProcessAssets: (value: boolean) => void;
   toggleExpandedDir: (path: string) => void;
   setExpandedDirs: (dirs: string[]) => void;
   setPersonality: (personality: Personality) => void;
@@ -137,6 +140,7 @@ interface PersistedSettings {
   documentTab: DocumentTab;
   conversionPipeline: ConversionPipeline;
   chunkingPipeline: ChunkingPipeline;
+  processAssets: boolean;
   expandedDirs: string[];
   personality: Personality;
   customSystemMessage: string;
@@ -340,6 +344,8 @@ export const useSettingsStore = create<SettingsState>()(
 
       setChunkingPipeline: (pipeline) => set({ chunkingPipeline: pipeline }),
 
+      setProcessAssets: (processAssets) => set({ processAssets }),
+
       toggleExpandedDir: (path) =>
         set((state) => {
           const dirs = new Set(state.expandedDirs);
@@ -429,6 +435,7 @@ export const useSettingsStore = create<SettingsState>()(
         documentTab: state.documentTab,
         conversionPipeline: state.conversionPipeline,
         chunkingPipeline: state.chunkingPipeline,
+        processAssets: state.processAssets,
         expandedDirs: state.expandedDirs,
         personality: state.personality,
         customSystemMessage: state.customSystemMessage,
@@ -463,14 +470,15 @@ export const useSettingsStore = create<SettingsState>()(
           chunkingPipeline:
             ChunkingPipelineSchema.safeParse(data.chunkingPipeline).data ??
             UI_DEFAULTS.chunkingPipeline,
+          processAssets:
+            z.boolean().safeParse(data.processAssets).data ?? UI_DEFAULTS.processAssets,
           expandedDirs:
             ExpandedDirsSchema.safeParse(data.expandedDirs).data ?? UI_DEFAULTS.expandedDirs,
           personality:
             PersonalitySchema.safeParse(data.personality).data ?? UI_DEFAULTS.personality,
           customSystemMessage:
-            typeof data.customSystemMessage === "string"
-              ? data.customSystemMessage
-              : UI_DEFAULTS.customSystemMessage,
+            z.string().safeParse(data.customSystemMessage).data ??
+            UI_DEFAULTS.customSystemMessage,
           conversionConfigs:
             PipelineConfigsSchema.safeParse(data.conversionConfigs).data ??
             UI_DEFAULTS.conversionConfigs,
