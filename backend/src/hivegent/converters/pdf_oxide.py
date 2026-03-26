@@ -1,13 +1,14 @@
 """pdf_oxide-based PDF converter."""
 
 import asyncio
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from pdf_oxide import PdfDocument
 from pydantic import BaseModel
 
-from .base import ConversionResult, DocumentConverter
+from .base import ConversionResult, DocumentConverter, collect_dir_images
 
 __all__ = ["PdfOxideConverter", "PdfOxideConverterConfig"]
 
@@ -31,8 +32,21 @@ class PdfOxideConverter(DocumentConverter):
     def _convert_sync(self, path: Path) -> ConversionResult:
         """Run the synchronous pdf_oxide conversion."""
         doc = PdfDocument(str(path))
-        pages = [doc.to_markdown(page) for page in range(doc.page_count())]
-        return ConversionResult(markdown="\n\n".join(pages))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            pages = [
+                doc.to_markdown(
+                    page,
+                    image_output_dir=str(temp_path),
+                    embed_images=False,
+                )
+                for page in range(doc.page_count())
+            ]
+            # Collect extracted images before the temp dir is cleaned up.
+            image_data = collect_dir_images(temp_path, temp_path)
+            return ConversionResult(
+                markdown="\n\n".join(pages), images=image_data
+            )
 
     async def __call__(
         self,

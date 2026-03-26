@@ -62,9 +62,9 @@ _FORMAT_OVERRIDES: dict[str, str] = {
     ".typst": "typst",
 }
 
-# Office formats require filesystem access (to unzip the OOXML archive)
+# These formats are zip-based containers that require filesystem access
 # and cannot run in pandoc's sandbox mode.
-_SANDBOX_INCOMPATIBLE = frozenset({".docx", ".pptx", ".xlsx"})
+_SANDBOX_INCOMPATIBLE = frozenset({".docx", ".pptx", ".xlsx", ".epub", ".odt"})
 
 
 @dataclass(slots=True, frozen=True)

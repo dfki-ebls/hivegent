@@ -1,12 +1,14 @@
 """Kreuzberg-based document converter with native async support."""
 
 from dataclasses import dataclass, field
+from io import BytesIO
 from pathlib import Path
 
-from kreuzberg import ExtractionConfig, extract_file
+import PIL.Image
+from kreuzberg import ExtractionConfig, ImageExtractionConfig, extract_file
 from pydantic import BaseModel, Field
 
-from .base import ConversionResult, DocumentConverter
+from .base import ConversionResult, DocumentConverter, pil_to_png_bytes
 
 __all__ = ["KreuzbergConverter", "KreuzbergConverterConfig"]
 
@@ -17,10 +19,6 @@ class KreuzbergConverterConfig(BaseModel):
     force_ocr: bool = Field(
         default=False,
         description="Force OCR even when embedded text is available.",
-    )
-    output_format: str = Field(
-        default="plain",
-        description="Output format ('plain' or 'markdown').",
     )
     enable_quality_processing: bool = Field(
         default=True,
@@ -90,19 +88,37 @@ class KreuzbergConverter(DocumentConverter):
         path: Path,
         /,
     ) -> ConversionResult:
-        """Convert a document to plain text using Kreuzberg.
+        """Convert a document to markdown using Kreuzberg.
 
         Args:
             path: Path to the document to convert.
 
         Returns:
-            The conversion result with extracted text content.
+            The conversion result with markdown content and extracted images.
         """
         extraction_config = ExtractionConfig(
             force_ocr=self.config.force_ocr,
-            output_format=self.config.output_format,
+            output_format="markdown",
             enable_quality_processing=self.config.enable_quality_processing,
             include_document_structure=self.config.include_document_structure,
+            images=ImageExtractionConfig(inject_placeholders=True),
         )
         result = await extract_file(path, config=extraction_config)
-        return ConversionResult(markdown=str(result.content))
+        markdown = str(result.content)
+
+        # Kreuzberg injects ``![](image)`` as a uniform placeholder for every
+        # image.  Replace each occurrence sequentially (same approach as the
+        # Docling converter with ``<!-- image -->``).
+        image_data: dict[str, bytes] = {}
+        if result.images:
+            for img in sorted(result.images, key=lambda i: i.get("image_index", 0)):
+                img_name = f"image_{len(image_data):06}.png"
+                raw: bytes = img["data"]
+                fmt = img.get("format", "png")
+                if fmt.lower() != "png":
+                    pil_img = PIL.Image.open(BytesIO(raw))
+                    raw = pil_to_png_bytes(pil_img)
+                image_data[img_name] = raw
+                markdown = markdown.replace("![](image)", f"![]({img_name})", 1)
+
+        return ConversionResult(markdown=markdown, images=image_data)
