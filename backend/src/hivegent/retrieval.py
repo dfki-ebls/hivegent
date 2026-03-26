@@ -35,6 +35,15 @@ LANCEDB_TABLE = "chunks"
 METADATA_FILENAME_COLUMN = "filename"
 
 
+@dataclass(slots=True, frozen=True)
+class _ChunkEntry:
+    """Loaded chunk metadata for a single indexed chunk."""
+
+    text: str
+    token_count: int
+    image_path: str | None = None
+
+
 @dataclass(slots=True)
 class _RetrievalState:
     """Thread-safe singleton managing LanceDB storage and embeddings."""
@@ -47,7 +56,7 @@ class _RetrievalState:
     ) = field(default=None)
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _pending_reindex: set[str] = field(default_factory=set)
-    _token_counts: dict[str, dict[str, int]] = field(default_factory=dict)
+    _chunk_meta: dict[str, dict[str, _ChunkEntry]] = field(default_factory=dict)
 
     def get_embedding_func(
         self,
@@ -204,7 +213,7 @@ def _parse_chunk_key(key: str) -> tuple[str, int]:
         raise ValueError(f"Invalid chunk key format: {key!r}") from exc
 
 
-def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, tuple[str, int]]:
+def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, _ChunkEntry]:
     """Load all chunks from a metadata directory as a casebase mapping.
 
     Metadata filenames use the stem-only convention (``report.json`` for
@@ -215,12 +224,12 @@ def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, tuple[str, int]]:
         metadata_dir: The directory containing metadata JSON files.
 
     Returns:
-        Dict mapping chunk keys to ``(text, token_count)`` tuples.
+        Dict mapping chunk keys to :class:`_ChunkEntry` instances.
     """
     if not metadata_dir.exists():
         return {}
 
-    chunks: dict[str, tuple[str, int]] = {}
+    chunks: dict[str, _ChunkEntry] = {}
 
     for meta_file in sorted(metadata_dir.rglob("*.json")):
         stem = str(meta_file.relative_to(metadata_dir).as_posix()).removesuffix(".json")
@@ -234,9 +243,14 @@ def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, tuple[str, int]]:
             continue
 
         entry_filename = doc.description_path or doc_filename
+        image_path = doc.original_path if doc.entry_kind == "image" else None
         for i, chunk in enumerate(doc.chunks):
             key = _build_chunk_key(entry_filename, i)
-            chunks[key] = (chunk.text, chunk.token_count)
+            chunks[key] = _ChunkEntry(
+                text=chunk.text,
+                token_count=chunk.token_count,
+                image_path=image_path,
+            )
 
     return chunks
 
@@ -253,7 +267,7 @@ def invalidate_store(store: Casebase) -> None:
     key = store.store_key
     with _state._lock:
         _state._storage_cache.pop(key, None)
-        _state._token_counts.pop(key, None)
+        _state._chunk_meta.pop(key, None)
         _state._pending_reindex.discard(key)
 
 
@@ -304,55 +318,52 @@ def sync_index(store: Casebase) -> None:
     """
     storage = _state.get_storage(store)
     loaded = _load_all_chunks_from_dir(store.metadata_dir(settings.data_dir))
-    casebase = {key: text for key, (text, _) in loaded.items()}
+    casebase = {key: entry.text for key, entry in loaded.items()}
     logger.info(
         "Syncing LanceDB index for %s (%d chunks)", store.store_key, len(casebase)
     )
     storage.create_index(casebase)
     with _state._lock:
-        _state._token_counts[store.store_key] = {
-            key: tc for key, (_, tc) in loaded.items()
-        }
+        _state._chunk_meta[store.store_key] = loaded
     _state.clear_dirty(store.store_key)
 
 
-def _ensure_token_counts(store: Casebase) -> None:
-    """Lazily load and cache token counts for a store that is already indexed.
+def _ensure_chunk_meta(store: Casebase) -> None:
+    """Lazily load and cache chunk metadata for a store that is already indexed.
 
     Args:
-        store: The casebase whose token counts should be cached.
+        store: The casebase whose chunk metadata should be cached.
     """
     key = store.store_key
     with _state._lock:
-        if key in _state._token_counts:
+        if key in _state._chunk_meta:
             return
 
     loaded = _load_all_chunks_from_dir(store.metadata_dir(settings.data_dir))
     with _state._lock:
-        if key not in _state._token_counts:
-            _state._token_counts[key] = {k: tc for k, (_, tc) in loaded.items()}
+        if key not in _state._chunk_meta:
+            _state._chunk_meta[key] = loaded
 
 
 def _to_retrieved_chunk(
     result: SearchResult,
-    token_count: int | None = None,
+    meta: _ChunkEntry | None = None,
 ) -> RetrievedChunk:
     """Map a raw :class:`SearchResult` to a :class:`RetrievedChunk`.
 
     Args:
         result: The raw search result.
-        token_count: Accurate token count from chunk metadata.
-            Falls back to ``len(text.split())`` when ``None``.
+        meta: Cached chunk metadata.  When ``None``, token count falls
+            back to ``len(text.split())``.
     """
     filename, chunk_index = _parse_chunk_key(result.key)
     return RetrievedChunk(
         filename=filename,
         chunk_index=chunk_index,
         text=result.text,
-        token_count=token_count
-        if token_count is not None
-        else len(result.text.split()),
+        token_count=meta.token_count if meta is not None else len(result.text.split()),
         score=round(result.score, 4),
+        image_path=meta.image_path if meta is not None else None,
     )
 
 
@@ -377,17 +388,17 @@ def build_search_tool(
         if _state.is_dirty(store.store_key):
             sync_index(store)
         else:
-            _ensure_token_counts(store)
+            _ensure_chunk_meta(store)
 
-    token_counts: dict[str, int] = {}
+    chunk_meta: dict[str, _ChunkEntry] = {}
     with _state._lock:
         for store in stores:
-            counts = _state._token_counts.get(store.store_key)
-            if counts is not None:
-                token_counts.update(counts)
+            meta = _state._chunk_meta.get(store.store_key)
+            if meta is not None:
+                chunk_meta.update(meta)
 
     def _result_mapper(result: SearchResult) -> RetrievedChunk:
-        return _to_retrieved_chunk(result, token_counts.get(result.key))
+        return _to_retrieved_chunk(result, chunk_meta.get(result.key))
 
     key_filter: Callable[[str], bool] | None = (
         (lambda key: file_filter(_parse_chunk_key(key)[0]))

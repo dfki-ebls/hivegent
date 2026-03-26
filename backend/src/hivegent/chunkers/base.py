@@ -114,6 +114,10 @@ class RetrievedChunk(BaseModel):
     text: str = Field(description="The chunk text content")
     token_count: int = Field(description="Number of tokens in the chunk")
     score: float = Field(description="The relevance score")
+    image_path: str | None = Field(
+        default=None,
+        description="Workspace-relative path to the original image file when this chunk describes an image",
+    )
 
 
 class DocumentChunker(ABC):

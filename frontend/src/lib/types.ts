@@ -215,6 +215,7 @@ export const RetrievedChunkSchema = z.object({
   text: z.string(),
   token_count: z.number(),
   score: z.number(),
+  image_path: z.string().nullable().optional(),
 });
 export type RetrievedChunk = z.infer<typeof RetrievedChunkSchema>;
 

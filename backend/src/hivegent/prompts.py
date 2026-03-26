@@ -5,6 +5,7 @@ from enum import StrEnum
 __all__ = [
     "CITATION_INSTRUCTIONS",
     "EXPLORE_INSTRUCTIONS",
+    "IMAGE_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS_EMPTY",
     "PLAN_INSTRUCTIONS",
@@ -44,6 +45,13 @@ When referencing information from documents, always use inline citation tags:
 Use the exact filename from your tool results as the filename attribute.
 Prefer chunk citations with the chunk index when you retrieved a specific chunk.
 Place citations around the relevant text inline, not grouped at the end."""
+
+IMAGE_INSTRUCTIONS = """
+
+When search results include an `image_path` field, the chunk describes an image.
+To show the image inline, use: <imgref src="image_path value">caption</imgref>
+Use the exact `image_path` from the tool result as the `src` attribute.
+Only reference images that were returned by tools with an `image_path` field."""
 
 MEMORY_INSTRUCTIONS = """
 

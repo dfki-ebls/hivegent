@@ -1,7 +1,8 @@
 "use client";
 
 import { FileTextIcon } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import type { HTMLAttributes } from "react";
+import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import type { FetchedChunk } from "@/lib/types";
@@ -14,14 +15,17 @@ import { DocumentDialog } from "./DocumentDialog";
  * Displays the cited text followed by a filename badge.
  * Hover shows a preview card, click opens the DocumentDialog.
  *
- * Accepts `Record<string, unknown>` because Streamdown's `Components` type
- * maps `cite` (a known HTML element) to its intrinsic props, while the actual
- * attributes (`filename`, `chunk`) come from the custom `allowedTags` config.
+ * Extends `HTMLAttributes<HTMLElement>` so it satisfies Streamdown's
+ * `Components` mapped type for the intrinsic `cite` element.  The custom
+ * `filename` and `chunk` attributes come from the `allowedTags` config.
  */
-export function Citation(props: Record<string, unknown>) {
-  const filename = props.filename as string | undefined;
-  const chunk = props.chunk as string | undefined;
-  const children = props.children as ReactNode;
+interface CitationProps extends HTMLAttributes<HTMLElement> {
+  filename?: string;
+  chunk?: string;
+  node?: unknown;
+}
+
+export function Citation({ filename, chunk, children }: CitationProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const chunks = useFetchedDocumentsStore((state) => state.chunks);

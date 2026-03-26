@@ -41,6 +41,7 @@ from ...messages import (
 )
 from ...prompts import (
     CITATION_INSTRUCTIONS,
+    IMAGE_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS_EMPTY,
     PERSONALITY_TEMPLATES,
@@ -329,7 +330,9 @@ async def create_conversation_chat(
     )
 
     if config.personality == Personality.CUSTOM and config.system_message:
-        instructions = config.system_message + CITATION_INSTRUCTIONS
+        instructions = (
+            config.system_message + CITATION_INSTRUCTIONS + IMAGE_INSTRUCTIONS
+        )
     else:
         instructions = (
             PERSONALITY_TEMPLATES.get(
@@ -337,6 +340,7 @@ async def create_conversation_chat(
                 PERSONALITY_TEMPLATES[Personality.DEFAULT],
             )
             + CITATION_INSTRUCTIONS
+            + IMAGE_INSTRUCTIONS
         )
 
     if config.mode == "plan":

@@ -90,6 +90,7 @@ import {
 import { SpeechInput } from "./ai-elements/speech-input";
 import { Suggestion, Suggestions } from "./ai-elements/suggestion";
 import { Citation } from "./Citation";
+import { ImageRef } from "./ImageRef";
 import { ConversationsList } from "./ConversationsList";
 import { SettingsDialog } from "./SettingsDialog";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
@@ -159,8 +160,8 @@ interface TextPartDisplayProps {
   onRegenerate: () => void;
 }
 
-const CITATION_ALLOWED_TAGS = { cite: ["filename", "chunk"] };
-const CITATION_COMPONENTS = { cite: Citation } as Components;
+const CITATION_ALLOWED_TAGS = { cite: ["filename", "chunk"], imgref: ["src"] };
+const CITATION_COMPONENTS: Components = { cite: Citation, imgref: ImageRef };
 
 function TextPartDisplay({ text, showActions, onRegenerate }: TextPartDisplayProps) {
   return (
