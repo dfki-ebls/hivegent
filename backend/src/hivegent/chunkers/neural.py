@@ -23,8 +23,8 @@ class NeuralChunkerConfig(BaseChonkieConfig):
         description="Minimum character count for a chunk.",
     )
     device_map: str = Field(
-        default="cpu",
-        description="Device to run the model on (e.g. 'cpu', 'cuda').",
+        default="auto",
+        description="Device to run the model on (e.g. 'auto', 'cpu', 'cuda', 'mps').",
     )
 
 
