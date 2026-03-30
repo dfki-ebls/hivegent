@@ -160,6 +160,20 @@ async def _check_and_fix_store(store: Casebase) -> None:
                 len(report.orphaned_chunks),
             )
             await fix_store_consistency(report)
+
+        # Always sync the search index.  The LanceDB index can be
+        # missing or stale independently of document/chunk consistency
+        # (e.g. a previous sync failed, the directory was wiped, or the
+        # embedding config changed).  create_index diffs against the
+        # existing table and no-ops when everything already matches.
+        try:
+            sync_index(store)
+        except Exception:
+            logger.warning(
+                "Failed to sync index for %s",
+                store.store_key,
+                exc_info=True,
+            )
     except Exception:
         logger.warning(
             "Consistency check failed for %s", store.store_key, exc_info=True
