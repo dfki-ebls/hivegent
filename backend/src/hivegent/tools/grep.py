@@ -1,5 +1,6 @@
 """Grep tool callable — search documents for a pattern."""
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..subprocesses import rg_search
-from .base import FileFilter, Tool, file_allowed
+from .base import PathsTool, SearchPath, file_allowed
 
 __all__ = [
     "ContextLinesArg",
@@ -48,11 +49,8 @@ ContextLinesArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class GrepTool(Tool):
+class GrepTool(PathsTool):
     """Search documents for a pattern."""
-
-    path: Path
-    file_filter: FileFilter = None
 
     @override
     async def __call__(
@@ -66,28 +64,39 @@ class GrepTool(Tool):
         Uses smart case matching: case-insensitive unless the pattern contains
         uppercase letters.
         """
-        if not self.path.exists():
-            return []
+        results = await asyncio.gather(
+            *(
+                self._search_one(sp, pattern, glob, context_lines)
+                for sp in self.resolved_paths
+            )
+        )
+        return [m for batch in results for m in batch]
 
+    async def _search_one(
+        self,
+        sp: SearchPath,
+        pattern: str,
+        glob: str | None,
+        context_lines: int,
+    ) -> list[GrepMatch]:
+        """Run ripgrep against a single search path."""
+        if not sp.path.exists():
+            return []
         matches: list[GrepMatch] = []
         try:
             for rg_match in await rg_search(
-                pattern,
-                self.path,
-                glob=glob,
-                context_lines=context_lines,
+                pattern, sp.path, glob=glob, context_lines=context_lines
             ):
-                filename = str(Path(rg_match.path).relative_to(self.path))
+                filename = str(Path(rg_match.path).relative_to(sp.path))
+                if not file_allowed(sp.filter_func, filename):
+                    continue
                 matches.append(
                     GrepMatch(
-                        filename=filename,
+                        filename=sp.prefixed(filename),
                         line_number=rg_match.line_number,
                         line_text=rg_match.line_text,
                     )
                 )
         except Exception:
-            logger.warning("Grep failed for pattern %r in %s", pattern, self.path)
-
-        if self.file_filter is not None:
-            matches = [m for m in matches if file_allowed(self.file_filter, m.filename)]
+            logger.warning("Grep failed for pattern %r in %s", pattern, sp.path)
         return matches

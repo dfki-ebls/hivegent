@@ -1,16 +1,18 @@
 """Retrieval tools using cbrkit indexed backends."""
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Literal, cast, override
 
 import cbrkit
 from pydantic import Field
 
-from .base import Tool
+from .base import Tool, apply_prefix
 
 __all__ = [
+    "IndexedStorage",
+    "IndexedStorageFilterFunc",
     "LanceDBSearchTool",
     "SearchQueryArg",
     "SearchResult",
@@ -23,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 type SearchType = Literal["dense", "sparse", "hybrid"]
 
+IndexedStorageFilterFunc = Callable[[str], bool] | None
+"""Optional predicate on result keys.
+
+Receives the *unprefixed* key and should return ``True`` to keep the
+result.
+"""
+
 
 @dataclass(slots=True, frozen=True)
 class SearchResult:
@@ -31,6 +40,32 @@ class SearchResult:
     key: str
     text: str
     score: float
+
+
+@dataclass(slots=True, frozen=True)
+class IndexedStorage:
+    """A LanceDB storage with optional prefix and filter.
+
+    Mirrors :class:`~tools.base.SearchPath` for vector retrieval:
+    each storage may carry a display prefix and an independent filter
+    predicate.
+
+    Attributes:
+        storage: The cbrkit LanceDB storage instance.
+        prefix: Display prefix prepended to result keys from this
+            storage.  ``None`` means no prefix.
+        filter_func: Optional predicate on result keys.  Receives
+            the *unprefixed* key and should return ``True`` to keep
+            the result.
+    """
+
+    storage: cbrkit.indexable.lancedb[str]
+    prefix: str | None = None
+    filter_func: IndexedStorageFilterFunc = None
+
+    def prefixed(self, key: str) -> str:
+        """Return *key* with this storage's prefix prepended."""
+        return apply_prefix(self.prefix, key)
 
 
 SearchQueryArg = Annotated[
@@ -56,21 +91,18 @@ SearchTypeArg = Annotated[
 class LanceDBSearchTool[R = SearchResult](Tool):
     """Search one or more LanceDB storages using cbrkit indexed retrieval.
 
-    Builds a ``cbrkit.retrieval.lancedb`` retriever per storage, combines
-    them with :func:`cbrkit.retrieval.combine`, and applies dropout
-    limiting.
+    Each :class:`IndexedStorage` is queried independently so that
+    per-storage filters and prefixes are applied correctly.
+    Results are merged and sorted by score.
 
     Args:
-        storages: One or more cbrkit LanceDB storage instances.
-        key_filter: Optional predicate on result keys.  When ``None``,
-            all keys are accepted.
+        storages: One or more indexed storage entries.
         result_mapper: Optional callable that transforms each
             :class:`SearchResult` before it is returned.  When ``None``,
             raw :class:`SearchResult` objects are returned.
     """
 
-    storages: Sequence[cbrkit.indexable.lancedb[str]]
-    key_filter: Callable[[str], bool] | None = None
+    storages: tuple[IndexedStorage, ...] = ()
     result_mapper: Callable[[SearchResult], R] | None = None
 
     @override
@@ -85,40 +117,38 @@ class LanceDBSearchTool[R = SearchResult](Tool):
         Returns:
             List of results sorted by score descending.
         """
-        lancedb_retrievers: list[cbrkit.retrieval.lancedb[str]] = []
+        all_results: list[SearchResult] = []
 
-        for storage in self.storages:
-            if not storage.has_index():
+        for idx in self.storages:
+            if not idx.storage.has_index():
                 continue
 
-            lancedb_retrievers.append(
+            retriever = cbrkit.retrieval.dropout(
                 cbrkit.retrieval.lancedb(
-                    storage=storage,
+                    storage=idx.storage,
                     search_type=search_type,
+                ),
+                limit=top_k,
+            )
+            result = cbrkit.retrieval.apply_query_indexed(query, retriever)
+            step = result.final_step.queries["default"]
+
+            for key in step.ranking:
+                str_key = cast(str, key)
+                if idx.filter_func is not None and not idx.filter_func(str_key):
+                    continue
+                all_results.append(
+                    SearchResult(
+                        key=idx.prefixed(str_key),
+                        text=step.casebase[key],
+                        score=float(step.similarities[key]),
+                    )
                 )
-            )
 
-        if not lancedb_retrievers:
-            return []
-
-        combined = cbrkit.retrieval.dropout(
-            cbrkit.retrieval.combine(lancedb_retrievers),
-            limit=top_k,
-        )
-        result = cbrkit.retrieval.apply_query_indexed(query, combined)
-        step = result.final_step.queries["default"]
-
-        results = [
-            SearchResult(
-                key=cast(str, key),
-                text=step.casebase[key],
-                score=float(step.similarities[key]),
-            )
-            for key in step.ranking
-            if self.key_filter is None or self.key_filter(str(key))
-        ]
+        all_results.sort(key=lambda r: r.score, reverse=True)
+        all_results = all_results[:top_k]
 
         if self.result_mapper is not None:
-            return [self.result_mapper(r) for r in results]
+            return [self.result_mapper(r) for r in all_results]
 
-        return cast(list[R], results)
+        return cast(list[R], all_results)

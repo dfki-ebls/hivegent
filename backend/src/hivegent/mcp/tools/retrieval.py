@@ -11,7 +11,7 @@ from ...chunks import GetChunkTool, ListChunksTool
 from ...config import settings
 from ...prompts import EXPLORE_INSTRUCTIONS
 from ...retrieval import build_search_tool
-from ...store import Casebase
+from ...store import Casebase, build_search_paths
 from ...tools import (
     GetDocumentLinesTool,
     GlobDocumentsTool,
@@ -35,14 +35,24 @@ __all__ = [
 
 def _list_chunks(
     store: Casebase = Depends(get_mcp_user_store),
+    group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
 ) -> ListChunksTool:
-    return ListChunksTool(metadata_dir=store.metadata_dir(settings.data_dir))
+    return ListChunksTool(
+        paths=build_search_paths(
+            store, group_stores, settings.data_dir, dir_fn=Casebase.metadata_dir
+        )
+    )
 
 
 def _get_chunk(
     store: Casebase = Depends(get_mcp_user_store),
+    group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
 ) -> GetChunkTool:
-    return GetChunkTool(metadata_dir=store.metadata_dir(settings.data_dir))
+    return GetChunkTool(
+        paths=build_search_paths(
+            store, group_stores, settings.data_dir, dir_fn=Casebase.metadata_dir
+        )
+    )
 
 
 def _semantic_search(
@@ -93,17 +103,17 @@ async def explore_documents(
         )
         return result.output
 
-    workspace = store.workspace_dir(settings.data_dir)
+    paths = build_search_paths(store, group_stores, settings.data_dir)
     all_stores = (store, *group_stores)
     result = await ctx.sample(
         task,
         system_prompt=EXPLORE_INSTRUCTIONS,
         tools=[
-            ListDocumentsTool(path=workspace),
-            GlobDocumentsTool(path=workspace),
-            GrepTool(path=workspace),
+            ListDocumentsTool(paths=paths),
+            GlobDocumentsTool(paths=paths),
+            GrepTool(paths=paths),
             build_search_tool(all_stores),
-            GetDocumentLinesTool(path=workspace),
+            GetDocumentLinesTool(paths=paths),
         ],
     )
     return result.text

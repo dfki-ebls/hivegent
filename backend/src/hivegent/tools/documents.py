@@ -4,12 +4,11 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from fnmatch import fnmatch
-from pathlib import Path
 from typing import Annotated, override
 
 from pydantic import Field
 
-from .base import FileFilter, Tool, file_allowed
+from .base import PathsTool, file_allowed, resolve_search_path
 
 __all__ = [
     "DocumentEndLineArg",
@@ -108,12 +107,10 @@ def _matches_subdir_and_depth(
 
 
 @dataclass(slots=True, frozen=True)
-class ListDocumentsTool(Tool):
+class ListDocumentsTool(PathsTool):
     """List all available documents with their sizes in bytes."""
 
-    path: Path
     glob: str | None = None
-    file_filter: FileFilter = None
 
     @override
     def __call__(
@@ -122,16 +119,20 @@ class ListDocumentsTool(Tool):
         max_depth: DocumentMaxDepthArg = None,
     ) -> list[DocumentSummary]:
         """List all available documents with their sizes in bytes."""
-        if not self.path.exists():
-            return []
         results: list[DocumentSummary] = []
-        for f in sorted(self.path.rglob(self.glob or "*")):
-            if f.is_file():
-                rel = str(f.relative_to(self.path).as_posix())
+        for sp in self.resolved_paths:
+            if not sp.path.exists():
+                continue
+            for f in sorted(sp.path.rglob(self.glob or "*")):
+                if not f.is_file():
+                    continue
+                rel = str(f.relative_to(sp.path).as_posix())
+                if not file_allowed(sp.filter_func, rel):
+                    continue
                 stat = f.stat()
                 results.append(
                     DocumentSummary(
-                        filename=rel,
+                        filename=sp.prefixed(rel),
                         size=stat.st_size,
                         modified_at=datetime.fromtimestamp(
                             stat.st_mtime, tz=timezone.utc
@@ -144,25 +145,24 @@ class ListDocumentsTool(Tool):
                 for r in results
                 if _matches_subdir_and_depth(r.filename, subdir, max_depth)
             ]
-        if self.file_filter is not None:
-            results = [r for r in results if file_allowed(self.file_filter, r.filename)]
         return results
 
 
 @dataclass(slots=True, frozen=True)
-class GetDocumentTool(Tool):
+class GetDocumentTool(PathsTool):
     """Get the full content of a specific document."""
-
-    path: Path
-    file_filter: FileFilter = None
 
     @override
     def __call__(self, filename: DocumentFilenameArg) -> str | None:
         """Get the full content of a specific document."""
-        if not file_allowed(self.file_filter, filename):
+        resolved = resolve_search_path(self.resolved_paths, filename)
+        if resolved is None:
             return None
-        file_path = (self.path / filename).resolve()
-        if not file_path.is_relative_to(self.path.resolve()):
+        sp, local = resolved
+        if not file_allowed(sp.filter_func, local):
+            return None
+        file_path = (sp.path / local).resolve()
+        if not file_path.is_relative_to(sp.path.resolve()):
             return None
         if not file_path.is_file():
             return None
@@ -170,11 +170,8 @@ class GetDocumentTool(Tool):
 
 
 @dataclass(slots=True, frozen=True)
-class GetDocumentLinesTool(Tool):
+class GetDocumentLinesTool(PathsTool):
     """Get a range of lines from a document."""
-
-    path: Path
-    file_filter: FileFilter = None
 
     @override
     def __call__(
@@ -184,10 +181,14 @@ class GetDocumentLinesTool(Tool):
         end: DocumentEndLineArg = None,
     ) -> DocumentRange | None:
         """Get a range of lines from a document."""
-        if not file_allowed(self.file_filter, filename):
+        resolved = resolve_search_path(self.resolved_paths, filename)
+        if resolved is None:
             return None
-        file_path = (self.path / filename).resolve()
-        if not file_path.is_relative_to(self.path.resolve()):
+        sp, local = resolved
+        if not file_allowed(sp.filter_func, local):
+            return None
+        file_path = (sp.path / local).resolve()
+        if not file_path.is_relative_to(sp.path.resolve()):
             return None
         if not file_path.is_file():
             return None
@@ -206,24 +207,22 @@ class GetDocumentLinesTool(Tool):
 
 
 @dataclass(slots=True, frozen=True)
-class GlobDocumentsTool(Tool):
+class GlobDocumentsTool(PathsTool):
     """Find documents matching a glob pattern."""
 
-    path: Path
     glob: str | None = None
-    file_filter: FileFilter = None
 
     @override
     def __call__(self, pattern: GlobPatternArg) -> list[str]:
         """Find documents matching a glob pattern."""
-        if not self.path.exists():
-            return []
         results: list[str] = []
-        for f in sorted(self.path.rglob(self.glob or "*")):
-            if f.is_file():
-                rel = str(f.relative_to(self.path).as_posix())
-                if fnmatch(rel, pattern):
-                    results.append(rel)
-        if self.file_filter is not None:
-            results = [r for r in results if file_allowed(self.file_filter, r)]
+        for sp in self.resolved_paths:
+            if not sp.path.exists():
+                continue
+            for f in sorted(sp.path.rglob(self.glob or "*")):
+                if not f.is_file():
+                    continue
+                rel = str(f.relative_to(sp.path).as_posix())
+                if fnmatch(rel, pattern) and file_allowed(sp.filter_func, rel):
+                    results.append(sp.prefixed(rel))
         return results

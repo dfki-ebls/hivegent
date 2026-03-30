@@ -15,8 +15,8 @@ from .chunkers.base import DocumentMetadata, RetrievedChunk
 from .config import settings
 from .converters.base import DOCUMENT_EXTENSION
 from .store import Casebase
-from .tools.base import FileFilter
-from .tools.retrieval import LanceDBSearchTool, SearchResult
+from .tools.base import SearchPathFilterFunc, apply_prefix
+from .tools.retrieval import IndexedStorage, LanceDBSearchTool, SearchResult
 
 __all__ = [
     "build_search_tool",
@@ -369,17 +369,19 @@ def _to_retrieved_chunk(
 
 def build_search_tool(
     stores: Sequence[Casebase],
-    file_filter: FileFilter = None,
+    *,
+    filter_for_store: Callable[[Casebase], SearchPathFilterFunc] | None = None,
 ) -> LanceDBSearchTool[RetrievedChunk]:
     """Build a :class:`LanceDBSearchTool` spanning one or more casebases.
 
     Syncs any pending re-indexes and creates LanceDB storages as needed.
-    Results are automatically mapped to :class:`RetrievedChunk`.
+    Results are automatically mapped to :class:`RetrievedChunk` with
+    per-store filtering and ``@group/`` prefixing.
 
     Args:
         stores: Casebases to search across.
-        file_filter: Optional filename filter, composed with chunk key
-            parsing so it operates on the filename portion of each key.
+        filter_for_store: Optional callable returning a filename filter
+            for each store.  ``None`` means no filtering.
 
     Returns:
         A configured :class:`LanceDBSearchTool` ready to use.
@@ -390,24 +392,37 @@ def build_search_tool(
         else:
             _ensure_chunk_meta(store)
 
+    # Build per-store chunk metadata with prefixed keys.
     chunk_meta: dict[str, _ChunkEntry] = {}
+    indexed: list[IndexedStorage] = []
+
     with _state._lock:
         for store in stores:
+            prefix = store.prefix
             meta = _state._chunk_meta.get(store.store_key)
             if meta is not None:
-                chunk_meta.update(meta)
+                for key, entry in meta.items():
+                    prefixed_key = apply_prefix(prefix, key)
+                    chunk_meta[prefixed_key] = entry
+
+            file_filter = filter_for_store(store) if filter_for_store else None
+            key_filter: Callable[[str], bool] | None = (
+                (lambda key, ff=file_filter: ff(_parse_chunk_key(key)[0]))  # type: ignore[misc]
+                if file_filter is not None
+                else None
+            )
+            indexed.append(
+                IndexedStorage(
+                    storage=_state.get_storage(store),
+                    prefix=prefix,
+                    filter_func=key_filter,
+                )
+            )
 
     def _result_mapper(result: SearchResult) -> RetrievedChunk:
         return _to_retrieved_chunk(result, chunk_meta.get(result.key))
 
-    key_filter: Callable[[str], bool] | None = (
-        (lambda key: file_filter(_parse_chunk_key(key)[0]))
-        if file_filter is not None
-        else None
-    )
-
     return LanceDBSearchTool(
-        storages=[_state.get_storage(s) for s in stores],
+        storages=tuple(indexed),
         result_mapper=_result_mapper,
-        key_filter=key_filter,
     )

@@ -1,13 +1,16 @@
 """Casebase identity for user and group storage namespaces."""
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from .config import sanitize_group_id, sanitize_user_id
+from .tools.base import SearchPath, SearchPathFilterFunc
 
 __all__ = [
     "Casebase",
+    "build_search_paths",
 ]
 
 
@@ -43,6 +46,11 @@ class Casebase:
     def store_key(self) -> str:
         """Stable opaque key for caching and identification."""
         return f"{self.kind}:{self.id}"
+
+    @property
+    def prefix(self) -> str | None:
+        """Display prefix for document filenames from this store."""
+        return f"@{self.id}" if self.kind == "group" else None
 
     def root_path(self, data_dir: Path) -> Path:
         """Return the root path for this store without creating directories.
@@ -158,3 +166,41 @@ class Casebase:
     def memory_path(self, data_dir: Path) -> Path:
         """Return the memory markdown path for this store."""
         return self.root_dir(data_dir) / "memory.md"
+
+
+def build_search_paths(
+    store: "Casebase",
+    group_stores: Sequence["Casebase"],
+    data_dir: Path,
+    *,
+    dir_fn: Callable[["Casebase", Path], Path] = Casebase.workspace_dir,
+    filter_for_store: Callable[["Casebase"], SearchPathFilterFunc] | None = None,
+) -> tuple[SearchPath, ...]:
+    """Build :class:`SearchPath` entries for a user store and its groups.
+
+    Args:
+        store: The user's personal casebase.
+        group_stores: Group casebases the user can access.
+        data_dir: Application data root directory.
+        dir_fn: Method to obtain the directory path from each store
+            (default :meth:`Casebase.workspace_dir`).
+        filter_for_store: Optional callable returning a file filter for
+            each store.
+    """
+    get_filter = filter_for_store or (lambda _: None)
+    paths: list[SearchPath] = [
+        SearchPath(
+            path=dir_fn(store, data_dir),
+            prefix=store.prefix,
+            filter_func=get_filter(store),
+        ),
+    ]
+    for gs in group_stores:
+        paths.append(
+            SearchPath(
+                path=dir_fn(gs, data_dir),
+                prefix=gs.prefix,
+                filter_func=get_filter(gs),
+            )
+        )
+    return tuple(paths)

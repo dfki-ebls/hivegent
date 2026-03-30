@@ -42,8 +42,8 @@ async def edit_document(
         return "Edit denied by user."
 
     tool = EditDocumentTool(
-        path=store.workspace_dir(settings.data_dir),
-        on_write=partial(on_document_write, store),
+        paths=store.workspace_dir(settings.data_dir),
+        hook=partial(on_document_write, store),
     )
     return await tool(filename, old_string, new_string)
 
@@ -65,7 +65,7 @@ async def write_document(
         return "Write denied by user."
 
     tool = WriteDocumentTool(
-        path=store.workspace_dir(settings.data_dir),
-        on_write=partial(on_document_write, store),
+        paths=store.workspace_dir(settings.data_dir),
+        hook=partial(on_document_write, store),
     )
     return await tool(filename, content, mode)

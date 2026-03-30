@@ -6,6 +6,7 @@ from ...chunkers.base import RetrievedChunk
 from ...chunks import GetChunkTool, ListChunksTool
 from ...config import settings
 from ...retrieval import build_search_tool
+from ...store import Casebase, build_search_paths
 from ...tools import (
     GetDocumentLinesTool,
     GetDocumentTool,
@@ -13,6 +14,7 @@ from ...tools import (
     GrepTool,
     LanceDBSearchTool,
     ListDocumentsTool,
+    SearchPath,
 )
 from ...tools.pydantic_ai import register_agent_tools
 from ..common import UserDeps
@@ -20,57 +22,57 @@ from ..common import UserDeps
 __all__ = ["explore_toolset"]
 
 
-def _list_documents(deps: UserDeps) -> ListDocumentsTool:
-    return ListDocumentsTool(
-        path=deps.store.workspace_dir(settings.data_dir),
-        file_filter=deps.document_filter,
+def _workspace_paths(deps: UserDeps) -> tuple[SearchPath, ...]:
+    return build_search_paths(
+        deps.store,
+        deps.group_stores,
+        settings.data_dir,
+        filter_for_store=deps.filter_for_store,
     )
+
+
+def _metadata_paths(deps: UserDeps) -> tuple[SearchPath, ...]:
+    return build_search_paths(
+        deps.store,
+        deps.group_stores,
+        settings.data_dir,
+        dir_fn=Casebase.metadata_dir,
+        filter_for_store=deps.filter_for_store,
+    )
+
+
+def _list_documents(deps: UserDeps) -> ListDocumentsTool:
+    return ListDocumentsTool(paths=_workspace_paths(deps))
 
 
 def _glob_documents(deps: UserDeps) -> GlobDocumentsTool:
-    return GlobDocumentsTool(
-        path=deps.store.workspace_dir(settings.data_dir),
-        file_filter=deps.document_filter,
-    )
+    return GlobDocumentsTool(paths=_workspace_paths(deps))
 
 
 def _grep(deps: UserDeps) -> GrepTool:
-    return GrepTool(
-        path=deps.store.workspace_dir(settings.data_dir),
-        file_filter=deps.document_filter,
-    )
+    return GrepTool(paths=_workspace_paths(deps))
 
 
 def _get_document_lines(deps: UserDeps) -> GetDocumentLinesTool:
-    return GetDocumentLinesTool(
-        path=deps.store.workspace_dir(settings.data_dir),
-        file_filter=deps.document_filter,
-    )
+    return GetDocumentLinesTool(paths=_workspace_paths(deps))
 
 
 def _get_document(deps: UserDeps) -> GetDocumentTool:
-    return GetDocumentTool(
-        path=deps.store.workspace_dir(settings.data_dir),
-        file_filter=deps.document_filter,
-    )
+    return GetDocumentTool(paths=_workspace_paths(deps))
 
 
 def _list_chunks(deps: UserDeps) -> ListChunksTool:
-    return ListChunksTool(
-        metadata_dir=deps.store.metadata_dir(settings.data_dir),
-        file_filter=deps.document_filter,
-    )
+    return ListChunksTool(paths=_metadata_paths(deps))
 
 
 def _get_chunk(deps: UserDeps) -> GetChunkTool:
-    return GetChunkTool(
-        metadata_dir=deps.store.metadata_dir(settings.data_dir),
-        file_filter=deps.document_filter,
-    )
+    return GetChunkTool(paths=_metadata_paths(deps))
 
 
 def _semantic_search(deps: UserDeps) -> LanceDBSearchTool[RetrievedChunk]:
-    return build_search_tool(deps.all_stores, file_filter=deps.document_filter)
+    return build_search_tool(
+        deps.all_stores, filter_for_store=deps.filter_for_store
+    )
 
 
 explore_toolset: FunctionToolset[UserDeps] = FunctionToolset()

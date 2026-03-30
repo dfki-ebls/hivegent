@@ -2,12 +2,12 @@
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Annotated, Literal, override
 
 from pydantic import Field
 
-from .base import FileFilter, Tool, file_allowed
+from .base import PathsTool, file_allowed, resolve_search_path
 from .documents import DocumentFilenameArg
 
 __all__ = [
@@ -15,6 +15,7 @@ __all__ = [
     "EditDocumentTool",
     "EditNewStringArg",
     "EditOldStringArg",
+    "MutationHook",
     "WriteDocumentTool",
     "WriteModeArg",
 ]
@@ -41,14 +42,18 @@ WriteModeArg = Annotated[
     ),
 ]
 
+MutationHook = Callable[[str], Awaitable[None]] | None
+"""Optional async callback invoked after a successful write.
+
+Receives the local (unprefixed) filename that was modified.
+"""
+
 
 @dataclass(slots=True, frozen=True)
-class EditDocumentTool(Tool):
+class EditDocumentTool(PathsTool):
     """Edit a document by replacing an exact string with a new string."""
 
-    path: Path
-    file_filter: FileFilter = None
-    on_write: Callable[[DocumentFilenameArg], Awaitable[None]] | None = None
+    hook: MutationHook = None
 
     @override
     async def __call__(
@@ -62,10 +67,14 @@ class EditDocumentTool(Tool):
         Fails if the string does not exist or appears more than once,
         ensuring unambiguous edits.
         """
-        if not file_allowed(self.file_filter, filename):
+        resolved = resolve_search_path(self.resolved_paths, filename)
+        if resolved is None:
             return f"Error: '{filename}' is not accessible."
-        file_path = (self.path / filename).resolve()
-        if not file_path.is_relative_to(self.path.resolve()):
+        sp, local = resolved
+        if not file_allowed(sp.filter_func, local):
+            return f"Error: '{filename}' is not accessible."
+        file_path = (sp.path / local).resolve()
+        if not file_path.is_relative_to(sp.path.resolve()):
             return "Error: path traversal detected."
         if not file_path.is_file():
             return f"Error: '{filename}' does not exist."
@@ -82,19 +91,17 @@ class EditDocumentTool(Tool):
 
         new_content = content.replace(old_string, new_string, 1)
         file_path.write_text(new_content, encoding="utf-8")
-        if self.on_write:
-            await self.on_write(filename)
+        if self.hook:
+            await self.hook(local)
         return f"Replaced 1 occurrence in '{filename}'."
 
 
 @dataclass(slots=True, frozen=True)
-class WriteDocumentTool(Tool):
+class WriteDocumentTool(PathsTool):
     """Write content to a document using prepend, append, or replace mode."""
 
-    path: Path
     glob: str | None = None
-    file_filter: FileFilter = None
-    on_write: Callable[[DocumentFilenameArg], Awaitable[None]] | None = None
+    hook: MutationHook = None
 
     @override
     async def __call__(
@@ -104,12 +111,16 @@ class WriteDocumentTool(Tool):
         mode: WriteModeArg = "replace",
     ) -> str:
         """Write content to a document."""
-        if not file_allowed(self.file_filter, filename):
+        resolved = resolve_search_path(self.resolved_paths, filename)
+        if resolved is None:
             return f"Error: '{filename}' is not accessible."
-        file_path = (self.path / filename).resolve()
-        if not file_path.is_relative_to(self.path.resolve()):
+        sp, local = resolved
+        if not file_allowed(sp.filter_func, local):
+            return f"Error: '{filename}' is not accessible."
+        file_path = (sp.path / local).resolve()
+        if not file_path.is_relative_to(sp.path.resolve()):
             return "Error: path traversal detected."
-        if self.glob and not PurePosixPath(filename).match(self.glob):
+        if self.glob and not PurePosixPath(local).match(self.glob):
             return f"Error: '{filename}' does not match pattern '{self.glob}'."
 
         if mode == "replace":
@@ -127,6 +138,6 @@ class WriteDocumentTool(Tool):
             file_path.write_text(content + existing, encoding="utf-8")
             message = f"Prepended {len(content)} characters to '{filename}'."
 
-        if self.on_write:
-            await self.on_write(filename)
+        if self.hook:
+            await self.hook(local)
         return message

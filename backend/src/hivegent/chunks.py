@@ -22,7 +22,7 @@ from .entries import (
     stem_path_from_reference,
 )
 from .store import Casebase
-from .tools.base import FileFilter, Tool, file_allowed
+from .tools.base import PathsTool, file_allowed, resolve_search_path
 
 __all__ = [
     "ChunkIndexArg",
@@ -49,18 +49,19 @@ ChunkIndexArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class ListChunksTool(Tool):
+class ListChunksTool(PathsTool):
     """List chunk metadata for a document."""
-
-    metadata_dir: Path
-    file_filter: FileFilter = None
 
     @override
     def __call__(self, filename: str) -> list[ChunkSummary] | None:
         """List chunk metadata for a document."""
-        if not file_allowed(self.file_filter, filename):
+        resolved = resolve_search_path(self.resolved_paths, filename)
+        if resolved is None:
             return None
-        metadata = load_document_metadata(self.metadata_dir, filename)
+        sp, local = resolved
+        if not file_allowed(sp.filter_func, local):
+            return None
+        metadata = load_document_metadata(sp.path, local)
         if not metadata:
             return None
         return [
@@ -74,11 +75,8 @@ class ListChunksTool(Tool):
 
 
 @dataclass(slots=True, frozen=True)
-class GetChunkTool(Tool):
+class GetChunkTool(PathsTool):
     """Get the content of a specific chunk."""
-
-    metadata_dir: Path
-    file_filter: FileFilter = None
 
     @override
     def __call__(
@@ -87,9 +85,13 @@ class GetChunkTool(Tool):
         chunk_index: ChunkIndexArg,
     ) -> str | None:
         """Get the content of a specific chunk."""
-        if not file_allowed(self.file_filter, filename):
+        resolved = resolve_search_path(self.resolved_paths, filename)
+        if resolved is None:
             return None
-        metadata = load_document_metadata(self.metadata_dir, filename)
+        sp, local = resolved
+        if not file_allowed(sp.filter_func, local):
+            return None
+        metadata = load_document_metadata(sp.path, local)
         if not metadata:
             return None
         if 0 <= chunk_index < len(metadata.chunks):

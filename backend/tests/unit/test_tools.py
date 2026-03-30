@@ -11,6 +11,7 @@ from hivegent.chunks import (
     GetChunkTool,
     ListChunksTool,
 )
+from hivegent.tools.base import SearchPath
 from hivegent.tools.documents import (
     GetDocumentLinesTool,
     GetDocumentTool,
@@ -25,13 +26,13 @@ class TestListDocumentsTool:
     """Tests for ListDocumentsTool."""
 
     def test_empty_dir(self, tmp_path: Path) -> None:
-        tool = ListDocumentsTool(path=tmp_path, glob="*.md")
+        tool = ListDocumentsTool(paths=tmp_path, glob="*.md")
         assert tool() == []
 
     def test_lists_md_files(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("hello")
         (tmp_path / "b.txt").write_text("world")  # not .md, should be ignored
-        tool = ListDocumentsTool(path=tmp_path, glob="*.md")
+        tool = ListDocumentsTool(paths=tmp_path, glob="*.md")
         result = tool()
         filenames = [r.filename for r in result]
         assert "a.md" in filenames
@@ -40,7 +41,7 @@ class TestListDocumentsTool:
     def test_custom_glob(self, tmp_path: Path) -> None:
         (tmp_path / "a.txt").write_text("hello")
         (tmp_path / "b.md").write_text("world")
-        tool = ListDocumentsTool(path=tmp_path, glob="*.txt")
+        tool = ListDocumentsTool(paths=tmp_path, glob="*.txt")
         result = tool()
         filenames = [r.filename for r in result]
         assert "a.txt" in filenames
@@ -51,7 +52,7 @@ class TestListDocumentsTool:
         sub.mkdir()
         (sub / "n.md").write_text("note")
         (tmp_path / "top.md").write_text("top")
-        tool = ListDocumentsTool(path=tmp_path, glob="*.md")
+        tool = ListDocumentsTool(paths=tmp_path, glob="*.md")
         result = tool(subdir="notes")
         filenames = [r.filename for r in result]
         assert "notes/n.md" in filenames
@@ -61,14 +62,30 @@ class TestListDocumentsTool:
         (tmp_path / "a.md").write_text("hello")
         (tmp_path / "b.txt").write_text("world")
         (tmp_path / "c.png").write_bytes(b"\x89PNG")
-        tool = ListDocumentsTool(path=tmp_path)
+        tool = ListDocumentsTool(paths=tmp_path)
         result = tool()
         filenames = {r.filename for r in result}
         assert filenames == {"a.md", "b.txt", "c.png"}
 
     def test_nonexistent_dir(self, tmp_path: Path) -> None:
-        tool = ListDocumentsTool(path=tmp_path / "nonexistent", glob="*.md")
+        tool = ListDocumentsTool(paths=tmp_path / "nonexistent", glob="*.md")
         assert tool() == []
+
+    def test_multi_store(self, tmp_path: Path) -> None:
+        user_dir = tmp_path / "user"
+        user_dir.mkdir()
+        (user_dir / "a.md").write_text("user")
+        group_dir = tmp_path / "group"
+        group_dir.mkdir()
+        (group_dir / "b.md").write_text("group")
+        tool = ListDocumentsTool(
+            paths=(
+                SearchPath(path=user_dir),
+                SearchPath(path=group_dir, prefix="@team"),
+            )
+        )
+        filenames = {r.filename for r in tool()}
+        assert filenames == {"a.md", "@team/b.md"}
 
 
 class TestGetDocumentTool:
@@ -76,16 +93,32 @@ class TestGetDocumentTool:
 
     def test_reads_file(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("content here")
-        tool = GetDocumentTool(path=tmp_path)
+        tool = GetDocumentTool(paths=tmp_path)
         assert tool("doc.md") == "content here"
 
     def test_returns_none_for_nonexistent(self, tmp_path: Path) -> None:
-        tool = GetDocumentTool(path=tmp_path)
+        tool = GetDocumentTool(paths=tmp_path)
         assert tool("missing.md") is None
 
     def test_rejects_path_traversal(self, tmp_path: Path) -> None:
-        tool = GetDocumentTool(path=tmp_path)
+        tool = GetDocumentTool(paths=tmp_path)
         assert tool("../../../etc/passwd") is None
+
+    def test_reads_group_document(self, tmp_path: Path) -> None:
+        group_dir = tmp_path / "group"
+        group_dir.mkdir()
+        (group_dir / "doc.md").write_text("group content")
+        tool = GetDocumentTool(
+            paths=(
+                SearchPath(path=tmp_path),
+                SearchPath(path=group_dir, prefix="@team"),
+            )
+        )
+        assert tool("@team/doc.md") == "group content"
+
+    def test_returns_none_for_unknown_prefix(self, tmp_path: Path) -> None:
+        tool = GetDocumentTool(paths=tmp_path)
+        assert tool("@unknown/doc.md") is None
 
 
 class TestGetDocumentLinesTool:
@@ -94,7 +127,7 @@ class TestGetDocumentLinesTool:
     def test_correct_range(self, tmp_path: Path) -> None:
         lines = ["line1", "line2", "line3", "line4", "line5"]
         (tmp_path / "doc.md").write_text("\n".join(lines))
-        tool = GetDocumentLinesTool(path=tmp_path)
+        tool = GetDocumentLinesTool(paths=tmp_path)
         result = tool("doc.md", start=2, end=4)
         assert result is not None
         assert result.start_line == 2
@@ -104,19 +137,19 @@ class TestGetDocumentLinesTool:
 
     def test_defaults_to_full_file(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("a\nb\nc")
-        tool = GetDocumentLinesTool(path=tmp_path)
+        tool = GetDocumentLinesTool(paths=tmp_path)
         result = tool("doc.md")
         assert result is not None
         assert result.start_line == 1
         assert result.end_line == 3
 
     def test_returns_none_for_nonexistent(self, tmp_path: Path) -> None:
-        tool = GetDocumentLinesTool(path=tmp_path)
+        tool = GetDocumentLinesTool(paths=tmp_path)
         assert tool("missing.md") is None
 
     def test_clamps_start_to_one(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("only")
-        tool = GetDocumentLinesTool(path=tmp_path)
+        tool = GetDocumentLinesTool(paths=tmp_path)
         result = tool("doc.md", start=-5)
         assert result is not None
         assert result.start_line == 1
@@ -128,23 +161,39 @@ class TestGlobDocumentsTool:
     def test_matches_pattern(self, tmp_path: Path) -> None:
         (tmp_path / "notes.md").write_text("a")
         (tmp_path / "readme.md").write_text("b")
-        tool = GlobDocumentsTool(path=tmp_path, glob="*.md")
+        tool = GlobDocumentsTool(paths=tmp_path, glob="*.md")
         result = tool("note*")
         assert result == ["notes.md"]
 
     def test_custom_glob(self, tmp_path: Path) -> None:
         (tmp_path / "data.txt").write_text("a")
         (tmp_path / "data.md").write_text("b")
-        tool = GlobDocumentsTool(path=tmp_path, glob="*.txt")
+        tool = GlobDocumentsTool(paths=tmp_path, glob="*.txt")
         result = tool("*")
         assert result == ["data.txt"]
 
     def test_none_glob_matches_all(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("a")
         (tmp_path / "b.txt").write_text("b")
-        tool = GlobDocumentsTool(path=tmp_path)
+        tool = GlobDocumentsTool(paths=tmp_path)
         result = tool("*")
         assert set(result) == {"a.md", "b.txt"}
+
+    def test_multi_store(self, tmp_path: Path) -> None:
+        user_dir = tmp_path / "user"
+        user_dir.mkdir()
+        (user_dir / "a.md").write_text("user")
+        group_dir = tmp_path / "group"
+        group_dir.mkdir()
+        (group_dir / "b.md").write_text("group")
+        tool = GlobDocumentsTool(
+            paths=(
+                SearchPath(path=user_dir),
+                SearchPath(path=group_dir, prefix="@team"),
+            )
+        )
+        result = tool("*.md")
+        assert set(result) == {"a.md", "@team/b.md"}
 
 
 class TestListChunksTool:
@@ -171,11 +220,11 @@ class TestListChunksTool:
                 ],
             ).model_dump_json()
         )
-        tool = ListChunksTool(metadata_dir=metadata_dir)
+        tool = ListChunksTool(paths=metadata_dir)
         assert tool("doc.md") == chunks
 
     def test_returns_none_for_missing(self, tmp_path: Path) -> None:
-        tool = ListChunksTool(metadata_dir=tmp_path)
+        tool = ListChunksTool(paths=tmp_path)
         assert tool("missing.md") is None
 
 
@@ -202,7 +251,7 @@ class TestGetChunkTool:
                 ],
             ).model_dump_json()
         )
-        tool = GetChunkTool(metadata_dir=metadata_dir)
+        tool = GetChunkTool(paths=metadata_dir)
         assert tool("doc.md", 0) == "chunk content"
 
     def test_returns_none_for_invalid_index(self, tmp_path: Path) -> None:
@@ -225,7 +274,7 @@ class TestGetChunkTool:
                 ],
             ).model_dump_json()
         )
-        tool = GetChunkTool(metadata_dir=metadata_dir)
+        tool = GetChunkTool(paths=metadata_dir)
         assert tool("doc.md", 99) is None
 
 
@@ -234,7 +283,7 @@ class TestEditDocumentTool:
 
     async def test_replaces_string(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("hello world")
-        tool = EditDocumentTool(path=tmp_path)
+        tool = EditDocumentTool(paths=tmp_path)
         result = await tool("doc.md", "hello", "goodbye")
         assert "Replaced 1 occurrence" in result
         assert (tmp_path / "doc.md").read_text() == "goodbye world"
@@ -246,19 +295,19 @@ class TestEditDocumentTool:
         async def _on_write(filename: str) -> None:
             written.append(filename)
 
-        tool = EditDocumentTool(path=tmp_path, on_write=_on_write)
+        tool = EditDocumentTool(paths=tmp_path, hook=_on_write)
         await tool("doc.md", "hello", "goodbye")
         assert written == ["doc.md"]
 
     async def test_error_on_missing_string(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("hello world")
-        tool = EditDocumentTool(path=tmp_path)
+        tool = EditDocumentTool(paths=tmp_path)
         result = await tool("doc.md", "missing", "new")
         assert "Error" in result
 
     async def test_error_on_duplicate_string(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("hello hello")
-        tool = EditDocumentTool(path=tmp_path)
+        tool = EditDocumentTool(paths=tmp_path)
         result = await tool("doc.md", "hello", "goodbye")
         assert "Error" in result
         assert "2 times" in result
@@ -268,32 +317,32 @@ class TestWriteDocumentTool:
     """Tests for WriteDocumentTool."""
 
     async def test_replace_creates_file(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(path=tmp_path, glob="*.md")
+        tool = WriteDocumentTool(paths=tmp_path, glob="*.md")
         result = await tool("new.md", "content")
         assert "Wrote" in result
         assert (tmp_path / "new.md").read_text() == "content"
 
     async def test_append(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("start")
-        tool = WriteDocumentTool(path=tmp_path, glob="*.md")
+        tool = WriteDocumentTool(paths=tmp_path, glob="*.md")
         result = await tool("doc.md", " end", mode="append")
         assert "Appended" in result
         assert (tmp_path / "doc.md").read_text() == "start end"
 
     async def test_prepend(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("end")
-        tool = WriteDocumentTool(path=tmp_path, glob="*.md")
+        tool = WriteDocumentTool(paths=tmp_path, glob="*.md")
         result = await tool("doc.md", "start ", mode="prepend")
         assert "Prepended" in result
         assert (tmp_path / "doc.md").read_text() == "start end"
 
     async def test_rejects_non_matching_glob(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(path=tmp_path, glob="*.md")
+        tool = WriteDocumentTool(paths=tmp_path, glob="*.md")
         result = await tool("doc.txt", "content")
         assert "Error" in result
 
     async def test_none_glob_allows_any(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(path=tmp_path)
+        tool = WriteDocumentTool(paths=tmp_path)
         result = await tool("data.txt", "content")
         assert "Wrote" in result
         assert (tmp_path / "data.txt").read_text() == "content"
@@ -304,7 +353,7 @@ class TestWriteDocumentTool:
         async def _on_write(filename: str) -> None:
             written.append(filename)
 
-        tool = WriteDocumentTool(path=tmp_path, glob="*.md", on_write=_on_write)
+        tool = WriteDocumentTool(paths=tmp_path, glob="*.md", hook=_on_write)
         await tool("doc.md", "content")
         assert written == ["doc.md"]
 
@@ -315,22 +364,22 @@ class TestJqTool:
     async def test_single_file_query(self, tmp_path: Path) -> None:
         data = {"title": "Hello", "count": 42}
         (tmp_path / "item.json").write_text(json.dumps(data))
-        tool = JqTool(path=tmp_path)
+        tool = JqTool(paths=tmp_path)
         result = json.loads(await tool(".title", "item.json"))
         assert result == ["Hello"]
 
     async def test_invalid_jq_expression(self, tmp_path: Path) -> None:
         (tmp_path / "item.json").write_text(json.dumps({"x": 1}))
-        tool = JqTool(path=tmp_path)
+        tool = JqTool(paths=tmp_path)
         result = await tool("invalid [[[", "item.json")
         assert result.startswith("Error:")
 
     async def test_nonexistent_filename(self, tmp_path: Path) -> None:
-        tool = JqTool(path=tmp_path)
+        tool = JqTool(paths=tmp_path)
         result = await tool(".", "missing.json")
         assert result.startswith("Error:")
 
     async def test_path_traversal(self, tmp_path: Path) -> None:
-        tool = JqTool(path=tmp_path)
+        tool = JqTool(paths=tmp_path)
         result = await tool(".", "../etc/passwd")
         assert result.startswith("Error:")

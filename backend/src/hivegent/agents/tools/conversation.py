@@ -31,7 +31,7 @@ def list_conversations_tool(
 
 
 def _jq_factory(deps: UserDeps) -> JqTool:
-    return JqTool(path=deps.store.conversations_dir(settings.data_dir))
+    return JqTool(paths=deps.store.conversations_dir(settings.data_dir))
 
 
 conversation_toolset.add_function(
