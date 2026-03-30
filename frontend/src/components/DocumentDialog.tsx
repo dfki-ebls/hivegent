@@ -1,7 +1,7 @@
 import { ExternalLink, FileText, ImageIcon, Pencil, RefreshCw } from "lucide-react";
 import { isWebUrl } from "@/lib/utils";
 import Markdown from "markdown-to-jsx";
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   getDocumentChunks,
@@ -92,7 +92,6 @@ export function DocumentDialog({
   const [isLoading, setIsLoading] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("full-doc");
   const [activeChunkId, setActiveChunkId] = useState<string | null>(null);
-  const highlightRef = useRef<HTMLDivElement>(null);
 
   // Managed-mode chunk data
   const [managedData, setManagedData] = useState<ChunkedDocumentResponse | null>(null);
@@ -235,20 +234,20 @@ export function DocumentDialog({
     };
   }, [open, filename, isNew, isManagedMode, markFullDocument, getContent]);
 
-  // --- Scroll to highlighted chunk ---
-  useEffect(() => {
-    if (!highlightRef.current) return;
-    // Two rAF frames: first lets React flush DOM mutations, second waits
-    // for the Radix ScrollArea viewport to settle before measuring layout.
-    requestAnimationFrame(() => {
+  // Ref callback that scrolls to the highlight when the element mounts.
+  // By including the active-chunk identifiers in the dependency list,
+  // React treats each chunk switch as a new ref, guaranteeing the
+  // callback fires after the DOM element is attached.
+  const highlightRef = useCallback(
+    (node: HTMLElement | null) => {
+      if (!node) return;
+      // Single rAF to let the Radix ScrollArea viewport settle.
       requestAnimationFrame(() => {
-        highlightRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-        });
+        node.scrollIntoView({ behavior: "smooth", block: "center" });
       });
-    });
-  }, [activeChunkId, managedActiveIndex, fullContent, viewMode]);
+    },
+    [activeChunkId, managedActiveIndex],
+  );
 
   // --- Rechunk handler ---
   const handleRechunk = useCallback(async () => {
