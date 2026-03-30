@@ -360,6 +360,11 @@ async def create_conversation_chat(
     if config.reasoning_effort != "auto":
         model_settings = OpenAIResponsesModelSettings(
             openai_reasoning_effort=config.reasoning_effort,
+            openai_reasoning_summary="auto",
+        )
+    else:
+        model_settings = OpenAIResponsesModelSettings(
+            openai_reasoning_summary="auto",
         )
 
     store = user_store(user)
