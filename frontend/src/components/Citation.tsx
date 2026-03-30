@@ -1,11 +1,12 @@
 "use client";
 
 import { FileTextIcon } from "lucide-react";
-import type { HTMLAttributes } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import type { FetchedChunk } from "@/lib/types";
+import { sortChunks } from "@/lib/types";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { DocumentDialog } from "./DocumentDialog";
 
@@ -25,11 +26,21 @@ interface CitationProps extends HTMLAttributes<HTMLElement> {
   node?: unknown;
 }
 
+/** Extract plain text from React children for content matching. */
+function childrenToText(node: ReactNode): string {
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(childrenToText).join("");
+  return "";
+}
+
 export function Citation({ filename, chunk, children }: CitationProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
+
+  const citedText = useMemo(() => childrenToText(children), [children]);
 
   // Find the best matching chunk for this citation
   const matchedChunk = useMemo((): FetchedChunk | null => {
@@ -37,25 +48,39 @@ export function Citation({ filename, chunk, children }: CitationProps) {
     const doc = documents.get(filename);
     if (!doc) return null;
 
+    const siblings = doc.chunkIds
+      .map((id) => chunks.get(id))
+      .filter((c): c is FetchedChunk => c != null);
+    if (siblings.length === 0) return null;
+
     const chunkIndex = chunk !== undefined ? parseInt(chunk, 10) : undefined;
 
-    // Try to find a chunk matching by chunk_index
-    if (chunkIndex !== undefined) {
-      for (const id of doc.chunkIds) {
-        const c = chunks.get(id);
-        if (c && c.position.type === "chunk_index" && c.position.chunkIndex === chunkIndex) {
-          return c;
-        }
-      }
+    // 1. Exact match by chunk_index position
+    if (chunkIndex !== undefined && !Number.isNaN(chunkIndex)) {
+      const exact = siblings.find(
+        (c) => c.position.type === "chunk_index" && c.position.chunkIndex === chunkIndex,
+      );
+      if (exact) return exact;
     }
 
-    // Fallback: return the first chunk for this document
-    for (const id of doc.chunkIds) {
-      const c = chunks.get(id);
-      if (c) return c;
+    // 2. Content match: find the chunk that contains the cited text
+    if (citedText.length > 0) {
+      const contentMatch = siblings.find((c) => c.content.includes(citedText));
+      if (contentMatch) return contentMatch;
     }
-    return null;
-  }, [filename, chunk, documents, chunks]);
+
+    // 3. Ordinal fallback when a chunk index was specified
+    if (chunkIndex !== undefined && !Number.isNaN(chunkIndex)) {
+      const sorted = sortChunks(siblings);
+      if (chunkIndex < sorted.length) return sorted[chunkIndex];
+    }
+
+    // 4. Last resort: first sibling as sidebar anchor
+    return siblings[0];
+  }, [filename, chunk, citedText, documents, chunks]);
+
+  // Document-level citations (no chunk attr and no content match) open full-doc
+  const openFullDoc = chunk === undefined && matchedChunk?.position.type !== "chunk_index";
 
   if (!filename) {
     return <span>{children}</span>;
@@ -104,6 +129,7 @@ export function Citation({ filename, chunk, children }: CitationProps) {
         filename={filename}
         chunk={matchedChunk}
         fallbackFilename={filename}
+        initialFullDoc={openFullDoc}
       />
     </span>
   );

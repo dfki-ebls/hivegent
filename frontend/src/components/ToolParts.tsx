@@ -152,10 +152,15 @@ export function processToolOutput(
       for (const match of matches) {
         if (match.line_number <= 0) continue;
 
-        const position: ChunkPosition = {
-          type: "line",
-          line: match.line_number,
-        };
+        const lineCount = 1 + (match.line_text.match(/\n/g)?.length ?? 0);
+        const position: ChunkPosition =
+          lineCount > 1
+            ? {
+                type: "line_range",
+                startLine: match.line_number,
+                endLine: match.line_number + lineCount - 1,
+              }
+            : { type: "line", line: match.line_number };
         addChunk({
           filename: match.filename,
           content: match.line_text,

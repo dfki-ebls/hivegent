@@ -78,12 +78,12 @@ class TestRgSearch:
         assert any("include.md" in p for p in paths)
         assert not any("exclude.txt" in p for p in paths)
 
-    async def test_submatches_populated(self, tmp_path: Path) -> None:
-        (tmp_path / "test.txt").write_text("foo bar foo\n")
-        matches = await rg_search("foo", tmp_path)
+    async def test_context_lines(self, tmp_path: Path) -> None:
+        (tmp_path / "test.txt").write_text("aaa\nbbb\nccc\nddd\neee\n")
+        matches = await rg_search("ccc", tmp_path, context_lines=1)
         assert len(matches) == 1
-        assert len(matches[0].submatches) >= 1
-        assert matches[0].submatches[0].text == "foo"
+        assert matches[0].line_number == 2
+        assert matches[0].line_text == "bbb\nccc\nddd"
 
 
 class TestJqFilter:

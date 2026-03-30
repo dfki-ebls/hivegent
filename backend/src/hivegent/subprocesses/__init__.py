@@ -3,11 +3,10 @@
 from .base import SubprocessError, SubprocessResult, run
 from .jq import jq_filter
 from .pandoc import pandoc_convert
-from .rg import RgMatch, RgSubMatch, rg_search
+from .rg import RgMatch, rg_search
 
 __all__ = [
     "RgMatch",
-    "RgSubMatch",
     "SubprocessError",
     "SubprocessResult",
     "jq_filter",

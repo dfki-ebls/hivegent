@@ -238,11 +238,14 @@ export function DocumentDialog({
   // --- Scroll to highlighted chunk ---
   useEffect(() => {
     if (!highlightRef.current) return;
-    // Delay until layout is settled so scroll measurements are correct.
+    // Two rAF frames: first lets React flush DOM mutations, second waits
+    // for the Radix ScrollArea viewport to settle before measuring layout.
     requestAnimationFrame(() => {
-      highlightRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
+      requestAnimationFrame(() => {
+        highlightRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
       });
     });
   }, [activeChunkId, managedActiveIndex, fullContent, viewMode]);
