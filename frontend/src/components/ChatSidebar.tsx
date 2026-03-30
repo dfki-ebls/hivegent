@@ -23,10 +23,18 @@ import {
   SquarePen,
   X,
 } from "lucide-react";
+import { cjk } from "@streamdown/cjk";
+import { code } from "@streamdown/code";
+import { createMathPlugin } from "@streamdown/math";
+import { mermaid } from "@streamdown/mermaid";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Components } from "streamdown";
 import { getToolPartInfo, processToolOutput, ToolPartDisplay, type ToolPart } from "./ToolParts";
+import {
+  normalizeDisplayMathDelimiters,
+  normalizeMathDelimiters,
+} from "@/lib/normalize-math";
 import {
   API_BASE_URL,
   buildLlmConfig,
@@ -162,12 +170,14 @@ interface TextPartDisplayProps {
 
 const CITATION_ALLOWED_TAGS = { cite: ["filename", "chunk"], imgref: ["src"] };
 const CITATION_COMPONENTS: Components = { cite: Citation, imgref: ImageRef };
+const math = createMathPlugin({ singleDollarTextMath: true });
+const streamdownPlugins = { cjk, code, math, mermaid };
 
 function TextPartDisplay({ text, showActions, onRegenerate }: TextPartDisplayProps) {
   return (
     <div>
-      <MessageResponse allowedTags={CITATION_ALLOWED_TAGS} components={CITATION_COMPONENTS}>
-        {text}
+      <MessageResponse allowedTags={CITATION_ALLOWED_TAGS} components={CITATION_COMPONENTS} plugins={streamdownPlugins}>
+        {normalizeMathDelimiters(text)}
       </MessageResponse>
       {showActions && (
         <MessageActions>
@@ -307,7 +317,7 @@ function MessagePart({
     return (
       <Reasoning key={partIndex} isStreaming={part.state === "streaming"}>
         <ReasoningTrigger />
-        <ReasoningContent>{part.text}</ReasoningContent>
+        <ReasoningContent>{normalizeDisplayMathDelimiters(part.text)}</ReasoningContent>
       </Reasoning>
     );
   }
