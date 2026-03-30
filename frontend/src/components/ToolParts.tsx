@@ -150,15 +150,15 @@ export function processToolOutput(
 
       const source = `grep: ${pattern}`;
       for (const match of matches) {
-        if (match.line <= 0) continue;
+        if (match.line_number <= 0) continue;
 
         const position: ChunkPosition = {
           type: "line",
-          line: match.line,
+          line: match.line_number,
         };
         addChunk({
           filename: match.filename,
-          content: match.content ?? "",
+          content: match.line_text,
           source,
           position,
         });
