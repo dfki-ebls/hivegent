@@ -1,12 +1,11 @@
 "use client";
 
 import { FileTextIcon } from "lucide-react";
-import type { HTMLAttributes, ReactNode } from "react";
+import type { HTMLAttributes } from "react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import type { FetchedChunk } from "@/lib/types";
-import { sortChunks } from "@/lib/types";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { DocumentDialog } from "./DocumentDialog";
 
@@ -18,29 +17,20 @@ import { DocumentDialog } from "./DocumentDialog";
  *
  * Extends `HTMLAttributes<HTMLElement>` so it satisfies Streamdown's
  * `Components` mapped type for the intrinsic `cite` element.  The custom
- * `filename` and `chunk` attributes come from the `allowedTags` config.
+ * `filename`, `chunk`, and `line` attributes come from the `allowedTags` config.
  */
 interface CitationProps extends HTMLAttributes<HTMLElement> {
   filename?: string;
   chunk?: string;
+  line?: string;
   node?: unknown;
 }
 
-/** Extract plain text from React children for content matching. */
-function childrenToText(node: ReactNode): string {
-  if (typeof node === "string") return node;
-  if (typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(childrenToText).join("");
-  return "";
-}
-
-export function Citation({ filename, chunk, children }: CitationProps) {
+export function Citation({ filename, chunk, line, children }: CitationProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
-
-  const citedText = useMemo(() => childrenToText(children), [children]);
 
   // Find the best matching chunk for this citation
   const matchedChunk = useMemo((): FetchedChunk | null => {
@@ -54,6 +44,7 @@ export function Citation({ filename, chunk, children }: CitationProps) {
     if (siblings.length === 0) return null;
 
     const chunkIndex = chunk !== undefined ? parseInt(chunk, 10) : undefined;
+    const lineNumber = line !== undefined ? parseInt(line, 10) : undefined;
 
     // 1. Exact match by chunk_index position
     if (chunkIndex !== undefined && !Number.isNaN(chunkIndex)) {
@@ -63,24 +54,24 @@ export function Citation({ filename, chunk, children }: CitationProps) {
       if (exact) return exact;
     }
 
-    // 2. Content match: find the chunk that contains the cited text
-    if (citedText.length > 0) {
-      const contentMatch = siblings.find((c) => c.content.includes(citedText));
-      if (contentMatch) return contentMatch;
+    // 2. Exact match by line position
+    if (lineNumber !== undefined && !Number.isNaN(lineNumber)) {
+      const exact = siblings.find((c) => {
+        if (c.position.type === "line") return c.position.line === lineNumber;
+        if (c.position.type === "line_range")
+          return lineNumber >= c.position.startLine && lineNumber <= c.position.endLine;
+        return false;
+      });
+      if (exact) return exact;
     }
 
-    // 3. Ordinal fallback when a chunk index was specified
-    if (chunkIndex !== undefined && !Number.isNaN(chunkIndex)) {
-      const sorted = sortChunks(siblings);
-      if (chunkIndex < sorted.length) return sorted[chunkIndex];
-    }
-
-    // 4. Last resort: first sibling as sidebar anchor
+    // 3. Last resort: first sibling as document-level anchor
     return siblings[0];
-  }, [filename, chunk, citedText, documents, chunks]);
+  }, [filename, chunk, line, documents, chunks]);
 
-  // Document-level citations (no chunk attr and no content match) open full-doc
-  const openFullDoc = chunk === undefined && matchedChunk?.position.type !== "chunk_index";
+  // Document-level citations (no positional attr) open full-doc view
+  const openFullDoc =
+    chunk === undefined && line === undefined && matchedChunk?.position.type !== "chunk_index";
 
   if (!filename) {
     return <span>{children}</span>;
@@ -88,7 +79,15 @@ export function Citation({ filename, chunk, children }: CitationProps) {
 
   const displayName = filename.split("/").pop() ?? filename;
   const chunkIndex = chunk !== undefined ? parseInt(chunk, 10) : undefined;
+  const lineNumber = line !== undefined ? parseInt(line, 10) : undefined;
   const previewText = matchedChunk?.content.slice(0, 300) ?? null;
+
+  let positionLabel: string | undefined;
+  if (chunkIndex !== undefined && !Number.isNaN(chunkIndex)) {
+    positionLabel = `#${chunkIndex}`;
+  } else if (lineNumber !== undefined && !Number.isNaN(lineNumber)) {
+    positionLabel = `L${lineNumber}`;
+  }
 
   return (
     <span className="inline">
@@ -102,14 +101,14 @@ export function Citation({ filename, chunk, children }: CitationProps) {
           >
             <FileTextIcon className="mr-1 h-3 w-3" />
             {displayName}
-            {chunkIndex !== undefined && ` #${chunkIndex}`}
+            {positionLabel && ` ${positionLabel}`}
           </Badge>
         </HoverCardTrigger>
         <HoverCardContent className="w-80 p-4" side="top">
           <div className="space-y-2">
             <h4 className="truncate font-medium text-sm">{filename}</h4>
-            {chunkIndex !== undefined && (
-              <p className="text-xs text-muted-foreground">Chunk {chunkIndex}</p>
+            {positionLabel && (
+              <p className="text-xs text-muted-foreground">{positionLabel}</p>
             )}
             {previewText ? (
               <blockquote className="border-l-2 border-muted pl-3 text-sm text-muted-foreground italic line-clamp-4">

@@ -30,7 +30,7 @@ async def rg_search(
     *,
     glob: str | None = None,
     context_lines: int = 0,
-    smart_case: bool = True,
+    case_sensitive: bool = False,
 ) -> list[RgMatch]:
     """Search *path* for *pattern* using ripgrep.
 
@@ -39,8 +39,8 @@ async def rg_search(
         path: Directory or file to search.
         glob: Only search files matching this glob (e.g. ``"*.md"``).
         context_lines: Number of context lines before and after each match.
-        smart_case: Enable smart-case matching (case-insensitive unless
-            the pattern contains uppercase letters).
+        case_sensitive: When ``False`` (the default), search
+            case-insensitively.  When ``True``, match case exactly.
 
     Returns:
         List of matches parsed from ripgrep's JSON output.
@@ -48,8 +48,8 @@ async def rg_search(
         surrounding context in ``line_text``.
     """
     args: list[str | Path] = ["rg", "--json"]
-    if smart_case:
-        args.append("--smart-case")
+    if not case_sensitive:
+        args.append("--ignore-case")
     if glob:
         args.extend(["--glob", glob])
     if context_lines > 0:

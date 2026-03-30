@@ -168,7 +168,7 @@ interface TextPartDisplayProps {
   onRegenerate: () => void;
 }
 
-const CITATION_ALLOWED_TAGS = { cite: ["filename", "chunk"], imgref: ["src"] };
+const CITATION_ALLOWED_TAGS = { cite: ["filename", "chunk", "line"], imgref: ["src"] };
 const CITATION_COMPONENTS: Components = { cite: Citation, imgref: ImageRef };
 const math = createMathPlugin({ singleDollarTextMath: true });
 const streamdownPlugins = { cjk, code, math, mermaid };

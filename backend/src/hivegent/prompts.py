@@ -48,12 +48,19 @@ Guidelines:
 """
 
 CITATION_INSTRUCTIONS = """
-When referencing information from documents, always use inline citation tags:
-- Document citation: <cite filename="path/to/file.md">quoted or paraphrased text</cite>
-- Chunk citation: <cite filename="path/to/file.md" chunk="3">text from chunk</cite>
+When referencing information from documents, always use inline citation tags.
 Use the exact filename from your tool results as the filename attribute.
-Prefer chunk citations with the chunk index when you retrieved a specific chunk.
 Place citations around the relevant text inline, not grouped at the end.
+
+Citation formats (choose based on the tool that returned the information):
+- From semantic_search or get_chunk: <cite filename="doc.md" chunk="3">text</cite>
+- From grep or get_document_lines: <cite filename="doc.md" line="42">text</cite>
+- From web_search or web_fetch: <cite filename="https://example.com">text</cite>
+- General document reference: <cite filename="doc.md">text</cite>
+
+Use the chunk index from semantic_search/get_chunk results for the chunk attribute.
+Use the line number from grep/get_document_lines results for the line attribute.
+Use the URL from web_search/web_fetch results as the filename attribute.
 """
 
 MATH_INSTRUCTIONS = """

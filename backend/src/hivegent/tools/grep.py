@@ -12,6 +12,7 @@ from ..subprocesses import rg_search
 from .base import PathsTool, SearchPath, file_allowed
 
 __all__ = [
+    "CaseSensitiveArg",
     "ContextLinesArg",
     "GrepMatch",
     "GrepGlobArg",
@@ -46,6 +47,12 @@ ContextLinesArg = Annotated[
         ge=0,
     ),
 ]
+CaseSensitiveArg = Annotated[
+    bool,
+    Field(
+        description="Match case exactly. Default is false (case-insensitive).",
+    ),
+]
 
 
 async def _search_path(
@@ -53,6 +60,7 @@ async def _search_path(
     pattern: str,
     glob: str | None,
     context_lines: int,
+    case_sensitive: bool,
 ) -> list[GrepMatch]:
     """Run ripgrep against a single search path."""
     if not sp.path.exists():
@@ -60,7 +68,11 @@ async def _search_path(
     matches: list[GrepMatch] = []
     try:
         for rg_match in await rg_search(
-            pattern, sp.path, glob=glob, context_lines=context_lines
+            pattern,
+            sp.path,
+            glob=glob,
+            context_lines=context_lines,
+            case_sensitive=case_sensitive,
         ):
             filename = str(Path(rg_match.path).relative_to(sp.path))
             if file_allowed(sp.filter_func, filename):
@@ -86,13 +98,17 @@ class GrepTool(PathsTool):
         pattern: GrepPatternArg,
         glob: GrepGlobArg = None,
         context_lines: ContextLinesArg = 2,
+        case_sensitive: CaseSensitiveArg = False,
     ) -> list[GrepMatch]:
         """Search documents for a pattern.
 
-        Uses smart case matching: case-insensitive unless the pattern contains
-        uppercase letters.
+        Searches case-insensitively by default.  Set ``case_sensitive=True``
+        to match case exactly.
         """
         results = await asyncio.gather(
-            *(_search_path(sp, pattern, glob, context_lines) for sp in self.resolved_paths)
+            *(
+                _search_path(sp, pattern, glob, context_lines, case_sensitive)
+                for sp in self.resolved_paths
+            )
         )
         return [m for batch in results for m in batch]
