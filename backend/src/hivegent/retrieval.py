@@ -54,7 +54,12 @@ class _RetrievalState:
     _embedding_func: (
         cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray] | None
     ) = field(default=None)
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    # RLock (reentrant) because public methods like get_storage() and
+    # get_embedding_func() acquire the lock internally, and callers such
+    # as build_search_tool() need to call them while already holding the
+    # lock to get a consistent snapshot of the caches.  A plain Lock
+    # would deadlock in that situation.
+    _lock: threading.RLock = field(default_factory=threading.RLock)
     _pending_reindex: set[str] = field(default_factory=set)
     _chunk_meta: dict[str, dict[str, _ChunkEntry]] = field(default_factory=dict)
 

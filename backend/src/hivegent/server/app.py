@@ -1,5 +1,6 @@
 """FastAPI application assembly for Hivegent."""
 
+import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -15,6 +16,11 @@ from ..observability import configure_observability
 from .routes import api_router
 
 __all__ = ["app", "create_app", "mcp_http_app"]
+
+# LanceDB registers an os.register_at_fork() hook that warns on every
+# fork(), including the safe fork+exec used by uvicorn's reloader and
+# Python's subprocess module.  Filter it out to keep logs clean.
+warnings.filterwarnings("ignore", message="lance is not fork-safe")
 
 mcp_http_app = mcp_app.http_app(path="/")
 
