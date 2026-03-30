@@ -314,10 +314,23 @@ function MessagePart({
   }
 
   if (part.type === "reasoning") {
+    // pydantic-ai stores raw chain-of-thought in providerMetadata when
+    // the model (e.g. gpt-oss) doesn't produce reasoning summaries.
+    const reasoningText =
+      part.text ||
+      (
+        part.providerMetadata?.pydantic_ai as
+          | { provider_details?: { raw_content?: string[] } }
+          | undefined
+      )?.provider_details?.raw_content?.join("\n\n") ||
+      "";
+
+    if (!reasoningText && part.state !== "streaming") return null;
+
     return (
       <Reasoning key={partIndex} isStreaming={part.state === "streaming"}>
         <ReasoningTrigger />
-        <ReasoningContent>{normalizeDisplayMathDelimiters(part.text)}</ReasoningContent>
+        <ReasoningContent>{normalizeDisplayMathDelimiters(reasoningText)}</ReasoningContent>
       </Reasoning>
     );
   }
