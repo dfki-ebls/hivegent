@@ -249,7 +249,7 @@ function SearchToolDisplay({ toolName, part }: ToolPartDisplayProps) {
             {input.top_k && <ToolKeyValue label="Max results" value={input.top_k} />}
           </ToolSection>
         )}
-        {output && (
+        {Array.isArray(output) && (
           <ToolResult>
             <ToolKeyValue label="Found" value={`${output.length} chunk(s)`} />
             {output.map((chunk) => (
