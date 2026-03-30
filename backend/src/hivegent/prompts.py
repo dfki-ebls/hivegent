@@ -6,6 +6,7 @@ __all__ = [
     "CITATION_INSTRUCTIONS",
     "EXPLORE_INSTRUCTIONS",
     "IMAGE_INSTRUCTIONS",
+    "MATH_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS_EMPTY",
     "PLAN_INSTRUCTIONS",
@@ -45,6 +46,13 @@ When referencing information from documents, always use inline citation tags:
 Use the exact filename from your tool results as the filename attribute.
 Prefer chunk citations with the chunk index when you retrieved a specific chunk.
 Place citations around the relevant text inline, not grouped at the end."""
+
+MATH_INSTRUCTIONS = """
+
+When writing mathematical expressions, always use dollar-sign delimiters:
+- Inline math: $x^2 + y^2 = z^2$
+- Display math: $$\\int_0^\\infty e^{-x} \\, dx = 1$$
+Never use LaTeX delimiters like \\(...\\) or \\[...\\]."""
 
 IMAGE_INSTRUCTIONS = """
 

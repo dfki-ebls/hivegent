@@ -42,6 +42,7 @@ from ...messages import (
 from ...prompts import (
     CITATION_INSTRUCTIONS,
     IMAGE_INSTRUCTIONS,
+    MATH_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS_EMPTY,
     PERSONALITY_TEMPLATES,
@@ -331,7 +332,10 @@ async def create_conversation_chat(
 
     if config.personality == Personality.CUSTOM and config.system_message:
         instructions = (
-            config.system_message + CITATION_INSTRUCTIONS + IMAGE_INSTRUCTIONS
+            config.system_message
+            + CITATION_INSTRUCTIONS
+            + IMAGE_INSTRUCTIONS
+            + MATH_INSTRUCTIONS
         )
     else:
         instructions = (
@@ -341,6 +345,7 @@ async def create_conversation_chat(
             )
             + CITATION_INSTRUCTIONS
             + IMAGE_INSTRUCTIONS
+            + MATH_INSTRUCTIONS
         )
 
     if config.mode == "plan":
