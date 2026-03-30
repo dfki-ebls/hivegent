@@ -5,7 +5,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from ...config import settings
-from ...prompts import EXPLORE_INSTRUCTIONS
+from ...prompts import EXPLORE_INSTRUCTIONS, join_instructions
 from ..app import user_agent
 from ..common import ExploreTaskArg, UserDeps
 from .conversation import conversation_toolset
@@ -60,7 +60,7 @@ async def explore_documents(
         model=_subagent_model(ctx.deps),
         deps=ctx.deps,
         toolsets=[explore_toolset],
-        instructions=EXPLORE_INSTRUCTIONS,
+        instructions=join_instructions([EXPLORE_INSTRUCTIONS]),
         usage=ctx.usage,
     )
     return result.output

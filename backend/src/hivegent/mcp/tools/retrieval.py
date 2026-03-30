@@ -9,7 +9,7 @@ from ...agents import UserDeps, explore_toolset, user_agent
 from ...chunkers.base import RetrievedChunk
 from ...chunks import GetChunkTool, ListChunksTool
 from ...config import settings
-from ...prompts import EXPLORE_INSTRUCTIONS
+from ...prompts import EXPLORE_INSTRUCTIONS, join_instructions
 from ...retrieval import build_search_tool
 from ...store import Casebase, build_search_paths
 from ...tools import (
@@ -99,7 +99,7 @@ async def explore_documents(
                 group_stores=group_stores,
             ),
             toolsets=[explore_toolset],
-            instructions=EXPLORE_INSTRUCTIONS,
+            instructions=join_instructions([EXPLORE_INSTRUCTIONS]),
         )
         return result.output
 
@@ -107,7 +107,7 @@ async def explore_documents(
     all_stores = (store, *group_stores)
     result = await ctx.sample(
         task,
-        system_prompt=EXPLORE_INSTRUCTIONS,
+        system_prompt=join_instructions([EXPLORE_INSTRUCTIONS]),
         tools=[
             ListDocumentsTool(paths=paths),
             GlobDocumentsTool(paths=paths),

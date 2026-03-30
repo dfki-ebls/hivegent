@@ -48,6 +48,7 @@ from ...prompts import (
     PERSONALITY_TEMPLATES,
     PLAN_INSTRUCTIONS,
     Personality,
+    join_instructions,
 )
 from ...types import (
     BulkDeleteConversationsResponse,
@@ -331,33 +332,29 @@ async def create_conversation_chat(
     )
 
     if config.personality == Personality.CUSTOM and config.system_message:
-        instructions = (
-            config.system_message
-            + CITATION_INSTRUCTIONS
-            + IMAGE_INSTRUCTIONS
-            + MATH_INSTRUCTIONS
-        )
+        parts = [config.system_message]
     else:
-        instructions = (
+        parts = [
             PERSONALITY_TEMPLATES.get(
                 config.personality,
                 PERSONALITY_TEMPLATES[Personality.DEFAULT],
             )
-            + CITATION_INSTRUCTIONS
-            + IMAGE_INSTRUCTIONS
-            + MATH_INSTRUCTIONS
-        )
+        ]
+
+    parts.extend([CITATION_INSTRUCTIONS, IMAGE_INSTRUCTIONS, MATH_INSTRUCTIONS])
 
     if config.mode == "plan":
-        instructions += PLAN_INSTRUCTIONS
+        parts.append(PLAN_INSTRUCTIONS)
 
     memory_enabled = "save_memory" not in (config.tools.disabled_tools or [])
     if memory_enabled:
         memory_content = load_memory(user.id)
         if memory_content:
-            instructions += MEMORY_INSTRUCTIONS.format(memory_content=memory_content)
+            parts.append(MEMORY_INSTRUCTIONS.format(memory_content=memory_content))
         else:
-            instructions += MEMORY_INSTRUCTIONS_EMPTY
+            parts.append(MEMORY_INSTRUCTIONS_EMPTY)
+
+    instructions = join_instructions(parts)
 
     model_settings: OpenAIResponsesModelSettings | None = None
     if config.reasoning_effort != "auto":
