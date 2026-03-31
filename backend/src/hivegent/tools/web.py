@@ -10,7 +10,7 @@ import httpx
 from ddgs import DDGS
 from pydantic import Field
 
-from .base import Tool
+from .base import Tool, ToolOutput
 
 __all__ = [
     "WebFetch",
@@ -90,7 +90,7 @@ class WebSearch(Tool):
         self,
         query: WebQueryArg,
         max_results: WebMaxResultsArg = 5,
-    ) -> list[dict[str, str]]:
+    ) -> ToolOutput[list[dict[str, str]]]:
         """Search the web using DuckDuckGo for up-to-date information.
 
         Returns a list of results with ``title``, ``href``, and ``body`` fields.
@@ -98,18 +98,27 @@ class WebSearch(Tool):
         max_results = min(max(1, max_results), 20)
         try:
             with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=max_results))
-            return [
+                raw = list(ddgs.text(query, max_results=max_results))
+            results = [
                 {
                     "title": r.get("title", ""),
                     "href": r.get("href", ""),
                     "body": r.get("body", ""),
                 }
-                for r in results
+                for r in raw
             ]
         except Exception:
             logger.exception("Web search failed for query %r", query)
-            return []
+            results = []
+        if not results:
+            return ToolOutput(data=results, formatted="(no results)")
+        lines: list[str] = []
+        for i, r in enumerate(results, 1):
+            lines.append(f"[{i}] {r.get('title', '')} ({r.get('href', '')})")
+            body = r.get("body", "")
+            if body:
+                lines.append(f"    {body}")
+        return ToolOutput(data=results, formatted="\n".join(lines))
 
 
 @dataclass(slots=True, frozen=True)

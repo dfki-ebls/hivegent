@@ -4,6 +4,8 @@ from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
+from ..compact import CompactToolResultModel
+
 from ...config import settings
 from ...prompts import EXPLORE_INSTRUCTIONS, join_instructions
 from ..app import user_agent
@@ -22,7 +24,7 @@ __all__ = [
 subagent_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
-def _subagent_model(deps: UserDeps) -> OpenAIResponsesModel:
+def _subagent_model(deps: UserDeps) -> CompactToolResultModel:
     """Build the model used for subagent calls."""
     llm = deps.llm
     if llm:
@@ -34,12 +36,14 @@ def _subagent_model(deps: UserDeps) -> OpenAIResponsesModel:
         api_key = settings.llm.api_key
         base_url = settings.llm.base_url or None
 
-    return OpenAIResponsesModel(
-        model,
-        provider=OpenAIProvider(
-            api_key=api_key,
-            base_url=base_url,
-        ),
+    return CompactToolResultModel(
+        OpenAIResponsesModel(
+            model,
+            provider=OpenAIProvider(
+                api_key=api_key,
+                base_url=base_url,
+            ),
+        )
     )
 
 

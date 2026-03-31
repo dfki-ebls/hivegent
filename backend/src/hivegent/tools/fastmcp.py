@@ -7,10 +7,18 @@ from typing import Any, get_type_hints
 
 from fastmcp import FastMCP
 from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAccessIssue]
+from fastmcp.tools.tool import ToolResult
 
-from .base import Tool, factory_tool_name, resolve_tool_cls, tool_description
+from .base import Tool, ToolOutput, factory_tool_name, resolve_tool_cls, tool_description
 
 __all__ = ["for_fastmcp", "register_mcp_tools"]
+
+
+def _wrap_tool_output(result: Any) -> Any:  # noqa: ANN401
+    """Extract formatted text from a :class:`ToolOutput`, pass others through."""
+    if isinstance(result, ToolOutput):
+        return ToolResult(content=result.formatted)
+    return result
 
 
 def for_fastmcp(
@@ -60,14 +68,12 @@ def for_fastmcp(
 
         @wraps(call)
         async def wrapper(**kwargs: Any) -> Any:  # noqa: ANN401
-            tool = kwargs.pop("_tool_")
-            return await tool(**kwargs)
+            return _wrap_tool_output(await kwargs.pop("_tool_")(**kwargs))
     else:
 
         @wraps(call)
         def wrapper(**kwargs: Any) -> Any:  # noqa: ANN401
-            tool = kwargs.pop("_tool_")
-            return tool(**kwargs)
+            return _wrap_tool_output(kwargs.pop("_tool_")(**kwargs))
 
     setattr(wrapper, "__signature__", new_sig)  # pyright: ignore[reportAttributeAccessIssue]
     wrapper.__annotations__ = new_annotations

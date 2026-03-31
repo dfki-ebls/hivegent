@@ -8,7 +8,7 @@ from typing import Annotated, Literal, cast, override
 import cbrkit
 from pydantic import Field
 
-from .base import Tool, apply_prefix
+from .base import Tool, ToolOutput, apply_prefix
 
 __all__ = [
     "IndexedStorage",
@@ -111,7 +111,7 @@ class LanceDBSearchTool[R = SearchResult](Tool):
         query: SearchQueryArg,
         max_results: SearchMaxResultsArg = 5,
         search_type: SearchTypeArg = "hybrid",
-    ) -> list[R]:
+    ) -> ToolOutput[list[R]]:
         """Search indexed chunks using dense, sparse, or hybrid retrieval.
 
         Returns:
@@ -148,7 +148,21 @@ class LanceDBSearchTool[R = SearchResult](Tool):
         all_results.sort(key=lambda r: r.score, reverse=True)
         all_results = all_results[:max_results]
 
+        final: list[R]
         if self.result_mapper is not None:
-            return [self.result_mapper(r) for r in all_results]
+            final = [self.result_mapper(r) for r in all_results]
+        else:
+            final = cast(list[R], all_results)
 
-        return cast(list[R], all_results)
+        if not final:
+            return ToolOutput(data=final, formatted="(no results)")
+        lines: list[str] = []
+        for i, r in enumerate(final, 1):
+            key = getattr(r, "key", None) or getattr(r, "filename", "?")
+            chunk_idx = getattr(r, "chunk_index", None)
+            score: float = getattr(r, "score", 0.0)
+            text: str = getattr(r, "text", "")
+            label = f"{key}#{chunk_idx}" if chunk_idx is not None else key
+            preview = text[:100] + "..." if len(text) > 100 else text
+            lines.append(f"[{i}] {label} ({score:.0%})\n    {preview}")
+        return ToolOutput(data=final, formatted="\n".join(lines))

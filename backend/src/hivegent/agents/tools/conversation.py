@@ -1,13 +1,14 @@
 """Conversation-oriented agent tool registrations."""
 
 from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai.messages import ToolReturn
 
 from ...config import settings
 from ...messages import (
-    ConversationSummary,
     list_conversations as _list_conversations,
 )
 from ...tools import JqTool
+from ...tools.base import ToolOutput
 from ..common import UserDeps
 from ...tools.pydantic_ai import for_pydantic_ai
 
@@ -22,12 +23,22 @@ conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 @conversation_toolset.tool
 def list_conversations_tool(
     ctx: RunContext[UserDeps],
-) -> list[ConversationSummary]:
+) -> ToolReturn:
     """List past conversations with titles, dates, and message counts.
 
     Returns summaries sorted by most recent first.
     """
-    return _list_conversations(ctx.deps.store.id)
+    conversations = _list_conversations(ctx.deps.store.id)
+    if not conversations:
+        formatted = "(no conversations)"
+    else:
+        formatted = "\n".join(
+            f"{c.id[:8]}  {c.updated_at:%Y-%m-%d}  {c.message_count:>3} msgs  {c.title}"
+            for c in conversations
+        )
+    return ToolReturn(
+        return_value=ToolOutput(data=conversations, formatted=formatted),
+    )
 
 
 def _jq_factory(deps: UserDeps) -> JqTool:

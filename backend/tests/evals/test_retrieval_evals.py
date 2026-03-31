@@ -49,8 +49,8 @@ async def test_sparse_search_finds_relevant_chunks(
 
     tool = build_search_tool([user_store])
     for ann in annotations:
-        results = tool(ann["question"], search_type="sparse", max_results=10)
-        result_filenames = {chunk.filename for chunk in results}
+        output = tool(ann["question"], search_type="sparse", max_results=10)
+        result_filenames = {chunk.filename for chunk in output.data}
 
         for expected_doc in ann["relevant_documents"]:
             assert expected_doc in result_filenames, (
@@ -69,5 +69,5 @@ async def test_sparse_search_returns_nonempty(
 
     tool = build_search_tool([user_store])
     for ann in annotations:
-        results = tool(ann["question"], search_type="sparse", max_results=5)
-        assert len(results) > 0, f"No results for query {ann['question']!r}"
+        output = tool(ann["question"], search_type="sparse", max_results=5)
+        assert len(output.data) > 0, f"No results for query {ann['question']!r}"

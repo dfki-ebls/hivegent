@@ -27,13 +27,13 @@ class TestListDocumentsTool:
 
     def test_empty_dir(self, tmp_path: Path) -> None:
         tool = ListDocumentsTool(paths=tmp_path, glob="*.md")
-        assert tool() == []
+        assert tool().data == []
 
     def test_lists_md_files(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("hello")
         (tmp_path / "b.txt").write_text("world")  # not .md, should be ignored
         tool = ListDocumentsTool(paths=tmp_path, glob="*.md")
-        result = tool()
+        result = tool().data
         filenames = [r.filename for r in result]
         assert "a.md" in filenames
         assert "b.txt" not in filenames
@@ -42,7 +42,7 @@ class TestListDocumentsTool:
         (tmp_path / "a.txt").write_text("hello")
         (tmp_path / "b.md").write_text("world")
         tool = ListDocumentsTool(paths=tmp_path, glob="*.txt")
-        result = tool()
+        result = tool().data
         filenames = [r.filename for r in result]
         assert "a.txt" in filenames
         assert "b.md" not in filenames
@@ -53,7 +53,7 @@ class TestListDocumentsTool:
         (sub / "n.md").write_text("note")
         (tmp_path / "top.md").write_text("top")
         tool = ListDocumentsTool(paths=tmp_path, glob="*.md")
-        result = tool(subdir="notes")
+        result = tool(subdir="notes").data
         filenames = [r.filename for r in result]
         assert "notes/n.md" in filenames
         assert "top.md" not in filenames
@@ -63,13 +63,13 @@ class TestListDocumentsTool:
         (tmp_path / "b.txt").write_text("world")
         (tmp_path / "c.png").write_bytes(b"\x89PNG")
         tool = ListDocumentsTool(paths=tmp_path)
-        result = tool()
+        result = tool().data
         filenames = {r.filename for r in result}
         assert filenames == {"a.md", "b.txt", "c.png"}
 
     def test_nonexistent_dir(self, tmp_path: Path) -> None:
         tool = ListDocumentsTool(paths=tmp_path / "nonexistent", glob="*.md")
-        assert tool() == []
+        assert tool().data == []
 
     def test_multi_store(self, tmp_path: Path) -> None:
         user_dir = tmp_path / "user"
@@ -84,7 +84,7 @@ class TestListDocumentsTool:
                 SearchPath(path=group_dir, prefix="@team"),
             )
         )
-        filenames = {r.filename for r in tool()}
+        filenames = {r.filename for r in tool().data}
         assert filenames == {"a.md", "@team/b.md"}
 
     def test_includes_directories(self, tmp_path: Path) -> None:
@@ -92,7 +92,7 @@ class TestListDocumentsTool:
         sub.mkdir()
         (sub / "n.md").write_text("note")
         tool = ListDocumentsTool(paths=tmp_path)
-        result = tool(max_depth=None)
+        result = tool(max_depth=None).data
         dirs = [r for r in result if r.is_directory]
         assert any(r.filename == "notes" for r in dirs)
 
@@ -102,7 +102,7 @@ class TestListDocumentsTool:
         (sub / "n.md").write_text("note")
         (tmp_path / "top.md").write_text("top")
         tool = ListDocumentsTool(paths=tmp_path)
-        filenames = {r.filename for r in tool()}
+        filenames = {r.filename for r in tool().data}
         assert "top.md" in filenames
         assert "notes" in filenames
         assert "notes/n.md" not in filenames
@@ -111,7 +111,7 @@ class TestListDocumentsTool:
         for i in range(10):
             (tmp_path / f"f{i}.txt").write_text(str(i))
         tool = ListDocumentsTool(paths=tmp_path)
-        result = tool(max_results=3)
+        result = tool(max_results=3).data
         assert len(result) == 3
 
 
@@ -165,7 +165,7 @@ class TestGetDocumentLinesTool:
         lines = ["line1", "line2", "line3", "line4", "line5"]
         (tmp_path / "doc.md").write_text("\n".join(lines))
         tool = GetDocumentLinesTool(paths=tmp_path)
-        result = tool("doc.md", start=2, end=4)
+        result = tool("doc.md", start=2, end=4).data
         assert result is not None
         assert result.start_line == 2
         assert result.end_line == 4
@@ -175,19 +175,19 @@ class TestGetDocumentLinesTool:
     def test_defaults_to_full_file(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("a\nb\nc")
         tool = GetDocumentLinesTool(paths=tmp_path)
-        result = tool("doc.md")
+        result = tool("doc.md").data
         assert result is not None
         assert result.start_line == 1
         assert result.end_line == 3
 
     def test_returns_none_for_nonexistent(self, tmp_path: Path) -> None:
         tool = GetDocumentLinesTool(paths=tmp_path)
-        assert tool("missing.md") is None
+        assert tool("missing.md").data is None
 
     def test_clamps_start_to_one(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("only")
         tool = GetDocumentLinesTool(paths=tmp_path)
-        result = tool("doc.md", start=-5)
+        result = tool("doc.md", start=-5).data
         assert result is not None
         assert result.start_line == 1
 
@@ -195,7 +195,7 @@ class TestGetDocumentLinesTool:
         lines = [f"line{i}" for i in range(500)]
         (tmp_path / "big.md").write_text("\n".join(lines))
         tool = GetDocumentLinesTool(paths=tmp_path)
-        result = tool("big.md")
+        result = tool("big.md").data
         assert result is not None
         assert result.start_line == 1
         assert result.end_line == 200
@@ -205,7 +205,7 @@ class TestGetDocumentLinesTool:
         lines = [f"line{i}" for i in range(100)]
         (tmp_path / "doc.md").write_text("\n".join(lines))
         tool = GetDocumentLinesTool(paths=tmp_path, default_lines=10)
-        result = tool("doc.md")
+        result = tool("doc.md").data
         assert result is not None
         assert result.end_line == 10
 
@@ -217,22 +217,19 @@ class TestGlobDocumentsTool:
         (tmp_path / "notes.md").write_text("a")
         (tmp_path / "readme.md").write_text("b")
         tool = GlobDocumentsTool(paths=tmp_path, glob="*.md")
-        result = tool("note*")
-        assert result == ["notes.md"]
+        assert tool("note*").data == ["notes.md"]
 
     def test_custom_glob(self, tmp_path: Path) -> None:
         (tmp_path / "data.txt").write_text("a")
         (tmp_path / "data.md").write_text("b")
         tool = GlobDocumentsTool(paths=tmp_path, glob="*.txt")
-        result = tool("*")
-        assert result == ["data.txt"]
+        assert tool("*").data == ["data.txt"]
 
     def test_none_glob_matches_all(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("a")
         (tmp_path / "b.txt").write_text("b")
         tool = GlobDocumentsTool(paths=tmp_path)
-        result = tool("*")
-        assert set(result) == {"a.md", "b.txt"}
+        assert set(tool("*").data) == {"a.md", "b.txt"}
 
     def test_multi_store(self, tmp_path: Path) -> None:
         user_dir = tmp_path / "user"
@@ -247,15 +244,13 @@ class TestGlobDocumentsTool:
                 SearchPath(path=group_dir, prefix="@team"),
             )
         )
-        result = tool("*.md")
-        assert set(result) == {"a.md", "@team/b.md"}
+        assert set(tool("*.md").data) == {"a.md", "@team/b.md"}
 
     def test_max_results_limits_glob(self, tmp_path: Path) -> None:
         for i in range(10):
             (tmp_path / f"f{i}.txt").write_text(str(i))
         tool = GlobDocumentsTool(paths=tmp_path)
-        result = tool("*.txt", max_results=3)
-        assert len(result) == 3
+        assert len(tool("*.txt", max_results=3).data) == 3
 
 
 class TestListChunksTool:
@@ -283,11 +278,11 @@ class TestListChunksTool:
             ).model_dump_json()
         )
         tool = ListChunksTool(paths=metadata_dir)
-        assert tool("doc.md") == chunks
+        assert tool("doc.md").data == chunks
 
     def test_returns_none_for_missing(self, tmp_path: Path) -> None:
         tool = ListChunksTool(paths=tmp_path)
-        assert tool("missing.md") is None
+        assert tool("missing.md").data is None
 
 
 class TestGetChunkTool:

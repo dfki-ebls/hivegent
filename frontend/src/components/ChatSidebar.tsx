@@ -346,6 +346,8 @@ function MessagePart({
         key={partIndex}
         toolName={info.toolName}
         part={part as ToolPart}
+        output={info.output}
+        formatted={info.formatted}
         onApprove={onApprove}
         onDeny={onDeny}
         onExecutePlan={info.toolName === "create_plan" ? onExecutePlan : undefined}

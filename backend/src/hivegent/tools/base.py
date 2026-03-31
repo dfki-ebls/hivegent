@@ -8,11 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, get_type_hints
 
+from pydantic import BaseModel
+
 __all__ = [
     "PathsTool",
     "SearchPath",
     "SearchPathFilterFunc",
     "Tool",
+    "ToolOutput",
     "apply_prefix",
     "coerce_paths",
     "factory_tool_name",
@@ -117,6 +120,19 @@ def file_allowed(filter_func: SearchPathFilterFunc, filename: str) -> bool:
         ``True`` if the file is allowed, ``False`` otherwise.
     """
     return filter_func is None or filter_func(filename)
+
+
+class ToolOutput[T](BaseModel):
+    """Tool result carrying both structured data and a compact text form.
+
+    Tools that benefit from a compact LLM representation return this
+    instead of a bare value.  The adapters route ``data`` to the
+    frontend (via the Vercel AI stream) and ``formatted`` to the LLM
+    and MCP clients.
+    """
+
+    data: T
+    formatted: str
 
 
 class Tool(ABC):

@@ -9,6 +9,8 @@ from nanoid import generate
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+from hivegent.agents.compact import CompactToolResultModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -387,12 +389,14 @@ async def create_conversation_chat(
         ),
         sdk_version=6,
         output_type=[str, DeferredToolRequests],
-        model=OpenAIResponsesModel(
-            config.llm.model,
-            provider=OpenAIProvider(
-                api_key=config.llm.api_key,
-                base_url=config.llm.base_url,
-            ),
+        model=CompactToolResultModel(
+            OpenAIResponsesModel(
+                config.llm.model,
+                provider=OpenAIProvider(
+                    api_key=config.llm.api_key,
+                    base_url=config.llm.base_url,
+                ),
+            )
         ),
         toolsets=build_toolsets(
             TOOLSET_GROUPS,

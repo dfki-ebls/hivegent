@@ -44,11 +44,16 @@ interface ToolPartInfo {
   state: ToolPart["state"];
   input: Record<string, unknown> | undefined;
   output: unknown;
+  formatted: string | null;
 }
 
 interface ToolPartDisplayProps {
   toolName: string;
   part: ToolPart;
+  /** Pre-unwrapped structured data from the ToolOutput envelope. */
+  output?: unknown;
+  /** Compact text from the ToolOutput envelope. */
+  formatted?: string | null;
   onApprove?: (id: string) => void;
   onDeny?: (id: string) => void;
   onExecutePlan?: () => void;
@@ -69,6 +74,15 @@ function parseJson<T>(value: unknown): T | undefined {
     }
   }
   return value as T;
+}
+
+/** Unwrap a ``{data, formatted}`` envelope from ToolOutput-returning tools. */
+function unwrapToolOutput(raw: unknown): { data: unknown; formatted: string | null } {
+  if (raw && typeof raw === "object" && "data" in raw && "formatted" in raw) {
+    const envelope = raw as { data: unknown; formatted: string };
+    return { data: envelope.data, formatted: envelope.formatted };
+  }
+  return { data: raw, formatted: null };
 }
 
 function prettyPrint(value: unknown): string {
@@ -225,18 +239,21 @@ export function getToolPartInfo(part: UIMessage["parts"][number]): ToolPartInfo 
   const toolName = getToolName(typed);
   if (!toolName) return null;
 
+  const raw = parseJson<unknown>(typed.output) ?? typed.output;
+  const { data, formatted } = unwrapToolOutput(raw);
   return {
     toolName,
     state: typed.state ?? "output-available",
     input: parseJson<Record<string, unknown>>(typed.input),
-    output: parseJson<unknown>(typed.output) ?? typed.output,
+    output: data,
+    formatted,
   };
 }
 
-function SearchToolDisplay({ toolName, part }: ToolPartDisplayProps) {
+function SearchToolDisplay({ toolName, part, output: rawOutput }: ToolPartDisplayProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
   const input = parseJson<{ query: string; type?: string; top_k?: number }>(part.input);
-  const output = parseJson<RetrievedChunk[]>(part.output);
+  const output = rawOutput as RetrievedChunk[] | undefined;
   const title = input?.type === "sparse" ? "Keyword Search" : "Semantic Search";
 
   return (
@@ -414,7 +431,7 @@ function CreatePlanToolDisplay({ part, onExecutePlan }: ToolPartDisplayProps) {
   );
 }
 
-function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
+function GenericToolDisplay({ toolName, part, formatted }: ToolPartDisplayProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
   const input = parseJson<Record<string, unknown>>(part.input);
 
@@ -425,7 +442,11 @@ function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
         {input && <ToolParameters params={input} />}
         {part.output !== undefined && (
           <ToolResult>
-            <CodeBlock code={prettyPrint(part.output)} language="json" />
+            {formatted ? (
+              <pre className="whitespace-pre-wrap text-xs font-mono">{formatted}</pre>
+            ) : (
+              <CodeBlock code={prettyPrint(part.output)} language="json" />
+            )}
           </ToolResult>
         )}
         {state === "output-error" && part.errorText && <ToolError message={part.errorText} />}
@@ -437,6 +458,8 @@ function GenericToolDisplay({ toolName, part }: ToolPartDisplayProps) {
 export function ToolPartDisplay({
   toolName,
   part,
+  output,
+  formatted,
   onApprove,
   onDeny,
   onExecutePlan,
@@ -445,7 +468,7 @@ export function ToolPartDisplay({
     return <CreatePlanToolDisplay toolName={toolName} part={part} onExecutePlan={onExecutePlan} />;
   }
   if (toolName === "semantic_search") {
-    return <SearchToolDisplay toolName={toolName} part={part} />;
+    return <SearchToolDisplay toolName={toolName} part={part} output={output} />;
   }
   if (toolName === "edit_document") {
     return (
@@ -467,5 +490,5 @@ export function ToolPartDisplay({
       />
     );
   }
-  return <GenericToolDisplay toolName={toolName} part={part} />;
+  return <GenericToolDisplay toolName={toolName} part={part} formatted={formatted} />;
 }

@@ -6,10 +6,18 @@ from functools import wraps
 from typing import Any, get_type_hints
 
 from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai.messages import ToolReturn
 
-from .base import Tool, factory_tool_name, resolve_tool_cls, tool_description
+from .base import Tool, ToolOutput, factory_tool_name, resolve_tool_cls, tool_description
 
 __all__ = ["for_pydantic_ai", "register_agent_tools"]
+
+
+def _wrap_tool_output(result: Any) -> Any:  # noqa: ANN401
+    """Wrap a :class:`ToolOutput` in a :class:`ToolReturn`, pass others through."""
+    if isinstance(result, ToolOutput):
+        return ToolReturn(return_value=result)
+    return result
 
 
 def for_pydantic_ai[D](
@@ -57,14 +65,12 @@ def for_pydantic_ai[D](
 
         @wraps(call)
         async def wrapper(ctx: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-            tool = factory(ctx.deps)
-            return await tool(**kwargs)
+            return _wrap_tool_output(await factory(ctx.deps)(**kwargs))
     else:
 
         @wraps(call)
         def wrapper(ctx: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-            tool = factory(ctx.deps)
-            return tool(**kwargs)
+            return _wrap_tool_output(factory(ctx.deps)(**kwargs))
 
     setattr(wrapper, "__signature__", new_sig)  # pyright: ignore[reportAttributeAccessIssue]
     wrapper.__annotations__ = new_annotations

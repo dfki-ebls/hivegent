@@ -22,7 +22,9 @@ from .entries import (
     stem_path_from_reference,
 )
 from .store import Casebase
-from .tools.base import PathsTool, file_allowed, resolve_search_path
+from .tools.base import PathsTool, ToolOutput, file_allowed, resolve_search_path
+
+_NOT_FOUND_MSG = "(document not found)"
 
 __all__ = [
     "ChunkIndexArg",
@@ -53,18 +55,18 @@ class ListChunksTool(PathsTool):
     """List chunk metadata for a document."""
 
     @override
-    def __call__(self, filename: str) -> list[ChunkSummary] | None:
+    def __call__(self, filename: str) -> ToolOutput[list[ChunkSummary] | None]:
         """List chunk metadata for a document."""
         resolved = resolve_search_path(self.resolved_paths, filename)
         if resolved is None:
-            return None
+            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
         sp, local = resolved
         if not file_allowed(sp.filter_func, local):
-            return None
+            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
         metadata = load_document_metadata(sp.path, local)
         if not metadata:
-            return None
-        return [
+            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
+        result = [
             ChunkSummary(
                 token_count=chunk.token_count,
                 start_index=chunk.start_index,
@@ -72,6 +74,15 @@ class ListChunksTool(PathsTool):
             )
             for chunk in metadata.chunks
         ]
+        if not result:
+            return ToolOutput(data=result, formatted="(no chunks)")
+        lines: list[str] = []
+        for i, c in enumerate(result):
+            lines.append(
+                f"#{i}  chars {c.start_index}-{c.end_index}"
+                f"  ({c.token_count} tokens)"
+            )
+        return ToolOutput(data=result, formatted="\n".join(lines))
 
 
 @dataclass(slots=True, frozen=True)

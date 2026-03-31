@@ -8,7 +8,7 @@ from typing import Annotated, override
 
 from pydantic import Field
 
-from .base import PathsTool, file_allowed, resolve_search_path
+from .base import PathsTool, ToolOutput, file_allowed, resolve_search_path
 
 __all__ = [
     "DocumentEndLineArg",
@@ -28,6 +28,20 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+_NOT_FOUND_MSG = "(document not found)"
+
+_SIZE_UNITS = ("B", "K", "M", "G")
+
+
+def _humanize_size(n: int) -> str:
+    """Format byte count as a compact human-readable string."""
+    value = float(n)
+    for unit in _SIZE_UNITS[:-1]:
+        if abs(value) < 1024:
+            return f"{value:.0f}{unit}" if value == int(value) else f"{value:.1f}{unit}"
+        value /= 1024
+    return f"{value:.1f}{_SIZE_UNITS[-1]}"
 
 
 @dataclass(slots=True, frozen=True)
@@ -138,7 +152,7 @@ class ListDocumentsTool(PathsTool):
         subdir: DocumentSubdirArg = None,
         max_depth: DocumentMaxDepthArg = 1,
         max_results: DocumentMaxResultsArg = 200,
-    ) -> list[DocumentSummary]:
+    ) -> ToolOutput[list[DocumentSummary]]:
         """List all available documents with their sizes in bytes."""
         results: list[DocumentSummary] = []
         for sp in self.resolved_paths:
@@ -164,7 +178,15 @@ class ListDocumentsTool(PathsTool):
                         is_directory=is_dir,
                     )
                 )
-        return results[:max_results]
+        results = results[:max_results]
+        if not results:
+            return ToolOutput(data=results, formatted="(no documents)")
+        lines: list[str] = []
+        for d in results:
+            date = d.modified_at.strftime("%Y-%m-%d %H:%M") if d.modified_at else "-"
+            kind = "d" if d.is_directory else "-"
+            lines.append(f"{kind} {date}  {_humanize_size(d.size):>6}  {d.filename}")
+        return ToolOutput(data=results, formatted="\n".join(lines))
 
 
 @dataclass(slots=True, frozen=True)
@@ -210,19 +232,19 @@ class GetDocumentLinesTool(PathsTool):
         filename: DocumentFilenameArg,
         start: DocumentStartLineArg = 1,
         end: DocumentEndLineArg = None,
-    ) -> DocumentRange | None:
+    ) -> ToolOutput[DocumentRange | None]:
         """Get a range of lines from a document."""
         resolved = resolve_search_path(self.resolved_paths, filename)
         if resolved is None:
-            return None
+            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
         sp, local = resolved
         if not file_allowed(sp.filter_func, local):
-            return None
+            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
         file_path = (sp.path / local).resolve()
         if not file_path.is_relative_to(sp.path.resolve()):
-            return None
+            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
         if not file_path.is_file():
-            return None
+            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
 
         lines = file_path.read_text(encoding="utf-8").splitlines()
         total = len(lines)
@@ -232,11 +254,15 @@ class GetDocumentLinesTool(PathsTool):
         else:
             end = min(total, end)
 
-        return DocumentRange(
+        result = DocumentRange(
             start_line=start,
             end_line=end,
             total_lines=total,
             content="\n".join(lines[start - 1 : end]),
+        )
+        return ToolOutput(
+            data=result,
+            formatted=f"lines {result.start_line}-{result.end_line} of {result.total_lines}:\n{result.content}",
         )
 
 
@@ -251,7 +277,7 @@ class GlobDocumentsTool(PathsTool):
         self,
         pattern: GlobPatternArg,
         max_results: DocumentMaxResultsArg = 200,
-    ) -> list[str]:
+    ) -> ToolOutput[list[str]]:
         """Find documents matching a glob pattern."""
         results: list[str] = []
         for sp in self.resolved_paths:
@@ -263,4 +289,8 @@ class GlobDocumentsTool(PathsTool):
                 rel = str(f.relative_to(sp.path).as_posix())
                 if fnmatch(rel, pattern) and file_allowed(sp.filter_func, rel):
                     results.append(sp.prefixed(rel))
-        return results[:max_results]
+        results = results[:max_results]
+        return ToolOutput(
+            data=results,
+            formatted="\n".join(results) if results else "(no matches)",
+        )

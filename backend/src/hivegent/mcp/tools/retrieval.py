@@ -5,6 +5,8 @@ from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAcces
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
+from ...agents.compact import CompactToolResultModel
+
 from ...agents import UserDeps, explore_toolset, user_agent
 from ...chunkers.base import RetrievedChunk
 from ...chunks import GetChunkTool, ListChunksTool
@@ -86,12 +88,14 @@ async def explore_documents(
     if model_name:
         result = await user_agent.run(
             task,
-            model=OpenAIResponsesModel(
-                model_name,
-                provider=OpenAIProvider(
-                    api_key=settings.llm.api_key,
-                    base_url=settings.llm.base_url or None,
-                ),
+            model=CompactToolResultModel(
+                OpenAIResponsesModel(
+                    model_name,
+                    provider=OpenAIProvider(
+                        api_key=settings.llm.api_key,
+                        base_url=settings.llm.base_url or None,
+                    ),
+                )
             ),
             deps=UserDeps(
                 user_id=user_id,

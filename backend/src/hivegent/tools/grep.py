@@ -9,7 +9,7 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..subprocesses import rg_search
-from .base import PathsTool, SearchPath, file_allowed
+from .base import PathsTool, SearchPath, ToolOutput, file_allowed
 
 __all__ = [
     "CaseSensitiveArg",
@@ -114,7 +114,7 @@ class GrepTool(PathsTool):
         context_lines: ContextLinesArg = 2,
         case_sensitive: CaseSensitiveArg = False,
         max_results: GrepMaxResultsArg = 50,
-    ) -> list[GrepMatch]:
+    ) -> ToolOutput[list[GrepMatch]]:
         """Search documents for a pattern.
 
         Searches case-insensitively by default.  Set ``case_sensitive=True``
@@ -127,4 +127,12 @@ class GrepTool(PathsTool):
             )
         )
         all_matches = [m for batch in results for m in batch]
-        return all_matches[:max_results]
+        all_matches = all_matches[:max_results]
+        if not all_matches:
+            return ToolOutput(data=all_matches, formatted="(no matches)")
+        return ToolOutput(
+            data=all_matches,
+            formatted="\n".join(
+                f"{m.filename}:{m.line_number}:{m.line_text}" for m in all_matches
+            ),
+        )
