@@ -13,15 +13,17 @@ from .base import PathsTool, file_allowed, resolve_search_path
 __all__ = [
     "DocumentEndLineArg",
     "DocumentFilenameArg",
-    "DocumentRange",
+    "DocumentMaxCharsArg",
     "DocumentMaxDepthArg",
-    "DocumentSummary",
+    "DocumentMaxResultsArg",
+    "DocumentRange",
     "DocumentStartLineArg",
     "DocumentSubdirArg",
+    "DocumentSummary",
     "GetDocumentLinesTool",
     "GetDocumentTool",
-    "GlobPatternArg",
     "GlobDocumentsTool",
+    "GlobPatternArg",
     "ListDocumentsTool",
 ]
 
@@ -30,11 +32,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True, frozen=True)
 class DocumentSummary:
-    """Summary of a document."""
+    """Summary of a document or directory."""
 
     filename: str
     size: int
     modified_at: datetime | None = None
+    is_directory: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -68,7 +71,24 @@ DocumentStartLineArg = Annotated[
 ]
 DocumentEndLineArg = Annotated[
     int | None,
-    Field(description="Last 1-based line number to include.", ge=1),
+    Field(
+        description="Last 1-based line number to include. Defaults to a window of lines from start when omitted.",
+        ge=1,
+    ),
+]
+DocumentMaxResultsArg = Annotated[
+    int,
+    Field(description="Maximum number of entries to return.", ge=1, le=1000),
+]
+DocumentMaxCharsArg = Annotated[
+    int | None,
+    Field(
+        description=(
+            "Maximum number of characters to return. "
+            "Content is truncated with a marker if exceeded."
+        ),
+        ge=1,
+    ),
 ]
 GlobPatternArg = Annotated[
     str,
@@ -116,7 +136,8 @@ class ListDocumentsTool(PathsTool):
     def __call__(
         self,
         subdir: DocumentSubdirArg = None,
-        max_depth: DocumentMaxDepthArg = None,
+        max_depth: DocumentMaxDepthArg = 1,
+        max_results: DocumentMaxResultsArg = 200,
     ) -> list[DocumentSummary]:
         """List all available documents with their sizes in bytes."""
         results: list[DocumentSummary] = []
@@ -124,28 +145,26 @@ class ListDocumentsTool(PathsTool):
             if not sp.path.exists():
                 continue
             for f in sorted(sp.path.rglob(self.glob or "*")):
-                if not f.is_file():
+                is_dir = f.is_dir()
+                if not is_dir and not f.is_file():
                     continue
                 rel = str(f.relative_to(sp.path).as_posix())
                 if not file_allowed(sp.filter_func, rel):
+                    continue
+                if not _matches_subdir_and_depth(rel, subdir, max_depth):
                     continue
                 stat = f.stat()
                 results.append(
                     DocumentSummary(
                         filename=sp.prefixed(rel),
-                        size=stat.st_size,
+                        size=stat.st_size if not is_dir else 0,
                         modified_at=datetime.fromtimestamp(
                             stat.st_mtime, tz=timezone.utc
                         ),
+                        is_directory=is_dir,
                     )
                 )
-        if subdir is not None or max_depth is not None:
-            results = [
-                r
-                for r in results
-                if _matches_subdir_and_depth(r.filename, subdir, max_depth)
-            ]
-        return results
+        return results[:max_results]
 
 
 @dataclass(slots=True, frozen=True)
@@ -153,7 +172,11 @@ class GetDocumentTool(PathsTool):
     """Get the full content of a specific document."""
 
     @override
-    def __call__(self, filename: DocumentFilenameArg) -> str | None:
+    def __call__(
+        self,
+        filename: DocumentFilenameArg,
+        max_chars: DocumentMaxCharsArg = 100_000,
+    ) -> str | None:
         """Get the full content of a specific document."""
         resolved = resolve_search_path(self.resolved_paths, filename)
         if resolved is None:
@@ -166,12 +189,20 @@ class GetDocumentTool(PathsTool):
             return None
         if not file_path.is_file():
             return None
-        return file_path.read_text(encoding="utf-8")
+        content = file_path.read_text(encoding="utf-8")
+        if max_chars is not None and len(content) > max_chars:
+            content = (
+                content[:max_chars]
+                + "\n\n[truncated — use get_document_lines for specific sections]"
+            )
+        return content
 
 
 @dataclass(slots=True, frozen=True)
 class GetDocumentLinesTool(PathsTool):
     """Get a range of lines from a document."""
+
+    default_lines: int = 200
 
     @override
     def __call__(
@@ -196,7 +227,10 @@ class GetDocumentLinesTool(PathsTool):
         lines = file_path.read_text(encoding="utf-8").splitlines()
         total = len(lines)
         start = max(1, start)
-        end = min(total, end) if end else total
+        if end is None:
+            end = min(total, start + self.default_lines - 1)
+        else:
+            end = min(total, end)
 
         return DocumentRange(
             start_line=start,
@@ -213,7 +247,11 @@ class GlobDocumentsTool(PathsTool):
     glob: str | None = None
 
     @override
-    def __call__(self, pattern: GlobPatternArg) -> list[str]:
+    def __call__(
+        self,
+        pattern: GlobPatternArg,
+        max_results: DocumentMaxResultsArg = 200,
+    ) -> list[str]:
         """Find documents matching a glob pattern."""
         results: list[str] = []
         for sp in self.resolved_paths:
@@ -225,4 +263,4 @@ class GlobDocumentsTool(PathsTool):
                 rel = str(f.relative_to(sp.path).as_posix())
                 if fnmatch(rel, pattern) and file_allowed(sp.filter_func, rel):
                     results.append(sp.prefixed(rel))
-        return results
+        return results[:max_results]

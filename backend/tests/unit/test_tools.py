@@ -87,6 +87,33 @@ class TestListDocumentsTool:
         filenames = {r.filename for r in tool()}
         assert filenames == {"a.md", "@team/b.md"}
 
+    def test_includes_directories(self, tmp_path: Path) -> None:
+        sub = tmp_path / "notes"
+        sub.mkdir()
+        (sub / "n.md").write_text("note")
+        tool = ListDocumentsTool(paths=tmp_path)
+        result = tool(max_depth=None)
+        dirs = [r for r in result if r.is_directory]
+        assert any(r.filename == "notes" for r in dirs)
+
+    def test_max_depth_default_excludes_nested(self, tmp_path: Path) -> None:
+        sub = tmp_path / "notes"
+        sub.mkdir()
+        (sub / "n.md").write_text("note")
+        (tmp_path / "top.md").write_text("top")
+        tool = ListDocumentsTool(paths=tmp_path)
+        filenames = {r.filename for r in tool()}
+        assert "top.md" in filenames
+        assert "notes" in filenames
+        assert "notes/n.md" not in filenames
+
+    def test_max_results_limits_list(self, tmp_path: Path) -> None:
+        for i in range(10):
+            (tmp_path / f"f{i}.txt").write_text(str(i))
+        tool = ListDocumentsTool(paths=tmp_path)
+        result = tool(max_results=3)
+        assert len(result) == 3
+
 
 class TestGetDocumentTool:
     """Tests for GetDocumentTool."""
@@ -119,6 +146,16 @@ class TestGetDocumentTool:
     def test_returns_none_for_unknown_prefix(self, tmp_path: Path) -> None:
         tool = GetDocumentTool(paths=tmp_path)
         assert tool("@unknown/doc.md") is None
+
+    def test_truncates_large_file(self, tmp_path: Path) -> None:
+        content = "x" * 200
+        (tmp_path / "big.md").write_text(content)
+        tool = GetDocumentTool(paths=tmp_path)
+        result = tool("big.md", max_chars=50)
+        assert result is not None
+        assert result.startswith("x" * 50)
+        assert "[truncated" in result
+        assert len(result.split("\n\n[truncated")[0]) == 50
 
 
 class TestGetDocumentLinesTool:
@@ -153,6 +190,24 @@ class TestGetDocumentLinesTool:
         result = tool("doc.md", start=-5)
         assert result is not None
         assert result.start_line == 1
+
+    def test_default_end_caps_lines(self, tmp_path: Path) -> None:
+        lines = [f"line{i}" for i in range(500)]
+        (tmp_path / "big.md").write_text("\n".join(lines))
+        tool = GetDocumentLinesTool(paths=tmp_path)
+        result = tool("big.md")
+        assert result is not None
+        assert result.start_line == 1
+        assert result.end_line == 200
+        assert result.total_lines == 500
+
+    def test_custom_default_lines(self, tmp_path: Path) -> None:
+        lines = [f"line{i}" for i in range(100)]
+        (tmp_path / "doc.md").write_text("\n".join(lines))
+        tool = GetDocumentLinesTool(paths=tmp_path, default_lines=10)
+        result = tool("doc.md")
+        assert result is not None
+        assert result.end_line == 10
 
 
 class TestGlobDocumentsTool:
@@ -194,6 +249,13 @@ class TestGlobDocumentsTool:
         )
         result = tool("*.md")
         assert set(result) == {"a.md", "@team/b.md"}
+
+    def test_max_results_limits_glob(self, tmp_path: Path) -> None:
+        for i in range(10):
+            (tmp_path / f"f{i}.txt").write_text(str(i))
+        tool = GlobDocumentsTool(paths=tmp_path)
+        result = tool("*.txt", max_results=3)
+        assert len(result) == 3
 
 
 class TestListChunksTool:
@@ -383,3 +445,11 @@ class TestJqTool:
         tool = JqTool(paths=tmp_path)
         result = await tool(".", "../etc/passwd")
         assert result.startswith("Error:")
+
+    async def test_large_output_truncated(self, tmp_path: Path) -> None:
+        data = {"items": ["x" * 100 for _ in range(50)]}
+        (tmp_path / "big.json").write_text(json.dumps(data))
+        tool = JqTool(paths=tmp_path, max_output_chars=100)
+        result = await tool(".", "big.json")
+        assert "[truncated]" in result
+        assert len(result.split("\n\n[truncated]")[0]) == 100

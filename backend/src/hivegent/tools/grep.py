@@ -15,6 +15,7 @@ __all__ = [
     "CaseSensitiveArg",
     "ContextLinesArg",
     "GrepMatch",
+    "GrepMaxResultsArg",
     "GrepPathArg",
     "GrepPatternArg",
     "GrepTool",
@@ -56,6 +57,14 @@ CaseSensitiveArg = Annotated[
     bool,
     Field(
         description="Match case exactly. Default is false (case-insensitive).",
+    ),
+]
+GrepMaxResultsArg = Annotated[
+    int,
+    Field(
+        description="Maximum total number of matches to return.",
+        ge=1,
+        le=1000,
     ),
 ]
 
@@ -104,6 +113,7 @@ class GrepTool(PathsTool):
         path: GrepPathArg = None,
         context_lines: ContextLinesArg = 2,
         case_sensitive: CaseSensitiveArg = False,
+        max_results: GrepMaxResultsArg = 50,
     ) -> list[GrepMatch]:
         """Search documents for a pattern.
 
@@ -116,4 +126,5 @@ class GrepTool(PathsTool):
                 for sp in self.resolved_paths
             )
         )
-        return [m for batch in results for m in batch]
+        all_matches = [m for batch in results for m in batch]
+        return all_matches[:max_results]

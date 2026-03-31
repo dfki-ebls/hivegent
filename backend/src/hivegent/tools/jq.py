@@ -25,6 +25,8 @@ JqFilenameArg = Annotated[
 class JqTool(PathsTool):
     """Run a jq filter against a JSON file."""
 
+    max_output_chars: int = 100_000
+
     @override
     async def __call__(
         self,
@@ -47,4 +49,7 @@ class JqTool(PathsTool):
             result = await jq_filter(filter, data)
         except ValueError as exc:
             return f"Error: {exc}"
-        return json.dumps(result, default=str)
+        output = json.dumps(result, default=str)
+        if len(output) > self.max_output_chars:
+            output = output[: self.max_output_chars] + "\n\n[truncated]"
+        return output

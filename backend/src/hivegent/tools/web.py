@@ -22,7 +22,6 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-_MAX_RESPONSE_BYTES = 1_000_000
 _TIMEOUT_SECONDS = 10.0
 
 _BLOCKED_SCHEMES = frozenset({"file", "ftp", "data", "javascript"})
@@ -117,6 +116,8 @@ class WebSearch(Tool):
 class WebFetch(Tool):
     """Fetch web page content as plain text."""
 
+    max_response_bytes: int = 1_000_000
+
     @override
     async def __call__(self, url: WebUrlArg) -> str:
         """Fetch the content of a web page as plain text.
@@ -145,8 +146,8 @@ class WebFetch(Tool):
                     return f"Error: unsupported content type '{content_type}'."
 
                 body = response.text
-                if len(body) > _MAX_RESPONSE_BYTES:
-                    body = body[:_MAX_RESPONSE_BYTES] + "\n\n[truncated]"
+                if len(body) > self.max_response_bytes:
+                    body = body[: self.max_response_bytes] + "\n\n[truncated]"
                 return body
         except httpx.TimeoutException:
             return "Error: request timed out."

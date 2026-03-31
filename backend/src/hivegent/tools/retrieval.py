@@ -16,7 +16,7 @@ __all__ = [
     "LanceDBSearchTool",
     "SearchQueryArg",
     "SearchResult",
-    "SearchTopKArg",
+    "SearchMaxResultsArg",
     "SearchType",
     "SearchTypeArg",
 ]
@@ -72,7 +72,7 @@ SearchQueryArg = Annotated[
     str,
     Field(description="Natural language search query."),
 ]
-SearchTopKArg = Annotated[
+SearchMaxResultsArg = Annotated[
     int,
     Field(description="Maximum number of results to return.", ge=1),
 ]
@@ -109,7 +109,7 @@ class LanceDBSearchTool[R = SearchResult](Tool):
     def __call__(
         self,
         query: SearchQueryArg,
-        top_k: SearchTopKArg = 5,
+        max_results: SearchMaxResultsArg = 5,
         search_type: SearchTypeArg = "hybrid",
     ) -> list[R]:
         """Search indexed chunks using dense, sparse, or hybrid retrieval.
@@ -128,7 +128,7 @@ class LanceDBSearchTool[R = SearchResult](Tool):
                     storage=idx.storage,
                     search_type=search_type,
                 ),
-                limit=top_k,
+                limit=max_results,
             )
             result = cbrkit.retrieval.apply_query_indexed(query, retriever)
             step = result.final_step.queries["default"]
@@ -146,7 +146,7 @@ class LanceDBSearchTool[R = SearchResult](Tool):
                 )
 
         all_results.sort(key=lambda r: r.score, reverse=True)
-        all_results = all_results[:top_k]
+        all_results = all_results[:max_results]
 
         if self.result_mapper is not None:
             return [self.result_mapper(r) for r in all_results]
