@@ -15,7 +15,7 @@ __all__ = [
     "CaseSensitiveArg",
     "ContextLinesArg",
     "GrepMatch",
-    "GrepGlobArg",
+    "GrepPathArg",
     "GrepPatternArg",
     "GrepTool",
 ]
@@ -36,9 +36,14 @@ GrepPatternArg = Annotated[
     str,
     Field(description="Text or regular expression pattern to search for."),
 ]
-GrepGlobArg = Annotated[
+GrepPathArg = Annotated[
     str | None,
-    Field(description="Optional glob pattern that limits which files are searched."),
+    Field(
+        description=(
+            "Optional filename or glob pattern to restrict which files "
+            "are searched (e.g. `report.md` or `*.md`)."
+        ),
+    ),
 ]
 ContextLinesArg = Annotated[
     int,
@@ -58,7 +63,7 @@ CaseSensitiveArg = Annotated[
 async def _search_path(
     sp: SearchPath,
     pattern: str,
-    glob: str | None,
+    path: str | None,
     context_lines: int,
     case_sensitive: bool,
 ) -> list[GrepMatch]:
@@ -70,7 +75,7 @@ async def _search_path(
         for rg_match in await rg_search(
             pattern,
             sp.path,
-            glob=glob,
+            glob=path,
             context_lines=context_lines,
             case_sensitive=case_sensitive,
         ):
@@ -96,7 +101,7 @@ class GrepTool(PathsTool):
     async def __call__(
         self,
         pattern: GrepPatternArg,
-        glob: GrepGlobArg = None,
+        path: GrepPathArg = None,
         context_lines: ContextLinesArg = 2,
         case_sensitive: CaseSensitiveArg = False,
     ) -> list[GrepMatch]:
@@ -107,7 +112,7 @@ class GrepTool(PathsTool):
         """
         results = await asyncio.gather(
             *(
-                _search_path(sp, pattern, glob, context_lines, case_sensitive)
+                _search_path(sp, pattern, path, context_lines, case_sensitive)
                 for sp in self.resolved_paths
             )
         )
