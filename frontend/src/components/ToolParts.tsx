@@ -6,7 +6,7 @@ import type {
   GrepMatch,
   RetrievedChunk,
 } from "@/lib/types";
-import type { DynamicToolUIPart, ToolUIPart } from "ai";
+import type { ToolUIPart } from "ai";
 
 import {
   Confirmation,
@@ -16,7 +16,6 @@ import {
   ConfirmationRejected,
   ConfirmationRequest,
 } from "@/components/ai-elements/confirmation";
-import { CodeBlock } from "@/components/ai-elements/code-block";
 import {
   Plan,
   PlanAction,
@@ -27,17 +26,12 @@ import {
   PlanTitle,
   PlanTrigger,
 } from "@/components/ai-elements/plan";
-import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
+import { Tool, ToolContent, ToolHeader, type ToolPart } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
-import {
-  ToolError,
-  ToolKeyValue,
-  ToolParameters,
-  ToolResult,
-  ToolSection,
-} from "@/components/ToolDisplay";
+import { ToolError, ToolParameters, ToolResult } from "@/components/ToolDisplay";
+import { snakeCaseToTitleCase } from "@/lib/utils";
 
-export type ToolPart = ToolUIPart | DynamicToolUIPart;
+export type { ToolPart };
 
 interface ToolPartInfo {
   toolName: string;
@@ -50,8 +44,6 @@ interface ToolPartInfo {
 interface ToolPartDisplayProps {
   toolName: string;
   part: ToolPart;
-  /** Pre-unwrapped structured data from the ToolOutput envelope. */
-  output?: unknown;
   /** Compact text from the ToolOutput envelope. */
   formatted?: string | null;
   onApprove?: (id: string) => void;
@@ -267,156 +259,6 @@ export function getToolPartInfo(
   };
 }
 
-function SearchToolDisplay({ toolName, part, output: rawOutput }: ToolPartDisplayProps) {
-  const state: ToolPart["state"] = part.state ?? "output-available";
-  const input = parseJson<{ query: string; type?: string; top_k?: number }>(part.input);
-  const output = rawOutput as RetrievedChunk[] | undefined;
-  const title = input?.type === "sparse" ? "Keyword Search" : "Semantic Search";
-
-  return (
-    <Tool defaultOpen={false}>
-      <ToolHeader title={title} type={`tool-${toolName}`} state={state} />
-      <ToolContent>
-        {input?.query && (
-          <ToolSection title="Parameters">
-            <ToolKeyValue label="Query" value={`"${input.query}"`} />
-            {input.top_k && <ToolKeyValue label="Max results" value={input.top_k} />}
-          </ToolSection>
-        )}
-        {Array.isArray(output) && (
-          <ToolResult>
-            <ToolKeyValue label="Found" value={`${output.length} chunk(s)`} />
-            {output.map((chunk) => (
-              <ToolKeyValue
-                key={`${chunk.filename}::${chunk.chunk_index}`}
-                label={`${chunk.filename} #${chunk.chunk_index}`}
-                value={`${(chunk.score * 100).toFixed(0)}% match`}
-                indent
-              />
-            ))}
-          </ToolResult>
-        )}
-        {part.errorText && <ToolError message={part.errorText} />}
-      </ToolContent>
-    </Tool>
-  );
-}
-
-function EditDocumentToolDisplay({ part, onApprove, onDeny }: ToolPartDisplayProps) {
-  const state: ToolPart["state"] = part.state ?? "output-available";
-  const approval = part.approval as ToolUIPart["approval"];
-  const input = parseJson<{
-    filename: string;
-    old_string: string;
-    new_string: string;
-  }>(part.input);
-
-  return (
-    <Tool defaultOpen={state === "approval-requested"}>
-      <ToolHeader title="Edit Document" type="tool-edit_document" state={state} />
-      <ToolContent>
-        {input && (
-          <ToolSection title="Parameters">
-            <ToolKeyValue label="File" value={input.filename} />
-            <ToolKeyValue
-              label="Replace"
-              value={<pre className="whitespace-pre-wrap text-xs">{input.old_string}</pre>}
-            />
-            <ToolKeyValue
-              label="With"
-              value={<pre className="whitespace-pre-wrap text-xs">{input.new_string}</pre>}
-            />
-          </ToolSection>
-        )}
-        <Confirmation approval={approval} state={state}>
-          <ConfirmationRequest>
-            <span className="text-sm">
-              Allow the assistant to edit <strong>{input?.filename}</strong>?
-            </span>
-          </ConfirmationRequest>
-          <ConfirmationAccepted>
-            <span className="text-sm text-green-700 dark:text-green-400">Edit approved</span>
-          </ConfirmationAccepted>
-          <ConfirmationRejected>
-            <span className="text-sm text-orange-700 dark:text-orange-400">Edit denied</span>
-          </ConfirmationRejected>
-          <ConfirmationActions>
-            <ConfirmationAction variant="outline" onClick={() => onDeny?.(approval?.id ?? "")}>
-              Deny
-            </ConfirmationAction>
-            <ConfirmationAction onClick={() => onApprove?.(approval?.id ?? "")}>
-              Approve
-            </ConfirmationAction>
-          </ConfirmationActions>
-        </Confirmation>
-        {part.output !== undefined && (
-          <ToolResult>
-            <pre className="whitespace-pre-wrap text-xs font-mono">{prettyPrint(part.output)}</pre>
-          </ToolResult>
-        )}
-        {part.errorText && <ToolError message={part.errorText} />}
-      </ToolContent>
-    </Tool>
-  );
-}
-
-function WriteDocumentToolDisplay({ part, onApprove, onDeny }: ToolPartDisplayProps) {
-  const state: ToolPart["state"] = part.state ?? "output-available";
-  const approval = part.approval as ToolUIPart["approval"];
-  const input = parseJson<{ filename: string; content: string; mode?: string }>(part.input);
-  const modeLabel = input?.mode ?? "replace";
-
-  return (
-    <Tool defaultOpen={state === "approval-requested"}>
-      <ToolHeader title="Write Document" type="tool-write_document" state={state} />
-      <ToolContent>
-        {input && (
-          <ToolSection title="Parameters">
-            <ToolKeyValue label="File" value={input.filename} />
-            <ToolKeyValue label="Mode" value={modeLabel} />
-            <ToolKeyValue
-              label="Content"
-              value={
-                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap text-xs">
-                  {input.content}
-                </pre>
-              }
-            />
-          </ToolSection>
-        )}
-        <Confirmation approval={approval} state={state}>
-          <ConfirmationRequest>
-            <span className="text-sm">
-              Allow the assistant to <strong>{modeLabel}</strong> <strong>{input?.filename}</strong>
-              ?
-            </span>
-          </ConfirmationRequest>
-          <ConfirmationAccepted>
-            <span className="text-sm text-green-700 dark:text-green-400">Write approved</span>
-          </ConfirmationAccepted>
-          <ConfirmationRejected>
-            <span className="text-sm text-orange-700 dark:text-orange-400">Write denied</span>
-          </ConfirmationRejected>
-          <ConfirmationActions>
-            <ConfirmationAction variant="outline" onClick={() => onDeny?.(approval?.id ?? "")}>
-              Deny
-            </ConfirmationAction>
-            <ConfirmationAction onClick={() => onApprove?.(approval?.id ?? "")}>
-              Approve
-            </ConfirmationAction>
-          </ConfirmationActions>
-        </Confirmation>
-        {part.output !== undefined && (
-          <ToolResult>
-            <pre className="whitespace-pre-wrap text-xs font-mono">{prettyPrint(part.output)}</pre>
-          </ToolResult>
-        )}
-        {part.errorText && <ToolError message={part.errorText} />}
-      </ToolContent>
-    </Tool>
-  );
-}
-
 function CreatePlanToolDisplay({ part, onExecutePlan }: ToolPartDisplayProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
   const input = parseJson<{ title?: string; description?: string; steps?: string[] }>(part.input);
@@ -433,7 +275,7 @@ function CreatePlanToolDisplay({ part, onExecutePlan }: ToolPartDisplayProps) {
         </PlanAction>
       </PlanHeader>
       <PlanContent>
-        <ol className="list-decimal pl-5 space-y-1 text-sm">
+        <ol className="list-decimal space-y-1 pl-5 text-sm">
           {input?.steps?.map((step, i) => (
             <li key={i}>{step}</li>
           ))}
@@ -448,34 +290,9 @@ function CreatePlanToolDisplay({ part, onExecutePlan }: ToolPartDisplayProps) {
   );
 }
 
-function GenericToolDisplay({ toolName, part, formatted }: ToolPartDisplayProps) {
-  const state: ToolPart["state"] = part.state ?? "output-available";
-  const input = parseJson<Record<string, unknown>>(part.input);
-
-  return (
-    <Tool defaultOpen={false}>
-      <ToolHeader type={`tool-${toolName}`} state={state} />
-      <ToolContent>
-        {input && <ToolParameters params={input} />}
-        {part.output !== undefined && (
-          <ToolResult>
-            {formatted ? (
-              <pre className="whitespace-pre-wrap text-xs font-mono">{formatted}</pre>
-            ) : (
-              <CodeBlock code={prettyPrint(part.output)} language="json" />
-            )}
-          </ToolResult>
-        )}
-        {state === "output-error" && part.errorText && <ToolError message={part.errorText} />}
-      </ToolContent>
-    </Tool>
-  );
-}
-
 export function ToolPartDisplay({
   toolName,
   part,
-  output,
   formatted,
   onApprove,
   onDeny,
@@ -484,28 +301,48 @@ export function ToolPartDisplay({
   if (toolName === "create_plan") {
     return <CreatePlanToolDisplay toolName={toolName} part={part} onExecutePlan={onExecutePlan} />;
   }
-  if (toolName === "semantic_search") {
-    return <SearchToolDisplay toolName={toolName} part={part} output={output} />;
-  }
-  if (toolName === "edit_document") {
-    return (
-      <EditDocumentToolDisplay
-        toolName={toolName}
-        part={part}
-        onApprove={onApprove}
-        onDeny={onDeny}
-      />
-    );
-  }
-  if (toolName === "write_document") {
-    return (
-      <WriteDocumentToolDisplay
-        toolName={toolName}
-        part={part}
-        onApprove={onApprove}
-        onDeny={onDeny}
-      />
-    );
-  }
-  return <GenericToolDisplay toolName={toolName} part={part} formatted={formatted} />;
+
+  const state: ToolPart["state"] = part.state ?? "output-available";
+  const approval = "approval" in part ? (part as ToolUIPart).approval : undefined;
+  const input = parseJson<Record<string, unknown>>(part.input);
+
+  return (
+    <Tool defaultOpen={state === "approval-requested"}>
+      <ToolHeader title={snakeCaseToTitleCase(toolName)} type={`tool-${toolName}`} state={state} />
+      <ToolContent>
+        {input && <ToolParameters params={input} />}
+        {approval && (
+          <Confirmation approval={approval} state={state}>
+            <ConfirmationRequest>
+              <span className="text-sm">
+                Allow the assistant to run <strong>{snakeCaseToTitleCase(toolName)}</strong>?
+              </span>
+            </ConfirmationRequest>
+            <ConfirmationAccepted>
+              <span className="text-sm text-green-700 dark:text-green-400">Approved</span>
+            </ConfirmationAccepted>
+            <ConfirmationRejected>
+              <span className="text-sm text-orange-700 dark:text-orange-400">Denied</span>
+            </ConfirmationRejected>
+            <ConfirmationActions>
+              <ConfirmationAction variant="outline" onClick={() => onDeny?.(approval.id ?? "")}>
+                Deny
+              </ConfirmationAction>
+              <ConfirmationAction onClick={() => onApprove?.(approval.id ?? "")}>
+                Approve
+              </ConfirmationAction>
+            </ConfirmationActions>
+          </Confirmation>
+        )}
+        {part.output !== undefined && (
+          <ToolResult>
+            <pre className="whitespace-pre-wrap text-xs font-mono">
+              {formatted ?? prettyPrint(part.output)}
+            </pre>
+          </ToolResult>
+        )}
+        {state === "output-error" && part.errorText && <ToolError message={part.errorText} />}
+      </ToolContent>
+    </Tool>
+  );
 }

@@ -26,6 +26,14 @@ export function collectFilePaths(entry: DirectoryEntry, out: string[] = []): str
   return out;
 }
 
+/** Convert a snake_case string to Title Case. */
+export function snakeCaseToTitleCase(s: string): string {
+  return s
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 /** Check whether a filename is an external web URL. */
 export function isWebUrl(value: string): boolean {
   return value.startsWith("http://") || value.startsWith("https://");
