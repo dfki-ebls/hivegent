@@ -7,6 +7,7 @@ from typing import Annotated, Any, cast, override
 
 from pydantic import Field
 from pydantic_ai import FunctionToolset
+from pydantic_ai.messages import ToolReturn
 
 from hivegent.tools.pydantic_ai import (
     for_pydantic_ai,
@@ -124,10 +125,10 @@ class TestForPydanticAI:
         fn = for_pydantic_ai(_sync_default, _Deps)
         assert "return" in fn.__annotations__
 
-    def test_tool_output_return_rewritten_to_str(self) -> None:
+    def test_tool_output_return_rewritten_to_tool_return(self) -> None:
         fn = for_pydantic_ai(_tool_output_deps, _Deps)
-        assert fn.__annotations__["return"] is str
-        assert inspect.signature(fn).return_annotation is str
+        assert fn.__annotations__["return"] is ToolReturn
+        assert inspect.signature(fn).return_annotation is ToolReturn
 
 
 # -- register_agent_tools -----------------------------------------------------

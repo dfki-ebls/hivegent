@@ -59,7 +59,8 @@ interface ToolPartDisplayProps {
   onExecutePlan?: () => void;
 }
 
-function getToolName(part: { type: string; toolName?: string }): string | null {
+function getToolName(part: { type?: string; toolName?: string }): string | null {
+  if (!part.type) return null;
   if (part.type === "dynamic-tool" && part.toolName) return part.toolName;
   if (part.type.startsWith("tool-")) return part.type.replace("tool-", "");
   return null;
@@ -76,13 +77,15 @@ function parseJson<T>(value: unknown): T | undefined {
   return value as T;
 }
 
-/** Unwrap a ``{data, formatted}`` envelope from ToolOutput-returning tools. */
-function unwrapToolOutput(raw: unknown): { data: unknown; formatted: string | null } {
-  if (raw && typeof raw === "object" && "data" in raw) {
-    const envelope = raw as { data: unknown; formatted?: string | null };
-    return { data: envelope.data, formatted: envelope.formatted ?? null };
-  }
-  return { data: raw, formatted: null };
+/** Check whether a message part is a ``data-tool-output`` DataUIPart. */
+function isToolDataPart(part: unknown): part is { type: "data-tool-output"; data: unknown } {
+  return (
+    part != null &&
+    typeof part === "object" &&
+    "type" in part &&
+    (part as { type: string }).type === "data-tool-output" &&
+    "data" in part
+  );
 }
 
 function prettyPrint(value: unknown): string {
@@ -111,8 +114,9 @@ export function processToolOutput(
 
   switch (toolName) {
     case "semantic_search": {
+      if (!Array.isArray(output)) return;
       const chunks = output as RetrievedChunk[];
-      if (!chunks?.length) return;
+      if (!chunks.length) return;
 
       const query = input.query as string;
       const source = `search${query ? `: ${query}` : ""}`;
@@ -141,8 +145,9 @@ export function processToolOutput(
     }
     case "get_document_lines": {
       const filename = input.filename as string;
+      if (typeof output !== "object" || output == null) return;
       const result = output as DocumentRange;
-      if (filename && result?.content) {
+      if (filename && result.content) {
         const position: ChunkPosition = {
           type: "line_range",
           startLine: result.start_line,
@@ -158,9 +163,10 @@ export function processToolOutput(
       return;
     }
     case "grep": {
+      if (!Array.isArray(output)) return;
       const matches = output as GrepMatch[];
       const pattern = input.pattern as string;
-      if (!matches?.length || !pattern) return;
+      if (!matches.length || !pattern) return;
 
       const source = `grep: ${pattern}`;
       for (const match of matches) {
@@ -202,8 +208,9 @@ export function processToolOutput(
       return;
     }
     case "web_search": {
+      if (!Array.isArray(output)) return;
       const results = output as { title: string; href: string; body: string }[];
-      if (!results?.length) return;
+      if (!results.length) return;
       const query = input.query as string;
       const source = `web: ${query ?? "search"}`;
       for (const r of results) {
@@ -228,7 +235,11 @@ export function processToolOutput(
   }
 }
 
-export function getToolPartInfo(part: UIMessage["parts"][number]): ToolPartInfo | null {
+export function getToolPartInfo(
+  parts: UIMessage["parts"],
+  index: number,
+): ToolPartInfo | null {
+  const part = parts[index];
   const typed = part as {
     type: string;
     toolName?: string;
@@ -240,12 +251,18 @@ export function getToolPartInfo(part: UIMessage["parts"][number]): ToolPartInfo 
   if (!toolName) return null;
 
   const raw = parseJson<unknown>(typed.output) ?? typed.output;
-  const { data, formatted } = unwrapToolOutput(raw);
+  const formatted = typeof raw === "string" ? raw : null;
+
+  // Structured data arrives as an adjacent data-tool-output DataUIPart,
+  // streamed via ToolReturn.metadata by the backend.
+  const next = parts[index + 1];
+  const output = isToolDataPart(next) ? next.data : raw;
+
   return {
     toolName,
     state: typed.state ?? "output-available",
     input: parseJson<Record<string, unknown>>(typed.input),
-    output: data,
+    output,
     formatted,
   };
 }

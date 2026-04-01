@@ -7,21 +7,28 @@ from typing import Any, get_type_hints
 
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.messages import ToolReturn
+from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 from .base import Tool, ToolOutput, factory_tool_name, resolve_tool_cls, tool_description
 
-__all__ = ["for_pydantic_ai", "register_agent_tools"]
+__all__ = ["for_pydantic_ai", "register_agent_tools", "wrap_tool_output"]
+
+DATA_CHUNK_TYPE = "data-tool-output"
+"""DataChunk type used to stream structured tool data to the frontend."""
 
 
-def _wrap_tool_output(result: ToolOutput[Any]) -> ToolReturn:
+def wrap_tool_output(result: ToolOutput[Any]) -> ToolReturn:
     """Wrap a :class:`ToolOutput` in a :class:`ToolReturn`.
 
-    Eagerly resolves ``formatted`` so that :class:`CompactToolResultModel`
-    never needs to re-derive the text on subsequent LLM turns.
+    ``return_value`` carries the compact text the LLM sees directly.
+    When ``data`` is structured (not a plain string or ``None``), a
+    :class:`DataChunk` is attached as ``metadata`` so the Vercel AI
+    stream delivers the structured payload to the frontend.
     """
-    if result.formatted is None:
-        result = result.model_copy(update={"formatted": result.text})
-    return ToolReturn(return_value=result)
+    metadata: DataChunk | None = None
+    if result.data is not None and not isinstance(result.data, str):
+        metadata = DataChunk(type=DATA_CHUNK_TYPE, data=result.data)
+    return ToolReturn(return_value=result.text, metadata=metadata)
 
 
 def for_pydantic_ai[D](
@@ -56,10 +63,10 @@ def for_pydantic_ai[D](
     call_params = [p for name, p in sig.parameters.items() if name != "self"]
     new_params = [ctx_param, *call_params]
 
-    # ToolOutput is unwrapped to a plain string by CompactToolResultModel,
-    # so the declared return type must reflect what the model actually sees.
+    # The wrapper returns ToolReturn; rewrite the annotation so pydantic-ai
+    # recognises the structured return and extracts return_value / metadata.
     ret = hints.get("return")
-    ret_annotation = str if isinstance(ret, type) and issubclass(ret, ToolOutput) else sig.return_annotation
+    ret_annotation = ToolReturn if isinstance(ret, type) and issubclass(ret, ToolOutput) else sig.return_annotation
     new_sig = sig.replace(parameters=new_params, return_annotation=ret_annotation)
 
     # Build annotations dict
@@ -68,18 +75,18 @@ def for_pydantic_ai[D](
         if p.name in hints:
             new_annotations[p.name] = hints[p.name]
     if ret is not None:
-        new_annotations["return"] = str if isinstance(ret, type) and issubclass(ret, ToolOutput) else ret
+        new_annotations["return"] = ToolReturn if isinstance(ret, type) and issubclass(ret, ToolOutput) else ret
 
     if is_async:
 
         @wraps(call)
         async def wrapper(ctx: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-            return _wrap_tool_output(await factory(ctx.deps)(**kwargs))
+            return wrap_tool_output(await factory(ctx.deps)(**kwargs))
     else:
 
         @wraps(call)
         def wrapper(ctx: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-            return _wrap_tool_output(factory(ctx.deps)(**kwargs))
+            return wrap_tool_output(factory(ctx.deps)(**kwargs))
 
     setattr(wrapper, "__signature__", new_sig)  # pyright: ignore[reportAttributeAccessIssue]
     wrapper.__annotations__ = new_annotations

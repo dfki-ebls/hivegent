@@ -10,7 +10,7 @@ from ...messages import (
 from ...tools import JqTool
 from ...tools.base import ToolOutput
 from ..common import UserDeps
-from ...tools.pydantic_ai import for_pydantic_ai
+from ...tools.pydantic_ai import for_pydantic_ai, wrap_tool_output
 
 __all__ = [
     "conversation_toolset",
@@ -36,9 +36,7 @@ def list_conversations_tool(
             f"{c.id[:8]}  {c.updated_at:%Y-%m-%d}  {c.message_count:>3} msgs  {c.title}"
             for c in conversations
         )
-    return ToolReturn(
-        return_value=ToolOutput(data=conversations, formatted=formatted),
-    )
+    return wrap_tool_output(ToolOutput(data=conversations, formatted=formatted))
 
 
 def _jq_factory(deps: UserDeps) -> JqTool:

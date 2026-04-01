@@ -14,7 +14,7 @@ from .base import Tool, ToolOutput, factory_tool_name, resolve_tool_cls, tool_de
 __all__ = ["for_fastmcp", "register_mcp_tools"]
 
 
-def _wrap_tool_output(result: ToolOutput[Any]) -> ToolResult:
+def wrap_tool_output(result: ToolOutput[Any]) -> ToolResult:
     """Extract model-facing text from a :class:`ToolOutput`."""
     return ToolResult(content=result.text)
 
@@ -53,7 +53,7 @@ def for_fastmcp(
     )
     new_params = [*call_params, tool_param]
 
-    # ToolOutput is unwrapped to a plain string by _wrap_tool_output,
+    # ToolOutput is unwrapped to a plain string by wrap_tool_output,
     # so the declared return type must reflect what is actually returned.
     ret = hints.get("return")
     ret_annotation = str if isinstance(ret, type) and issubclass(ret, ToolOutput) else sig.return_annotation
@@ -71,12 +71,12 @@ def for_fastmcp(
 
         @wraps(call)
         async def wrapper(**kwargs: Any) -> Any:  # noqa: ANN401
-            return _wrap_tool_output(await kwargs.pop("_tool_")(**kwargs))
+            return wrap_tool_output(await kwargs.pop("_tool_")(**kwargs))
     else:
 
         @wraps(call)
         def wrapper(**kwargs: Any) -> Any:  # noqa: ANN401
-            return _wrap_tool_output(kwargs.pop("_tool_")(**kwargs))
+            return wrap_tool_output(kwargs.pop("_tool_")(**kwargs))
 
     setattr(wrapper, "__signature__", new_sig)  # pyright: ignore[reportAttributeAccessIssue]
     wrapper.__annotations__ = new_annotations

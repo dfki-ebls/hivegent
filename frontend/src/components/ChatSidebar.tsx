@@ -259,6 +259,7 @@ function UserTextPartDisplay({
 // --- Message part renderer ---
 
 interface MessagePartProps {
+  parts: UIMessage["parts"];
   part: UIMessage["parts"][number];
   partIndex: number;
   isLastTextPart: boolean;
@@ -275,6 +276,7 @@ interface MessagePartProps {
 }
 
 function MessagePart({
+  parts,
   part,
   partIndex,
   isLastTextPart,
@@ -339,7 +341,7 @@ function MessagePart({
     return null;
   }
 
-  const info = getToolPartInfo(part);
+  const info = getToolPartInfo(parts, partIndex);
   if (info) {
     return (
       <ToolPartDisplay
@@ -633,9 +635,10 @@ export function ChatSidebar({
   // Sync tool outputs to the document store
   useEffect(() => {
     for (const message of messages) {
-      if (!message.parts) continue;
-      for (const part of message.parts) {
-        const info = getToolPartInfo(part);
+      const parts = message.parts;
+      if (!parts) continue;
+      for (let i = 0; i < parts.length; i++) {
+        const info = getToolPartInfo(parts, i);
         if (!info || info.state !== "output-available") continue;
         processToolOutput(info.toolName, info.input, info.output, addChunk, markFullDocument);
       }
@@ -753,6 +756,7 @@ export function ChatSidebar({
                       return (
                         <MessagePart
                           key={partIndex}
+                          parts={message.parts ?? []}
                           part={part}
                           partIndex={partIndex}
                           isLastTextPart={isLastTextPart}
