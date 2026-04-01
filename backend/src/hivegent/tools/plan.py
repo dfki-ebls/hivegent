@@ -5,7 +5,7 @@ from typing import Annotated, override
 
 from pydantic import Field
 
-from .base import Tool, ToolOutput
+from .base import AsyncTool, ToolOutput
 
 __all__ = [
     "CreatePlanTool",
@@ -29,7 +29,7 @@ PlanStepsArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class CreatePlanTool(Tool[str]):
+class CreatePlanTool(AsyncTool[str]):
     """Present a step-by-step plan for upcoming operations."""
 
     @override

@@ -5,8 +5,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from magic_pdf.data.data_reader_writer import FileBasedDataWriter  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
-from magic_pdf.pipe.UNIPipe import UNIPipe  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]
+from magic_pdf.data.data_reader_writer import FileBasedDataWriter  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # ty: ignore[unresolved-import]
+from magic_pdf.pipe.UNIPipe import UNIPipe  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # ty: ignore[unresolved-import]
 from pydantic import BaseModel
 
 from .base import ConversionResult, DocumentConverter, collect_dir_images

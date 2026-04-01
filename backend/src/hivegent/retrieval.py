@@ -372,6 +372,17 @@ def _to_retrieved_chunk(
     )
 
 
+def _make_key_filter(
+    file_filter: Callable[[str], bool],
+) -> Callable[[str], bool]:
+    """Build a key filter that extracts the filename and delegates to *file_filter*."""
+
+    def key_filter(key: str) -> bool:
+        return file_filter(_parse_chunk_key(key)[0])
+
+    return key_filter
+
+
 def build_search_tool(
     stores: Sequence[Casebase],
     *,
@@ -412,9 +423,7 @@ def build_search_tool(
 
             file_filter = filter_for_store(store) if filter_for_store else None
             key_filter: Callable[[str], bool] | None = (
-                (lambda key, ff=file_filter: ff(_parse_chunk_key(key)[0]))  # type: ignore[misc]
-                if file_filter is not None
-                else None
+                _make_key_filter(file_filter) if file_filter is not None else None
             )
             indexed.append(
                 IndexedStorage(

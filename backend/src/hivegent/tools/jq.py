@@ -7,7 +7,7 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..subprocesses import jq_filter
-from .base import PathsTool, ToolOutput, resolve_search_path
+from .base import AsyncPathTool, ToolOutput, resolve_search_path
 
 __all__ = ["JqFilenameArg", "JqFilterArg", "JqTool"]
 
@@ -22,7 +22,7 @@ JqFilenameArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class JqTool(PathsTool[str]):
+class JqTool(AsyncPathTool[str]):
     """Run a jq filter against a JSON file."""
 
     max_output_chars: int = 100_000

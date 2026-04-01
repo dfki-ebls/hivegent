@@ -7,7 +7,7 @@ from typing import Annotated, Literal, override
 
 from pydantic import Field
 
-from .base import PathsTool, ToolOutput, file_allowed, resolve_search_path
+from .base import AsyncPathTool, ToolOutput, file_allowed, resolve_search_path
 from .documents import DocumentFilenameArg
 
 __all__ = [
@@ -50,7 +50,7 @@ Receives the local (unprefixed) filename that was modified.
 
 
 @dataclass(slots=True, frozen=True)
-class EditDocumentTool(PathsTool[str]):
+class EditDocumentTool(AsyncPathTool[str]):
     """Edit a document by replacing an exact string with a new string."""
 
     hook: MutationHook = None
@@ -97,7 +97,7 @@ class EditDocumentTool(PathsTool[str]):
 
 
 @dataclass(slots=True, frozen=True)
-class WriteDocumentTool(PathsTool[str]):
+class WriteDocumentTool(AsyncPathTool[str]):
     """Write content to a document using prepend, append, or replace mode."""
 
     glob: str | None = None

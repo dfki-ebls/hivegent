@@ -8,7 +8,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 from pydantic_ai import FunctionToolset, RunContext
 
-from hivegent.tools.base import Tool, ToolOutput
+from hivegent.tools.base import AsyncTool, SyncTool, ToolOutput
 from hivegent.tools.fastmcp import register_mcp_tools
 from hivegent.tools.pydantic_ai import register_agent_tools
 
@@ -23,7 +23,7 @@ VerboseArg = Annotated[bool, Field(description="Whether to include detailed outp
 
 
 @dataclass(slots=True, frozen=True)
-class SyncLookupTool(Tool[str]):
+class SyncLookupTool(SyncTool[str]):
     """Sync lookup tool for testing."""
 
     prefix: str = ""
@@ -41,7 +41,7 @@ class SyncLookupTool(Tool[str]):
 
 
 @dataclass(slots=True, frozen=True)
-class AsyncLookupTool(Tool[str]):
+class AsyncLookupTool(AsyncTool[str]):
     """Async lookup tool for testing."""
 
     prefix: str = ""

@@ -14,7 +14,7 @@ from hivegent.tools.pydantic_ai import (
     register_agent_tools,
 )
 from hivegent.tools.fastmcp import for_fastmcp
-from hivegent.tools.base import Tool, ToolOutput, tool_description
+from hivegent.tools.base import AsyncTool, SyncTool, ToolOutput, tool_description
 
 
 # -- Fixtures ----------------------------------------------------------------
@@ -24,7 +24,7 @@ LimitArg = Annotated[int, Field(description="Max results.", ge=1)]
 
 
 @dataclass(slots=True, frozen=True)
-class SyncTool(Tool[str]):
+class SyncFixtureTool(SyncTool[str]):
     """A sync tool for testing."""
 
     prefix: str = ""
@@ -36,7 +36,7 @@ class SyncTool(Tool[str]):
 
 
 @dataclass(slots=True, frozen=True)
-class AsyncTool(Tool[list[str]]):
+class AsyncFixtureTool(AsyncTool[list[str]]):
     """An async tool for testing."""
 
     path: Path = Path(".")
@@ -48,7 +48,7 @@ class AsyncTool(Tool[list[str]]):
 
 
 @dataclass(slots=True, frozen=True)
-class ToolOutputTool(Tool[list[str]]):
+class ToolOutputTool(SyncTool[list[str]]):
     """A tool that returns ToolOutput with explicit formatted."""
 
     @override
@@ -63,28 +63,28 @@ class _Deps:
     value: str = "test"
 
 
-def _sync_with_prefix(d: _Deps) -> SyncTool:
-    return SyncTool(prefix=d.value)
+def _sync_with_prefix(d: _Deps) -> SyncFixtureTool:
+    return SyncFixtureTool(prefix=d.value)
 
 
-def _sync_default(_d: _Deps) -> SyncTool:
-    return SyncTool()
+def _sync_default(_d: _Deps) -> SyncFixtureTool:
+    return SyncFixtureTool()
 
 
-def _async_default(_d: _Deps) -> AsyncTool:
-    return AsyncTool()
+def _async_default(_d: _Deps) -> AsyncFixtureTool:
+    return AsyncFixtureTool()
 
 
 def _tool_output_deps(_d: _Deps) -> ToolOutputTool:
     return ToolOutputTool()
 
 
-def _sync_mcp() -> SyncTool:
-    return SyncTool()
+def _sync_mcp() -> SyncFixtureTool:
+    return SyncFixtureTool()
 
 
-def _async_mcp() -> AsyncTool:
-    return AsyncTool()
+def _async_mcp() -> AsyncFixtureTool:
+    return AsyncFixtureTool()
 
 
 def _tool_output_mcp() -> ToolOutputTool:
@@ -111,7 +111,7 @@ class TestForPydanticAI:
 
     def test_sync_wrapper_doc(self) -> None:
         fn = for_pydantic_ai(_sync_default, _Deps)
-        assert fn.__doc__ == tool_description(SyncTool)
+        assert fn.__doc__ == tool_description(SyncFixtureTool)
 
     def test_async_wrapper_is_coroutine(self) -> None:
         fn = for_pydantic_ai(_async_default, _Deps)
@@ -189,7 +189,7 @@ class TestForFastMCP:
 
     def test_doc(self) -> None:
         fn = for_fastmcp(_sync_mcp)
-        assert fn.__doc__ == tool_description(SyncTool)
+        assert fn.__doc__ == tool_description(SyncFixtureTool)
 
     def test_async_wrapper(self) -> None:
         fn = for_fastmcp(_async_mcp)

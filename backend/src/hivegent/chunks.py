@@ -22,7 +22,7 @@ from .entries import (
     stem_path_from_reference,
 )
 from .store import Casebase
-from .tools.base import PathsTool, ToolOutput, file_allowed, resolve_search_path
+from .tools.base import SyncPathTool, ToolOutput, file_allowed, resolve_search_path
 
 _NOT_FOUND_MSG = "(document not found)"
 
@@ -51,7 +51,7 @@ ChunkIndexArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class ListChunksTool(PathsTool[list[ChunkSummary] | None]):
+class ListChunksTool(SyncPathTool[list[ChunkSummary] | None]):
     """List chunk metadata for a document."""
 
     @override
@@ -86,7 +86,7 @@ class ListChunksTool(PathsTool[list[ChunkSummary] | None]):
 
 
 @dataclass(slots=True, frozen=True)
-class GetChunkTool(PathsTool[str | None]):
+class GetChunkTool(SyncPathTool[str | None]):
     """Get the content of a specific chunk."""
 
     @override

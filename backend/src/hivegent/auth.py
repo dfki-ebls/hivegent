@@ -120,12 +120,12 @@ def _build_claims_registry() -> JWTClaimsRegistry:
     Returns:
         A configured JWTClaimsRegistry instance.
     """
-    options: dict[str, ClaimsOption] = {"sub": ClaimsOption(essential=True)}
+    options: dict[str, Any] = {"sub": ClaimsOption(essential=True)}
     if auth_settings.issuer:
         options["iss"] = ClaimsOption(value=auth_settings.issuer)
     if auth_settings.audience:
         options["aud"] = ClaimsOption(value=auth_settings.audience)
-    return JWTClaimsRegistry(leeway=300, **options)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+    return JWTClaimsRegistry(leeway=300, **options)
 
 
 def _extract_group_permissions(

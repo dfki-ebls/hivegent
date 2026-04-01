@@ -8,7 +8,7 @@ from typing import Annotated, override
 
 from pydantic import Field
 
-from .base import PathsTool, ToolOutput, file_allowed, resolve_search_path
+from .base import SyncPathTool, ToolOutput, file_allowed, resolve_search_path
 
 __all__ = [
     "DocumentEndLineArg",
@@ -141,7 +141,7 @@ def _matches_subdir_and_depth(
 
 
 @dataclass(slots=True, frozen=True)
-class ListDocumentsTool(PathsTool[list[DocumentSummary]]):
+class ListDocumentsTool(SyncPathTool[list[DocumentSummary]]):
     """List all available documents with their sizes in bytes."""
 
     glob: str | None = None
@@ -190,7 +190,7 @@ class ListDocumentsTool(PathsTool[list[DocumentSummary]]):
 
 
 @dataclass(slots=True, frozen=True)
-class GetDocumentTool(PathsTool[str | None]):
+class GetDocumentTool(SyncPathTool[str | None]):
     """Get the full content of a specific document."""
 
     @override
@@ -221,7 +221,7 @@ class GetDocumentTool(PathsTool[str | None]):
 
 
 @dataclass(slots=True, frozen=True)
-class GetDocumentLinesTool(PathsTool[DocumentRange | None]):
+class GetDocumentLinesTool(SyncPathTool[DocumentRange | None]):
     """Get a range of lines from a document."""
 
     default_lines: int = 200
@@ -267,7 +267,7 @@ class GetDocumentLinesTool(PathsTool[DocumentRange | None]):
 
 
 @dataclass(slots=True, frozen=True)
-class GlobDocumentsTool(PathsTool[list[str]]):
+class GlobDocumentsTool(SyncPathTool[list[str]]):
     """Find documents matching a glob pattern."""
 
     glob: str | None = None

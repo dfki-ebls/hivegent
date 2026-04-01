@@ -19,7 +19,7 @@ def wrap_tool_output(result: ToolOutput[Any]) -> ToolResult:
 
 
 def for_fastmcp(
-    factory_provider: Callable[..., Tool],
+    factory_provider: Callable[..., Tool[Any]],
 ) -> Callable[..., Any]:
     """Build a wrapper function whose signature FastMCP can introspect.
 
@@ -69,7 +69,7 @@ def for_fastmcp(
 
 def register_mcp_tools(
     app: FastMCP,
-    factories: Sequence[Callable[..., Tool]],
+    factories: Sequence[Callable[..., Tool[Any]]],
 ) -> None:
     """Register multiple Tool factories on a FastMCP app.
 

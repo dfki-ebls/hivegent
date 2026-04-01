@@ -45,7 +45,8 @@ async def edit_document(
         paths=store.workspace_dir(settings.data_dir),
         hook=partial(on_document_write, store),
     )
-    return await tool(filename, old_string, new_string)
+    result = await tool(filename, old_string, new_string)
+    return result.data
 
 
 @mcp_app.tool(description=tool_description(WriteDocumentTool))
@@ -68,4 +69,5 @@ async def write_document(
         paths=store.workspace_dir(settings.data_dir),
         hook=partial(on_document_write, store),
     )
-    return await tool(filename, content, mode)
+    result = await tool(filename, content, mode)
+    return result.data

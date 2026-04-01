@@ -10,7 +10,7 @@ import httpx
 from ddgs import DDGS
 from pydantic import Field
 
-from .base import Tool, ToolOutput
+from .base import AsyncTool, SyncTool, ToolOutput
 
 __all__ = [
     "WebFetch",
@@ -82,7 +82,7 @@ def _validate_url(url: str) -> str | None:
 
 
 @dataclass(slots=True, frozen=True)
-class WebSearch(Tool[list[dict[str, str]]]):
+class WebSearch(SyncTool[list[dict[str, str]]]):
     """Search the web using DuckDuckGo."""
 
     @override
@@ -122,7 +122,7 @@ class WebSearch(Tool[list[dict[str, str]]]):
 
 
 @dataclass(slots=True, frozen=True)
-class WebFetch(Tool[str]):
+class WebFetch(AsyncTool[str]):
     """Fetch web page content as plain text."""
 
     max_response_bytes: int = 1_000_000

@@ -27,7 +27,7 @@ PIL.Image.MAX_IMAGE_PIXELS = 1_000_000_000
 # The default 1 MB causes "Decompressed Data Too Large" for images with
 # large embedded metadata (common in Office documents). We are generous
 # while still guarding against decompression bombs.
-PIL.ImageFile.SAFEBLOCK = 32 * 1024 * 1024  # type: ignore[assignment]
+setattr(PIL.ImageFile, "SAFEBLOCK", 32 * 1024 * 1024)
 
 __all__ = ["DoclingConverter", "DoclingConverterConfig"]
 

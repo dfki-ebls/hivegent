@@ -9,7 +9,7 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..subprocesses import rg_search
-from .base import PathsTool, SearchPath, ToolOutput, file_allowed
+from .base import AsyncPathTool, SearchPath, ToolOutput, file_allowed
 
 __all__ = [
     "CaseSensitiveArg",
@@ -103,7 +103,7 @@ async def _search_path(
 
 
 @dataclass(slots=True, frozen=True)
-class GrepTool(PathsTool[list[GrepMatch]]):
+class GrepTool(AsyncPathTool[list[GrepMatch]]):
     """Search documents for a pattern."""
 
     @override

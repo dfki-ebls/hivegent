@@ -5,18 +5,22 @@ import json
 import re
 import types
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self, get_type_hints
+from typing import Any, Self, get_type_hints, override
 
 from pydantic import BaseModel
 
 __all__ = [
+    "AsyncPathTool",
+    "AsyncTool",
     "CallInfo",
-    "PathsTool",
+    "PathTool",
     "SearchPath",
     "SearchPathFilterFunc",
+    "SyncPathTool",
+    "SyncTool",
     "Tool",
     "ToolOutput",
     "apply_prefix",
@@ -150,26 +154,49 @@ class ToolOutput[T](BaseModel):
 
 
 class Tool[T](ABC):
-    """Abstract base class for tool implementations.
+    """Base class for all tool implementations.
 
-    All tool classes must implement ``__call__`` with their specific
-    signature, returning ``ToolOutput[T]``.
+    Concrete tools should inherit from :class:`SyncTool` or
+    :class:`AsyncTool` (or their :class:`PathTool` counterparts) instead
+    of subclassing this directly.
+
     The ``__call__`` docstring serves as the canonical tool description,
     reused by agent toolsets and MCP endpoints, while parameter
     descriptions live in ``Annotated`` metadata on the signature itself.
     """
 
     @abstractmethod
+    def __call__(
+        self, *args: Any, **kwargs: Any
+    ) -> ToolOutput[T] | Awaitable[ToolOutput[T]]:
+        """Execute the tool."""
+        ...
+
+
+class SyncTool[T](Tool[T], ABC):
+    """Abstract base for synchronous tool implementations."""
+
+    @override
+    @abstractmethod
     def __call__(self, *args: Any, **kwargs: Any) -> ToolOutput[T]: ...
 
 
+class AsyncTool[T](Tool[T], ABC):
+    """Abstract base for asynchronous tool implementations."""
+
+    @override
+    @abstractmethod
+    async def __call__(self, *args: Any, **kwargs: Any) -> ToolOutput[T]: ...
+
+
 @dataclass(slots=True, frozen=True)
-class PathsTool[T](Tool[T], ABC):
+class PathTool[T](Tool[T], ABC):
     """Tool base that owns a ``paths`` field with lazy coercion.
 
     Accepts a bare :class:`~pathlib.Path`, a single :class:`SearchPath`,
     or a tuple.  Use :attr:`resolved_paths` to obtain the normalised
-    tuple.
+    tuple.  Concrete subclasses should inherit from
+    :class:`SyncPathTool` or :class:`AsyncPathTool`.
     """
 
     paths: Path | SearchPath | tuple[SearchPath, ...] = ()
@@ -180,7 +207,17 @@ class PathsTool[T](Tool[T], ABC):
         return coerce_paths(self.paths)
 
 
-def tool_name(tool_cls: type[Tool]) -> str:
+@dataclass(slots=True, frozen=True)
+class SyncPathTool[T](PathTool[T], SyncTool[T], ABC):
+    """Synchronous tool with search paths."""
+
+
+@dataclass(slots=True, frozen=True)
+class AsyncPathTool[T](PathTool[T], AsyncTool[T], ABC):
+    """Asynchronous tool with search paths."""
+
+
+def tool_name(tool_cls: type[Tool[Any]]) -> str:
     """Derive a snake_case tool name from a CamelCase class name.
 
     Strips a trailing ``Tool`` suffix so that e.g.
@@ -213,7 +250,7 @@ def factory_tool_name(factory: Callable[..., Any]) -> str:
     return name.lstrip("_")
 
 
-def resolve_tool_cls(factory: Callable[..., Tool]) -> type[Tool]:
+def resolve_tool_cls(factory: Callable[..., Tool[Any]]) -> type[Tool[Any]]:
     """Extract the Tool subclass from a factory's return type annotation.
 
     Handles parameterized generics like ``LanceDBSearchTool[str]`` by
@@ -243,7 +280,7 @@ def resolve_tool_cls(factory: Callable[..., Tool]) -> type[Tool]:
     return tool_cls
 
 
-def tool_description(tool: type[Tool]) -> str | None:
+def tool_description(tool: type[Tool[Any]]) -> str | None:
     """Return the canonical user-facing description for a tool callable."""
     return inspect.getdoc(tool.__call__) or inspect.getdoc(tool)
 
@@ -298,7 +335,7 @@ class CallInfo:
         setattr(wrapper, "__signature__", sig)
 
     @classmethod
-    def from_factory(cls, factory: Callable[..., Tool]) -> Self:
+    def from_factory(cls, factory: Callable[..., Tool[Any]]) -> Self:
         """Extract call metadata from a Tool factory's return type.
 
         Resolves the Tool subclass from *factory*'s return annotation,

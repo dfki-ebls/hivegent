@@ -4,7 +4,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from hivegent.chunkers.base import RetrievedChunk
-from hivegent.retrieval import _parse_chunk_key, _to_retrieved_chunk
+from hivegent.retrieval import _ChunkEntry, _parse_chunk_key, _to_retrieved_chunk
 from hivegent.tools.retrieval import SearchResult
 
 
@@ -61,7 +61,7 @@ class TestToRetrievedChunk:
 
     def test_explicit_token_count(self) -> None:
         result = SearchResult(key="report.md::0", text="hello world", score=0.95)
-        chunk = _to_retrieved_chunk(result, token_count=42)
+        chunk = _to_retrieved_chunk(result, meta=_ChunkEntry(text="hello world", token_count=42))
         assert chunk == snapshot(
             RetrievedChunk(
                 filename="report.md",

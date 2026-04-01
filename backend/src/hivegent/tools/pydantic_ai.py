@@ -1,8 +1,8 @@
 """Adapter utilities for registering Tool classes with pydantic-ai."""
 
 import inspect
-from collections.abc import Callable, Sequence
-from typing import Any
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any, cast
 
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.messages import ToolReturn
@@ -31,7 +31,7 @@ def wrap_tool_output(result: ToolOutput[Any]) -> ToolReturn:
 
 
 def for_pydantic_ai[D](
-    factory: Callable[[D], Tool],
+    factory: Callable[[D], Tool[Any]],
     deps_type: type[D],
 ) -> Callable[..., Any]:
     """Build a wrapper function whose signature pydantic-ai can introspect.
@@ -49,7 +49,9 @@ def for_pydantic_ai[D](
     info = CallInfo.from_factory(factory)
 
     # Build parameter list: RunContext first, then __call__ params.
-    ctx_annotation: Any = RunContext[deps_type]
+    # Use getattr to build RunContext[D] at runtime without a subscript
+    # expression that ty would interpret as a static type form.
+    ctx_annotation: Any = getattr(RunContext, "__class_getitem__")(deps_type)
     ctx_param = inspect.Parameter(
         "ctx",
         inspect.Parameter.POSITIONAL_OR_KEYWORD,
@@ -69,11 +71,13 @@ def for_pydantic_ai[D](
     if info.is_async:
 
         async def wrapper(ctx: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-            return wrap_tool_output(await factory(ctx.deps)(**kwargs))
+            result = cast(Awaitable[ToolOutput[Any]], factory(ctx.deps)(**kwargs))
+            return wrap_tool_output(await result)
     else:
 
         def wrapper(ctx: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-            return wrap_tool_output(factory(ctx.deps)(**kwargs))
+            result = cast(ToolOutput[Any], factory(ctx.deps)(**kwargs))
+            return wrap_tool_output(result)
 
     info.apply_to(wrapper, new_sig, new_annotations)
     return wrapper
@@ -82,7 +86,7 @@ def for_pydantic_ai[D](
 def register_agent_tools[D](
     toolset: FunctionToolset[D],
     deps_type: type[D],
-    factories: Sequence[Callable[[D], Tool]],
+    factories: Sequence[Callable[[D], Tool[Any]]],
     *,
     requires_approval: bool | None = None,
 ) -> None:

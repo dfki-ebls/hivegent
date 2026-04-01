@@ -8,7 +8,7 @@ from typing import Annotated, Literal, cast, override
 import cbrkit
 from pydantic import Field
 
-from .base import Tool, ToolOutput, apply_prefix
+from .base import SyncTool, ToolOutput, apply_prefix
 
 __all__ = [
     "IndexedStorage",
@@ -88,7 +88,7 @@ SearchTypeArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class LanceDBSearchTool[R = SearchResult](Tool[list[R]]):
+class LanceDBSearchTool[R = SearchResult](SyncTool[list[R]]):
     """Search one or more LanceDB storages using cbrkit indexed retrieval.
 
     Each :class:`IndexedStorage` is queried independently so that
