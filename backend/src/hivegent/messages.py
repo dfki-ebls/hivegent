@@ -223,7 +223,7 @@ def list_conversations(user_id: str) -> list[ConversationSummary]:
     for path in user_dir.glob("*.json"):
         try:
             conv = load_conversation(user_id, path.stem)
-            if conv:
+            if conv and conv.messages:
                 conversations.append(
                     ConversationSummary(
                         id=conv.id,
