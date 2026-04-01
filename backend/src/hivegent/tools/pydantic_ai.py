@@ -13,11 +13,15 @@ from .base import Tool, ToolOutput, factory_tool_name, resolve_tool_cls, tool_de
 __all__ = ["for_pydantic_ai", "register_agent_tools"]
 
 
-def _wrap_tool_output(result: Any) -> Any:  # noqa: ANN401
-    """Wrap a :class:`ToolOutput` in a :class:`ToolReturn`, pass others through."""
-    if isinstance(result, ToolOutput):
-        return ToolReturn(return_value=result)
-    return result
+def _wrap_tool_output(result: ToolOutput[Any]) -> ToolReturn:
+    """Wrap a :class:`ToolOutput` in a :class:`ToolReturn`.
+
+    Eagerly resolves ``formatted`` so that :class:`CompactToolResultModel`
+    never needs to re-derive the text on subsequent LLM turns.
+    """
+    if result.formatted is None:
+        result = result.model_copy(update={"formatted": result.text})
+    return ToolReturn(return_value=result)
 
 
 def for_pydantic_ai[D](
@@ -51,15 +55,20 @@ def for_pydantic_ai[D](
     )
     call_params = [p for name, p in sig.parameters.items() if name != "self"]
     new_params = [ctx_param, *call_params]
-    new_sig = sig.replace(parameters=new_params)
+
+    # ToolOutput is unwrapped to a plain string by CompactToolResultModel,
+    # so the declared return type must reflect what the model actually sees.
+    ret = hints.get("return")
+    ret_annotation = str if isinstance(ret, type) and issubclass(ret, ToolOutput) else sig.return_annotation
+    new_sig = sig.replace(parameters=new_params, return_annotation=ret_annotation)
 
     # Build annotations dict
     new_annotations: dict[str, Any] = {"ctx": ctx_annotation}
     for p in call_params:
         if p.name in hints:
             new_annotations[p.name] = hints[p.name]
-    if "return" in hints:
-        new_annotations["return"] = hints["return"]
+    if ret is not None:
+        new_annotations["return"] = str if isinstance(ret, type) and issubclass(ret, ToolOutput) else ret
 
     if is_async:
 
@@ -78,6 +87,10 @@ def for_pydantic_ai[D](
     name = factory_tool_name(factory)
     wrapper.__name__ = name
     wrapper.__qualname__ = name
+    # @wraps copies __wrapped__ from the original __call__, which
+    # get_type_hints() follows to discover the return type.  Remove it so
+    # consumers use our rewritten annotations instead.
+    wrapper.__wrapped__ = None  # type: ignore[attr-defined]
     return wrapper
 
 

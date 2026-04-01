@@ -141,7 +141,7 @@ def _matches_subdir_and_depth(
 
 
 @dataclass(slots=True, frozen=True)
-class ListDocumentsTool(PathsTool):
+class ListDocumentsTool(PathsTool[list[DocumentSummary]]):
     """List all available documents with their sizes in bytes."""
 
     glob: str | None = None
@@ -190,7 +190,7 @@ class ListDocumentsTool(PathsTool):
 
 
 @dataclass(slots=True, frozen=True)
-class GetDocumentTool(PathsTool):
+class GetDocumentTool(PathsTool[str | None]):
     """Get the full content of a specific document."""
 
     @override
@@ -198,30 +198,30 @@ class GetDocumentTool(PathsTool):
         self,
         filename: DocumentFilenameArg,
         max_chars: DocumentMaxCharsArg = 100_000,
-    ) -> str | None:
+    ) -> ToolOutput[str | None]:
         """Get the full content of a specific document."""
         resolved = resolve_search_path(self.resolved_paths, filename)
         if resolved is None:
-            return None
+            return ToolOutput(data=None)
         sp, local = resolved
         if not file_allowed(sp.filter_func, local):
-            return None
+            return ToolOutput(data=None)
         file_path = (sp.path / local).resolve()
         if not file_path.is_relative_to(sp.path.resolve()):
-            return None
+            return ToolOutput(data=None)
         if not file_path.is_file():
-            return None
+            return ToolOutput(data=None)
         content = file_path.read_text(encoding="utf-8")
         if max_chars is not None and len(content) > max_chars:
             content = (
                 content[:max_chars]
                 + "\n\n[truncated — use get_document_lines for specific sections]"
             )
-        return content
+        return ToolOutput(data=content)
 
 
 @dataclass(slots=True, frozen=True)
-class GetDocumentLinesTool(PathsTool):
+class GetDocumentLinesTool(PathsTool[DocumentRange | None]):
     """Get a range of lines from a document."""
 
     default_lines: int = 200
@@ -267,7 +267,7 @@ class GetDocumentLinesTool(PathsTool):
 
 
 @dataclass(slots=True, frozen=True)
-class GlobDocumentsTool(PathsTool):
+class GlobDocumentsTool(PathsTool[list[str]]):
     """Find documents matching a glob pattern."""
 
     glob: str | None = None

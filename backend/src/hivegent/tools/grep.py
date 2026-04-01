@@ -103,7 +103,7 @@ async def _search_path(
 
 
 @dataclass(slots=True, frozen=True)
-class GrepTool(PathsTool):
+class GrepTool(PathsTool[list[GrepMatch]]):
     """Search documents for a pattern."""
 
     @override

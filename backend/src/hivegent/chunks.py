@@ -51,7 +51,7 @@ ChunkIndexArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class ListChunksTool(PathsTool):
+class ListChunksTool(PathsTool[list[ChunkSummary] | None]):
     """List chunk metadata for a document."""
 
     @override
@@ -86,7 +86,7 @@ class ListChunksTool(PathsTool):
 
 
 @dataclass(slots=True, frozen=True)
-class GetChunkTool(PathsTool):
+class GetChunkTool(PathsTool[str | None]):
     """Get the content of a specific chunk."""
 
     @override
@@ -94,20 +94,20 @@ class GetChunkTool(PathsTool):
         self,
         filename: str,
         chunk_index: ChunkIndexArg,
-    ) -> str | None:
+    ) -> ToolOutput[str | None]:
         """Get the content of a specific chunk."""
         resolved = resolve_search_path(self.resolved_paths, filename)
         if resolved is None:
-            return None
+            return ToolOutput(data=None)
         sp, local = resolved
         if not file_allowed(sp.filter_func, local):
-            return None
+            return ToolOutput(data=None)
         metadata = load_document_metadata(sp.path, local)
         if not metadata:
-            return None
+            return ToolOutput(data=None)
         if 0 <= chunk_index < len(metadata.chunks):
-            return metadata.chunks[chunk_index].text
-        return None
+            return ToolOutput(data=metadata.chunks[chunk_index].text)
+        return ToolOutput(data=None)
 
 
 def _default_entry_metadata(

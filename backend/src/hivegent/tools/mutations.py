@@ -7,7 +7,7 @@ from typing import Annotated, Literal, override
 
 from pydantic import Field
 
-from .base import PathsTool, file_allowed, resolve_search_path
+from .base import PathsTool, ToolOutput, file_allowed, resolve_search_path
 from .documents import DocumentFilenameArg
 
 __all__ = [
@@ -50,7 +50,7 @@ Receives the local (unprefixed) filename that was modified.
 
 
 @dataclass(slots=True, frozen=True)
-class EditDocumentTool(PathsTool):
+class EditDocumentTool(PathsTool[str]):
     """Edit a document by replacing an exact string with a new string."""
 
     hook: MutationHook = None
@@ -61,7 +61,7 @@ class EditDocumentTool(PathsTool):
         filename: DocumentFilenameArg,
         old_string: EditOldStringArg,
         new_string: EditNewStringArg,
-    ) -> str:
+    ) -> ToolOutput[str]:
         """Replace an exact string in a document.
 
         Fails if the string does not exist or appears more than once,
@@ -69,35 +69,35 @@ class EditDocumentTool(PathsTool):
         """
         resolved = resolve_search_path(self.resolved_paths, filename)
         if resolved is None:
-            return f"Error: '{filename}' is not accessible."
+            return ToolOutput(data=f"Error: '{filename}' is not accessible.")
         sp, local = resolved
         if not file_allowed(sp.filter_func, local):
-            return f"Error: '{filename}' is not accessible."
+            return ToolOutput(data=f"Error: '{filename}' is not accessible.")
         file_path = (sp.path / local).resolve()
         if not file_path.is_relative_to(sp.path.resolve()):
-            return "Error: path traversal detected."
+            return ToolOutput(data="Error: path traversal detected.")
         if not file_path.is_file():
-            return f"Error: '{filename}' does not exist."
+            return ToolOutput(data=f"Error: '{filename}' does not exist.")
 
         content = file_path.read_text(encoding="utf-8")
         count = content.count(old_string)
         if count == 0:
-            return f"Error: old_string not found in '{filename}'."
+            return ToolOutput(data=f"Error: old_string not found in '{filename}'.")
         if count > 1:
-            return (
-                f"Error: old_string appears {count} times in '{filename}'; "
-                "must be unique."
+            return ToolOutput(
+                data=f"Error: old_string appears {count} times in '{filename}'; "
+                "must be unique.",
             )
 
         new_content = content.replace(old_string, new_string, 1)
         file_path.write_text(new_content, encoding="utf-8")
         if self.hook:
             await self.hook(local)
-        return f"Replaced 1 occurrence in '{filename}'."
+        return ToolOutput(data=f"Replaced 1 occurrence in '{filename}'.")
 
 
 @dataclass(slots=True, frozen=True)
-class WriteDocumentTool(PathsTool):
+class WriteDocumentTool(PathsTool[str]):
     """Write content to a document using prepend, append, or replace mode."""
 
     glob: str | None = None
@@ -109,26 +109,30 @@ class WriteDocumentTool(PathsTool):
         filename: DocumentFilenameArg,
         content: DocumentContentArg,
         mode: WriteModeArg = "replace",
-    ) -> str:
+    ) -> ToolOutput[str]:
         """Write content to a document."""
         resolved = resolve_search_path(self.resolved_paths, filename)
         if resolved is None:
-            return f"Error: '{filename}' is not accessible."
+            return ToolOutput(data=f"Error: '{filename}' is not accessible.")
         sp, local = resolved
         if not file_allowed(sp.filter_func, local):
-            return f"Error: '{filename}' is not accessible."
+            return ToolOutput(data=f"Error: '{filename}' is not accessible.")
         file_path = (sp.path / local).resolve()
         if not file_path.is_relative_to(sp.path.resolve()):
-            return "Error: path traversal detected."
+            return ToolOutput(data="Error: path traversal detected.")
         if self.glob and not PurePosixPath(local).match(self.glob):
-            return f"Error: '{filename}' does not match pattern '{self.glob}'."
+            return ToolOutput(
+                data=f"Error: '{filename}' does not match pattern '{self.glob}'.",
+            )
 
         if mode == "replace":
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
             message = f"Wrote {len(content)} characters to '{filename}'."
         elif not file_path.is_file():
-            return f"Error: '{filename}' does not exist (use mode='replace' to create)."
+            return ToolOutput(
+                data=f"Error: '{filename}' does not exist (use mode='replace' to create).",
+            )
         elif mode == "append":
             existing = file_path.read_text(encoding="utf-8")
             file_path.write_text(existing + content, encoding="utf-8")
@@ -140,4 +144,4 @@ class WriteDocumentTool(PathsTool):
 
         if self.hook:
             await self.hook(local)
-        return message
+        return ToolOutput(data=message)

@@ -1,5 +1,6 @@
 """Model wrapper that compacts tool results for the LLM."""
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
@@ -63,15 +64,36 @@ class CompactToolResultModel(WrapperModel):
             yield stream
 
 
+def _derive_text(data: object) -> str:
+    """Derive model-facing text from raw data."""
+    if isinstance(data, str):
+        return data
+    return json.dumps(data, default=str)
+
+
 def _get_formatted(part: ModelRequestPart) -> str | None:
-    """Extract the compact text from a tool return part, if present."""
+    """Extract the compact text from a :class:`ToolReturnPart`.
+
+    Returns ``None`` when the part does not carry a ``ToolOutput``
+    envelope (live instance or deserialized dict with a ``"data"`` key).
+    """
     if not isinstance(part, ToolReturnPart):
         return None
-    # content is a ToolOutput BaseModel instance or a plain dict
-    compact = getattr(part.content, "formatted", None)
-    if compact is None and isinstance(part.content, dict):
-        compact = part.content.get("formatted")
-    return compact
+    content = part.content
+    # Live ToolOutput instance — eagerly resolved by the adapter, so
+    # formatted is almost always set; fall back to _derive_text just
+    # in case.
+    from ..tools.base import ToolOutput
+
+    if isinstance(content, ToolOutput):
+        return content.text
+    # Deserialized dict (loaded from storage)
+    if isinstance(content, dict) and "data" in content:
+        formatted = content.get("formatted")
+        if isinstance(formatted, str):
+            return formatted
+        return _derive_text(content["data"])
+    return None
 
 
 def _compact_messages(messages: list[ModelMessage]) -> list[ModelMessage]:

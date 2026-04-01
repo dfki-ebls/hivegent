@@ -13,7 +13,7 @@ from hivegent.tools.pydantic_ai import (
     register_agent_tools,
 )
 from hivegent.tools.fastmcp import for_fastmcp
-from hivegent.tools.base import Tool, tool_description
+from hivegent.tools.base import Tool, ToolOutput, tool_description
 
 
 # -- Fixtures ----------------------------------------------------------------
@@ -23,27 +23,38 @@ LimitArg = Annotated[int, Field(description="Max results.", ge=1)]
 
 
 @dataclass(slots=True, frozen=True)
-class SyncTool(Tool):
+class SyncTool(Tool[str]):
     """A sync tool for testing."""
 
     prefix: str = ""
 
     @override
-    def __call__(self, query: QueryArg, limit: LimitArg = 5) -> str:
+    def __call__(self, query: QueryArg, limit: LimitArg = 5) -> ToolOutput[str]:
         """Search for things."""
-        return f"{self.prefix}{query}:{limit}"
+        return ToolOutput(data=f"{self.prefix}{query}:{limit}")
 
 
 @dataclass(slots=True, frozen=True)
-class AsyncTool(Tool):
+class AsyncTool(Tool[list[str]]):
     """An async tool for testing."""
 
     path: Path = Path(".")
 
     @override
-    async def __call__(self, query: QueryArg) -> list[str]:
+    async def __call__(self, query: QueryArg) -> ToolOutput[list[str]]:
         """Fetch results asynchronously."""
-        return [str(self.path), query]
+        return ToolOutput(data=[str(self.path), query])
+
+
+@dataclass(slots=True, frozen=True)
+class ToolOutputTool(Tool[list[str]]):
+    """A tool that returns ToolOutput with explicit formatted."""
+
+    @override
+    def __call__(self, query: QueryArg) -> ToolOutput[list[str]]:
+        """Search with structured output."""
+        results = [query]
+        return ToolOutput(data=results, formatted=query)
 
 
 @dataclass(slots=True, frozen=True)
@@ -63,12 +74,20 @@ def _async_default(_d: _Deps) -> AsyncTool:
     return AsyncTool()
 
 
+def _tool_output_deps(_d: _Deps) -> ToolOutputTool:
+    return ToolOutputTool()
+
+
 def _sync_mcp() -> SyncTool:
     return SyncTool()
 
 
 def _async_mcp() -> AsyncTool:
     return AsyncTool()
+
+
+def _tool_output_mcp() -> ToolOutputTool:
+    return ToolOutputTool()
 
 
 # -- for_pydantic_ai ---------------------------------------------------------
@@ -104,6 +123,11 @@ class TestForPydanticAI:
     def test_annotations_include_return(self) -> None:
         fn = for_pydantic_ai(_sync_default, _Deps)
         assert "return" in fn.__annotations__
+
+    def test_tool_output_return_rewritten_to_str(self) -> None:
+        fn = for_pydantic_ai(_tool_output_deps, _Deps)
+        assert fn.__annotations__["return"] is str
+        assert inspect.signature(fn).return_annotation is str
 
 
 # -- register_agent_tools -----------------------------------------------------
@@ -169,3 +193,8 @@ class TestForFastMCP:
     def test_async_wrapper(self) -> None:
         fn = for_fastmcp(_async_mcp)
         assert inspect.iscoroutinefunction(fn)
+
+    def test_tool_output_return_rewritten_to_str(self) -> None:
+        fn = for_fastmcp(_tool_output_mcp)
+        assert fn.__annotations__["return"] is str
+        assert inspect.signature(fn).return_annotation is str

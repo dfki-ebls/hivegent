@@ -82,7 +82,7 @@ def _validate_url(url: str) -> str | None:
 
 
 @dataclass(slots=True, frozen=True)
-class WebSearch(Tool):
+class WebSearch(Tool[list[dict[str, str]]]):
     """Search the web using DuckDuckGo."""
 
     @override
@@ -122,13 +122,13 @@ class WebSearch(Tool):
 
 
 @dataclass(slots=True, frozen=True)
-class WebFetch(Tool):
+class WebFetch(Tool[str]):
     """Fetch web page content as plain text."""
 
     max_response_bytes: int = 1_000_000
 
     @override
-    async def __call__(self, url: WebUrlArg) -> str:
+    async def __call__(self, url: WebUrlArg) -> ToolOutput[str]:
         """Fetch the content of a web page as plain text.
 
         Follows redirects.
@@ -136,7 +136,7 @@ class WebFetch(Tool):
         """
         error = _validate_url(url)
         if error:
-            return error
+            return ToolOutput(data=error)
 
         try:
             async with httpx.AsyncClient(
@@ -152,16 +152,18 @@ class WebFetch(Tool):
                     "text/" not in content_type
                     and "application/json" not in content_type
                 ):
-                    return f"Error: unsupported content type '{content_type}'."
+                    return ToolOutput(
+                        data=f"Error: unsupported content type '{content_type}'."
+                    )
 
                 body = response.text
                 if len(body) > self.max_response_bytes:
                     body = body[: self.max_response_bytes] + "\n\n[truncated]"
-                return body
+                return ToolOutput(data=body)
         except httpx.TimeoutException:
-            return "Error: request timed out."
+            return ToolOutput(data="Error: request timed out.")
         except httpx.HTTPStatusError as exc:
-            return f"Error: HTTP {exc.response.status_code}."
+            return ToolOutput(data=f"Error: HTTP {exc.response.status_code}.")
         except Exception:
             logger.exception("Web fetch failed for URL %r", url)
-            return "Error: failed to fetch URL."
+            return ToolOutput(data="Error: failed to fetch URL.")

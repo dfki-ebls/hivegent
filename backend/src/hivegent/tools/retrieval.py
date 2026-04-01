@@ -88,7 +88,7 @@ SearchTypeArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class LanceDBSearchTool[R = SearchResult](Tool):
+class LanceDBSearchTool[R = SearchResult](Tool[list[R]]):
     """Search one or more LanceDB storages using cbrkit indexed retrieval.
 
     Each :class:`IndexedStorage` is queried independently so that

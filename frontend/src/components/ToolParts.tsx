@@ -78,9 +78,9 @@ function parseJson<T>(value: unknown): T | undefined {
 
 /** Unwrap a ``{data, formatted}`` envelope from ToolOutput-returning tools. */
 function unwrapToolOutput(raw: unknown): { data: unknown; formatted: string | null } {
-  if (raw && typeof raw === "object" && "data" in raw && "formatted" in raw) {
-    const envelope = raw as { data: unknown; formatted: string };
-    return { data: envelope.data, formatted: envelope.formatted };
+  if (raw && typeof raw === "object" && "data" in raw) {
+    const envelope = raw as { data: unknown; formatted?: string | null };
+    return { data: envelope.data, formatted: envelope.formatted ?? null };
   }
   return { data: raw, formatted: null };
 }

@@ -14,11 +14,9 @@ from .base import Tool, ToolOutput, factory_tool_name, resolve_tool_cls, tool_de
 __all__ = ["for_fastmcp", "register_mcp_tools"]
 
 
-def _wrap_tool_output(result: Any) -> Any:  # noqa: ANN401
-    """Extract formatted text from a :class:`ToolOutput`, pass others through."""
-    if isinstance(result, ToolOutput):
-        return ToolResult(content=result.formatted)
-    return result
+def _wrap_tool_output(result: ToolOutput[Any]) -> ToolResult:
+    """Extract model-facing text from a :class:`ToolOutput`."""
+    return ToolResult(content=result.text)
 
 
 def for_fastmcp(
@@ -54,15 +52,20 @@ def for_fastmcp(
         annotation=Any,
     )
     new_params = [*call_params, tool_param]
-    new_sig = sig.replace(parameters=new_params)
+
+    # ToolOutput is unwrapped to a plain string by _wrap_tool_output,
+    # so the declared return type must reflect what is actually returned.
+    ret = hints.get("return")
+    ret_annotation = str if isinstance(ret, type) and issubclass(ret, ToolOutput) else sig.return_annotation
+    new_sig = sig.replace(parameters=new_params, return_annotation=ret_annotation)
 
     # Build annotations
     new_annotations: dict[str, Any] = {"_tool_": Any}
     for p in call_params:
         if p.name in hints:
             new_annotations[p.name] = hints[p.name]
-    if "return" in hints:
-        new_annotations["return"] = hints["return"]
+    if ret is not None:
+        new_annotations["return"] = str if isinstance(ret, type) and issubclass(ret, ToolOutput) else ret
 
     if is_async:
 
@@ -81,6 +84,10 @@ def for_fastmcp(
     name = factory_tool_name(factory_provider)
     wrapper.__name__ = name
     wrapper.__qualname__ = name
+    # @wraps copies __wrapped__ from the original __call__, which FastMCP
+    # follows to discover the return type.  Remove it so FastMCP uses our
+    # rewritten annotations instead.
+    wrapper.__wrapped__ = None  # type: ignore[attr-defined]
     return wrapper
 
 

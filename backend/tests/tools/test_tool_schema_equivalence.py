@@ -8,7 +8,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 from pydantic_ai import FunctionToolset, RunContext
 
-from hivegent.tools.base import Tool
+from hivegent.tools.base import Tool, ToolOutput
 from hivegent.tools.fastmcp import register_mcp_tools
 from hivegent.tools.pydantic_ai import register_agent_tools
 
@@ -23,7 +23,7 @@ VerboseArg = Annotated[bool, Field(description="Whether to include detailed outp
 
 
 @dataclass(slots=True, frozen=True)
-class SyncLookupTool(Tool):
+class SyncLookupTool(Tool[str]):
     """Sync lookup tool for testing."""
 
     prefix: str = ""
@@ -35,13 +35,13 @@ class SyncLookupTool(Tool):
         count: CountArg = 10,
         category: CategoryArg = None,
         verbose: VerboseArg = False,
-    ) -> str:
+    ) -> ToolOutput[str]:
         """Look up entities by name."""
-        return f"{self.prefix}{name}:{count}"
+        return ToolOutput(data=f"{self.prefix}{name}:{count}")
 
 
 @dataclass(slots=True, frozen=True)
-class AsyncLookupTool(Tool):
+class AsyncLookupTool(Tool[str]):
     """Async lookup tool for testing."""
 
     prefix: str = ""
@@ -53,9 +53,9 @@ class AsyncLookupTool(Tool):
         count: CountArg = 10,
         category: CategoryArg = None,
         verbose: VerboseArg = False,
-    ) -> list[str]:
+    ) -> ToolOutput[str]:
         """Look up entities by name asynchronously."""
-        return [f"{self.prefix}{name}:{count}"]
+        return ToolOutput(data=f"{self.prefix}{name}:{count}")
 
 
 # -- Deps and factory functions ----------------------------------------------
@@ -164,9 +164,9 @@ def _make_direct_fastmcp_app() -> FastMCP:
         count: CountArg = 10,
         category: CategoryArg = None,
         verbose: VerboseArg = False,
-    ) -> list[str]:
+    ) -> str:
         """Look up entities by name asynchronously."""
-        return [name]
+        return name
 
     return app
 
@@ -233,9 +233,9 @@ def _make_direct_pydantic_ai_toolset() -> FunctionToolset[_Deps]:
         count: CountArg = 10,
         category: CategoryArg = None,
         verbose: VerboseArg = False,
-    ) -> list[str]:
+    ) -> str:
         """Look up entities by name asynchronously."""
-        return [name]
+        return name
 
     return toolset
 

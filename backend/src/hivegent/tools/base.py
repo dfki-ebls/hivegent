@@ -1,6 +1,7 @@
 """Shared base protocol and helpers for tool implementations."""
 
 import inspect
+import json
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -125,32 +126,43 @@ def file_allowed(filter_func: SearchPathFilterFunc, filename: str) -> bool:
 class ToolOutput[T](BaseModel):
     """Tool result carrying both structured data and a compact text form.
 
-    Tools that benefit from a compact LLM representation return this
-    instead of a bare value.  The adapters route ``data`` to the
-    frontend (via the Vercel AI stream) and ``formatted`` to the LLM
-    and MCP clients.
+    The adapters route ``data`` to the frontend (via the Vercel AI
+    stream) and :attr:`text` to the LLM and MCP clients.
+
+    When ``formatted`` is ``None``, :attr:`text` derives the
+    representation automatically: strings are used as-is, other types
+    are serialized to JSON.
     """
 
     data: T
-    formatted: str
+    formatted: str | None = None
+
+    @property
+    def text(self) -> str:
+        """Model-facing text: explicit ``formatted`` or auto-derived."""
+        if self.formatted is not None:
+            return self.formatted
+        if isinstance(self.data, str):
+            return self.data
+        return json.dumps(self.data, default=str)
 
 
-class Tool(ABC):
+class Tool[T](ABC):
     """Abstract base class for tool implementations.
 
     All tool classes must implement ``__call__`` with their specific
-    signature.
+    signature, returning ``ToolOutput[T]``.
     The ``__call__`` docstring serves as the canonical tool description,
     reused by agent toolsets and MCP endpoints, while parameter
     descriptions live in ``Annotated`` metadata on the signature itself.
     """
 
     @abstractmethod
-    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
+    def __call__(self, *args: Any, **kwargs: Any) -> ToolOutput[T]: ...
 
 
 @dataclass(slots=True, frozen=True)
-class PathsTool(Tool, ABC):
+class PathsTool[T](Tool[T], ABC):
     """Tool base that owns a ``paths`` field with lazy coercion.
 
     Accepts a bare :class:`~pathlib.Path`, a single :class:`SearchPath`,

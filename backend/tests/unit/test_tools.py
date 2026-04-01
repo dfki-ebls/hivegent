@@ -121,15 +121,15 @@ class TestGetDocumentTool:
     def test_reads_file(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("content here")
         tool = GetDocumentTool(paths=tmp_path)
-        assert tool("doc.md") == "content here"
+        assert tool("doc.md").data == "content here"
 
     def test_returns_none_for_nonexistent(self, tmp_path: Path) -> None:
         tool = GetDocumentTool(paths=tmp_path)
-        assert tool("missing.md") is None
+        assert tool("missing.md").data is None
 
     def test_rejects_path_traversal(self, tmp_path: Path) -> None:
         tool = GetDocumentTool(paths=tmp_path)
-        assert tool("../../../etc/passwd") is None
+        assert tool("../../../etc/passwd").data is None
 
     def test_reads_group_document(self, tmp_path: Path) -> None:
         group_dir = tmp_path / "group"
@@ -141,17 +141,17 @@ class TestGetDocumentTool:
                 SearchPath(path=group_dir, prefix="@team"),
             )
         )
-        assert tool("@team/doc.md") == "group content"
+        assert tool("@team/doc.md").data == "group content"
 
     def test_returns_none_for_unknown_prefix(self, tmp_path: Path) -> None:
         tool = GetDocumentTool(paths=tmp_path)
-        assert tool("@unknown/doc.md") is None
+        assert tool("@unknown/doc.md").data is None
 
     def test_truncates_large_file(self, tmp_path: Path) -> None:
         content = "x" * 200
         (tmp_path / "big.md").write_text(content)
         tool = GetDocumentTool(paths=tmp_path)
-        result = tool("big.md", max_chars=50)
+        result = tool("big.md", max_chars=50).data
         assert result is not None
         assert result.startswith("x" * 50)
         assert "[truncated" in result
@@ -309,7 +309,7 @@ class TestGetChunkTool:
             ).model_dump_json()
         )
         tool = GetChunkTool(paths=metadata_dir)
-        assert tool("doc.md", 0) == "chunk content"
+        assert tool("doc.md", 0).data == "chunk content"
 
     def test_returns_none_for_invalid_index(self, tmp_path: Path) -> None:
         created_at = datetime(2024, 1, 1, tzinfo=UTC)
@@ -332,7 +332,7 @@ class TestGetChunkTool:
             ).model_dump_json()
         )
         tool = GetChunkTool(paths=metadata_dir)
-        assert tool("doc.md", 99) is None
+        assert tool("doc.md", 99).data is None
 
 
 class TestEditDocumentTool:
@@ -341,7 +341,7 @@ class TestEditDocumentTool:
     async def test_replaces_string(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("hello world")
         tool = EditDocumentTool(paths=tmp_path)
-        result = await tool("doc.md", "hello", "goodbye")
+        result = (await tool("doc.md", "hello", "goodbye")).data
         assert "Replaced 1 occurrence" in result
         assert (tmp_path / "doc.md").read_text() == "goodbye world"
 
@@ -359,13 +359,13 @@ class TestEditDocumentTool:
     async def test_error_on_missing_string(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("hello world")
         tool = EditDocumentTool(paths=tmp_path)
-        result = await tool("doc.md", "missing", "new")
+        result = (await tool("doc.md", "missing", "new")).data
         assert "Error" in result
 
     async def test_error_on_duplicate_string(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("hello hello")
         tool = EditDocumentTool(paths=tmp_path)
-        result = await tool("doc.md", "hello", "goodbye")
+        result = (await tool("doc.md", "hello", "goodbye")).data
         assert "Error" in result
         assert "2 times" in result
 
@@ -375,32 +375,32 @@ class TestWriteDocumentTool:
 
     async def test_replace_creates_file(self, tmp_path: Path) -> None:
         tool = WriteDocumentTool(paths=tmp_path, glob="*.md")
-        result = await tool("new.md", "content")
+        result = (await tool("new.md", "content")).data
         assert "Wrote" in result
         assert (tmp_path / "new.md").read_text() == "content"
 
     async def test_append(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("start")
         tool = WriteDocumentTool(paths=tmp_path, glob="*.md")
-        result = await tool("doc.md", " end", mode="append")
+        result = (await tool("doc.md", " end", mode="append")).data
         assert "Appended" in result
         assert (tmp_path / "doc.md").read_text() == "start end"
 
     async def test_prepend(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("end")
         tool = WriteDocumentTool(paths=tmp_path, glob="*.md")
-        result = await tool("doc.md", "start ", mode="prepend")
+        result = (await tool("doc.md", "start ", mode="prepend")).data
         assert "Prepended" in result
         assert (tmp_path / "doc.md").read_text() == "start end"
 
     async def test_rejects_non_matching_glob(self, tmp_path: Path) -> None:
         tool = WriteDocumentTool(paths=tmp_path, glob="*.md")
-        result = await tool("doc.txt", "content")
+        result = (await tool("doc.txt", "content")).data
         assert "Error" in result
 
     async def test_none_glob_allows_any(self, tmp_path: Path) -> None:
         tool = WriteDocumentTool(paths=tmp_path)
-        result = await tool("data.txt", "content")
+        result = (await tool("data.txt", "content")).data
         assert "Wrote" in result
         assert (tmp_path / "data.txt").read_text() == "content"
 
@@ -422,29 +422,29 @@ class TestJqTool:
         data = {"title": "Hello", "count": 42}
         (tmp_path / "item.json").write_text(json.dumps(data))
         tool = JqTool(paths=tmp_path)
-        result = json.loads(await tool(".title", "item.json"))
+        result = json.loads((await tool(".title", "item.json")).data)
         assert result == ["Hello"]
 
     async def test_invalid_jq_expression(self, tmp_path: Path) -> None:
         (tmp_path / "item.json").write_text(json.dumps({"x": 1}))
         tool = JqTool(paths=tmp_path)
-        result = await tool("invalid [[[", "item.json")
+        result = (await tool("invalid [[[", "item.json")).data
         assert result.startswith("Error:")
 
     async def test_nonexistent_filename(self, tmp_path: Path) -> None:
         tool = JqTool(paths=tmp_path)
-        result = await tool(".", "missing.json")
+        result = (await tool(".", "missing.json")).data
         assert result.startswith("Error:")
 
     async def test_path_traversal(self, tmp_path: Path) -> None:
         tool = JqTool(paths=tmp_path)
-        result = await tool(".", "../etc/passwd")
+        result = (await tool(".", "../etc/passwd")).data
         assert result.startswith("Error:")
 
     async def test_large_output_truncated(self, tmp_path: Path) -> None:
         data = {"items": ["x" * 100 for _ in range(50)]}
         (tmp_path / "big.json").write_text(json.dumps(data))
         tool = JqTool(paths=tmp_path, max_output_chars=100)
-        result = await tool(".", "big.json")
+        result = (await tool(".", "big.json")).data
         assert "[truncated]" in result
         assert len(result.split("\n\n[truncated]")[0]) == 100
