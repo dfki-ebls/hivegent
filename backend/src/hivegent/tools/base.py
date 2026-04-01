@@ -3,15 +3,17 @@
 import inspect
 import json
 import re
+import types
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, get_type_hints
+from typing import Any, Self, get_type_hints
 
 from pydantic import BaseModel
 
 __all__ = [
+    "CallInfo",
     "PathsTool",
     "SearchPath",
     "SearchPathFilterFunc",
@@ -244,3 +246,99 @@ def resolve_tool_cls(factory: Callable[..., Tool]) -> type[Tool]:
 def tool_description(tool: type[Tool]) -> str | None:
     """Return the canonical user-facing description for a tool callable."""
     return inspect.getdoc(tool.__call__) or inspect.getdoc(tool)
+
+
+@dataclass(slots=True, frozen=True)
+class CallInfo:
+    """Extracted metadata from a Tool's ``__call__`` method.
+
+    Provides the information both framework adapters need to build
+    wrapper functions with correct signatures and type annotations.
+
+    Attributes:
+        name: Tool name derived from the factory function.
+        description: Canonical tool description from the Tool class.
+        params: ``__call__`` parameters with ``self`` removed.
+        annotations: Resolved type hints for ``__call__`` parameters
+            (``self`` and ``return`` excluded).
+        is_async: Whether ``__call__`` is a coroutine function.
+        source_module: Module name of the originating factory.
+    """
+
+    name: str
+    description: str | None
+    params: tuple[inspect.Parameter, ...]
+    annotations: dict[str, Any]
+    is_async: bool
+    source_module: str
+
+    def apply_to(
+        self,
+        wrapper: types.FunctionType,
+        sig: inspect.Signature,
+        annotations: dict[str, Any],
+    ) -> None:
+        """Stamp call metadata onto a wrapper function.
+
+        Sets ``__signature__``, ``__annotations__``, ``__name__``,
+        ``__qualname__``, ``__doc__``, and ``__module__`` so that
+        framework introspection sees the rewritten signature.
+
+        Args:
+            wrapper: The wrapper function to decorate.
+            sig: The rewritten :class:`inspect.Signature`.
+            annotations: The rewritten ``__annotations__`` dict.
+        """
+        wrapper.__annotations__ = annotations
+        wrapper.__name__ = self.name
+        wrapper.__qualname__ = self.name
+        wrapper.__doc__ = self.description
+        wrapper.__module__ = self.source_module
+        # __signature__ is not in the FunctionType stub; use setattr.
+        setattr(wrapper, "__signature__", sig)
+
+    @classmethod
+    def from_factory(cls, factory: Callable[..., Tool]) -> Self:
+        """Extract call metadata from a Tool factory's return type.
+
+        Resolves the Tool subclass from *factory*'s return annotation,
+        then inspects its ``__call__`` method to build a :class:`CallInfo`.
+
+        Args:
+            factory: A callable whose return annotation is a ``Tool``
+                subclass.
+
+        Returns:
+            Extracted call information.
+
+        Raises:
+            TypeError: If the factory's return annotation is not a Tool
+                subclass.
+            TypeError: If any ``__call__`` parameter (besides ``self``)
+                lacks a type annotation.
+        """
+        tool_cls = resolve_tool_cls(factory)
+        call = tool_cls.__call__
+        sig = inspect.signature(call)
+        hints = get_type_hints(call, include_extras=True)
+
+        params = tuple(p for name, p in sig.parameters.items() if name != "self")
+
+        for p in params:
+            if p.name not in hints:
+                cls_name = tool_cls.__qualname__
+                msg = f"{cls_name}.__call__ has unannotated parameter {p.name!r}"
+                raise TypeError(msg)
+
+        annotations = {
+            name: hint for name, hint in hints.items() if name not in ("self", "return")
+        }
+
+        return cls(
+            name=factory_tool_name(factory),
+            description=tool_description(tool_cls),
+            params=params,
+            annotations=annotations,
+            is_async=inspect.iscoroutinefunction(call),
+            source_module=getattr(factory, "__module__", ""),
+        )

@@ -2,14 +2,13 @@
 
 import inspect
 from collections.abc import Callable, Sequence
-from functools import wraps
-from typing import Any, get_type_hints
+from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAccessIssue]
 from fastmcp.tools.tool import ToolResult
 
-from .base import Tool, ToolOutput, factory_tool_name, resolve_tool_cls, tool_description
+from .base import CallInfo, Tool, ToolOutput, factory_tool_name
 
 __all__ = ["for_fastmcp", "register_mcp_tools"]
 
@@ -35,59 +34,36 @@ def for_fastmcp(
     Returns:
         A callable with rewritten signature, annotations, and docstring.
     """
-    tool_cls = resolve_tool_cls(factory_provider)
-    call = tool_cls.__call__
-    is_async = inspect.iscoroutinefunction(call)
-    sig = inspect.signature(call)
-    hints = get_type_hints(call, include_extras=True)
+    info = CallInfo.from_factory(factory_provider)
 
-    # __call__ params minus 'self'
-    call_params = [p for name, p in sig.parameters.items() if name != "self"]
-
-    # Append _tool_ as KEYWORD_ONLY with Depends default
+    # Append _tool_ as KEYWORD_ONLY with Depends default.
     tool_param = inspect.Parameter(
         "_tool_",
         inspect.Parameter.KEYWORD_ONLY,
         default=Depends(factory_provider),
         annotation=Any,
     )
-    new_params = [*call_params, tool_param]
+    new_sig = inspect.Signature(
+        parameters=[*info.params, tool_param],
+        return_annotation=str,
+    )
 
-    # ToolOutput is unwrapped to a plain string by wrap_tool_output,
-    # so the declared return type must reflect what is actually returned.
-    ret = hints.get("return")
-    ret_annotation = str if isinstance(ret, type) and issubclass(ret, ToolOutput) else sig.return_annotation
-    new_sig = sig.replace(parameters=new_params, return_annotation=ret_annotation)
+    new_annotations: dict[str, Any] = {
+        "_tool_": Any,
+        **info.annotations,
+        "return": str,
+    }
 
-    # Build annotations
-    new_annotations: dict[str, Any] = {"_tool_": Any}
-    for p in call_params:
-        if p.name in hints:
-            new_annotations[p.name] = hints[p.name]
-    if ret is not None:
-        new_annotations["return"] = str if isinstance(ret, type) and issubclass(ret, ToolOutput) else ret
+    if info.is_async:
 
-    if is_async:
-
-        @wraps(call)
         async def wrapper(**kwargs: Any) -> Any:  # noqa: ANN401
             return wrap_tool_output(await kwargs.pop("_tool_")(**kwargs))
     else:
 
-        @wraps(call)
         def wrapper(**kwargs: Any) -> Any:  # noqa: ANN401
             return wrap_tool_output(kwargs.pop("_tool_")(**kwargs))
 
-    setattr(wrapper, "__signature__", new_sig)  # pyright: ignore[reportAttributeAccessIssue]
-    wrapper.__annotations__ = new_annotations
-    wrapper.__doc__ = tool_description(tool_cls)
-    name = factory_tool_name(factory_provider)
-    wrapper.__name__ = name
-    wrapper.__qualname__ = name
-    # @wraps copies __wrapped__ from the original __call__, which FastMCP
-    # follows to discover the return type.  Remove it so FastMCP uses our
-    # rewritten annotations instead.
-    wrapper.__wrapped__ = None  # type: ignore[attr-defined]
+    info.apply_to(wrapper, new_sig, new_annotations)
     return wrapper
 
 

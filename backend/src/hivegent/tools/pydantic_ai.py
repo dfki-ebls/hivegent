@@ -2,14 +2,13 @@
 
 import inspect
 from collections.abc import Callable, Sequence
-from functools import wraps
-from typing import Any, get_type_hints
+from typing import Any
 
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
-from .base import Tool, ToolOutput, factory_tool_name, resolve_tool_cls, tool_description
+from .base import CallInfo, Tool, ToolOutput, factory_tool_name
 
 __all__ = ["for_pydantic_ai", "register_agent_tools", "wrap_tool_output"]
 
@@ -47,57 +46,36 @@ def for_pydantic_ai[D](
     Returns:
         A callable with rewritten signature, annotations, and docstring.
     """
-    tool_cls = resolve_tool_cls(factory)
-    call = tool_cls.__call__
-    is_async = inspect.iscoroutinefunction(call)
-    sig = inspect.signature(call)
-    hints = get_type_hints(call, include_extras=True)
+    info = CallInfo.from_factory(factory)
 
-    # Build new parameters: ctx first, then __call__ params minus 'self'
-    ctx_annotation = RunContext[deps_type]  # type: ignore[valid-type]
+    # Build parameter list: RunContext first, then __call__ params.
+    ctx_annotation: Any = RunContext[deps_type]
     ctx_param = inspect.Parameter(
         "ctx",
         inspect.Parameter.POSITIONAL_OR_KEYWORD,
         annotation=ctx_annotation,
     )
-    call_params = [p for name, p in sig.parameters.items() if name != "self"]
-    new_params = [ctx_param, *call_params]
+    new_sig = inspect.Signature(
+        parameters=[ctx_param, *info.params],
+        return_annotation=ToolReturn,
+    )
 
-    # The wrapper returns ToolReturn; rewrite the annotation so pydantic-ai
-    # recognises the structured return and extracts return_value / metadata.
-    ret = hints.get("return")
-    ret_annotation = ToolReturn if isinstance(ret, type) and issubclass(ret, ToolOutput) else sig.return_annotation
-    new_sig = sig.replace(parameters=new_params, return_annotation=ret_annotation)
+    new_annotations: dict[str, Any] = {
+        "ctx": ctx_annotation,
+        **info.annotations,
+        "return": ToolReturn,
+    }
 
-    # Build annotations dict
-    new_annotations: dict[str, Any] = {"ctx": ctx_annotation}
-    for p in call_params:
-        if p.name in hints:
-            new_annotations[p.name] = hints[p.name]
-    if ret is not None:
-        new_annotations["return"] = ToolReturn if isinstance(ret, type) and issubclass(ret, ToolOutput) else ret
+    if info.is_async:
 
-    if is_async:
-
-        @wraps(call)
         async def wrapper(ctx: Any, **kwargs: Any) -> Any:  # noqa: ANN401
             return wrap_tool_output(await factory(ctx.deps)(**kwargs))
     else:
 
-        @wraps(call)
         def wrapper(ctx: Any, **kwargs: Any) -> Any:  # noqa: ANN401
             return wrap_tool_output(factory(ctx.deps)(**kwargs))
 
-    setattr(wrapper, "__signature__", new_sig)  # pyright: ignore[reportAttributeAccessIssue]
-    wrapper.__annotations__ = new_annotations
-    wrapper.__doc__ = tool_description(tool_cls)
-    name = factory_tool_name(factory)
-    wrapper.__name__ = name
-    wrapper.__qualname__ = name
-    # @wraps copies __wrapped__ from the original __call__, which
-    # get_type_hints() follows to discover the return type.  Remove it so
-    # consumers use our rewritten annotations instead.
-    wrapper.__wrapped__ = None  # type: ignore[attr-defined]
+    info.apply_to(wrapper, new_sig, new_annotations)
     return wrapper
 
 
