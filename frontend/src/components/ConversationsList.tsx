@@ -202,14 +202,21 @@ function ConversationItem({
   };
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       className={`group relative w-full rounded-lg border p-3 transition-colors cursor-pointer text-left ${
         isActive
           ? "border-primary bg-primary/5"
           : "border-transparent hover:border-border hover:bg-muted/50"
       }`}
       onClick={() => !isEditing && onSelect()}
+      onKeyDown={(e) => {
+        if ((e.key === "Enter" || e.key === " ") && !isEditing) {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -242,7 +249,7 @@ function ConversationItem({
           onDelete={onDelete}
         />
       )}
-    </button>
+    </div>
   );
 }
 
