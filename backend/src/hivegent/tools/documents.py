@@ -1,14 +1,14 @@
 """Document listing and reading tool callables."""
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from fnmatch import fnmatch
 from typing import Annotated, override
 
 from pydantic import Field
 
-from .base import SyncPathTool, ToolOutput, file_allowed, resolve_search_path
+from .base import SearchPath, SyncPathTool, ToolOutput, file_allowed, resolve_search_path
 
 __all__ = [
     "DocumentEndLineArg",
@@ -20,11 +20,13 @@ __all__ = [
     "DocumentStartLineArg",
     "DocumentSubdirArg",
     "DocumentSummary",
+    "DocumentTreeNode",
     "GetDocumentLinesTool",
     "GetDocumentTool",
     "GlobDocumentsTool",
     "GlobPatternArg",
     "ListDocumentsTool",
+    "TreeDocumentsTool",
 ]
 
 logger = logging.getLogger(__name__)
@@ -140,6 +142,41 @@ def _matches_subdir_and_depth(
     return True
 
 
+def _scan_entries(
+    resolved_paths: tuple[SearchPath, ...],
+    glob: str | None,
+    subdir: str | None,
+    max_depth: int | None,
+    max_results: int,
+) -> list[DocumentSummary]:
+    """Collect matching file and directory entries from search paths."""
+    results: list[DocumentSummary] = []
+    for sp in resolved_paths:
+        if not sp.path.exists():
+            continue
+        for f in sorted(sp.path.rglob(glob or "*")):
+            is_dir = f.is_dir()
+            if not is_dir and not f.is_file():
+                continue
+            rel = str(f.relative_to(sp.path).as_posix())
+            if not file_allowed(sp.filter_func, rel):
+                continue
+            if not _matches_subdir_and_depth(rel, subdir, max_depth):
+                continue
+            stat = f.stat()
+            results.append(
+                DocumentSummary(
+                    filename=sp.prefixed(rel),
+                    size=stat.st_size if not is_dir else 0,
+                    modified_at=datetime.fromtimestamp(
+                        stat.st_mtime, tz=timezone.utc
+                    ),
+                    is_directory=is_dir,
+                )
+            )
+    return results[:max_results]
+
+
 @dataclass(slots=True, frozen=True)
 class ListDocumentsTool(SyncPathTool[list[DocumentSummary]]):
     """List all available documents with their sizes in bytes."""
@@ -154,31 +191,9 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary]]):
         max_results: DocumentMaxResultsArg = 200,
     ) -> ToolOutput[list[DocumentSummary]]:
         """List all available documents with their sizes in bytes."""
-        results: list[DocumentSummary] = []
-        for sp in self.resolved_paths:
-            if not sp.path.exists():
-                continue
-            for f in sorted(sp.path.rglob(self.glob or "*")):
-                is_dir = f.is_dir()
-                if not is_dir and not f.is_file():
-                    continue
-                rel = str(f.relative_to(sp.path).as_posix())
-                if not file_allowed(sp.filter_func, rel):
-                    continue
-                if not _matches_subdir_and_depth(rel, subdir, max_depth):
-                    continue
-                stat = f.stat()
-                results.append(
-                    DocumentSummary(
-                        filename=sp.prefixed(rel),
-                        size=stat.st_size if not is_dir else 0,
-                        modified_at=datetime.fromtimestamp(
-                            stat.st_mtime, tz=timezone.utc
-                        ),
-                        is_directory=is_dir,
-                    )
-                )
-        results = results[:max_results]
+        results = _scan_entries(
+            self.resolved_paths, self.glob, subdir, max_depth, max_results
+        )
         if not results:
             return ToolOutput(data=results, formatted="(no documents)")
         lines: list[str] = []
@@ -187,6 +202,105 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary]]):
             kind = "d" if d.is_directory else "-"
             lines.append(f"{kind} {date}  {_humanize_size(d.size):>6}  {d.filename}")
         return ToolOutput(data=results, formatted="\n".join(lines))
+
+
+@dataclass(slots=True, frozen=True)
+class DocumentTreeNode:
+    """A file or directory node in a document tree."""
+
+    name: str
+    path: str
+    is_directory: bool = False
+    size: int = 0
+    children: tuple["DocumentTreeNode", ...] = ()
+
+
+@dataclass
+class _TreeBuildNode:
+    """Mutable intermediate node used while constructing the tree."""
+
+    entry: DocumentSummary | None = None
+    children: dict[str, "_TreeBuildNode"] = field(default_factory=dict)
+
+
+def _build_document_tree(entries: list[DocumentSummary]) -> DocumentTreeNode:
+    """Build a :class:`DocumentTreeNode` tree from a flat list of entries."""
+    root = _TreeBuildNode()
+    for entry in entries:
+        node = root
+        for part in entry.filename.split("/"):
+            if part not in node.children:
+                node.children[part] = _TreeBuildNode()
+            node = node.children[part]
+        node.entry = entry
+
+    def _convert(name: str, path: str, build: _TreeBuildNode) -> DocumentTreeNode:
+        children: list[DocumentTreeNode] = []
+        for key in sorted(build.children):
+            child_path = f"{path}/{key}" if path else key
+            children.append(_convert(key, child_path, build.children[key]))
+        entry = build.entry
+        return DocumentTreeNode(
+            name=name,
+            path=path,
+            is_directory=entry.is_directory if entry else bool(children),
+            size=entry.size if entry and not entry.is_directory else 0,
+            children=tuple(children),
+        )
+
+    return _convert(".", "", root)
+
+
+def _format_document_tree(
+    node: DocumentTreeNode,
+    prefix: str = "",
+    is_last: bool = True,
+) -> list[str]:
+    """Format a :class:`DocumentTreeNode` as ``tree(1)``-style text."""
+    lines: list[str] = []
+    if node.path:
+        connector = "└── " if is_last else "├── "
+        suffix = "/" if node.is_directory else ""
+        size_str = f" ({_humanize_size(node.size)})" if not node.is_directory else ""
+        lines.append(f"{prefix}{connector}{node.name}{suffix}{size_str}")
+    child_prefix = prefix + ("    " if is_last else "│   ") if node.path else ""
+    for i, child in enumerate(node.children):
+        lines.extend(
+            _format_document_tree(child, child_prefix, i == len(node.children) - 1)
+        )
+    return lines
+
+
+@dataclass(slots=True, frozen=True)
+class TreeDocumentsTool(SyncPathTool[DocumentTreeNode]):
+    """Show the hierarchical directory structure of available documents."""
+
+    glob: str | None = None
+
+    @override
+    def __call__(
+        self,
+        subdir: DocumentSubdirArg = None,
+        max_depth: DocumentMaxDepthArg = None,
+        max_results: DocumentMaxResultsArg = 500,
+    ) -> ToolOutput[DocumentTreeNode]:
+        """Show the hierarchical directory structure of available documents."""
+        entries = _scan_entries(
+            self.resolved_paths, self.glob, subdir, max_depth, max_results
+        )
+        root = _build_document_tree(entries)
+        lines = _format_document_tree(root)
+        if not lines:
+            return ToolOutput(data=root, formatted="(empty)")
+
+        dir_count = sum(1 for e in entries if e.is_directory)
+        file_count = sum(1 for e in entries if not e.is_directory)
+        lines.append("")
+        lines.append(
+            f"{dir_count} {'directory' if dir_count == 1 else 'directories'}, "
+            f"{file_count} {'file' if file_count == 1 else 'files'}"
+        )
+        return ToolOutput(data=root, formatted="\n".join(lines))
 
 
 @dataclass(slots=True, frozen=True)

@@ -6,6 +6,7 @@ from hivegent.tools.documents import (
     DocumentMaxDepthArg,
     DocumentSubdirArg,
     ListDocumentsTool,
+    TreeDocumentsTool,
 )
 from hivegent.tools.grep import ContextLinesArg, GrepPatternArg, GrepTool
 from hivegent.tools.retrieval import SearchTypeArg
@@ -14,6 +15,17 @@ from hivegent.tools.base import tool_description
 
 def _description(annotation: object) -> str | None:
     return TypeAdapter(annotation).json_schema().get("description")
+
+
+def test_tree_documents_registered_in_agent_toolset() -> None:
+    tool = explore_toolset.tools["tree_documents"]
+    assert tool.description == tool_description(TreeDocumentsTool)
+
+
+async def test_tree_documents_registered_in_mcp() -> None:
+    tool = await mcp_app.get_tool("tree_documents")
+    assert tool is not None
+    assert tool.description == tool_description(TreeDocumentsTool)
 
 
 def test_agent_tool_reuses_canonical_docstring_and_alias_metadata() -> None:

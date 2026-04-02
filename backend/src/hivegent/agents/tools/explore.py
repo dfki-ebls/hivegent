@@ -15,6 +15,7 @@ from ...tools import (
     LanceDBSearchTool,
     ListDocumentsTool,
     SearchPath,
+    TreeDocumentsTool,
 )
 from ...tools.pydantic_ai import register_agent_tools
 from ..common import UserDeps
@@ -43,6 +44,10 @@ def _metadata_paths(deps: UserDeps) -> tuple[SearchPath, ...]:
 
 def _list_documents(deps: UserDeps) -> ListDocumentsTool:
     return ListDocumentsTool(paths=_workspace_paths(deps))
+
+
+def _tree_documents(deps: UserDeps) -> TreeDocumentsTool:
+    return TreeDocumentsTool(paths=_workspace_paths(deps))
 
 
 def _glob_documents(deps: UserDeps) -> GlobDocumentsTool:
@@ -82,6 +87,7 @@ register_agent_tools(
     UserDeps,
     [
         _list_documents,
+        _tree_documents,
         _glob_documents,
         _grep,
         _get_document_lines,

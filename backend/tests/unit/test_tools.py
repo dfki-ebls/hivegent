@@ -17,6 +17,7 @@ from hivegent.tools.documents import (
     GetDocumentTool,
     GlobDocumentsTool,
     ListDocumentsTool,
+    TreeDocumentsTool,
 )
 from hivegent.tools.jq import JqTool
 from hivegent.tools.mutations import EditDocumentTool, WriteDocumentTool
@@ -113,6 +114,104 @@ class TestListDocumentsTool:
         tool = ListDocumentsTool(paths=tmp_path)
         result = tool(max_results=3).data
         assert len(result) == 3
+
+
+class TestTreeDocumentsTool:
+    """Tests for TreeDocumentsTool."""
+
+    def test_empty_dir(self, tmp_path: Path) -> None:
+        tool = TreeDocumentsTool(paths=tmp_path, glob="*.md")
+        result = tool()
+        assert result.data.children == ()
+        assert result.formatted == "(empty)"
+
+    def test_single_level(self, tmp_path: Path) -> None:
+        (tmp_path / "a.md").write_text("hello")
+        (tmp_path / "b.md").write_text("world")
+        tool = TreeDocumentsTool(paths=tmp_path, glob="*.md")
+        result = tool()
+        names = [c.name for c in result.data.children]
+        assert names == ["a.md", "b.md"]
+        assert all(not c.is_directory for c in result.data.children)
+
+    def test_nested_structure(self, tmp_path: Path) -> None:
+        sub = tmp_path / "notes"
+        sub.mkdir()
+        (sub / "n.md").write_text("note")
+        (tmp_path / "top.md").write_text("top")
+        tool = TreeDocumentsTool(paths=tmp_path, glob="*.md")
+        result = tool()
+        dir_children = [c for c in result.data.children if c.is_directory]
+        assert len(dir_children) == 1
+        assert dir_children[0].name == "notes"
+        assert dir_children[0].children[0].name == "n.md"
+
+    def test_subdir_filter(self, tmp_path: Path) -> None:
+        sub = tmp_path / "notes"
+        sub.mkdir()
+        (sub / "n.md").write_text("note")
+        (tmp_path / "top.md").write_text("top")
+        tool = TreeDocumentsTool(paths=tmp_path, glob="*.md")
+        result = tool(subdir="notes")
+        # Only notes/n.md matches; tree has notes/ → n.md
+        assert len(result.data.children) == 1
+        assert result.data.children[0].name == "notes"
+        assert result.data.children[0].children[0].name == "n.md"
+
+    def test_max_depth(self, tmp_path: Path) -> None:
+        deep = tmp_path / "a" / "b"
+        deep.mkdir(parents=True)
+        (deep / "deep.md").write_text("deep")
+        (tmp_path / "top.md").write_text("top")
+        tool = TreeDocumentsTool(paths=tmp_path)
+        result = tool(max_depth=1)
+        all_names = {c.name for c in result.data.children}
+        assert "top.md" in all_names
+        assert "a" in all_names
+
+    def test_max_results(self, tmp_path: Path) -> None:
+        for i in range(10):
+            (tmp_path / f"f{i}.txt").write_text(str(i))
+        tool = TreeDocumentsTool(paths=tmp_path)
+        result = tool(max_results=3)
+        assert len(result.data.children) == 3
+
+    def test_multi_store(self, tmp_path: Path) -> None:
+        user_dir = tmp_path / "user"
+        user_dir.mkdir()
+        (user_dir / "a.md").write_text("user")
+        group_dir = tmp_path / "group"
+        group_dir.mkdir()
+        (group_dir / "b.md").write_text("group")
+        tool = TreeDocumentsTool(
+            paths=(
+                SearchPath(path=user_dir),
+                SearchPath(path=group_dir, prefix="@team"),
+            )
+        )
+        names = {c.name for c in tool().data.children}
+        assert names == {"a.md", "@team"}
+
+    def test_formatted_output(self, tmp_path: Path) -> None:
+        sub = tmp_path / "docs"
+        sub.mkdir()
+        (sub / "a.md").write_text("hello")
+        (tmp_path / "b.md").write_text("world")
+        tool = TreeDocumentsTool(paths=tmp_path)
+        formatted = tool().formatted
+        assert formatted is not None
+        assert "├── " in formatted or "└── " in formatted
+
+    def test_summary_line(self, tmp_path: Path) -> None:
+        sub = tmp_path / "docs"
+        sub.mkdir()
+        (sub / "a.md").write_text("hello")
+        (tmp_path / "b.md").write_text("world")
+        tool = TreeDocumentsTool(paths=tmp_path)
+        formatted = tool().formatted
+        assert formatted is not None
+        assert "1 directory" in formatted
+        assert "2 files" in formatted
 
 
 class TestGetDocumentTool:

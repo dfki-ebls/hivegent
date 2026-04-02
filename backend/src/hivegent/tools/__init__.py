@@ -3,10 +3,12 @@
 from .documents import (
     DocumentRange,
     DocumentSummary,
+    DocumentTreeNode,
     GetDocumentLinesTool,
     GetDocumentTool,
     GlobDocumentsTool,
     ListDocumentsTool,
+    TreeDocumentsTool,
 )
 from .grep import GrepMatch, GrepTool
 from .jq import JqTool
@@ -20,6 +22,7 @@ __all__ = [
     "CreatePlanTool",
     "DocumentRange",
     "DocumentSummary",
+    "DocumentTreeNode",
     "EditDocumentTool",
     "GetDocumentLinesTool",
     "GetDocumentTool",
@@ -35,6 +38,7 @@ __all__ = [
     "SearchResult",
     "SearchType",
     "Tool",
+    "TreeDocumentsTool",
     "file_allowed",
     "tool_name",
     "WebFetch",
