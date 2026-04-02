@@ -513,10 +513,10 @@ export function ChatSidebar({
   const handleSendMessage = useCallback(
     async (text: string, files?: FileUIPart[]) => {
       if (!text.trim() && (!files || files.length === 0)) return;
-      const authHeaders = await getAuthHeaders();
-      await sendMessage({ text, files }, { headers: authHeaders, body: buildRequestBody() });
       setInputValue("");
       onClearDocuments();
+      const authHeaders = await getAuthHeaders();
+      await sendMessage({ text, files }, { headers: authHeaders, body: buildRequestBody() });
     },
     [buildRequestBody, sendMessage, onClearDocuments],
   );
@@ -546,13 +546,14 @@ export function ChatSidebar({
   const handleEditMessage = useCallback(
     async (messageId: string, newText: string) => {
       setEditingMessageId(null);
+      clearAll();
       const authHeaders = await getAuthHeaders();
       await sendMessage(
         { text: newText, messageId },
         { headers: authHeaders, body: buildRequestBody() },
       );
     },
-    [buildRequestBody, sendMessage],
+    [buildRequestBody, sendMessage, clearAll],
   );
 
   // Re-send the pending message after navigating to a compacted conversation
@@ -564,12 +565,13 @@ export function ChatSidebar({
   }, [isLoadingHistory, handleSendMessage]);
 
   const handleRegenerate = useCallback(async () => {
+    clearAll();
     const authHeaders = await getAuthHeaders();
     await regenerate({
       headers: authHeaders,
       body: buildRequestBody(),
     });
-  }, [buildRequestBody, regenerate]);
+  }, [buildRequestBody, regenerate, clearAll]);
 
   const handleRetry = useCallback(async () => {
     const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
@@ -579,12 +581,13 @@ export function ChatSidebar({
       .map((p) => p.text)
       .join("\n");
     if (!text) return;
+    clearAll();
     const authHeaders = await getAuthHeaders();
     await sendMessage(
       { text, messageId: lastUserMessage.id },
       { headers: authHeaders, body: buildRequestBody() },
     );
-  }, [messages, buildRequestBody, sendMessage]);
+  }, [messages, buildRequestBody, sendMessage, clearAll]);
 
   const handleCompact = useCallback(
     async (retryMessageText?: string) => {
