@@ -182,7 +182,7 @@ export function SettingsDialog() {
 
         <div className="grid lg:grid-cols-3 gap-6 py-4">
           {/* Column 1 — Model Configuration */}
-          <div className="grid gap-4">
+          <div className="grid gap-4 content-start">
             <SettingsSection
               label="Model"
               htmlFor="model"
