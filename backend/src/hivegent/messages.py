@@ -16,7 +16,6 @@ __all__ = [
     "ConversationData",
     "ConversationSummary",
     "persist_conversation",
-    "find_empty_conversation",
     "list_conversations",
     "load_conversation",
     "load_messages",
@@ -157,29 +156,6 @@ def _extract_title(messages: Sequence[ModelMessage]) -> str:
                     )
     return ""
 
-
-def find_empty_conversation(user_id: str) -> str | None:
-    """Find an existing conversation with zero messages.
-
-    Scans the user's conversations directory for a file with an empty
-    message list and returns its ID.
-
-    Args:
-        user_id: The user ID to search conversations for.
-
-    Returns:
-        The conversation ID if an empty one exists, otherwise None.
-    """
-    user_dir = Casebase.for_user(user_id).conversations_dir(settings.data_dir)
-    if not user_dir.exists():
-        return None
-
-    for path in user_dir.glob("*.json"):
-        conv = load_conversation(user_id, path.stem)
-        if conv and len(conv.messages) == 0:
-            return conv.id
-
-    return None
 
 
 def persist_conversation(user_id: str, conversation_id: str) -> None:

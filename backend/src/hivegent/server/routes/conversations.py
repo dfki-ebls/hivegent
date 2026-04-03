@@ -31,7 +31,6 @@ from ...memory import load_memory
 from ...mcp import build_mcp_server
 from ...messages import (
     ConversationSummary,
-    find_empty_conversation,
     list_conversations,
     load_conversation,
     load_messages,
@@ -82,11 +81,6 @@ async def create_conversation(
     user: Annotated[User, Depends(get_current_user)],
 ) -> CreateConversationResponse:
     """Create a new conversation and return its ID."""
-    existing_id = find_empty_conversation(user.id)
-    if existing_id:
-        set_conversation_title(user.id, existing_id, "")
-        return CreateConversationResponse(id=existing_id)
-
     conversation_id = generate()
     persist_conversation(user.id, conversation_id)
     return CreateConversationResponse(id=conversation_id)
