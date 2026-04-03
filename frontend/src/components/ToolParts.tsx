@@ -105,7 +105,7 @@ export function processToolOutput(
   if (!input || output == null) return;
 
   switch (toolName) {
-    case "semantic_search": {
+    case "search": {
       if (!Array.isArray(output)) return;
       const chunks = output as RetrievedChunk[];
       if (!chunks.length) return;
@@ -127,30 +127,31 @@ export function processToolOutput(
       }
       return;
     }
-    case "get_document": {
+    case "read_document": {
       const filename = input.filename as string;
-      const content = typeof output === "string" ? output : null;
-      if (filename && content) {
-        markFullDocument(filename, content, "get_document");
+      if (!filename) return;
+
+      if (typeof output === "object" && output != null && "start_line" in (output as object)) {
+        const result = output as DocumentRange;
+        if (result.content) {
+          const position: ChunkPosition = {
+            type: "line_range",
+            startLine: result.start_line,
+            endLine: result.end_line,
+          };
+          addChunk({
+            filename,
+            content: result.content,
+            source: `lines ${result.start_line}-${result.end_line}`,
+            position,
+          });
+        }
+        return;
       }
-      return;
-    }
-    case "get_document_lines": {
-      const filename = input.filename as string;
-      if (typeof output !== "object" || output == null) return;
-      const result = output as DocumentRange;
-      if (filename && result.content) {
-        const position: ChunkPosition = {
-          type: "line_range",
-          startLine: result.start_line,
-          endLine: result.end_line,
-        };
-        addChunk({
-          filename,
-          content: result.content,
-          source: `lines ${result.start_line}-${result.end_line}`,
-          position,
-        });
+
+      const content = typeof output === "string" ? output : null;
+      if (content) {
+        markFullDocument(filename, content, "read_document");
       }
       return;
     }
@@ -177,23 +178,6 @@ export function processToolOutput(
           filename: match.filename,
           content: match.line_text,
           source,
-          position,
-        });
-      }
-      return;
-    }
-    case "get_chunk": {
-      const filename = input.filename as string;
-      const chunkIndex = input.chunk_index as number;
-      if (filename && typeof output === "string") {
-        const position: ChunkPosition = {
-          type: "chunk_index",
-          chunkIndex,
-        };
-        addChunk({
-          filename,
-          content: output,
-          source: `chunk ${chunkIndex}`,
           position,
         });
       }

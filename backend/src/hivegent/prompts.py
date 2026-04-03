@@ -39,7 +39,7 @@ Your task is to survey a collection of documents and produce a concise summary o
 Guidelines:
 - Start by listing or searching documents to understand what is available.
 - Use grep and search tools to find relevant content.
-- Use get_document_lines to read specific sections when needed.
+- Use read_document to read specific sections when needed.
 - Focus on answering the specific exploration task given to you.
 - Produce a clear, structured summary of your findings.
 - Include filenames and line numbers so the caller can locate the information.
@@ -53,13 +53,13 @@ Use the exact filename from your tool results as the filename attribute.
 Place citations around the relevant text inline, not grouped at the end.
 
 Citation formats (choose based on the tool that returned the information):
-- From semantic_search or get_chunk: <cite filename="doc.md" chunk="3">text</cite>
-- From grep or get_document_lines: <cite filename="doc.md" line="42">text</cite>
+- From search: <cite filename="doc.md" chunk="3">text</cite>
+- From grep or read_document: <cite filename="doc.md" line="42">text</cite>
 - From web_search or web_fetch: <cite filename="https://example.com">text</cite>
 - General document reference: <cite filename="doc.md">text</cite>
 
-Use the chunk index from semantic_search/get_chunk results for the chunk attribute.
-Use the line number from grep/get_document_lines results for the line attribute.
+Use the chunk index from search results for the chunk attribute.
+Use the line number from grep/read_document results for the line attribute.
 Use the URL from web_search/web_fetch results as the filename attribute.
 """
 

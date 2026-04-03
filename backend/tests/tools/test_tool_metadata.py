@@ -4,9 +4,8 @@ from hivegent.agents import explore_toolset
 from hivegent.mcp import mcp_app
 from hivegent.tools.documents import (
     DocumentMaxDepthArg,
-    DocumentSubdirArg,
+    DocumentPathArg,
     ListDocumentsTool,
-    TreeDocumentsTool,
 )
 from hivegent.tools.grep import ContextLinesArg, GrepPatternArg, GrepTool
 from hivegent.tools.retrieval import SearchTypeArg
@@ -17,24 +16,13 @@ def _description(annotation: object) -> str | None:
     return TypeAdapter(annotation).json_schema().get("description")
 
 
-def test_tree_documents_registered_in_agent_toolset() -> None:
-    tool = explore_toolset.tools["tree_documents"]
-    assert tool.description == tool_description(TreeDocumentsTool)
-
-
-async def test_tree_documents_registered_in_mcp() -> None:
-    tool = await mcp_app.get_tool("tree_documents")
-    assert tool is not None
-    assert tool.description == tool_description(TreeDocumentsTool)
-
-
 def test_agent_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
     tool = explore_toolset.tools["list_documents"]
     schema = tool.function_schema.json_schema
 
     assert tool.description == tool_description(ListDocumentsTool)
-    assert schema["properties"]["subdir"]["description"] == _description(
-        DocumentSubdirArg
+    assert schema["properties"]["path"]["description"] == _description(
+        DocumentPathArg
     )
     assert schema["properties"]["max_depth"]["description"] == _description(
         DocumentMaxDepthArg
@@ -42,7 +30,7 @@ def test_agent_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
 
 
 def test_agent_search_tool_uses_consistent_search_type_name() -> None:
-    tool = explore_toolset.tools["semantic_search"]
+    tool = explore_toolset.tools["search"]
     schema = tool.function_schema.json_schema
 
     assert "search_type" in schema["properties"]
@@ -66,7 +54,7 @@ async def test_mcp_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
 
 
 async def test_mcp_search_tool_uses_consistent_search_type_name() -> None:
-    tool = await mcp_app.get_tool("semantic_search")
+    tool = await mcp_app.get_tool("search")
     assert tool is not None
 
     assert "search_type" in tool.parameters["properties"]

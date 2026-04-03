@@ -14,14 +14,14 @@ from ...tools.pydantic_ai import for_pydantic_ai, wrap_tool_output
 
 __all__ = [
     "conversation_toolset",
-    "list_conversations_tool",
+    "list_conversations",
 ]
 
 conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
 @conversation_toolset.tool
-def list_conversations_tool(
+def list_conversations(
     ctx: RunContext[UserDeps],
 ) -> ToolReturn:
     """List past conversations with titles, dates, and message counts.

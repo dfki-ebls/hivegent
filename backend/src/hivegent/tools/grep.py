@@ -12,7 +12,6 @@ from ..subprocesses import rg_search
 from .base import AsyncPathTool, SearchPath, ToolOutput, file_allowed
 
 __all__ = [
-    "CaseSensitiveArg",
     "ContextLinesArg",
     "GrepMatch",
     "GrepMaxResultsArg",
@@ -53,12 +52,6 @@ ContextLinesArg = Annotated[
         ge=0,
     ),
 ]
-CaseSensitiveArg = Annotated[
-    bool,
-    Field(
-        description="Match case exactly. Default is false (case-insensitive).",
-    ),
-]
 GrepMaxResultsArg = Annotated[
     int,
     Field(
@@ -74,7 +67,6 @@ async def _search_path(
     pattern: str,
     path: str | None,
     context_lines: int,
-    case_sensitive: bool,
 ) -> list[GrepMatch]:
     """Run ripgrep against a single search path."""
     if not sp.path.exists():
@@ -86,7 +78,7 @@ async def _search_path(
             sp.path,
             glob=path,
             context_lines=context_lines,
-            case_sensitive=case_sensitive,
+            case_sensitive=False,
         ):
             filename = str(Path(rg_match.path).relative_to(sp.path))
             if file_allowed(sp.filter_func, filename):
@@ -112,17 +104,12 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
         pattern: GrepPatternArg,
         path: GrepPathArg = None,
         context_lines: ContextLinesArg = 2,
-        case_sensitive: CaseSensitiveArg = False,
         max_results: GrepMaxResultsArg = 50,
     ) -> ToolOutput[list[GrepMatch]]:
-        """Search documents for a pattern.
-
-        Searches case-insensitively by default.  Set ``case_sensitive=True``
-        to match case exactly.
-        """
+        """Search documents for a pattern (case-insensitive)."""
         results = await asyncio.gather(
             *(
-                _search_path(sp, pattern, path, context_lines, case_sensitive)
+                _search_path(sp, pattern, path, context_lines)
                 for sp in self.resolved_paths
             )
         )

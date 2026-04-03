@@ -238,7 +238,7 @@ def factory_tool_name(factory: Callable[..., Any]) -> str:
     """Derive a tool name from a factory function.
 
     Strips a leading underscore from the function name so that
-    ``_semantic_search`` becomes ``semantic_search``.
+    ``_search`` becomes ``search``.
 
     Args:
         factory: The factory callable.

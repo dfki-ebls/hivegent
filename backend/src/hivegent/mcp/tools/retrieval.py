@@ -7,17 +7,15 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from ...agents import UserDeps, explore_toolset, user_agent
 from ...chunkers.base import RetrievedChunk
-from ...chunks import GetChunkTool, ListChunksTool
 from ...config import settings
 from ...prompts import EXPLORE_INSTRUCTIONS, join_instructions
 from ...retrieval import build_search_tool
 from ...store import Casebase, build_search_paths
 from ...tools import (
-    GetDocumentLinesTool,
-    GlobDocumentsTool,
     GrepTool,
     LanceDBSearchTool,
     ListDocumentsTool,
+    ReadDocumentTool,
 )
 from ...tools.fastmcp import register_mcp_tools
 from ..app import mcp_app
@@ -33,29 +31,7 @@ __all__ = [
 ]
 
 
-def _list_chunks(
-    store: Casebase = Depends(get_mcp_user_store),
-    group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
-) -> ListChunksTool:
-    return ListChunksTool(
-        paths=build_search_paths(
-            store, group_stores, settings.data_dir, dir_fn=Casebase.metadata_dir
-        )
-    )
-
-
-def _get_chunk(
-    store: Casebase = Depends(get_mcp_user_store),
-    group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
-) -> GetChunkTool:
-    return GetChunkTool(
-        paths=build_search_paths(
-            store, group_stores, settings.data_dir, dir_fn=Casebase.metadata_dir
-        )
-    )
-
-
-def _semantic_search(
+def _search(
     store: Casebase = Depends(get_mcp_user_store),
     group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
 ) -> LanceDBSearchTool[RetrievedChunk]:
@@ -65,9 +41,7 @@ def _semantic_search(
 register_mcp_tools(
     mcp_app,
     [
-        _list_chunks,
-        _get_chunk,
-        _semantic_search,
+        _search,
     ],
 )
 
@@ -110,10 +84,9 @@ async def explore_documents(
         system_prompt=join_instructions([EXPLORE_INSTRUCTIONS]),
         tools=[
             ListDocumentsTool(paths=paths),
-            GlobDocumentsTool(paths=paths),
             GrepTool(paths=paths),
             build_search_tool(all_stores),
-            GetDocumentLinesTool(paths=paths),
+            ReadDocumentTool(paths=paths),
         ],
     )
     return result.text
