@@ -1,5 +1,8 @@
 """Base chunking types and interfaces."""
 
+from __future__ import annotations
+
+import bisect
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import ClassVar, Literal
@@ -26,10 +29,13 @@ class ChunkData(BaseModel):
     token_count: int = Field(description="Number of tokens in the chunk")
     start_index: int = Field(description="Start character index in original document")
     end_index: int = Field(description="End character index in original document")
+    start_line: int = Field(default=0, description="1-based line number in the original document")
+    end_line: int = Field(default=0, description="1-based line number in the original document")
     index: int | None = Field(
         default=None,
         description="Zero-based chunk index within the document when available",
     )
+
 
 
 type EntryKind = Literal[
@@ -100,6 +106,8 @@ class ChunkSummary(BaseModel):
     token_count: int = Field(description="Number of tokens in the chunk")
     start_index: int = Field(description="Start character index in original document")
     end_index: int = Field(description="End character index in original document")
+    start_line: int = Field(description="1-based start line number in the original document")
+    end_line: int = Field(description="1-based end line number in the original document")
 
 
 class RetrievedChunk(BaseModel):
@@ -114,6 +122,8 @@ class RetrievedChunk(BaseModel):
     text: str = Field(description="The chunk text content")
     token_count: int = Field(description="Number of tokens in the chunk")
     score: float = Field(description="The relevance score")
+    start_line: int = Field(default=0, description="1-based start line number in the original document")
+    end_line: int = Field(default=0, description="1-based end line number in the original document")
     image_path: str | None = Field(
         default=None,
         description="Workspace-relative path to the original image file when this chunk describes an image",
@@ -123,15 +133,15 @@ class RetrievedChunk(BaseModel):
 class DocumentChunker(ABC):
     """Abstract base class for document chunkers.
 
-    All chunkers must inherit from this class and implement the required
-    properties and methods.
-    Chunkers split document text into smaller pieces for retrieval.
+    Subclasses implement :meth:`_split` to produce chunks with character
+    offsets.  The base :meth:`__call__` automatically annotates each chunk
+    with 1-based line numbers derived from those offsets.
     """
 
     name: ClassVar[str]
 
     @abstractmethod
-    async def __call__(
+    async def _split(
         self,
         text: str,
         /,
@@ -142,6 +152,39 @@ class DocumentChunker(ABC):
             text: The document text to chunk.
 
         Returns:
-            List of ChunkData objects.
+            List of ChunkData objects (line numbers may be unset).
         """
         ...
+
+    async def __call__(
+        self,
+        text: str,
+        /,
+    ) -> list[ChunkData]:
+        """Split text into chunks and annotate line numbers.
+
+        Args:
+            text: The document text to chunk.
+
+        Returns:
+            List of ChunkData objects with 1-based line numbers set.
+        """
+        chunks = await self._split(text)
+        if not chunks:
+            return []
+        line_starts = [0]
+        pos = text.find("\n")
+        while pos != -1:
+            line_starts.append(pos + 1)
+            pos = text.find("\n", pos + 1)
+        return [
+            chunk.model_copy(
+                update={
+                    "start_line": bisect.bisect_right(line_starts, chunk.start_index),
+                    "end_line": bisect.bisect_right(
+                        line_starts, max(chunk.end_index - 1, chunk.start_index)
+                    ),
+                }
+            )
+            for chunk in chunks
+        ]

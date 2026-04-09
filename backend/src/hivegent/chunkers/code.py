@@ -51,7 +51,7 @@ class CodeDocumentChunker(DocumentChunker):
         ).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
-    async def __call__(
+    async def _split(
         self,
         text: str,
         /,

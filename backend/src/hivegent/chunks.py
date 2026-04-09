@@ -71,6 +71,8 @@ class ListChunksTool(SyncPathTool[list[ChunkSummary] | None]):
                 token_count=chunk.token_count,
                 start_index=chunk.start_index,
                 end_index=chunk.end_index,
+                start_line=chunk.start_line,
+                end_line=chunk.end_line,
             )
             for chunk in metadata.chunks
         ]
@@ -79,7 +81,8 @@ class ListChunksTool(SyncPathTool[list[ChunkSummary] | None]):
         lines: list[str] = []
         for i, c in enumerate(result):
             lines.append(
-                f"#{i}  chars {c.start_index}-{c.end_index}"
+                f"#{i}  lines {c.start_line}-{c.end_line}"
+                f"  chars {c.start_index}-{c.end_index}"
                 f"  ({c.token_count} tokens)"
             )
         return ToolOutput(data=result, formatted="\n".join(lines))

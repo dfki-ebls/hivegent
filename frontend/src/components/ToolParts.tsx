@@ -114,8 +114,9 @@ export function processToolOutput(
       const source = `search${query ? `: ${query}` : ""}`;
       for (const chunk of chunks) {
         const position: ChunkPosition = {
-          type: "chunk_index",
-          chunkIndex: chunk.chunk_index,
+          type: "line_range",
+          startLine: chunk.start_line,
+          endLine: chunk.end_line,
         };
         addChunk({
           filename: chunk.filename,

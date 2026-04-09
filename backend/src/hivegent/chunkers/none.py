@@ -13,7 +13,7 @@ class NoneDocumentChunker(DocumentChunker):
 
     name = "none"
 
-    async def __call__(
+    async def _split(
         self,
         text: str,
         /,

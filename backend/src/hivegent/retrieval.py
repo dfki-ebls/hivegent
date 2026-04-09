@@ -41,6 +41,8 @@ class _ChunkEntry:
 
     text: str
     token_count: int
+    start_line: int
+    end_line: int
     image_path: str | None = None
 
 
@@ -254,6 +256,8 @@ def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, _ChunkEntry]:
             chunks[key] = _ChunkEntry(
                 text=chunk.text,
                 token_count=chunk.token_count,
+                start_line=chunk.start_line,
+                end_line=chunk.end_line,
                 image_path=image_path,
             )
 
@@ -362,13 +366,23 @@ def _to_retrieved_chunk(
             back to ``len(text.split())``.
     """
     filename, chunk_index = _parse_chunk_key(result.key)
+    if meta is not None:
+        return RetrievedChunk(
+            filename=filename,
+            chunk_index=chunk_index,
+            text=result.text,
+            token_count=meta.token_count,
+            score=round(result.score, 4),
+            start_line=meta.start_line,
+            end_line=meta.end_line,
+            image_path=meta.image_path,
+        )
     return RetrievedChunk(
         filename=filename,
         chunk_index=chunk_index,
         text=result.text,
-        token_count=meta.token_count if meta is not None else len(result.text.split()),
+        token_count=len(result.text.split()),
         score=round(result.score, 4),
-        image_path=meta.image_path if meta is not None else None,
     )
 
 

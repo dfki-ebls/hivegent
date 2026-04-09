@@ -162,6 +162,10 @@ class LanceDBSearchTool[R = SearchResult](SyncTool[list[R]]):
             chunk_idx = getattr(r, "chunk_index", None)
             score: float = getattr(r, "score", 0.0)
             text: str = getattr(r, "text", "")
+            start_line = getattr(r, "start_line", None)
+            end_line = getattr(r, "end_line", None)
             label = f"{key}#{chunk_idx}" if chunk_idx is not None else key
+            if start_line is not None and end_line is not None:
+                label += f" L{start_line}-{end_line}"
             lines.append(f"[{i}] {label} ({score:.0%})\n{text}")
         return ToolOutput(data=final, formatted="\n\n".join(lines))

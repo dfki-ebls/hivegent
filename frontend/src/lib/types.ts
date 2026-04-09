@@ -132,6 +132,8 @@ export const ChunkInfoSchema = z.object({
   token_count: z.number(),
   start_index: z.number(),
   end_index: z.number(),
+  start_line: z.number(),
+  end_line: z.number(),
 });
 export type ChunkInfo = z.infer<typeof ChunkInfoSchema>;
 
@@ -215,6 +217,8 @@ export const RetrievedChunkSchema = z.object({
   text: z.string(),
   token_count: z.number(),
   score: z.number(),
+  start_line: z.number(),
+  end_line: z.number(),
   image_path: z.string().nullable().optional(),
 });
 export type RetrievedChunk = z.infer<typeof RetrievedChunkSchema>;

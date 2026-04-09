@@ -61,7 +61,10 @@ class TestToRetrievedChunk:
 
     def test_explicit_token_count(self) -> None:
         result = SearchResult(key="report.md::0", text="hello world", score=0.95)
-        chunk = _to_retrieved_chunk(result, meta=_ChunkEntry(text="hello world", token_count=42))
+        chunk = _to_retrieved_chunk(
+            result,
+            meta=_ChunkEntry(text="hello world", token_count=42, start_line=5, end_line=10),
+        )
         assert chunk == snapshot(
             RetrievedChunk(
                 filename="report.md",
@@ -69,9 +72,13 @@ class TestToRetrievedChunk:
                 text="hello world",
                 token_count=42,
                 score=0.95,
+                start_line=5,
+                end_line=10,
             )
         )
 
     def test_rounds_score(self) -> None:
         result = SearchResult(key="a.md::1", text="x", score=0.123456789)
         assert _to_retrieved_chunk(result).score == snapshot(0.1235)
+
+
