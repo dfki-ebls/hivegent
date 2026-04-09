@@ -5,9 +5,10 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_serializer, field_validator
 from pydantic_ai import ModelMessagesTypeAdapter
-from pydantic_ai.messages import ModelMessage, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
+from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 from .config import settings
 from .store import Casebase
@@ -89,6 +90,11 @@ def load_conversation(user_id: str, conversation_id: str) -> ConversationData | 
 def load_messages(user_id: str, conversation_id: str) -> list[ModelMessage]:
     """Load messages for a conversation.
 
+    Reconstructs ``DataChunk`` instances in ``ToolReturnPart.metadata``
+    that lose their type during JSON round-tripping (``metadata: Any``
+    deserializes as a plain dict).  Without this, ``dump_messages``
+    silently omits the ``data-tool-output`` parts the frontend needs.
+
     Args:
         user_id: The user ID that owns the conversation.
         conversation_id: The conversation ID.
@@ -99,7 +105,17 @@ def load_messages(user_id: str, conversation_id: str) -> list[ModelMessage]:
     conversation = load_conversation(user_id, conversation_id)
     if not conversation:
         return []
-    return list(conversation.messages)
+    for msg in conversation.messages:
+        if not isinstance(msg, ModelRequest):
+            continue
+        for part in msg.parts:
+            if not isinstance(part, ToolReturnPart) or not isinstance(part.metadata, dict):
+                continue
+            try:
+                part.metadata = DataChunk(**part.metadata)
+            except (ValidationError, TypeError):
+                pass
+    return conversation.messages
 
 
 def save_messages(
