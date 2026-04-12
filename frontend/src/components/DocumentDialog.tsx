@@ -72,6 +72,48 @@ function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleString();
 }
 
+/**
+ * Resolve a chunk's character range within ``fullContent``.
+ *
+ * Uses the chunk's stored line numbers so overlapping or repeated
+ * snippets highlight correctly, and only falls back to text search when
+ * position information is unavailable.
+ */
+function resolveChunkRange(
+  fullContent: string,
+  chunk: FetchedChunk,
+): { start: number; end: number } | null {
+  const position = chunk.position;
+  const [startLine, endLine] =
+    position.type === "line_range"
+      ? [position.startLine, position.endLine]
+      : position.type === "line"
+        ? [position.line, position.line]
+        : [0, 0];
+
+  if (startLine > 0) {
+    let start = 0;
+    for (let i = 1; i < startLine; i++) {
+      const nl = fullContent.indexOf("\n", start);
+      if (nl === -1) return null;
+      start = nl + 1;
+    }
+    let end = start;
+    for (let i = startLine; i <= endLine; i++) {
+      const nl = fullContent.indexOf("\n", end);
+      end = nl === -1 ? fullContent.length : nl + 1;
+      if (nl === -1) break;
+    }
+    // Trim trailing newline so the highlight matches chunk content.
+    if (end > start && fullContent[end - 1] === "\n") end--;
+    if (end > start) return { start, end };
+  }
+
+  const idx = fullContent.indexOf(chunk.content);
+  if (idx >= 0) return { start: idx, end: idx + chunk.content.length };
+  return null;
+}
+
 export function DocumentDialog({
   open,
   onOpenChange,
@@ -542,15 +584,13 @@ export function DocumentDialog({
       );
     }
 
-    // Fetched mode: find chunk in full content by text
+    // Fetched mode: locate chunk in full content using its stored position
     if (!activeChunk) return null;
 
     if (fullContent) {
-      const chunkText = activeChunk.content;
-      const idx = fullContent.indexOf(chunkText);
-
-      if (idx >= 0) {
-        return renderChunkHighlight(fullContent, idx, idx + chunkText.length);
+      const range = resolveChunkRange(fullContent, activeChunk);
+      if (range) {
+        return renderChunkHighlight(fullContent, range.start, range.end);
       }
     }
 
