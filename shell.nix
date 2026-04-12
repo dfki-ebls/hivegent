@@ -20,10 +20,10 @@ mkShell {
     uv --directory "$ROOT_DIR/backend" sync --all-extras
   '';
   HIVEGENT_AUTH_DISABLED = "1";
-  HIVEGENT_LLM__MODEL = "gpt-oss:20b";
-  HIVEGENT_LLM__SMALL_MODEL = "qwen3.5:0.8b";
-  HIVEGENT_LLM__VISION_MODEL = "qwen3.5:0.8b";
-  HIVEGENT_LLM__BASE_URL = "http://localhost:11434/v1";
+  HIVEGENT_LLM__MODEL = "openai/gpt-oss-20b";
+  HIVEGENT_LLM__SMALL_MODEL = "qwen3.5-0.8b";
+  HIVEGENT_LLM__VISION_MODEL = "qwen3.5-0.8b";
+  HIVEGENT_LLM__BASE_URL = "http://localhost:1234/v1";
   UV_PYTHON = lib.getExe python3;
   packages = [
     nodejs
