@@ -123,6 +123,14 @@ def save_messages(
 ) -> None:
     """Save messages for a conversation.
 
+    Preserves ``ToolReturnPart.metadata`` across turns.  Pydantic AI's
+    Vercel AI adapter reconstructs prior tool returns from the UI
+    history without reading the accompanying ``data-tool-output``
+    DataUIPart, so on subsequent turns those parts arrive back with
+    ``metadata=None``.  We merge the previously persisted metadata back
+    in — keyed by ``tool_call_id`` — before writing, so structured tool
+    payloads survive multi-turn conversations.
+
     Args:
         user_id: The user ID that owns the conversation.
         conversation_id: The conversation ID.
@@ -137,6 +145,7 @@ def save_messages(
     msgs = list(messages)
 
     if existing:
+        _preserve_tool_return_metadata(msgs, existing.messages)
         conversation = ConversationData(
             id=conversation_id,
             title=existing.title or _extract_title(msgs),
@@ -155,6 +164,34 @@ def save_messages(
         )
 
     path.write_bytes(conversation.model_dump_json(indent=2).encode())
+
+
+def _preserve_tool_return_metadata(
+    new_messages: Sequence[ModelMessage],
+    existing_messages: Sequence[ModelMessage],
+) -> None:
+    """Backfill ``ToolReturnPart.metadata`` from *existing_messages* where missing."""
+    existing_metadata: dict[str, Any] = {}
+    for msg in existing_messages:
+        if not isinstance(msg, ModelRequest):
+            continue
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart) and part.metadata is not None:
+                existing_metadata[part.tool_call_id] = part.metadata
+
+    if not existing_metadata:
+        return
+
+    for msg in new_messages:
+        if not isinstance(msg, ModelRequest):
+            continue
+        for part in msg.parts:
+            if (
+                isinstance(part, ToolReturnPart)
+                and part.metadata is None
+                and part.tool_call_id in existing_metadata
+            ):
+                part.metadata = existing_metadata[part.tool_call_id]
 
 
 def _extract_title(messages: Sequence[ModelMessage]) -> str:

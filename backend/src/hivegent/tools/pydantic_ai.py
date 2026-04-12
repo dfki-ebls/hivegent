@@ -20,9 +20,11 @@ def wrap_tool_output(result: ToolOutput[Any]) -> ToolReturn:
     """Wrap a :class:`ToolOutput` in a :class:`ToolReturn`.
 
     ``return_value`` carries the compact text the LLM sees directly.
-    When ``data`` is structured (not a plain string or ``None``), a
-    :class:`DataChunk` is attached as ``metadata`` so the Vercel AI
-    stream delivers the structured payload to the frontend.
+    Structured ``data`` (anything that isn't a plain string) is attached
+    as a :class:`DataChunk` in ``metadata`` so the frontend receives it
+    without parsing the LLM-facing text.  String-valued ``data`` is
+    considered the canonical payload on its own and is left in
+    ``return_value`` without duplication.
     """
     metadata: DataChunk | None = None
     if result.data is not None and not isinstance(result.data, str):
