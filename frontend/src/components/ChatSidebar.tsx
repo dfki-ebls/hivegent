@@ -642,7 +642,14 @@ export function ChatSidebar({
       for (let i = 0; i < parts.length; i++) {
         const info = getToolPartInfo(parts, i);
         if (!info || info.state !== "output-available") continue;
-        processToolOutput(info.toolName, info.input, info.output, addChunk, markFullDocument);
+        processToolOutput(
+          info.toolName,
+          info.input,
+          info.text,
+          info.metadata,
+          addChunk,
+          markFullDocument,
+        );
       }
     }
   }, [messages, addChunk, markFullDocument]);

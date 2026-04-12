@@ -37,7 +37,20 @@ interface ToolPartInfo {
   toolName: string;
   state: ToolPart["state"];
   input: Record<string, unknown> | undefined;
-  output: unknown;
+  /**
+   * Plain-string tool output.  Set only for tools whose canonical
+   * payload is a string (e.g. full-document reads, web fetches) — these
+   * never emit a ``data-tool-output`` DataUIPart.
+   */
+  text: string | null;
+  /**
+   * Structured tool output, streamed as an adjacent ``data-tool-output``
+   * DataUIPart.  Set only for tools that emit one; ``null`` otherwise
+   * (either the tool is plain-string or the data part hasn't streamed
+   * yet).
+   */
+  metadata: unknown;
+  /** LLM-facing text form (for display in the chat sidebar only). */
   formatted: string | null;
 }
 
@@ -95,19 +108,34 @@ function prettyPrint(value: unknown): string {
   return String(value as number | boolean);
 }
 
+/**
+ * Update the document store from a tool call's output.
+ *
+ * Each tool declares a strict payload mode:
+ *  - **structured**: consumes only the ``data-tool-output`` DataUIPart
+ *    (``metadata``).  The handler skips until that part has arrived;
+ *    the LLM-facing text is never parsed.
+ *  - **plain-string**: consumes only ``text`` (the ``return_value`` the
+ *    LLM sees).  These tools never emit a DataUIPart.
+ *
+ * ``read_document`` is mixed: its ``start_line`` argument puts it in
+ *  structured mode (returning a ``DocumentRange``); otherwise it is
+ *  plain-string mode (full document content).
+ */
 export function processToolOutput(
   toolName: string,
   input: Record<string, unknown> | undefined,
-  output: unknown,
+  text: string | null,
+  metadata: unknown,
   addChunk: (chunk: Omit<FetchedChunk, "id">) => void,
   markFullDocument: (filename: string, content: string, source: string) => void,
 ) {
-  if (!input || output == null) return;
+  if (!input) return;
 
   switch (toolName) {
     case "search": {
-      if (!Array.isArray(output)) return;
-      const chunks = output as RetrievedChunk[];
+      if (!Array.isArray(metadata)) return;
+      const chunks = metadata as RetrievedChunk[];
       if (!chunks.length) return;
 
       const query = input.query as string;
@@ -131,34 +159,34 @@ export function processToolOutput(
     case "read_document": {
       const filename = input.filename as string;
       if (!filename) return;
+      const isLineRange = input.start_line != null;
 
-      if (typeof output === "object" && output != null && "start_line" in (output as object)) {
-        const result = output as DocumentRange;
-        if (result.content) {
-          const position: ChunkPosition = {
-            type: "line_range",
-            startLine: result.start_line,
-            endLine: result.end_line,
-          };
-          addChunk({
-            filename,
-            content: result.content,
-            source: `lines ${result.start_line}-${result.end_line}`,
-            position,
-          });
-        }
+      if (isLineRange) {
+        if (metadata == null || typeof metadata !== "object") return;
+        if (!("start_line" in (metadata as object))) return;
+        const result = metadata as DocumentRange;
+        if (!result.content) return;
+        const position: ChunkPosition = {
+          type: "line_range",
+          startLine: result.start_line,
+          endLine: result.end_line,
+        };
+        addChunk({
+          filename,
+          content: result.content,
+          source: `lines ${result.start_line}-${result.end_line}`,
+          position,
+        });
         return;
       }
 
-      const content = typeof output === "string" ? output : null;
-      if (content) {
-        markFullDocument(filename, content, "read_document");
-      }
+      if (typeof text !== "string" || !text) return;
+      markFullDocument(filename, text, "read_document");
       return;
     }
     case "grep": {
-      if (!Array.isArray(output)) return;
-      const matches = output as GrepMatch[];
+      if (!Array.isArray(metadata)) return;
+      const matches = metadata as GrepMatch[];
       const pattern = input.pattern as string;
       if (!matches.length || !pattern) return;
 
@@ -185,8 +213,8 @@ export function processToolOutput(
       return;
     }
     case "web_search": {
-      if (!Array.isArray(output)) return;
-      const results = output as { title: string; href: string; body: string }[];
+      if (!Array.isArray(metadata)) return;
+      const results = metadata as { title: string; href: string; body: string }[];
       if (!results.length) return;
       const query = input.query as string;
       const source = `web: ${query ?? "search"}`;
@@ -203,10 +231,9 @@ export function processToolOutput(
     }
     case "web_fetch": {
       const url = input.url as string;
-      const content = typeof output === "string" ? output : null;
-      if (url && content && !content.startsWith("Error:")) {
-        markFullDocument(url, content, "web_fetch");
-      }
+      if (!url || typeof text !== "string" || !text) return;
+      if (text.startsWith("Error:")) return;
+      markFullDocument(url, text, "web_fetch");
       return;
     }
   }
@@ -228,19 +255,22 @@ export function getToolPartInfo(
   if (!toolName) return null;
 
   const raw = parseJson<unknown>(typed.output) ?? typed.output;
-  const formatted = typeof raw === "string" ? raw : null;
+  const text = typeof raw === "string" ? raw : null;
 
-  // Structured data arrives as an adjacent data-tool-output DataUIPart,
-  // streamed via ToolReturn.metadata by the backend.
+  // A tool is either ``plain-string`` (no ``data-tool-output`` ever
+  // arrives) or ``structured`` (the adjacent DataUIPart carries the
+  // canonical payload).  We never parse ``text`` as a stand-in for
+  // structured data.
   const next = parts[index + 1];
-  const output = isToolDataPart(next) ? next.data : raw;
+  const metadata = isToolDataPart(next) ? next.data : null;
 
   return {
     toolName,
     state: typed.state ?? "output-available",
     input: parseJson<Record<string, unknown>>(typed.input),
-    output,
-    formatted,
+    text,
+    metadata,
+    formatted: text,
   };
 }
 
