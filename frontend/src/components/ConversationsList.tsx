@@ -5,7 +5,6 @@ import { useConversationsStore } from "../stores/conversations-store";
 import { useSettingsStore } from "../stores/settings-store";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { ScrollArea } from "./ui/scroll-area";
 
 // --- Utility functions ---
 
@@ -300,22 +299,20 @@ export function ConversationsList({
   if (conversations.length === 0) return <EmptyState />;
 
   return (
-    <ScrollArea className="h-full">
-      <div className="space-y-2 p-2">
-        {conversations.map((conversation) => (
-          <ConversationItem
-            key={conversation.id}
-            title={conversation.title}
-            updatedAt={conversation.updated_at}
-            messageCount={conversation.message_count}
-            isActive={conversation.id === currentConversationId}
-            onSelect={() => onConversationSelect(conversation.id)}
-            onDelete={() => handleDelete(conversation.id)}
-            onUpdateTitle={(title) => updateTitle(conversation.id, title)}
-            onGenerateTitle={() => handleGenerateTitle(conversation.id)}
-          />
-        ))}
-      </div>
-    </ScrollArea>
+    <div className="h-full space-y-2 overflow-y-auto p-2">
+      {conversations.map((conversation) => (
+        <ConversationItem
+          key={conversation.id}
+          title={conversation.title}
+          updatedAt={conversation.updated_at}
+          messageCount={conversation.message_count}
+          isActive={conversation.id === currentConversationId}
+          onSelect={() => onConversationSelect(conversation.id)}
+          onDelete={() => handleDelete(conversation.id)}
+          onUpdateTitle={(title) => updateTitle(conversation.id, title)}
+          onGenerateTitle={() => handleGenerateTitle(conversation.id)}
+        />
+      ))}
+    </div>
   );
 }
