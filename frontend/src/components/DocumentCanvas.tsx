@@ -141,9 +141,7 @@ function ChunkCard({ chunk, onClick }: ChunkCardProps) {
         )}
         <span className="text-xs text-muted-foreground">{chunkPositionLabel(chunk.position)}</span>
       </div>
-      <pre className="line-clamp-4 whitespace-pre-wrap text-xs text-muted-foreground">
-        {chunk.content}
-      </pre>
+      <p className="line-clamp-4 text-xs text-muted-foreground">{chunk.content.trim()}</p>
     </button>
   );
 }

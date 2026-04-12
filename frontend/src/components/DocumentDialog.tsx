@@ -1,7 +1,7 @@
 import { ExternalLink, FileText, ImageIcon, Pencil, RefreshCw } from "lucide-react";
 import { isWebUrl } from "@/lib/utils";
 import Markdown from "markdown-to-jsx";
-import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   getDocumentChunks,
@@ -113,6 +113,9 @@ export function DocumentDialog({
   const [isEditingAssetDescription, setIsEditingAssetDescription] = useState(false);
   const [isSavingAssetDescription, setIsSavingAssetDescription] = useState(false);
 
+  // When true, the next scroll-into-view uses "instant" instead of "smooth".
+  const isInitialScrollRef = useRef(true);
+
   // Fetched-mode store access
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
@@ -138,6 +141,7 @@ export function DocumentDialog({
   useEffect(() => {
     if (!open) return;
 
+    isInitialScrollRef.current = true;
     setEditFilename(filenameProp);
     setManagedData(null);
     setManagedError(null);
@@ -241,9 +245,11 @@ export function DocumentDialog({
   const highlightRef = useCallback(
     (node: HTMLElement | null) => {
       if (!node) return;
+      const behavior = isInitialScrollRef.current ? "instant" : "smooth";
+      isInitialScrollRef.current = false;
       // Single rAF to let the Radix ScrollArea viewport settle.
       requestAnimationFrame(() => {
-        node.scrollIntoView({ behavior: "smooth", block: "center" });
+        node.scrollIntoView({ behavior, block: "center" });
       });
     },
     [activeChunkId, managedActiveIndex],
