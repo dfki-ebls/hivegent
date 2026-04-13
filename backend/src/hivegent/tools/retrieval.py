@@ -167,5 +167,18 @@ class LanceDBSearchTool[R = SearchResult](SyncTool[list[R]]):
             label = f"{key}#{chunk_idx}" if chunk_idx is not None else key
             if start_line is not None and end_line is not None:
                 label += f" L{start_line}-{end_line}"
+                text = _annotate_lines(text, start_line)
             lines.append(f"[{i}] {label} ({score:.0%})\n{text}")
         return ToolOutput(data=final, formatted="\n\n".join(lines))
+
+
+def _annotate_lines(text: str, start_line: int) -> str:
+    """Prefix each line of *text* with its 1-indexed line number.
+
+    Without per-line annotations the LLM can only see the chunk's
+    overall line range and has to guess which line a specific sentence
+    is on, producing off-by-one citations.
+    """
+    return "\n".join(
+        f"{start_line + i}: {line}" for i, line in enumerate(text.splitlines())
+    )

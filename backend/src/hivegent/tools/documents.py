@@ -370,9 +370,13 @@ class ReadDocumentTool(SyncPathTool[str | DocumentRange | None]):
                 total_lines=total,
                 content="\n".join(all_lines[start - 1 : end]),
             )
+            annotated = "\n".join(
+                f"{start + i}: {line}"
+                for i, line in enumerate(all_lines[start - 1 : end])
+            )
             return ToolOutput(
                 data=result,
-                formatted=f"lines {result.start_line}-{result.end_line} of {result.total_lines}:\n{result.content}",
+                formatted=f"lines {result.start_line}-{result.end_line} of {result.total_lines}:\n{annotated}",
             )
 
         content = file_path.read_text(encoding="utf-8")

@@ -9,11 +9,6 @@ import {
 } from "@/lib/types";
 
 describe("makeChunkId", () => {
-  it("builds id for chunk_index position", () => {
-    const pos: ChunkPosition = { type: "chunk_index", chunkIndex: 3 };
-    expect(makeChunkId("report.md", "search", pos)).toBe("report.md::search::chunk_3");
-  });
-
   it("builds id for line position", () => {
     const pos: ChunkPosition = { type: "line", line: 42 };
     expect(makeChunkId("file.md", "grep", pos)).toBe("file.md::grep::line_42");
@@ -39,10 +34,6 @@ describe("chunkSortKey", () => {
     expect(chunkSortKey({ type: "full_document" })).toBe(-1);
   });
 
-  it("returns chunkIndex for chunk_index", () => {
-    expect(chunkSortKey({ type: "chunk_index", chunkIndex: 5 })).toBe(5);
-  });
-
   it("returns line for line", () => {
     expect(chunkSortKey({ type: "line", line: 42 })).toBe(42);
   });
@@ -60,7 +51,7 @@ describe("sortChunks", () => {
         filename: "f.md",
         content: "",
         source: "s",
-        position: { type: "chunk_index", chunkIndex: 2 },
+        position: { type: "line", line: 20 },
       },
       {
         id: "b",
@@ -74,14 +65,14 @@ describe("sortChunks", () => {
         filename: "f.md",
         content: "",
         source: "s",
-        position: { type: "chunk_index", chunkIndex: 0 },
+        position: { type: "line", line: 5 },
       },
     ];
 
     const sorted = sortChunks(chunks);
     expect(sorted[0].id).toBe("b"); // full_document first
-    expect(sorted[1].id).toBe("c"); // chunk 0
-    expect(sorted[2].id).toBe("a"); // chunk 2
+    expect(sorted[1].id).toBe("c"); // line 5
+    expect(sorted[2].id).toBe("a"); // line 20
   });
 
   it("does not mutate the original array", () => {
@@ -91,14 +82,14 @@ describe("sortChunks", () => {
         filename: "f.md",
         content: "",
         source: "s",
-        position: { type: "chunk_index", chunkIndex: 1 },
+        position: { type: "line", line: 10 },
       },
       {
         id: "b",
         filename: "f.md",
         content: "",
         source: "s",
-        position: { type: "chunk_index", chunkIndex: 0 },
+        position: { type: "line", line: 5 },
       },
     ];
     const sorted = sortChunks(chunks);

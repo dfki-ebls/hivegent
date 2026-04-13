@@ -75,9 +75,9 @@ function formatDate(dateString: string): string {
 /**
  * Resolve a chunk's character range within ``fullContent``.
  *
- * Uses the chunk's stored line numbers so overlapping or repeated
- * snippets highlight correctly, and only falls back to text search when
- * position information is unavailable.
+ * Prefers the chunk's stored line numbers (1-indexed) so overlapping or
+ * repeated snippets highlight correctly; falls back to a text search
+ * only when the chunk has content to search for.
  */
 function resolveChunkRange(
   fullContent: string,
@@ -91,27 +91,20 @@ function resolveChunkRange(
         ? [position.line, position.line]
         : [0, 0];
 
-  if (startLine > 0) {
+  if (startLine >= 1) {
+    const lines = fullContent.split("\n");
+    if (startLine > lines.length) return null;
+    const e = Math.min(endLine, lines.length);
     let start = 0;
-    for (let i = 1; i < startLine; i++) {
-      const nl = fullContent.indexOf("\n", start);
-      if (nl === -1) return null;
-      start = nl + 1;
-    }
-    let end = start;
-    for (let i = startLine; i <= endLine; i++) {
-      const nl = fullContent.indexOf("\n", end);
-      end = nl === -1 ? fullContent.length : nl + 1;
-      if (nl === -1) break;
-    }
-    // Trim trailing newline so the highlight matches chunk content.
-    if (end > start && fullContent[end - 1] === "\n") end--;
-    if (end > start) return { start, end };
+    for (let i = 0; i < startLine - 1; i++) start += lines[i].length + 1;
+    let end = start + lines[startLine - 1].length;
+    for (let i = startLine; i < e; i++) end += lines[i].length + 1;
+    return { start, end };
   }
 
+  if (!chunk.content) return null;
   const idx = fullContent.indexOf(chunk.content);
-  if (idx >= 0) return { start: idx, end: idx + chunk.content.length };
-  return null;
+  return idx >= 0 ? { start: idx, end: idx + chunk.content.length } : null;
 }
 
 export function DocumentDialog({
@@ -587,17 +580,23 @@ export function DocumentDialog({
     // Fetched mode: locate chunk in full content using its stored position
     if (!activeChunk) return null;
 
-    if (fullContent) {
-      const range = resolveChunkRange(fullContent, activeChunk);
-      if (range) {
-        return renderChunkHighlight(fullContent, range.start, range.end);
-      }
+    if (!fullContent) {
+      return (
+        <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
+          Document content unavailable
+        </div>
+      );
     }
 
-    // Fallback: just show chunk content
+    const range = resolveChunkRange(fullContent, activeChunk);
+    if (range) {
+      return renderChunkHighlight(fullContent, range.start, range.end);
+    }
+    // Couldn't locate the cited line — show the whole document so the
+    // user at least has the source in front of them.
     return (
       <ScrollArea className="flex-1 min-h-0">
-        <pre className="whitespace-pre-wrap text-sm p-4 font-mono">{activeChunk.content}</pre>
+        <pre className="whitespace-pre-wrap text-sm p-4 font-mono">{fullContent}</pre>
       </ScrollArea>
     );
   };

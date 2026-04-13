@@ -12,82 +12,58 @@ import { DocumentDialog } from "./DocumentDialog";
 /**
  * Inline citation rendered by Streamdown for `<cite>` tags.
  *
- * Displays the cited text followed by a filename badge.
- * Hover shows a preview card, click opens the DocumentDialog.
- *
  * Extends `HTMLAttributes<HTMLElement>` so it satisfies Streamdown's
- * `Components` mapped type for the intrinsic `cite` element.  The custom
- * `filename`, `chunk`, and `line` attributes come from the `allowedTags` config.
+ * `Components` mapped type for the intrinsic `cite` element.  The
+ * custom `filename` and `line` attributes come from `allowedTags`.
  */
 interface CitationProps extends HTMLAttributes<HTMLElement> {
   filename?: string;
-  chunk?: string;
   line?: string;
   node?: unknown;
 }
 
-export function Citation({ filename, chunk, line, children }: CitationProps) {
+export function Citation({ filename, line, children }: CitationProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
-
-  const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
 
-  // Find the best matching chunk for this citation
-  const matchedChunk = useMemo((): FetchedChunk | null => {
-    if (!filename) return null;
+  const lineNumber = useMemo(() => {
+    if (line === undefined) return null;
+    const n = parseInt(line, 10);
+    return Number.isNaN(n) ? null : n;
+  }, [line]);
+
+  // Synthesize an ephemeral chunk anchored at the cited line.  The
+  // dialog resolves it to a position in the freshly-fetched full
+  // document; no lookup against fetched chunks — the LLM cites by
+  // line number alone.
+  const anchorChunk = useMemo((): FetchedChunk | null => {
+    if (!filename || lineNumber === null) return null;
+    return {
+      id: `citation:${filename}:L${lineNumber}`,
+      filename,
+      content: "",
+      source: `line ${lineNumber}`,
+      position: { type: "line", line: lineNumber },
+    };
+  }, [filename, lineNumber]);
+
+  // If the full document is already cached, use it to render a hover
+  // preview of the cited line.
+  const previewText = useMemo(() => {
+    if (!filename || lineNumber === null) return null;
     const doc = documents.get(filename);
-    if (!doc) return null;
-
-    const siblings = doc.chunkIds
-      .map((id) => chunks.get(id))
-      .filter((c): c is FetchedChunk => c != null);
-    if (siblings.length === 0) return null;
-
-    const chunkIndex = chunk !== undefined ? parseInt(chunk, 10) : undefined;
-    const lineNumber = line !== undefined ? parseInt(line, 10) : undefined;
-
-    // 1. Exact match by chunk_index position
-    if (chunkIndex !== undefined && !Number.isNaN(chunkIndex)) {
-      const exact = siblings.find(
-        (c) => c.position.type === "chunk_index" && c.position.chunkIndex === chunkIndex,
-      );
-      if (exact) return exact;
-    }
-
-    // 2. Exact match by line position
-    if (lineNumber !== undefined && !Number.isNaN(lineNumber)) {
-      const exact = siblings.find((c) => {
-        if (c.position.type === "line") return c.position.line === lineNumber;
-        if (c.position.type === "line_range")
-          return lineNumber >= c.position.startLine && lineNumber <= c.position.endLine;
-        return false;
-      });
-      if (exact) return exact;
-    }
-
-    // 3. Last resort: first sibling as document-level anchor
-    return siblings[0];
-  }, [filename, chunk, line, documents, chunks]);
-
-  // Document-level citations (no positional attr) open full-doc view
-  const openFullDoc =
-    chunk === undefined && line === undefined && matchedChunk?.position.type !== "chunk_index";
+    if (!doc?.fullContent) return null;
+    const lines = doc.fullContent.split("\n");
+    if (lineNumber < 1 || lineNumber > lines.length) return null;
+    return lines[lineNumber - 1];
+  }, [filename, lineNumber, documents]);
 
   if (!filename) {
     return <span>{children}</span>;
   }
 
   const displayName = filename.split("/").pop() ?? filename;
-  const chunkIndex = chunk !== undefined ? parseInt(chunk, 10) : undefined;
-  const lineNumber = line !== undefined ? parseInt(line, 10) : undefined;
-  const previewText = matchedChunk?.content.slice(0, 300) ?? null;
-
-  let positionLabel: string | undefined;
-  if (chunkIndex !== undefined && !Number.isNaN(chunkIndex)) {
-    positionLabel = `#${chunkIndex}`;
-  } else if (lineNumber !== undefined && !Number.isNaN(lineNumber)) {
-    positionLabel = `L${lineNumber}`;
-  }
+  const positionLabel = lineNumber !== null ? `L${lineNumber}` : undefined;
 
   return (
     <span className="inline">
@@ -113,12 +89,12 @@ export function Citation({ filename, chunk, line, children }: CitationProps) {
             {previewText ? (
               <blockquote className="border-l-2 border-muted pl-3 text-sm text-muted-foreground italic line-clamp-4">
                 {previewText}
-                {(matchedChunk?.content.length ?? 0) > 300 && "\u2026"}
               </blockquote>
             ) : (
-              <p className="text-xs text-muted-foreground italic">No preview available</p>
+              <p className="text-xs text-muted-foreground italic">
+                Click to load and view in context
+              </p>
             )}
-            <p className="text-xs text-muted-foreground">Click to view in context</p>
           </div>
         </HoverCardContent>
       </HoverCard>
@@ -126,9 +102,9 @@ export function Citation({ filename, chunk, line, children }: CitationProps) {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         filename={filename}
-        chunk={matchedChunk}
+        chunk={anchorChunk}
         fallbackFilename={filename}
-        initialFullDoc={openFullDoc}
+        initialFullDoc={lineNumber === null}
       />
     </span>
   );

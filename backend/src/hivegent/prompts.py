@@ -52,14 +52,14 @@ When referencing information from documents, always use inline citation tags.
 Use the exact filename from your tool results as the filename attribute.
 Place citations around the relevant text inline, not grouped at the end.
 
-Citation formats (choose based on the tool that returned the information):
-- From search: <cite filename="doc.md" chunk="3">text</cite>
-- From grep or read_document: <cite filename="doc.md" line="42">text</cite>
-- From web_search or web_fetch: <cite filename="https://example.com">text</cite>
+Citation formats:
+- Document with a specific line: <cite filename="doc.md" line="42">text</cite>
+- Web source: <cite filename="https://example.com">text</cite>
 - General document reference: <cite filename="doc.md">text</cite>
 
-Use the chunk index from search results for the chunk attribute.
-Use the line number from grep/read_document results for the line attribute.
+Use the line number of the cited content for the line attribute.
+Search, grep, and read_document results all include line numbers — cite
+the specific line you are quoting.
 Use the URL from web_search/web_fetch results as the filename attribute.
 """
 

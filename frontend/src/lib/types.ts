@@ -530,7 +530,6 @@ export type ToolsSpec = z.infer<typeof ToolsSpecSchema>;
 
 /** Position of a chunk within its parent document (discriminated union). */
 export type ChunkPosition =
-  | { type: "chunk_index"; chunkIndex: number }
   | { type: "line"; line: number }
   | { type: "line_range"; startLine: number; endLine: number }
   | { type: "full_document" }
@@ -559,9 +558,6 @@ export interface FetchedDocument {
 export function makeChunkId(filename: string, source: string, position: ChunkPosition): string {
   let positionKey: string;
   switch (position.type) {
-    case "chunk_index":
-      positionKey = `chunk_${position.chunkIndex}`;
-      break;
     case "line":
       positionKey = `line_${position.line}`;
       break;
@@ -588,8 +584,6 @@ export function chunkSortKey(position: ChunkPosition): number {
       return -1;
     case "web_result":
       return 0;
-    case "chunk_index":
-      return position.chunkIndex;
     case "line":
       return position.line;
     case "line_range":
@@ -600,8 +594,6 @@ export function chunkSortKey(position: ChunkPosition): number {
 /** Human-readable label for a chunk position. */
 export function chunkPositionLabel(position: ChunkPosition): string {
   switch (position.type) {
-    case "chunk_index":
-      return `Chunk #${position.chunkIndex}`;
     case "line":
       return `Line ${position.line}`;
     case "line_range":
