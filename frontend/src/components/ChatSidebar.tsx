@@ -400,6 +400,7 @@ export function ChatSidebar({
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("auto");
   const [compactedFrom, setCompactedFrom] = useState<string | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
+  const [compactionError, setCompactionError] = useState<Error | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [conversationError, setConversationError] = useState(false);
   const [steeringQueue, setSteeringQueue] = useState<SteeringMessage[]>([]);
@@ -593,6 +594,7 @@ export function ChatSidebar({
   const handleCompact = useCallback(
     async (retryMessageText?: string) => {
       setIsCompacting(true);
+      setCompactionError(null);
       try {
         const result = await compactConversation(
           id,
@@ -611,7 +613,7 @@ export function ChatSidebar({
           params: { id: result.new_conversation_id },
         });
       } catch (err) {
-        console.error("Compaction failed:", err);
+        setCompactionError(err instanceof Error ? err : new Error(String(err)));
       } finally {
         setIsCompacting(false);
       }
@@ -632,8 +634,9 @@ export function ChatSidebar({
   // Auto-compact when context window is exceeded
   useEffect(() => {
     if (!isContextLengthError(error)) return;
+    if (compactionError) return;
     void handleCompact(getLastUserMessageText(messages));
-  }, [error, messages, handleCompact]);
+  }, [error, messages, handleCompact, compactionError]);
 
   // Dump the full request payload to the console on error so it can be
   // copy-pasted for debugging — there is no server-side equivalent since
@@ -836,18 +839,29 @@ export function ChatSidebar({
               );
             })}
             {status === "submitted" && <Loader />}
-            {error && !isContextLengthError(error) && (
+            {((error && !isContextLengthError(error)) || compactionError) && (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Error</AlertTitle>
                 <AlertDescription className="flex items-start justify-between gap-2">
-                  <span>{error.message || "An error occurred while processing your request."}</span>
+                  <span>
+                    {compactionError
+                      ? `Compaction failed: ${compactionError.message}`
+                      : error?.message || "An error occurred while processing your request."}
+                  </span>
                   <span className="flex shrink-0 gap-1">
                     <Button variant="outline" size="sm" onClick={handleRetry}>
                       <RefreshCcwIcon className="mr-1 h-3 w-3" />
                       Retry
                     </Button>
-                    <Button variant="ghost" size="icon-sm" onClick={clearError}>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => {
+                        setCompactionError(null);
+                        clearError();
+                      }}
+                    >
                       <X className="h-3 w-3" />
                       <span className="sr-only">Dismiss</span>
                     </Button>
