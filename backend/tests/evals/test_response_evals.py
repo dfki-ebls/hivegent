@@ -69,12 +69,12 @@ async def test_response_contains_expected_text(
 ) -> None:
     """Real LLM response contains keywords from the expected answer."""
     from hivegent.config import settings
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
     deps = await _seed_and_get_deps(data_dir, user_store, annotations)
 
-    model = OpenAIResponsesModel(
+    model = OpenAIChatModel(
         settings.llm.model,
         provider=OpenAIProvider(
             api_key=settings.llm.api_key,

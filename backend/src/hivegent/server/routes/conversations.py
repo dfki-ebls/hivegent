@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from nanoid import generate
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.run import AgentRunResult
@@ -182,7 +182,7 @@ Return ONLY the title, no quotes or extra text.
     try:
         result = await base_agent.run(
             f"Conversation:\n{conversation_preview}",
-            model=OpenAIResponsesModel(
+            model=OpenAIChatModel(
                 resolved.model,
                 provider=OpenAIProvider(
                     api_key=resolved.api_key,
@@ -351,15 +351,10 @@ async def create_conversation_chat(
 
     instructions = join_instructions(parts)
 
-    model_settings: OpenAIResponsesModelSettings | None = None
+    model_settings: OpenAIChatModelSettings | None = None
     if config.reasoning_effort != "auto":
-        model_settings = OpenAIResponsesModelSettings(
+        model_settings = OpenAIChatModelSettings(
             openai_reasoning_effort=config.reasoning_effort,
-            openai_reasoning_summary="auto",
-        )
-    else:
-        model_settings = OpenAIResponsesModelSettings(
-            openai_reasoning_summary="auto",
         )
 
     store = user_store(user)
@@ -382,7 +377,7 @@ async def create_conversation_chat(
         ),
         sdk_version=6,
         output_type=[str, DeferredToolRequests],
-        model=OpenAIResponsesModel(
+        model=OpenAIChatModel(
             config.llm.model,
             provider=OpenAIProvider(
                 api_key=config.llm.api_key,

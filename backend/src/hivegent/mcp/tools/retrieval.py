@@ -2,7 +2,7 @@
 
 from fastmcp import Context
 from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAccessIssue]
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from ...agents import UserDeps, explore_toolset, user_agent
@@ -60,7 +60,7 @@ async def explore_documents(
     if model_name:
         result = await user_agent.run(
             task,
-            model=OpenAIResponsesModel(
+            model=OpenAIChatModel(
                 model_name,
                 provider=OpenAIProvider(
                     api_key=settings.llm.api_key,

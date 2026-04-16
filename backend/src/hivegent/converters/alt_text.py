@@ -9,7 +9,7 @@ from pathlib import PurePosixPath
 
 from PIL import Image
 from pydantic_ai import BinaryContent
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..agents import base_agent
@@ -71,7 +71,7 @@ async def describe_image(
     content = BinaryContent(data=clean_bytes, media_type=media_type)
     result = await base_agent.run(
         [_ALT_TEXT_PROMPT, content],
-        model=OpenAIResponsesModel(
+        model=OpenAIChatModel(
             llm_options.model,
             provider=OpenAIProvider(
                 api_key=llm_options.api_key,

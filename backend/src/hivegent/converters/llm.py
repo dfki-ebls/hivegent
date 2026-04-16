@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 from pydantic_ai import BinaryContent
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..agents import base_agent
@@ -97,7 +97,7 @@ class LLMConverter(DocumentConverter):
 
         result = await base_agent.run(
             [self.config.prompt, content],
-            model=OpenAIResponsesModel(
+            model=OpenAIChatModel(
                 self.llm_options.model,
                 provider=OpenAIProvider(
                     api_key=self.llm_options.api_key,

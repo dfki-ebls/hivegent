@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 from pydantic_ai import FunctionToolset, RunContext
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from ...config import settings
@@ -34,7 +34,7 @@ ExploreScopeArg = Annotated[
 ]
 
 
-def _subagent_model(deps: UserDeps) -> OpenAIResponsesModel:
+def _subagent_model(deps: UserDeps) -> OpenAIChatModel:
     """Build the model used for subagent calls."""
     llm = deps.llm
     if llm:
@@ -46,7 +46,7 @@ def _subagent_model(deps: UserDeps) -> OpenAIResponsesModel:
         api_key = settings.llm.api_key
         base_url = settings.llm.base_url or None
 
-    return OpenAIResponsesModel(
+    return OpenAIChatModel(
         model,
         provider=OpenAIProvider(
             api_key=api_key,
