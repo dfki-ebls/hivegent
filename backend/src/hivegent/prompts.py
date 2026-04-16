@@ -57,9 +57,9 @@ Citation formats:
 - Web source: <cite filename="https://example.com">text</cite>
 - General document reference: <cite filename="doc.md">text</cite>
 
-Use the line number of the cited content for the line attribute.
-Search, grep, and read_document results all include line numbers — cite
-the specific line you are quoting.
+Include the line attribute whenever you are quoting a specific line from
+a document — search, grep, and read_document results all include line
+numbers. The frontend uses it to highlight the exact span.
 Use the URL from web_search/web_fetch results as the filename attribute.
 """
 

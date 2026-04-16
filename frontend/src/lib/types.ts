@@ -541,7 +541,9 @@ export type ChunkPosition =
   | { type: "line"; line: number }
   | { type: "line_range"; startLine: number; endLine: number }
   | { type: "full_document" }
-  | { type: "web_result"; url: string };
+  | { type: "web_result"; url: string }
+  /** Unlocated span — resolve by searching `FetchedChunk.content` in the document. */
+  | { type: "text" };
 
 /** A single fetched chunk (search result, grep match, line range, etc.). */
 export interface FetchedChunk {
@@ -586,6 +588,9 @@ export function makeChunkId(filename: string, source: string, position: ChunkPos
     case "web_result":
       positionKey = "web";
       break;
+    case "text":
+      positionKey = "text";
+      break;
   }
   return `${filename}::${source}::${positionKey}`;
 }
@@ -604,6 +609,8 @@ export function chunkSortKey(position: ChunkPosition): number {
       return position.line;
     case "line_range":
       return position.startLine;
+    case "text":
+      return Number.MAX_SAFE_INTEGER;
   }
 }
 
@@ -623,6 +630,8 @@ export function chunkPositionLabel(position: ChunkPosition): string {
         return position.url;
       }
     }
+    case "text":
+      return "Cited text";
   }
 }
 

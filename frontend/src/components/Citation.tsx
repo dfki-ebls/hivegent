@@ -1,11 +1,11 @@
 "use client";
 
 import { FileTextIcon } from "lucide-react";
-import type { HTMLAttributes } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import type { FetchedChunk } from "@/lib/types";
+import { type ChunkPosition, type FetchedChunk, makeChunkId } from "@/lib/types";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { DocumentDialog } from "./DocumentDialog";
 
@@ -22,41 +22,52 @@ interface CitationProps extends HTMLAttributes<HTMLElement> {
   node?: unknown;
 }
 
+function extractText(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join("");
+  if (typeof node === "object" && "props" in node) {
+    return extractText((node.props as { children?: ReactNode }).children);
+  }
+  return "";
+}
+
 export function Citation({ filename, line, children }: CitationProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
-  const documents = useFetchedDocumentsStore((state) => state.documents);
+  const doc = useFetchedDocumentsStore((state) =>
+    filename ? state.documents.get(filename) : undefined,
+  );
 
   const lineNumber = useMemo(() => {
     if (line === undefined) return null;
     const n = parseInt(line, 10);
-    return Number.isNaN(n) ? null : n;
+    return Number.isFinite(n) && n >= 1 ? n : null;
   }, [line]);
 
-  // Synthesize an ephemeral chunk anchored at the cited line.  The
-  // dialog resolves it to a position in the freshly-fetched full
-  // document; no lookup against fetched chunks — the LLM cites by
-  // line number alone.
-  const anchorChunk = useMemo((): FetchedChunk | null => {
-    if (!filename || lineNumber === null) return null;
-    return {
-      id: `citation:${filename}:L${lineNumber}`,
-      filename,
-      content: "",
-      source: `line ${lineNumber}`,
-      position: { type: "line", line: lineNumber },
-    };
-  }, [filename, lineNumber]);
+  const citedText = useMemo(() => extractText(children).trim(), [children]);
 
-  // If the full document is already cached, use it to render a hover
-  // preview of the cited line.
+  const anchorChunk = useMemo((): FetchedChunk | null => {
+    if (!filename) return null;
+    if (lineNumber === null && !citedText) return null;
+    const position: ChunkPosition =
+      lineNumber !== null ? { type: "line", line: lineNumber } : { type: "text" };
+    const source = lineNumber !== null ? `line ${lineNumber}` : "cited text";
+    return {
+      id: makeChunkId(filename, source, position),
+      filename,
+      content: citedText,
+      source,
+      position,
+    };
+  }, [filename, lineNumber, citedText]);
+
   const previewText = useMemo(() => {
-    if (!filename || lineNumber === null) return null;
-    const doc = documents.get(filename);
-    if (!doc?.fullContent) return null;
-    const lines = doc.fullContent.split("\n");
-    if (lineNumber < 1 || lineNumber > lines.length) return null;
-    return lines[lineNumber - 1];
-  }, [filename, lineNumber, documents]);
+    if (lineNumber !== null) {
+      const lines = doc?.fullContent?.split("\n");
+      if (lines && lineNumber <= lines.length) return lines[lineNumber - 1];
+    }
+    return citedText || null;
+  }, [lineNumber, citedText, doc]);
 
   if (!filename) {
     return <span>{children}</span>;
@@ -104,7 +115,7 @@ export function Citation({ filename, line, children }: CitationProps) {
         filename={filename}
         chunk={anchorChunk}
         fallbackFilename={filename}
-        initialFullDoc={lineNumber === null}
+        initialFullDoc={anchorChunk === null}
       />
     </span>
   );
