@@ -39,12 +39,14 @@ from ...types import (
 from ..common import parse_pipeline_spec, resolve_llm_config, safe_path, user_store
 from ..operations import (
     delete_single,
+    PreparedCollection,
     ensure_upload_slot,
     find_original,
     get_document_response,
     list_assets,
     list_documents_for_store,
     move_document_internal,
+    prepare_collection_upload,
     process_bulk_operation,
     process_collection,
     read_collection_zip,
@@ -280,16 +282,12 @@ async def upload_collection(
 
 @router.post("/documents/collections/stream", response_class=EventSourceResponse)
 async def upload_collection_stream(
-    file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
-    pipeline_spec: str = Form(default="{}"),
-    llm_config: str = Form(default="{}"),
+    prepared: Annotated[PreparedCollection, Depends(prepare_collection_upload)],
 ) -> AsyncIterable[CollectionProgressEvent | CollectionCompleteEvent]:
     """Upload a collection with streaming progress events."""
-    spec, resolved = validate_collection_upload(pipeline_spec, llm_config)
     store = user_store(user)
-    raw = await read_collection_zip(file)
-    async for event in process_collection(store, raw, spec, resolved):
+    async for event in process_collection(store, prepared.raw, prepared.spec, prepared.resolved):
         yield event
 
 

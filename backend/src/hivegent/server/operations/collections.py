@@ -6,9 +6,10 @@ import tempfile
 import zlib
 import zipfile
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from fastapi import HTTPException, UploadFile
+from fastapi import Form, HTTPException, UploadFile
 
 from ...config import sanitize_document_path, settings
 from ...converters.base import DOCUMENT_EXTENSION
@@ -22,15 +23,14 @@ from ..models import PipelineSpec
 from .uploads import upload_file
 
 __all__ = [
+    "PreparedCollection",
+    "prepare_collection_upload",
     "process_collection",
     "read_collection_zip",
     "validate_collection_upload",
 ]
 
 logger = logging.getLogger(__name__)
-
-_MAX_COLLECTION_SIZE_BYTES = 100 * 1024 * 1024
-_MAX_COLLECTION_FILES = 1000
 
 
 async def process_collection(
@@ -91,12 +91,12 @@ async def process_collection(
             for path in extract_root.rglob("*")
             if path.is_file()
         )
-        if len(collection_files) > _MAX_COLLECTION_FILES:
+        if len(collection_files) > settings.max_collection_files:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     f"Collection has too many files ({len(collection_files)}). "
-                    f"Maximum: {_MAX_COLLECTION_FILES}"
+                    f"Maximum: {settings.max_collection_files}"
                 ),
             )
 
@@ -238,12 +238,36 @@ def validate_collection_upload(
 async def read_collection_zip(file: UploadFile) -> bytes:
     """Read and validate a collection ZIP upload."""
     raw = await file.read()
-    if len(raw) > _MAX_COLLECTION_SIZE_BYTES:
+    if len(raw) > settings.max_collection_size_bytes:
         raise HTTPException(
             status_code=400,
             detail=(
                 f"Collection too large. "
-                f"Maximum size: {_MAX_COLLECTION_SIZE_BYTES} bytes"
+                f"Maximum size: {settings.max_collection_size_bytes} bytes"
             ),
         )
     return raw
+
+
+@dataclass(slots=True, frozen=True)
+class PreparedCollection:
+    """Validated collection payload ready for streaming."""
+
+    raw: bytes
+    spec: PipelineSpec
+    resolved: LlmConfig
+
+
+async def prepare_collection_upload(
+    file: UploadFile,
+    pipeline_spec: str = Form(default="{}"),
+    llm_config: str = Form(default="{}"),
+) -> PreparedCollection:
+    """FastAPI dependency that parses config and buffers the ZIP upload.
+
+    Runs before the response body starts, so validation errors surface as a
+    normal 400 response instead of truncating an SSE stream.
+    """
+    spec, resolved = validate_collection_upload(pipeline_spec, llm_config)
+    raw = await read_collection_zip(file)
+    return PreparedCollection(raw=raw, spec=spec, resolved=resolved)

@@ -1,6 +1,8 @@
 """Shared document operations exposed as a small package."""
 
 from .collections import (
+    PreparedCollection,
+    prepare_collection_upload,
     process_collection,
     read_collection_zip,
     validate_collection_upload,
@@ -26,6 +28,7 @@ from .uploads import (
 )
 
 __all__ = [
+    "PreparedCollection",
     "build_tree_response",
     "delete_directory_internal",
     "delete_single",
@@ -36,6 +39,7 @@ __all__ = [
     "list_documents_for_store",
     "move_directory_internal",
     "move_document_internal",
+    "prepare_collection_upload",
     "process_bulk_operation",
     "process_collection",
     "read_collection_zip",

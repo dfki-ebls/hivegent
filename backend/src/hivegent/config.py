@@ -191,6 +191,8 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("data")
     max_file_size_bytes: int = 50 * 1024 * 1024  # 50 MB
+    max_collection_size_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GB
+    max_collection_files: int = 10_000
     cors_origins: list[str] = ["http://localhost:3000"]
 
     def get_traces_dir(self) -> Path:

@@ -41,6 +41,7 @@ from ..common import (
     safe_path,
 )
 from ..operations import (
+    PreparedCollection,
     build_tree_response,
     delete_directory_internal,
     delete_single,
@@ -49,6 +50,7 @@ from ..operations import (
     list_assets,
     list_documents_for_store,
     move_document_internal,
+    prepare_collection_upload,
     process_collection,
     read_collection_zip,
     reconvert_single,
@@ -243,17 +245,13 @@ async def upload_group_collection(
 @router.post("/groups/{group_id}/documents/collections/stream", response_class=EventSourceResponse)
 async def upload_group_collection_stream(
     group_id: str,
-    file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
-    pipeline_spec: str = Form(default="{}"),
-    llm_config: str = Form(default="{}"),
+    prepared: Annotated[PreparedCollection, Depends(prepare_collection_upload)],
 ) -> AsyncIterable[CollectionProgressEvent | CollectionCompleteEvent]:
     """Upload a collection to a group with streaming progress events."""
     safe_id = require_group_write(user, group_id)
-    spec, resolved = validate_collection_upload(pipeline_spec, llm_config)
     store = group_store(safe_id)
-    raw = await read_collection_zip(file)
-    async for event in process_collection(store, raw, spec, resolved):
+    async for event in process_collection(store, prepared.raw, prepared.spec, prepared.resolved):
         yield event
 
 

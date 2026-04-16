@@ -45,6 +45,11 @@ import {
   chunkPositionLabel,
   sortChunks,
 } from "../lib/types";
+import {
+  buildCollectionZip,
+  buildCollectionZipFromDirectoryInput,
+  classifyDropItems,
+} from "../lib/collection-upload";
 import { collectFilePaths, formatFileSize, formatWebUrl, isWebUrl } from "../lib/utils";
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
 import { useUserDocumentsStore } from "../stores/user-documents-store";
@@ -1153,17 +1158,21 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
 
   // --- File upload handlers ---
 
+  const uploadOptions = useMemo<UploadDocumentOptions>(
+    () => ({
+      spec: pipelineSpec,
+      llm: buildLlmConfig({
+        model: visionModel,
+        apiKey: llmSettings.apiKey,
+        baseUrl: llmSettings.baseUrl,
+      }),
+    }),
+    [pipelineSpec, visionModel, llmSettings],
+  );
+
   const handleFiles = useCallback(
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
-      const options: UploadDocumentOptions = {
-        spec: pipelineSpec,
-        llm: buildLlmConfig({
-          model: visionModel,
-          apiKey: llmSettings.apiKey,
-          baseUrl: llmSettings.baseUrl,
-        }),
-      };
       const fileArray = Array.from(files);
 
       // Check for duplicate stems within the batch
@@ -1183,17 +1192,17 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       const existingStems = new Set(documents.map((d) => fileStem(d.filename)));
       const conflicting = stems.filter((s) => existingStems.has(s));
       if (conflicting.length > 0) {
-        setPendingOverwrite({ files: fileArray, options, conflicting });
+        setPendingOverwrite({ files: fileArray, options: uploadOptions, conflicting });
         return;
       }
 
       if (fileArray.length === 1) {
-        await upload(fileArray[0], options);
+        await upload(fileArray[0], uploadOptions);
       } else {
-        await uploadMultiple(fileArray, options);
+        await uploadMultiple(fileArray, uploadOptions);
       }
     },
-    [upload, uploadMultiple, pipelineSpec, visionModel, llmSettings, documents],
+    [upload, uploadMultiple, uploadOptions, documents],
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -1207,12 +1216,26 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   }, []);
 
   const handleDrop = useCallback(
-    (e: React.DragEvent) => {
+    async (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
-      void handleFiles(e.dataTransfer.files);
+
+      const { items, files } = e.dataTransfer;
+      if (files.length === 0 && items.length === 0) return;
+
+      const classification = await classifyDropItems(items, files);
+      const hasCollection =
+        classification.directories.length > 0 || classification.zipFiles.length > 0;
+
+      if (!hasCollection) {
+        void handleFiles(files);
+        return;
+      }
+
+      const collection = await buildCollectionZip(classification);
+      await uploadCol(collection, uploadOptions);
     },
-    [handleFiles],
+    [handleFiles, uploadCol, uploadOptions],
   );
 
   const handleFileInputChange = useCallback(
@@ -1230,34 +1253,14 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       const files = e.target.files;
       if (!files || files.length === 0) return;
 
-      const options = {
-        spec: pipelineSpec,
-        llm: buildLlmConfig({
-          model: visionModel,
-          apiKey: llmSettings.apiKey,
-          baseUrl: llmSettings.baseUrl,
-        }),
-      };
-
-      // Bundle directory files into a ZIP using JSZip
-      const { default: JSZip } = await import("jszip");
-      const zip = new JSZip();
-      for (const file of Array.from(files)) {
-        const relativePath = file.webkitRelativePath || file.name;
-        zip.file(relativePath, file);
-      }
-      const blob = await zip.generateAsync({ type: "blob" });
-      const zipFile = new File([blob], "collection.zip", {
-        type: "application/zip",
-      });
-
-      await uploadCol(zipFile, options);
+      const collection = await buildCollectionZipFromDirectoryInput(files);
+      await uploadCol(collection, uploadOptions);
 
       if (directoryInputRef.current) {
         directoryInputRef.current.value = "";
       }
     },
-    [uploadCol, pipelineSpec, visionModel, llmSettings],
+    [uploadCol, uploadOptions],
   );
 
   const handleZipInputChange = useCallback(
@@ -1268,22 +1271,13 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       const file = files[0];
       if (!file.name.toLowerCase().endsWith(".zip")) return;
 
-      const options = {
-        spec: pipelineSpec,
-        llm: buildLlmConfig({
-          model: visionModel,
-          apiKey: llmSettings.apiKey,
-          baseUrl: llmSettings.baseUrl,
-        }),
-      };
-
-      await uploadCol(file, options);
+      await uploadCol(file, uploadOptions);
 
       if (zipInputRef.current) {
         zipInputRef.current.value = "";
       }
     },
-    [uploadCol, pipelineSpec, visionModel, llmSettings],
+    [uploadCol, uploadOptions],
   );
 
   // --- Directory handlers ---
