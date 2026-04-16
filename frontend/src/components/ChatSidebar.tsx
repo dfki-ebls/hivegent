@@ -31,10 +31,7 @@ import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Components } from "streamdown";
 import { getToolPartInfo, processToolOutput, ToolPartDisplay, type ToolPart } from "./ToolParts";
-import {
-  normalizeDisplayMathDelimiters,
-  normalizeMathDelimiters,
-} from "@/lib/normalize-math";
+import { normalizeDisplayMathDelimiters, normalizeMathDelimiters } from "@/lib/normalize-math";
 import {
   API_BASE_URL,
   buildLlmConfig,
@@ -176,7 +173,11 @@ const streamdownPlugins = { cjk, code, math, mermaid };
 function TextPartDisplay({ text, showActions, onRegenerate }: TextPartDisplayProps) {
   return (
     <div>
-      <MessageResponse allowedTags={CITATION_ALLOWED_TAGS} components={CITATION_COMPONENTS} plugins={streamdownPlugins}>
+      <MessageResponse
+        allowedTags={CITATION_ALLOWED_TAGS}
+        components={CITATION_COMPONENTS}
+        plugins={streamdownPlugins}
+      >
         {normalizeMathDelimiters(text)}
       </MessageResponse>
       {showActions && (
@@ -633,6 +634,21 @@ export function ChatSidebar({
     if (!isContextLengthError(error)) return;
     void handleCompact(getLastUserMessageText(messages));
   }, [error, messages, handleCompact]);
+
+  // Dump the full request payload to the console on error so it can be
+  // copy-pasted for debugging — there is no server-side equivalent since
+  // pydantic-ai streams errors in-band as ErrorChunks.
+  const loggedErrorRef = useRef<unknown>(null);
+  useEffect(() => {
+    if (!error || error === loggedErrorRef.current) return;
+    loggedErrorRef.current = error;
+    console.error("Chat request failed", {
+      conversationId: id,
+      error,
+      messages,
+      body: buildRequestBody(),
+    });
+  }, [error, id, messages, buildRequestBody]);
 
   // Sync tool outputs to the document store
   useEffect(() => {
