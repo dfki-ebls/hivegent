@@ -139,32 +139,68 @@ async def process_collection(
             collection_stems.add(stem)
 
         total = len(collection_files)
-        for relative_path in collection_files:
-            safe = sanitize_document_path(relative_path)
-            if relative_path in failed:
-                current += 1
-                yield CollectionProgressEvent(
-                    file=relative_path,
-                    current=current,
-                    total=total,
-                    status="failed",
-                )
-                continue
+        try:
+            for relative_path in collection_files:
+                safe = sanitize_document_path(relative_path)
+                if relative_path in failed:
+                    current += 1
+                    yield CollectionProgressEvent(
+                        file=relative_path,
+                        current=current,
+                        total=total,
+                        status="failed",
+                    )
+                    continue
 
-            if relative_path in companion_originals:
-                # Store the binary as the original for its markdown sibling.
+                if relative_path in companion_originals:
+                    # Store the binary as the original for its markdown sibling.
+                    try:
+                        original_bytes = (extract_root / relative_path).read_bytes()
+                        original_path = workspace_dir / safe
+                        original_path.parent.mkdir(parents=True, exist_ok=True)
+                        original_path.write_bytes(original_bytes)
+                        status = "ok"
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to write original %s: %s", relative_path, exc
+                        )
+                        failed.append(relative_path)
+                        status = "failed"
+                    current += 1
+                    yield CollectionProgressEvent(
+                        file=relative_path,
+                        current=current,
+                        total=total,
+                        status=status,
+                    )
+                    continue
+
                 try:
-                    original_bytes = (extract_root / relative_path).read_bytes()
-                    original_path = workspace_dir / safe
-                    original_path.parent.mkdir(parents=True, exist_ok=True)
-                    original_path.write_bytes(original_bytes)
+                    if safe in preprocessed_markdown:
+                        content_bytes = preprocessed_markdown[safe]
+                        markdown_count += 1
+                    else:
+                        content_bytes = (extract_root / relative_path).read_bytes()
+                        converted_count += 1
+                    await upload_file(
+                        store,
+                        safe,
+                        content_bytes,
+                        spec,
+                        resolved,
+                        origin="collection",
+                        sync=False,
+                    )
                     status = "ok"
                 except Exception as exc:
-                    logger.warning(
-                        "Failed to write original %s: %s", relative_path, exc
-                    )
+                    logger.warning("Failed to process %s: %s", relative_path, exc)
+                    if safe in preprocessed_markdown:
+                        markdown_count -= 1
+                    else:
+                        converted_count -= 1
                     failed.append(relative_path)
                     status = "failed"
+
                 current += 1
                 yield CollectionProgressEvent(
                     file=relative_path,
@@ -172,43 +208,11 @@ async def process_collection(
                     total=total,
                     status=status,
                 )
-                continue
-
-            try:
-                if safe in preprocessed_markdown:
-                    content_bytes = preprocessed_markdown[safe]
-                    markdown_count += 1
-                else:
-                    content_bytes = (extract_root / relative_path).read_bytes()
-                    converted_count += 1
-                await upload_file(
-                    store,
-                    safe,
-                    content_bytes,
-                    spec,
-                    resolved,
-                    origin="collection",
-                    sync=False,
-                )
-                status = "ok"
-            except Exception as exc:
-                logger.warning("Failed to process %s: %s", relative_path, exc)
-                if safe in preprocessed_markdown:
-                    markdown_count -= 1
-                else:
-                    converted_count -= 1
-                failed.append(relative_path)
-                status = "failed"
-
-            current += 1
-            yield CollectionProgressEvent(
-                file=relative_path,
-                current=current,
-                total=total,
-                status=status,
-            )
-
-        mark_dirty_and_sync(store)
+        finally:
+            # Runs on normal completion, exception, and client disconnect
+            # (GeneratorExit / CancelledError) so the index reflects any
+            # files already persisted to disk.
+            mark_dirty_and_sync(store)
 
     total_ok = markdown_count + converted_count
     yield CollectionCompleteEvent(
