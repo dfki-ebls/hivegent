@@ -6,22 +6,25 @@ from typing import Any
 
 from .base import run
 
-__all__ = ["RgMatch", "rg_search"]
+__all__ = ["RgLine", "RgMatch", "rg_search"]
+
+
+@dataclass(slots=True, frozen=True)
+class RgLine:
+    """A single line in a match block with its match/context classification."""
+
+    line_number: int
+    text: str
+    is_match: bool
 
 
 @dataclass(slots=True, frozen=True)
 class RgMatch:
-    """A single match block from ripgrep's JSON output.
-
-    When context lines are requested, ``line_text`` contains the
-    matched line together with its surrounding context,
-    ``line_number`` refers to the first line of that block, and
-    ``match_line`` is the line that actually matched the pattern.
-    """
+    """A match block from ripgrep — at least one matching line, plus any
+    surrounding context lines that ripgrep grouped with it."""
 
     path: str
-    line_number: int
-    line_text: str
+    lines: tuple[RgLine, ...]
 
 
 async def rg_search(
@@ -43,9 +46,9 @@ async def rg_search(
             case-insensitively.  When ``True``, match case exactly.
 
     Returns:
-        List of matches parsed from ripgrep's JSON output.
-        When *context_lines* is positive, each match includes
-        surrounding context in ``line_text``.
+        List of match blocks parsed from ripgrep's JSON output.  Each
+        block contains one or more lines; ``is_match`` distinguishes
+        matching lines from surrounding context.
     """
     args: list[str | Path] = ["rg", "--json"]
     if not case_sensitive:
@@ -60,18 +63,12 @@ async def rg_search(
     result = await run(args, allowed_returncodes=(1,))
 
     matches: list[RgMatch] = []
-    block_lines: list[tuple[int, str]] = []
+    block_lines: list[RgLine] = []
     block_path: str | None = None
 
     def _flush() -> None:
         if block_lines and block_path is not None:
-            matches.append(
-                RgMatch(
-                    path=block_path,
-                    line_number=block_lines[0][0],
-                    line_text="\n".join(text for _, text in block_lines),
-                )
-            )
+            matches.append(RgMatch(path=block_path, lines=tuple(block_lines)))
 
     for item in result.stdout_ndjson():
         kind = item.get("type")
@@ -79,21 +76,20 @@ async def rg_search(
             _flush()
             block_lines = []
             block_path = None
-        elif kind == "match":
+        elif kind in ("match", "context"):
             data: dict[str, Any] = item["data"]
             # Without --context, consecutive matches have no separator,
             # so flush the previous block before starting a new one.
-            if context_lines == 0:
+            if kind == "match" and context_lines == 0:
                 _flush()
                 block_lines = []
             block_path = data["path"]["text"]
             block_lines.append(
-                (data["line_number"], data["lines"]["text"].rstrip("\n"))
-            )
-        elif kind == "context":
-            data = item["data"]
-            block_lines.append(
-                (data["line_number"], data["lines"]["text"].rstrip("\n"))
+                RgLine(
+                    line_number=data["line_number"],
+                    text=data["lines"]["text"].rstrip("\n"),
+                    is_match=(kind == "match"),
+                )
             )
 
     _flush()

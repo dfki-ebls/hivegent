@@ -7,7 +7,7 @@ from .documents import (
     ListDocumentsTool,
     ReadDocumentTool,
 )
-from .grep import GrepMatch, GrepTool
+from .grep import GrepLine, GrepMatch, GrepTool
 from .jq import JqTool
 from .mutations import EditDocumentTool, WriteDocumentTool
 from .plan import CreatePlanTool
@@ -21,6 +21,7 @@ __all__ = [
     "DocumentSummary",
     "DocumentTreeNode",
     "EditDocumentTool",
+    "GrepLine",
     "GrepMatch",
     "GrepTool",
     "IndexedStorage",

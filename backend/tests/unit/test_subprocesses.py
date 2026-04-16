@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from hivegent.subprocesses import (
+    RgLine,
     SubprocessError,
     jq_filter,
     pandoc_convert,
@@ -62,8 +63,9 @@ class TestRgSearch:
         (tmp_path / "hello.txt").write_text("Hello World\nGoodbye World\n")
         matches = await rg_search("Hello", tmp_path)
         assert len(matches) == 1
-        assert matches[0].line_number == 1
-        assert "Hello" in matches[0].line_text
+        assert matches[0].lines[0].line_number == 1
+        assert matches[0].lines[0].is_match
+        assert "Hello" in matches[0].lines[0].text
 
     async def test_no_matches_returns_empty(self, tmp_path: Path) -> None:
         (tmp_path / "hello.txt").write_text("nothing here\n")
@@ -82,8 +84,11 @@ class TestRgSearch:
         (tmp_path / "test.txt").write_text("aaa\nbbb\nccc\nddd\neee\n")
         matches = await rg_search("ccc", tmp_path, context_lines=1)
         assert len(matches) == 1
-        assert matches[0].line_number == 2
-        assert matches[0].line_text == "bbb\nccc\nddd"
+        assert matches[0].lines == (
+            RgLine(line_number=2, text="bbb", is_match=False),
+            RgLine(line_number=3, text="ccc", is_match=True),
+            RgLine(line_number=4, text="ddd", is_match=False),
+        )
 
 
 class TestJqFilter:

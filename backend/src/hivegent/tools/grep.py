@@ -13,6 +13,7 @@ from .base import AsyncPathTool, SearchPath, ToolOutput, file_allowed
 
 __all__ = [
     "ContextLinesArg",
+    "GrepLine",
     "GrepMatch",
     "GrepMaxResultsArg",
     "GrepPathArg",
@@ -22,14 +23,24 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+_BLOCK_SEP = "\n--\n"
+
+
+@dataclass(slots=True, frozen=True)
+class GrepLine:
+    """A single line in a match block."""
+
+    line_number: int
+    text: str
+    is_match: bool
+
 
 @dataclass(slots=True, frozen=True)
 class GrepMatch:
-    """A pattern match in a document with a path relative to the search root."""
+    """A match block in a document with a path relative to the search root."""
 
     filename: str
-    line_number: int
-    line_text: str
+    lines: tuple[GrepLine, ...]
 
 
 GrepPatternArg = Annotated[
@@ -85,8 +96,14 @@ async def _search_path(
                 matches.append(
                     GrepMatch(
                         filename=sp.prefixed(filename),
-                        line_number=rg_match.line_number,
-                        line_text=rg_match.line_text,
+                        lines=tuple(
+                            GrepLine(
+                                line_number=line.line_number,
+                                text=line.text,
+                                is_match=line.is_match,
+                            )
+                            for line in rg_match.lines
+                        ),
                     )
                 )
     except Exception:
@@ -96,7 +113,16 @@ async def _search_path(
 
 @dataclass(slots=True, frozen=True)
 class GrepTool(AsyncPathTool[list[GrepMatch]]):
-    """Search documents for a pattern."""
+    """Search documents for a pattern.
+
+    ``max_line_chars`` and ``max_formatted_chars`` safeguard the LLM
+    context against a single call flooding it with long wrapped
+    markdown lines or too many merged blocks.  The caller can always
+    issue a more specific follow-up to get more detail.
+    """
+
+    max_line_chars: int = 200
+    max_formatted_chars: int = 10_000
 
     @override
     async def __call__(
@@ -117,9 +143,38 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
         all_matches = all_matches[:max_results]
         if not all_matches:
             return ToolOutput(data=all_matches, formatted="(no matches)")
-        return ToolOutput(
-            data=all_matches,
-            formatted="\n".join(
-                f"{m.filename}:{m.line_number}:{m.line_text}" for m in all_matches
-            ),
+        return ToolOutput(data=all_matches, formatted=self._format_matches(all_matches))
+
+    def _format_matches(self, matches: list[GrepMatch]) -> str:
+        parts: list[str] = []
+        total = 0
+        shown = 0
+        for m in matches:
+            block = self._format_match(m)
+            added = len(block) + (len(_BLOCK_SEP) if parts else 0)
+            if total + added > self.max_formatted_chars:
+                break
+            if parts:
+                parts.append(_BLOCK_SEP)
+            parts.append(block)
+            total += added
+            shown += 1
+        omitted = len(matches) - shown
+        if omitted:
+            parts.append(
+                f"{_BLOCK_SEP}({omitted} more matches omitted — "
+                f"refine your pattern, narrow the path, or lower context_lines)"
+            )
+        return "".join(parts)
+
+    def _format_match(self, m: GrepMatch) -> str:
+        return "\n".join(
+            f"{m.filename}:{line.line_number}"
+            f"{':' if line.is_match else '-'}{self._truncate_line(line.text)}"
+            for line in m.lines
         )
+
+    def _truncate_line(self, text: str) -> str:
+        if len(text) <= self.max_line_chars:
+            return text
+        return text[: self.max_line_chars - 1] + "…"

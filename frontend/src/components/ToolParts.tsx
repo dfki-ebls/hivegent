@@ -192,20 +192,18 @@ export function processToolOutput(
 
       const source = `grep: ${pattern}`;
       for (const match of matches) {
-        if (match.line_number <= 0) continue;
+        if (match.lines.length === 0) continue;
+        const startLine = match.lines[0].line_number;
+        const endLine = match.lines[match.lines.length - 1].line_number;
+        if (startLine <= 0) continue;
 
-        const lineCount = 1 + (match.line_text.match(/\n/g)?.length ?? 0);
         const position: ChunkPosition =
-          lineCount > 1
-            ? {
-                type: "line_range",
-                startLine: match.line_number,
-                endLine: match.line_number + lineCount - 1,
-              }
-            : { type: "line", line: match.line_number };
+          match.lines.length > 1
+            ? { type: "line_range", startLine, endLine }
+            : { type: "line", line: startLine };
         addChunk({
           filename: match.filename,
-          content: match.line_text,
+          content: match.lines.map((l) => l.text).join("\n"),
           source,
           position,
         });

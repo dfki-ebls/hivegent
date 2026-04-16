@@ -203,10 +203,16 @@ export const DocumentRangeSchema = z.object({
 });
 export type DocumentRange = z.infer<typeof DocumentRangeSchema>;
 
+export const GrepLineSchema = z.object({
+  line_number: z.number(),
+  text: z.string(),
+  is_match: z.boolean(),
+});
+export type GrepLine = z.infer<typeof GrepLineSchema>;
+
 export const GrepMatchSchema = z.object({
   filename: z.string(),
-  line_number: z.number(),
-  line_text: z.string(),
+  lines: z.array(GrepLineSchema),
 });
 export type GrepMatch = z.infer<typeof GrepMatchSchema>;
 
