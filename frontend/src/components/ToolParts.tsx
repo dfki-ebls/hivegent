@@ -152,6 +152,8 @@ export function processToolOutput(
           source,
           score: chunk.score,
           position,
+          startIndex: chunk.start_index,
+          endIndex: chunk.end_index,
         });
       }
       return;

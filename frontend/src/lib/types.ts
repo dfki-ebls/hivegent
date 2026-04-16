@@ -225,6 +225,8 @@ export const RetrievedChunkSchema = z.object({
   score: z.number(),
   start_line: z.number(),
   end_line: z.number(),
+  start_index: z.number(),
+  end_index: z.number(),
   image_path: z.string().nullable().optional(),
 });
 export type RetrievedChunk = z.infer<typeof RetrievedChunkSchema>;
@@ -549,6 +551,14 @@ export interface FetchedChunk {
   source: string;
   score?: number;
   position: ChunkPosition;
+  /**
+   * Exact character offsets of the chunk in the original document.
+   * Populated for semantic-search chunks so the canvas can highlight
+   * the precise span rather than rounding to whole lines.  Never sent
+   * to the LLM — citations rely on {@link ChunkPosition} line numbers.
+   */
+  startIndex?: number;
+  endIndex?: number;
 }
 
 /** A document that groups one or more fetched chunks. */

@@ -43,6 +43,8 @@ class _ChunkEntry:
     token_count: int
     start_line: int
     end_line: int
+    start_index: int
+    end_index: int
     image_path: str | None = None
 
 
@@ -258,6 +260,8 @@ def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, _ChunkEntry]:
                 token_count=chunk.token_count,
                 start_line=chunk.start_line,
                 end_line=chunk.end_line,
+                start_index=chunk.start_index,
+                end_index=chunk.end_index,
                 image_path=image_path,
             )
 
@@ -356,33 +360,21 @@ def _ensure_chunk_meta(store: Casebase) -> None:
 
 def _to_retrieved_chunk(
     result: SearchResult,
-    meta: _ChunkEntry | None = None,
+    meta: _ChunkEntry,
 ) -> RetrievedChunk:
-    """Map a raw :class:`SearchResult` to a :class:`RetrievedChunk`.
-
-    Args:
-        result: The raw search result.
-        meta: Cached chunk metadata.  When ``None``, token count falls
-            back to ``len(text.split())``.
-    """
+    """Map a raw :class:`SearchResult` plus cached metadata to a :class:`RetrievedChunk`."""
     filename, chunk_index = _parse_chunk_key(result.key)
-    if meta is not None:
-        return RetrievedChunk(
-            filename=filename,
-            chunk_index=chunk_index,
-            text=result.text,
-            token_count=meta.token_count,
-            score=round(result.score, 4),
-            start_line=meta.start_line,
-            end_line=meta.end_line,
-            image_path=meta.image_path,
-        )
     return RetrievedChunk(
         filename=filename,
         chunk_index=chunk_index,
         text=result.text,
-        token_count=len(result.text.split()),
+        token_count=meta.token_count,
         score=round(result.score, 4),
+        start_line=meta.start_line,
+        end_line=meta.end_line,
+        start_index=meta.start_index,
+        end_index=meta.end_index,
+        image_path=meta.image_path,
     )
 
 
@@ -448,7 +440,7 @@ def build_search_tool(
             )
 
     def _result_mapper(result: SearchResult) -> RetrievedChunk:
-        return _to_retrieved_chunk(result, chunk_meta.get(result.key))
+        return _to_retrieved_chunk(result, chunk_meta[result.key])
 
     return LanceDBSearchTool(
         storages=tuple(indexed),

@@ -122,8 +122,14 @@ class RetrievedChunk(BaseModel):
     text: str = Field(description="The chunk text content")
     token_count: int = Field(description="Number of tokens in the chunk")
     score: float = Field(description="The relevance score")
-    start_line: int = Field(default=0, description="1-based start line number in the original document")
-    end_line: int = Field(default=0, description="1-based end line number in the original document")
+    start_line: int = Field(description="1-based start line number in the original document")
+    end_line: int = Field(description="1-based end line number in the original document")
+    start_index: int = Field(
+        description="Start character index in the original document (for frontend highlighting only)",
+    )
+    end_index: int = Field(
+        description="End character index in the original document (for frontend highlighting only)",
+    )
     image_path: str | None = Field(
         default=None,
         description="Workspace-relative path to the original image file when this chunk describes an image",

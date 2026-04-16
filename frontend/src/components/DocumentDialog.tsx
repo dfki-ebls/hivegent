@@ -75,14 +75,23 @@ function formatDate(dateString: string): string {
 /**
  * Resolve a chunk's character range within ``fullContent``.
  *
- * Prefers the chunk's stored line numbers (1-indexed) so overlapping or
- * repeated snippets highlight correctly; falls back to a text search
- * only when the chunk has content to search for.
+ * Prefers exact character offsets from the backend (semantic-search
+ * chunks carry these) so highlights don't round up to whole lines.
+ * Falls back to line numbers, then to a text search.
  */
 function resolveChunkRange(
   fullContent: string,
   chunk: FetchedChunk,
 ): { start: number; end: number } | null {
+  if (
+    chunk.startIndex !== undefined &&
+    chunk.endIndex !== undefined &&
+    chunk.endIndex > chunk.startIndex &&
+    chunk.endIndex <= fullContent.length
+  ) {
+    return { start: chunk.startIndex, end: chunk.endIndex };
+  }
+
   const position = chunk.position;
   const [startLine, endLine] =
     position.type === "line_range"
