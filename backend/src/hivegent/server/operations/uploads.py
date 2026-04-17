@@ -1,5 +1,6 @@
 """Upload and reconversion helpers for document operations."""
 
+import asyncio
 import logging
 import mimetypes
 import shutil
@@ -60,9 +61,9 @@ def _is_image(suffix: str) -> bool:
     return suffix.lower() in IMAGE_EXTENSIONS
 
 
-def _resolve_vision_config(llm_config: LlmConfig) -> LlmConfig | None:
-    """Build an LLM config for the vision model when available."""
-    resolved = resolve_llm_config(llm_config, default_model=settings.llm.vision_model)
+def _resolve_aux_config(llm_config: LlmConfig) -> LlmConfig | None:
+    """Build an LLM config for the auxiliary (small, vision-capable) model."""
+    resolved = resolve_llm_config(llm_config, default_model=settings.llm.aux_model)
     return resolved if resolved.model else None
 
 
@@ -130,9 +131,9 @@ async def _build_image_description(
     llm_config: LlmConfig,
 ) -> str:
     """Generate markdown text for an image description."""
-    vision = _resolve_vision_config(llm_config)
+    aux = _resolve_aux_config(llm_config)
     fallback = PurePosixPath(filepath).stem
-    if not vision:
+    if not aux:
         return f"{fallback}\n"
 
     media_type = mimetypes.guess_type(filepath)[0]
@@ -140,7 +141,7 @@ async def _build_image_description(
         return f"{fallback}\n"
 
     try:
-        description = await describe_image(content, media_type, vision)
+        description = await describe_image(content, media_type, aux)
     except Exception:
         logger.warning("Image description generation failed for %s", filepath, exc_info=True)
         description = fallback
@@ -351,27 +352,34 @@ async def _upload_convertible(
     description_path = description_path_for_stem(stem_path)
     assets_dir = assets_dir_for_stem(stem_path)
     markdown_content = result.markdown
-    has_assets = False
 
+    child_paths: list[tuple[str, bytes]] = []
     for image_relpath, image_data in sorted(result.images.items()):
         child_path = str((PurePosixPath(assets_dir) / image_relpath).as_posix())
         relative_from_doc = str(
             PurePosixPath(PurePosixPath(assets_dir).name) / PurePosixPath(image_relpath)
         )
         markdown_content = markdown_content.replace(image_relpath, relative_from_doc)
-        if spec.process_assets:
-            await upload_file(
-                store,
-                child_path,
-                image_data,
-                spec,
-                llm_config,
-                origin="extracted",
-                sync=False,
+        child_paths.append((child_path, image_data))
+
+    if child_paths and spec.process_assets:
+        await asyncio.gather(
+            *(
+                upload_file(
+                    store,
+                    child_path,
+                    image_data,
+                    spec,
+                    llm_config,
+                    origin="extracted",
+                    sync=False,
+                )
+                for child_path, image_data in child_paths
             )
-        else:
+        )
+    elif child_paths:
+        for child_path, image_data in child_paths:
             _write_original_file(workspace_dir, child_path, image_data)
-        has_assets = True
 
     chunk_count, chunking_used = await _write_markdown_projection(
         store,
@@ -382,7 +390,7 @@ async def _upload_convertible(
             stem_path=stem_path,
             description_path=description_path,
             original_path=filepath,
-            assets_dir=assets_dir if has_assets else None,
+            assets_dir=assets_dir if child_paths else None,
             entry_kind="convertible",
             origin=origin,
             generated_by="converter",

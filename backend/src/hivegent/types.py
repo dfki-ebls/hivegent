@@ -369,8 +369,12 @@ class SettingsResponse(BaseModel):
     """LLM settings with user context."""
 
     model: str = Field(description="Default chat model")
-    vision_model: str | None = Field(description="Default vision model for conversion")
-    small_model: str | None = Field(description="Default model for lightweight tasks")
+    aux_model: str | None = Field(
+        description=(
+            "Default auxiliary model — must be small, fast, and vision-capable. "
+            "Used for document conversion, alt text, titles, compaction, and chunking."
+        ),
+    )
     has_api_key: bool = Field(description="Whether a server-side API key is configured")
     base_url: str = Field(description="Default base URL for the LLM provider")
     user: UserResponse = Field(description="Authenticated user information")

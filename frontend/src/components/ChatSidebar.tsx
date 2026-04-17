@@ -599,7 +599,7 @@ export function ChatSidebar({
         const result = await compactConversation(
           id,
           buildLlmConfig({
-            model: overrides.smallModel || overrides.model,
+            model: overrides.auxModel || overrides.model,
             apiKey: overrides.apiKey,
             baseUrl: overrides.baseUrl,
           }),

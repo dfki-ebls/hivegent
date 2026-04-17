@@ -235,7 +235,7 @@ def validate_collection_upload(
     """Parse and validate pipeline and LLM configuration for collection uploads."""
     spec = parse_pipeline_spec(pipeline_spec)
     llm = LlmConfig.model_validate_json(llm_config)
-    resolved = resolve_llm_config(llm, default_model=settings.llm.vision_model)
+    resolved = resolve_llm_config(llm, default_model=settings.llm.aux_model)
     return spec, resolved
 
 

@@ -1031,7 +1031,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       await storeReconvert(filepath, {
         spec: pipelineSpec,
         llm: buildLlmConfig({
-          model: overrides.visionModel,
+          model: overrides.auxModel,
           apiKey: overrides.apiKey,
           baseUrl: overrides.baseUrl,
         }),
@@ -1073,7 +1073,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       files,
       pipelineSpec,
       buildLlmConfig({
-        model: overrides.visionModel,
+        model: overrides.auxModel,
         apiKey: overrides.apiKey,
         baseUrl: overrides.baseUrl,
       }),
@@ -1154,7 +1154,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     () => ({
       spec: pipelineSpec,
       llm: buildLlmConfig({
-        model: overrides.visionModel,
+        model: overrides.auxModel,
         apiKey: overrides.apiKey,
         baseUrl: overrides.baseUrl,
       }),

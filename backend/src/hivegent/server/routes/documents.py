@@ -131,7 +131,7 @@ async def replace_original(
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
         LlmConfig.model_validate_json(llm_config),
-        default_model=settings.llm.vision_model,
+        default_model=settings.llm.aux_model,
     )
     result = await upload_file(
         store=store,
@@ -163,7 +163,7 @@ async def upload_document_stream(
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
         LlmConfig.model_validate_json(llm_config),
-        default_model=settings.llm.vision_model,
+        default_model=settings.llm.aux_model,
     )
 
     content = await file.read()
@@ -200,7 +200,7 @@ async def upload_document(
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
         LlmConfig.model_validate_json(llm_config),
-        default_model=settings.llm.vision_model,
+        default_model=settings.llm.aux_model,
     )
 
     content = await file.read()
@@ -228,7 +228,7 @@ async def reconvert_document_stream(
     """Re-convert a document with streaming progress events."""
     safe = safe_path(filepath)
     store = user_store(user)
-    resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
+    resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
     async for event in reconvert_single_stream(store, safe, request.pipeline, resolved):
         yield event
 
@@ -342,7 +342,7 @@ async def bulk_reconvert_stream(
     """Bulk reconvert multiple documents with streaming progress."""
     store = user_store(user)
     spec = request.pipeline
-    resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
+    resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
 
     async def _reconvert_one(filepath: str) -> None:
         safe = safe_path(filepath)
@@ -419,7 +419,7 @@ async def reconvert_document(
     """Re-convert a document from its original binary file."""
     safe = safe_path(filepath)
     store = user_store(user)
-    resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
+    resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
     result = await reconvert_single(store, safe, request.pipeline, resolved)
     mark_dirty_and_sync(store)
     return result

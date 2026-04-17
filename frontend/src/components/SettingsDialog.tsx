@@ -228,28 +228,15 @@ export function SettingsDialog() {
             </SettingsSection>
 
             <SettingsSection
-              label="Small Model (optional)"
-              htmlFor="small-model"
-              description="A smaller model for lightweight tasks like title generation. Uses the same provider settings as the main model."
+              label="Auxiliary Model (optional)"
+              htmlFor="aux-model"
+              description="Must be small, fast, and vision-capable. Drives document conversion, alt-text generation, title generation, compaction, subagent exploration, and LLM-guided chunking — all high-volume workloads where cost and latency matter more than reasoning depth. Uses the same provider settings as the main model."
             >
               <Input
-                id="small-model"
-                placeholder={backendDefaults?.small_model ?? "e.g., qwen/qwen3-8b"}
-                value={overrides.smallModel}
-                onChange={(e) => setOverride({ smallModel: e.target.value })}
-              />
-            </SettingsSection>
-
-            <SettingsSection
-              label="Vision Model (optional)"
-              htmlFor="vision-model"
-              description="A vision-capable model for document conversion (PDF, images). Uses the same provider settings as the main model."
-            >
-              <Input
-                id="vision-model"
-                placeholder={backendDefaults?.vision_model ?? "e.g., openai/gpt-4o"}
-                value={overrides.visionModel}
-                onChange={(e) => setOverride({ visionModel: e.target.value })}
+                id="aux-model"
+                placeholder={backendDefaults?.aux_model ?? "e.g., openai/gpt-4o-mini"}
+                value={overrides.auxModel}
+                onChange={(e) => setOverride({ auxModel: e.target.value })}
               />
             </SettingsSection>
           </div>

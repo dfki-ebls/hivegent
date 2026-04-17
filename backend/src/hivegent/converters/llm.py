@@ -45,15 +45,6 @@ MEDIA_TYPES: dict[str, str] = {
     ".tif": "image/tiff",
 }
 
-CONVERSION_PROMPT = """Convert this document to markdown.
-Extract all text preserving structure (headings, lists, paragraphs).
-Convert tables to markdown tables.
-Convert equations and formulas to LaTeX (inline $...$ or block $$...$$).
-Do not include any commentary, just the converted content."""
-
-
-# Extensions derived from the MEDIA_TYPES keys above.
-# https://platform.openai.com/docs/guides/pdf-files
 @dataclass(slots=True, frozen=True)
 class LLMConverter(DocumentConverter):
     """Document converter using vision-capable LLMs.
@@ -82,8 +73,8 @@ class LLMConverter(DocumentConverter):
         """
         if not self.llm_options.model:
             raise ValueError(
-                "No vision model configured. "
-                "Set HIVEGENT_LLM__VISION_MODEL or provide x-vision-model header."
+                "No auxiliary model configured. "
+                "Set HIVEGENT_LLM__AUX_MODEL to a small, fast, vision-capable model."
             )
 
         suffix = path.suffix.lower()

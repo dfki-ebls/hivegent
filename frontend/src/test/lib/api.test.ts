@@ -54,8 +54,7 @@ describe("getSettings", () => {
   it("fetches and parses settings", async () => {
     const mockSettings = {
       model: "gpt-4",
-      vision_model: "gpt-4-vision",
-      small_model: "gpt-3.5",
+      aux_model: "gpt-4o-mini",
       has_api_key: true,
       base_url: "https://api.openai.com",
       user: {

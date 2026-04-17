@@ -145,7 +145,7 @@ async def upload_group_document_stream(
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
         LlmConfig.model_validate_json(llm_config),
-        default_model=settings.llm.vision_model,
+        default_model=settings.llm.aux_model,
     )
 
     content = await file.read()
@@ -184,7 +184,7 @@ async def upload_group_document(
     spec = parse_pipeline_spec(pipeline_spec)
     llm_config_model = resolve_llm_config(
         LlmConfig.model_validate_json(llm_config),
-        default_model=settings.llm.vision_model,
+        default_model=settings.llm.aux_model,
     )
 
     content = await file.read()
@@ -214,7 +214,7 @@ async def reconvert_group_document_stream(
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
     store = group_store(safe_id)
-    resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
+    resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
     async for event in reconvert_single_stream(store, safe, request.pipeline, resolved):
         yield event
 
@@ -323,7 +323,7 @@ async def reconvert_group_document(
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
     store = group_store(safe_id)
-    resolved = resolve_llm_config(request.llm, default_model=settings.llm.vision_model)
+    resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
     result = await reconvert_single(store, safe, request.pipeline, resolved)
     mark_dirty_and_sync(store)
     return result

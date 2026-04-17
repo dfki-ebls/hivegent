@@ -177,7 +177,7 @@ async def generate_conversation_title(
 The title should capture the main topic or question.
 Return ONLY the title, no quotes or extra text.
 """
-    resolved = resolve_llm_config(request.llm, default_model=settings.llm.small_model)
+    resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
 
     try:
         result = await base_agent.run(
@@ -242,7 +242,7 @@ async def create_conversation_compaction(
     user: Annotated[User, Depends(get_current_user)],
 ) -> CompactConversationResponse:
     """Compact a conversation by summarizing it into a new conversation."""
-    llm_config = resolve_llm_config(request.llm, default_model=settings.llm.small_model)
+    llm_config = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
     try:
         result = await compact_conversation(user.id, conversation_id, llm_config)
     except ValueError as exc:

@@ -111,11 +111,21 @@ def sanitize_document_path(path: str) -> str:
 
 
 class LlmSettings(BaseModel):
-    """LLM provider defaults, configurable via environment variables."""
+    """LLM provider defaults, configurable via environment variables.
+
+    ``model`` drives the main chat agent and should be the strongest
+    reasoning model available.  ``aux_model`` powers every other LLM
+    touchpoint — document conversion, alt-text generation, title
+    generation, compaction, subagent exploration, and LLM-guided
+    chunking — so it must be small, fast, and vision-capable.  All of
+    those workloads call it many times per document (especially
+    alt-text and chunking), so cost and latency dominate over raw
+    reasoning quality.  Both share the same ``api_key`` and
+    ``base_url``.
+    """
 
     model: str = ""
-    vision_model: str | None = None
-    small_model: str | None = None
+    aux_model: str | None = None
     api_key: str = ""
     base_url: str = ""
 

@@ -70,8 +70,7 @@ export const UserOverridesSchema = z.object({
   model: z.string(),
   apiKey: z.string(),
   baseUrl: z.string(),
-  smallModel: z.string(),
-  visionModel: z.string(),
+  auxModel: z.string(),
 });
 export type UserOverrides = z.infer<typeof UserOverridesSchema>;
 
@@ -92,8 +91,7 @@ export type UserResponse = z.infer<typeof UserResponseSchema>;
 /** Settings exposed by the backend. */
 export const BackendSettingsSchema = z.object({
   model: z.string(),
-  vision_model: z.string().nullable(),
-  small_model: z.string().nullable(),
+  aux_model: z.string().nullable(),
   has_api_key: z.boolean(),
   base_url: z.string(),
   user: UserResponseSchema,

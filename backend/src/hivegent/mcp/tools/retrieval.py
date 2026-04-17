@@ -55,7 +55,7 @@ async def explore_documents(
     group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
 ) -> str | None:
     """Explore documents with a subagent or MCP sampling fallback."""
-    model_name = settings.llm.small_model or settings.llm.model
+    model_name = settings.llm.aux_model or settings.llm.model
 
     if model_name:
         result = await user_agent.run(

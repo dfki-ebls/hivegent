@@ -38,11 +38,11 @@ def _subagent_model(deps: UserDeps) -> OpenAIChatModel:
     """Build the model used for subagent calls."""
     llm = deps.llm
     if llm:
-        model = settings.llm.small_model or llm.model
+        model = settings.llm.aux_model or llm.model
         api_key = llm.api_key
         base_url = llm.base_url
     else:
-        model = settings.llm.small_model or settings.llm.model
+        model = settings.llm.aux_model or settings.llm.model
         api_key = settings.llm.api_key
         base_url = settings.llm.base_url or None
 

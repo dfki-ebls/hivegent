@@ -49,7 +49,7 @@ class SlumberDocumentChunker(DocumentChunker):
         from ..config import settings
 
         genie = OpenAIGenie(
-            model=settings.llm.small_model or settings.llm.model,
+            model=settings.llm.aux_model or settings.llm.model,
             api_key=settings.llm.api_key,
             base_url=settings.llm.base_url or None,
         )

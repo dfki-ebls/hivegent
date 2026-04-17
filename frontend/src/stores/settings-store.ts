@@ -35,8 +35,7 @@ const EMPTY_OVERRIDES: UserOverrides = {
   model: "",
   apiKey: "",
   baseUrl: "",
-  smallModel: "",
-  visionModel: "",
+  auxModel: "",
 };
 
 /** Per-pipeline configuration overrides, keyed by pipeline value. */

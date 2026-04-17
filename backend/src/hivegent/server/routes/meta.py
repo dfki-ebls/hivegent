@@ -31,8 +31,7 @@ async def get_settings(
     """Get server-side LLM settings and authenticated user metadata."""
     return SettingsResponse(
         model=settings.llm.model,
-        vision_model=settings.llm.vision_model,
-        small_model=settings.llm.small_model,
+        aux_model=settings.llm.aux_model,
         has_api_key=bool(settings.llm.api_key),
         base_url=settings.llm.base_url,
         user=UserResponse.from_user(user),
