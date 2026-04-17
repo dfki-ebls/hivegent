@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 from pydantic_ai import BinaryContent
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..agents import base_agent
@@ -14,6 +14,8 @@ from .base import ConversionResult, DocumentConverter
 from .images import sanitize_image_bytes
 
 __all__ = ["LLMConverter", "LlmConverterConfig"]
+
+_VISION_MODEL_SETTINGS = OpenAIChatModelSettings(openai_reasoning_effort="none")
 
 
 class LlmConverterConfig(BaseModel):
@@ -97,6 +99,7 @@ class LLMConverter(DocumentConverter):
                     base_url=self.llm_options.base_url,
                 ),
             ),
+            model_settings=_VISION_MODEL_SETTINGS,
         )
 
         return ConversionResult(markdown=str(result.output))

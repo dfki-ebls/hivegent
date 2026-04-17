@@ -6,7 +6,7 @@ import re
 from pathlib import PurePosixPath
 
 from pydantic_ai import BinaryContent
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..agents import base_agent
@@ -25,6 +25,7 @@ _ALT_TEXT_PROMPT = (
 )
 
 _MAX_CONCURRENCY = 8
+_VISION_MODEL_SETTINGS = OpenAIChatModelSettings(openai_reasoning_effort="none")
 
 
 async def describe_image(
@@ -61,6 +62,7 @@ async def describe_image(
                 base_url=llm_options.base_url,
             ),
         ),
+        model_settings=_VISION_MODEL_SETTINGS,
     )
     return str(result.output).strip()
 
