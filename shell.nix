@@ -20,7 +20,7 @@ mkShell {
     uv --directory "$ROOT_DIR/backend" sync --all-extras
   '';
   HIVEGENT_AUTH_DISABLED = "1";
-  HIVEGENT_LLM__MODEL = "openai/gpt-oss-20b";
+  HIVEGENT_LLM__MODEL = "qwen3.6-35b-a3b";
   HIVEGENT_LLM__AUX_MODEL = "qwen3.5-0.8b";
   HIVEGENT_LLM__BASE_URL = "http://localhost:1234/v1";
   UV_PYTHON = lib.getExe python3;
