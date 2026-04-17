@@ -25,6 +25,7 @@ from ...converters import (
 )
 from ...converters.alt_text import describe_image
 from ...converters.base import DOCUMENT_EXTENSION, IMAGE_EXTENSIONS
+from ...converters.images import guess_image_media_type, sanitize_image_bytes
 from ...entries import (
     assets_dir_for_stem,
     description_path_for_stem,
@@ -128,6 +129,7 @@ async def _write_markdown_projection(
 async def _build_image_description(
     filepath: str,
     content: bytes,
+    media_type: str,
     llm_config: LlmConfig,
 ) -> str:
     """Generate markdown text for an image description."""
@@ -136,8 +138,7 @@ async def _build_image_description(
     if not aux:
         return f"{fallback}\n"
 
-    media_type = mimetypes.guess_type(filepath)[0]
-    if not media_type or not media_type.startswith("image/"):
+    if not media_type:
         return f"{fallback}\n"
 
     try:
@@ -220,10 +221,17 @@ async def _upload_image(
 ) -> UploadCompleteEvent:
     """Store an image and generate a markdown description."""
     workspace_dir = store.workspace_dir(settings.data_dir)
-    _write_original_file(workspace_dir, filepath, content)
+    media_type = guess_image_media_type(filepath) or ""
+    sanitized_content = sanitize_image_bytes(content, media_type)
+    _write_original_file(workspace_dir, filepath, sanitized_content)
     stem_path = stem_path_from_reference(filepath)
     description_path = description_path_for_stem(stem_path)
-    markdown_content = await _build_image_description(filepath, content, llm_config)
+    markdown_content = await _build_image_description(
+        filepath,
+        sanitized_content,
+        media_type,
+        llm_config,
+    )
     chunk_count, chunking_used = await _write_markdown_projection(
         store,
         description_path,
@@ -353,14 +361,15 @@ async def _upload_convertible(
     assets_dir = assets_dir_for_stem(stem_path)
     markdown_content = result.markdown
 
-    child_paths: list[tuple[str, bytes]] = []
+    child_paths: list[tuple[str, str, bytes]] = []
     for image_relpath, image_data in sorted(result.images.items()):
+        image_media_type = guess_image_media_type(image_relpath) or ""
         child_path = str((PurePosixPath(assets_dir) / image_relpath).as_posix())
         relative_from_doc = str(
             PurePosixPath(PurePosixPath(assets_dir).name) / PurePosixPath(image_relpath)
         )
         markdown_content = markdown_content.replace(image_relpath, relative_from_doc)
-        child_paths.append((child_path, image_data))
+        child_paths.append((child_path, image_media_type, image_data))
 
     if child_paths and spec.process_assets:
         await asyncio.gather(
@@ -374,12 +383,16 @@ async def _upload_convertible(
                     origin="extracted",
                     sync=False,
                 )
-                for child_path, image_data in child_paths
+                for child_path, _, image_data in child_paths
             )
         )
     elif child_paths:
-        for child_path, image_data in child_paths:
-            _write_original_file(workspace_dir, child_path, image_data)
+        for child_path, image_media_type, image_data in child_paths:
+            _write_original_file(
+                workspace_dir,
+                child_path,
+                sanitize_image_bytes(image_data, image_media_type),
+            )
 
     chunk_count, chunking_used = await _write_markdown_projection(
         store,

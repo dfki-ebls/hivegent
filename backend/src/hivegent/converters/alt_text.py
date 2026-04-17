@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import mimetypes
 import re
 from pathlib import PurePosixPath
 
@@ -12,7 +11,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..agents import base_agent
 from ..types import LlmConfig
-from .images import sanitize_image_bytes
+from .images import guess_image_media_type, sanitize_image_bytes
 
 __all__ = ["MD_IMAGE_RE", "describe_image", "generate_alt_texts"]
 
@@ -65,15 +64,6 @@ async def describe_image(
     )
     return str(result.output).strip()
 
-
-def _guess_media_type(path: str) -> str | None:
-    """Guess the MIME type for an image path."""
-    mt = mimetypes.guess_type(path)[0]
-    if mt and mt.startswith("image/"):
-        return mt
-    return None
-
-
 async def generate_alt_texts(
     markdown: str,
     images: dict[str, bytes],
@@ -118,7 +108,7 @@ async def generate_alt_texts(
         semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
 
         async def _gen(path: str, data: bytes) -> tuple[str, str]:
-            media_type = _guess_media_type(path)
+            media_type = guess_image_media_type(path)
             if media_type is None:
                 return path, PurePosixPath(path).stem
             async with semaphore:
