@@ -7,39 +7,36 @@ import mimetypes
 __all__ = ["guess_image_media_type", "sanitize_image_bytes"]
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-_PNG_TEXT_CHUNK_TYPES = frozenset({b"tEXt", b"zTXt", b"iTXt"})
-_PNG_IEND = b"IEND"
+# Critical chunks (IHDR/PLTE/IDAT/IEND) plus tRNS for transparent rendering.
+# Everything else — ICC profiles, text, EXIF, APNG animation, timestamps,
+# color-space hints — is ancillary and safe to drop, which sidesteps Pillow's
+# per-chunk decompression caps (e.g. iCCP and zTXt/iTXt payloads embedded in
+# Office documents regularly exceed the default MAX_TEXT_CHUNK of 1 MB).
+_PNG_KEPT_CHUNK_TYPES = frozenset({b"IHDR", b"PLTE", b"IDAT", b"IEND", b"tRNS"})
 
 
-def _strip_png_text_chunks(image_bytes: bytes) -> bytes:
-    """Remove text chunks from a PNG without decoding pixel data."""
+def _strip_png_metadata(image_bytes: bytes) -> bytes:
+    """Keep only essential PNG chunks; discard all ancillary metadata."""
     if not image_bytes.startswith(_PNG_SIGNATURE):
         raise ValueError("Invalid PNG signature")
 
     output = bytearray(_PNG_SIGNATURE)
     offset = len(_PNG_SIGNATURE)
     end = len(image_bytes)
-    saw_iend = False
 
-    while offset < end:
-        if offset + 8 > end:
-            raise ValueError("Truncated PNG chunk header")
+    while offset + 8 <= end:
         chunk_length = int.from_bytes(image_bytes[offset : offset + 4], "big")
         chunk_type = image_bytes[offset + 4 : offset + 8]
         chunk_end = offset + 12 + chunk_length
         if chunk_end > end:
             raise ValueError("Truncated PNG chunk data")
-        if chunk_type not in _PNG_TEXT_CHUNK_TYPES:
+        if chunk_type in _PNG_KEPT_CHUNK_TYPES:
             output.extend(image_bytes[offset:chunk_end])
         offset = chunk_end
-        if chunk_type == _PNG_IEND:
-            saw_iend = True
-            break
+        if chunk_type == b"IEND":
+            return bytes(output)
 
-    if not saw_iend:
-        raise ValueError("PNG is missing IEND")
-
-    return bytes(output)
+    raise ValueError("PNG is missing IEND")
 
 
 def guess_image_media_type(path: str) -> str | None:
@@ -66,5 +63,5 @@ def sanitize_image_bytes(image_bytes: bytes, media_type: str) -> bytes:
         ValueError: If a PNG is structurally invalid.
     """
     if media_type == "image/png":
-        return _strip_png_text_chunks(image_bytes)
+        return _strip_png_metadata(image_bytes)
     return image_bytes
