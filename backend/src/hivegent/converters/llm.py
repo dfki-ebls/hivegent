@@ -11,6 +11,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from ..agents import base_agent
 from ..types import LlmConfig
 from .base import ConversionResult, DocumentConverter
+from .images import sanitize_image_bytes
 
 __all__ = ["LLMConverter", "LlmConverterConfig"]
 
@@ -81,8 +82,9 @@ class LLMConverter(DocumentConverter):
         media_type = MEDIA_TYPES.get(suffix)
         assert media_type is not None, f"Unsupported extension: {suffix}"
 
+        raw_bytes = path.read_bytes()
         content = BinaryContent(
-            data=path.read_bytes(),
+            data=sanitize_image_bytes(raw_bytes, media_type),
             media_type=media_type,
         )
 

@@ -1,19 +1,18 @@
 """Alt text generation for images using a vision model."""
 
 import asyncio
-import io
 import logging
 import mimetypes
 import re
 from pathlib import PurePosixPath
 
-from PIL import Image
 from pydantic_ai import BinaryContent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..agents import base_agent
 from ..types import LlmConfig
+from .images import sanitize_image_bytes
 
 __all__ = ["MD_IMAGE_RE", "describe_image", "generate_alt_texts"]
 
@@ -26,30 +25,7 @@ _ALT_TEXT_PROMPT = (
     "Be factual and specific. Do not start with 'This image shows' or similar."
 )
 
-
-def _strip_png_metadata(image_bytes: bytes, media_type: str) -> bytes:
-    """Re-encode an image to strip metadata that may cause server errors.
-
-    Some PNG files extracted from PDFs contain oversized text chunks that
-    cause ``PngImagePlugin.MAX_TEXT_CHUNK`` errors on inference servers.
-    Re-saving through Pillow drops those chunks.
-
-    Args:
-        image_bytes: The raw image bytes.
-        media_type: The MIME type of the image.
-
-    Returns:
-        Clean image bytes, or the original bytes if re-encoding fails.
-    """
-    if media_type != "image/png":
-        return image_bytes
-    try:
-        with Image.open(io.BytesIO(image_bytes)) as img:
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            return buf.getvalue()
-    except Exception:
-        return image_bytes
+_MAX_CONCURRENCY = 8
 
 
 async def describe_image(
@@ -59,6 +35,8 @@ async def describe_image(
 ) -> str:
     """Generate a description for a single image.
 
+    PNG images are sanitized before being sent to the vision model.
+
     Args:
         image_bytes: The raw image bytes.
         media_type: The MIME type of the image.
@@ -66,9 +44,15 @@ async def describe_image(
 
     Returns:
         A concise description string.
+
+    Raises:
+        OSError: If the image cannot be decoded.
+        ValueError: If Pillow rejects the image.
     """
-    clean_bytes = _strip_png_metadata(image_bytes, media_type)
-    content = BinaryContent(data=clean_bytes, media_type=media_type)
+    content = BinaryContent(
+        data=sanitize_image_bytes(image_bytes, media_type),
+        media_type=media_type,
+    )
     result = await base_agent.run(
         [_ALT_TEXT_PROMPT, content],
         model=OpenAIChatModel(
@@ -83,14 +67,7 @@ async def describe_image(
 
 
 def _guess_media_type(path: str) -> str | None:
-    """Guess the MIME type for an image path.
-
-    Args:
-        path: Relative image path.
-
-    Returns:
-        A MIME type string, or ``None`` if unrecognized.
-    """
+    """Guess the MIME type for an image path."""
     mt = mimetypes.guess_type(path)[0]
     if mt and mt.startswith("image/"):
         return mt
@@ -107,8 +84,7 @@ async def generate_alt_texts(
     Scans for ``![](path)`` patterns where alt text is empty.  For each,
     sends the image to the vision model and inserts the generated
     description.  References with existing alt text are left unchanged.
-
-    Falls back to filename stem when no vision model is configured.
+    On failure, falls back to the filename stem.
 
     Args:
         markdown: The markdown content with image references.
@@ -122,7 +98,6 @@ async def generate_alt_texts(
     """
     has_vision = llm_options is not None and bool(llm_options.model)
 
-    # Collect empty-alt references that have image data available.
     tasks: dict[str, bytes] = {}
     for m in MD_IMAGE_RE.finditer(markdown):
         alt, path = m.group(1), m.group(2)
@@ -136,22 +111,22 @@ async def generate_alt_texts(
     if not tasks:
         return markdown
 
-    # Generate descriptions.
     descriptions: dict[str, str] = {}
 
     if has_vision:
         assert llm_options is not None
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
 
         async def _gen(path: str, data: bytes) -> tuple[str, str]:
-            mt = _guess_media_type(path)
-            if mt is None:
+            media_type = _guess_media_type(path)
+            if media_type is None:
                 return path, PurePosixPath(path).stem
-            try:
-                desc = await describe_image(data, mt, llm_options)
-                return path, desc
-            except Exception:
-                logger.warning("Alt text generation failed for %s", path, exc_info=True)
-                return path, PurePosixPath(path).stem
+            async with semaphore:
+                try:
+                    return path, await describe_image(data, media_type, llm_options)
+                except Exception:
+                    logger.warning("Alt text generation failed for %s", path, exc_info=True)
+                    return path, PurePosixPath(path).stem
 
         results = await asyncio.gather(*[_gen(p, d) for p, d in tasks.items()])
         for path, desc in results:
@@ -160,7 +135,6 @@ async def generate_alt_texts(
         for path in tasks:
             descriptions[path] = PurePosixPath(path).stem
 
-    # Rewrite markdown with generated alt text.
     def _replace(m: re.Match[str]) -> str:
         alt, path = m.group(1), m.group(2)
         if alt or path not in descriptions:
