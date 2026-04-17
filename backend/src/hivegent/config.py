@@ -149,7 +149,7 @@ class EmbeddingSettings(BaseModel):
     """
 
     provider: Literal["sentence-transformers", "openai"] = "sentence-transformers"
-    model: str = "all-MiniLM-L6-v2"
+    model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     api_key: str = ""
     base_url: str = ""
 
