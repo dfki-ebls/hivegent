@@ -92,8 +92,8 @@ export type UserResponse = z.infer<typeof UserResponseSchema>;
 /** Settings exposed by the backend. */
 export const BackendSettingsSchema = z.object({
   model: z.string(),
-  vision_model: z.string(),
-  small_model: z.string(),
+  vision_model: z.string().nullable(),
+  small_model: z.string().nullable(),
   has_api_key: z.boolean(),
   base_url: z.string(),
   user: UserResponseSchema,

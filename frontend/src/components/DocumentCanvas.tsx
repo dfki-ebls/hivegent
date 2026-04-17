@@ -825,8 +825,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     moveDir: storeMoveDir,
     clearError,
   } = useUserDocumentsStore();
-  const llmSettings = useSettingsStore((state) => state.llm);
-  const visionModel = useSettingsStore((state) => state.visionModel);
+  const overrides = useSettingsStore((state) => state.overrides);
   const conversionPipeline = useSettingsStore((state) => state.conversionPipeline);
   const chunkingPipeline = useSettingsStore((state) => state.chunkingPipeline);
   const conversionConfigs = useSettingsStore((state) => state.conversionConfigs);
@@ -1032,13 +1031,13 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       await storeReconvert(filepath, {
         spec: pipelineSpec,
         llm: buildLlmConfig({
-          model: visionModel,
-          apiKey: llmSettings.apiKey,
-          baseUrl: llmSettings.baseUrl,
+          model: overrides.visionModel,
+          apiKey: overrides.apiKey,
+          baseUrl: overrides.baseUrl,
         }),
       });
     },
-    [storeReconvert, pipelineSpec, visionModel, llmSettings],
+    [storeReconvert, pipelineSpec, overrides],
   );
 
   const handleDownloadOriginal = useCallback(
@@ -1074,19 +1073,12 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       files,
       pipelineSpec,
       buildLlmConfig({
-        model: visionModel,
-        apiKey: llmSettings.apiKey,
-        baseUrl: llmSettings.baseUrl,
+        model: overrides.visionModel,
+        apiKey: overrides.apiKey,
+        baseUrl: overrides.baseUrl,
       }),
     );
-  }, [
-    selectedReconvertable,
-    clearSelection,
-    storeBulkReconvert,
-    pipelineSpec,
-    visionModel,
-    llmSettings,
-  ]);
+  }, [selectedReconvertable, clearSelection, storeBulkReconvert, pipelineSpec, overrides]);
 
   const handleBulkDelete = useCallback(() => {
     setPendingDelete({ kind: "bulk", files: [...selectedFiles] });
@@ -1162,12 +1154,12 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     () => ({
       spec: pipelineSpec,
       llm: buildLlmConfig({
-        model: visionModel,
-        apiKey: llmSettings.apiKey,
-        baseUrl: llmSettings.baseUrl,
+        model: overrides.visionModel,
+        apiKey: overrides.apiKey,
+        baseUrl: overrides.baseUrl,
       }),
     }),
-    [pipelineSpec, visionModel, llmSettings],
+    [pipelineSpec, overrides],
   );
 
   const handleFiles = useCallback(

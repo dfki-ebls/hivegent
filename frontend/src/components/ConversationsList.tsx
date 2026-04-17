@@ -271,7 +271,7 @@ export function ConversationsList({
     generateTitle,
   } = useConversationsStore();
 
-  const { llm, smallModel } = useSettingsStore();
+  const { overrides } = useSettingsStore();
 
   useEffect(() => {
     void fetchConversations();
@@ -287,9 +287,9 @@ export function ConversationsList({
     await generateTitle(
       id,
       buildLlmConfig({
-        model: smallModel || llm.model,
-        apiKey: llm.apiKey,
-        baseUrl: llm.baseUrl,
+        model: overrides.smallModel || overrides.model,
+        apiKey: overrides.apiKey,
+        baseUrl: overrides.baseUrl,
       }),
     );
   };

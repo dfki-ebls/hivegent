@@ -392,7 +392,7 @@ export function ChatSidebar({
   const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const fetchConversations = useConversationsStore((state) => state.fetchConversations);
-  const { llm, smallModel, personality, customSystemMessage, toolsSpec } = useSettingsStore();
+  const { overrides, personality, customSystemMessage, toolsSpec } = useSettingsStore();
   const [inputValue, setInputValue] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [activeTab, setActiveTab] = useState("chat");
@@ -495,7 +495,7 @@ export function ChatSidebar({
       system_message: personality === "custom" ? customSystemMessage : undefined,
       reasoning_effort: reasoningEffort,
       mode: modeOverride ?? agentMode,
-      llm: buildLlmConfig(llm),
+      llm: buildLlmConfig(overrides),
       included_documents: includedDocuments,
       excluded_documents: excludedDocuments,
       tools: buildToolsPayload(toolsSpec),
@@ -505,7 +505,7 @@ export function ChatSidebar({
       customSystemMessage,
       reasoningEffort,
       agentMode,
-      llm,
+      overrides,
       includedDocuments,
       excludedDocuments,
       toolsSpec,
@@ -599,9 +599,9 @@ export function ChatSidebar({
         const result = await compactConversation(
           id,
           buildLlmConfig({
-            model: smallModel || llm.model,
-            apiKey: llm.apiKey,
-            baseUrl: llm.baseUrl,
+            model: overrides.smallModel || overrides.model,
+            apiKey: overrides.apiKey,
+            baseUrl: overrides.baseUrl,
           }),
         );
         clearAll();
@@ -618,7 +618,7 @@ export function ChatSidebar({
         setIsCompacting(false);
       }
     },
-    [id, llm, smallModel, clearAll, navigate],
+    [id, overrides, clearAll, navigate],
   );
 
   const handleExecutePlan = useCallback(async () => {

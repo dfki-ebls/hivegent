@@ -114,8 +114,8 @@ class LlmSettings(BaseModel):
     """LLM provider defaults, configurable via environment variables."""
 
     model: str = ""
-    vision_model: str = ""
-    small_model: str = ""
+    vision_model: str | None = None
+    small_model: str | None = None
     api_key: str = ""
     base_url: str = ""
 

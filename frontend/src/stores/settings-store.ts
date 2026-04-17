@@ -1,9 +1,9 @@
 /**
  * Zustand store for all persisted user settings.
  *
- * Combines LLM configuration (model overrides, API keys, available models)
- * with UI preferences (active tab, pipeline selections, expanded directories)
- * into a single persisted store with Zod-validated rehydration.
+ * Holds raw LLM override strings (empty = no override; backend applies its
+ * own default at request time) alongside UI preferences, persisted with
+ * Zod-validated rehydration.
  */
 
 import { z } from "zod";
@@ -31,12 +31,6 @@ import {
   UserOverridesSchema,
 } from "../lib/types";
 
-export interface LLMSettings {
-  model: string;
-  apiKey: string;
-  baseUrl: string;
-}
-
 const EMPTY_OVERRIDES: UserOverrides = {
   model: "",
   apiKey: "",
@@ -62,10 +56,10 @@ const UI_DEFAULTS = {
 };
 
 interface SettingsState {
-  // Backend defaults (not persisted)
+  // Backend defaults, used only to display placeholders in the settings UI
   backendDefaults: BackendSettings | null;
 
-  // User LLM overrides (persisted)
+  // User LLM overrides (persisted). Empty string means "no override".
   overrides: UserOverrides;
 
   // UI preferences (persisted)
@@ -84,16 +78,8 @@ interface SettingsState {
   readGroups: string[];
   writeGroups: string[];
 
-  // Computed effective values (backend default + user override)
-  llm: LLMSettings;
-  smallModel: string;
-  visionModel: string;
-  hasServerApiKey: boolean;
-
   // LLM actions
-  setLLM: (settings: Partial<LLMSettings>) => void;
-  setSmallModel: (model: string) => void;
-  setVisionModel: (model: string) => void;
+  setOverride: (partial: Partial<UserOverrides>) => void;
   reset: () => void;
   initFromBackend: () => Promise<void>;
 
@@ -115,23 +101,6 @@ interface SettingsState {
   addMcpServer: (server: McpServerEntry) => void;
   removeMcpServer: (index: number) => void;
   updateMcpServer: (index: number, server: McpServerEntry) => void;
-}
-
-/** Recompute effective values from backend defaults and user overrides. */
-function computeEffective(
-  defaults: BackendSettings | null,
-  overrides: UserOverrides,
-): Pick<SettingsState, "llm" | "smallModel" | "visionModel" | "hasServerApiKey"> {
-  return {
-    llm: {
-      model: overrides.model || defaults?.model || "",
-      apiKey: overrides.apiKey,
-      baseUrl: overrides.baseUrl || defaults?.base_url || "",
-    },
-    smallModel: overrides.smallModel || defaults?.small_model || "",
-    visionModel: overrides.visionModel || defaults?.vision_model || "",
-    hasServerApiKey: defaults?.has_api_key ?? false,
-  };
 }
 
 /** Shape of the partialized state written to localStorage. */
@@ -283,56 +252,21 @@ export const useSettingsStore = create<SettingsState>()(
       writeGroups: [],
       ...UI_DEFAULTS,
 
-      // Initial computed values (no backend defaults yet)
-      ...computeEffective(null, EMPTY_OVERRIDES),
-
-      setLLM: (settings) =>
-        set((state) => {
-          const newOverrides = {
-            ...state.overrides,
-            ...(settings.model !== undefined ? { model: settings.model } : {}),
-            ...(settings.apiKey !== undefined ? { apiKey: settings.apiKey } : {}),
-            ...(settings.baseUrl !== undefined ? { baseUrl: settings.baseUrl } : {}),
-          };
-          return {
-            overrides: newOverrides,
-            ...computeEffective(state.backendDefaults, newOverrides),
-          };
-        }),
-
-      setSmallModel: (model) =>
-        set((state) => {
-          const newOverrides = { ...state.overrides, smallModel: model };
-          return {
-            overrides: newOverrides,
-            ...computeEffective(state.backendDefaults, newOverrides),
-          };
-        }),
-
-      setVisionModel: (model) =>
-        set((state) => {
-          const newOverrides = { ...state.overrides, visionModel: model };
-          return {
-            overrides: newOverrides,
-            ...computeEffective(state.backendDefaults, newOverrides),
-          };
-        }),
-
-      reset: () =>
+      setOverride: (partial) =>
         set((state) => ({
-          overrides: EMPTY_OVERRIDES,
-          ...computeEffective(state.backendDefaults, EMPTY_OVERRIDES),
+          overrides: { ...state.overrides, ...partial },
         })),
+
+      reset: () => set({ overrides: EMPTY_OVERRIDES }),
 
       initFromBackend: async () => {
         try {
           const defaults = await getSettings();
-          set((state) => ({
+          set({
             backendDefaults: defaults,
             readGroups: defaults.user.read_groups,
             writeGroups: defaults.user.write_groups,
-            ...computeEffective(defaults, state.overrides),
-          }));
+          });
         } catch {
           // Silently fail — keep existing values
         }
@@ -486,7 +420,6 @@ export const useSettingsStore = create<SettingsState>()(
             PipelineConfigsSchema.safeParse(data.chunkingConfigs).data ??
             UI_DEFAULTS.chunkingConfigs,
           toolsSpec,
-          ...computeEffective(current.backendDefaults, overrides),
         };
       },
     },

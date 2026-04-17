@@ -75,16 +75,12 @@ type AuthMode = "none" | "headers" | "oauth2";
 
 export function SettingsDialog() {
   const {
-    llm,
-    smallModel,
-    visionModel,
-    hasServerApiKey,
+    overrides,
+    backendDefaults,
     personality,
     customSystemMessage,
     toolsSpec,
-    setLLM,
-    setSmallModel,
-    setVisionModel,
+    setOverride,
     setPersonality,
     setCustomSystemMessage,
     toggleTool,
@@ -92,6 +88,7 @@ export function SettingsDialog() {
     removeMcpServer,
     reset,
   } = useSettingsStore();
+  const hasServerApiKey = backendDefaults?.has_api_key ?? false;
 
   const [open, setOpen] = useState(false);
   const [tools, setTools] = useState<ToolInfo[]>([]);
@@ -190,9 +187,9 @@ export function SettingsDialog() {
             >
               <Input
                 id="model"
-                placeholder="e.g., openai/gpt-4o"
-                value={llm.model}
-                onChange={(e) => setLLM({ model: e.target.value })}
+                placeholder={backendDefaults?.model || "e.g., openai/gpt-4o"}
+                value={overrides.model}
+                onChange={(e) => setOverride({ model: e.target.value })}
               />
             </SettingsSection>
 
@@ -211,8 +208,8 @@ export function SettingsDialog() {
                 placeholder={
                   hasServerApiKey ? "Using server API key" : "Enter your API key (if required)"
                 }
-                value={llm.apiKey}
-                onChange={(e) => setLLM({ apiKey: e.target.value })}
+                value={overrides.apiKey}
+                onChange={(e) => setOverride({ apiKey: e.target.value })}
               />
             </SettingsSection>
 
@@ -224,9 +221,9 @@ export function SettingsDialog() {
               <Input
                 id="base-url"
                 type="url"
-                placeholder="e.g., http://localhost:11434/v1"
-                value={llm.baseUrl}
-                onChange={(e) => setLLM({ baseUrl: e.target.value })}
+                placeholder={backendDefaults?.base_url || "e.g., http://localhost:11434/v1"}
+                value={overrides.baseUrl}
+                onChange={(e) => setOverride({ baseUrl: e.target.value })}
               />
             </SettingsSection>
 
@@ -237,9 +234,9 @@ export function SettingsDialog() {
             >
               <Input
                 id="small-model"
-                placeholder="e.g., qwen/qwen3-8b"
-                value={smallModel}
-                onChange={(e) => setSmallModel(e.target.value)}
+                placeholder={backendDefaults?.small_model ?? "e.g., qwen/qwen3-8b"}
+                value={overrides.smallModel}
+                onChange={(e) => setOverride({ smallModel: e.target.value })}
               />
             </SettingsSection>
 
@@ -250,9 +247,9 @@ export function SettingsDialog() {
             >
               <Input
                 id="vision-model"
-                placeholder="e.g., openai/gpt-4o"
-                value={visionModel}
-                onChange={(e) => setVisionModel(e.target.value)}
+                placeholder={backendDefaults?.vision_model ?? "e.g., openai/gpt-4o"}
+                value={overrides.visionModel}
+                onChange={(e) => setOverride({ visionModel: e.target.value })}
               />
             </SettingsSection>
           </div>
