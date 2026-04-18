@@ -6,7 +6,7 @@ import re
 from pathlib import PurePosixPath
 
 from pydantic_ai import BinaryContent
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..agents import base_agent
@@ -25,7 +25,6 @@ _ALT_TEXT_PROMPT = (
 )
 
 _MAX_CONCURRENCY = 8
-_VISION_MODEL_SETTINGS = OpenAIChatModelSettings(openai_reasoning_effort="none")
 
 
 async def describe_image(
@@ -35,7 +34,11 @@ async def describe_image(
 ) -> str:
     """Generate a description for a single image.
 
-    PNG images are sanitized before being sent to the vision model.
+    PNG metadata is stripped before upload.  Reasoning-capable models are
+    expected to emit the final description after any ``<think>`` block —
+    pydantic_ai aggregates the ``TextPart`` content and discards thinking.
+    Disable thinking at the server (e.g. vLLM ``chat_template_kwargs``)
+    if the chosen model otherwise produces thinking-only responses.
 
     Args:
         image_bytes: The raw image bytes.
@@ -46,8 +49,7 @@ async def describe_image(
         A concise description string.
 
     Raises:
-        OSError: If the image cannot be decoded.
-        ValueError: If Pillow rejects the image.
+        ValueError: If the PNG payload is structurally invalid.
     """
     content = BinaryContent(
         data=sanitize_image_bytes(image_bytes, media_type),
@@ -62,7 +64,6 @@ async def describe_image(
                 base_url=llm_options.base_url,
             ),
         ),
-        model_settings=_VISION_MODEL_SETTINGS,
     )
     return str(result.output).strip()
 
