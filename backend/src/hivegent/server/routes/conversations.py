@@ -391,7 +391,10 @@ async def create_conversation_chat(
         toolsets=build_toolsets(
             TOOLSET_GROUPS,
             config.tools,
-            extra=[build_mcp_server(server) for server in config.tools.mcp_servers],
+            extra=[
+                build_mcp_server(server).defer_loading()
+                for server in config.tools.mcp_servers
+            ],
             mode=config.mode,
         ),
         instructions=instructions,

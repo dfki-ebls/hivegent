@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from typing import cast
 
 from hivegent.tools.base import SearchPath
 from hivegent.tools.documents import (
@@ -22,7 +21,7 @@ def _as_summaries(
 ) -> list[DocumentSummary]:
     """Narrow a ListDocumentsTool result to a list of summaries."""
     assert isinstance(data, list) and all(isinstance(d, DocumentSummary) for d in data)
-    return cast(list[DocumentSummary], data)
+    return data
 
 
 class TestListDocumentsTool:
