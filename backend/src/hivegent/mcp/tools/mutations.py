@@ -10,11 +10,12 @@ from ...config import settings
 from ...store import Casebase
 from ...tools import EditDocumentTool, WriteDocumentTool
 from ...tools.base import tool_description
-from ...tools.documents import DocumentFilenameArg
+from ...tools.documents import DocumentFilePathArg
 from ...tools.mutations import (
     DocumentContentArg,
     EditNewStringArg,
     EditOldStringArg,
+    EditReplaceAllArg,
     WriteModeArg,
 )
 from ..app import mcp_app
@@ -25,15 +26,16 @@ __all__ = ["edit_document", "write_document"]
 
 @mcp_app.tool(description=tool_description(EditDocumentTool))
 async def edit_document(
-    filename: DocumentFilenameArg,
+    file_path: DocumentFilePathArg,
     old_string: EditOldStringArg,
     new_string: EditNewStringArg,
     ctx: Context,
+    replace_all: EditReplaceAllArg = False,
     store: Casebase = Depends(get_mcp_user_store),
 ) -> str:
     response = await ctx.elicit(
         message=(
-            f"Allow edit to '{filename}'?\n\n"
+            f"Allow edit to '{file_path}'?\n\n"
             f"Replace:\n{old_string!r}\n\nWith:\n{new_string!r}"
         ),
         response_type=None,
@@ -45,13 +47,13 @@ async def edit_document(
         paths=store.workspace_dir(settings.data_dir),
         hook=partial(on_document_write, store),
     )
-    result = await tool(filename, old_string, new_string)
+    result = await tool(file_path, old_string, new_string, replace_all)
     return result.data
 
 
 @mcp_app.tool(description=tool_description(WriteDocumentTool))
 async def write_document(
-    filename: DocumentFilenameArg,
+    file_path: DocumentFilePathArg,
     content: DocumentContentArg,
     ctx: Context,
     mode: WriteModeArg = "replace",
@@ -59,7 +61,7 @@ async def write_document(
 ) -> str:
     action = "Create/overwrite" if mode == "replace" else mode.capitalize()
     response = await ctx.elicit(
-        message=f"Allow {action} '{filename}' ({len(content)} chars)?",
+        message=f"Allow {action} '{file_path}' ({len(content)} chars)?",
         response_type=None,
     )
     if response.action != "accept":
@@ -69,5 +71,5 @@ async def write_document(
         paths=store.workspace_dir(settings.data_dir),
         hook=partial(on_document_write, store),
     )
-    result = await tool(filename, content, mode)
+    result = await tool(file_path, content, mode)
     return result.data

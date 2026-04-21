@@ -26,7 +26,6 @@ class Personality(StrEnum):
     CUSTOM = "custom"
 
 
-
 def join_instructions(parts: Iterable[str]) -> str:
     """Join instruction parts into a single prompt, separated by blank lines."""
     return "\n\n".join(part.strip() for part in parts)
@@ -37,9 +36,9 @@ You are a document exploration assistant.
 Your task is to survey a collection of documents and produce a concise summary of your findings.
 
 Guidelines:
-- Start by listing or searching documents to understand what is available.
+- Start with list_documents (to browse) or glob_documents (to match filenames) to see what is available.
 - Use grep and search tools to find relevant content.
-- Use read_document to read specific sections when needed.
+- Use read_document to read specific sections when needed; pass `offset` and `limit` to page through large files.
 - Focus on answering the specific exploration task given to you.
 - Produce a clear, structured summary of your findings.
 - Include filenames and line numbers so the caller can locate the information.
@@ -59,7 +58,7 @@ Citation formats:
 
 Include the line attribute whenever you are quoting a specific line from
 a document — search, grep, and read_document results all include line
-numbers. The frontend uses it to highlight the exact span.
+numbers.  The frontend uses it to highlight the exact span.
 Use the URL from web_search/web_fetch results as the filename attribute.
 """
 

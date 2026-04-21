@@ -34,6 +34,8 @@ async def rg_search(
     glob: str | None = None,
     context_lines: int = 0,
     case_sensitive: bool = False,
+    literal: bool = False,
+    exclude_dirs: tuple[str, ...] = (),
 ) -> list[RgMatch]:
     """Search *path* for *pattern* using ripgrep.
 
@@ -44,6 +46,10 @@ async def rg_search(
         context_lines: Number of context lines before and after each match.
         case_sensitive: When ``False`` (the default), search
             case-insensitively.  When ``True``, match case exactly.
+        literal: When ``True``, treat *pattern* as a fixed string rather
+            than a regular expression.
+        exclude_dirs: Directory names to skip anywhere in the tree
+            (e.g. ``("node_modules", ".git")``).
 
     Returns:
         List of match blocks parsed from ripgrep's JSON output.  Each
@@ -53,8 +59,12 @@ async def rg_search(
     args: list[str | Path] = ["rg", "--json"]
     if not case_sensitive:
         args.append("--ignore-case")
+    if literal:
+        args.append("--fixed-strings")
     if glob:
         args.extend(["--glob", glob])
+    for excluded in exclude_dirs:
+        args.extend(["--glob", f"!**/{excluded}/**"])
     if context_lines > 0:
         args.extend(["--context", str(context_lines)])
     args.extend([pattern, path])

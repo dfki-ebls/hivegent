@@ -5,6 +5,7 @@ from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAcces
 from ...config import settings
 from ...store import Casebase, build_search_paths
 from ...tools import (
+    GlobDocumentsTool,
     GrepTool,
     ListDocumentsTool,
     ReadDocumentTool,
@@ -25,6 +26,15 @@ def _list_documents(
     )
 
 
+def _glob_documents(
+    store: Casebase = Depends(get_mcp_user_store),
+    group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
+) -> GlobDocumentsTool:
+    return GlobDocumentsTool(
+        paths=build_search_paths(store, group_stores, settings.data_dir)
+    )
+
+
 def _read_document(
     store: Casebase = Depends(get_mcp_user_store),
     group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
@@ -38,15 +48,14 @@ def _grep(
     store: Casebase = Depends(get_mcp_user_store),
     group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
 ) -> GrepTool:
-    return GrepTool(
-        paths=build_search_paths(store, group_stores, settings.data_dir)
-    )
+    return GrepTool(paths=build_search_paths(store, group_stores, settings.data_dir))
 
 
 register_mcp_tools(
     mcp_app,
     [
         _list_documents,
+        _glob_documents,
         _read_document,
         _grep,
     ],

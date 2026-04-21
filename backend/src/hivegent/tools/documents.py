@@ -1,21 +1,40 @@
-"""Document listing and reading tool callables."""
+"""Document listing, globbing, and reading tool callables."""
 
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from fnmatch import fnmatch
-from glob import has_magic as is_glob
+from pathlib import Path
 from typing import Annotated, override
 
 from pydantic import Field
 
-from .base import SearchPath, SyncPathTool, ToolOutput, file_allowed, resolve_search_path
+from .base import (
+    IncludeIgnoredArg,
+    SearchPath,
+    SyncPathTool,
+    ToolOutput,
+    excluded_dirs,
+    file_allowed,
+    is_in_excluded_dir,
+    resolve_accessible_file,
+)
 
 __all__ = [
-    "DocumentFilenameArg",
+    "DocumentFilePathArg",
+    "DocumentFlattenArg",
+    "DocumentLimitArg",
+    "DocumentMaxDepthArg",
+    "DocumentMaxResultsArg",
+    "DocumentOffsetArg",
+    "DocumentPathArg",
     "DocumentRange",
     "DocumentSummary",
     "DocumentTreeNode",
+    "GlobDocumentsTool",
+    "GlobMaxResultsArg",
+    "GlobPatternArg",
     "ListDocumentsTool",
     "ReadDocumentTool",
 ]
@@ -25,6 +44,7 @@ logger = logging.getLogger(__name__)
 _NOT_FOUND_MSG = "(document not found)"
 
 _SIZE_UNITS = ("B", "K", "M", "G")
+
 
 def _humanize_size(n: int) -> str:
     """Format byte count as a compact human-readable string."""
@@ -56,17 +76,14 @@ class DocumentRange:
     content: str
 
 
-DocumentFilenameArg = Annotated[
+DocumentFilePathArg = Annotated[
     str,
     Field(description="Relative file path within the tool workspace."),
 ]
 DocumentPathArg = Annotated[
     str | None,
     Field(
-        description=(
-            "Subdirectory to list, or a glob pattern to filter files "
-            "(e.g. `reports` or `*.md`)."
-        ),
+        description="Optional subdirectory to scope the operation within.",
     ),
 ]
 DocumentFlattenArg = Annotated[
@@ -89,16 +106,35 @@ DocumentMaxResultsArg = Annotated[
     int,
     Field(description="Maximum number of entries to return.", ge=1, le=1000),
 ]
-DocumentStartLineArg = Annotated[
-    int | None,
-    Field(description="First 1-based line number to include.", ge=1),
-]
-DocumentEndLineArg = Annotated[
-    int | None,
+DocumentOffsetArg = Annotated[
+    int,
     Field(
-        description="Last 1-based line number to include. Defaults to a window of lines from start when omitted.",
+        description="1-based starting line number.",
         ge=1,
     ),
+]
+DocumentLimitArg = Annotated[
+    int | None,
+    Field(
+        description=(
+            "Maximum number of lines to return. When omitted, uses the tool's "
+            "default window."
+        ),
+        ge=1,
+    ),
+]
+
+GlobPatternArg = Annotated[
+    str,
+    Field(
+        description=(
+            "Glob pattern matched against relative filenames (e.g. `*.md`, `**/*.txt`)."
+        ),
+    ),
+]
+GlobMaxResultsArg = Annotated[
+    int,
+    Field(description="Maximum number of matching files to return.", ge=1, le=1000),
 ]
 
 
@@ -132,65 +168,93 @@ def _matches_subdir_and_depth(
     return True
 
 
+def _walk_entries(
+    resolved_paths: tuple[SearchPath, ...],
+    base_glob: str | None,
+    exclude_dirs: tuple[str, ...],
+    *,
+    root_subpath: str | None = None,
+    include_dirs: bool,
+) -> Iterator[tuple[SearchPath, Path, str, bool]]:
+    """Walk search paths yielding ``(sp, absolute, relative, is_dir)`` tuples.
+
+    Applies ``base_glob``, the excluded-dir filter, and the search path's
+    own ``filter_func``.  Callers handle sorting, capping, and any
+    additional filters (subdir, depth, fnmatch).
+    """
+    for sp in resolved_paths:
+        root = sp.path / root_subpath if root_subpath else sp.path
+        if not root.exists():
+            continue
+        for absolute in sorted(root.rglob(base_glob or "*")):
+            is_dir = absolute.is_dir()
+            if is_dir and not include_dirs:
+                continue
+            if not is_dir and not absolute.is_file():
+                continue
+            rel = str(absolute.relative_to(sp.path).as_posix())
+            if is_in_excluded_dir(rel, exclude_dirs):
+                continue
+            if not file_allowed(sp.filter_func, rel):
+                continue
+            yield sp, absolute, rel, is_dir
+
+
 def _scan_entries(
     resolved_paths: tuple[SearchPath, ...],
-    glob: str | None,
+    base_glob: str | None,
     subdir: str | None,
     max_depth: int | None,
     max_results: int,
+    exclude_dirs: tuple[str, ...],
 ) -> list[DocumentSummary]:
     """Collect matching file and directory entries from search paths."""
     results: list[DocumentSummary] = []
-    for sp in resolved_paths:
-        if not sp.path.exists():
+    for sp, absolute, rel, is_dir in _walk_entries(
+        resolved_paths, base_glob, exclude_dirs, include_dirs=True
+    ):
+        if not _matches_subdir_and_depth(rel, subdir, max_depth):
             continue
-        for f in sorted(sp.path.rglob(glob or "*")):
-            is_dir = f.is_dir()
-            if not is_dir and not f.is_file():
-                continue
-            rel = str(f.relative_to(sp.path).as_posix())
-            if not file_allowed(sp.filter_func, rel):
-                continue
-            if not _matches_subdir_and_depth(rel, subdir, max_depth):
-                continue
-            stat = f.stat()
-            results.append(
-                DocumentSummary(
-                    filename=sp.prefixed(rel),
-                    size=stat.st_size if not is_dir else 0,
-                    modified_at=datetime.fromtimestamp(
-                        stat.st_mtime, tz=timezone.utc
-                    ),
-                    is_directory=is_dir,
-                )
+        stat = absolute.stat()
+        results.append(
+            DocumentSummary(
+                filename=sp.prefixed(rel),
+                size=stat.st_size if not is_dir else 0,
+                modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                is_directory=is_dir,
             )
-    return results[:max_results]
+        )
+        if len(results) >= max_results:
+            break
+    return results
 
 
-def _scan_glob(
+def _glob_entries(
     resolved_paths: tuple[SearchPath, ...],
     base_glob: str | None,
     pattern: str,
+    subdir: str | None,
     max_results: int,
+    exclude_dirs: tuple[str, ...],
 ) -> list[str]:
-    """Find files matching a glob *pattern* across search paths."""
-    results: list[str] = []
-    # When no base_glob restricts the file set, let rglob do the filtering
-    # directly instead of enumerating every file and re-filtering with fnmatch.
+    """Find files matching *pattern* across search paths, scoped to *subdir*."""
+    # Without a base_glob, pass the user pattern straight to rglob and skip the
+    # per-entry fnmatch pass.
     effective_glob = pattern if base_glob is None else base_glob
     skip_fnmatch = base_glob is None
-    for sp in resolved_paths:
-        if not sp.path.exists():
-            continue
-        for f in sorted(sp.path.rglob(effective_glob)):
-            if not f.is_file():
-                continue
-            rel = str(f.relative_to(sp.path).as_posix())
-            if (skip_fnmatch or fnmatch(rel, pattern)) and file_allowed(
-                sp.filter_func, rel
-            ):
-                results.append(sp.prefixed(rel))
-    return results[:max_results]
+    results: list[str] = []
+    for sp, _absolute, rel, _is_dir in _walk_entries(
+        resolved_paths,
+        effective_glob,
+        exclude_dirs,
+        root_subpath=subdir,
+        include_dirs=False,
+    ):
+        if skip_fnmatch or fnmatch(rel, pattern):
+            results.append(sp.prefixed(rel))
+            if len(results) >= max_results:
+                break
+    return results
 
 
 @dataclass(slots=True, frozen=True)
@@ -261,8 +325,8 @@ def _format_document_tree(
 
 
 @dataclass(slots=True, frozen=True)
-class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode | list[str]]):
-    """List available documents, optionally as a tree or filtered by glob pattern."""
+class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
+    """List available documents as a flat list or hierarchical tree."""
 
     glob: str | None = None
 
@@ -273,39 +337,47 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode | 
         flatten: DocumentFlattenArg = True,
         max_depth: DocumentMaxDepthArg = 1,
         max_results: DocumentMaxResultsArg = 200,
-    ) -> ToolOutput[list[DocumentSummary] | DocumentTreeNode | list[str]]:
+        include_ignored: IncludeIgnoredArg = False,
+    ) -> ToolOutput[list[DocumentSummary] | DocumentTreeNode]:
         """List available documents with sizes and dates.
 
         Set ``flatten=False`` to show a hierarchical directory tree.
-        The ``path`` parameter accepts a subdirectory name or a glob
-        pattern (e.g. ``*.md``) to filter results.
+        Use ``glob_documents`` for pattern-based file matching.  Common
+        build and vendor directories are skipped by default; pass
+        ``include_ignored=True`` to include them.
         """
-        if path is not None and is_glob(path):
-            results = _scan_glob(
-                self.resolved_paths, self.glob, path, max_results
-            )
-            return ToolOutput(
-                data=results,
-                formatted="\n".join(results) if results else "(no matches)",
-            )
-
+        exclude = excluded_dirs(include_ignored)
         subdir = path
 
         if flatten:
             results = _scan_entries(
-                self.resolved_paths, self.glob, subdir, max_depth, max_results
+                self.resolved_paths,
+                self.glob,
+                subdir,
+                max_depth,
+                max_results,
+                exclude,
             )
             if not results:
                 return ToolOutput(data=results, formatted="(no documents)")
             lines: list[str] = []
             for d in results:
-                date = d.modified_at.strftime("%Y-%m-%d %H:%M") if d.modified_at else "-"
+                date = (
+                    d.modified_at.strftime("%Y-%m-%d %H:%M") if d.modified_at else "-"
+                )
                 kind = "d" if d.is_directory else "-"
-                lines.append(f"{kind} {date}  {_humanize_size(d.size):>6}  {d.filename}")
+                lines.append(
+                    f"{kind} {date}  {_humanize_size(d.size):>6}  {d.filename}"
+                )
             return ToolOutput(data=results, formatted="\n".join(lines))
 
         entries = _scan_entries(
-            self.resolved_paths, self.glob, subdir, max_depth, max_results
+            self.resolved_paths,
+            self.glob,
+            subdir,
+            max_depth,
+            max_results,
+            exclude,
         )
         root = _build_document_tree(entries)
         tree_lines = _format_document_tree(root)
@@ -323,66 +395,114 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode | 
 
 
 @dataclass(slots=True, frozen=True)
-class ReadDocumentTool(SyncPathTool[str | DocumentRange | None]):
-    """Read the content of a document, optionally limited to a line range."""
+class GlobDocumentsTool(SyncPathTool[list[str]]):
+    """Find documents whose filenames match a glob pattern."""
 
-    max_chars: int = 100_000
-    default_lines: int = 200
+    glob: str | None = None
 
     @override
     def __call__(
         self,
-        filename: DocumentFilenameArg,
-        start_line: DocumentStartLineArg = None,
-        end_line: DocumentEndLineArg = None,
-    ) -> ToolOutput[str | DocumentRange | None]:
+        pattern: GlobPatternArg,
+        path: DocumentPathArg = None,
+        max_results: GlobMaxResultsArg = 1000,
+        include_ignored: IncludeIgnoredArg = False,
+    ) -> ToolOutput[list[str]]:
+        """Find document filenames matching a glob pattern.
+
+        Returns a flat list of relative filenames.  Use ``list_documents``
+        for directory listings with sizes, dates, or tree output.  Common
+        build and vendor directories are skipped by default.
+        """
+        results = _glob_entries(
+            self.resolved_paths,
+            self.glob,
+            pattern,
+            path,
+            max_results,
+            excluded_dirs(include_ignored),
+        )
+        return ToolOutput(
+            data=results,
+            formatted="\n".join(results) if results else "(no matches)",
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class ReadDocumentTool(SyncPathTool[DocumentRange | None]):
+    """Read a document's content as a line range with line numbers."""
+
+    default_lines: int = 2000
+    max_chars: int = 100_000
+
+    @override
+    def __call__(
+        self,
+        file_path: DocumentFilePathArg,
+        offset: DocumentOffsetArg = 1,
+        limit: DocumentLimitArg = None,
+    ) -> ToolOutput[DocumentRange | None]:
         """Read a document's content.
 
-        Returns the full content when no line range is given,
-        or a specific range of lines when ``start_line`` is provided.
-        Use ``start_line`` and ``end_line`` to read specific sections
-        of large documents.
+        Returns the lines from ``offset`` (1-indexed) up to ``limit`` lines,
+        each prefixed with its line number.  When ``limit`` is omitted the
+        tool reads a default window and reports how many lines remain so
+        the caller can issue a follow-up with a higher ``offset``.  The
+        output is also clamped by a per-call character budget.
         """
-        resolved = resolve_search_path(self.resolved_paths, filename)
-        if resolved is None:
+        resolved = resolve_accessible_file(self.resolved_paths, file_path)
+        if resolved is None or not resolved[2].is_file():
             return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
-        sp, local = resolved
-        if not file_allowed(sp.filter_func, local):
-            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
-        file_path = (sp.path / local).resolve()
-        if not file_path.is_relative_to(sp.path.resolve()):
-            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
-        if not file_path.is_file():
-            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
+        _sp, _local, absolute = resolved
 
-        if start_line is not None:
-            all_lines = file_path.read_text(encoding="utf-8").splitlines()
-            total = len(all_lines)
-            start = max(1, start_line)
-            if end_line is None:
-                end = min(total, start + self.default_lines - 1)
-            else:
-                end = min(total, end_line)
-
-            result = DocumentRange(
-                start_line=start,
-                end_line=end,
-                total_lines=total,
-                content="\n".join(all_lines[start - 1 : end]),
+        all_lines = absolute.read_text(encoding="utf-8").splitlines()
+        total = len(all_lines)
+        start = max(1, offset)
+        if total == 0:
+            empty = DocumentRange(
+                start_line=start, end_line=start - 1, total_lines=0, content=""
             )
-            annotated = "\n".join(
-                f"{start + i}: {line}"
-                for i, line in enumerate(all_lines[start - 1 : end])
+            return ToolOutput(data=empty, formatted="(empty file)")
+        if start > total:
+            past_eof = DocumentRange(
+                start_line=start, end_line=start - 1, total_lines=total, content=""
             )
             return ToolOutput(
-                data=result,
-                formatted=f"lines {result.start_line}-{result.end_line} of {result.total_lines}:\n{annotated}",
+                data=past_eof,
+                formatted=f"(offset {start} is past end of file with {total} lines)",
             )
 
-        content = file_path.read_text(encoding="utf-8")
-        if len(content) > self.max_chars:
-            content = (
-                content[: self.max_chars]
-                + "\n\n[truncated — use read_document with start_line/end_line for specific sections]"
-            )
-        return ToolOutput(data=content)
+        window = limit if limit is not None else self.default_lines
+        end = min(total, start + window - 1)
+
+        # Cap by character budget: one giant line still gets returned alone so
+        # the caller sees something rather than an empty range.
+        selected: list[str] = []
+        char_count = 0
+        for line in all_lines[start - 1 : end]:
+            if selected and char_count + len(line) + 1 > self.max_chars:
+                break
+            selected.append(line)
+            char_count += len(line) + 1
+        end = start + len(selected) - 1
+
+        result = DocumentRange(
+            start_line=start,
+            end_line=end,
+            total_lines=total,
+            content="\n".join(selected),
+        )
+        annotated = "\n".join(f"{start + i}: {line}" for i, line in enumerate(selected))
+        remaining = total - end
+        suffix = (
+            f"\n\n[{remaining} more lines — call again with offset={end + 1}]"
+            if remaining > 0
+            else ""
+        )
+        return ToolOutput(
+            data=result,
+            formatted=(
+                f"lines {result.start_line}-{result.end_line} of "
+                f"{result.total_lines}:\n{annotated}{suffix}"
+            ),
+        )

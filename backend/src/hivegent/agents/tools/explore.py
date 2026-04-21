@@ -7,6 +7,7 @@ from ...config import settings
 from ...retrieval import build_search_tool
 from ...store import build_search_paths
 from ...tools import (
+    GlobDocumentsTool,
     GrepTool,
     LanceDBSearchTool,
     ListDocumentsTool,
@@ -32,6 +33,10 @@ def _list_documents(deps: UserDeps) -> ListDocumentsTool:
     return ListDocumentsTool(paths=_workspace_paths(deps))
 
 
+def _glob_documents(deps: UserDeps) -> GlobDocumentsTool:
+    return GlobDocumentsTool(paths=_workspace_paths(deps))
+
+
 def _read_document(deps: UserDeps) -> ReadDocumentTool:
     return ReadDocumentTool(paths=_workspace_paths(deps))
 
@@ -41,9 +46,7 @@ def _grep(deps: UserDeps) -> GrepTool:
 
 
 def _search(deps: UserDeps) -> LanceDBSearchTool[RetrievedChunk]:
-    return build_search_tool(
-        deps.all_stores, filter_for_store=deps.filter_for_store
-    )
+    return build_search_tool(deps.all_stores, filter_for_store=deps.filter_for_store)
 
 
 explore_toolset: FunctionToolset[UserDeps] = FunctionToolset()
@@ -53,6 +56,7 @@ register_agent_tools(
     UserDeps,
     [
         _list_documents,
+        _glob_documents,
         _read_document,
         _grep,
         _search,

@@ -7,14 +7,15 @@ from typing import Annotated, Literal, override
 
 from pydantic import Field
 
-from .base import AsyncPathTool, ToolOutput, file_allowed, resolve_search_path
-from .documents import DocumentFilenameArg
+from .base import AsyncPathTool, ToolOutput, resolve_accessible_file
+from .documents import DocumentFilePathArg
 
 __all__ = [
     "DocumentContentArg",
     "EditDocumentTool",
     "EditNewStringArg",
     "EditOldStringArg",
+    "EditReplaceAllArg",
     "MutationHook",
     "WriteDocumentTool",
     "WriteModeArg",
@@ -22,11 +23,26 @@ __all__ = [
 
 EditOldStringArg = Annotated[
     str,
-    Field(description="Exact text to replace, which must occur exactly once."),
+    Field(
+        description=(
+            "Exact text to replace.  Must occur exactly once unless "
+            "`replace_all` is true."
+        ),
+    ),
 ]
 EditNewStringArg = Annotated[
     str,
     Field(description="Replacement text."),
+]
+EditReplaceAllArg = Annotated[
+    bool,
+    Field(
+        description=(
+            "When true, replace every occurrence of `old_string` instead "
+            "of requiring a unique match.  Use this for renames and "
+            "global substitutions."
+        ),
+    ),
 ]
 DocumentContentArg = Annotated[
     str,
@@ -58,42 +74,47 @@ class EditDocumentTool(AsyncPathTool[str]):
     @override
     async def __call__(
         self,
-        filename: DocumentFilenameArg,
+        file_path: DocumentFilePathArg,
         old_string: EditOldStringArg,
         new_string: EditNewStringArg,
+        replace_all: EditReplaceAllArg = False,
     ) -> ToolOutput[str]:
         """Replace an exact string in a document.
 
-        Fails if the string does not exist or appears more than once,
-        ensuring unambiguous edits.
+        By default the match must be unique — fails if ``old_string`` does
+        not exist or appears more than once.  Pass ``replace_all=True`` to
+        substitute every occurrence instead.
         """
-        resolved = resolve_search_path(self.resolved_paths, filename)
+        resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None:
-            return ToolOutput(data=f"Error: '{filename}' is not accessible.")
-        sp, local = resolved
-        if not file_allowed(sp.filter_func, local):
-            return ToolOutput(data=f"Error: '{filename}' is not accessible.")
-        file_path = (sp.path / local).resolve()
-        if not file_path.is_relative_to(sp.path.resolve()):
-            return ToolOutput(data="Error: path traversal detected.")
-        if not file_path.is_file():
-            return ToolOutput(data=f"Error: '{filename}' does not exist.")
+            return ToolOutput(data=f"Error: '{file_path}' is not accessible.")
+        _sp, local, absolute = resolved
+        if not absolute.is_file():
+            return ToolOutput(data=f"Error: '{file_path}' does not exist.")
 
-        content = file_path.read_text(encoding="utf-8")
+        content = absolute.read_text(encoding="utf-8")
         count = content.count(old_string)
         if count == 0:
-            return ToolOutput(data=f"Error: old_string not found in '{filename}'.")
-        if count > 1:
+            return ToolOutput(data=f"Error: old_string not found in '{file_path}'.")
+        if count > 1 and not replace_all:
             return ToolOutput(
-                data=f"Error: old_string appears {count} times in '{filename}'; "
-                "must be unique.",
+                data=(
+                    f"Error: old_string appears {count} times in '{file_path}'; "
+                    "must be unique or call with replace_all=True."
+                ),
             )
 
-        new_content = content.replace(old_string, new_string, 1)
-        file_path.write_text(new_content, encoding="utf-8")
+        new_content = (
+            content.replace(old_string, new_string)
+            if replace_all
+            else content.replace(old_string, new_string, 1)
+        )
+        absolute.write_text(new_content, encoding="utf-8")
         if self.hook:
             await self.hook(local)
-        return ToolOutput(data=f"Replaced 1 occurrence in '{filename}'.")
+        replaced = count if replace_all else 1
+        noun = "occurrence" if replaced == 1 else "occurrences"
+        return ToolOutput(data=f"Replaced {replaced} {noun} in '{file_path}'.")
 
 
 @dataclass(slots=True, frozen=True)
@@ -106,41 +127,39 @@ class WriteDocumentTool(AsyncPathTool[str]):
     @override
     async def __call__(
         self,
-        filename: DocumentFilenameArg,
+        file_path: DocumentFilePathArg,
         content: DocumentContentArg,
         mode: WriteModeArg = "replace",
     ) -> ToolOutput[str]:
         """Write content to a document."""
-        resolved = resolve_search_path(self.resolved_paths, filename)
+        resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None:
-            return ToolOutput(data=f"Error: '{filename}' is not accessible.")
-        sp, local = resolved
-        if not file_allowed(sp.filter_func, local):
-            return ToolOutput(data=f"Error: '{filename}' is not accessible.")
-        file_path = (sp.path / local).resolve()
-        if not file_path.is_relative_to(sp.path.resolve()):
-            return ToolOutput(data="Error: path traversal detected.")
+            return ToolOutput(data=f"Error: '{file_path}' is not accessible.")
+        _sp, local, absolute = resolved
         if self.glob and not PurePosixPath(local).match(self.glob):
             return ToolOutput(
-                data=f"Error: '{filename}' does not match pattern '{self.glob}'.",
+                data=f"Error: '{file_path}' does not match pattern '{self.glob}'.",
             )
 
         if mode == "replace":
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(content, encoding="utf-8")
-            message = f"Wrote {len(content)} characters to '{filename}'."
-        elif not file_path.is_file():
+            absolute.parent.mkdir(parents=True, exist_ok=True)
+            absolute.write_text(content, encoding="utf-8")
+            message = f"Wrote {len(content)} characters to '{file_path}'."
+        elif not absolute.is_file():
             return ToolOutput(
-                data=f"Error: '{filename}' does not exist (use mode='replace' to create).",
+                data=(
+                    f"Error: '{file_path}' does not exist "
+                    "(use mode='replace' to create)."
+                ),
             )
         elif mode == "append":
-            existing = file_path.read_text(encoding="utf-8")
-            file_path.write_text(existing + content, encoding="utf-8")
-            message = f"Appended {len(content)} characters to '{filename}'."
+            existing = absolute.read_text(encoding="utf-8")
+            absolute.write_text(existing + content, encoding="utf-8")
+            message = f"Appended {len(content)} characters to '{file_path}'."
         else:
-            existing = file_path.read_text(encoding="utf-8")
-            file_path.write_text(content + existing, encoding="utf-8")
-            message = f"Prepended {len(content)} characters to '{filename}'."
+            existing = absolute.read_text(encoding="utf-8")
+            absolute.write_text(content + existing, encoding="utf-8")
+            message = f"Prepended {len(content)} characters to '{file_path}'."
 
         if self.hook:
             await self.hook(local)

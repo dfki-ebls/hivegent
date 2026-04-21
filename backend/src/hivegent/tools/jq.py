@@ -7,17 +7,14 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..subprocesses import jq_filter
-from .base import AsyncPathTool, ToolOutput, resolve_search_path
+from .base import AsyncPathTool, ToolOutput, resolve_accessible_file
+from .documents import DocumentFilePathArg
 
-__all__ = ["JqFilenameArg", "JqFilterArg", "JqTool"]
+__all__ = ["JqFilterArg", "JqTool"]
 
 JqFilterArg = Annotated[
     str,
     Field(description="jq filter expression to apply."),
-]
-JqFilenameArg = Annotated[
-    str,
-    Field(description="Relative JSON file path within the tool workspace."),
 ]
 
 
@@ -31,19 +28,13 @@ class JqTool(AsyncPathTool[str]):
     async def __call__(
         self,
         filter: JqFilterArg,
-        filename: JqFilenameArg,
+        file_path: DocumentFilePathArg,
     ) -> ToolOutput[str]:
         """Run a jq filter expression against a JSON file."""
-        resolved = resolve_search_path(self.resolved_paths, filename)
-        if resolved is None:
-            return ToolOutput(data=f"Error: file '{filename}' not found.")
-        sp, local = resolved
-        file_path = (sp.path / local).resolve()
-        if not file_path.is_relative_to(sp.path.resolve()):
-            return ToolOutput(data="Error: path traversal detected.")
-        if not file_path.is_file():
-            return ToolOutput(data=f"Error: file '{filename}' not found.")
-        data = json.loads(file_path.read_text(encoding="utf-8"))
+        resolved = resolve_accessible_file(self.resolved_paths, file_path)
+        if resolved is None or not resolved[2].is_file():
+            return ToolOutput(data=f"Error: file '{file_path}' not found.")
+        data = json.loads(resolved[2].read_text(encoding="utf-8"))
 
         try:
             result = await jq_filter(filter, data)

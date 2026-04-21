@@ -9,6 +9,7 @@ from hivegent.tools.documents import (
     DocumentRange,
     DocumentSummary,
     DocumentTreeNode,
+    GlobDocumentsTool,
     ListDocumentsTool,
     ReadDocumentTool,
 )
@@ -17,7 +18,7 @@ from hivegent.tools.mutations import EditDocumentTool, WriteDocumentTool
 
 
 def _as_summaries(
-    data: list[DocumentSummary] | DocumentTreeNode | list[str],
+    data: list[DocumentSummary] | DocumentTreeNode,
 ) -> list[DocumentSummary]:
     """Narrow a ListDocumentsTool result to a list of summaries."""
     assert isinstance(data, list) and all(isinstance(d, DocumentSummary) for d in data)
@@ -25,7 +26,7 @@ def _as_summaries(
 
 
 class TestListDocumentsTool:
-    """Tests for ListDocumentsTool (flat list, tree, and glob modes)."""
+    """Tests for ListDocumentsTool (flat list and tree modes)."""
 
     # --- Flat list mode tests (default) ---
 
@@ -120,6 +121,28 @@ class TestListDocumentsTool:
         data = tool(max_results=3).data
         assert isinstance(data, list)
         assert len(data) == 3
+
+    def test_skips_build_dirs_by_default(self, tmp_path: Path) -> None:
+        (tmp_path / "src.py").write_text("x")
+        cache = tmp_path / "__pycache__"
+        cache.mkdir()
+        (cache / "junk.pyc").write_bytes(b"x")
+        tool = ListDocumentsTool(paths=tmp_path)
+        data = _as_summaries(tool(max_depth=None).data)
+        filenames = {r.filename for r in data}
+        assert "src.py" in filenames
+        assert "__pycache__" not in filenames
+        assert "__pycache__/junk.pyc" not in filenames
+
+    def test_include_ignored_exposes_build_dirs(self, tmp_path: Path) -> None:
+        (tmp_path / "src.py").write_text("x")
+        cache = tmp_path / "__pycache__"
+        cache.mkdir()
+        (cache / "junk.pyc").write_bytes(b"x")
+        tool = ListDocumentsTool(paths=tmp_path)
+        data = _as_summaries(tool(max_depth=None, include_ignored=True).data)
+        filenames = {r.filename for r in data}
+        assert "__pycache__" in filenames
 
     # --- Tree mode tests (flatten=False) ---
 
@@ -224,61 +247,96 @@ class TestListDocumentsTool:
         assert "1 directory" in formatted
         assert "2 files" in formatted
 
-    # --- Glob mode tests (path with wildcards) ---
 
-    def test_glob_matches_pattern(self, tmp_path: Path) -> None:
+class TestGlobDocumentsTool:
+    """Tests for GlobDocumentsTool (pattern-based file matching)."""
+
+    def test_matches_pattern(self, tmp_path: Path) -> None:
         (tmp_path / "notes.md").write_text("a")
         (tmp_path / "readme.md").write_text("b")
-        tool = ListDocumentsTool(paths=tmp_path, glob="*.md")
-        assert tool(path="note*").data == ["notes.md"]
+        tool = GlobDocumentsTool(paths=tmp_path, glob="*.md")
+        assert tool("note*").data == ["notes.md"]
 
-    def test_glob_custom_base_glob(self, tmp_path: Path) -> None:
+    def test_custom_base_glob(self, tmp_path: Path) -> None:
         (tmp_path / "data.txt").write_text("a")
         (tmp_path / "data.md").write_text("b")
-        tool = ListDocumentsTool(paths=tmp_path, glob="*.txt")
-        assert tool(path="*").data == ["data.txt"]
+        tool = GlobDocumentsTool(paths=tmp_path, glob="*.txt")
+        assert tool("*").data == ["data.txt"]
 
-    def test_glob_none_base_matches_all(self, tmp_path: Path) -> None:
+    def test_none_base_matches_all(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("a")
         (tmp_path / "b.txt").write_text("b")
-        tool = ListDocumentsTool(paths=tmp_path)
-        data = tool(path="*").data
+        tool = GlobDocumentsTool(paths=tmp_path)
+        data = tool("*").data
         assert isinstance(data, list)
         assert set(data) == {"a.md", "b.txt"}
 
-    def test_glob_multi_store(self, tmp_path: Path) -> None:
+    def test_multi_store(self, tmp_path: Path) -> None:
         user_dir = tmp_path / "user"
         user_dir.mkdir()
         (user_dir / "a.md").write_text("user")
         group_dir = tmp_path / "group"
         group_dir.mkdir()
         (group_dir / "b.md").write_text("group")
-        tool = ListDocumentsTool(
+        tool = GlobDocumentsTool(
             paths=(
                 SearchPath(path=user_dir),
                 SearchPath(path=group_dir, prefix="@team"),
             )
         )
-        data = tool(path="*.md").data
+        data = tool("*.md").data
         assert isinstance(data, list)
         assert set(data) == {"a.md", "@team/b.md"}
 
-    def test_glob_max_results(self, tmp_path: Path) -> None:
+    def test_max_results(self, tmp_path: Path) -> None:
         for i in range(10):
             (tmp_path / f"f{i}.txt").write_text(str(i))
-        tool = ListDocumentsTool(paths=tmp_path)
-        data = tool(path="*.txt", max_results=3).data
+        tool = GlobDocumentsTool(paths=tmp_path)
+        data = tool("*.txt", max_results=3).data
         assert isinstance(data, list)
         assert len(data) == 3
 
+    def test_subdir_scoping(self, tmp_path: Path) -> None:
+        notes = tmp_path / "notes"
+        notes.mkdir()
+        (notes / "a.md").write_text("a")
+        (tmp_path / "top.md").write_text("top")
+        tool = GlobDocumentsTool(paths=tmp_path)
+        data = tool("*.md", path="notes").data
+        assert data == ["notes/a.md"]
+
+    def test_skips_build_dirs_by_default(self, tmp_path: Path) -> None:
+        (tmp_path / "src.py").write_text("x")
+        cache = tmp_path / "__pycache__"
+        cache.mkdir()
+        (cache / "junk.py").write_text("x")
+        tool = GlobDocumentsTool(paths=tmp_path)
+        data = tool("**/*.py").data
+        assert "src.py" in data
+        assert "__pycache__/junk.py" not in data
+
+    def test_include_ignored_exposes_build_dirs(self, tmp_path: Path) -> None:
+        (tmp_path / "src.py").write_text("x")
+        cache = tmp_path / "__pycache__"
+        cache.mkdir()
+        (cache / "junk.py").write_text("x")
+        tool = GlobDocumentsTool(paths=tmp_path)
+        data = tool("**/*.py", include_ignored=True).data
+        assert "__pycache__/junk.py" in data
+
 
 class TestReadDocumentTool:
-    """Tests for ReadDocumentTool (full content and line-range modes)."""
+    """Tests for ReadDocumentTool (line-range reads with line numbers)."""
 
     def test_reads_file(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("content here")
         tool = ReadDocumentTool(paths=tmp_path)
-        assert tool("doc.md").data == "content here"
+        result = tool("doc.md").data
+        assert isinstance(result, DocumentRange)
+        assert result.content == "content here"
+        assert result.start_line == 1
+        assert result.end_line == 1
+        assert result.total_lines == 1
 
     def test_returns_none_for_nonexistent(self, tmp_path: Path) -> None:
         tool = ReadDocumentTool(paths=tmp_path)
@@ -298,78 +356,98 @@ class TestReadDocumentTool:
                 SearchPath(path=group_dir, prefix="@team"),
             )
         )
-        assert tool("@team/doc.md").data == "group content"
+        result = tool("@team/doc.md").data
+        assert isinstance(result, DocumentRange)
+        assert result.content == "group content"
 
     def test_returns_none_for_unknown_prefix(self, tmp_path: Path) -> None:
         tool = ReadDocumentTool(paths=tmp_path)
         assert tool("@unknown/doc.md").data is None
 
-    def test_truncates_large_file(self, tmp_path: Path) -> None:
+    def test_formatted_always_includes_line_numbers(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.md").write_text("alpha\nbeta")
+        tool = ReadDocumentTool(paths=tmp_path)
+        formatted = tool("doc.md").formatted
+        assert formatted is not None
+        assert "1: alpha" in formatted
+        assert "2: beta" in formatted
+
+    def test_char_cap_truncates_within_window(self, tmp_path: Path) -> None:
         content = "x" * 200
         (tmp_path / "big.md").write_text(content)
         tool = ReadDocumentTool(paths=tmp_path, max_chars=50)
         result = tool("big.md").data
-        assert isinstance(result, str)
-        assert result.startswith("x" * 50)
-        assert "[truncated" in result
-        assert len(result.split("\n\n[truncated")[0]) == 50
+        assert isinstance(result, DocumentRange)
+        # Single 200-char line fits in the window so it's kept whole;
+        # but a longer file with multiple lines would get clipped.
+        assert len(result.content) == 200
 
-    # --- Line-range mode tests ---
+    def test_char_cap_clips_multiline(self, tmp_path: Path) -> None:
+        lines = ["y" * 50 for _ in range(10)]
+        (tmp_path / "big.md").write_text("\n".join(lines))
+        tool = ReadDocumentTool(paths=tmp_path, max_chars=120)
+        result = tool("big.md").data
+        assert isinstance(result, DocumentRange)
+        # 120-char budget fits ~2 lines (each 50 + newline = 51 chars).
+        assert result.end_line < result.total_lines
+
+    # --- offset / limit tests ---
 
     def test_correct_range(self, tmp_path: Path) -> None:
         lines = ["line1", "line2", "line3", "line4", "line5"]
         (tmp_path / "doc.md").write_text("\n".join(lines))
         tool = ReadDocumentTool(paths=tmp_path)
-        result = tool("doc.md", start_line=2, end_line=4).data
+        result = tool("doc.md", offset=2, limit=3).data
         assert isinstance(result, DocumentRange)
         assert result.start_line == 2
         assert result.end_line == 4
         assert result.total_lines == 5
         assert result.content == "line2\nline3\nline4"
 
-    def test_defaults_to_full_file(self, tmp_path: Path) -> None:
+    def test_defaults_to_full_file_when_small(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("a\nb\nc")
         tool = ReadDocumentTool(paths=tmp_path)
         result = tool("doc.md").data
-        # Without start_line, returns full content as string
-        assert result == "a\nb\nc"
-
-    def test_start_line_without_end(self, tmp_path: Path) -> None:
-        (tmp_path / "doc.md").write_text("a\nb\nc")
-        tool = ReadDocumentTool(paths=tmp_path)
-        result = tool("doc.md", start_line=1).data
         assert isinstance(result, DocumentRange)
         assert result.start_line == 1
         assert result.end_line == 3
+        assert result.content == "a\nb\nc"
 
-    def test_returns_none_for_nonexistent_lines(self, tmp_path: Path) -> None:
+    def test_offset_without_limit(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.md").write_text("a\nb\nc")
         tool = ReadDocumentTool(paths=tmp_path)
-        assert tool("missing.md", start_line=1).data is None
-
-    def test_clamps_start_to_one(self, tmp_path: Path) -> None:
-        (tmp_path / "doc.md").write_text("only")
-        tool = ReadDocumentTool(paths=tmp_path)
-        result = tool("doc.md", start_line=-5).data
+        result = tool("doc.md", offset=2).data
         assert isinstance(result, DocumentRange)
-        assert result.start_line == 1
+        assert result.start_line == 2
+        assert result.end_line == 3
+        assert result.content == "b\nc"
 
-    def test_default_end_caps_lines(self, tmp_path: Path) -> None:
-        lines = [f"line{i}" for i in range(500)]
+    def test_default_window_caps_lines(self, tmp_path: Path) -> None:
+        lines = [f"line{i}" for i in range(5000)]
         (tmp_path / "big.md").write_text("\n".join(lines))
         tool = ReadDocumentTool(paths=tmp_path)
-        result = tool("big.md", start_line=1).data
+        result = tool("big.md").data
         assert isinstance(result, DocumentRange)
         assert result.start_line == 1
-        assert result.end_line == 200
-        assert result.total_lines == 500
+        assert result.end_line == 2000
+        assert result.total_lines == 5000
 
     def test_custom_default_lines(self, tmp_path: Path) -> None:
         lines = [f"line{i}" for i in range(100)]
         (tmp_path / "doc.md").write_text("\n".join(lines))
         tool = ReadDocumentTool(paths=tmp_path, default_lines=10)
-        result = tool("doc.md", start_line=1).data
+        result = tool("doc.md").data
         assert isinstance(result, DocumentRange)
         assert result.end_line == 10
+
+    def test_continuation_hint_when_truncated(self, tmp_path: Path) -> None:
+        lines = [f"line{i}" for i in range(100)]
+        (tmp_path / "doc.md").write_text("\n".join(lines))
+        tool = ReadDocumentTool(paths=tmp_path, default_lines=10)
+        formatted = tool("doc.md").formatted
+        assert formatted is not None
+        assert "more lines" in formatted
+        assert "offset=11" in formatted
 
 
 class TestEditDocumentTool:
@@ -405,6 +483,13 @@ class TestEditDocumentTool:
         result = (await tool("doc.md", "hello", "goodbye")).data
         assert "Error" in result
         assert "2 times" in result
+
+    async def test_replace_all(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.md").write_text("foo foo foo")
+        tool = EditDocumentTool(paths=tmp_path)
+        result = (await tool("doc.md", "foo", "bar", replace_all=True)).data
+        assert "Replaced 3 occurrences" in result
+        assert (tmp_path / "doc.md").read_text() == "bar bar bar"
 
 
 class TestWriteDocumentTool:
@@ -468,7 +553,7 @@ class TestJqTool:
         result = (await tool("invalid [[[", "item.json")).data
         assert result.startswith("Error:")
 
-    async def test_nonexistent_filename(self, tmp_path: Path) -> None:
+    async def test_nonexistent_file_path(self, tmp_path: Path) -> None:
         tool = JqTool(paths=tmp_path)
         result = (await tool(".", "missing.json")).data
         assert result.startswith("Error:")

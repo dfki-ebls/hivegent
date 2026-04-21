@@ -7,7 +7,7 @@ from hivegent.tools.documents import (
     DocumentPathArg,
     ListDocumentsTool,
 )
-from hivegent.tools.grep import ContextLinesArg, GrepPatternArg, GrepTool
+from hivegent.tools.grep import GrepContextArg, GrepPatternArg, GrepTool
 from hivegent.tools.retrieval import SearchTypeArg
 from hivegent.tools.base import tool_description
 
@@ -21,9 +21,7 @@ def test_agent_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
     schema = tool.function_schema.json_schema
 
     assert tool.description == tool_description(ListDocumentsTool)
-    assert schema["properties"]["path"]["description"] == _description(
-        DocumentPathArg
-    )
+    assert schema["properties"]["path"]["description"] == _description(DocumentPathArg)
     assert schema["properties"]["max_depth"]["description"] == _description(
         DocumentMaxDepthArg
     )
@@ -48,9 +46,9 @@ async def test_mcp_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
     assert tool.parameters["properties"]["pattern"]["description"] == _description(
         GrepPatternArg
     )
-    assert tool.parameters["properties"]["context_lines"][
-        "description"
-    ] == _description(ContextLinesArg)
+    assert tool.parameters["properties"]["context"]["description"] == _description(
+        GrepContextArg
+    )
 
 
 async def test_mcp_search_tool_uses_consistent_search_type_name() -> None:

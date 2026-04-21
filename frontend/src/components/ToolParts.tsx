@@ -118,9 +118,9 @@ function prettyPrint(value: unknown): string {
  *  - **plain-string**: consumes only ``text`` (the ``return_value`` the
  *    LLM sees).  These tools never emit a DataUIPart.
  *
- * ``read_document`` is mixed: its ``start_line`` argument puts it in
- *  structured mode (returning a ``DocumentRange``); otherwise it is
- *  plain-string mode (full document content).
+ * ``read_document`` always returns a structured ``DocumentRange``.
+ * When the range spans the full file we treat it as a full-document
+ * read; otherwise we add a chunk for the specific line range.
  */
 export function processToolOutput(
   toolName: string,
@@ -159,31 +159,30 @@ export function processToolOutput(
       return;
     }
     case "read_document": {
-      const filename = input.filename as string;
+      const filename = input.file_path as string;
       if (!filename) return;
-      const isLineRange = input.start_line != null;
+      if (metadata == null || typeof metadata !== "object") return;
+      if (!("start_line" in (metadata as object))) return;
+      const result = metadata as DocumentRange;
+      if (!result.content) return;
 
-      if (isLineRange) {
-        if (metadata == null || typeof metadata !== "object") return;
-        if (!("start_line" in (metadata as object))) return;
-        const result = metadata as DocumentRange;
-        if (!result.content) return;
-        const position: ChunkPosition = {
-          type: "line_range",
-          startLine: result.start_line,
-          endLine: result.end_line,
-        };
-        addChunk({
-          filename,
-          content: result.content,
-          source: `lines ${result.start_line}-${result.end_line}`,
-          position,
-        });
+      const isFullFile = result.start_line === 1 && result.end_line === result.total_lines;
+      if (isFullFile) {
+        markFullDocument(filename, result.content, "read_document");
         return;
       }
 
-      if (typeof text !== "string" || !text) return;
-      markFullDocument(filename, text, "read_document");
+      const position: ChunkPosition = {
+        type: "line_range",
+        startLine: result.start_line,
+        endLine: result.end_line,
+      };
+      addChunk({
+        filename,
+        content: result.content,
+        source: `lines ${result.start_line}-${result.end_line}`,
+        position,
+      });
       return;
     }
     case "grep": {
@@ -239,10 +238,7 @@ export function processToolOutput(
   }
 }
 
-export function getToolPartInfo(
-  parts: UIMessage["parts"],
-  index: number,
-): ToolPartInfo | null {
+export function getToolPartInfo(parts: UIMessage["parts"], index: number): ToolPartInfo | null {
   const part = parts[index];
   const typed = part as {
     type: string;

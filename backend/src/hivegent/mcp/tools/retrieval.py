@@ -12,6 +12,7 @@ from ...prompts import EXPLORE_INSTRUCTIONS, join_instructions
 from ...retrieval import build_search_tool
 from ...store import Casebase, build_search_paths
 from ...tools import (
+    GlobDocumentsTool,
     GrepTool,
     LanceDBSearchTool,
     ListDocumentsTool,
@@ -84,6 +85,7 @@ async def explore_documents(
         system_prompt=join_instructions([EXPLORE_INSTRUCTIONS]),
         tools=[
             ListDocumentsTool(paths=paths),
+            GlobDocumentsTool(paths=paths),
             GrepTool(paths=paths),
             build_search_tool(all_stores),
             ReadDocumentTool(paths=paths),

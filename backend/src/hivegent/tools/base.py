@@ -8,14 +8,16 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self, get_type_hints, override
+from typing import Annotated, Any, Self, get_type_hints, override
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 __all__ = [
     "AsyncPathTool",
     "AsyncTool",
     "CallInfo",
+    "DEFAULT_EXCLUDE_DIRS",
+    "IncludeIgnoredArg",
     "PathTool",
     "SearchPath",
     "SearchPathFilterFunc",
@@ -25,12 +27,37 @@ __all__ = [
     "ToolOutput",
     "apply_prefix",
     "coerce_paths",
+    "excluded_dirs",
     "factory_tool_name",
     "file_allowed",
+    "is_in_excluded_dir",
+    "resolve_accessible_file",
     "resolve_search_path",
     "resolve_tool_cls",
     "tool_description",
     "tool_name",
+]
+
+DEFAULT_EXCLUDE_DIRS: tuple[str, ...] = (
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    ".next",
+    "coverage",
+    "__pycache__",
+)
+"""Build and vendor directory names skipped by default in file listings."""
+
+IncludeIgnoredArg = Annotated[
+    bool,
+    Field(
+        description=(
+            "When true, include common build and vendor directories "
+            "(node_modules, .git, dist, build, .next, coverage, "
+            "__pycache__) that are skipped by default."
+        ),
+    ),
 ]
 
 SearchPathFilterFunc = Callable[[str], bool] | None
@@ -127,6 +154,42 @@ def file_allowed(filter_func: SearchPathFilterFunc, filename: str) -> bool:
         ``True`` if the file is allowed, ``False`` otherwise.
     """
     return filter_func is None or filter_func(filename)
+
+
+def excluded_dirs(include_ignored: bool) -> tuple[str, ...]:
+    """Return the default exclude list, or empty when *include_ignored* is true."""
+    return () if include_ignored else DEFAULT_EXCLUDE_DIRS
+
+
+def is_in_excluded_dir(rel_path: str, exclude_dirs: tuple[str, ...]) -> bool:
+    """Check whether *rel_path* sits inside any excluded directory name."""
+    if not exclude_dirs:
+        return False
+    parts = rel_path.split("/")
+    return any(excluded in parts for excluded in exclude_dirs)
+
+
+def resolve_accessible_file(
+    paths: tuple[SearchPath, ...],
+    file_path: str,
+) -> tuple[SearchPath, str, Path] | None:
+    """Resolve *file_path* to its search path, local name, and absolute path.
+
+    Performs the checks every document tool shares: prefix resolution,
+    filter predicate, and traversal defense against symlink escapes.
+    Does *not* require the file to exist — callers that need that
+    should check :py:meth:`pathlib.Path.is_file` on the returned path.
+    """
+    resolved = resolve_search_path(paths, file_path)
+    if resolved is None:
+        return None
+    sp, local = resolved
+    if not file_allowed(sp.filter_func, local):
+        return None
+    absolute = (sp.path / local).resolve()
+    if not absolute.is_relative_to(sp.path.resolve()):
+        return None
+    return sp, local, absolute
 
 
 class ToolOutput[T](BaseModel):
