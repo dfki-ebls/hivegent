@@ -9,7 +9,7 @@
     "build": "vite build && tsc",
     "preview": "vite preview",
     "test": "vitest run",
-    "shadcnup": "npx shadcn@latest add @ai-elements/all --yes --overwrite --all"
+    "shadcnup": "npx shadcn@latest add --yes --overwrite --all && npx shadcn@latest add @ai-elements/all --yes --overwrite --all"
   },
   "dependencies": {
     "@ai-sdk/react": "^3",
