@@ -5,8 +5,8 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from fastmcp import FastMCP
-from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAccessIssue]
-from fastmcp.tools.tool import ToolResult
+from fastmcp.dependencies import Depends
+from fastmcp.tools import ToolResult
 
 from .base import CallInfo, Tool, ToolOutput, factory_tool_name
 
