@@ -219,7 +219,9 @@ async def upload_document(
     )
 
 
-@router.post("/documents/reconvert/stream/{filepath:path}", response_class=EventSourceResponse)
+@router.post(
+    "/documents/reconvert/stream/{filepath:path}", response_class=EventSourceResponse
+)
 async def reconvert_document_stream(
     filepath: str,
     request: ReconvertRequest,
@@ -233,7 +235,9 @@ async def reconvert_document_stream(
         yield event
 
 
-@router.post("/documents/rechunk/stream/{filepath:path}", response_class=EventSourceResponse)
+@router.post(
+    "/documents/rechunk/stream/{filepath:path}", response_class=EventSourceResponse
+)
 async def rechunk_document_stream(
     filepath: str,
     request: PipelineSpec,
@@ -287,7 +291,9 @@ async def upload_collection_stream(
 ) -> AsyncIterable[CollectionProgressEvent | CollectionCompleteEvent]:
     """Upload a collection with streaming progress events."""
     store = user_store(user)
-    async for event in process_collection(store, prepared.raw, prepared.spec, prepared.resolved):
+    async for event in process_collection(
+        store, prepared.raw, prepared.spec, prepared.resolved
+    ):
         yield event
 
 

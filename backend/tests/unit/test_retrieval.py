@@ -71,7 +71,9 @@ class TestToRetrievedChunk:
 
     def test_nested_path(self) -> None:
         result = SearchResult(key="docs/notes.md::2", text="foo bar baz", score=0.80)
-        chunk = _to_retrieved_chunk(result, self._meta(text="foo bar baz", token_count=3))
+        chunk = _to_retrieved_chunk(
+            result, self._meta(text="foo bar baz", token_count=3)
+        )
         assert chunk == snapshot(
             RetrievedChunk(
                 filename="docs/notes.md",
@@ -116,5 +118,3 @@ class TestToRetrievedChunk:
     def test_rounds_score(self) -> None:
         result = SearchResult(key="a.md::1", text="x", score=0.123456789)
         assert _to_retrieved_chunk(result, self._meta()).score == snapshot(0.1235)
-
-

@@ -44,9 +44,7 @@ class PdfOxideConverter(DocumentConverter):
             ]
             # Collect extracted images before the temp dir is cleaned up.
             image_data = collect_dir_images(temp_path, temp_path)
-            return ConversionResult(
-                markdown="\n\n".join(pages), images=image_data
-            )
+            return ConversionResult(markdown="\n\n".join(pages), images=image_data)
 
     async def __call__(
         self,

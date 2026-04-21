@@ -206,9 +206,7 @@ class TestFastMCPSchemaEquivalence:
 
 def _make_adapter_pydantic_ai_toolset() -> FunctionToolset[_Deps]:
     toolset: FunctionToolset[_Deps] = FunctionToolset()
-    register_agent_tools(
-        toolset, _Deps, [_sync_lookup_deps, _async_lookup_deps]
-    )
+    register_agent_tools(toolset, _Deps, [_sync_lookup_deps, _async_lookup_deps])
     return toolset
 
 

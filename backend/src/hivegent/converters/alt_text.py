@@ -67,6 +67,7 @@ async def describe_image(
     )
     return str(result.output).strip()
 
+
 async def generate_alt_texts(
     markdown: str,
     images: dict[str, bytes],
@@ -118,7 +119,9 @@ async def generate_alt_texts(
                 try:
                     return path, await describe_image(data, media_type, llm_options)
                 except Exception:
-                    logger.warning("Alt text generation failed for %s", path, exc_info=True)
+                    logger.warning(
+                        "Alt text generation failed for %s", path, exc_info=True
+                    )
                     return path, PurePosixPath(path).stem
 
         results = await asyncio.gather(*[_gen(p, d) for p, d in tasks.items()])

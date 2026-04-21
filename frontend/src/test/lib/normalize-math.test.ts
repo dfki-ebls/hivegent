@@ -1,14 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  normalizeDisplayMathDelimiters,
-  normalizeMathDelimiters,
-} from "@/lib/normalize-math";
+import { normalizeDisplayMathDelimiters, normalizeMathDelimiters } from "@/lib/normalize-math";
 
 describe("normalizeMathDelimiters", () => {
   it("converts inline \\(...\\) to $...$", () => {
     expect(normalizeMathDelimiters("The equation \\(x^2\\) is simple")).toBe(
-      "The equation $x^2$ is simple"
+      "The equation $x^2$ is simple",
     );
   });
 
@@ -29,21 +26,15 @@ describe("normalizeMathDelimiters", () => {
   });
 
   it("leaves escaped backslashes untouched", () => {
-    expect(normalizeMathDelimiters("\\\\(not math\\\\)")).toBe(
-      "\\\\(not math\\\\)"
-    );
+    expect(normalizeMathDelimiters("\\\\(not math\\\\)")).toBe("\\\\(not math\\\\)");
   });
 
   it("leaves existing $...$ notation unchanged", () => {
-    expect(normalizeMathDelimiters("$x^2$ and $$y^2$$")).toBe(
-      "$x^2$ and $$y^2$$"
-    );
+    expect(normalizeMathDelimiters("$x^2$ and $$y^2$$")).toBe("$x^2$ and $$y^2$$");
   });
 
   it("handles nested LaTeX commands", () => {
-    expect(normalizeMathDelimiters("\\(\\frac{1}{2}\\)")).toBe(
-      "$\\frac{1}{2}$"
-    );
+    expect(normalizeMathDelimiters("\\(\\frac{1}{2}\\)")).toBe("$\\frac{1}{2}$");
   });
 
   it("returns plain text unchanged", () => {
@@ -63,9 +54,7 @@ describe("normalizeMathDelimiters", () => {
 
 describe("normalizeDisplayMathDelimiters", () => {
   it("converts display \\[...\\] to $$...$$", () => {
-    expect(normalizeDisplayMathDelimiters("\\[E = mc^2\\]")).toBe(
-      "$$E = mc^2$$"
-    );
+    expect(normalizeDisplayMathDelimiters("\\[E = mc^2\\]")).toBe("$$E = mc^2$$");
   });
 
   it("does not convert inline \\(...\\)", () => {

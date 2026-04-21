@@ -62,7 +62,9 @@ class _ScopeConfig:
 
 
 _SCOPES: dict[str, _ScopeConfig] = {
-    "documents": _ScopeConfig(explore_toolset, join_instructions([EXPLORE_INSTRUCTIONS])),
+    "documents": _ScopeConfig(
+        explore_toolset, join_instructions([EXPLORE_INSTRUCTIONS])
+    ),
     "conversations": _ScopeConfig(conversation_toolset),
     "web": _ScopeConfig(web_toolset),
 }

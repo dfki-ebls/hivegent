@@ -47,6 +47,7 @@ MEDIA_TYPES: dict[str, str] = {
     ".tif": "image/tiff",
 }
 
+
 @dataclass(slots=True, frozen=True)
 class LLMConverter(DocumentConverter):
     """Document converter using vision-capable LLMs.

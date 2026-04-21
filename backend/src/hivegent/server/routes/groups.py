@@ -126,7 +126,10 @@ async def get_group_document_content(
     return get_document_response(group_store(safe_id), safe)
 
 
-@router.put("/groups/{group_id}/documents/stream/{filepath:path}", response_class=EventSourceResponse)
+@router.put(
+    "/groups/{group_id}/documents/stream/{filepath:path}",
+    response_class=EventSourceResponse,
+)
 async def upload_group_document_stream(
     group_id: str,
     filepath: str,
@@ -203,7 +206,10 @@ async def upload_group_document(
     )
 
 
-@router.post("/groups/{group_id}/documents/reconvert/stream/{filepath:path}", response_class=EventSourceResponse)
+@router.post(
+    "/groups/{group_id}/documents/reconvert/stream/{filepath:path}",
+    response_class=EventSourceResponse,
+)
 async def reconvert_group_document_stream(
     group_id: str,
     filepath: str,
@@ -242,7 +248,10 @@ async def upload_group_collection(
     return result
 
 
-@router.post("/groups/{group_id}/documents/collections/stream", response_class=EventSourceResponse)
+@router.post(
+    "/groups/{group_id}/documents/collections/stream",
+    response_class=EventSourceResponse,
+)
 async def upload_group_collection_stream(
     group_id: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -251,7 +260,9 @@ async def upload_group_collection_stream(
     """Upload a collection to a group with streaming progress events."""
     safe_id = require_group_write(user, group_id)
     store = group_store(safe_id)
-    async for event in process_collection(store, prepared.raw, prepared.spec, prepared.resolved):
+    async for event in process_collection(
+        store, prepared.raw, prepared.spec, prepared.resolved
+    ):
         yield event
 
 

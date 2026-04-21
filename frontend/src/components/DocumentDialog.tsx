@@ -654,10 +654,7 @@ export function DocumentDialog({
 
           {hasAssets && (
             <div className="px-2 shrink-0">
-              <Tabs
-                value={sidebarTab}
-                onValueChange={(v) => setSidebarTab(v as SidebarTab)}
-              >
+              <Tabs value={sidebarTab} onValueChange={(v) => setSidebarTab(v as SidebarTab)}>
                 <TabsList className="w-full">
                   <TabsTrigger value="chunks" className="flex-1 text-xs">
                     Chunks
@@ -699,9 +696,7 @@ export function DocumentDialog({
                     >
                       Chunk #{i}
                     </Badge>
-                    <span className="text-muted-foreground">
-                      {chunkInfo.token_count} tokens
-                    </span>
+                    <span className="text-muted-foreground">{chunkInfo.token_count} tokens</span>
                   </div>
                   <p className="truncate text-muted-foreground mt-0.5">
                     {chunkInfo.text.slice(0, 60)}

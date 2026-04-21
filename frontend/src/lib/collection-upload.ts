@@ -18,9 +18,7 @@ const classifyFile = (file: File, classification: DropClassification): void => {
   else classification.looseFiles.push(file);
 };
 
-const readAllEntries = async (
-  reader: FileSystemDirectoryReader,
-): Promise<FileSystemEntry[]> => {
+const readAllEntries = async (reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> => {
   const all: FileSystemEntry[] = [];
   while (true) {
     const batch: FileSystemEntry[] = await new Promise((resolve, reject) => {
@@ -39,10 +37,7 @@ const readFileFromEntry = (entry: FileSystemFileEntry): Promise<File> =>
 
 const joinPath = (base: string, name: string): string => (base ? `${base}/${name}` : name);
 
-const walkEntry = async (
-  entry: FileSystemEntry,
-  basePath = "",
-): Promise<CollectedFile[]> => {
+const walkEntry = async (entry: FileSystemEntry, basePath = ""): Promise<CollectedFile[]> => {
   if (entry.isFile) {
     const file = await readFileFromEntry(entry as FileSystemFileEntry);
     return [{ path: joinPath(basePath, entry.name), file }];
@@ -123,9 +118,7 @@ export const buildCollectionZip = async ({
   return finalizeZip(zip);
 };
 
-export const buildCollectionZipFromDirectoryInput = async (
-  files: FileList,
-): Promise<File> => {
+export const buildCollectionZipFromDirectoryInput = async (files: FileList): Promise<File> => {
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   for (const file of Array.from(files)) {

@@ -20,6 +20,6 @@ export function normalizeDisplayMathDelimiters(text: string): string {
 export function normalizeMathDelimiters(text: string): string {
   return normalizeDisplayMathDelimiters(text).replace(
     /(?<!\\)\\\(([\s\S]*?)(?<!\\)\\\)/g,
-    "$$$1$$"
+    "$$$1$$",
   );
 }

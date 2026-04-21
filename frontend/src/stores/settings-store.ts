@@ -410,8 +410,7 @@ export const useSettingsStore = create<SettingsState>()(
           personality:
             PersonalitySchema.safeParse(data.personality).data ?? UI_DEFAULTS.personality,
           customSystemMessage:
-            z.string().safeParse(data.customSystemMessage).data ??
-            UI_DEFAULTS.customSystemMessage,
+            z.string().safeParse(data.customSystemMessage).data ?? UI_DEFAULTS.customSystemMessage,
           conversionConfigs:
             PipelineConfigsSchema.safeParse(data.conversionConfigs).data ??
             UI_DEFAULTS.conversionConfigs,

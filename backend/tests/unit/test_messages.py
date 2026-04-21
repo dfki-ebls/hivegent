@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.messages import ToolCallPart as PydanticToolCallPart
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai.request_types import DataUIPart
@@ -45,9 +50,7 @@ def test_load_messages_rehydrates_data_chunks(data_dir: Any) -> None:
 
     ui_messages = VercelAIAdapter.dump_messages(loaded)
     all_parts = [p for msg in ui_messages for p in msg.parts]
-    data_parts: list[DataUIPart] = [
-        p for p in all_parts if isinstance(p, DataUIPart)
-    ]
+    data_parts: list[DataUIPart] = [p for p in all_parts if isinstance(p, DataUIPart)]
     assert len(data_parts) == 1
     assert data_parts[0].data == [{"text": "hi"}]
 

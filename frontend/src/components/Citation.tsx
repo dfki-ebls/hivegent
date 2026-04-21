@@ -94,9 +94,7 @@ export function Citation({ filename, line, children }: CitationProps) {
         <HoverCardContent className="w-80 p-4" side="top">
           <div className="space-y-2">
             <h4 className="truncate font-medium text-sm">{filename}</h4>
-            {positionLabel && (
-              <p className="text-xs text-muted-foreground">{positionLabel}</p>
-            )}
+            {positionLabel && <p className="text-xs text-muted-foreground">{positionLabel}</p>}
             {previewText ? (
               <blockquote className="border-l-2 border-muted pl-3 text-sm text-muted-foreground italic line-clamp-4">
                 {previewText}

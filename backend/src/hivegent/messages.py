@@ -5,9 +5,20 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    field_serializer,
+    field_validator,
+)
 from pydantic_ai import ModelMessagesTypeAdapter
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 from .config import settings
@@ -109,7 +120,9 @@ def load_messages(user_id: str, conversation_id: str) -> list[ModelMessage]:
         if not isinstance(msg, ModelRequest):
             continue
         for part in msg.parts:
-            if not isinstance(part, ToolReturnPart) or not isinstance(part.metadata, dict):
+            if not isinstance(part, ToolReturnPart) or not isinstance(
+                part.metadata, dict
+            ):
                 continue
             try:
                 part.metadata = DataChunk(**part.metadata)
@@ -208,7 +221,6 @@ def _extract_title(messages: Sequence[ModelMessage]) -> str:
                         else first_line[:97] + "..."
                     )
     return ""
-
 
 
 def persist_conversation(user_id: str, conversation_id: str) -> None:

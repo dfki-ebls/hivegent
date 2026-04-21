@@ -29,13 +29,16 @@ class ChunkData(BaseModel):
     token_count: int = Field(description="Number of tokens in the chunk")
     start_index: int = Field(description="Start character index in original document")
     end_index: int = Field(description="End character index in original document")
-    start_line: int = Field(default=0, description="1-based line number in the original document")
-    end_line: int = Field(default=0, description="1-based line number in the original document")
+    start_line: int = Field(
+        default=0, description="1-based line number in the original document"
+    )
+    end_line: int = Field(
+        default=0, description="1-based line number in the original document"
+    )
     index: int | None = Field(
         default=None,
         description="Zero-based chunk index within the document when available",
     )
-
 
 
 type EntryKind = Literal[
@@ -106,8 +109,12 @@ class ChunkSummary(BaseModel):
     token_count: int = Field(description="Number of tokens in the chunk")
     start_index: int = Field(description="Start character index in original document")
     end_index: int = Field(description="End character index in original document")
-    start_line: int = Field(description="1-based start line number in the original document")
-    end_line: int = Field(description="1-based end line number in the original document")
+    start_line: int = Field(
+        description="1-based start line number in the original document"
+    )
+    end_line: int = Field(
+        description="1-based end line number in the original document"
+    )
 
 
 class RetrievedChunk(BaseModel):
@@ -122,8 +129,12 @@ class RetrievedChunk(BaseModel):
     text: str = Field(description="The chunk text content")
     token_count: int = Field(description="Number of tokens in the chunk")
     score: float = Field(description="The relevance score")
-    start_line: int = Field(description="1-based start line number in the original document")
-    end_line: int = Field(description="1-based end line number in the original document")
+    start_line: int = Field(
+        description="1-based start line number in the original document"
+    )
+    end_line: int = Field(
+        description="1-based end line number in the original document"
+    )
     start_index: int = Field(
         description="Start character index in the original document (for frontend highlighting only)",
     )

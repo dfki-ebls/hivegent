@@ -26,7 +26,9 @@ __all__ = [
 ]
 
 
-def resolve_llm_config(llm: LlmConfig, *, default_model: str | None = None) -> LlmConfig:
+def resolve_llm_config(
+    llm: LlmConfig, *, default_model: str | None = None
+) -> LlmConfig:
     """Apply server defaults to a client-provided LLM configuration."""
     return LlmConfig(
         model=llm.model or default_model or settings.llm.model,

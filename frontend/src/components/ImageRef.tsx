@@ -58,16 +58,12 @@ export function ImageRef({ src, children }: ImageRefProps) {
 
   if (error) {
     return (
-      <span className="text-sm text-muted-foreground italic">
-        [Image not available: {src}]
-      </span>
+      <span className="text-sm text-muted-foreground italic">[Image not available: {src}]</span>
     );
   }
 
   if (!blobUrl) {
-    return (
-      <span className="text-sm text-muted-foreground italic">Loading image…</span>
-    );
+    return <span className="text-sm text-muted-foreground italic">Loading image…</span>;
   }
 
   return (

@@ -144,7 +144,9 @@ async def _build_image_description(
     try:
         description = await describe_image(content, media_type, aux)
     except Exception:
-        logger.warning("Image description generation failed for %s", filepath, exc_info=True)
+        logger.warning(
+            "Image description generation failed for %s", filepath, exc_info=True
+        )
         description = fallback
     return f"{description.strip() or fallback}\n"
 
@@ -496,7 +498,9 @@ async def upload_file_stream(
     content: bytes,
     spec: PipelineSpec,
     llm_config: LlmConfig,
-) -> AsyncGenerator[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent, None]:
+) -> AsyncGenerator[
+    OperationStageEvent | UploadCompleteEvent | OperationErrorEvent, None
+]:
     """Upload a single file with SSE stage events for progress."""
     suffix = PurePosixPath(filepath).suffix.lower()
     try:
@@ -519,7 +523,9 @@ async def reconvert_single_stream(
     safe: str,
     spec: PipelineSpec,
     resolved: LlmConfig,
-) -> AsyncGenerator[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent, None]:
+) -> AsyncGenerator[
+    OperationStageEvent | UploadCompleteEvent | OperationErrorEvent, None
+]:
     """Reconvert a single document with SSE stage events for progress."""
     try:
         metadata = get_metadata(store, safe)
