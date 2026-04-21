@@ -2,7 +2,7 @@
   treefmt,
   watch-dev,
   mkShell,
-  nodejs,
+  nodejs_25,
   python3,
   uv,
   git,
@@ -25,7 +25,7 @@ mkShell {
   HIVEGENT_LLM__BASE_URL = "http://localhost:1234/v1";
   UV_PYTHON = lib.getExe python3;
   packages = [
-    nodejs
+    nodejs_25
     python3
     treefmt
     uv
