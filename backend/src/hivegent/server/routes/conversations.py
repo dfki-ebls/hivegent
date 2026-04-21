@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from nanoid import generate
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
-
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
@@ -27,8 +27,8 @@ from ...agents import (
 from ...auth import User, get_current_user
 from ...compaction import compact_conversation
 from ...config import settings
-from ...memory import load_memory
 from ...mcp import build_mcp_server
+from ...memory import load_memory
 from ...messages import (
     ConversationSummary,
     list_conversations,
@@ -351,18 +351,22 @@ async def create_conversation_chat(
 
     instructions = join_instructions(parts)
 
-    model_settings: OpenAIChatModelSettings | None = None
-    if config.reasoning_effort != "auto":
-        model_settings = OpenAIChatModelSettings(
-            openai_reasoning_effort=config.reasoning_effort,
-        )
-
     store = user_store(user)
     user_group_stores = group_stores(user)
 
     def on_complete(result: AgentRunResult[str]) -> None:
         """Save messages after the agent run completes."""
         save_messages(user.id, config.conversation_id, result.all_messages())
+
+    thinking: str | bool
+
+    match config.reasoning_effort:
+        case "none":
+            thinking = False
+        case "auto":
+            thinking = True
+        case effort:
+            thinking = effort
 
     return await VercelAIAdapter.dispatch_request(
         request,
@@ -391,6 +395,8 @@ async def create_conversation_chat(
             mode=config.mode,
         ),
         instructions=instructions,
-        model_settings=model_settings,
+        model_settings=ModelSettings(
+            thinking=thinking,
+        ),
         on_complete=on_complete,
     )
