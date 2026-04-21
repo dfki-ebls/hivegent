@@ -9,7 +9,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-18T06:50:52.523636Z"
+exclude-newer = "2026-04-18T06:53:58.077693Z"
 exclude-newer-span = "P3D"
 
 [[package]]
@@ -1417,6 +1417,7 @@ dependencies = [
     { name = "logfire" },
     { name = "nanoid" },
     { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "pydantic-ai-harness" },
     { name = "pydantic-ai-slim", extra = ["mcp", "openai", "ui"] },
     { name = "pydantic-settings" },
     { name = "sentence-transformers" },
@@ -1488,6 +1489,7 @@ requires-dist = [
     { name = "nanoid", specifier = ">=2,<3" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.60b1" },
     { name = "pdf-oxide", marker = "extra == 'pdf-oxide'", specifier = ">=0.3,<1" },
+    { name = "pydantic-ai-harness", specifier = ">=0.1,<1" },
     { name = "pydantic-ai-slim", extras = ["ui", "openai", "mcp"], specifier = ">=1,<2" },
     { name = "pydantic-settings", specifier = ">=2,<3" },
     { name = "sentence-transformers", specifier = ">=5,<6" },
@@ -3291,6 +3293,18 @@ wheels = [
 [package.optional-dependencies]
 email = [
     { name = "email-validator" },
+]
+
+[[package]]
+name = "pydantic-ai-harness"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic-ai-slim" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a7/65/601dc2306c373251d53894c2b285441fe60508db12515b6a42a9ca429a0a/pydantic_ai_harness-0.1.1.tar.gz", hash = "sha256:32a5e5859fa211bef1d53fa298c45f4be0a137f99266bc1fc81674298592e021", size = 139551, upload-time = "2026-04-13T20:48:29.596Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/9f/783912423a097e795b61b24ab8bd3357a4dc4803ca03119bc832163c3310/pydantic_ai_harness-0.1.1-py3-none-any.whl", hash = "sha256:6b2e827f28233b378cf3b49cd3979c15a515ba66a9e20b419c7f7c2c105358fe", size = 21801, upload-time = "2026-04-13T20:48:27.977Z" },
 ]
 
 [[package]]
