@@ -17,7 +17,7 @@ def _web_fetch(_deps: UserDeps) -> WebFetch:
     return WebFetch()
 
 
-web_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+web_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=True)
 
 register_agent_tools(
     web_toolset,

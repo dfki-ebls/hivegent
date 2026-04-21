@@ -34,7 +34,7 @@ def _write_document(deps: UserDeps) -> WriteDocumentTool:
     )
 
 
-write_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+write_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=True)
 
 register_agent_tools(
     write_toolset,

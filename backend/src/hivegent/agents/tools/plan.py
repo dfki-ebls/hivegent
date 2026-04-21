@@ -13,6 +13,6 @@ def _create_plan(deps: UserDeps) -> CreatePlanTool:  # noqa: ARG001
     return CreatePlanTool()
 
 
-plan_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+plan_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=True)
 
 register_agent_tools(plan_toolset, UserDeps, [_create_plan])

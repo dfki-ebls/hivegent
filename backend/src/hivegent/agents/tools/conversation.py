@@ -17,7 +17,7 @@ __all__ = [
     "list_conversations",
 ]
 
-conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=True)
 
 
 @conversation_toolset.tool
