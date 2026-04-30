@@ -25,22 +25,22 @@ dependencies = [
   "sentence_transformers>=5,<6",
   "typer>=0.21,<1",
   "uvicorn[standard]>=0.40,<1",
-  "zvec>=0.2,<1",
+  "zvec>=0.3,<1",
 ]
 
 [project.scripts]
 hivegent = "hivegent.cli:app"
 
 [project.optional-dependencies]
-marker = ["marker-pdf[full]>=1,<2"]
+# code = ["chonkie[code]>=1,<2"]
+# marker = ["marker-pdf[full]>=1,<2"]
+# mineru = ["mineru[all]>=3,<4"]
 docling = ["docling>=2,<3"]
-markitdown = ["markitdown[all]>=0.1,<1"]
 kreuzberg = ["kreuzberg>=4,<5"]
+markitdown = ["markitdown[all]>=0.1,<1"]
 pdf-oxide = ["pdf_oxide>=0.3,<1"]
-# mineru = ["mineru[all]>=2,<3"]
 semantic = ["chonkie[semantic]>=1,<2"]
-code = ["chonkie[code]>=1,<2"]
-all = ["hivegent[marker,docling,kreuzberg,markitdown,pdf-oxide,semantic,code]"]
+all = ["hivegent[docling,markitdown,kreuzberg,pdf-oxide,semantic]"]
 
 [dependency-groups]
 dev = [
