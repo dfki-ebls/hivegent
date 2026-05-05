@@ -50,11 +50,12 @@ CITATION_INSTRUCTIONS = """
 When referencing information from documents, always use inline citation tags.
 Use the exact filename from your tool results as the filename attribute.
 Place citations around the relevant text inline, not grouped at the end.
+Replace QUOTED_TEXT with the actual phrase you are citing — never leave it as the literal placeholder.
 
 Citation formats:
-- Document with a specific line: <cite filename="doc.md" line="42">text</cite>
-- Web source: <cite filename="https://example.com">text</cite>
-- General document reference: <cite filename="doc.md">text</cite>
+- Document with a specific line: <cite filename="doc.md" line="42">QUOTED_TEXT</cite>
+- Web source: <cite filename="https://example.com">QUOTED_TEXT</cite>
+- General document reference: <cite filename="doc.md">QUOTED_TEXT</cite>
 
 Include the line attribute whenever you are quoting a specific line from
 a document — search, grep, and read_document results all include line
