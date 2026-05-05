@@ -15,35 +15,15 @@ from joserfc.errors import (
 )
 from joserfc.jwk import KeySet
 from joserfc.jwt import ClaimsOption, JWTClaimsRegistry
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .config import settings
 from .tokens import token_store
 from .types import User
 
 __all__ = [
-    "AuthSettings",
     "User",
     "get_current_user",
 ]
-
-
-class AuthSettings(BaseSettings):
-    """Authentication settings loaded from environment variables."""
-
-    model_config = SettingsConfigDict(
-        env_prefix="HIVEGENT_AUTH_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-    )
-
-    disabled: bool = False
-    issuer: str = ""
-    audience: str | None = None
-    jwks_cache_ttl: int = 3600
-
-
-auth_settings = AuthSettings()
 
 
 class JWKSFetcher:
@@ -64,7 +44,7 @@ class JWKSFetcher:
         """Check if the cached JWKS is still valid."""
         if self._cache is None:
             return False
-        return (time.time() - self._cache_time) < auth_settings.jwks_cache_ttl
+        return (time.time() - self._cache_time) < settings.auth.jwks_cache_ttl
 
     async def get_jwks(self, force_refresh: bool = False) -> KeySet:
         """Fetch JWKS from the OIDC provider.
@@ -82,13 +62,13 @@ class JWKSFetcher:
             assert self._cache is not None
             return self._cache
 
-        if not auth_settings.issuer:
+        if not settings.auth.issuer:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="OIDC issuer not configured",
             )
 
-        jwks_uri = f"{auth_settings.issuer.rstrip('/')}/.well-known/jwks.json"
+        jwks_uri = f"{settings.auth.issuer.rstrip('/')}/.well-known/jwks.json"
 
         try:
             response = await self._get_client().get(jwks_uri, timeout=10.0)
@@ -121,10 +101,10 @@ def _build_claims_registry() -> JWTClaimsRegistry:
         A configured JWTClaimsRegistry instance.
     """
     options: dict[str, Any] = {"sub": ClaimsOption(essential=True)}
-    if auth_settings.issuer:
-        options["iss"] = ClaimsOption(value=auth_settings.issuer)
-    if auth_settings.audience:
-        options["aud"] = ClaimsOption(value=auth_settings.audience)
+    if settings.auth.issuer:
+        options["iss"] = ClaimsOption(value=settings.auth.issuer)
+    if settings.auth.audience:
+        options["aud"] = ClaimsOption(value=settings.auth.audience)
     return JWTClaimsRegistry(leeway=300, **options)
 
 
@@ -244,7 +224,7 @@ async def get_current_user(
     Validates the Bearer token from the Authorization header.
     Supports both JWT tokens and Personal Access Tokens (PATs).
 
-    When HIVEGENT_AUTH_DISABLED=true, returns a dev user without validation.
+    When HIVEGENT_AUTH__DISABLED=true, returns a dev user without validation.
 
     Args:
         credentials: The HTTP Bearer credentials.
@@ -256,7 +236,7 @@ async def get_current_user(
         HTTPException: If authentication fails.
     """
     # Bypass authentication in development mode
-    if auth_settings.disabled:
+    if settings.auth.disabled:
         # Give write access to all groups that exist on disk
         groups_dir = settings.data_dir / "groups"
         dev_groups = (

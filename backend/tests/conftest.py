@@ -36,12 +36,9 @@ def user_store(data_dir: Path) -> Casebase:
 @pytest.fixture()
 def app_client(data_dir: Path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN201
     """Return a Starlette ``TestClient`` with auth disabled."""
-    monkeypatch.setenv("HIVEGENT_AUTH_DISABLED", "true")
+    from hivegent.config import settings
 
-    # Re-import auth_settings so the env var takes effect
-    from hivegent.auth import AuthSettings
-
-    monkeypatch.setattr("hivegent.auth.auth_settings", AuthSettings())
+    monkeypatch.setattr(settings.auth, "disabled", True)
 
     from starlette.testclient import TestClient
 

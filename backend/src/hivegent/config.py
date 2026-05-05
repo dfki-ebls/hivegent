@@ -11,6 +11,7 @@ from .converters.base import DOCUMENT_EXTENSION
 
 __all__ = [
     "DOCUMENT_EXTENSION",
+    "AuthSettings",
     "EmbeddingSettings",
     "GroupSettings",
     "LlmSettings",
@@ -183,6 +184,18 @@ class GroupSettings(BaseModel):
     default_permission: str = "read"
 
 
+class AuthSettings(BaseModel):
+    """OIDC authentication settings.
+
+    Configurable via ``HIVEGENT_AUTH__*`` environment variables.
+    """
+
+    disabled: bool = False
+    issuer: str = ""
+    audience: str | None = None
+    jwks_cache_ttl: int = 3600
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -198,6 +211,7 @@ class Settings(BaseSettings):
     logfire: LogfireSettings = LogfireSettings()
     mcp: McpSettings = McpSettings()
     groups: GroupSettings = GroupSettings()
+    auth: AuthSettings = AuthSettings()
 
     data_dir: Path = Path("data")
     max_file_size_bytes: int = 50 * 1024 * 1024  # 50 MB

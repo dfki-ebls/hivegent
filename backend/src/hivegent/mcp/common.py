@@ -6,7 +6,6 @@ from fastmcp.dependencies import CurrentAccessToken
 from fastmcp.server.auth import AccessToken
 from pydantic import Field
 
-from ..auth import auth_settings
 from ..config import settings
 from ..store import Casebase
 
@@ -27,7 +26,7 @@ def get_mcp_user_id(
     access_token: AccessToken | None = CurrentAccessToken(),
 ) -> str:
     """Extract the user ID from the MCP auth token."""
-    if auth_settings.disabled:
+    if settings.auth.disabled:
         return "localhost"
     if access_token is None:
         raise RuntimeError("No authenticated user in MCP context")
@@ -48,7 +47,7 @@ def get_mcp_group_stores(
     access_token: AccessToken | None = CurrentAccessToken(),
 ) -> tuple[Casebase, ...]:
     """Build group casebases from the MCP auth token."""
-    if auth_settings.disabled:
+    if settings.auth.disabled:
         return ()
     if access_token is None:
         return ()
