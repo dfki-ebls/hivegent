@@ -32,7 +32,7 @@
     {
       devShells.default = pkgs.callPackage ./shell.nix {
         treefmt = config.treefmt.build.wrapper;
-        inherit (config.packages) watch-dev;
+        inherit (config.packages) watch-dev backend;
       };
       checks = {
         inherit (config.packages) backend frontend;

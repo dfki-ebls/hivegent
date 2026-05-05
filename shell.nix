@@ -1,17 +1,13 @@
 {
   treefmt,
   watch-dev,
+  backend,
   mkShell,
   nodejs_25,
   python3,
   uv,
   git,
-  jq,
-  pandoc,
-  ripgrep,
   lib,
-  libreoffice,
-  stdenv,
 }:
 mkShell {
   shellHook = ''
@@ -19,7 +15,7 @@ mkShell {
     npm --prefix "$ROOT_DIR/frontend" install
     uv --directory "$ROOT_DIR/backend" sync --all-extras
   '';
-  HIVEGENT_AUTH_DISABLED = "1";
+  HIVEGENT_AUTH__DISABLED = "1";
   HIVEGENT_LLM__MODEL = "qwen3.6-35b-a3b";
   HIVEGENT_LLM__AUX_MODEL = "qwen3.5-0.8b";
   HIVEGENT_LLM__BASE_URL = "http://localhost:18000/v1";
@@ -30,11 +26,9 @@ mkShell {
     treefmt
     uv
     watch-dev
-    # CLI tools used by backend subprocess wrappers
-    jq
-    pandoc
-    ripgrep
   ]
-  # docling dependencies
-  ++ lib.optionals stdenv.hostPlatform.isLinux [ libreoffice ];
+  # CLI tools used by backend subprocess wrappers + docling deps; sourced
+  # from the backend derivation so the dev shell and the wrapped binary
+  # share a single list (see `backend/default.nix`).
+  ++ backend.runtimeInputs;
 }

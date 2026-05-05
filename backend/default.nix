@@ -5,6 +5,12 @@
   uv2nix,
   pyproject-nix,
   pyproject-build-systems,
+  makeBinaryWrapper,
+  jq,
+  pandoc,
+  ripgrep,
+  libreoffice,
+  stdenv,
 }:
 let
   workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
@@ -67,8 +73,32 @@ let
       ];
     });
   inherit (callPackage pyproject-nix.build.util { }) mkApplication;
+
+  app = mkApplication {
+    venv = mkVenv "hivegent-env" workspace.deps.optionals;
+    package = pythonSet.hivegent;
+  };
+
+  # Runtime CLI tools the backend invokes via `asyncio.create_subprocess_exec`
+  # (`hivegent/subprocesses/`) plus libreoffice, used by docling for office
+  # document conversion. Exposed via `passthru.runtimeInputs` so `shell.nix`
+  # can use the same list and stay in sync without redeclaring it.
+  runtimeInputs = [
+    jq
+    pandoc
+    ripgrep
+  ]
+  ++ lib.optionals stdenv.hostPlatform.isLinux [ libreoffice ];
 in
-mkApplication {
-  venv = mkVenv "hivegent-env" workspace.deps.optionals;
-  package = pythonSet.hivegent;
-}
+app.overrideAttrs (oldAttrs: {
+  nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ makeBinaryWrapper ];
+  postFixup =
+    (oldAttrs.postFixup or "")
+    + ''
+      wrapProgram "$out/bin/hivegent" \
+        --prefix PATH : ${lib.makeBinPath runtimeInputs}
+    '';
+  passthru = (oldAttrs.passthru or { }) // {
+    inherit runtimeInputs;
+  };
+})
