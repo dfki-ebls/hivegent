@@ -1,7 +1,5 @@
 {
   inputs,
-  self,
-  lib',
   lib,
   ...
 }:
@@ -12,16 +10,7 @@
   ];
   systems = import inputs.systems;
 
-  flake = {
-    nixosModules.default = ./nixos;
-    nixosConfigurations.default = inputs.nixpkgs-unstable.lib.nixosSystem {
-      system = null;
-      specialArgs = {
-        inherit inputs lib';
-      };
-      modules = [ self.nixosModules.default ];
-    };
-  };
+  # flakenixosModules.default = ./nixos;
 
   perSystem =
     {
