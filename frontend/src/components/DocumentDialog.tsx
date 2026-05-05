@@ -132,7 +132,9 @@ export function DocumentDialog({
   groupId,
 }: DocumentDialogProps) {
   // --- State ---
-  const [fullContent, setFullContent] = useState<string | null>(null);
+  // Local content is only used in managed mode (custom getContent fetcher).
+  // In fetched mode the store is the source of truth (see `fullContent` below).
+  const [localFullContent, setLocalFullContent] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("full-doc");
   const [activeChunkId, setActiveChunkId] = useState<string | null>(null);
@@ -168,6 +170,15 @@ export function DocumentDialog({
   const isManagedMode = showMetadata || onRechunk != null;
   const filename = chunk?.filename ?? fallbackFilename ?? filenameProp;
 
+  // Subscribe to just this document's full content so unrelated store
+  // updates (e.g., new search chunks streaming in) don't refire the fetch
+  // effect below.
+  const storedFullContent = useFetchedDocumentsStore((state) =>
+    filename ? state.documents.get(filename)?.fullContent : undefined,
+  );
+
+  const fullContent = isManagedMode ? localFullContent : (storedFullContent ?? null);
+
   // --- Fetched-mode sibling chunks ---
   const siblingChunks = useMemo(() => {
     if (isManagedMode || !filename) return [];
@@ -198,7 +209,7 @@ export function DocumentDialog({
     if (isNew) {
       setViewMode("edit");
       setEditContent("");
-      setFullContent(null);
+      setLocalFullContent(null);
     } else if (chunk) {
       setActiveChunkId(chunk.id);
       setViewMode(initialFullDoc || chunk.position.type === "full_document" ? "full-doc" : "chunk");
@@ -226,29 +237,17 @@ export function DocumentDialog({
     fetchManagedChunks();
   }, [open, isManagedMode, filename, isNew, fetchManagedChunks]);
 
-  // --- Sync fullContent from fetched store ---
-  useEffect(() => {
-    if (isManagedMode) return;
-    const doc = documents.get(filename);
-    if (doc?.fullContent) {
-      setFullContent(doc.fullContent);
-      setIsLoading(false);
-    }
-  }, [isManagedMode, documents, filename]);
-
   const isWeb = isWebUrl(filename);
 
   // --- Fetch full document content ---
   useEffect(() => {
     if (!open || !filename || isNew) return;
 
-    // In fetched mode, check store first
-    if (!isManagedMode) {
-      const doc = useFetchedDocumentsStore.getState().documents.get(filename);
-      if (doc?.fullContent) {
-        setFullContent(doc.fullContent);
-        return;
-      }
+    // In fetched mode the store is the source of truth — skip the fetcher
+    // when content is already present (or arrives via a tool output mid-flight).
+    if (!isManagedMode && storedFullContent != null) {
+      setIsLoading(false);
+      return;
     }
 
     // Don't fetch from backend for web URLs — content comes from the store only
@@ -262,42 +261,38 @@ export function DocumentDialog({
     const fetcher = getContent ?? getDocumentContent;
     fetcher(filename)
       .then((content) => {
-        if (!cancelled) {
-          if (!isManagedMode) {
-            markFullDocument(filename, content, "preview");
-          }
-          setFullContent(content);
-          setEditContent(content);
-          startTransition(() => setIsLoading(false));
+        if (cancelled) return;
+        if (isManagedMode) {
+          setLocalFullContent(content);
+        } else {
+          markFullDocument(filename, content, "preview");
         }
+        setEditContent(content);
+        startTransition(() => setIsLoading(false));
       })
       .catch(() => {
-        if (!cancelled) {
-          setFullContent(null);
-          setIsLoading(false);
-        }
+        if (cancelled) return;
+        if (isManagedMode) setLocalFullContent(null);
+        setIsLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [open, filename, isNew, isManagedMode, markFullDocument, getContent]);
+  }, [open, filename, isNew, isManagedMode, markFullDocument, getContent, storedFullContent]);
 
-  // Ref callback that scrolls to the highlight when the element mounts.
-  // By including the active-chunk identifiers in the dependency list,
-  // React treats each chunk switch as a new ref, guaranteeing the
-  // callback fires after the DOM element is attached.
-  const highlightRef = useCallback(
-    (node: HTMLElement | null) => {
-      if (!node) return;
-      const behavior = isInitialScrollRef.current ? "instant" : "smooth";
-      isInitialScrollRef.current = false;
-      // Single rAF to let the Radix ScrollArea viewport settle.
-      requestAnimationFrame(() => {
-        node.scrollIntoView({ behavior, block: "center" });
-      });
-    },
-    [activeChunkId, managedActiveIndex],
-  );
+  // Scroll the highlight into view when its DOM element mounts. The span
+  // is keyed by the active chunk identifier (see renderChunkHighlight), so
+  // each chunk switch remounts it and re-fires this callback.
+  const highlightRef = useCallback((node: HTMLElement | null) => {
+    if (!node) return;
+    const behavior = isInitialScrollRef.current ? "instant" : "smooth";
+    isInitialScrollRef.current = false;
+    // Single rAF to let the Radix ScrollArea viewport settle.
+    requestAnimationFrame(() => {
+      node.scrollIntoView({ behavior, block: "center" });
+    });
+  }, []);
+  const highlightKey = isManagedMode ? `m:${managedActiveIndex}` : `f:${activeChunkId}`;
 
   // --- Rechunk handler ---
   const handleRechunk = useCallback(async () => {
@@ -380,6 +375,7 @@ export function DocumentDialog({
         <pre className="whitespace-pre-wrap text-sm p-4 font-mono">
           <span className="text-muted-foreground">{before}</span>
           <span
+            key={highlightKey}
             ref={highlightRef}
             className="bg-yellow-200/50 dark:bg-yellow-900/50 border-l-2 border-yellow-500 pl-1"
           >

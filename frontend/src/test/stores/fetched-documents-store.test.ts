@@ -89,6 +89,17 @@ describe("useFetchedDocumentsStore", () => {
       expect(doc!.fullContentFetched).toBe(true);
       expect(doc!.chunkIds.length).toBeGreaterThanOrEqual(2);
     });
+
+    it("returns identical state references when called with unchanged args", () => {
+      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "fetch");
+      const before = useFetchedDocumentsStore.getState();
+
+      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "fetch");
+      const after = useFetchedDocumentsStore.getState();
+
+      expect(after.documents).toBe(before.documents);
+      expect(after.chunks).toBe(before.chunks);
+    });
   });
 
   describe("clearAll", () => {

@@ -59,40 +59,44 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
 
   markFullDocument: (filename, content, source) =>
     set((state) => {
-      const newDocs = new Map(state.documents);
-      const newChunks = new Map(state.chunks);
-
       const position: ChunkPosition = { type: "full_document" };
       const id = makeChunkId(filename, source, position);
 
-      if (!newChunks.has(id)) {
-        newChunks.set(id, {
-          id,
-          filename,
-          content,
-          source,
-          position,
-        });
+      const existingChunk = state.chunks.get(id);
+      const existingDoc = state.documents.get(filename);
+      const chunkUpToDate = existingChunk?.content === content;
+      const docUpToDate =
+        existingDoc?.fullContentFetched === true &&
+        existingDoc.fullContent === content &&
+        existingDoc.chunkIds.includes(id);
+
+      if (chunkUpToDate && docUpToDate) return state;
+
+      const newChunks = chunkUpToDate ? state.chunks : new Map(state.chunks);
+      if (!chunkUpToDate) {
+        newChunks.set(id, { id, filename, content, source, position });
       }
 
-      const existing = newDocs.get(filename);
-      if (existing) {
-        const chunkIds = existing.chunkIds.includes(id)
-          ? existing.chunkIds
-          : [...existing.chunkIds, id];
-        newDocs.set(filename, {
-          ...existing,
-          fullContentFetched: true,
-          fullContent: content,
-          chunkIds,
-        });
-      } else {
-        newDocs.set(filename, {
-          filename,
-          fullContentFetched: true,
-          fullContent: content,
-          chunkIds: [id],
-        });
+      const newDocs = docUpToDate ? state.documents : new Map(state.documents);
+      if (!docUpToDate) {
+        if (existingDoc) {
+          const chunkIds = existingDoc.chunkIds.includes(id)
+            ? existingDoc.chunkIds
+            : [...existingDoc.chunkIds, id];
+          newDocs.set(filename, {
+            ...existingDoc,
+            fullContentFetched: true,
+            fullContent: content,
+            chunkIds,
+          });
+        } else {
+          newDocs.set(filename, {
+            filename,
+            fullContentFetched: true,
+            fullContent: content,
+            chunkIds: [id],
+          });
+        }
       }
 
       return { chunks: newChunks, documents: newDocs };
