@@ -9,15 +9,15 @@ from ...messages import (
 )
 from ...tools import JqTool
 from ...tools.base import ToolOutput
-from ..common import UserDeps
 from ...tools.pydantic_ai import for_pydantic_ai, wrap_tool_output
+from ..common import UserDeps
 
 __all__ = [
     "conversation_toolset",
     "list_conversations",
 ]
 
-conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=True)
+conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=False)
 
 
 @conversation_toolset.tool

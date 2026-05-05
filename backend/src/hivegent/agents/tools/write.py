@@ -8,8 +8,8 @@ from ...chunks import on_document_write
 from ...config import settings
 from ...tools import EditDocumentTool, WriteDocumentTool
 from ...tools.base import SearchPath
-from ..common import UserDeps
 from ...tools.pydantic_ai import register_agent_tools
+from ..common import UserDeps
 
 __all__ = ["write_toolset"]
 
@@ -34,7 +34,7 @@ def _write_document(deps: UserDeps) -> WriteDocumentTool:
     )
 
 
-write_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=True)
+write_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=False)
 
 register_agent_tools(
     write_toolset,
