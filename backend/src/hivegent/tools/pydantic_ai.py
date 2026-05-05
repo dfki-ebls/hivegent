@@ -2,8 +2,9 @@
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
+from pydantic import BeforeValidator
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
@@ -14,6 +15,30 @@ __all__ = ["for_pydantic_ai", "register_agent_tools", "wrap_tool_output"]
 
 DATA_CHUNK_TYPE = "data-tool-output"
 """DataChunk type used to stream structured tool data to the frontend."""
+
+
+def _dequote_value(value: object) -> object:
+    """Strip surrounding double quotes from a string value.
+
+    llama.cpp's autoparser path does not constrain string content
+    (notably ``enum`` literals) at generation time, so some local
+    models emit arguments JSON-double-encoded — e.g. the value
+    ``\"files_with_matches\"`` instead of ``files_with_matches``.
+    Stripping bookend quotes before pydantic's strict validation lets
+    such values match their declared schema.  Non-strings and strings
+    without matching bookend quotes pass through unchanged.
+    """
+    if (
+        isinstance(value, str)
+        and len(value) >= 2
+        and value[0] == '"'
+        and value[-1] == '"'
+    ):
+        return value[1:-1]
+    return value
+
+
+_DEQUOTE_VALIDATOR = BeforeValidator(_dequote_value)
 
 
 def wrap_tool_output(result: ToolOutput[Any]) -> ToolReturn:
@@ -66,7 +91,7 @@ def for_pydantic_ai[D](
 
     new_annotations: dict[str, Any] = {
         "ctx": ctx_annotation,
-        **info.annotations,
+        **{n: Annotated[h, _DEQUOTE_VALIDATOR] for n, h in info.annotations.items()},
         "return": ToolReturn,
     }
 
