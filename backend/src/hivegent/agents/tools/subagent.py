@@ -35,14 +35,19 @@ ExploreScopeArg = Annotated[
 
 
 def _subagent_model(deps: UserDeps) -> OpenAIChatModel:
-    """Build the model used for subagent calls."""
+    """Build the model used for subagent calls.
+
+    Subagents perform agentic exploration with large contexts and tool
+    calling, so they reuse the main model rather than ``aux_model`` —
+    tiny aux models tend to fail in these scenarios.
+    """
     llm = deps.llm
     if llm:
-        model = settings.llm.aux_model or llm.model
+        model = llm.model
         api_key = llm.api_key
         base_url = llm.base_url
     else:
-        model = settings.llm.aux_model or settings.llm.model
+        model = settings.llm.model
         api_key = settings.llm.api_key
         base_url = settings.llm.base_url or None
 
@@ -76,7 +81,7 @@ async def explore(
     task: ExploreTaskArg,
     scope: ExploreScopeArg = "documents",
 ) -> str:
-    """Explore using a lightweight model.
+    """Explore using a subagent.
 
     Delegates to a subagent that can search and read within the chosen scope.
     Returns a summary of findings. Use this for broad exploration tasks
