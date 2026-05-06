@@ -1,11 +1,13 @@
 """OIDC authentication and JWT validation."""
 
+import asyncio
 import time
 from typing import Annotated, Any
 
 import httpx
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastmcp.server.auth.oidc_proxy import OIDCConfiguration
 from joserfc import jwt
 from joserfc.errors import (
     ExpiredTokenError,
@@ -15,6 +17,7 @@ from joserfc.errors import (
 )
 from joserfc.jwk import KeySet
 from joserfc.jwt import ClaimsOption, JWTClaimsRegistry
+from pydantic import AnyHttpUrl, ValidationError
 
 from .config import settings
 from .tokens import token_store
@@ -22,53 +25,109 @@ from .types import User
 
 __all__ = [
     "User",
+    "build_discovery_url",
+    "fetch_oidc_configuration",
     "get_current_user",
 ]
 
 
+def build_discovery_url(issuer: str) -> str:
+    """Return the RFC 8414 / OIDC Discovery 1.0 URL for ``issuer``."""
+    return f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+
+
+def fetch_oidc_configuration(
+    issuer: str, *, timeout_seconds: int = 10
+) -> OIDCConfiguration:
+    """Fetch and parse the OIDC discovery document for ``issuer``.
+
+    Delegates to fastmcp's ``OIDCConfiguration.get_oidc_configuration``
+    so the FastAPI and FastMCP auth layers share one implementation.
+
+    Raises:
+        httpx.HTTPError: On transport failure.
+        pydantic.ValidationError: On malformed payload.
+        ValueError: If ``issuer`` is empty.
+    """
+    if not issuer:
+        raise ValueError("OIDC issuer not configured")
+    config_url = AnyHttpUrl(build_discovery_url(issuer))
+    return OIDCConfiguration.get_oidc_configuration(
+        config_url, strict=False, timeout_seconds=timeout_seconds
+    )
+
+
 class JWKSFetcher:
-    """Fetch and cache JWKS from OIDC provider."""
+    """Fetch and cache JWKS from OIDC provider via discovery."""
 
     def __init__(self) -> None:
         self._cache: KeySet | None = None
         self._cache_time: float = 0
+        self._discovery_cache: OIDCConfiguration | None = None
+        self._discovery_cache_time: float = 0
         self._client: httpx.AsyncClient | None = None
 
     def _get_client(self) -> httpx.AsyncClient:
-        """Lazily create the HTTP client on first use."""
         if self._client is None:
             self._client = httpx.AsyncClient()
         return self._client
 
-    def _is_cache_valid(self) -> bool:
-        """Check if the cached JWKS is still valid."""
-        if self._cache is None:
-            return False
-        return (time.time() - self._cache_time) < settings.auth.jwks_cache_ttl
+    def _is_fresh(self, cached: object, cached_time: float) -> bool:
+        return (
+            cached is not None
+            and (time.time() - cached_time) < settings.auth.jwks_cache_ttl
+        )
+
+    async def _get_discovery(self, force_refresh: bool = False) -> OIDCConfiguration:
+        """Fetch the OIDC discovery document.
+
+        Raises:
+            HTTPException: 503 on transport failure, 500 on malformed payload
+                or missing configuration.
+        """
+        if not force_refresh and self._is_fresh(
+            self._discovery_cache, self._discovery_cache_time
+        ):
+            assert self._discovery_cache is not None
+            return self._discovery_cache
+
+        try:
+            config = await asyncio.to_thread(
+                fetch_oidc_configuration, settings.auth.issuer
+            )
+        except httpx.HTTPError as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Failed to fetch OIDC discovery document: {e}",
+            ) from e
+        except (ValidationError, ValueError) as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Invalid OIDC discovery document: {e}",
+            ) from e
+
+        if not config.jwks_uri:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="OIDC discovery document missing jwks_uri",
+            )
+
+        self._discovery_cache = config
+        self._discovery_cache_time = time.time()
+        return config
 
     async def get_jwks(self, force_refresh: bool = False) -> KeySet:
-        """Fetch JWKS from the OIDC provider.
-
-        Args:
-            force_refresh: Force a refresh even if cache is valid.
-
-        Returns:
-            A KeySet containing the provider's public keys.
+        """Fetch JWKS from the OIDC provider, resolving the URI via discovery.
 
         Raises:
             HTTPException: If JWKS cannot be fetched.
         """
-        if not force_refresh and self._is_cache_valid():
+        if not force_refresh and self._is_fresh(self._cache, self._cache_time):
             assert self._cache is not None
             return self._cache
 
-        if not settings.auth.issuer:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="OIDC issuer not configured",
-            )
-
-        jwks_uri = f"{settings.auth.issuer.rstrip('/')}/.well-known/jwks.json"
+        config = await self._get_discovery(force_refresh=force_refresh)
+        jwks_uri = str(config.jwks_uri)
 
         try:
             response = await self._get_client().get(jwks_uri, timeout=10.0)
