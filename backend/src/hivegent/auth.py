@@ -181,15 +181,33 @@ _jwks_fetcher = JWKSFetcher()
 def _build_claims_registry() -> JWTClaimsRegistry:
     """Build a JWT claims registry based on current auth settings.
 
-    Returns:
-        A configured JWTClaimsRegistry instance.
+    Issuer comparison tolerates a trailing ``/`` on either side: Rauthy
+    and several other IdPs emit ``iss`` with a trailing slash even when
+    the configured URL doesn't, and OIDC mandates exact match. The
+    expected value is normalized here; the actual claim is normalized in
+    ``validate_jwt_token`` before validation.
     """
     options: dict[str, Any] = {"sub": ClaimsOption(essential=True)}
     if settings.auth.issuer:
-        options["iss"] = ClaimsOption(value=settings.auth.issuer)
+        options["iss"] = ClaimsOption(value=settings.auth.issuer.rstrip("/"))
     if settings.auth.audience:
         options["aud"] = ClaimsOption(value=settings.auth.audience)
     return JWTClaimsRegistry(leeway=300, **options)
+
+
+def _format_invalid_claim_detail(claim: str, claims: dict[str, Any]) -> str:
+    """Build a 401 detail for an invalid claim without leaking ``sub``."""
+    expected_by_claim = {
+        "iss": settings.auth.issuer,
+        "aud": settings.auth.audience,
+    }
+    expected = expected_by_claim.get(claim)
+    if expected:
+        return (
+            f"Invalid token claim {claim!r}: "
+            f"expected {expected!r}, got {claims.get(claim)!r}"
+        )
+    return f"Invalid token claim: {claim!r}"
 
 
 def _extract_group_permissions(
@@ -267,7 +285,11 @@ async def validate_jwt_token(token: str) -> User:
 
     try:
         claims_registry = _build_claims_registry()
-        claims_registry.validate(decoded.claims)
+        normalized_claims = dict(decoded.claims)
+        token_iss = normalized_claims.get("iss")
+        if isinstance(token_iss, str):
+            normalized_claims["iss"] = token_iss.rstrip("/")
+        claims_registry.validate(normalized_claims)
     except ExpiredTokenError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -277,13 +299,13 @@ async def validate_jwt_token(token: str) -> User:
     except MissingClaimError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token missing required claim: {e}",
+            detail=f"Token missing required claim: {e.claim!r}",
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
     except InvalidClaimError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token claim: {e}",
+            detail=_format_invalid_claim_detail(e.claim, decoded.claims),
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
 
