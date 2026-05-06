@@ -22,13 +22,16 @@ __all__ = ["app", "create_app", "mcp_http_app"]
 # Python's subprocess module.  Filter it out to keep logs clean.
 warnings.filterwarnings("ignore", message="lance is not fork-safe")
 
-mcp_http_app = mcp_app.http_app(path="/")
+mcp_http_app = mcp_app.http_app(path="/") if settings.mcp.enabled else None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Run startup consistency checks, then delegate to the MCP lifespan."""
     await check_and_fix_all_stores()
+    if mcp_http_app is None:
+        yield
+        return
     async with mcp_http_app.lifespan(app):
         yield
 
@@ -56,7 +59,8 @@ def create_app() -> FastAPI:
     )
     app.add_exception_handler(ValidationError, validation_error_handler)
     app.include_router(api_router)
-    app.mount("/mcp", mcp_http_app)
+    if mcp_http_app is not None:
+        app.mount("/mcp", mcp_http_app)
     return app
 
 

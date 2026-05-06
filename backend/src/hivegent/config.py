@@ -169,12 +169,14 @@ class EmbeddingSettings(BaseModel):
 class McpSettings(BaseModel):
     """MCP server settings for OIDC authentication.
 
+    ``enabled`` controls whether the ``/mcp`` HTTP endpoint is mounted.
     ``mode`` selects ``proxy`` (FastMCP proxies the OAuth flow with a
     pre-registered ``client_id``/``client_secret``) or ``remote`` (clients
     register themselves with the upstream via RFC 7591 dynamic client
     registration, e.g. Rauthy; FastMCP only verifies JWTs).
     """
 
+    enabled: bool = True
     mode: Literal["proxy", "remote"] = "proxy"
     client_id: str = ""
     client_secret: str = ""
