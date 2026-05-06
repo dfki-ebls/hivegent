@@ -38,7 +38,7 @@ def app_client(data_dir: Path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN201
     """Return a Starlette ``TestClient`` with auth disabled."""
     from hivegent.config import settings
 
-    monkeypatch.setattr(settings.auth, "disabled", True)
+    monkeypatch.setattr(settings.auth, "enable", False)
 
     from starlette.testclient import TestClient
 

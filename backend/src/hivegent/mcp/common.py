@@ -26,7 +26,7 @@ def get_mcp_user_id(
     access_token: AccessToken | None = CurrentAccessToken(),
 ) -> str:
     """Extract the user ID from the MCP auth token."""
-    if settings.auth.disabled:
+    if not settings.auth.enable:
         return "localhost"
     if access_token is None:
         raise RuntimeError("No authenticated user in MCP context")
@@ -47,7 +47,7 @@ def get_mcp_group_stores(
     access_token: AccessToken | None = CurrentAccessToken(),
 ) -> tuple[Casebase, ...]:
     """Build group casebases from the MCP auth token."""
-    if settings.auth.disabled:
+    if not settings.auth.enable:
         return ()
     if access_token is None:
         return ()

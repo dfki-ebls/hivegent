@@ -22,7 +22,7 @@ __all__ = ["app", "create_app", "mcp_http_app"]
 # Python's subprocess module.  Filter it out to keep logs clean.
 warnings.filterwarnings("ignore", message="lance is not fork-safe")
 
-mcp_http_app = mcp_app.http_app(path="/") if settings.mcp.enabled else None
+mcp_http_app = mcp_app.http_app(path="/") if settings.mcp.enable else None
 
 
 @asynccontextmanager

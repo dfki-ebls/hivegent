@@ -60,12 +60,12 @@ def configure_observability(app: FastAPI) -> None:
     daily-rotated files under the configured traces directory.
     FastAPI, Pydantic AI, and MCP are instrumented automatically.
 
-    Does nothing when ``settings.logfire.enabled`` is ``False``.
+    Does nothing when ``settings.logfire.enable`` is ``False``.
 
     Args:
         app: The FastAPI application instance to instrument.
     """
-    if not settings.logfire.enabled:
+    if not settings.logfire.enable:
         return
 
     traces_dir = settings.get_traces_dir()

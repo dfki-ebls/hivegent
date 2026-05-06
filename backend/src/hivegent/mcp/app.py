@@ -15,7 +15,7 @@ __all__ = ["mcp_app"]
 
 mcp_auth: AuthProvider | None = None
 
-if not settings.auth.disabled:
+if settings.auth.enable:
     if settings.mcp.mode == "proxy":
         mcp_auth = OIDCProxy(
             config_url=f"{settings.auth.issuer}/.well-known/openid-configuration",

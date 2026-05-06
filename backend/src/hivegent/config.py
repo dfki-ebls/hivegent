@@ -134,11 +134,11 @@ class LlmSettings(BaseModel):
 class LogfireSettings(BaseModel):
     """Logfire observability settings.
 
-    Configurable via ``HIVEGENT_LOGFIRE__ENABLED`` and
+    Configurable via ``HIVEGENT_LOGFIRE__ENABLE`` and
     ``HIVEGENT_LOGFIRE__TRACES_DIR``.
     """
 
-    enabled: bool = True
+    enable: bool = True
     traces_dir: Path | None = None
 
 
@@ -169,14 +169,14 @@ class EmbeddingSettings(BaseModel):
 class McpSettings(BaseModel):
     """MCP server settings for OIDC authentication.
 
-    ``enabled`` controls whether the ``/mcp`` HTTP endpoint is mounted.
+    ``enable`` controls whether the ``/mcp`` HTTP endpoint is mounted.
     ``mode`` selects ``proxy`` (FastMCP proxies the OAuth flow with a
     pre-registered ``client_id``/``client_secret``) or ``remote`` (clients
     register themselves with the upstream via RFC 7591 dynamic client
     registration, e.g. Rauthy; FastMCP only verifies JWTs).
     """
 
-    enabled: bool = True
+    enable: bool = True
     mode: Literal["proxy", "remote"] = "proxy"
     client_id: str = ""
     client_secret: str = ""
@@ -199,7 +199,7 @@ class AuthSettings(BaseModel):
     Configurable via ``HIVEGENT_AUTH__*`` environment variables.
     """
 
-    disabled: bool = False
+    enable: bool = True
     issuer: str = ""
     audience: str | None = None
     jwks_cache_ttl: int = 3600

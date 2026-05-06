@@ -15,7 +15,7 @@ mkShell {
     npm --prefix "$ROOT_DIR/frontend" install
     uv --directory "$ROOT_DIR/backend" sync --all-extras
   '';
-  HIVEGENT_AUTH__DISABLED = "1";
+  HIVEGENT_AUTH__ENABLE = "0";
   HIVEGENT_LLM__MODEL = "qwen3.6-35b-a3b";
   HIVEGENT_LLM__AUX_MODEL = "qwen3.5-0.8b";
   HIVEGENT_LLM__BASE_URL = "http://localhost:18000/v1";

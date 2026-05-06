@@ -224,7 +224,7 @@ async def get_current_user(
     Validates the Bearer token from the Authorization header.
     Supports both JWT tokens and Personal Access Tokens (PATs).
 
-    When HIVEGENT_AUTH__DISABLED=true, returns a dev user without validation.
+    When HIVEGENT_AUTH__ENABLE=false, returns a dev user without validation.
 
     Args:
         credentials: The HTTP Bearer credentials.
@@ -236,7 +236,7 @@ async def get_current_user(
         HTTPException: If authentication fails.
     """
     # Bypass authentication in development mode
-    if settings.auth.disabled:
+    if not settings.auth.enable:
         # Give write access to all groups that exist on disk
         groups_dir = settings.data_dir / "groups"
         dev_groups = (
