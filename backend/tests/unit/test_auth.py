@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
-from joserfc.jwk import OctKey
+from joserfc.jwk import KeySet, OctKey
 
+from hivegent import auth
 from hivegent.auth import JWKSFetcher, build_discovery_url
 from hivegent.config import settings
 
@@ -52,3 +54,48 @@ async def test_get_jwks_uses_jwks_uri_from_discovery_doc(
     await fetcher.get_jwks()
 
     assert requested_urls == [discovery_url, custom_jwks_uri]
+
+
+async def test_validate_jwt_token_passes_discovery_algorithms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``validate_jwt_token`` must forward the discovery algs to ``jwt.decode``.
+
+    Regression: joserfc's default registry only permits its ``recommended``
+    algs (HS256/RS256/ES256), so EdDSA-only IdPs like rauthy were rejected
+    with ``Algorithm of 'EdDSA' is not recommended`` until we started
+    passing ``algorithms=`` explicitly.
+    """
+    monkeypatch.setattr(settings.auth, "issuer", "")
+    monkeypatch.setattr(settings.auth, "audience", None)
+
+    fake_keyset = KeySet.import_key_set({"keys": [OctKey.generate_key().as_dict()]})
+    fake_config = SimpleNamespace(
+        id_token_signing_alg_values_supported=["EdDSA"],
+        jwks_uri="https://example.invalid/jwks",
+    )
+
+    fetcher = JWKSFetcher()
+
+    async def fake_get_jwks(force_refresh: bool = False) -> KeySet:
+        return fake_keyset
+
+    async def fake_get_discovery(force_refresh: bool = False) -> SimpleNamespace:
+        return fake_config
+
+    monkeypatch.setattr(fetcher, "get_jwks", fake_get_jwks)
+    monkeypatch.setattr(fetcher, "_get_discovery", fake_get_discovery)
+    monkeypatch.setattr(auth, "_jwks_fetcher", fetcher)
+
+    captured: dict[str, Any] = {}
+
+    def fake_decode(value: Any, key: Any, algorithms: Any = None, **_: Any) -> Any:
+        captured["algorithms"] = algorithms
+        return SimpleNamespace(claims={"sub": "user-1"})
+
+    monkeypatch.setattr(auth.jwt, "decode", fake_decode)
+
+    user = await auth.validate_jwt_token("dummy.jwt.token")
+
+    assert captured["algorithms"] == ["EdDSA"]
+    assert user.id == "user-1"

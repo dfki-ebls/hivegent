@@ -24,11 +24,19 @@ from .tokens import token_store
 from .types import User
 
 __all__ = [
+    "DEFAULT_JWT_ALGORITHMS",
     "User",
     "build_discovery_url",
     "fetch_oidc_configuration",
     "get_current_user",
 ]
+
+# Fallback when the IdP's discovery document doesn't advertise
+# ``id_token_signing_alg_values_supported`` and no explicit override is set.
+# Modern Ed25519-based signatures only — no legacy RSA/ECDSA algorithms.
+# joserfc spells the JWS alg ``EdDSA`` and the JWK ``crv`` value ``Ed25519``;
+# both names appear in the wild, so accept either.
+DEFAULT_JWT_ALGORITHMS: tuple[str, ...] = ("EdDSA", "Ed25519")
 
 
 def build_discovery_url(issuer: str) -> str:
@@ -115,6 +123,23 @@ class JWKSFetcher:
         self._discovery_cache = config
         self._discovery_cache_time = time.time()
         return config
+
+    async def get_allowed_algorithms(self, force_refresh: bool = False) -> list[str]:
+        """Return the list of JWT signing algorithms accepted for tokens.
+
+        Reads ``id_token_signing_alg_values_supported`` from the OIDC
+        discovery document (rauthy and most IdPs advertise the same algs
+        for ID and access tokens), falling back to
+        ``DEFAULT_JWT_ALGORITHMS`` if the field is absent.
+
+        Raises:
+            HTTPException: If discovery has to be fetched and fails.
+        """
+        config = await self._get_discovery(force_refresh=force_refresh)
+        advertised = config.id_token_signing_alg_values_supported
+        if advertised:
+            return list(advertised)
+        return list(DEFAULT_JWT_ALGORITHMS)
 
     async def get_jwks(self, force_refresh: bool = False) -> KeySet:
         """Fetch JWKS from the OIDC provider, resolving the URI via discovery.
@@ -223,14 +248,16 @@ async def validate_jwt_token(token: str) -> User:
         HTTPException: If the token is invalid.
     """
     key_set = await _jwks_fetcher.get_jwks()
+    algorithms = await _jwks_fetcher.get_allowed_algorithms()
 
     try:
-        decoded = jwt.decode(token, key_set)
+        decoded = jwt.decode(token, key_set, algorithms=algorithms)
     except JoseError:
         # Try refreshing JWKS in case keys were rotated
         try:
             key_set = await _jwks_fetcher.get_jwks(force_refresh=True)
-            decoded = jwt.decode(token, key_set)
+            algorithms = await _jwks_fetcher.get_allowed_algorithms(force_refresh=True)
+            decoded = jwt.decode(token, key_set, algorithms=algorithms)
         except JoseError as e:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
