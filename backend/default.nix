@@ -1,16 +1,19 @@
 {
   lib,
+  stdenv,
   callPackage,
   python3,
   uv2nix,
   pyproject-nix,
   pyproject-build-systems,
   makeBinaryWrapper,
+  exiftool,
+  ffmpeg-headless,
   jq,
+  libreoffice,
   pandoc,
   ripgrep,
-  libreoffice,
-  stdenv,
+  tesseract,
 }:
 let
   workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
@@ -79,25 +82,32 @@ let
     package = pythonSet.hivegent;
   };
 
-  # Runtime CLI tools the backend invokes via `asyncio.create_subprocess_exec`
-  # (`hivegent/subprocesses/`) plus libreoffice, used by docling for office
-  # document conversion. Exposed via `passthru.runtimeInputs` so `shell.nix`
-  # can use the same list and stay in sync without redeclaring it.
+  # Every external CLI any code path in the backend or its dependencies can
+  # invoke. Declared explicitly (rather than relying on PATH) so the wrapped
+  # binary behaves identically across machines. Exposed via
+  # `passthru.runtimeInputs` so `shell.nix` reuses the same list.
+  #
+  # - jq, pandoc, ripgrep: used by `hivegent/subprocesses/` wrappers.
+  # - ffmpeg: pydub audio decoding (markitdown audio converter, non-wav).
+  # - exiftool: optional audio metadata extraction in markitdown.
+  # - tesseract: optional OCR backend for docling (`TesseractCliOcrOptions`).
+  # - libreoffice: docling docx→pdf conversion; Linux-only in nixpkgs.
   runtimeInputs = [
+    exiftool
+    ffmpeg-headless
     jq
     pandoc
     ripgrep
+    tesseract
   ]
   ++ lib.optionals stdenv.hostPlatform.isLinux [ libreoffice ];
 in
 app.overrideAttrs (oldAttrs: {
   nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ makeBinaryWrapper ];
-  postFixup =
-    (oldAttrs.postFixup or "")
-    + ''
-      wrapProgram "$out/bin/hivegent" \
-        --prefix PATH : ${lib.makeBinPath runtimeInputs}
-    '';
+  postFixup = (oldAttrs.postFixup or "") + ''
+    wrapProgram "$out/bin/hivegent" \
+      --prefix PATH : ${lib.makeBinPath runtimeInputs}
+  '';
   passthru = (oldAttrs.passthru or { }) // {
     inherit runtimeInputs;
   };
