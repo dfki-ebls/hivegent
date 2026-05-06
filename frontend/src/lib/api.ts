@@ -106,6 +106,23 @@ export function requiresConversion(filename: string): boolean {
   return ext !== ".md";
 }
 
+/** Probe the public readiness endpoint, aborting after `timeoutMs` so
+ * polling callers don't stack up hung connections. */
+export async function checkHealth(timeoutMs = 3000): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/health`, {
+      signal: controller.signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Fetch server-side LLM settings. */
 export async function getSettings(): Promise<BackendSettings> {
   const res = await authFetch(`${API_BASE_URL}/api/settings`);

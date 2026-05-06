@@ -14,6 +14,7 @@ from ..consistency import check_and_fix_all_stores
 from ..mcp import mcp_app
 from ..observability import configure_observability
 from .routes import api_router
+from .routes.public import router as public_router
 
 __all__ = ["app", "create_app", "mcp_http_app"]
 
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_exception_handler(ValidationError, validation_error_handler)
+    app.include_router(public_router)
     app.include_router(api_router)
     if mcp_http_app is not None:
         app.mount("/mcp", mcp_http_app)
