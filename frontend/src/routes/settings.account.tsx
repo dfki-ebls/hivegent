@@ -8,6 +8,7 @@ import {
   UserCogIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { BackendReadyGate } from "../components/BackendReadyGate";
 import { Button } from "../components/ui/button";
 import {
   AlertDialog,
@@ -33,7 +34,11 @@ import { useUserDocumentsStore } from "../stores/user-documents-store";
 
 export const Route = createFileRoute("/settings/account")({
   beforeLoad: enforceLogin,
-  component: AccountPage,
+  component: () => (
+    <BackendReadyGate>
+      <AccountPage />
+    </BackendReadyGate>
+  ),
 });
 
 // --- Danger Zone ---

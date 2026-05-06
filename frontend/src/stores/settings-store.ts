@@ -259,15 +259,18 @@ export const useSettingsStore = create<SettingsState>()(
       reset: () => set({ overrides: EMPTY_OVERRIDES }),
 
       initFromBackend: async () => {
-        try {
-          const defaults = await getSettings();
-          set({
-            backendDefaults: defaults,
-            readGroups: defaults.user.read_groups,
-            writeGroups: defaults.user.write_groups,
-          });
-        } catch {
-          // Silently fail — keep existing values
+        while (true) {
+          try {
+            const defaults = await getSettings();
+            set({
+              backendDefaults: defaults,
+              readGroups: defaults.user.read_groups,
+              writeGroups: defaults.user.write_groups,
+            });
+            return;
+          } catch {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
         }
       },
 

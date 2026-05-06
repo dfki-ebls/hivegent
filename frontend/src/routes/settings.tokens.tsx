@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Key } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { BackendReadyGate } from "../components/BackendReadyGate";
 import { CreateTokenDialog } from "../components/CreateTokenDialog";
 import { TokenCreatedDialog } from "../components/TokenCreatedDialog";
 import { TokenList } from "../components/TokenList";
@@ -21,7 +22,11 @@ import { enforceLogin } from "../oidc";
 
 export const Route = createFileRoute("/settings/tokens")({
   beforeLoad: enforceLogin,
-  component: TokensPage,
+  component: () => (
+    <BackendReadyGate>
+      <TokensPage />
+    </BackendReadyGate>
+  ),
 });
 
 function TokensPage() {

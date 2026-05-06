@@ -8,7 +8,7 @@ interface ToolSectionProps {
   children: ReactNode;
 }
 
-export function ToolSection({
+function ToolSection({
   title,
   variant = "default",
   border = false,
@@ -37,7 +37,7 @@ interface ToolKeyValueProps {
   indent?: boolean;
 }
 
-export function ToolKeyValue({ label, value, indent = false }: ToolKeyValueProps) {
+function ToolKeyValue({ label, value, indent = false }: ToolKeyValueProps) {
   return (
     <div className={cn(indent && "pl-4")}>
       <span className="text-muted-foreground">{label}:</span>{" "}

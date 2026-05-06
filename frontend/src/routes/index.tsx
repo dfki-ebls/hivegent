@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { FileSearch, LogIn } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { BackendReadyGate } from "../components/BackendReadyGate";
 import { Button } from "../components/ui/button";
 import { Spinner } from "../components/ui/spinner";
 import { createConversation } from "../lib/api";
@@ -13,34 +14,16 @@ export const Route = createFileRoute("/")({
 
 function IndexPage() {
   const { isUserLoggedIn, login } = useOidc();
-  const navigate = useNavigate();
-  const redirectingRef = useRef(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
 
-  // Auto-redirect authenticated users to a new conversation
-  useEffect(() => {
-    if (!isUserLoggedIn || redirectingRef.current) return;
-    redirectingRef.current = true;
-    createConversation()
-      .then((id) => {
-        void navigate({ to: "/conversations/$id", params: { id } });
-      })
-      .catch((error) => {
-        console.error("Failed to create conversation:", error);
-        redirectingRef.current = false;
-      });
-  }, [isUserLoggedIn, navigate]);
-
-  // Show loading while redirecting
   if (isUserLoggedIn) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Spinner className="h-8 w-8 text-muted-foreground" />
-      </div>
+      <BackendReadyGate>
+        <NewConversationRedirect />
+      </BackendReadyGate>
     );
   }
 
-  // Not authenticated - show landing page with sign in button
   return (
     <div className="flex h-full items-center justify-center">
       <div className="flex flex-col items-center gap-6 text-center">
@@ -64,6 +47,30 @@ function IndexPage() {
           Sign In
         </Button>
       </div>
+    </div>
+  );
+}
+
+function NewConversationRedirect() {
+  const navigate = useNavigate();
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    createConversation()
+      .then((id) => {
+        void navigate({ to: "/conversations/$id", params: { id } });
+      })
+      .catch((error) => {
+        console.error("Failed to create conversation:", error);
+        startedRef.current = false;
+      });
+  }, [navigate]);
+
+  return (
+    <div className="flex h-full items-center justify-center">
+      <Spinner className="h-8 w-8 text-muted-foreground" />
     </div>
   );
 }

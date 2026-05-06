@@ -7,14 +7,18 @@ import { useEffect } from "react";
 import { AppErrorBoundary } from "../components/AppErrorBoundary";
 import { Header } from "../components/Header";
 import { ThemeProvider } from "../components/ThemeProvider";
+import { useOidc } from "../oidc";
 import { useSettingsStore } from "../stores/settings-store";
 
 function RootComponent() {
+  const { isUserLoggedIn } = useOidc();
   const initFromBackend = useSettingsStore((state) => state.initFromBackend);
 
   useEffect(() => {
-    void initFromBackend();
-  }, [initFromBackend]);
+    if (isUserLoggedIn) {
+      void initFromBackend();
+    }
+  }, [isUserLoggedIn, initFromBackend]);
 
   return (
     <ThemeProvider>
