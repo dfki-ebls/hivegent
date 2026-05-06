@@ -13,9 +13,9 @@ __all__ = ["app"]
 app = typer.Typer(
     help="Hivegent CLI for service account management.",
     no_args_is_help=True,
-    pretty_exceptions_enable=True,
-    pretty_exceptions_show_locals=False,
-    pretty_exceptions_short=True,
+    pretty_exceptions_enable=False,
+    # pretty_exceptions_show_locals=False,
+    # pretty_exceptions_short=True,
 )
 
 # Default paths
