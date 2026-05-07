@@ -38,8 +38,6 @@ __all__ = [
     "get_metadata",
     "list_chunked_documents",
     "load_document_metadata",
-    "on_document_write",
-    "rechunk_document",
 ]
 
 logger = logging.getLogger(__name__)
@@ -195,6 +193,7 @@ async def chunk_document(
     )
 
     meta_path = metadata_path_for_reference(store, filename)
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
     meta_path.write_text(
         doc.model_dump_json(indent=2, exclude_none=True),
         encoding="utf-8",
@@ -239,7 +238,7 @@ def get_metadata(store: Casebase, filename: str) -> DocumentMetadata | None:
     Returns:
         The document metadata, or ``None`` if not found.
     """
-    return load_document_metadata(store.metadata_dir(settings.data_dir), filename)
+    return load_document_metadata(store.metadata_path(settings.data_dir), filename)
 
 
 def delete_metadata(store: Casebase, filepath: str) -> bool:
@@ -255,14 +254,14 @@ def delete_metadata(store: Casebase, filepath: str) -> bool:
     Returns:
         True if the metadata file was deleted, False if it didn't exist.
     """
-    metadata_dir = store.metadata_dir(settings.data_dir)
+    metadata_root = store.metadata_path(settings.data_dir)
     meta_path = metadata_path_for_reference(store, filepath)
     try:
         meta_path.unlink()
     except FileNotFoundError:
         return False
     parent = meta_path.parent
-    while parent != metadata_dir:
+    while parent != metadata_root:
         try:
             parent.rmdir()
         except OSError:
@@ -301,42 +300,3 @@ def list_chunked_documents(store: Casebase) -> dict[str, int]:
     return result
 
 
-async def rechunk_document(
-    store: Casebase,
-    filename: str,
-    chunking: ChunkingSpec | None = None,
-) -> None:
-    """Re-chunk a document and persist metadata.
-
-    Reads the file from the store's documents directory, re-chunks it,
-    and writes the metadata JSON while preserving the logical entry fields.
-    Does **not** sync the search index; the caller should mark the store
-    dirty via :func:`~hivegent.retrieval.mark_dirty`.
-
-    Args:
-        store: The casebase.
-        filename: The relative document path.
-        chunking: Optional chunking spec (pipeline + config).
-    """
-    workspace = store.workspace_dir(settings.data_dir)
-    file_path = workspace / filename
-    try:
-        text_content = file_path.read_text(encoding="utf-8")
-        await chunk_document(store, filename, text_content, chunking)
-    except Exception:
-        logger.warning("Re-chunking failed for %s after write", filename)
-
-
-async def on_document_write(store: Casebase, filename: str) -> None:
-    """Re-chunk a document and mark the search index dirty.
-
-    Intended as the ``on_write`` callback for mutation tools.
-
-    Args:
-        store: The casebase the document belongs to.
-        filename: The relative document path that was written.
-    """
-    from .retrieval import mark_dirty_and_sync
-
-    await rechunk_document(store, filename)
-    mark_dirty_and_sync(store)

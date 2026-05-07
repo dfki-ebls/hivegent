@@ -6,6 +6,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .chunkers import ChunkingSpec
+from .config import settings
+from .converters import ConversionSpec
 from .messages import ConversationSummary
 from .prompts import Personality
 
@@ -50,7 +53,9 @@ __all__ = [
     "MoveDocumentResponse",
     "OperationErrorEvent",
     "OperationStageEvent",
+    "PipelineSpec",
     "RechunkCompleteEvent",
+    "resolve_llm_config",
     "SettingsResponse",
     "TokenInfo",
     "ToolInfo",
@@ -112,6 +117,25 @@ class LlmConfig(BaseModel):
     model: str = ""
     api_key: str = ""
     base_url: str | None = None
+
+
+def resolve_llm_config(
+    llm: LlmConfig, *, default_model: str | None = None
+) -> LlmConfig:
+    """Apply server defaults to a client-provided LLM configuration."""
+    return LlmConfig(
+        model=llm.model or default_model or settings.llm.model,
+        api_key=llm.api_key or settings.llm.api_key,
+        base_url=llm.base_url or settings.llm.base_url or None,
+    )
+
+
+class PipelineSpec(BaseModel):
+    """Bundled conversion and chunking pipeline selection."""
+
+    conversion: ConversionSpec = Field(default_factory=ConversionSpec)
+    chunking: ChunkingSpec = Field(default_factory=ChunkingSpec)
+    process_assets: bool = Field(default=True)
 
 
 class McpOAuth2Config(BaseModel):

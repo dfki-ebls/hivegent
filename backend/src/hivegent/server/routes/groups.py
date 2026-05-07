@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from fastapi.sse import EventSourceResponse
 from starlette.responses import Response
 
+from ... import workspace
 from ...auth import User, get_current_user
 from ...config import settings
-from ...retrieval import mark_dirty_and_sync
 from ...types import (
     AssetEntry,
     AssetListResponse,
@@ -43,20 +43,12 @@ from ..common import (
 from ..operations import (
     PreparedCollection,
     build_tree_response,
-    delete_directory_internal,
-    delete_single,
-    ensure_upload_slot,
     get_document_response,
     list_assets,
     list_documents_for_store,
-    move_document_internal,
     prepare_collection_upload,
-    process_collection,
     read_collection_zip,
-    reconvert_single,
     reconvert_single_stream,
-    update_asset_description,
-    upload_file,
     upload_file_stream,
     validate_collection_upload,
 )
@@ -109,7 +101,7 @@ async def patch_group_asset_description(
     """Update an asset's companion .md description in a group."""
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
-    return update_asset_description(
+    return await workspace.update_asset_description(
         group_store(safe_id), safe, request.asset_name, request.content
     )
 
@@ -143,10 +135,9 @@ async def upload_group_document_stream(
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
     store = group_store(safe_id)
-    ensure_upload_slot(store, safe, overwrite=overwrite)
 
     spec = parse_pipeline_spec(pipeline_spec)
-    llm_config_model = resolve_llm_config(
+    llm = resolve_llm_config(
         LlmConfig.model_validate_json(llm_config),
         default_model=settings.llm.aux_model,
     )
@@ -163,7 +154,8 @@ async def upload_group_document_stream(
         filepath=safe,
         content=content,
         spec=spec,
-        llm_config=llm_config_model,
+        llm_config=llm,
+        overwrite=overwrite,
     ):
         yield event
 
@@ -182,10 +174,9 @@ async def upload_group_document(
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
     store = group_store(safe_id)
-    ensure_upload_slot(store, safe, overwrite=overwrite)
 
     spec = parse_pipeline_spec(pipeline_spec)
-    llm_config_model = resolve_llm_config(
+    llm = resolve_llm_config(
         LlmConfig.model_validate_json(llm_config),
         default_model=settings.llm.aux_model,
     )
@@ -197,12 +188,13 @@ async def upload_group_document(
             detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
         )
 
-    return await upload_file(
-        store=store,
-        filepath=safe,
-        content=content,
+    return await workspace.upload(
+        store,
+        safe,
+        content,
         spec=spec,
-        llm_config=llm_config_model,
+        llm=llm,
+        overwrite=overwrite,
     )
 
 
@@ -240,7 +232,7 @@ async def upload_group_collection(
     raw = await read_collection_zip(file)
 
     result: CollectionCompleteEvent | None = None
-    async for event in process_collection(store, raw, spec, resolved):
+    async for event in workspace.process_collection(store, raw, spec, resolved):
         if isinstance(event, CollectionCompleteEvent):
             result = event
 
@@ -260,7 +252,7 @@ async def upload_group_collection_stream(
     """Upload a collection to a group with streaming progress events."""
     safe_id = require_group_write(user, group_id)
     store = group_store(safe_id)
-    async for event in process_collection(
+    async for event in workspace.process_collection(
         store, prepared.raw, prepared.spec, prepared.resolved
     ):
         yield event
@@ -275,9 +267,7 @@ async def delete_group_document(
     """Delete a document from a group's knowledge base."""
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
-    store = group_store(safe_id)
-    delete_single(store, safe)
-    mark_dirty_and_sync(store)
+    await workspace.delete_document(group_store(safe_id), safe)
     return DeleteDocumentResponse(
         filename=safe,
         message="Document deleted successfully",
@@ -293,11 +283,7 @@ async def create_group_directory(
     """Create a new directory within a group's documents directory."""
     safe_id = require_group_write(user, group_id)
     safe = safe_path(request.path)
-    store = group_store(safe_id)
-    directory_path = store.workspace_dir(settings.data_dir) / safe
-    if directory_path.exists():
-        raise HTTPException(status_code=409, detail="Directory already exists")
-    directory_path.mkdir(parents=True, exist_ok=True)
+    await workspace.create_directory(group_store(safe_id), safe)
     return CreateDirectoryResponse(
         path=safe,
         message="Directory created successfully",
@@ -313,9 +299,7 @@ async def delete_group_directory(
     """Delete a directory from a group's documents."""
     safe_id = require_group_write(user, group_id)
     safe = safe_path(request.path)
-    store = group_store(safe_id)
-    files_deleted = delete_directory_internal(store, safe)
-    mark_dirty_and_sync(store)
+    files_deleted = await workspace.delete_directory(group_store(safe_id), safe)
     return DeleteDirectoryResponse(
         path=safe,
         files_deleted=files_deleted,
@@ -335,9 +319,7 @@ async def reconvert_group_document(
     safe = safe_path(filepath)
     store = group_store(safe_id)
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
-    result = await reconvert_single(store, safe, request.pipeline, resolved)
-    mark_dirty_and_sync(store)
-    return result
+    return await workspace.reconvert(store, safe, spec=request.pipeline, llm=resolved)
 
 
 @router.post("/groups/{group_id}/documents/move/{filepath:path}")
@@ -355,4 +337,4 @@ async def move_group_document(
         raise HTTPException(
             status_code=400, detail="Source and destination are the same"
         )
-    return move_document_internal(group_store(safe_id), src, dst)
+    return await workspace.move_document(group_store(safe_id), src, dst)

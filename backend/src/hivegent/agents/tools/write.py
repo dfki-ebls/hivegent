@@ -4,7 +4,7 @@ from functools import partial
 
 from pydantic_ai import FunctionToolset
 
-from ...chunks import on_document_write
+from ... import workspace
 from ...config import settings
 from ...tools import EditDocumentTool, WriteDocumentTool
 from ...tools.base import SearchPath
@@ -20,7 +20,7 @@ def _edit_document(deps: UserDeps) -> EditDocumentTool:
             path=deps.store.workspace_dir(settings.data_dir),
             filter_func=deps.document_filter,
         ),
-        hook=partial(on_document_write, deps.store),
+        hook=partial(workspace.on_agent_write, deps.store),
     )
 
 
@@ -30,7 +30,7 @@ def _write_document(deps: UserDeps) -> WriteDocumentTool:
             path=deps.store.workspace_dir(settings.data_dir),
             filter_func=deps.document_filter,
         ),
-        hook=partial(on_document_write, deps.store),
+        hook=partial(workspace.on_agent_write, deps.store),
     )
 
 

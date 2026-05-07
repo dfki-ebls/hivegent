@@ -10,6 +10,7 @@ from .store import Casebase
 __all__ = [
     "EntryPaths",
     "assets_dir_for_stem",
+    "cleanup_empty_parents",
     "description_path_for_stem",
     "entry_exists",
     "find_original_for_reference",
@@ -55,12 +56,15 @@ def assets_dir_for_stem(stem_path: str) -> str:
 
 
 def metadata_path_for_reference(store: Casebase, reference: str) -> Path:
-    """Return the metadata JSON path for a logical entry reference."""
-    metadata_dir = store.metadata_dir(settings.data_dir)
+    """Return the metadata JSON path for a logical entry reference.
+
+    Pure path computation — does not create any directories.  Callers
+    that need to *write* the metadata file should call ``mkdir`` on the
+    returned path's parent themselves.
+    """
+    metadata_dir = store.metadata_path(settings.data_dir)
     stem_path = stem_path_from_reference(reference)
-    path = metadata_dir / f"{stem_path}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
+    return metadata_dir / f"{stem_path}.json"
 
 
 def find_original_for_reference(workspace_dir: Path, reference: str) -> str | None:
@@ -114,3 +118,14 @@ def entry_exists(workspace_dir: Path, metadata_dir: Path, reference: str) -> boo
 def stem_display_name(stem_path: str) -> str:
     """Return the user-facing basename for a logical stem."""
     return PurePosixPath(stem_path).name
+
+
+def cleanup_empty_parents(path: Path, stop_at: Path) -> None:
+    """Remove empty parent directories of *path* up to ``stop_at``."""
+    parent = path.parent
+    while parent != stop_at:
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent

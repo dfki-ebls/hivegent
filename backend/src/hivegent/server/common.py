@@ -1,18 +1,15 @@
 """Shared helpers for server routes and operations."""
 
-from pathlib import Path
-
 from fastapi import HTTPException
 from pydantic import ValidationError
 
 from ..auth import User
-from ..config import sanitize_document_path, sanitize_group_id, settings
+from ..config import sanitize_document_path, sanitize_group_id
 from ..store import Casebase
-from ..types import DocumentFilter, LlmConfig
+from ..types import DocumentFilter, resolve_llm_config
 from .models import PipelineSpec
 
 __all__ = [
-    "cleanup_empty_parents",
     "group_store",
     "group_stores",
     "parse_document_filters",
@@ -24,17 +21,6 @@ __all__ = [
     "safe_path",
     "user_store",
 ]
-
-
-def resolve_llm_config(
-    llm: LlmConfig, *, default_model: str | None = None
-) -> LlmConfig:
-    """Apply server defaults to a client-provided LLM configuration."""
-    return LlmConfig(
-        model=llm.model or default_model or settings.llm.model,
-        api_key=llm.api_key or settings.llm.api_key,
-        base_url=llm.base_url or settings.llm.base_url or None,
-    )
 
 
 def parse_document_filters(
@@ -127,17 +113,6 @@ def safe_group_id(group_id: str) -> str:
         return sanitize_group_id(group_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-def cleanup_empty_parents(path: Path, stop_at: Path) -> None:
-    """Remove empty parent directories up to ``stop_at``."""
-    parent = path.parent
-    while parent != stop_at:
-        try:
-            parent.rmdir()
-        except OSError:
-            break
-        parent = parent.parent
 
 
 def require_group_member(user: User, group_id: str) -> str:

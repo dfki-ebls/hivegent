@@ -9,7 +9,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
 
-from ..agents import base_agent
+from ..agents.app import base_agent
 from ..types import LlmConfig
 from .base import ConversionResult, DocumentConverter
 from .images import sanitize_image_bytes

@@ -2,11 +2,10 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
+from ... import workspace
 from ...auth import User, get_current_user
-from ...config import settings
-from ...retrieval import mark_dirty_and_sync
 from ...types import (
     CreateDirectoryRequest,
     CreateDirectoryResponse,
@@ -17,11 +16,7 @@ from ...types import (
     MoveDirectoryResponse,
 )
 from ..common import safe_path, user_store
-from ..operations import (
-    build_tree_response,
-    delete_directory_internal,
-    move_directory_internal,
-)
+from ..operations import build_tree_response
 
 __all__ = ["router"]
 
@@ -43,11 +38,7 @@ async def create_directory(
 ) -> CreateDirectoryResponse:
     """Create a new directory within the user's documents directory."""
     safe = safe_path(request.path)
-    store = user_store(user)
-    directory_path = store.workspace_dir(settings.data_dir) / safe
-    if directory_path.exists():
-        raise HTTPException(status_code=409, detail="Directory already exists")
-    directory_path.mkdir(parents=True, exist_ok=True)
+    await workspace.create_directory(user_store(user), safe)
     return CreateDirectoryResponse(
         path=safe,
         message="Directory created successfully",
@@ -62,7 +53,7 @@ async def move_directory(
     """Move/rename a directory within the user's documents directory."""
     safe_src = safe_path(request.source)
     safe_dst = safe_path(request.destination)
-    return move_directory_internal(user_store(user), safe_src, safe_dst)
+    return await workspace.move_directory(user_store(user), safe_src, safe_dst)
 
 
 @router.delete("/directories")
@@ -72,9 +63,7 @@ async def delete_directory(
 ) -> DeleteDirectoryResponse:
     """Delete a directory and all of its contents."""
     safe = safe_path(request.path)
-    store = user_store(user)
-    files_deleted = delete_directory_internal(store, safe)
-    mark_dirty_and_sync(store)
+    files_deleted = await workspace.delete_directory(user_store(user), safe)
     return DeleteDirectoryResponse(
         path=safe,
         files_deleted=files_deleted,

@@ -12,6 +12,8 @@ __all__ = [
     "DocumentConverter",
     "IMAGE_EXTENSIONS",
     "collect_dir_images",
+    "is_image_suffix",
+    "is_markdown_suffix",
     "pil_to_png_bytes",
 ]
 
@@ -33,6 +35,16 @@ IMAGE_EXTENSIONS = frozenset(
         ".ico",
     }
 )
+
+
+def is_markdown_suffix(suffix: str) -> bool:
+    """Return whether *suffix* matches the markdown document extension."""
+    return suffix.lower() == DOCUMENT_EXTENSION
+
+
+def is_image_suffix(suffix: str) -> bool:
+    """Return whether *suffix* matches a known image extension."""
+    return suffix.lower() in IMAGE_EXTENSIONS
 
 
 class _PngSerializable(Protocol):

@@ -1,4 +1,17 @@
-"""Per-user and per-group LanceDB storage and retrieval using cbrkit."""
+"""Per-user and per-group LanceDB storage and retrieval using cbrkit.
+
+The public surface of this module is intentionally small:
+
+- :func:`build_search_tool` builds a search tool that auto-syncs any
+  dirty stores before serving a query.
+- :func:`sync_index` rebuilds a store's index from disk; called from the
+  startup consistency check.
+- :func:`invalidate_store` drops cached state and cancels in-flight
+  syncs; called by :mod:`hivegent.workspace` before wiping a store.
+- :func:`mark_dirty_and_sync` schedules a coalesced background sync.
+  Only :mod:`hivegent.workspace` should call this — it is the
+  invariant-keeping handshake every mutation makes after writing.
+"""
 
 import asyncio
 import json
@@ -21,7 +34,6 @@ from .tools.retrieval import IndexedStorage, LanceDBSearchTool, SearchResult
 __all__ = [
     "build_search_tool",
     "invalidate_store",
-    "mark_dirty",
     "mark_dirty_and_sync",
     "sync_index",
 ]
@@ -64,8 +76,18 @@ class _RetrievalState:
     # lock to get a consistent snapshot of the caches.  A plain Lock
     # would deadlock in that situation.
     _lock: threading.RLock = field(default_factory=threading.RLock)
+    # Generation counter incremented on every mark_dirty.  sync_index
+    # captures the value at start and only clears the dirty flag if no
+    # new mark_dirty calls happened during the sync — this prevents a
+    # race where a concurrent write would otherwise be lost from the
+    # dirty set after a sync completes.
+    _dirty_generations: dict[str, int] = field(default_factory=dict)
     _pending_reindex: set[str] = field(default_factory=set)
     _chunk_meta: dict[str, dict[str, _ChunkEntry]] = field(default_factory=dict)
+    # Retained references to in-flight background sync tasks so the
+    # event loop doesn't GC them early (which would log a warning) and
+    # so concurrent mark_dirty_and_sync calls coalesce onto one task.
+    _sync_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
 
     def get_embedding_func(
         self,
@@ -100,14 +122,30 @@ class _RetrievalState:
 
             return self._embedding_func
 
-    def mark_dirty(self, store_key: str) -> None:
+    def mark_dirty(self, store_key: str) -> int:
         """Mark a store's search index as needing a rebuild.
+
+        Returns the current generation count so a subsequent
+        :meth:`clear_dirty_if_unchanged` call can detect intervening
+        writes.
 
         Args:
             store_key: The store key to mark.
+
+        Returns:
+            The new generation count after the bump.
         """
         with self._lock:
             self._pending_reindex.add(store_key)
+            self._dirty_generations[store_key] = (
+                self._dirty_generations.get(store_key, 0) + 1
+            )
+            return self._dirty_generations[store_key]
+
+    def dirty_generation(self, store_key: str) -> int:
+        """Return the current dirty generation for a store."""
+        with self._lock:
+            return self._dirty_generations.get(store_key, 0)
 
     def is_dirty(self, store_key: str) -> bool:
         """Check whether a store's search index needs a rebuild.
@@ -121,14 +159,19 @@ class _RetrievalState:
         with self._lock:
             return store_key in self._pending_reindex
 
-    def clear_dirty(self, store_key: str) -> None:
-        """Clear the dirty flag for a store.
+    def clear_dirty_if_unchanged(self, store_key: str, generation: int) -> None:
+        """Clear the dirty flag only if no new writes happened.
 
         Args:
             store_key: The store key to clear.
+            generation: The generation captured at the start of the sync.
+                If a later :meth:`mark_dirty` call has bumped the
+                generation, the dirty flag is left set so the new write
+                triggers another sync.
         """
         with self._lock:
-            self._pending_reindex.discard(store_key)
+            if self._dirty_generations.get(store_key, 0) == generation:
+                self._pending_reindex.discard(store_key)
 
     def get_storage(self, store: Casebase) -> cbrkit.indexable.lancedb[str]:
         """Get or create the LanceDB storage for a casebase.
@@ -268,11 +311,12 @@ def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, _ChunkEntry]:
     return chunks
 
 
-def invalidate_store(store: Casebase) -> None:
+async def invalidate_store(store: Casebase) -> None:
     """Remove a casebase from the retrieval cache.
 
-    Call this before wiping a store's LanceDB directory so that stale
-    connections are not reused.
+    Cancels any in-flight background sync, waits for it to finish, and
+    drops the cached LanceDB connection so the directory can be safely
+    wiped afterwards.
 
     Args:
         store: The casebase to evict.
@@ -282,42 +326,63 @@ def invalidate_store(store: Casebase) -> None:
         _state._storage_cache.pop(key, None)
         _state._chunk_meta.pop(key, None)
         _state._pending_reindex.discard(key)
-
-
-def mark_dirty(store: Casebase) -> None:
-    """Mark a store's search index as needing a rebuild.
-
-    The next call to :func:`build_search_tool` will resolve the pending
-    reindex before performing any search.
-
-    Args:
-        store: The casebase to mark.
-    """
-    _state.mark_dirty(store.store_key)
+        _state._dirty_generations.pop(key, None)
+        task = _state._sync_tasks.pop(key, None)
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.warning("In-flight sync task failed during invalidation", exc_info=True)
 
 
 async def _eager_sync(store: Casebase) -> None:
-    """Run :func:`sync_index` in a thread, swallowing errors."""
+    """Run :func:`sync_index` in a thread, swallowing errors.
+
+    Loops while the store is still dirty so a single coalesced task
+    catches up after every concurrent write rather than racing
+    multiple parallel syncs.
+    """
+    key = store.store_key
     try:
-        await asyncio.to_thread(sync_index, store)
+        while _state.is_dirty(key):
+            await asyncio.to_thread(sync_index, store)
     except Exception:
-        logger.warning("Eager sync failed for %s", store.store_key)
+        logger.warning("Eager sync failed for %s", key, exc_info=True)
+    finally:
+        with _state._lock:
+            current = _state._sync_tasks.get(key)
+            if current is asyncio.current_task():
+                _state._sync_tasks.pop(key, None)
 
 
 def mark_dirty_and_sync(store: Casebase) -> None:
     """Mark a store dirty and eagerly schedule a background index sync.
 
+    Coalesces concurrent calls onto a single in-flight task per store
+    and retains a reference so the event loop does not GC it early.
     Falls back silently when no running event loop is available (e.g. in
     tests or synchronous contexts).
+
+    Only :mod:`hivegent.workspace` should call this — every mutation
+    primitive there invokes it as part of releasing the casebase lock.
 
     Args:
         store: The casebase to mark and sync.
     """
-    mark_dirty(store)
+    _state.mark_dirty(store.store_key)
     try:
-        asyncio.get_running_loop().create_task(_eager_sync(store))
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        pass
+        return
+    key = store.store_key
+    with _state._lock:
+        existing = _state._sync_tasks.get(key)
+        if existing is not None and not existing.done():
+            return
+        _state._sync_tasks[key] = loop.create_task(_eager_sync(store))
 
 
 def sync_index(store: Casebase) -> None:
@@ -325,20 +390,22 @@ def sync_index(store: Casebase) -> None:
 
     Loads every chunk for the store and calls ``create_index()`` which
     diffs against the existing table and only adds/removes changed rows.
+    Captures the dirty generation before reading metadata so concurrent
+    writes are not lost from the dirty set.
 
     Args:
         store: The casebase to sync.
     """
+    key = store.store_key
+    generation = _state.dirty_generation(key)
     storage = _state.get_storage(store)
     loaded = _load_all_chunks_from_dir(store.metadata_dir(settings.data_dir))
-    casebase = {key: entry.text for key, entry in loaded.items()}
-    logger.info(
-        "Syncing LanceDB index for %s (%d chunks)", store.store_key, len(casebase)
-    )
+    casebase = {chunk_key: entry.text for chunk_key, entry in loaded.items()}
+    logger.info("Syncing LanceDB index for %s (%d chunks)", key, len(casebase))
     storage.create_index(casebase)
     with _state._lock:
-        _state._chunk_meta[store.store_key] = loaded
-    _state.clear_dirty(store.store_key)
+        _state._chunk_meta[key] = loaded
+    _state.clear_dirty_if_unchanged(key, generation)
 
 
 def _ensure_chunk_meta(store: Casebase) -> None:

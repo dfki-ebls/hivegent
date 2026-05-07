@@ -9,7 +9,7 @@ from pydantic_ai import BinaryContent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from ..agents import base_agent
+from ..agents.app import base_agent
 from ..types import LlmConfig
 from .images import guess_image_media_type, sanitize_image_bytes
 

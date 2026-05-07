@@ -2,25 +2,14 @@
 
 from pydantic import BaseModel, Field
 
-from ..chunkers import ChunkingSpec
-from ..converters import ConversionSpec
-from ..types import LlmConfig
+from ..types import LlmConfig, PipelineSpec
 
 __all__ = [
     "BulkDeleteRequest",
     "BulkRechunkRequest",
     "BulkReconvertRequest",
-    "PipelineSpec",
     "ReconvertRequest",
 ]
-
-
-class PipelineSpec(BaseModel):
-    """Bundled conversion and chunking pipeline selection."""
-
-    conversion: ConversionSpec = Field(default_factory=ConversionSpec)
-    chunking: ChunkingSpec = Field(default_factory=ChunkingSpec)
-    process_assets: bool = Field(default=True)
 
 
 class ReconvertRequest(BaseModel):

@@ -5,10 +5,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ... import workspace
 from ...auth import User, get_current_user
 from ...config import settings
 from ...memory import clear_memory
-from ...retrieval import invalidate_store
 from ...tokens import token_store
 from ...types import (
     BulkDeleteUserDataResponse,
@@ -96,8 +96,8 @@ async def delete_all_user_data(
 ) -> BulkDeleteUserDataResponse:
     """Delete all data for the authenticated user."""
     store = user_store(user)
-    invalidate_store(store)
-    user_dir = store.root_dir(settings.data_dir)
+    await workspace.delete_all(store)
+    user_dir = store.root_path(settings.data_dir)
     if user_dir.exists():
         shutil.rmtree(user_dir)
     return BulkDeleteUserDataResponse(

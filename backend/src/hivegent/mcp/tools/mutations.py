@@ -5,7 +5,7 @@ from functools import partial
 from fastmcp import Context
 from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAccessIssue]
 
-from ...chunks import on_document_write
+from ... import workspace
 from ...config import settings
 from ...store import Casebase
 from ...tools import EditDocumentTool, WriteDocumentTool
@@ -45,7 +45,7 @@ async def edit_document(
 
     tool = EditDocumentTool(
         paths=store.workspace_dir(settings.data_dir),
-        hook=partial(on_document_write, store),
+        hook=partial(workspace.on_agent_write, store),
     )
     result = await tool(file_path, old_string, new_string, replace_all)
     return result.data
@@ -69,7 +69,7 @@ async def write_document(
 
     tool = WriteDocumentTool(
         paths=store.workspace_dir(settings.data_dir),
-        hook=partial(on_document_write, store),
+        hook=partial(workspace.on_agent_write, store),
     )
     result = await tool(file_path, content, mode)
     return result.data
