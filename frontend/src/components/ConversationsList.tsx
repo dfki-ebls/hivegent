@@ -202,6 +202,9 @@ function ConversationItem({
 
   return (
     <div
+      // Cannot use <button> because the item contains nested action buttons
+      // and an inline title editor input.
+      // eslint-disable-next-line jsx-a11y/prefer-tag-over-role
       role="button"
       tabIndex={0}
       className={`group relative w-full rounded-lg border p-3 transition-colors cursor-pointer text-left ${

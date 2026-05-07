@@ -1,14 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type {
+  deleteConversation as deleteConversationFn,
+  generateConversationTitle as generateConversationTitleFn,
+  listConversations as listConversationsFn,
+  updateConversationTitle as updateConversationTitleFn,
+} from "@/lib/api";
+import type { getOidc as getOidcFn } from "@/oidc";
+
 vi.mock("@/oidc", () => ({
-  getOidc: vi.fn().mockResolvedValue({ isUserLoggedIn: false }),
+  getOidc: vi.fn<typeof getOidcFn>().mockResolvedValue({ isUserLoggedIn: false } as Awaited<
+    ReturnType<typeof getOidcFn>
+  >),
 }));
 
 vi.mock("@/lib/api", () => ({
-  listConversations: vi.fn(),
-  deleteConversation: vi.fn(),
-  updateConversationTitle: vi.fn(),
-  generateConversationTitle: vi.fn(),
+  listConversations: vi.fn<typeof listConversationsFn>(),
+  deleteConversation: vi.fn<typeof deleteConversationFn>(),
+  updateConversationTitle: vi.fn<typeof updateConversationTitleFn>(),
+  generateConversationTitle: vi.fn<typeof generateConversationTitleFn>(),
 }));
 
 import { deleteConversation, listConversations } from "@/lib/api";
