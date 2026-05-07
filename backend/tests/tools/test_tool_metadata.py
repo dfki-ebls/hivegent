@@ -2,6 +2,7 @@ from pydantic import TypeAdapter
 
 from hivegent.agents import explore_toolset
 from hivegent.mcp import mcp_app
+from hivegent.tools.base import tool_description
 from hivegent.tools.documents import (
     DocumentMaxDepthArg,
     DocumentPathArg,
@@ -9,7 +10,6 @@ from hivegent.tools.documents import (
 )
 from hivegent.tools.grep import GrepContextArg, GrepPatternArg, GrepTool
 from hivegent.tools.retrieval import SearchTypeArg
-from hivegent.tools.base import tool_description
 
 
 def _description(annotation: object) -> str | None:

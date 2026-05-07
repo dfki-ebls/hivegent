@@ -14,9 +14,9 @@ __all__ = [
     "IndexedStorage",
     "IndexedStorageFilterFunc",
     "LanceDBSearchTool",
+    "SearchMaxResultsArg",
     "SearchQueryArg",
     "SearchResult",
-    "SearchMaxResultsArg",
     "SearchType",
     "SearchTypeArg",
 ]

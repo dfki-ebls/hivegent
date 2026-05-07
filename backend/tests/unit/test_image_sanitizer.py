@@ -28,10 +28,10 @@ def test_strips_oversized_iccp_chunk() -> None:
     sanitized = sanitize_image_bytes(poisoned, "image/png")
 
     old_limit = PngImagePlugin.MAX_TEXT_CHUNK
-    setattr(PngImagePlugin, "MAX_TEXT_CHUNK", 2 * 1024 * 1024)
+    PngImagePlugin.MAX_TEXT_CHUNK = 2 * 1024 * 1024  # ty: ignore[invalid-assignment]
     try:
         with Image.open(io.BytesIO(sanitized)) as img:
             img.load()
             assert img.size == (32, 32)
     finally:
-        setattr(PngImagePlugin, "MAX_TEXT_CHUNK", old_limit)
+        PngImagePlugin.MAX_TEXT_CHUNK = old_limit

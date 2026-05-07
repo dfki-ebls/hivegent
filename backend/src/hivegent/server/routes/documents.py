@@ -35,6 +35,12 @@ from ...types import (
     UploadDocumentResponse,
 )
 from ..common import parse_pipeline_spec, resolve_llm_config, safe_path, user_store
+from ..models import (
+    BulkDeleteRequest,
+    BulkRechunkRequest,
+    BulkReconvertRequest,
+    ReconvertRequest,
+)
 from ..operations import (
     PreparedCollection,
     find_original,
@@ -47,12 +53,6 @@ from ..operations import (
     reconvert_single_stream,
     upload_file_stream,
     validate_collection_upload,
-)
-from ..models import (
-    BulkDeleteRequest,
-    BulkRechunkRequest,
-    BulkReconvertRequest,
-    ReconvertRequest,
 )
 
 __all__ = ["router"]
@@ -284,11 +284,9 @@ async def bulk_rechunk_stream(
     spec = request.pipeline
 
     async def _rechunk_one(filepath: str) -> None:
-        await workspace.rechunk(store, safe_path(filepath), spec=spec, sync=False)
+        await workspace.rechunk(store, safe_path(filepath), spec=spec)
 
-    async for event in process_bulk_operation(
-        store, request.files, _rechunk_one, "Rechunked"
-    ):
+    async for event in process_bulk_operation(request.files, _rechunk_one, "Rechunked"):
         yield event
 
 
@@ -303,12 +301,10 @@ async def bulk_reconvert_stream(
     resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
 
     async def _reconvert_one(filepath: str) -> None:
-        await workspace.reconvert(
-            store, safe_path(filepath), spec=spec, llm=resolved, sync=False
-        )
+        await workspace.reconvert(store, safe_path(filepath), spec=spec, llm=resolved)
 
     async for event in process_bulk_operation(
-        store, request.files, _reconvert_one, "Reconverted"
+        request.files, _reconvert_one, "Reconverted"
     ):
         yield event
 
@@ -322,11 +318,9 @@ async def bulk_delete_stream(
     store = user_store(user)
 
     async def _delete_one(filepath: str) -> None:
-        await workspace.delete_document(store, safe_path(filepath), sync=False)
+        await workspace.delete_document(store, safe_path(filepath))
 
-    async for event in process_bulk_operation(
-        store, request.files, _delete_one, "Deleted"
-    ):
+    async for event in process_bulk_operation(request.files, _delete_one, "Deleted"):
         yield event
 
 

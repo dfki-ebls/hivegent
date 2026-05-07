@@ -10,9 +10,9 @@ __all__ = [
     "MATH_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS_EMPTY",
+    "PERSONALITY_TEMPLATES",
     "PLAN_INSTRUCTIONS",
     "Personality",
-    "PERSONALITY_TEMPLATES",
     "join_instructions",
 ]
 

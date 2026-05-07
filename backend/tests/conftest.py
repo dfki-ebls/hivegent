@@ -34,7 +34,7 @@ def user_store(data_dir: Path) -> Casebase:
 
 
 @pytest.fixture()
-def app_client(data_dir: Path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN201
+def app_client(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
     """Return a Starlette ``TestClient`` with auth disabled."""
     from hivegent.config import settings
 

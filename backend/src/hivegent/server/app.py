@@ -1,5 +1,6 @@
 """FastAPI application assembly for Hivegent."""
 
+import asyncio
 import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -10,7 +11,7 @@ from pydantic import ValidationError
 from starlette.responses import PlainTextResponse, Response
 
 from ..config import settings
-from ..consistency import check_and_fix_all_stores
+from ..consistency import check_and_fix_all_stores, run_periodic_consistency
 from ..mcp import mcp_app
 from ..observability import configure_observability
 from .routes import api_router
@@ -28,13 +29,27 @@ mcp_http_app = mcp_app.http_app(path="/") if settings.mcp.enable else None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Run startup consistency checks, then delegate to the MCP lifespan."""
+    """Run startup consistency, schedule the periodic tick, delegate to MCP."""
     await check_and_fix_all_stores()
-    if mcp_http_app is None:
-        yield
-        return
-    async with mcp_http_app.lifespan(app):
-        yield
+    tick_task: asyncio.Task[None] | None = None
+    if settings.consistency_tick_interval_seconds > 0:
+        tick_task = asyncio.create_task(
+            run_periodic_consistency(settings.consistency_tick_interval_seconds),
+            name="hivegent-consistency-tick",
+        )
+    try:
+        if mcp_http_app is None:
+            yield
+        else:
+            async with mcp_http_app.lifespan(app):
+                yield
+    finally:
+        if tick_task is not None:
+            tick_task.cancel()
+            try:
+                await tick_task
+            except asyncio.CancelledError:
+                pass
 
 
 async def validation_error_handler(

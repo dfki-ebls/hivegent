@@ -1,5 +1,15 @@
-"""Startup consistency check between documents, chunks, and the search index."""
+"""Consistency between workspace files, chunk metadata, and the search index.
 
+Two entry points:
+
+- :func:`check_and_fix_all_stores` runs once at startup, before the app
+  begins serving requests.
+- :func:`run_periodic_consistency` loops in the background, calling the
+  same per-store routine every ``interval_seconds`` so transient inline
+  index failures self-heal without a restart.
+"""
+
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
@@ -8,12 +18,14 @@ from .config import sanitize_group_id, sanitize_user_id, settings
 from .converters.base import DOCUMENT_EXTENSION
 from .retrieval import sync_index
 from .store import Casebase
+from .workspace import store_lock
 
 __all__ = [
     "ConsistencyReport",
     "check_and_fix_all_stores",
     "check_store_consistency",
     "fix_store_consistency",
+    "run_periodic_consistency",
 ]
 
 logger = logging.getLogger(__name__)
@@ -100,12 +112,10 @@ def check_store_consistency(store: Casebase) -> ConsistencyReport:
 async def fix_store_consistency(report: ConsistencyReport) -> None:
     """Repair inconsistencies described by a report.
 
-    Deletes orphaned chunks, rechunks new and stale documents, then
-    syncs the LanceDB index exactly once.  Each file operation is
-    wrapped in try/except so a single bad file does not block the rest.
-
-    Args:
-        report: The consistency report to act on.
+    Deletes orphaned chunks and rechunks new/stale documents.  Each
+    file operation is wrapped in try/except so a single bad file does
+    not block the rest; both ``delete_metadata`` and ``chunk_document``
+    maintain the LanceDB index inline.
     """
     if report.is_consistent:
         return
@@ -115,7 +125,7 @@ async def fix_store_consistency(report: ConsistencyReport) -> None:
 
     for path in report.orphaned_chunks:
         try:
-            delete_metadata(store, path)
+            await delete_metadata(store, path)
             logger.info("Deleted orphaned chunks: %s/%s", store.store_key, path)
         except Exception:
             logger.warning(
@@ -138,46 +148,44 @@ async def fix_store_consistency(report: ConsistencyReport) -> None:
                 exc_info=True,
             )
 
-    try:
-        sync_index(store)
-        logger.info("Index synced for %s", store.store_key)
-    except Exception:
-        logger.warning("Failed to sync index for %s", store.store_key, exc_info=True)
-
 
 async def _check_and_fix_store(store: Casebase) -> None:
-    """Check and fix a single store, catching exceptions."""
-    try:
-        report = check_store_consistency(store)
-        if report.is_consistent:
-            logger.debug("Store %s is consistent", store.store_key)
-        else:
-            logger.info(
-                "Store %s: %d new, %d stale, %d orphaned",
-                store.store_key,
-                len(report.new_documents),
-                len(report.stale_documents),
-                len(report.orphaned_chunks),
-            )
-            await fix_store_consistency(report)
+    """Check and fix a single store, holding the workspace lock throughout.
 
-        # Always sync the search index.  The LanceDB index can be
-        # missing or stale independently of document/chunk consistency
-        # (e.g. a previous sync failed, the directory was wiped, or the
-        # embedding config changed).  create_index diffs against the
-        # existing table and no-ops when everything already matches.
+    Acquiring the lock serialises this routine against any in-flight
+    workspace mutation so the periodic tick (which runs concurrently
+    with HTTP traffic) cannot reindex a stale snapshot of a document.
+    """
+    async with store_lock(store):
         try:
-            sync_index(store)
+            report = check_store_consistency(store)
+            if report.is_consistent:
+                logger.debug("Store %s is consistent", store.store_key)
+            else:
+                logger.info(
+                    "Store %s: %d new, %d stale, %d orphaned",
+                    store.store_key,
+                    len(report.new_documents),
+                    len(report.stale_documents),
+                    len(report.orphaned_chunks),
+                )
+                await fix_store_consistency(report)
+
+            # cbrkit diffs against existing rows inside ``create_index``,
+            # so this also catches any documents whose inline index
+            # write previously failed.
+            try:
+                await asyncio.to_thread(sync_index, store)
+            except Exception:
+                logger.warning(
+                    "Failed to sync index for %s",
+                    store.store_key,
+                    exc_info=True,
+                )
         except Exception:
             logger.warning(
-                "Failed to sync index for %s",
-                store.store_key,
-                exc_info=True,
+                "Consistency check failed for %s", store.store_key, exc_info=True
             )
-    except Exception:
-        logger.warning(
-            "Consistency check failed for %s", store.store_key, exc_info=True
-        )
 
 
 async def check_and_fix_all_stores() -> None:
@@ -226,3 +234,22 @@ async def check_and_fix_all_stores() -> None:
             await _check_and_fix_store(Casebase(kind="group", id=entry.name))
 
     logger.info("Consistency check complete")
+
+
+async def run_periodic_consistency(interval_seconds: int) -> None:
+    """Loop forever, calling :func:`check_and_fix_all_stores` every interval.
+
+    Each iteration sleeps first so the startup pass (which the lifespan
+    runs synchronously) isn't immediately followed by another full
+    sweep.  The task is designed to be cancelled by the FastAPI
+    lifespan shutdown — ``CancelledError`` is allowed to propagate.
+    """
+    logger.info("Periodic consistency tick every %ds", interval_seconds)
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            await check_and_fix_all_stores()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Periodic consistency tick failed", exc_info=True)

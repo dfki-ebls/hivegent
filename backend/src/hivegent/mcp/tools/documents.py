@@ -10,9 +10,9 @@ from ...tools import (
     ListDocumentsTool,
     ReadDocumentTool,
 )
+from ...tools.fastmcp import register_mcp_tools
 from ..app import mcp_app
 from ..common import get_mcp_group_stores, get_mcp_user_store
-from ...tools.fastmcp import register_mcp_tools
 
 __all__: list[str] = []
 

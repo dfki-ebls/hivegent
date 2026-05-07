@@ -13,10 +13,10 @@ from typing import Annotated, Any, Self, get_type_hints, override
 from pydantic import BaseModel, Field
 
 __all__ = [
+    "DEFAULT_EXCLUDE_DIRS",
     "AsyncPathTool",
     "AsyncTool",
     "CallInfo",
-    "DEFAULT_EXCLUDE_DIRS",
     "IncludeIgnoredArg",
     "PathTool",
     "SearchPath",
@@ -395,7 +395,7 @@ class CallInfo:
         wrapper.__doc__ = self.description
         wrapper.__module__ = self.source_module
         # __signature__ is not in the FunctionType stub; use setattr.
-        setattr(wrapper, "__signature__", sig)
+        wrapper.__signature__ = sig  # type: ignore[attr-defined]  # pyright: ignore[reportFunctionMemberAccess]  # ty: ignore[unresolved-attribute]
 
     @classmethod
     def from_factory(cls, factory: Callable[..., Tool[Any]]) -> Self:

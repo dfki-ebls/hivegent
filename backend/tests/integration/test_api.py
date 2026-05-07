@@ -5,7 +5,7 @@ from pathlib import Path
 from hivegent.store import Casebase
 
 
-def test_get_settings(app_client) -> None:  # noqa: ANN001
+def test_get_settings(app_client) -> None:
     """GET /api/settings returns LLM config and user info."""
     response = app_client.get("/api/settings")
     assert response.status_code == 200
@@ -15,7 +15,7 @@ def test_get_settings(app_client) -> None:  # noqa: ANN001
     assert data["user"]["id"] == "localhost"
 
 
-def test_list_documents_empty(app_client) -> None:  # noqa: ANN001
+def test_list_documents_empty(app_client) -> None:
     """GET /api/documents returns empty list initially."""
     response = app_client.get("/api/documents")
     assert response.status_code == 200
@@ -24,7 +24,7 @@ def test_list_documents_empty(app_client) -> None:  # noqa: ANN001
     assert data["total_count"] == 0
 
 
-def test_upload_and_list_document(app_client, data_dir: Path) -> None:  # noqa: ANN001
+def test_upload_and_list_document(app_client, data_dir: Path) -> None:
     """PUT a document then GET /api/documents shows it."""
     content = b"# Test Document\n\nHello world."
     response = app_client.put(
@@ -45,7 +45,7 @@ def test_upload_and_list_document(app_client, data_dir: Path) -> None:  # noqa: 
     assert listed["display_name"] == "test"
 
 
-def test_download_original(app_client, data_dir: Path) -> None:  # noqa: ANN001
+def test_download_original(app_client, data_dir: Path) -> None:
     """GET /api/documents/original/ returns the original file."""
     store = Casebase(kind="user", id="localhost")
     workspace = store.workspace_dir(data_dir)
@@ -57,7 +57,7 @@ def test_download_original(app_client, data_dir: Path) -> None:  # noqa: ANN001
     assert response.content == b"%PDF-fake"
 
 
-def test_download_original_not_found(app_client, data_dir: Path) -> None:  # noqa: ANN001
+def test_download_original_not_found(app_client, data_dir: Path) -> None:
     """GET /api/documents/original/ returns 404 when no original exists."""
     store = Casebase(kind="user", id="localhost")
     workspace = store.workspace_dir(data_dir)
@@ -70,7 +70,7 @@ def test_download_original_not_found(app_client, data_dir: Path) -> None:  # noq
 def test_replace_original_route_is_not_captured_by_upload(
     app_client,
     data_dir: Path,
-) -> None:  # noqa: ANN001
+) -> None:
     """PUT /api/documents/original/ targets original replacement, not document upload."""
     store = Casebase(kind="user", id="localhost")
     workspace = store.workspace_dir(data_dir)
@@ -89,7 +89,7 @@ def test_replace_original_route_is_not_captured_by_upload(
 def test_upload_image_creates_original_and_description(
     app_client,
     data_dir: Path,
-) -> None:  # noqa: ANN001
+) -> None:
     """PUT an image creates the original file and a markdown description."""
     png_bytes = (
         b"\x89PNG\r\n\x1a\n"
@@ -120,7 +120,7 @@ def test_upload_image_creates_original_and_description(
     assert '"entry_kind": "image"' in meta
 
 
-def test_create_conversation(app_client) -> None:  # noqa: ANN001
+def test_create_conversation(app_client) -> None:
     """POST /api/conversations creates a new conversation."""
     response = app_client.post("/api/conversations")
     assert response.status_code == 200

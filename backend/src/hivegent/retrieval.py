@@ -1,16 +1,23 @@
 """Per-user and per-group LanceDB storage and retrieval using cbrkit.
 
-The public surface of this module is intentionally small:
+The public surface:
 
-- :func:`build_search_tool` builds a search tool that auto-syncs any
-  dirty stores before serving a query.
-- :func:`sync_index` rebuilds a store's index from disk; called from the
-  startup consistency check.
-- :func:`invalidate_store` drops cached state and cancels in-flight
-  syncs; called by :mod:`hivegent.workspace` before wiping a store.
-- :func:`mark_dirty_and_sync` schedules a coalesced background sync.
-  Only :mod:`hivegent.workspace` should call this — it is the
-  invariant-keeping handshake every mutation makes after writing.
+- :func:`build_search_tool` builds a search tool spanning one or more
+  casebases.
+- :func:`index_document` upserts the chunks of a single document.
+- :func:`unindex_paths` removes the chunks of one or more documents.
+- :func:`unindex_subtree` removes every chunk whose document path is at
+  or beneath a prefix.
+- :func:`sync_index` reconciles a store's index against every metadata
+  file on disk; called from the startup consistency check and the
+  periodic consistency tick.  cbrkit's :meth:`create_index` already
+  diffs against the existing rows so unchanged documents skip
+  re-embedding.
+- :func:`invalidate_store` drops cached state before a store is wiped.
+
+Workspace mutations call :func:`index_document` / :func:`unindex_paths`
+/ :func:`unindex_subtree` synchronously while holding the workspace
+lock — there is no background dirty-tracking.
 """
 
 import asyncio
@@ -18,9 +25,10 @@ import json
 import logging
 import shutil
 import threading
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from collections.abc import Callable, Sequence
+from typing import Any
 
 import cbrkit
 
@@ -33,18 +41,19 @@ from .tools.retrieval import IndexedStorage, LanceDBSearchTool, SearchResult
 
 __all__ = [
     "build_search_tool",
+    "index_document",
     "invalidate_store",
-    "mark_dirty_and_sync",
     "sync_index",
+    "unindex_paths",
+    "unindex_subtree",
 ]
 
 CHUNK_KEY_SEPARATOR = "::"
-
-logger = logging.getLogger(__name__)
-
-EMBEDDING_FINGERPRINT_FILE = "embedding_config.json"
+STORE_METADATA_FILE = "metadata.json"
 LANCEDB_TABLE = "chunks"
 METADATA_FILENAME_COLUMN = "filename"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -62,7 +71,11 @@ class _ChunkEntry:
 
 @dataclass(slots=True)
 class _RetrievalState:
-    """Thread-safe singleton managing LanceDB storage and embeddings."""
+    """Caches LanceDB storages, the embedding function, and chunk metadata.
+
+    The lock is reentrant because :meth:`get_storage` may be called from
+    inside another :meth:`_lock`-holding section.
+    """
 
     _storage_cache: dict[str, cbrkit.indexable.lancedb[str]] = field(
         default_factory=dict
@@ -70,33 +83,13 @@ class _RetrievalState:
     _embedding_func: (
         cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray] | None
     ) = field(default=None)
-    # RLock (reentrant) because public methods like get_storage() and
-    # get_embedding_func() acquire the lock internally, and callers such
-    # as build_search_tool() need to call them while already holding the
-    # lock to get a consistent snapshot of the caches.  A plain Lock
-    # would deadlock in that situation.
-    _lock: threading.RLock = field(default_factory=threading.RLock)
-    # Generation counter incremented on every mark_dirty.  sync_index
-    # captures the value at start and only clears the dirty flag if no
-    # new mark_dirty calls happened during the sync — this prevents a
-    # race where a concurrent write would otherwise be lost from the
-    # dirty set after a sync completes.
-    _dirty_generations: dict[str, int] = field(default_factory=dict)
-    _pending_reindex: set[str] = field(default_factory=set)
     _chunk_meta: dict[str, dict[str, _ChunkEntry]] = field(default_factory=dict)
-    # Retained references to in-flight background sync tasks so the
-    # event loop doesn't GC them early (which would log a warning) and
-    # so concurrent mark_dirty_and_sync calls coalesce onto one task.
-    _sync_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
+    _lock: threading.RLock = field(default_factory=threading.RLock)
 
     def get_embedding_func(
         self,
     ) -> cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray]:
-        """Get or create the shared embedding function based on settings.
-
-        Returns:
-            An embedding function.
-        """
+        """Get or create the shared embedding function based on settings."""
         if self._embedding_func is not None:
             return self._embedding_func
 
@@ -122,68 +115,11 @@ class _RetrievalState:
 
             return self._embedding_func
 
-    def mark_dirty(self, store_key: str) -> int:
-        """Mark a store's search index as needing a rebuild.
-
-        Returns the current generation count so a subsequent
-        :meth:`clear_dirty_if_unchanged` call can detect intervening
-        writes.
-
-        Args:
-            store_key: The store key to mark.
-
-        Returns:
-            The new generation count after the bump.
-        """
-        with self._lock:
-            self._pending_reindex.add(store_key)
-            self._dirty_generations[store_key] = (
-                self._dirty_generations.get(store_key, 0) + 1
-            )
-            return self._dirty_generations[store_key]
-
-    def dirty_generation(self, store_key: str) -> int:
-        """Return the current dirty generation for a store."""
-        with self._lock:
-            return self._dirty_generations.get(store_key, 0)
-
-    def is_dirty(self, store_key: str) -> bool:
-        """Check whether a store's search index needs a rebuild.
-
-        Args:
-            store_key: The store key to check.
-
-        Returns:
-            True if the store is pending reindexing.
-        """
-        with self._lock:
-            return store_key in self._pending_reindex
-
-    def clear_dirty_if_unchanged(self, store_key: str, generation: int) -> None:
-        """Clear the dirty flag only if no new writes happened.
-
-        Args:
-            store_key: The store key to clear.
-            generation: The generation captured at the start of the sync.
-                If a later :meth:`mark_dirty` call has bumped the
-                generation, the dirty flag is left set so the new write
-                triggers another sync.
-        """
-        with self._lock:
-            if self._dirty_generations.get(store_key, 0) == generation:
-                self._pending_reindex.discard(store_key)
-
     def get_storage(self, store: Casebase) -> cbrkit.indexable.lancedb[str]:
-        """Get or create the LanceDB storage for a casebase.
+        """Return the LanceDB storage for *store*, lazily creating it.
 
-        Validates the embedding fingerprint on first access and
-        invalidates stale vector data when the model config changes.
-
-        Args:
-            store: The casebase identifier.
-
-        Returns:
-            The LanceDB storage instance.
+        Validates the embedding fingerprint and loads chunk metadata from
+        disk on first access.
         """
         key = store.store_key
         if key in self._storage_cache:
@@ -208,32 +144,40 @@ class _RetrievalState:
                 },
             )
             self._storage_cache[key] = storage
+            self._chunk_meta[key] = _load_all_chunks_from_dir(
+                store.metadata_path(settings.data_dir)
+            )
             return storage
 
 
 _state = _RetrievalState()
 
 
+def _read_store_metadata(lancedb_dir: Path) -> dict[str, Any]:
+    """Read the per-store sidecar metadata, returning ``{}`` when absent."""
+    try:
+        return json.loads(
+            (lancedb_dir / STORE_METADATA_FILE).read_text(encoding="utf-8")
+        )
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _write_store_metadata(lancedb_dir: Path, data: dict[str, Any]) -> None:
+    """Persist the per-store sidecar metadata."""
+    (lancedb_dir / STORE_METADATA_FILE).write_text(
+        json.dumps(data, indent=2), encoding="utf-8"
+    )
+
+
 def _validate_fingerprint(store_key: str, lancedb_dir: Path) -> None:
     """Check the embedding fingerprint and wipe stale vector data.
 
     Must be called while ``_state._lock`` is held.
-
-    Reads the stored fingerprint from the LanceDB directory.
-    If it exists and differs from the current config, the directory
-    is wiped and the store is scheduled for re-indexing.
-
-    Args:
-        store_key: The store key (for logging and reindex tracking).
-        lancedb_dir: Path to the store's LanceDB directory.
     """
-    fp_path = lancedb_dir / EMBEDDING_FINGERPRINT_FILE
+    metadata = _read_store_metadata(lancedb_dir)
+    stored = metadata.get("embedding")
     current = settings.embedding.fingerprint()
-
-    try:
-        stored = json.loads(fp_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        stored = None
 
     if stored is not None and stored != current:
         logger.warning(
@@ -247,10 +191,11 @@ def _validate_fingerprint(store_key: str, lancedb_dir: Path) -> None:
         _state._embedding_func = None
         shutil.rmtree(lancedb_dir)
         lancedb_dir.mkdir(parents=True, exist_ok=True)
-        _state._pending_reindex.add(store_key)
+        metadata = {}
 
     if stored != current:
-        fp_path.write_text(json.dumps(current), encoding="utf-8")
+        metadata["embedding"] = current
+        _write_store_metadata(lancedb_dir, metadata)
 
 
 def _build_chunk_key(filename: str, chunk_index: int) -> str:
@@ -265,18 +210,17 @@ def _parse_chunk_key(key: str) -> tuple[str, int]:
         raise ValueError(f"Invalid chunk key format: {key!r}") from exc
 
 
+def _escape_sql_literal(value: str) -> str:
+    """Escape a string for use inside a single-quoted LanceDB SQL literal."""
+    return value.replace("'", "''")
+
+
 def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, _ChunkEntry]:
     """Load all chunks from a metadata directory as a casebase mapping.
 
     Metadata filenames use the stem-only convention (``report.json`` for
     ``report.md``), so the document extension is re-appended when building
     chunk keys.
-
-    Args:
-        metadata_dir: The directory containing metadata JSON files.
-
-    Returns:
-        Dict mapping chunk keys to :class:`_ChunkEntry` instances.
     """
     if not metadata_dir.exists():
         return {}
@@ -295,134 +239,181 @@ def _load_all_chunks_from_dir(metadata_dir: Path) -> dict[str, _ChunkEntry]:
             continue
 
         entry_filename = doc.description_path or doc_filename
-        image_path = doc.original_path if doc.entry_kind == "image" else None
-        for i, chunk in enumerate(doc.chunks):
-            key = _build_chunk_key(entry_filename, i)
-            chunks[key] = _ChunkEntry(
-                text=chunk.text,
-                token_count=chunk.token_count,
-                start_line=chunk.start_line,
-                end_line=chunk.end_line,
-                start_index=chunk.start_index,
-                end_index=chunk.end_index,
-                image_path=image_path,
-            )
+        chunks.update(_doc_chunk_entries(entry_filename, doc))
 
     return chunks
 
 
-async def invalidate_store(store: Casebase) -> None:
-    """Remove a casebase from the retrieval cache.
+def _doc_chunk_entries(
+    filename: str, doc: DocumentMetadata
+) -> dict[str, _ChunkEntry]:
+    """Build the in-memory chunk metadata cache entries for a document."""
+    image_path = doc.original_path if doc.entry_kind == "image" else None
+    return {
+        _build_chunk_key(filename, i): _ChunkEntry(
+            text=chunk.text,
+            token_count=chunk.token_count,
+            start_line=chunk.start_line,
+            end_line=chunk.end_line,
+            start_index=chunk.start_index,
+            end_index=chunk.end_index,
+            image_path=image_path,
+        )
+        for i, chunk in enumerate(doc.chunks)
+    }
 
-    Cancels any in-flight background sync, waits for it to finish, and
-    drops the cached LanceDB connection so the directory can be safely
-    wiped afterwards.
 
-    Args:
-        store: The casebase to evict.
+def _delete_by_predicate(
+    storage: cbrkit.indexable.lancedb[str], predicate: str
+) -> None:
+    """Run a raw LanceDB ``DELETE`` against the chunks table.
+
+    Bypasses :meth:`cbrkit.indexable.lancedb.delete_index` so the FTS
+    index is not torn down and rebuilt on every per-document mutation —
+    LanceDB auto-maintains it across deletes.
     """
+    table = storage._table
+    if table is None:
+        return
+    table.delete(predicate)
+
+
+def _filename_in_predicate(filenames: Collection[str]) -> str:
+    """Build a ``filename IN (...)`` SQL predicate."""
+    quoted = ", ".join(f"'{_escape_sql_literal(f)}'" for f in filenames)
+    return f"{METADATA_FILENAME_COLUMN} IN ({quoted})"
+
+
+def _filename_subtree_predicate(prefix: str) -> str:
+    """Build a predicate matching ``prefix`` exactly or any path under it."""
+    escaped = _escape_sql_literal(prefix)
+    return (
+        f"{METADATA_FILENAME_COLUMN} = '{escaped}' OR "
+        f"{METADATA_FILENAME_COLUMN} LIKE '{escaped}/%'"
+    )
+
+
+def _index_document_sync(
+    store_key: str,
+    storage: cbrkit.indexable.lancedb[str],
+    filename: str,
+    new_chunks_text: dict[str, str],
+    new_chunks_meta: dict[str, _ChunkEntry],
+) -> None:
+    """Replace the LanceDB rows for *filename* and update the meta cache."""
+    key_prefix = f"{filename}{CHUNK_KEY_SEPARATOR}"
+    with _state._lock:
+        cache = _state._chunk_meta.setdefault(store_key, {})
+        old_keys = [k for k in cache if k.startswith(key_prefix)]
+
+        if storage._table is not None:
+            _delete_by_predicate(
+                storage,
+                f"{METADATA_FILENAME_COLUMN} = '{_escape_sql_literal(filename)}'",
+            )
+        for k in old_keys:
+            cache.pop(k, None)
+
+        if new_chunks_text:
+            storage.update_index(new_chunks_text)
+            cache.update(new_chunks_meta)
+
+
+def _unindex_paths_sync(
+    store_key: str,
+    storage: cbrkit.indexable.lancedb[str],
+    filenames: Collection[str],
+) -> None:
+    """Delete LanceDB rows whose filename is in *filenames* and update cache."""
+    if not filenames:
+        return
+    with _state._lock:
+        cache = _state._chunk_meta.setdefault(store_key, {})
+        target = set(filenames)
+        prefixes = tuple(f"{f}{CHUNK_KEY_SEPARATOR}" for f in target)
+        keys = [k for k in cache if k.startswith(prefixes)]
+        _delete_by_predicate(storage, _filename_in_predicate(target))
+        for k in keys:
+            cache.pop(k, None)
+
+
+def _unindex_subtree_sync(
+    store_key: str,
+    storage: cbrkit.indexable.lancedb[str],
+    prefix: str,
+) -> None:
+    """Delete LanceDB rows under *prefix* and update the meta cache."""
+    key_prefixes = (f"{prefix}{CHUNK_KEY_SEPARATOR}", f"{prefix}/")
+    with _state._lock:
+        cache = _state._chunk_meta.setdefault(store_key, {})
+        keys = [k for k in cache if k.startswith(key_prefixes)]
+        _delete_by_predicate(storage, _filename_subtree_predicate(prefix))
+        for k in keys:
+            cache.pop(k, None)
+
+
+async def index_document(
+    store: Casebase, filename: str, doc: DocumentMetadata
+) -> None:
+    """Replace the index entries for a single document.
+
+    Embeds the new chunks via the shared embedding function and writes
+    them to LanceDB, removing any rows tied to the previous version of
+    *filename*.  Keeps the in-memory chunk-metadata cache aligned with
+    the LanceDB table so queries return up-to-date snippet metadata.
+    """
+    storage = _state.get_storage(store)
+    new_text = {
+        _build_chunk_key(filename, i): chunk.text for i, chunk in enumerate(doc.chunks)
+    }
+    new_meta = _doc_chunk_entries(filename, doc)
+    await asyncio.to_thread(
+        _index_document_sync, store.store_key, storage, filename, new_text, new_meta
+    )
+
+
+async def unindex_paths(store: Casebase, filenames: Collection[str]) -> None:
+    """Remove chunks for the given document paths from the index."""
+    if not filenames:
+        return
+    storage = _state.get_storage(store)
+    await asyncio.to_thread(
+        _unindex_paths_sync, store.store_key, storage, list(filenames)
+    )
+
+
+async def unindex_subtree(store: Casebase, prefix: str) -> None:
+    """Remove every chunk whose path equals *prefix* or starts with ``prefix/``."""
+    if not prefix:
+        return
+    storage = _state.get_storage(store)
+    await asyncio.to_thread(_unindex_subtree_sync, store.store_key, storage, prefix)
+
+
+async def invalidate_store(store: Casebase) -> None:
+    """Drop cached state for *store* before its directories are wiped."""
     key = store.store_key
     with _state._lock:
         _state._storage_cache.pop(key, None)
         _state._chunk_meta.pop(key, None)
-        _state._pending_reindex.discard(key)
-        _state._dirty_generations.pop(key, None)
-        task = _state._sync_tasks.pop(key, None)
-    if task is not None and not task.done():
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            logger.warning("In-flight sync task failed during invalidation", exc_info=True)
-
-
-async def _eager_sync(store: Casebase) -> None:
-    """Run :func:`sync_index` in a thread, swallowing errors.
-
-    Loops while the store is still dirty so a single coalesced task
-    catches up after every concurrent write rather than racing
-    multiple parallel syncs.
-    """
-    key = store.store_key
-    try:
-        while _state.is_dirty(key):
-            await asyncio.to_thread(sync_index, store)
-    except Exception:
-        logger.warning("Eager sync failed for %s", key, exc_info=True)
-    finally:
-        with _state._lock:
-            current = _state._sync_tasks.get(key)
-            if current is asyncio.current_task():
-                _state._sync_tasks.pop(key, None)
-
-
-def mark_dirty_and_sync(store: Casebase) -> None:
-    """Mark a store dirty and eagerly schedule a background index sync.
-
-    Coalesces concurrent calls onto a single in-flight task per store
-    and retains a reference so the event loop does not GC it early.
-    Falls back silently when no running event loop is available (e.g. in
-    tests or synchronous contexts).
-
-    Only :mod:`hivegent.workspace` should call this — every mutation
-    primitive there invokes it as part of releasing the casebase lock.
-
-    Args:
-        store: The casebase to mark and sync.
-    """
-    _state.mark_dirty(store.store_key)
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    key = store.store_key
-    with _state._lock:
-        existing = _state._sync_tasks.get(key)
-        if existing is not None and not existing.done():
-            return
-        _state._sync_tasks[key] = loop.create_task(_eager_sync(store))
 
 
 def sync_index(store: Casebase) -> None:
-    """Rebuild the LanceDB index from all chunk JSON files.
+    """Reconcile the LanceDB index with the metadata files on disk.
 
-    Loads every chunk for the store and calls ``create_index()`` which
-    diffs against the existing table and only adds/removes changed rows.
-    Captures the dirty generation before reading metadata so concurrent
-    writes are not lost from the dirty set.
-
-    Args:
-        store: The casebase to sync.
+    cbrkit's :meth:`create_index` diffs against the existing table at the
+    row level and only re-embeds changed/new chunks, so this is cheap
+    enough to run on the periodic consistency tick without further
+    optimisation.
     """
     key = store.store_key
-    generation = _state.dirty_generation(key)
     storage = _state.get_storage(store)
-    loaded = _load_all_chunks_from_dir(store.metadata_dir(settings.data_dir))
+    loaded = _load_all_chunks_from_dir(store.metadata_path(settings.data_dir))
     casebase = {chunk_key: entry.text for chunk_key, entry in loaded.items()}
     logger.info("Syncing LanceDB index for %s (%d chunks)", key, len(casebase))
     storage.create_index(casebase)
     with _state._lock:
         _state._chunk_meta[key] = loaded
-    _state.clear_dirty_if_unchanged(key, generation)
-
-
-def _ensure_chunk_meta(store: Casebase) -> None:
-    """Lazily load and cache chunk metadata for a store that is already indexed.
-
-    Args:
-        store: The casebase whose chunk metadata should be cached.
-    """
-    key = store.store_key
-    with _state._lock:
-        if key in _state._chunk_meta:
-            return
-
-    loaded = _load_all_chunks_from_dir(store.metadata_dir(settings.data_dir))
-    with _state._lock:
-        if key not in _state._chunk_meta:
-            _state._chunk_meta[key] = loaded
 
 
 def _to_retrieved_chunk(
@@ -463,36 +454,20 @@ def build_search_tool(
 ) -> LanceDBSearchTool[RetrievedChunk]:
     """Build a :class:`LanceDBSearchTool` spanning one or more casebases.
 
-    Syncs any pending re-indexes and creates LanceDB storages as needed.
-    Results are automatically mapped to :class:`RetrievedChunk` with
-    per-store filtering and ``@group/`` prefixing.
-
-    Args:
-        stores: Casebases to search across.
-        filter_for_store: Optional callable returning a filename filter
-            for each store.  ``None`` means no filtering.
-
-    Returns:
-        A configured :class:`LanceDBSearchTool` ready to use.
+    The index is assumed up-to-date — every workspace mutation maintains
+    it inline.  Per-store filters are wired so each backing storage only
+    surfaces results passing the caller's filename predicate, and
+    ``@group/`` prefixing is applied to result keys.
     """
-    for store in stores:
-        if _state.is_dirty(store.store_key):
-            sync_index(store)
-        else:
-            _ensure_chunk_meta(store)
-
-    # Build per-store chunk metadata with prefixed keys.
     chunk_meta: dict[str, _ChunkEntry] = {}
     indexed: list[IndexedStorage] = []
 
     with _state._lock:
         for store in stores:
+            storage = _state.get_storage(store)
             prefix = store.prefix
-            meta = _state._chunk_meta.get(store.store_key)
-            if meta is not None:
-                for key, entry in meta.items():
-                    prefixed_key = apply_prefix(prefix, key)
-                    chunk_meta[prefixed_key] = entry
+            for key, entry in _state._chunk_meta.get(store.store_key, {}).items():
+                chunk_meta[apply_prefix(prefix, key)] = entry
 
             file_filter = filter_for_store(store) if filter_for_store else None
             key_filter: Callable[[str], bool] | None = (
@@ -500,7 +475,7 @@ def build_search_tool(
             )
             indexed.append(
                 IndexedStorage(
-                    storage=_state.get_storage(store),
+                    storage=storage,
                     prefix=prefix,
                     filter_func=key_filter,
                 )

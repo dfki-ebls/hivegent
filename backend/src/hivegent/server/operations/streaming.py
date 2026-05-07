@@ -1,9 +1,8 @@
 """SSE streaming helpers for document routes.
 
 These helpers wrap :mod:`hivegent.workspace` mutations with stage and
-progress events for the Vercel AI / Server-Sent Events frontend.  They
-do *not* mark the search index dirty — every workspace mutation already
-does so internally.
+progress events for the Vercel AI / Server-Sent Events frontend.  Each
+mutation handles its own indexing inline.
 """
 
 import logging
@@ -18,7 +17,6 @@ from ... import workspace
 from ...chunks import get_metadata
 from ...config import settings
 from ...converters.base import is_image_suffix, is_markdown_suffix
-from ...retrieval import mark_dirty_and_sync
 from ...store import Casebase
 from ...types import (
     BulkOperationCompleteEvent,
@@ -53,9 +51,7 @@ async def upload_file_stream(
     llm_config: LlmConfig,
     *,
     overwrite: bool = False,
-) -> AsyncGenerator[
-    OperationStageEvent | UploadCompleteEvent | OperationErrorEvent, None
-]:
+) -> AsyncGenerator[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent]:
     """Upload a single file with SSE stage events for progress."""
     suffix = PurePosixPath(filepath).suffix.lower()
     try:
@@ -85,9 +81,7 @@ async def reconvert_single_stream(
     safe: str,
     spec: PipelineSpec,
     llm_config: LlmConfig,
-) -> AsyncGenerator[
-    OperationStageEvent | UploadCompleteEvent | OperationErrorEvent, None
-]:
+) -> AsyncGenerator[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent]:
     """Re-convert a single document with SSE stage events for progress."""
     try:
         metadata = get_metadata(store, safe)
@@ -108,40 +102,34 @@ async def reconvert_single_stream(
 
 
 async def process_bulk_operation(
-    store: Casebase,
     files: list[str],
     process_one: Callable[[str], Awaitable[None]],
     label: str,
-) -> AsyncGenerator[BulkOperationProgressEvent | BulkOperationCompleteEvent, None]:
+) -> AsyncGenerator[BulkOperationProgressEvent | BulkOperationCompleteEvent]:
     """Run a per-file operation over many documents and yield progress.
 
-    ``process_one`` callbacks must invoke their workspace mutation with
-    ``sync=False``; this helper performs a single coalesced index sync
-    after the loop, avoiding ``O(N²)`` rebuilds for large bulks.
+    Each ``process_one`` call is expected to be a workspace mutation
+    that maintains its own index entries; this helper only emits
+    progress events.
     """
     total = len(files)
     failed_files: list[str] = []
 
-    try:
-        for index, filepath in enumerate(files):
-            status: Literal["ok", "failed"] = "ok"
-            try:
-                await process_one(filepath)
-            except Exception as exc:
-                logger.warning(
-                    "Bulk %s failed for %s: %s", label.lower(), filepath, exc
-                )
-                status = "failed"
-                failed_files.append(filepath)
+    for index, filepath in enumerate(files):
+        status: Literal["ok", "failed"] = "ok"
+        try:
+            await process_one(filepath)
+        except Exception as exc:
+            logger.warning("Bulk %s failed for %s: %s", label.lower(), filepath, exc)
+            status = "failed"
+            failed_files.append(filepath)
 
-            yield BulkOperationProgressEvent(
-                file=filepath,
-                current=index + 1,
-                total=total,
-                status=status,
-            )
-    finally:
-        mark_dirty_and_sync(store)
+        yield BulkOperationProgressEvent(
+            file=filepath,
+            current=index + 1,
+            total=total,
+            status=status,
+        )
 
     yield BulkOperationCompleteEvent(
         total_files=total,

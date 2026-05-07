@@ -55,7 +55,6 @@ __all__ = [
     "OperationStageEvent",
     "PipelineSpec",
     "RechunkCompleteEvent",
-    "resolve_llm_config",
     "SettingsResponse",
     "TokenInfo",
     "ToolInfo",
@@ -65,6 +64,7 @@ __all__ = [
     "UploadDocumentResponse",
     "User",
     "UserResponse",
+    "resolve_llm_config",
 ]
 
 
@@ -88,11 +88,7 @@ class DocumentFilter:
             self._matches(entry, filepath) for entry in self.included
         ):
             return False
-        if self.excluded and any(
-            self._matches(entry, filepath) for entry in self.excluded
-        ):
-            return False
-        return True
+        return not (self.excluded and any(self._matches(entry, filepath) for entry in self.excluded))
 
 
 @dataclass(slots=True, frozen=True)

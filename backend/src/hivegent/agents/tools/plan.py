@@ -9,7 +9,7 @@ from ..common import UserDeps
 __all__ = ["plan_toolset"]
 
 
-def _create_plan(deps: UserDeps) -> CreatePlanTool:  # noqa: ARG001
+def _create_plan(deps: UserDeps) -> CreatePlanTool:
     return CreatePlanTool()
 
 

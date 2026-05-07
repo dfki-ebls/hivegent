@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic_ai.models.test import TestModel
+
 from hivegent.agents import (
     UserDeps,
     explore_toolset,
@@ -13,7 +15,6 @@ from hivegent.agents import (
 from hivegent.chunks import chunk_document
 from hivegent.retrieval import sync_index
 from hivegent.store import Casebase
-from pydantic_ai.models.test import TestModel
 
 pytestmark = pytest.mark.slow
 
@@ -68,9 +69,10 @@ async def test_response_contains_expected_text(
     annotations: list[dict[str, Any]],
 ) -> None:
     """Real LLM response contains keywords from the expected answer."""
-    from hivegent.config import settings
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from hivegent.config import settings
 
     deps = await _seed_and_get_deps(data_dir, user_store, annotations)
 

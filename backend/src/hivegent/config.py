@@ -227,6 +227,9 @@ class Settings(BaseSettings):
     max_collection_size_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GB
     max_collection_files: int = 10_000
     cors_origins: list[str] = ["http://localhost:3000"]
+    # Background tick that retries any documents whose inline index
+    # write failed (``indexed_at = None``).  Set to 0 to disable.
+    consistency_tick_interval_seconds: int = 600
 
     def get_traces_dir(self) -> Path:
         """Get the directory for trace output files.

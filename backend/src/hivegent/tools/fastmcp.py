@@ -56,11 +56,11 @@ def for_fastmcp(
 
     if info.is_async:
 
-        async def wrapper(**kwargs: Any) -> Any:  # noqa: ANN401
+        async def wrapper(**kwargs: Any) -> Any:
             return wrap_tool_output(await kwargs.pop("_tool_")(**kwargs))
     else:
 
-        def wrapper(**kwargs: Any) -> Any:  # noqa: ANN401
+        def wrapper(**kwargs: Any) -> Any:
             return wrap_tool_output(kwargs.pop("_tool_")(**kwargs))
 
     info.apply_to(wrapper, new_sig, new_annotations)

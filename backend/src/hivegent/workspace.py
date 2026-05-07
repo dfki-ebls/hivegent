@@ -2,18 +2,14 @@
 
 Every operation that modifies the workspace, metadata, or search index for
 a :class:`~hivegent.store.Casebase` goes through this module.  Each public
-function:
-
-- Acquires the per-store async lock so concurrent mutations against the
-  same casebase are serialised.
-- Performs the workspace and metadata writes in one self-contained step.
-- Marks the search index dirty before releasing the lock so the index
-  reflects the new state.
+function acquires the per-store async lock so concurrent mutations on the
+same casebase are serialised, then performs workspace, metadata, and
+LanceDB writes in one step — :func:`hivegent.chunks.chunk_document` and
+:func:`hivegent.chunks.delete_metadata` keep the search index aligned
+with the metadata files inline.
 
 Routes, agents, and MCP tools never touch the workspace, metadata, or
-LanceDB directories directly — they call into this module instead.  This
-collapses the previous "remember to mark dirty" discipline into a single
-invariant enforced by the gateway.
+LanceDB directories directly — they call into this module instead.
 """
 
 from __future__ import annotations
@@ -23,8 +19,8 @@ import io
 import logging
 import mimetypes
 import shutil
-import threading
 import tempfile
+import threading
 import zipfile
 import zlib
 from collections.abc import AsyncGenerator
@@ -61,7 +57,7 @@ from .entries import (
     resolve_entry_paths,
     stem_path_from_reference,
 )
-from .retrieval import invalidate_store, mark_dirty_and_sync
+from .retrieval import index_document, invalidate_store, unindex_subtree
 from .store import Casebase
 from .types import (
     AssetEntry,
@@ -88,6 +84,7 @@ __all__ = [
     "rechunk",
     "reconvert",
     "replace_original",
+    "store_lock",
     "update_asset_description",
     "upload",
 ]
@@ -104,8 +101,12 @@ _locks: dict[str, asyncio.Lock] = {}
 _locks_guard = threading.Lock()
 
 
-def _store_lock(store: Casebase) -> asyncio.Lock:
-    """Return the asyncio lock guarding mutations on *store*."""
+def store_lock(store: Casebase) -> asyncio.Lock:
+    """Return the asyncio lock guarding mutations on *store*.
+
+    Public so the consistency tick can serialise its incremental
+    reindex against in-flight workspace mutations.
+    """
     key = store.store_key
     with _locks_guard:
         lock = _locks.get(key)
@@ -113,6 +114,20 @@ def _store_lock(store: Casebase) -> asyncio.Lock:
             lock = asyncio.Lock()
             _locks[key] = lock
     return lock
+
+
+async def _safe_unindex_subtree(store: Casebase, prefix: str) -> None:
+    """Drop index rows under *prefix*, logging (not raising) on failure.
+
+    File-system mutations have already happened by the time we get here;
+    the next consistency sync will reconcile any leftover rows.
+    """
+    try:
+        await unindex_subtree(store, prefix)
+    except Exception:
+        logger.warning(
+            "Failed to unindex subtree %s/%s", store.store_key, prefix, exc_info=True
+        )
 
 
 def _build_entry_metadata(
@@ -201,8 +216,8 @@ def _build_binary_stub(filepath: str, size_bytes: int) -> str:
     return f"File name: {name}.\nMIME type: {mime}.\nSize: {size_bytes} bytes.\n"
 
 
-def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
-    """Delete a logical entry's child-assets subtree from disk."""
+async def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
+    """Delete a logical entry's child-assets subtree and its index rows."""
     workspace_dir = store.workspace_dir(settings.data_dir)
     metadata_dir = store.metadata_dir(settings.data_dir)
     assets_dir = assets_dir_for_stem(stem_path)
@@ -214,6 +229,7 @@ def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
     if metadata_assets.exists():
         shutil.rmtree(metadata_assets)
         cleanup_empty_parents(metadata_assets, metadata_dir)
+    await _safe_unindex_subtree(store, assets_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -489,8 +505,8 @@ async def _upload_locked(
     )
 
 
-def _delete_single_locked(store: Casebase, safe: str) -> None:
-    """Remove a logical entry's files and metadata. Caller holds the lock."""
+async def _delete_single_locked(store: Casebase, safe: str) -> None:
+    """Remove a logical entry's files, metadata, and index rows."""
     workspace = store.workspace_dir(settings.data_dir)
     metadata_dir = store.metadata_dir(settings.data_dir)
     metadata = get_metadata(store, safe)
@@ -529,11 +545,12 @@ def _delete_single_locked(store: Casebase, safe: str) -> None:
         if metadata_assets.exists():
             shutil.rmtree(metadata_assets)
             cleanup_empty_parents(metadata_assets, metadata_dir)
+        await _safe_unindex_subtree(store, assets_rel)
 
-    delete_metadata(store, safe)
+    await delete_metadata(store, safe)
 
 
-def _ensure_upload_slot_locked(
+async def _ensure_upload_slot_locked(
     store: Casebase, reference: str, *, overwrite: bool
 ) -> None:
     """Free up an upload slot for *reference*, raising 409 if occupied."""
@@ -543,7 +560,7 @@ def _ensure_upload_slot_locked(
         return
     if not overwrite:
         raise HTTPException(status_code=409, detail="Document already exists")
-    _delete_single_locked(
+    await _delete_single_locked(
         store, description_path_for_stem(stem_path_from_reference(reference))
     )
 
@@ -618,6 +635,40 @@ def _rewrite_metadata_tree(
         _rewrite_metadata_paths(meta_file, replacements)
 
 
+async def _reindex_metadata_subtree(store: Casebase, prefix: str) -> None:
+    """Reindex every metadata JSON beneath ``metadata/<prefix>`` (or at it).
+
+    Used after rename operations: the JSONs already contain their new
+    ``description_path`` so we just feed each through
+    :func:`hivegent.retrieval.index_document`.
+    """
+    metadata_root = store.metadata_path(settings.data_dir)
+    candidates = (
+        metadata_root / f"{prefix}.json",
+        metadata_root / prefix,
+    )
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        meta_files = (
+            [candidate] if candidate.is_file() else list(candidate.rglob("*.json"))
+        )
+        for meta_file in meta_files:
+            try:
+                doc = DocumentMetadata.model_validate_json(
+                    meta_file.read_text(encoding="utf-8")
+                )
+                stem = str(
+                    meta_file.relative_to(metadata_root).as_posix()
+                ).removesuffix(".json")
+                description_path = doc.description_path or description_path_for_stem(
+                    stem
+                )
+                await index_document(store, description_path, doc)
+            except Exception:
+                logger.warning("Failed to reindex %s", meta_file, exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Public mutation API
 # ---------------------------------------------------------------------------
@@ -636,19 +687,15 @@ async def upload(
     """Upload a document to *store*, sanitising and chunking as needed.
 
     The casebase lock is held for the entire operation, including
-    extracted-asset child uploads.  The search index is marked dirty
-    before the lock is released.
+    extracted-asset child uploads.
     """
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
-    async with _store_lock(store):
-        try:
-            _ensure_upload_slot_locked(store, filepath, overwrite=overwrite)
-            return await _upload_locked(
-                store, filepath, content, spec, llm, origin=origin
-            )
-        finally:
-            mark_dirty_and_sync(store)
+    async with store_lock(store):
+        await _ensure_upload_slot_locked(store, filepath, overwrite=overwrite)
+        return await _upload_locked(
+            store, filepath, content, spec, llm, origin=origin
+        )
 
 
 async def replace_original(
@@ -666,51 +713,46 @@ async def replace_original(
     """
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
-    async with _store_lock(store):
-        try:
-            metadata = get_metadata(store, safe)
-            workspace_dir = store.workspace_dir(settings.data_dir)
-            existing_original_rel = (
-                metadata.original_path
-                if metadata
-                else resolve_entry_paths(workspace_dir, safe).original_path
+    async with store_lock(store):
+        metadata = get_metadata(store, safe)
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        existing_original_rel = (
+            metadata.original_path
+            if metadata
+            else resolve_entry_paths(workspace_dir, safe).original_path
+        )
+        if not existing_original_rel:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No original file found for '{safe}'",
             )
-            if not existing_original_rel:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No original file found for '{safe}'",
-                )
-            existing_original_path = workspace_dir / existing_original_rel
+        existing_original_path = workspace_dir / existing_original_rel
 
-            new_suffix = (
-                PurePosixPath(new_filename).suffix
-                if new_filename
-                else existing_original_path.suffix
-            ) or existing_original_path.suffix
-            new_original_relpath = (
-                f"{stem_path_from_reference(safe)}{new_suffix.lower()}"
-            )
+        new_suffix = (
+            PurePosixPath(new_filename).suffix
+            if new_filename
+            else existing_original_path.suffix
+        ) or existing_original_path.suffix
+        new_original_relpath = (
+            f"{stem_path_from_reference(safe)}{new_suffix.lower()}"
+        )
 
-            if existing_original_rel != new_original_relpath:
-                existing_original_path.unlink(missing_ok=True)
+        if existing_original_rel != new_original_relpath:
+            existing_original_path.unlink(missing_ok=True)
 
-            origin = metadata.origin if metadata else "upload"
-            _clear_assets_subtree(
-                store,
-                metadata.stem_path
-                if metadata
-                else stem_path_from_reference(safe),
-            )
-            return await _upload_locked(
-                store,
-                new_original_relpath,
-                new_content,
-                spec,
-                llm,
-                origin=origin,
-            )
-        finally:
-            mark_dirty_and_sync(store)
+        origin = metadata.origin if metadata else "upload"
+        await _clear_assets_subtree(
+            store,
+            metadata.stem_path if metadata else stem_path_from_reference(safe),
+        )
+        return await _upload_locked(
+            store,
+            new_original_relpath,
+            new_content,
+            spec,
+            llm,
+            origin=origin,
+        )
 
 
 async def reconvert(
@@ -719,43 +761,33 @@ async def reconvert(
     *,
     spec: PipelineSpec | None = None,
     llm: LlmConfig | None = None,
-    sync: bool = True,
 ) -> UploadCompleteEvent:
-    """Re-run conversion and chunking for an entry's existing original.
-
-    Pass ``sync=False`` when invoked inside a bulk loop; the caller is
-    then responsible for a single :func:`mark_dirty_and_sync` after the
-    loop so the index rebuild is coalesced into one pass.
-    """
+    """Re-run conversion and chunking for an entry's existing original."""
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
-    async with _store_lock(store):
-        try:
-            metadata = get_metadata(store, safe)
-            if not metadata or not metadata.original_path:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No original file found for '{safe}'",
-                )
-            workspace_dir = store.workspace_dir(settings.data_dir)
-            original_path = workspace_dir / metadata.original_path
-            if not original_path.exists():
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No original file found for '{safe}'",
-                )
-            _clear_assets_subtree(store, metadata.stem_path)
-            return await _upload_locked(
-                store,
-                metadata.original_path,
-                original_path.read_bytes(),
-                spec,
-                llm,
-                origin=metadata.origin,
+    async with store_lock(store):
+        metadata = get_metadata(store, safe)
+        if not metadata or not metadata.original_path:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No original file found for '{safe}'",
             )
-        finally:
-            if sync:
-                mark_dirty_and_sync(store)
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        original_path = workspace_dir / metadata.original_path
+        if not original_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"No original file found for '{safe}'",
+            )
+        await _clear_assets_subtree(store, metadata.stem_path)
+        return await _upload_locked(
+            store,
+            metadata.original_path,
+            original_path.read_bytes(),
+            spec,
+            llm,
+            origin=metadata.origin,
+        )
 
 
 async def rechunk(
@@ -763,144 +795,131 @@ async def rechunk(
     safe: str,
     *,
     spec: PipelineSpec | None = None,
-    sync: bool = True,
 ) -> DocumentMetadata:
-    """Re-chunk an existing markdown document.
-
-    Pass ``sync=False`` when invoked inside a bulk loop; see
-    :func:`reconvert` for the caller's coalescing responsibility.
-    """
+    """Re-chunk an existing markdown document."""
     spec = spec or PipelineSpec()
-    async with _store_lock(store):
-        try:
-            workspace_dir = store.workspace_dir(settings.data_dir)
-            file_path = workspace_dir / safe
-            if not file_path.exists() or not file_path.is_file():
-                raise HTTPException(status_code=404, detail="Document not found")
-            text = file_path.read_text(encoding="utf-8")
-            return await chunk_document(store, safe, text, spec.chunking)
-        finally:
-            if sync:
-                mark_dirty_and_sync(store)
+    async with store_lock(store):
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        file_path = workspace_dir / safe
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(status_code=404, detail="Document not found")
+        text = file_path.read_text(encoding="utf-8")
+        return await chunk_document(store, safe, text, spec.chunking)
 
 
-async def delete_document(store: Casebase, safe: str, *, sync: bool = True) -> None:
-    """Delete a logical entry and all of its files.
-
-    Pass ``sync=False`` when invoked inside a bulk loop; see
-    :func:`reconvert` for the caller's coalescing responsibility.
-    """
-    async with _store_lock(store):
-        try:
-            _delete_single_locked(store, safe)
-        finally:
-            if sync:
-                mark_dirty_and_sync(store)
+async def delete_document(store: Casebase, safe: str) -> None:
+    """Delete a logical entry and all of its files."""
+    async with store_lock(store):
+        await _delete_single_locked(store, safe)
 
 
 async def move_document(
     store: Casebase, src: str, dst: str
 ) -> MoveDocumentResponse:
     """Move a logical entry, its original, and its child-assets subtree."""
-    async with _store_lock(store):
-        try:
-            workspace_dir = store.workspace_dir(settings.data_dir)
-            metadata_dir = store.metadata_dir(settings.data_dir)
+    async with store_lock(store):
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        metadata_dir = store.metadata_dir(settings.data_dir)
 
-            metadata = get_metadata(store, src)
-            if not metadata:
-                raise HTTPException(status_code=404, detail="Document not found")
+        metadata = get_metadata(store, src)
+        if not metadata:
+            raise HTTPException(status_code=404, detail="Document not found")
 
-            src_stem = metadata.stem_path or stem_path_from_reference(src)
-            dst_stem = stem_path_from_reference(dst)
-            if src_stem != dst_stem and entry_exists(
-                workspace_dir, metadata_dir, dst
-            ):
-                raise HTTPException(
-                    status_code=409, detail="Destination already exists"
-                )
-
-            src_description = metadata.description_path or description_path_for_stem(
-                src_stem
+        src_stem = metadata.stem_path or stem_path_from_reference(src)
+        dst_stem = stem_path_from_reference(dst)
+        if src_stem != dst_stem and entry_exists(
+            workspace_dir, metadata_dir, dst
+        ):
+            raise HTTPException(
+                status_code=409, detail="Destination already exists"
             )
-            dst_description = description_path_for_stem(dst_stem)
-            src_description_path = workspace_dir / src_description
-            if not src_description_path.exists():
-                raise HTTPException(status_code=404, detail="Document not found")
 
-            dst_description_path = workspace_dir / dst_description
-            dst_description_path.parent.mkdir(parents=True, exist_ok=True)
-            src_description_path.rename(dst_description_path)
-            cleanup_empty_parents(src_description_path, workspace_dir)
+        src_description = metadata.description_path or description_path_for_stem(
+            src_stem
+        )
+        dst_description = description_path_for_stem(dst_stem)
+        src_description_path = workspace_dir / src_description
+        if not src_description_path.exists():
+            raise HTTPException(status_code=404, detail="Document not found")
 
-            dst_original: str | None = None
-            if metadata.original_path:
-                src_original_path = workspace_dir / metadata.original_path
-                if src_original_path.exists():
-                    dst_original = f"{dst_stem}{src_original_path.suffix}"
-                    dst_original_path = workspace_dir / dst_original
-                    dst_original_path.parent.mkdir(parents=True, exist_ok=True)
-                    src_original_path.rename(dst_original_path)
-                    cleanup_empty_parents(src_original_path, workspace_dir)
+        dst_description_path = workspace_dir / dst_description
+        dst_description_path.parent.mkdir(parents=True, exist_ok=True)
+        src_description_path.rename(dst_description_path)
+        cleanup_empty_parents(src_description_path, workspace_dir)
 
-            dst_assets_dir: str | None = None
-            src_assets_dir = metadata.assets_dir
-            if src_assets_dir:
-                src_assets_path = workspace_dir / src_assets_dir
-                if src_assets_path.exists():
-                    dst_assets_dir = assets_dir_for_stem(dst_stem)
-                    dst_assets_path = workspace_dir / dst_assets_dir
-                    dst_assets_path.parent.mkdir(parents=True, exist_ok=True)
-                    src_assets_path.rename(dst_assets_path)
-                    cleanup_empty_parents(src_assets_path, workspace_dir)
+        dst_original: str | None = None
+        if metadata.original_path:
+            src_original_path = workspace_dir / metadata.original_path
+            if src_original_path.exists():
+                dst_original = f"{dst_stem}{src_original_path.suffix}"
+                dst_original_path = workspace_dir / dst_original
+                dst_original_path.parent.mkdir(parents=True, exist_ok=True)
+                src_original_path.rename(dst_original_path)
+                cleanup_empty_parents(src_original_path, workspace_dir)
 
-                    src_assets_name = PurePosixPath(src_assets_dir).name
-                    dst_assets_name = PurePosixPath(dst_assets_dir).name
-                    if src_assets_name != dst_assets_name:
-                        body = dst_description_path.read_text(encoding="utf-8")
-                        body = body.replace(
-                            f"{src_assets_name}/", f"{dst_assets_name}/"
-                        )
-                        dst_description_path.write_text(body, encoding="utf-8")
+        dst_assets_dir: str | None = None
+        src_assets_dir = metadata.assets_dir
+        if src_assets_dir:
+            src_assets_path = workspace_dir / src_assets_dir
+            if src_assets_path.exists():
+                dst_assets_dir = assets_dir_for_stem(dst_stem)
+                dst_assets_path = workspace_dir / dst_assets_dir
+                dst_assets_path.parent.mkdir(parents=True, exist_ok=True)
+                src_assets_path.rename(dst_assets_path)
+                cleanup_empty_parents(src_assets_path, workspace_dir)
 
-            src_meta_path = metadata_path_for_reference(store, src_stem)
-            dst_meta_path = metadata_path_for_reference(store, dst_stem)
-            if src_meta_path.exists():
-                dst_meta_path.parent.mkdir(parents=True, exist_ok=True)
-                src_meta_path.rename(dst_meta_path)
-                cleanup_empty_parents(src_meta_path, metadata_dir)
+                src_assets_name = PurePosixPath(src_assets_dir).name
+                dst_assets_name = PurePosixPath(dst_assets_dir).name
+                if src_assets_name != dst_assets_name:
+                    body = dst_description_path.read_text(encoding="utf-8")
+                    body = body.replace(
+                        f"{src_assets_name}/", f"{dst_assets_name}/"
+                    )
+                    dst_description_path.write_text(body, encoding="utf-8")
 
-            src_meta_assets = metadata_dir / assets_dir_for_stem(src_stem)
-            dst_meta_assets = metadata_dir / assets_dir_for_stem(dst_stem)
-            if src_meta_assets.exists():
-                dst_meta_assets.parent.mkdir(parents=True, exist_ok=True)
-                src_meta_assets.rename(dst_meta_assets)
-                cleanup_empty_parents(src_meta_assets, metadata_dir)
+        src_meta_path = metadata_path_for_reference(store, src_stem)
+        dst_meta_path = metadata_path_for_reference(store, dst_stem)
+        if src_meta_path.exists():
+            dst_meta_path.parent.mkdir(parents=True, exist_ok=True)
+            src_meta_path.rename(dst_meta_path)
+            cleanup_empty_parents(src_meta_path, metadata_dir)
 
-            replacements = [
-                PathReplacement(old=src_stem, new=dst_stem),
-                PathReplacement(old=src_description, new=dst_description),
-            ]
-            if metadata.original_path and dst_original:
-                replacements.append(
-                    PathReplacement(old=metadata.original_path, new=dst_original)
-                )
-            if src_assets_dir and dst_assets_dir:
-                replacements.append(
-                    PathReplacement(old=src_assets_dir, new=dst_assets_dir)
-                )
-            if dst_meta_path.exists():
-                _rewrite_metadata_paths(dst_meta_path, replacements)
-            if dst_meta_assets.exists():
-                _rewrite_metadata_tree(dst_meta_assets, replacements)
+        src_meta_assets = metadata_dir / assets_dir_for_stem(src_stem)
+        dst_meta_assets = metadata_dir / assets_dir_for_stem(dst_stem)
+        if src_meta_assets.exists():
+            dst_meta_assets.parent.mkdir(parents=True, exist_ok=True)
+            src_meta_assets.rename(dst_meta_assets)
+            cleanup_empty_parents(src_meta_assets, metadata_dir)
 
-            return MoveDocumentResponse(
-                source=src,
-                destination=dst_description,
-                message="Document moved successfully",
+        replacements = [
+            PathReplacement(old=src_stem, new=dst_stem),
+            PathReplacement(old=src_description, new=dst_description),
+        ]
+        if metadata.original_path and dst_original:
+            replacements.append(
+                PathReplacement(old=metadata.original_path, new=dst_original)
             )
-        finally:
-            mark_dirty_and_sync(store)
+        if src_assets_dir and dst_assets_dir:
+            replacements.append(
+                PathReplacement(old=src_assets_dir, new=dst_assets_dir)
+            )
+        if dst_meta_path.exists():
+            _rewrite_metadata_paths(dst_meta_path, replacements)
+        if dst_meta_assets.exists():
+            _rewrite_metadata_tree(dst_meta_assets, replacements)
+
+        # Reindex dst before unindexing src: a partial failure leaves
+        # duplicate hits, never missing rows under dst.
+        await _reindex_metadata_subtree(store, dst_stem)
+        await _safe_unindex_subtree(store, src_stem)
+        if src_assets_dir:
+            await _safe_unindex_subtree(store, src_assets_dir)
+
+        return MoveDocumentResponse(
+            source=src,
+            destination=dst_description,
+            message="Document moved successfully",
+        )
 
 
 async def update_asset_description(
@@ -914,41 +933,38 @@ async def update_asset_description(
     Persists chunk metadata for the description so it is searchable
     immediately after the call returns.
     """
-    async with _store_lock(store):
-        try:
-            workspace = store.workspace_dir(settings.data_dir)
-            assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
-            assets_path = workspace / assets_dir
-            if not assets_path.exists() or not assets_path.is_dir():
-                raise HTTPException(
-                    status_code=404, detail="Document has no assets directory"
-                )
-            asset_path = assets_path / asset_name
-            if not asset_path.exists() or not asset_path.is_file():
-                raise HTTPException(status_code=404, detail="Asset file not found")
-
-            md_path = asset_path.with_suffix(DOCUMENT_EXTENSION)
-            md_path.write_text(content, encoding="utf-8")
-
-            description_path = str(md_path.relative_to(workspace).as_posix())
-            rel_path = str(asset_path.relative_to(workspace).as_posix())
-
-            await chunk_document(store, description_path, content)
-            return AssetEntry(
-                name=asset_name,
-                path=rel_path,
-                description_path=description_path,
-                description=content,
-                size_bytes=asset_path.stat().st_size,
-                media_type=mimetypes.guess_type(asset_name)[0],
+    async with store_lock(store):
+        workspace = store.workspace_dir(settings.data_dir)
+        assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
+        assets_path = workspace / assets_dir
+        if not assets_path.exists() or not assets_path.is_dir():
+            raise HTTPException(
+                status_code=404, detail="Document has no assets directory"
             )
-        finally:
-            mark_dirty_and_sync(store)
+        asset_path = assets_path / asset_name
+        if not asset_path.exists() or not asset_path.is_file():
+            raise HTTPException(status_code=404, detail="Asset file not found")
+
+        md_path = asset_path.with_suffix(DOCUMENT_EXTENSION)
+        md_path.write_text(content, encoding="utf-8")
+
+        description_path = str(md_path.relative_to(workspace).as_posix())
+        rel_path = str(asset_path.relative_to(workspace).as_posix())
+
+        await chunk_document(store, description_path, content)
+        return AssetEntry(
+            name=asset_name,
+            path=rel_path,
+            description_path=description_path,
+            description=content,
+            size_bytes=asset_path.stat().st_size,
+            media_type=mimetypes.guess_type(asset_name)[0],
+        )
 
 
 async def create_directory(store: Casebase, path: str) -> None:
     """Create an empty workspace directory."""
-    async with _store_lock(store):
+    async with store_lock(store):
         directory_path = store.workspace_dir(settings.data_dir) / path
         if directory_path.exists():
             raise HTTPException(status_code=409, detail="Directory already exists")
@@ -959,73 +975,73 @@ async def move_directory(
     store: Casebase, src: str, dst: str
 ) -> MoveDirectoryResponse:
     """Move or rename a workspace directory and its metadata subtree."""
-    async with _store_lock(store):
-        try:
-            workspace_dir = store.workspace_dir(settings.data_dir)
-            metadata_dir = store.metadata_dir(settings.data_dir)
+    async with store_lock(store):
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        metadata_dir = store.metadata_dir(settings.data_dir)
 
-            src_dir = workspace_dir / src
-            if not src_dir.exists() or not src_dir.is_dir():
-                raise HTTPException(status_code=404, detail="Directory not found")
-            dst_dir = workspace_dir / dst
-            if dst_dir.exists():
-                raise HTTPException(
-                    status_code=409, detail="Destination already exists"
-                )
-
-            files_moved = sum(
-                1 for file_path in src_dir.rglob("*") if file_path.is_file()
+        src_dir = workspace_dir / src
+        if not src_dir.exists() or not src_dir.is_dir():
+            raise HTTPException(status_code=404, detail="Directory not found")
+        dst_dir = workspace_dir / dst
+        if dst_dir.exists():
+            raise HTTPException(
+                status_code=409, detail="Destination already exists"
             )
-            dst_dir.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(src_dir), str(dst_dir))
-            cleanup_empty_parents(src_dir, workspace_dir)
 
-            src_meta = metadata_dir / src
-            dst_meta = metadata_dir / dst
-            if src_meta.exists():
-                dst_meta.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(src_meta), str(dst_meta))
-                cleanup_empty_parents(src_meta, metadata_dir)
-                _rewrite_metadata_tree(
-                    dst_meta, [PathReplacement(old=src, new=dst)]
-                )
+        files_moved = sum(
+            1 for file_path in src_dir.rglob("*") if file_path.is_file()
+        )
+        dst_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src_dir), str(dst_dir))
+        cleanup_empty_parents(src_dir, workspace_dir)
 
-            return MoveDirectoryResponse(
-                source=src,
-                destination=dst,
-                files_moved=files_moved,
-                message="Directory moved successfully",
+        src_meta = metadata_dir / src
+        dst_meta = metadata_dir / dst
+        if src_meta.exists():
+            dst_meta.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src_meta), str(dst_meta))
+            cleanup_empty_parents(src_meta, metadata_dir)
+            _rewrite_metadata_tree(
+                dst_meta, [PathReplacement(old=src, new=dst)]
             )
-        finally:
-            mark_dirty_and_sync(store)
+
+        # Reindex at the new paths first, then drop the old keys — see
+        # ``move_document`` for the rationale.
+        await _reindex_metadata_subtree(store, dst)
+        await _safe_unindex_subtree(store, src)
+
+        return MoveDirectoryResponse(
+            source=src,
+            destination=dst,
+            files_moved=files_moved,
+            message="Directory moved successfully",
+        )
 
 
 async def delete_directory(store: Casebase, path: str) -> int:
     """Delete a workspace directory and its metadata subtree."""
-    async with _store_lock(store):
-        try:
-            workspace_dir = store.workspace_dir(settings.data_dir)
-            metadata_dir = store.metadata_dir(settings.data_dir)
-            directory_path = workspace_dir / path
-            if not directory_path.exists() or not directory_path.is_dir():
-                raise HTTPException(status_code=404, detail="Directory not found")
-            files_deleted = sum(
-                1 for file_path in directory_path.rglob("*") if file_path.is_file()
-            )
-            shutil.rmtree(directory_path)
-            cleanup_empty_parents(directory_path, workspace_dir)
-            metadata_subdir = metadata_dir / path
-            if metadata_subdir.exists():
-                shutil.rmtree(metadata_subdir)
-                cleanup_empty_parents(metadata_subdir, metadata_dir)
-            return files_deleted
-        finally:
-            mark_dirty_and_sync(store)
+    async with store_lock(store):
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        metadata_dir = store.metadata_dir(settings.data_dir)
+        directory_path = workspace_dir / path
+        if not directory_path.exists() or not directory_path.is_dir():
+            raise HTTPException(status_code=404, detail="Directory not found")
+        files_deleted = sum(
+            1 for file_path in directory_path.rglob("*") if file_path.is_file()
+        )
+        shutil.rmtree(directory_path)
+        cleanup_empty_parents(directory_path, workspace_dir)
+        metadata_subdir = metadata_dir / path
+        if metadata_subdir.exists():
+            shutil.rmtree(metadata_subdir)
+            cleanup_empty_parents(metadata_subdir, metadata_dir)
+        await _safe_unindex_subtree(store, path)
+        return files_deleted
 
 
 async def delete_all(store: Casebase) -> None:
     """Wipe a casebase's workspace, metadata, and search index."""
-    async with _store_lock(store):
+    async with store_lock(store):
         await invalidate_store(store)
         data_dir = settings.data_dir
         for directory in (
@@ -1039,23 +1055,20 @@ async def delete_all(store: Casebase) -> None:
 
 async def on_agent_write(store: Casebase, filename: str) -> None:
     """Re-chunk a document after an agent or MCP write tool modified it."""
-    async with _store_lock(store):
+    async with store_lock(store):
+        workspace = store.workspace_dir(settings.data_dir)
+        file_path = workspace / filename
         try:
-            workspace = store.workspace_dir(settings.data_dir)
-            file_path = workspace / filename
-            try:
-                text = file_path.read_text(encoding="utf-8")
-            except OSError:
-                logger.warning("Re-chunking failed for %s after write", filename)
-                return
-            try:
-                await chunk_document(store, filename, text)
-            except Exception:
-                logger.warning(
-                    "Re-chunking failed for %s after write", filename, exc_info=True
-                )
-        finally:
-            mark_dirty_and_sync(store)
+            text = file_path.read_text(encoding="utf-8")
+        except OSError:
+            logger.warning("Re-chunking failed for %s after write", filename)
+            return
+        try:
+            await chunk_document(store, filename, text)
+        except Exception:
+            logger.warning(
+                "Re-chunking failed for %s after write", filename, exc_info=True
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1068,184 +1081,145 @@ async def process_collection(
     raw: bytes,
     spec: PipelineSpec,
     llm: LlmConfig,
-) -> AsyncGenerator[CollectionProgressEvent | CollectionCompleteEvent, None]:
+) -> AsyncGenerator[CollectionProgressEvent | CollectionCompleteEvent]:
     """Process a ZIP collection and yield progress events for each file.
 
     The casebase lock is held for the entire collection so a concurrent
-    upload elsewhere cannot interleave.  The index is marked dirty when
-    the generator finishes (including on cancellation).
+    upload elsewhere cannot interleave.  Each per-file upload indexes
+    its own chunks via :func:`hivegent.chunks.chunk_document`.
     """
     failed: list[str] = []
     markdown_count = 0
     converted_count = 0
     current = 0
 
-    async with _store_lock(store):
-        try:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                extract_root = Path(tmp_dir)
+    async with store_lock(store):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            extract_root = Path(tmp_dir)
 
-                try:
-                    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-                        for info in archive.infolist():
-                            normalized = str(PurePosixPath(info.filename))
-                            if (
-                                normalized.startswith("/")
-                                or normalized.startswith("..")
-                                or "/.." in normalized
-                            ):
-                                raise HTTPException(
-                                    status_code=400,
-                                    detail=f"ZIP contains unsafe path: {info.filename}",
-                                )
-                            if (
-                                info.file_size > settings.max_file_size_bytes
-                                and not info.is_dir()
-                            ):
-                                raise HTTPException(
-                                    status_code=400,
-                                    detail=(
-                                        f"File '{info.filename}' in ZIP is too large "
-                                        f"({info.file_size} bytes decompressed). "
-                                        f"Maximum: {settings.max_file_size_bytes} bytes"
-                                    ),
-                                )
-                        archive.extractall(extract_root)
-                except zipfile.BadZipFile as exc:
-                    raise HTTPException(
-                        status_code=400, detail="Invalid ZIP file"
-                    ) from exc
-                except zlib.error as exc:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Failed to decompress ZIP: {exc!s}",
-                    ) from exc
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                    for info in archive.infolist():
+                        normalized = str(PurePosixPath(info.filename))
+                        if (
+                            normalized.startswith("/")
+                            or normalized.startswith("..")
+                            or "/.." in normalized
+                        ):
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"ZIP contains unsafe path: {info.filename}",
+                            )
+                        if (
+                            info.file_size > settings.max_file_size_bytes
+                            and not info.is_dir()
+                        ):
+                            raise HTTPException(
+                                status_code=400,
+                                detail=(
+                                    f"File '{info.filename}' in ZIP is too large "
+                                    f"({info.file_size} bytes decompressed). "
+                                    f"Maximum: {settings.max_file_size_bytes} bytes"
+                                ),
+                            )
+                    archive.extractall(extract_root)
+            except zipfile.BadZipFile as exc:
+                raise HTTPException(
+                    status_code=400, detail="Invalid ZIP file"
+                ) from exc
+            except zlib.error as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Failed to decompress ZIP: {exc!s}",
+                ) from exc
 
-                top_items = list(extract_root.iterdir())
-                if len(top_items) == 1 and top_items[0].is_dir():
-                    extract_root = top_items[0]
+            top_items = list(extract_root.iterdir())
+            if len(top_items) == 1 and top_items[0].is_dir():
+                extract_root = top_items[0]
 
-                collection_files = sorted(
-                    str(path.relative_to(extract_root).as_posix())
-                    for path in extract_root.rglob("*")
-                    if path.is_file()
+            collection_files = sorted(
+                str(path.relative_to(extract_root).as_posix())
+                for path in extract_root.rglob("*")
+                if path.is_file()
+            )
+            if len(collection_files) > settings.max_collection_files:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Collection has too many files ({len(collection_files)}). "
+                        f"Maximum: {settings.max_collection_files}"
+                    ),
                 )
-                if len(collection_files) > settings.max_collection_files:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            f"Collection has too many files ({len(collection_files)}). "
-                            f"Maximum: {settings.max_collection_files}"
-                        ),
-                    )
 
-                workspace_dir = store.workspace_dir(settings.data_dir)
-                metadata_dir = store.metadata_dir(settings.data_dir)
-                preprocessed_markdown: dict[str, bytes] = {}
-                collection_stems: set[str] = set()
-                companion_originals: set[str] = set()
+            workspace_dir = store.workspace_dir(settings.data_dir)
+            metadata_dir = store.metadata_dir(settings.data_dir)
+            preprocessed_markdown: dict[str, bytes] = {}
+            collection_stems: set[str] = set()
+            companion_originals: set[str] = set()
 
-                for relative_path in collection_files:
-                    safe = sanitize_document_path(relative_path)
-                    suffix = PurePosixPath(safe).suffix.lower()
-                    if suffix == DOCUMENT_EXTENSION:
-                        try:
-                            text = (extract_root / relative_path).read_text(
-                                encoding="utf-8"
-                            )
-                        except Exception as exc:
-                            logger.warning(
-                                "Failed to read %s: %s", relative_path, exc
-                            )
-                            failed.append(relative_path)
-                            continue
-                        normalized_md = preprocess_markdown(
-                            text, safe, frozenset(collection_files)
+            for relative_path in collection_files:
+                safe = sanitize_document_path(relative_path)
+                suffix = PurePosixPath(safe).suffix.lower()
+                if suffix == DOCUMENT_EXTENSION:
+                    try:
+                        text = (extract_root / relative_path).read_text(
+                            encoding="utf-8"
                         )
-                        preprocessed_markdown[safe] = normalized_md.content.encode(
-                            "utf-8"
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to read %s: %s", relative_path, exc
                         )
-
-                    stem = stem_path_from_reference(safe)
-                    if entry_exists(workspace_dir, metadata_dir, safe):
                         failed.append(relative_path)
                         continue
-                    if stem in collection_stems:
-                        if suffix != DOCUMENT_EXTENSION:
-                            companion_originals.add(relative_path)
-                        else:
-                            failed.append(relative_path)
-                        continue
-                    collection_stems.add(stem)
+                    normalized_md = preprocess_markdown(
+                        text, safe, frozenset(collection_files)
+                    )
+                    preprocessed_markdown[safe] = normalized_md.content.encode(
+                        "utf-8"
+                    )
 
-                total = len(collection_files)
-                for relative_path in collection_files:
-                    safe = sanitize_document_path(relative_path)
-                    if relative_path in failed:
-                        current += 1
-                        yield CollectionProgressEvent(
-                            file=relative_path,
-                            current=current,
-                            total=total,
-                            status="failed",
-                        )
-                        continue
+                stem = stem_path_from_reference(safe)
+                if entry_exists(workspace_dir, metadata_dir, safe):
+                    failed.append(relative_path)
+                    continue
+                if stem in collection_stems:
+                    if suffix != DOCUMENT_EXTENSION:
+                        companion_originals.add(relative_path)
+                    else:
+                        failed.append(relative_path)
+                    continue
+                collection_stems.add(stem)
 
-                    if relative_path in companion_originals:
-                        try:
-                            original_bytes = (
-                                extract_root / relative_path
-                            ).read_bytes()
-                            original_path = workspace_dir / safe
-                            original_path.parent.mkdir(parents=True, exist_ok=True)
-                            original_path.write_bytes(original_bytes)
-                            status = "ok"
-                        except Exception as exc:
-                            logger.warning(
-                                "Failed to write original %s: %s",
-                                relative_path,
-                                exc,
-                            )
-                            failed.append(relative_path)
-                            status = "failed"
-                        current += 1
-                        yield CollectionProgressEvent(
-                            file=relative_path,
-                            current=current,
-                            total=total,
-                            status=status,
-                        )
-                        continue
+            total = len(collection_files)
+            for relative_path in collection_files:
+                safe = sanitize_document_path(relative_path)
+                if relative_path in failed:
+                    current += 1
+                    yield CollectionProgressEvent(
+                        file=relative_path,
+                        current=current,
+                        total=total,
+                        status="failed",
+                    )
+                    continue
 
+                if relative_path in companion_originals:
                     try:
-                        if safe in preprocessed_markdown:
-                            content_bytes = preprocessed_markdown[safe]
-                            markdown_count += 1
-                        else:
-                            content_bytes = (
-                                extract_root / relative_path
-                            ).read_bytes()
-                            converted_count += 1
-                        await _upload_locked(
-                            store,
-                            safe,
-                            content_bytes,
-                            spec,
-                            llm,
-                            origin="collection",
-                        )
+                        original_bytes = (
+                            extract_root / relative_path
+                        ).read_bytes()
+                        original_path = workspace_dir / safe
+                        original_path.parent.mkdir(parents=True, exist_ok=True)
+                        original_path.write_bytes(original_bytes)
                         status = "ok"
                     except Exception as exc:
                         logger.warning(
-                            "Failed to process %s: %s", relative_path, exc
+                            "Failed to write original %s: %s",
+                            relative_path,
+                            exc,
                         )
-                        if safe in preprocessed_markdown:
-                            markdown_count -= 1
-                        else:
-                            converted_count -= 1
                         failed.append(relative_path)
                         status = "failed"
-
                     current += 1
                     yield CollectionProgressEvent(
                         file=relative_path,
@@ -1253,8 +1227,44 @@ async def process_collection(
                         total=total,
                         status=status,
                     )
-        finally:
-            mark_dirty_and_sync(store)
+                    continue
+
+                try:
+                    if safe in preprocessed_markdown:
+                        content_bytes = preprocessed_markdown[safe]
+                        markdown_count += 1
+                    else:
+                        content_bytes = (
+                            extract_root / relative_path
+                        ).read_bytes()
+                        converted_count += 1
+                    await _upload_locked(
+                        store,
+                        safe,
+                        content_bytes,
+                        spec,
+                        llm,
+                        origin="collection",
+                    )
+                    status = "ok"
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to process %s: %s", relative_path, exc
+                    )
+                    if safe in preprocessed_markdown:
+                        markdown_count -= 1
+                    else:
+                        converted_count -= 1
+                    failed.append(relative_path)
+                    status = "failed"
+
+                current += 1
+                yield CollectionProgressEvent(
+                    file=relative_path,
+                    current=current,
+                    total=total,
+                    status=status,
+                )
 
     total_ok = markdown_count + converted_count
     yield CollectionCompleteEvent(

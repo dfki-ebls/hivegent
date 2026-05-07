@@ -4,7 +4,7 @@ import importlib
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from functools import lru_cache
+from functools import cache
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError
@@ -17,8 +17,8 @@ __all__ = [
     "ConversionResult",
     "ConversionSpec",
     "DocumentConverter",
-    "get_converter",
     "get_conversion_pipelines_info",
+    "get_converter",
     "resolve_auto_pipeline",
 ]
 
@@ -206,7 +206,7 @@ _AUTO_MAPPING: dict[str, ConversionPipeline] = {
 }
 
 
-@lru_cache(maxsize=None)
+@cache
 def _load_module_attr(module_name: str, attr_name: str) -> Any:
     """Import and return an attribute from a converter module."""
     module = importlib.import_module(module_name)

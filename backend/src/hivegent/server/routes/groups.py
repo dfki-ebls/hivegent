@@ -40,6 +40,7 @@ from ..common import (
     resolve_llm_config,
     safe_path,
 )
+from ..models import ReconvertRequest
 from ..operations import (
     PreparedCollection,
     build_tree_response,
@@ -52,7 +53,6 @@ from ..operations import (
     upload_file_stream,
     validate_collection_upload,
 )
-from ..models import ReconvertRequest
 
 __all__ = ["router"]
 

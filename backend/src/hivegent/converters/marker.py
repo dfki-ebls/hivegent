@@ -4,8 +4,8 @@ import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from marker.converters.pdf import PdfConverter
-from marker.models import create_model_dict
+from marker.converters.pdf import PdfConverter  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # ty: ignore[unresolved-import]
+from marker.models import create_model_dict  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # ty: ignore[unresolved-import]
 from pydantic import BaseModel
 
 from .base import ConversionResult, DocumentConverter, pil_to_png_bytes

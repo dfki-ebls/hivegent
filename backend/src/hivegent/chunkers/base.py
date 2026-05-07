@@ -13,11 +13,11 @@ __all__ = [
     "ChunkData",
     "ChunkSummary",
     "DocumentChunker",
+    "DocumentMetadata",
     "EntryGeneratedBy",
     "EntryKind",
     "EntryMetadata",
     "EntryOrigin",
-    "DocumentMetadata",
     "RetrievedChunk",
 ]
 

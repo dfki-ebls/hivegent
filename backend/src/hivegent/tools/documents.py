@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Annotated, override
@@ -220,7 +220,7 @@ def _scan_entries(
             DocumentSummary(
                 filename=sp.prefixed(rel),
                 size=stat.st_size if not is_dir else 0,
-                modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                modified_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
                 is_directory=is_dir,
             )
         )

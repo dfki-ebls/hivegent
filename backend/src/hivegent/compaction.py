@@ -7,7 +7,7 @@ as initial context, linking back to the original.
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from nanoid import generate
 from pydantic_ai.messages import (
@@ -83,7 +83,7 @@ async def compact_conversation(
     summary = await _summarize_conversation(conversation.messages, llm_config)
 
     new_id = generate()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     summary_messages: list[ModelMessage] = [
         ModelResponse(parts=[TextPart(content=summary)]),

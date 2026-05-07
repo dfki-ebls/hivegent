@@ -2,7 +2,7 @@
 
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
@@ -96,7 +96,7 @@ class TokenStore:
 
         token_hash = self._hasher.hash(raw_token)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expires_at = None
         if expires_in_days is not None:
             expires_at = now + timedelta(days=expires_in_days)
@@ -155,11 +155,11 @@ class TokenStore:
 
             # Check expiration
             if token.expires_at is not None:
-                if datetime.now(timezone.utc) > token.expires_at:
+                if datetime.now(UTC) > token.expires_at:
                     return None
 
             # Update last_used_at
-            token.last_used_at = datetime.now(timezone.utc)
+            token.last_used_at = datetime.now(UTC)
             self._save_user_tokens(user_id, tokens)
 
             return User(id=token.user_id)

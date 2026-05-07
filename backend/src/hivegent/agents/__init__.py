@@ -14,9 +14,9 @@ from .tools import (
 )
 
 __all__ = [
+    "TOOLSET_GROUPS",
     "ExploreTaskArg",
     "MemoryContentArg",
-    "TOOLSET_GROUPS",
     "UserDeps",
     "base_agent",
     "build_toolsets",

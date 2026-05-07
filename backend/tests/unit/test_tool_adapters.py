@@ -9,13 +9,12 @@ from pydantic import Field
 from pydantic_ai import FunctionToolset
 from pydantic_ai.messages import ToolReturn
 
+from hivegent.tools.base import AsyncTool, SyncTool, ToolOutput, tool_description
+from hivegent.tools.fastmcp import for_fastmcp
 from hivegent.tools.pydantic_ai import (
     for_pydantic_ai,
     register_agent_tools,
 )
-from hivegent.tools.fastmcp import for_fastmcp
-from hivegent.tools.base import AsyncTool, SyncTool, ToolOutput, tool_description
-
 
 # -- Fixtures ----------------------------------------------------------------
 

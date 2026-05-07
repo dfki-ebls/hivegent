@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, override
 
@@ -17,18 +17,21 @@ from .chunkers.base import (
 )
 from .config import settings
 from .entries import (
+    cleanup_empty_parents,
+    description_path_for_stem,
     metadata_path_for_reference,
     resolve_entry_paths,
     stem_path_from_reference,
 )
+from .retrieval import index_document, unindex_paths
 from .store import Casebase
 from .tools.base import SyncPathTool, ToolOutput, file_allowed, resolve_search_path
 
 _NOT_FOUND_MSG = "(document not found)"
 
 __all__ = [
-    "ChunkIndexArg",
     "ChunkData",
+    "ChunkIndexArg",
     "ChunkSummary",
     "DocumentMetadata",
     "GetChunkTool",
@@ -188,7 +191,7 @@ async def chunk_document(
     doc = DocumentMetadata(
         **resolved_entry_metadata.model_dump(),
         pipeline=chunker.name,
-        created_at=datetime.now(tz=timezone.utc),
+        created_at=datetime.now(tz=UTC),
         chunks=raw_chunks,
     )
 
@@ -199,6 +202,14 @@ async def chunk_document(
         encoding="utf-8",
     )
 
+    # Index failures must not abort the upload; the periodic consistency
+    # tick will reconcile.
+    try:
+        await index_document(store, filename, doc)
+    except Exception:
+        logger.warning(
+            "Failed to index %s/%s", store.store_key, filename, exc_info=True
+        )
     return doc
 
 
@@ -241,15 +252,11 @@ def get_metadata(store: Casebase, filename: str) -> DocumentMetadata | None:
     return load_document_metadata(store.metadata_path(settings.data_dir), filename)
 
 
-def delete_metadata(store: Casebase, filepath: str) -> bool:
-    """Delete metadata file for a document.
+async def delete_metadata(store: Casebase, filepath: str) -> bool:
+    """Delete the metadata file and index entries for a document.
 
-    After unlinking, cleans up empty parent directories up to the
-    metadata root.
-
-    Args:
-        store: The casebase.
-        filepath: The relative document path.
+    Cleans up empty parent directories up to the metadata root and
+    removes the corresponding rows from the LanceDB index.
 
     Returns:
         True if the metadata file was deleted, False if it didn't exist.
@@ -260,14 +267,14 @@ def delete_metadata(store: Casebase, filepath: str) -> bool:
         meta_path.unlink()
     except FileNotFoundError:
         return False
-    parent = meta_path.parent
-    while parent != metadata_root:
-        try:
-            parent.rmdir()
-        except OSError:
-            break
-        parent = parent.parent
-
+    cleanup_empty_parents(meta_path, metadata_root)
+    description_path = description_path_for_stem(stem_path_from_reference(filepath))
+    try:
+        await unindex_paths(store, [description_path])
+    except Exception:
+        logger.warning(
+            "Failed to unindex %s/%s", store.store_key, description_path, exc_info=True
+        )
     return True
 
 
@@ -283,7 +290,7 @@ def list_chunked_documents(store: Casebase) -> dict[str, int]:
     Returns:
         Dict mapping document filename to chunk count.
     """
-    metadata_dir = store.metadata_dir(settings.data_dir)
+    metadata_dir = store.metadata_path(settings.data_dir)
     if not metadata_dir.exists():
         return {}
 

@@ -1,8 +1,9 @@
 """Message persistence utilities."""
 
+import contextlib
 import json
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import (
@@ -27,10 +28,10 @@ from .store import Casebase
 __all__ = [
     "ConversationData",
     "ConversationSummary",
-    "persist_conversation",
     "list_conversations",
     "load_conversation",
     "load_messages",
+    "persist_conversation",
     "remove_conversation",
     "save_messages",
     "set_conversation_title",
@@ -124,10 +125,8 @@ def load_messages(user_id: str, conversation_id: str) -> list[ModelMessage]:
                 part.metadata, dict
             ):
                 continue
-            try:
+            with contextlib.suppress(ValidationError, TypeError):
                 part.metadata = DataChunk(**part.metadata)
-            except (ValidationError, TypeError):
-                pass
     return conversation.messages
 
 
@@ -152,7 +151,7 @@ def save_messages(
     path = Casebase.for_user(user_id).conversation_path(
         settings.data_dir, conversation_id
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     existing = load_conversation(user_id, conversation_id)
     msgs = list(messages)
@@ -236,7 +235,7 @@ def persist_conversation(user_id: str, conversation_id: str) -> None:
     path = Casebase.for_user(user_id).conversation_path(
         settings.data_dir, conversation_id
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     conversation = ConversationData(
         id=conversation_id,
         title="",
@@ -320,6 +319,6 @@ def set_conversation_title(user_id: str, conversation_id: str, title: str) -> bo
 
     data = json.loads(path.read_bytes())
     data["title"] = title
-    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    data["updated_at"] = datetime.now(UTC).isoformat()
     path.write_bytes(json.dumps(data, indent=2).encode())
     return True

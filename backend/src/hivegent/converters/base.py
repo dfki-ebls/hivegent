@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import ClassVar, Protocol
 
 __all__ = [
-    "ConversionResult",
     "DOCUMENT_EXTENSION",
-    "DocumentConverter",
     "IMAGE_EXTENSIONS",
+    "ConversionResult",
+    "DocumentConverter",
     "collect_dir_images",
     "is_image_suffix",
     "is_markdown_suffix",

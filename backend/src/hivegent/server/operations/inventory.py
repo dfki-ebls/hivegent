@@ -1,6 +1,6 @@
 """Inventory and tree-building helpers for document stores."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from ...chunks import list_chunked_documents
@@ -56,7 +56,7 @@ def _logical_entries_for_directory(
                 filename=entry_path,
                 display_name=PurePosixPath(stem_path).name,
                 size_bytes=size_bytes,
-                modified_at=datetime.fromtimestamp(modified_at, tz=timezone.utc),
+                modified_at=datetime.fromtimestamp(modified_at, tz=UTC),
                 chunk_count=chunk_counts.get(entry_path),
                 has_original=original is not None,
                 original_path=(

@@ -101,7 +101,9 @@ class KreuzbergConverter(DocumentConverter):
             output_format="markdown",
             enable_quality_processing=self.config.enable_quality_processing,
             include_document_structure=self.config.include_document_structure,
-            images=ImageExtractionConfig(inject_placeholders=True),
+            images=ImageExtractionConfig(
+                inject_placeholders=True,  # type: ignore[call-arg]  # pyright: ignore[reportCallIssue]  # ty: ignore[unknown-argument]
+            ),
         )
         result = await extract_file(path, config=extraction_config)
         markdown = str(result.content)
@@ -113,7 +115,7 @@ class KreuzbergConverter(DocumentConverter):
         if result.images:
             for img in sorted(result.images, key=lambda i: i.get("image_index", 0)):
                 img_name = f"image_{len(image_data):06}.png"
-                raw: bytes = img["data"]
+                raw: bytes = img["data"]  # pyright: ignore[reportTypedDictNotRequiredAccess]
                 fmt = img.get("format", "png")
                 if fmt.lower() != "png":
                     pil_img = PIL.Image.open(BytesIO(raw))

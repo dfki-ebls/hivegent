@@ -78,7 +78,7 @@ def for_pydantic_ai[D](
     # Build parameter list: RunContext first, then __call__ params.
     # Use getattr to build RunContext[D] at runtime without a subscript
     # expression that ty would interpret as a static type form.
-    ctx_annotation: Any = getattr(RunContext, "__class_getitem__")(deps_type)
+    ctx_annotation: Any = RunContext.__class_getitem__(deps_type)  # pyright: ignore[reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
     ctx_param = inspect.Parameter(
         "ctx",
         inspect.Parameter.POSITIONAL_OR_KEYWORD,
@@ -97,12 +97,12 @@ def for_pydantic_ai[D](
 
     if info.is_async:
 
-        async def wrapper(ctx: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        async def wrapper(ctx: Any, **kwargs: Any) -> Any:
             result = cast(Awaitable[ToolOutput[Any]], factory(ctx.deps)(**kwargs))
             return wrap_tool_output(await result)
     else:
 
-        def wrapper(ctx: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        def wrapper(ctx: Any, **kwargs: Any) -> Any:
             result = cast(ToolOutput[Any], factory(ctx.deps)(**kwargs))
             return wrap_tool_output(result)
 
