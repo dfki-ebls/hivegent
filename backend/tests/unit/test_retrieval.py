@@ -3,9 +3,18 @@
 import pytest
 from inline_snapshot import snapshot
 
+import hivegent.retrieval as retrieval
+import hivegent.workspace as workspace
 from hivegent.chunkers.base import RetrievedChunk
-from hivegent.retrieval import _ChunkEntry, _parse_chunk_key, _to_retrieved_chunk
+from hivegent.retrieval import (
+    _ChunkEntry,
+    _parse_chunk_key,
+    _to_retrieved_chunk,
+    sync_index,
+)
+from hivegent.store import Casebase
 from hivegent.tools.retrieval import SearchResult
+from hivegent.types import PipelineSpec
 
 
 class TestParseChunkKey:
@@ -36,7 +45,6 @@ class TestToRetrievedChunk:
     def _meta(
         self,
         *,
-        text: str = "hello world",
         token_count: int = 2,
         start_line: int = 1,
         end_line: int = 1,
@@ -44,7 +52,6 @@ class TestToRetrievedChunk:
         end_index: int = 11,
     ) -> _ChunkEntry:
         return _ChunkEntry(
-            text=text,
             token_count=token_count,
             start_line=start_line,
             end_line=end_line,
@@ -71,9 +78,7 @@ class TestToRetrievedChunk:
 
     def test_nested_path(self) -> None:
         result = SearchResult(key="docs/notes.md::2", text="foo bar baz", score=0.80)
-        chunk = _to_retrieved_chunk(
-            result, self._meta(text="foo bar baz", token_count=3)
-        )
+        chunk = _to_retrieved_chunk(result, self._meta(token_count=3))
         assert chunk == snapshot(
             RetrievedChunk(
                 filename="docs/notes.md",
@@ -93,7 +98,6 @@ class TestToRetrievedChunk:
         chunk = _to_retrieved_chunk(
             result,
             _ChunkEntry(
-                text="hello world",
                 token_count=42,
                 start_line=5,
                 end_line=10,
@@ -118,3 +122,72 @@ class TestToRetrievedChunk:
     def test_rounds_score(self) -> None:
         result = SearchResult(key="a.md::1", text="x", score=0.123456789)
         assert _to_retrieved_chunk(result, self._meta()).score == snapshot(0.1235)
+
+
+async def test_move_document_removes_old_index_key(
+    user_store: Casebase,
+    fake_embeddings: None,
+    single_chunk_pipeline: PipelineSpec,
+) -> None:
+    """Moving a document removes the old description-path row from LanceDB."""
+    _ = fake_embeddings
+    await workspace.upload(
+        user_store,
+        "old.md",
+        b"legacy content",
+        spec=single_chunk_pipeline,
+    )
+
+    await workspace.move_document(user_store, "old.md", "new.md")
+
+    storage = retrieval._state.get_storage(user_store)
+    assert sorted(storage.index) == ["new.md::0"]
+
+
+async def test_delete_directory_with_wildcard_keeps_sibling_index(
+    user_store: Casebase,
+    fake_embeddings: None,
+    single_chunk_pipeline: PipelineSpec,
+) -> None:
+    """Deleting a directory with SQL wildcard characters only removes its subtree."""
+    _ = fake_embeddings
+    await workspace.upload(
+        user_store, "a_/inside.md", b"inside", spec=single_chunk_pipeline
+    )
+    await workspace.upload(
+        user_store, "ab/outside.md", b"outside", spec=single_chunk_pipeline
+    )
+
+    await workspace.delete_directory(user_store, "a_")
+
+    storage = retrieval._state.get_storage(user_store)
+    assert sorted(storage.index) == ["ab/outside.md::0"]
+
+
+async def test_delete_document_with_quote_in_path_cleans_index(
+    user_store: Casebase,
+    fake_embeddings: None,
+    single_chunk_pipeline: PipelineSpec,
+) -> None:
+    """Deleting paths that need SQL escaping still removes their index rows."""
+    _ = fake_embeddings
+    await workspace.upload(
+        user_store, "quote's.md", b"quoted", spec=single_chunk_pipeline
+    )
+
+    await workspace.delete_document(user_store, "quote's.md")
+
+    storage = retrieval._state.get_storage(user_store)
+    assert storage.index == {}
+
+
+def test_sync_index_empty_store_does_not_create_empty_table(
+    user_store: Casebase,
+    fake_embeddings: None,
+) -> None:
+    """Syncing an empty store is a no-op instead of creating an invalid table."""
+    _ = fake_embeddings
+    sync_index(user_store)
+
+    storage = retrieval._state.get_storage(user_store)
+    assert not storage.has_index()

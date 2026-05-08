@@ -13,7 +13,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
-from .chunks import chunk_document, delete_metadata
+from .chunks import chunk_and_index_document, delete_metadata
 from .config import sanitize_group_id, sanitize_user_id, settings
 from .converters.base import DOCUMENT_EXTENSION
 from .retrieval import sync_index
@@ -33,19 +33,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True, frozen=True)
 class ConsistencyReport:
-    """Result of comparing documents, chunks, and index for one store.
+    """Result of comparing documents, metadata, and index for one store.
 
     Attributes:
         store: The casebase that was checked.
-        new_documents: Document paths that have no matching chunk file.
-        stale_documents: Document paths whose mtime exceeds their chunk mtime.
-        orphaned_chunks: Chunk files that have no matching document.
+        new_documents: Document paths that have no matching metadata file.
+        stale_documents: Document paths whose mtime exceeds their metadata mtime.
+        orphaned_metadata: Metadata files that have no matching document.
     """
 
     store: Casebase
     new_documents: list[str] = field(default_factory=list)
     stale_documents: list[str] = field(default_factory=list)
-    orphaned_chunks: list[str] = field(default_factory=list)
+    orphaned_metadata: list[str] = field(default_factory=list)
 
     @property
     def is_consistent(self) -> bool:
@@ -53,12 +53,12 @@ class ConsistencyReport:
         return (
             not self.new_documents
             and not self.stale_documents
-            and not self.orphaned_chunks
+            and not self.orphaned_metadata
         )
 
 
 def check_store_consistency(store: Casebase) -> ConsistencyReport:
-    """Compare documents and chunk files for a single store.
+    """Compare documents and metadata files for a single store.
 
     Computes paths directly to avoid ``mkdir`` side effects from the
     directory helpers.  Only uses stat calls, never reads file content.
@@ -82,7 +82,7 @@ def check_store_consistency(store: Casebase) -> ConsistencyReport:
 
     # Collect metadata relative paths and their mtimes.
     # Metadata files use stem-only naming: ``report.json`` for ``report.md``.
-    chunk_mtimes: dict[str, float] = {}
+    metadata_mtimes: dict[str, float] = {}
     if metadata_dir.exists():
         for path in metadata_dir.rglob("*.json"):
             if path.is_file():
@@ -90,32 +90,34 @@ def check_store_consistency(store: Casebase) -> ConsistencyReport:
                     ".json"
                 )
                 doc_key = stem + DOCUMENT_EXTENSION
-                chunk_mtimes[doc_key] = path.stat().st_mtime
+                metadata_mtimes[doc_key] = path.stat().st_mtime
 
     doc_keys = set(doc_mtimes)
-    chunk_keys = set(chunk_mtimes)
+    metadata_keys = set(metadata_mtimes)
 
-    new_documents = sorted(doc_keys - chunk_keys)
-    orphaned_chunks = sorted(chunk_keys - doc_keys)
+    new_documents = sorted(doc_keys - metadata_keys)
+    orphaned_metadata = sorted(metadata_keys - doc_keys)
     stale_documents = sorted(
-        rel for rel in doc_keys & chunk_keys if doc_mtimes[rel] > chunk_mtimes[rel]
+        rel
+        for rel in doc_keys & metadata_keys
+        if doc_mtimes[rel] > metadata_mtimes[rel]
     )
 
     return ConsistencyReport(
         store=store,
         new_documents=new_documents,
         stale_documents=stale_documents,
-        orphaned_chunks=orphaned_chunks,
+        orphaned_metadata=orphaned_metadata,
     )
 
 
 async def fix_store_consistency(report: ConsistencyReport) -> None:
     """Repair inconsistencies described by a report.
 
-    Deletes orphaned chunks and rechunks new/stale documents.  Each
+    Deletes orphaned metadata and rechunks new/stale documents.  Each
     file operation is wrapped in try/except so a single bad file does
-    not block the rest; both ``delete_metadata`` and ``chunk_document``
-    maintain the LanceDB index inline.
+    not block the rest; both ``delete_metadata`` and
+    ``chunk_and_index_document`` maintain the LanceDB index inline.
     """
     if report.is_consistent:
         return
@@ -123,13 +125,13 @@ async def fix_store_consistency(report: ConsistencyReport) -> None:
     store = report.store
     docs_dir = store.workspace_dir(settings.data_dir)
 
-    for path in report.orphaned_chunks:
+    for path in report.orphaned_metadata:
         try:
             await delete_metadata(store, path)
-            logger.info("Deleted orphaned chunks: %s/%s", store.store_key, path)
+            logger.info("Deleted orphaned metadata: %s/%s", store.store_key, path)
         except Exception:
             logger.warning(
-                "Failed to delete orphaned chunks: %s/%s",
+                "Failed to delete orphaned metadata: %s/%s",
                 store.store_key,
                 path,
                 exc_info=True,
@@ -138,7 +140,7 @@ async def fix_store_consistency(report: ConsistencyReport) -> None:
     for path in report.new_documents + report.stale_documents:
         try:
             content = (docs_dir / path).read_text(encoding="utf-8")
-            await chunk_document(store, path, content)
+            await chunk_and_index_document(store, path, content)
             logger.info("Chunked document: %s/%s", store.store_key, path)
         except Exception:
             logger.warning(
@@ -167,11 +169,11 @@ async def _check_and_fix_store(store: Casebase) -> None:
                     store.store_key,
                     len(report.new_documents),
                     len(report.stale_documents),
-                    len(report.orphaned_chunks),
+                    len(report.orphaned_metadata),
                 )
                 await fix_store_consistency(report)
 
-            # cbrkit diffs against existing rows inside ``create_index``,
+            # cbrkit diffs against existing rows inside ``put_index``,
             # so this also catches any documents whose inline index
             # write previously failed.
             try:

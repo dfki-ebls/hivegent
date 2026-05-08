@@ -36,7 +36,7 @@ __all__ = [
     "DocumentMetadata",
     "GetChunkTool",
     "ListChunksTool",
-    "chunk_document",
+    "chunk_and_index_document",
     "delete_metadata",
     "get_metadata",
     "list_chunked_documents",
@@ -138,7 +138,7 @@ def _default_entry_metadata(
     )
 
 
-async def chunk_document(
+async def chunk_and_index_document(
     store: Casebase,
     filename: str,
     content: str,
@@ -146,7 +146,7 @@ async def chunk_document(
     *,
     entry_metadata: EntryMetadata | None = None,
 ) -> DocumentMetadata:
-    """Chunk a document and persist the results to disk.
+    """Chunk a document, persist metadata, and update the search index.
 
     Args:
         store: The casebase.
@@ -305,5 +305,4 @@ def list_chunked_documents(store: Casebase) -> dict[str, int]:
             continue
 
     return result
-
 

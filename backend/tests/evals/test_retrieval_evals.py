@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from hivegent.chunks import chunk_document
+from hivegent.chunks import chunk_and_index_document
 from hivegent.retrieval import build_search_tool, sync_index
 from hivegent.store import Casebase
 
@@ -34,7 +34,7 @@ async def _seed_store(
         doc_path = docs_dir / doc_name
         doc_path.parent.mkdir(parents=True, exist_ok=True)
         doc_path.write_text(content, encoding="utf-8")
-        await chunk_document(store, doc_name, content)
+        await chunk_and_index_document(store, doc_name, content)
 
     sync_index(store)
 

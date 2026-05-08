@@ -4,9 +4,9 @@ Every operation that modifies the workspace, metadata, or search index for
 a :class:`~hivegent.store.Casebase` goes through this module.  Each public
 function acquires the per-store async lock so concurrent mutations on the
 same casebase are serialised, then performs workspace, metadata, and
-LanceDB writes in one step — :func:`hivegent.chunks.chunk_document` and
-:func:`hivegent.chunks.delete_metadata` keep the search index aligned
-with the metadata files inline.
+LanceDB writes in one step — :func:`hivegent.chunks.chunk_and_index_document`
+and :func:`hivegent.chunks.delete_metadata` keep the search index
+aligned with the metadata files inline.
 
 Routes, agents, and MCP tools never touch the workspace, metadata, or
 LanceDB directories directly — they call into this module instead.
@@ -23,7 +23,7 @@ import tempfile
 import threading
 import zipfile
 import zlib
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Collection
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -37,7 +37,7 @@ from .chunkers.base import (
     EntryMetadata,
     EntryOrigin,
 )
-from .chunks import chunk_document, delete_metadata, get_metadata
+from .chunks import chunk_and_index_document, delete_metadata, get_metadata
 from .config import sanitize_document_path, settings
 from .converters import (
     ConversionPipeline,
@@ -57,7 +57,12 @@ from .entries import (
     resolve_entry_paths,
     stem_path_from_reference,
 )
-from .retrieval import index_document, invalidate_store, unindex_subtree
+from .retrieval import (
+    index_document,
+    invalidate_store,
+    unindex_paths,
+    unindex_subtree,
+)
 from .store import Casebase
 from .types import (
     AssetEntry,
@@ -130,6 +135,21 @@ async def _safe_unindex_subtree(store: Casebase, prefix: str) -> None:
         )
 
 
+async def _safe_unindex_paths(store: Casebase, paths: Collection[str]) -> None:
+    """Drop exact document index rows, logging (not raising) on failure."""
+    if not paths:
+        return
+    try:
+        await unindex_paths(store, paths)
+    except Exception:
+        logger.warning(
+            "Failed to unindex paths %s/%s",
+            store.store_key,
+            sorted(paths),
+            exc_info=True,
+        )
+
+
 def _build_entry_metadata(
     *,
     stem_path: str,
@@ -178,7 +198,7 @@ async def _write_markdown_projection(
     full_path = workspace_dir / description_path
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
-    chunked = await chunk_document(
+    chunked = await chunk_and_index_document(
         store,
         description_path,
         content,
@@ -804,7 +824,7 @@ async def rechunk(
         if not file_path.exists() or not file_path.is_file():
             raise HTTPException(status_code=404, detail="Document not found")
         text = file_path.read_text(encoding="utf-8")
-        return await chunk_document(store, safe, text, spec.chunking)
+        return await chunk_and_index_document(store, safe, text, spec.chunking)
 
 
 async def delete_document(store: Casebase, safe: str) -> None:
@@ -911,7 +931,7 @@ async def move_document(
         # Reindex dst before unindexing src: a partial failure leaves
         # duplicate hits, never missing rows under dst.
         await _reindex_metadata_subtree(store, dst_stem)
-        await _safe_unindex_subtree(store, src_stem)
+        await _safe_unindex_paths(store, [src_description])
         if src_assets_dir:
             await _safe_unindex_subtree(store, src_assets_dir)
 
@@ -951,7 +971,7 @@ async def update_asset_description(
         description_path = str(md_path.relative_to(workspace).as_posix())
         rel_path = str(asset_path.relative_to(workspace).as_posix())
 
-        await chunk_document(store, description_path, content)
+        await chunk_and_index_document(store, description_path, content)
         return AssetEntry(
             name=asset_name,
             path=rel_path,
@@ -1064,7 +1084,7 @@ async def on_agent_write(store: Casebase, filename: str) -> None:
             logger.warning("Re-chunking failed for %s after write", filename)
             return
         try:
-            await chunk_document(store, filename, text)
+            await chunk_and_index_document(store, filename, text)
         except Exception:
             logger.warning(
                 "Re-chunking failed for %s after write", filename, exc_info=True
@@ -1086,7 +1106,7 @@ async def process_collection(
 
     The casebase lock is held for the entire collection so a concurrent
     upload elsewhere cannot interleave.  Each per-file upload indexes
-    its own chunks via :func:`hivegent.chunks.chunk_document`.
+    its own chunks via :func:`hivegent.chunks.chunk_and_index_document`.
     """
     failed: list[str] = []
     markdown_count = 0

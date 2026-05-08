@@ -12,7 +12,7 @@ from hivegent.agents import (
     explore_toolset,
     user_agent,
 )
-from hivegent.chunks import chunk_document
+from hivegent.chunks import chunk_and_index_document
 from hivegent.retrieval import sync_index
 from hivegent.store import Casebase
 
@@ -33,7 +33,7 @@ async def _seed_and_get_deps(
             doc_path.parent.mkdir(parents=True, exist_ok=True)
             content = f"# {doc_name}\n\n{ann['question']}\n\n{ann['expected_answer']}\n"
             doc_path.write_text(content, encoding="utf-8")
-            await chunk_document(user_store, doc_name, content)
+            await chunk_and_index_document(user_store, doc_name, content)
 
     sync_index(user_store)
     return UserDeps(user_id="testuser", store=user_store)

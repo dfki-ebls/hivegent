@@ -1,14 +1,22 @@
 """Shared test fixtures for hivegent."""
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from hivegent.chunkers import ChunkingPipeline, ChunkingSpec
 from hivegent.store import Casebase
+from hivegent.types import PipelineSpec
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def _fake_embeddings(values: Sequence[str]) -> list[list[float]]:
+    """Return stable tiny embeddings for tests."""
+    return [[float(len(value)), float(index)] for index, value in enumerate(values)]
 
 
 @pytest.fixture()
@@ -31,6 +39,21 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def user_store(data_dir: Path) -> Casebase:
     """Return a user casebase rooted in the temporary data directory."""
     return Casebase(kind="user", id="testuser")
+
+
+@pytest.fixture()
+def fake_embeddings(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install fake embeddings on the retrieval singleton."""
+    import hivegent.retrieval as retrieval
+
+    _ = data_dir
+    monkeypatch.setattr(retrieval._state, "_embedding_func", _fake_embeddings)
+
+
+@pytest.fixture()
+def single_chunk_pipeline() -> PipelineSpec:
+    """Return a pipeline spec that avoids heavyweight chunkers."""
+    return PipelineSpec(chunking=ChunkingSpec(pipeline=ChunkingPipeline.NONE))
 
 
 @pytest.fixture()
