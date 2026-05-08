@@ -17,4 +17,3 @@ function ChatPage() {
     </BackendReadyGate>
   );
 }
-

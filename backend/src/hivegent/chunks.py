@@ -305,4 +305,3 @@ def list_chunked_documents(store: Casebase) -> dict[str, int]:
             continue
 
     return result
-

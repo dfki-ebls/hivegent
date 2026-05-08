@@ -8,12 +8,7 @@ interface ToolSectionProps {
   children: ReactNode;
 }
 
-function ToolSection({
-  title,
-  variant = "default",
-  border = false,
-  children,
-}: ToolSectionProps) {
+function ToolSection({ title, variant = "default", border = false, children }: ToolSectionProps) {
   return (
     <div className={cn("space-y-2 p-4", border && "border-t")}>
       <h4

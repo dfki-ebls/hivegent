@@ -279,9 +279,7 @@ async def _upload_markdown_locked(
             stem_path=stem_path,
             description_path=filepath,
             original_path=None,
-            assets_dir=assets_dir
-            if (workspace_dir / assets_dir).exists()
-            else None,
+            assets_dir=assets_dir if (workspace_dir / assets_dir).exists() else None,
             entry_kind="user_markdown",
             origin=origin,
             generated_by="user",
@@ -713,9 +711,7 @@ async def upload(
     llm = llm or LlmConfig()
     async with store_lock(store):
         await _ensure_upload_slot_locked(store, filepath, overwrite=overwrite)
-        return await _upload_locked(
-            store, filepath, content, spec, llm, origin=origin
-        )
+        return await _upload_locked(store, filepath, content, spec, llm, origin=origin)
 
 
 async def replace_original(
@@ -753,9 +749,7 @@ async def replace_original(
             if new_filename
             else existing_original_path.suffix
         ) or existing_original_path.suffix
-        new_original_relpath = (
-            f"{stem_path_from_reference(safe)}{new_suffix.lower()}"
-        )
+        new_original_relpath = f"{stem_path_from_reference(safe)}{new_suffix.lower()}"
 
         if existing_original_rel != new_original_relpath:
             existing_original_path.unlink(missing_ok=True)
@@ -833,9 +827,7 @@ async def delete_document(store: Casebase, safe: str) -> None:
         await _delete_single_locked(store, safe)
 
 
-async def move_document(
-    store: Casebase, src: str, dst: str
-) -> MoveDocumentResponse:
+async def move_document(store: Casebase, src: str, dst: str) -> MoveDocumentResponse:
     """Move a logical entry, its original, and its child-assets subtree."""
     async with store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
@@ -847,12 +839,8 @@ async def move_document(
 
         src_stem = metadata.stem_path or stem_path_from_reference(src)
         dst_stem = stem_path_from_reference(dst)
-        if src_stem != dst_stem and entry_exists(
-            workspace_dir, metadata_dir, dst
-        ):
-            raise HTTPException(
-                status_code=409, detail="Destination already exists"
-            )
+        if src_stem != dst_stem and entry_exists(workspace_dir, metadata_dir, dst):
+            raise HTTPException(status_code=409, detail="Destination already exists")
 
         src_description = metadata.description_path or description_path_for_stem(
             src_stem
@@ -892,9 +880,7 @@ async def move_document(
                 dst_assets_name = PurePosixPath(dst_assets_dir).name
                 if src_assets_name != dst_assets_name:
                     body = dst_description_path.read_text(encoding="utf-8")
-                    body = body.replace(
-                        f"{src_assets_name}/", f"{dst_assets_name}/"
-                    )
+                    body = body.replace(f"{src_assets_name}/", f"{dst_assets_name}/")
                     dst_description_path.write_text(body, encoding="utf-8")
 
         src_meta_path = metadata_path_for_reference(store, src_stem)
@@ -920,9 +906,7 @@ async def move_document(
                 PathReplacement(old=metadata.original_path, new=dst_original)
             )
         if src_assets_dir and dst_assets_dir:
-            replacements.append(
-                PathReplacement(old=src_assets_dir, new=dst_assets_dir)
-            )
+            replacements.append(PathReplacement(old=src_assets_dir, new=dst_assets_dir))
         if dst_meta_path.exists():
             _rewrite_metadata_paths(dst_meta_path, replacements)
         if dst_meta_assets.exists():
@@ -991,9 +975,7 @@ async def create_directory(store: Casebase, path: str) -> None:
         directory_path.mkdir(parents=True, exist_ok=True)
 
 
-async def move_directory(
-    store: Casebase, src: str, dst: str
-) -> MoveDirectoryResponse:
+async def move_directory(store: Casebase, src: str, dst: str) -> MoveDirectoryResponse:
     """Move or rename a workspace directory and its metadata subtree."""
     async with store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
@@ -1004,13 +986,9 @@ async def move_directory(
             raise HTTPException(status_code=404, detail="Directory not found")
         dst_dir = workspace_dir / dst
         if dst_dir.exists():
-            raise HTTPException(
-                status_code=409, detail="Destination already exists"
-            )
+            raise HTTPException(status_code=409, detail="Destination already exists")
 
-        files_moved = sum(
-            1 for file_path in src_dir.rglob("*") if file_path.is_file()
-        )
+        files_moved = sum(1 for file_path in src_dir.rglob("*") if file_path.is_file())
         dst_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src_dir), str(dst_dir))
         cleanup_empty_parents(src_dir, workspace_dir)
@@ -1021,9 +999,7 @@ async def move_directory(
             dst_meta.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(src_meta), str(dst_meta))
             cleanup_empty_parents(src_meta, metadata_dir)
-            _rewrite_metadata_tree(
-                dst_meta, [PathReplacement(old=src, new=dst)]
-            )
+            _rewrite_metadata_tree(dst_meta, [PathReplacement(old=src, new=dst)])
 
         # Reindex at the new paths first, then drop the old keys — see
         # ``move_document`` for the rationale.
@@ -1144,9 +1120,7 @@ async def process_collection(
                             )
                     archive.extractall(extract_root)
             except zipfile.BadZipFile as exc:
-                raise HTTPException(
-                    status_code=400, detail="Invalid ZIP file"
-                ) from exc
+                raise HTTPException(status_code=400, detail="Invalid ZIP file") from exc
             except zlib.error as exc:
                 raise HTTPException(
                     status_code=400,
@@ -1186,17 +1160,13 @@ async def process_collection(
                             encoding="utf-8"
                         )
                     except Exception as exc:
-                        logger.warning(
-                            "Failed to read %s: %s", relative_path, exc
-                        )
+                        logger.warning("Failed to read %s: %s", relative_path, exc)
                         failed.append(relative_path)
                         continue
                     normalized_md = preprocess_markdown(
                         text, safe, frozenset(collection_files)
                     )
-                    preprocessed_markdown[safe] = normalized_md.content.encode(
-                        "utf-8"
-                    )
+                    preprocessed_markdown[safe] = normalized_md.content.encode("utf-8")
 
                 stem = stem_path_from_reference(safe)
                 if entry_exists(workspace_dir, metadata_dir, safe):
@@ -1225,9 +1195,7 @@ async def process_collection(
 
                 if relative_path in companion_originals:
                     try:
-                        original_bytes = (
-                            extract_root / relative_path
-                        ).read_bytes()
+                        original_bytes = (extract_root / relative_path).read_bytes()
                         original_path = workspace_dir / safe
                         original_path.parent.mkdir(parents=True, exist_ok=True)
                         original_path.write_bytes(original_bytes)
@@ -1254,9 +1222,7 @@ async def process_collection(
                         content_bytes = preprocessed_markdown[safe]
                         markdown_count += 1
                     else:
-                        content_bytes = (
-                            extract_root / relative_path
-                        ).read_bytes()
+                        content_bytes = (extract_root / relative_path).read_bytes()
                         converted_count += 1
                     await _upload_locked(
                         store,
@@ -1268,9 +1234,7 @@ async def process_collection(
                     )
                     status = "ok"
                 except Exception as exc:
-                    logger.warning(
-                        "Failed to process %s: %s", relative_path, exc
-                    )
+                    logger.warning("Failed to process %s: %s", relative_path, exc)
                     if safe in preprocessed_markdown:
                         markdown_count -= 1
                     else:

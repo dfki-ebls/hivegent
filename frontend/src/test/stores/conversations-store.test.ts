@@ -9,9 +9,9 @@ import type {
 import type { getOidc as getOidcFn } from "@/oidc";
 
 vi.mock("@/oidc", () => ({
-  getOidc: vi.fn<typeof getOidcFn>().mockResolvedValue({ isUserLoggedIn: false } as Awaited<
-    ReturnType<typeof getOidcFn>
-  >),
+  getOidc: vi
+    .fn<typeof getOidcFn>()
+    .mockResolvedValue({ isUserLoggedIn: false } as Awaited<ReturnType<typeof getOidcFn>>),
 }));
 
 vi.mock("@/lib/api", () => ({

@@ -63,6 +63,8 @@ import {
   UploadStreamEventSchema,
 } from "./types";
 
+import { featureFlags } from "./feature-flags";
+
 import { getOidc } from "@/oidc";
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -175,12 +177,20 @@ export async function testMcpServer(server: McpServerEntry): Promise<McpTestResu
   return (await res.json()) as McpTestResult;
 }
 
-/** Build a sparse LlmConfig from frontend settings. */
+/**
+ * Build a sparse LlmConfig from frontend settings.
+ *
+ * When the {@link featureFlags.llmSpec} flag is disabled, returns an empty
+ * config regardless of the input — LLM provider customization is a
+ * frontend-only feature, so disabling it implicitly forces every outgoing
+ * request to use the backend's configured defaults.
+ */
 export function buildLlmConfig(s: {
   model?: string;
   apiKey?: string;
   baseUrl?: string;
 }): LlmConfig {
+  if (!featureFlags.llmSpec) return {};
   const config: LlmConfig = {};
   if (s.model) config.model = s.model;
   if (s.apiKey) config.api_key = s.apiKey;
@@ -188,8 +198,18 @@ export function buildLlmConfig(s: {
   return config;
 }
 
-/** Convert a frontend ToolsSpec to the snake_case backend payload. */
+/**
+ * Convert a frontend ToolsSpec to the snake_case backend payload.
+ *
+ * When the {@link featureFlags.toolsSpec} flag is disabled, returns an
+ * empty payload regardless of the stored spec — tool/MCP customization is
+ * a frontend-only feature, so disabling it implicitly removes the data
+ * from every outgoing request without touching the backend.
+ */
 export function buildToolsPayload(spec: ToolsSpec): Record<string, unknown> {
+  if (!featureFlags.toolsSpec) {
+    return { disabled_tools: [], mcp_servers: [] };
+  }
   return {
     disabled_tools: spec.disabledTools,
     mcp_servers: spec.mcpServers.map((s) => ({

@@ -143,9 +143,7 @@ async def test_validate_jwt_token_accepts_trailing_slash_iss_mismatch(
     monkeypatch.setattr(settings.auth, "issuer", configured_iss)
     monkeypatch.setattr(settings.auth, "audience", None)
 
-    _install_fake_jwt_pipeline(
-        monkeypatch, {"sub": "user-1", "iss": token_iss}
-    )
+    _install_fake_jwt_pipeline(monkeypatch, {"sub": "user-1", "iss": token_iss})
 
     user = await auth.validate_jwt_token("dummy.jwt.token")
     assert user.id == "user-1"
@@ -181,9 +179,7 @@ async def test_validate_jwt_token_rejects_mismatched_aud_with_helpful_detail(
     monkeypatch.setattr(settings.auth, "issuer", "")
     monkeypatch.setattr(settings.auth, "audience", "hivegent-api")
 
-    _install_fake_jwt_pipeline(
-        monkeypatch, {"sub": "user-1", "aud": "other-api"}
-    )
+    _install_fake_jwt_pipeline(monkeypatch, {"sub": "user-1", "aud": "other-api"})
 
     with pytest.raises(HTTPException) as exc_info:
         await auth.validate_jwt_token("dummy.jwt.token")
@@ -204,9 +200,7 @@ async def test_validate_jwt_token_does_not_leak_sub_in_error_detail(
     monkeypatch.setattr(settings.auth, "audience", "hivegent-api")
 
     secret_sub = "personally-identifying-subject-id"
-    _install_fake_jwt_pipeline(
-        monkeypatch, {"sub": secret_sub, "aud": "other-api"}
-    )
+    _install_fake_jwt_pipeline(monkeypatch, {"sub": secret_sub, "aud": "other-api"})
 
     with pytest.raises(HTTPException) as exc_info:
         await auth.validate_jwt_token("dummy.jwt.token")

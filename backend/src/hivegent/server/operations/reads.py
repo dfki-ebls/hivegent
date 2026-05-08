@@ -79,9 +79,7 @@ def list_assets(store: Casebase, safe: str) -> AssetListResponse:
     assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
     assets_path = workspace / assets_dir
     if not assets_path.exists() or not assets_path.is_dir():
-        raise HTTPException(
-            status_code=404, detail="Document has no assets directory"
-        )
+        raise HTTPException(status_code=404, detail="Document has no assets directory")
 
     md_files: dict[str, Path] = {}
     asset_files: list[Path] = []

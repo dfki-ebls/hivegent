@@ -121,9 +121,7 @@ def _sql_like_pattern(prefix: str) -> str:
 _SQL_LIKE_ESCAPE_LITERAL = _sql_str(_SQL_LIKE_ESCAPE)
 
 
-def _doc_chunk_entries(
-    filename: str, doc: DocumentMetadata
-) -> dict[str, _ChunkEntry]:
+def _doc_chunk_entries(filename: str, doc: DocumentMetadata) -> dict[str, _ChunkEntry]:
     """Build chunk-metadata cache entries for a single document."""
     image_path = doc.original_path if doc.entry_kind == "image" else None
     return {
@@ -309,9 +307,7 @@ class _RetrievalState:
 _state = _RetrievalState()
 
 
-def _index_document_sync(
-    store: Casebase, filename: str, doc: DocumentMetadata
-) -> None:
+def _index_document_sync(store: Casebase, filename: str, doc: DocumentMetadata) -> None:
     storage = _state.get_storage(store)
     storage.replace_where(
         where=f"{METADATA_FILENAME_COLUMN} = {_sql_str(filename)}",
@@ -322,9 +318,7 @@ def _index_document_sync(
     )
 
 
-async def index_document(
-    store: Casebase, filename: str, doc: DocumentMetadata
-) -> None:
+async def index_document(store: Casebase, filename: str, doc: DocumentMetadata) -> None:
     """Replace the index entries for a single document.
 
     Embeds the new chunks via the shared embedding function and writes
@@ -390,9 +384,7 @@ def sync_index(store: Casebase) -> None:
         )
         storage.put_index(texts)
     else:
-        logger.debug(
-            "Skipping LanceDB index sync for empty store %s", store.store_key
-        )
+        logger.debug("Skipping LanceDB index sync for empty store %s", store.store_key)
 
 
 def build_search_tool(

@@ -12,6 +12,7 @@ import { createJSONStorage, persist, type StorageValue } from "zustand/middlewar
 
 import { getSettings } from "../lib/api";
 import { decryptApiKey, encryptApiKey, isEncrypted } from "../lib/crypto";
+import { featureFlags } from "../lib/feature-flags";
 import {
   type BackendSettings,
   ChunkingPipeline,
@@ -367,45 +368,36 @@ export const useSettingsStore = create<SettingsState>()(
       name: "hivegent-settings",
       storage: encryptedStorage,
       partialize: (state) => ({
-        overrides: state.overrides,
         documentTab: state.documentTab,
-        conversionPipeline: state.conversionPipeline,
-        chunkingPipeline: state.chunkingPipeline,
         processAssets: state.processAssets,
         expandedDirs: state.expandedDirs,
         personality: state.personality,
         customSystemMessage: state.customSystemMessage,
-        conversionConfigs: state.conversionConfigs,
-        chunkingConfigs: state.chunkingConfigs,
-        toolsSpec: state.toolsSpec,
+        // Each block below is gated by its feature flag.  When off, the
+        // slice is omitted from persisted state so secrets and stale user
+        // input never touch localStorage and don't survive a flag flip.
+        ...(featureFlags.llmSpec ? { overrides: state.overrides } : {}),
+        ...(featureFlags.pipelineSpec
+          ? {
+              conversionPipeline: state.conversionPipeline,
+              chunkingPipeline: state.chunkingPipeline,
+              conversionConfigs: state.conversionConfigs,
+              chunkingConfigs: state.chunkingConfigs,
+            }
+          : {}),
+        ...(featureFlags.toolsSpec ? { toolsSpec: state.toolsSpec } : {}),
       }),
       merge: (persisted, current) => {
         const data = persisted as Record<string, unknown> | undefined;
         if (!data) return current;
 
-        const overrides = UserOverridesSchema.safeParse(data.overrides).data ?? EMPTY_OVERRIDES;
-
-        // Migrate from flat disabledTools to toolsSpec
-        let toolsSpec = ToolsSpecSchema.safeParse(data.toolsSpec).data;
-        if (!toolsSpec) {
-          const legacyDisabled = z.array(z.string()).safeParse(data.disabledTools).data;
-          toolsSpec = {
-            disabledTools: legacyDisabled ?? [],
-            mcpServers: [],
-          };
-        }
-
+        // Flag-gated slices mirror `partialize`: when off, fall through to
+        // `current`'s defaults so stale data from a previous build with the
+        // flag on is ignored.
         return {
           ...current,
-          overrides,
           documentTab:
             DocumentTabSchema.safeParse(data.documentTab).data ?? UI_DEFAULTS.documentTab,
-          conversionPipeline:
-            ConversionPipelineSchema.safeParse(data.conversionPipeline).data ??
-            UI_DEFAULTS.conversionPipeline,
-          chunkingPipeline:
-            ChunkingPipelineSchema.safeParse(data.chunkingPipeline).data ??
-            UI_DEFAULTS.chunkingPipeline,
           processAssets:
             z.boolean().safeParse(data.processAssets).data ?? UI_DEFAULTS.processAssets,
           expandedDirs:
@@ -414,13 +406,34 @@ export const useSettingsStore = create<SettingsState>()(
             PersonalitySchema.safeParse(data.personality).data ?? UI_DEFAULTS.personality,
           customSystemMessage:
             z.string().safeParse(data.customSystemMessage).data ?? UI_DEFAULTS.customSystemMessage,
-          conversionConfigs:
-            PipelineConfigsSchema.safeParse(data.conversionConfigs).data ??
-            UI_DEFAULTS.conversionConfigs,
-          chunkingConfigs:
-            PipelineConfigsSchema.safeParse(data.chunkingConfigs).data ??
-            UI_DEFAULTS.chunkingConfigs,
-          toolsSpec,
+          ...(featureFlags.llmSpec
+            ? {
+                overrides:
+                  UserOverridesSchema.safeParse(data.overrides).data ?? EMPTY_OVERRIDES,
+              }
+            : {}),
+          ...(featureFlags.pipelineSpec
+            ? {
+                conversionPipeline:
+                  ConversionPipelineSchema.safeParse(data.conversionPipeline).data ??
+                  UI_DEFAULTS.conversionPipeline,
+                chunkingPipeline:
+                  ChunkingPipelineSchema.safeParse(data.chunkingPipeline).data ??
+                  UI_DEFAULTS.chunkingPipeline,
+                conversionConfigs:
+                  PipelineConfigsSchema.safeParse(data.conversionConfigs).data ??
+                  UI_DEFAULTS.conversionConfigs,
+                chunkingConfigs:
+                  PipelineConfigsSchema.safeParse(data.chunkingConfigs).data ??
+                  UI_DEFAULTS.chunkingConfigs,
+              }
+            : {}),
+          ...(featureFlags.toolsSpec
+            ? {
+                toolsSpec:
+                  ToolsSpecSchema.safeParse(data.toolsSpec).data ?? UI_DEFAULTS.toolsSpec,
+              }
+            : {}),
         };
       },
     },

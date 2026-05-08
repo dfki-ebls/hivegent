@@ -32,6 +32,7 @@ import {
   uploadDocument,
 } from "../lib/api";
 import { DOCUMENT_ACTIONS } from "../lib/document-actions";
+import { featureFlags } from "../lib/feature-flags";
 import {
   type ChunkingPipeline,
   type ConversionPipeline,
@@ -501,16 +502,20 @@ function PipelineSettingsBar({
 }: PipelineSettingsBarProps) {
   return (
     <div className="flex items-center justify-center gap-8 border-b px-4 py-3">
-      <ConversionPipelineSelector
-        value={conversionPipeline}
-        onChange={onConversionPipelineChange}
-        disabled={isBulkOperating}
-      />
-      <ChunkingPipelineSelector
-        value={chunkingPipeline}
-        onChange={onChunkingPipelineChange}
-        disabled={isBulkOperating}
-      />
+      {featureFlags.pipelineSpec && (
+        <>
+          <ConversionPipelineSelector
+            value={conversionPipeline}
+            onChange={onConversionPipelineChange}
+            disabled={isBulkOperating}
+          />
+          <ChunkingPipelineSelector
+            value={chunkingPipeline}
+            onChange={onChunkingPipelineChange}
+            disabled={isBulkOperating}
+          />
+        </>
+      )}
       <div className="flex items-center gap-2">
         <Label
           htmlFor="process-assets-switch"
@@ -950,17 +955,20 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   );
 
   const pipelineSpec: PipelineSpec = useMemo(
-    () => ({
-      conversion: {
-        pipeline: conversionPipeline,
-        config: conversionConfigs[conversionPipeline],
-      },
-      chunking: {
-        pipeline: chunkingPipeline,
-        config: chunkingConfigs[chunkingPipeline],
-      },
-      process_assets: processAssets,
-    }),
+    () =>
+      featureFlags.pipelineSpec
+        ? {
+            conversion: {
+              pipeline: conversionPipeline,
+              config: conversionConfigs[conversionPipeline],
+            },
+            chunking: {
+              pipeline: chunkingPipeline,
+              config: chunkingConfigs[chunkingPipeline],
+            },
+            process_assets: processAssets,
+          }
+        : { process_assets: processAssets },
     [conversionPipeline, chunkingPipeline, conversionConfigs, chunkingConfigs, processAssets],
   );
 

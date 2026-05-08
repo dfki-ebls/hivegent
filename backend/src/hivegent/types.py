@@ -88,7 +88,10 @@ class DocumentFilter:
             self._matches(entry, filepath) for entry in self.included
         ):
             return False
-        return not (self.excluded and any(self._matches(entry, filepath) for entry in self.excluded))
+        return not (
+            self.excluded
+            and any(self._matches(entry, filepath) for entry in self.excluded)
+        )
 
 
 @dataclass(slots=True, frozen=True)
