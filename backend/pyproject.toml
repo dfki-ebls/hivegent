@@ -63,5 +63,10 @@ markers = ["slow: marks tests as slow (deselect with -m 'not slow')"]
 [tool.uv.exclude-newer-package]
 cbrkit = false
 
+[tool.uv.extra-build-dependencies]
+antlr4-python3-runtime = ["setuptools"]
+ebooklib = ["setuptools"]
+pylatexenc = ["setuptools"]
+
 [tool.uv.sources]
 # cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }

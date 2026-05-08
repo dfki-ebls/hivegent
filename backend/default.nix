@@ -29,20 +29,6 @@ let
         autoPatchelfIgnoreMissingDeps = true;
       })
     );
-  buildSystemOverlay =
-    final: prev:
-    lib.mapAttrs
-      (
-        name: value:
-        prev.${name}.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ (final.resolveBuildSystem value);
-        })
-      )
-      {
-        antlr4-python3-runtime.setuptools = [ ];
-        ebooklib.setuptools = [ ];
-        pylatexenc.setuptools = [ ];
-      };
   packageOverlay =
     final: prev:
     lib.mapAttrs (name: value: prev.${name}.overrideAttrs value) {
@@ -64,7 +50,6 @@ let
       pyproject-build-systems.overlays.wheel
       projectOverlay
       cudaOverlay
-      buildSystemOverlay
       packageOverlay
     ]
   );
