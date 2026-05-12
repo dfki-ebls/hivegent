@@ -134,12 +134,16 @@ class LlmSettings(BaseModel):
 class LogfireSettings(BaseModel):
     """Logfire observability settings.
 
-    Configurable via ``HIVEGENT_LOGFIRE__ENABLE`` and
-    ``HIVEGENT_LOGFIRE__TRACES_DIR``.
+    Configurable via ``HIVEGENT_LOGFIRE__ENABLE``,
+    ``HIVEGENT_LOGFIRE__TRACES_DIR``, and
+    ``HIVEGENT_LOGFIRE__RETENTION_DAYS``.
     """
 
     enable: bool = True
     traces_dir: Path | None = None
+    # Delete daily ``YYYY-MM-DD.jsonl`` files older than this many days at
+    # startup.  Set to 0 to keep files indefinitely.
+    retention_days: int = 7
 
 
 class EmbeddingSettings(BaseModel):
