@@ -34,7 +34,6 @@ from ...messages import (
     list_conversations,
     load_conversation,
     load_messages,
-    persist_conversation,
     remove_conversation,
     save_messages,
     set_conversation_title,
@@ -78,12 +77,15 @@ router = APIRouter()
 
 @router.post("/conversations")
 async def create_conversation(
-    user: Annotated[User, Depends(get_current_user)],
+    _user: Annotated[User, Depends(get_current_user)],
 ) -> CreateConversationResponse:
-    """Create a new conversation and return its ID."""
-    conversation_id = generate()
-    persist_conversation(user.id, conversation_id)
-    return CreateConversationResponse(id=conversation_id)
+    """Issue a server-generated conversation ID.
+
+    No file is written until the first message is saved; until then the
+    ID is just a reservation that the client can navigate to.  The auth
+    dependency is required so anonymous clients cannot mint IDs.
+    """
+    return CreateConversationResponse(id=generate())
 
 
 @router.get("/conversations")
@@ -316,9 +318,6 @@ async def create_conversation_chat(
     """Handle chat requests using the Vercel AI Data Stream Protocol."""
     config = await _parse_chat_config(request)
     config.conversation_id = conversation_id
-
-    if not load_conversation(user.id, conversation_id):
-        raise HTTPException(status_code=404, detail="Conversation not found")
 
     document_filter, group_filters = parse_document_filters(
         config.included_documents,

@@ -31,7 +31,6 @@ __all__ = [
     "list_conversations",
     "load_conversation",
     "load_messages",
-    "persist_conversation",
     "remove_conversation",
     "save_messages",
     "set_conversation_title",
@@ -220,30 +219,6 @@ def _extract_title(messages: Sequence[ModelMessage]) -> str:
                         else first_line[:97] + "..."
                     )
     return ""
-
-
-def persist_conversation(user_id: str, conversation_id: str) -> None:
-    """Persist an empty conversation file.
-
-    Creates a new conversation JSON file with no messages.  The file
-    serves as proof that the ID was issued by the server.
-
-    Args:
-        user_id: The user ID that owns the conversation.
-        conversation_id: The conversation ID to create.
-    """
-    path = Casebase.for_user(user_id).conversation_path(
-        settings.data_dir, conversation_id
-    )
-    now = datetime.now(UTC)
-    conversation = ConversationData(
-        id=conversation_id,
-        title="",
-        created_at=now,
-        updated_at=now,
-        messages=[],
-    )
-    path.write_bytes(conversation.model_dump_json(indent=2).encode())
 
 
 def list_conversations(user_id: str) -> list[ConversationSummary]:
