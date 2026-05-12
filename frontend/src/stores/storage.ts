@@ -4,8 +4,7 @@
 
 import { deleteCryptoDatabase } from "../lib/crypto";
 
-/** All localStorage keys used by the application. */
-const STORAGE_KEYS = ["hivegent-settings", "hivegent-local-auth"] as const;
+const STORAGE_KEYS = ["hivegent-settings"] as const;
 
 /**
  * Remove all hivegent-related localStorage entries and reload the page.
