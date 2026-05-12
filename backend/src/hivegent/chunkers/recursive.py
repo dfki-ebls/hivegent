@@ -51,13 +51,8 @@ class RecursiveDocumentChunker(DocumentChunker):
         self,
         text: str,
         /,
+        *,
+        mime: str | None = None,
     ) -> list[ChunkData]:
-        """Split text using hierarchical recursive splitting.
-
-        Args:
-            text: The document text to chunk.
-
-        Returns:
-            List of ChunkData objects.
-        """
+        """Split text using hierarchical recursive splitting."""
         return await asyncio.to_thread(self._chunk, text)

@@ -50,13 +50,8 @@ class TokenDocumentChunker(DocumentChunker):
         self,
         text: str,
         /,
+        *,
+        mime: str | None = None,
     ) -> list[ChunkData]:
-        """Split text into fixed token-count chunks.
-
-        Args:
-            text: The document text to chunk.
-
-        Returns:
-            List of ChunkData objects.
-        """
+        """Split text into fixed token-count chunks."""
         return await asyncio.to_thread(self._chunk, text)

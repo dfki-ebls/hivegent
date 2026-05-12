@@ -186,7 +186,7 @@ async def chunk_and_index_document(
         content_length=len(content),
         config=spec.config,
     )
-    raw_chunks = await chunker(content)
+    raw_chunks = await chunker(content, mime=resolved_entry_metadata.mime)
 
     doc = DocumentMetadata(
         **resolved_entry_metadata.model_dump(),

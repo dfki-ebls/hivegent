@@ -59,13 +59,8 @@ class FastDocumentChunker(DocumentChunker):
         self,
         text: str,
         /,
+        *,
+        mime: str | None = None,
     ) -> list[ChunkData]:
-        """Split text using fast delimiter-based chunking.
-
-        Args:
-            text: The document text to chunk.
-
-        Returns:
-            List of ChunkData objects.
-        """
+        """Split text using fast delimiter-based chunking."""
         return await asyncio.to_thread(self._chunk, text)

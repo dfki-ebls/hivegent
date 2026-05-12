@@ -60,13 +60,8 @@ class MarkdownDocumentChunker(DocumentChunker):
         self,
         text: str,
         /,
+        *,
+        mime: str | None = None,
     ) -> list[ChunkData]:
-        """Split markdown text into semantic chunks.
-
-        Args:
-            text: The markdown text to chunk.
-
-        Returns:
-            List of ChunkData objects sorted by start_index.
-        """
+        """Split markdown text into semantic chunks sorted by start_index."""
         return await asyncio.to_thread(self._chunk, text)

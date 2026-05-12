@@ -17,6 +17,8 @@ class NoneDocumentChunker(DocumentChunker):
         self,
         text: str,
         /,
+        *,
+        mime: str | None = None,
     ) -> list[ChunkData]:
         """Return a single chunk spanning the full text."""
         return [

@@ -49,13 +49,8 @@ class TableDocumentChunker(DocumentChunker):
         self,
         text: str,
         /,
+        *,
+        mime: str | None = None,
     ) -> list[ChunkData]:
-        """Split text into table-aware chunks.
-
-        Args:
-            text: The document text to chunk.
-
-        Returns:
-            List of ChunkData objects.
-        """
+        """Split text into table-aware chunks."""
         return await asyncio.to_thread(self._chunk, text)

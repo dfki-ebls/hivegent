@@ -73,13 +73,8 @@ class SemanticDocumentChunker(DocumentChunker):
         self,
         text: str,
         /,
+        *,
+        mime: str | None = None,
     ) -> list[ChunkData]:
-        """Split text using semantic similarity boundaries.
-
-        Args:
-            text: The document text to chunk.
-
-        Returns:
-            List of ChunkData objects.
-        """
+        """Split text using semantic similarity boundaries."""
         return await asyncio.to_thread(self._chunk, text)

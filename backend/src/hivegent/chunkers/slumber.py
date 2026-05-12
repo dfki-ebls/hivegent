@@ -65,13 +65,8 @@ class SlumberDocumentChunker(DocumentChunker):
         self,
         text: str,
         /,
+        *,
+        mime: str | None = None,
     ) -> list[ChunkData]:
-        """Split text using LLM-guided chunking.
-
-        Args:
-            text: The document text to chunk.
-
-        Returns:
-            List of ChunkData objects.
-        """
+        """Split text using LLM-guided chunking."""
         return await asyncio.to_thread(self._chunk, text)

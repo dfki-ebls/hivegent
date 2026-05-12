@@ -62,13 +62,8 @@ class SentenceDocumentChunker(DocumentChunker):
         self,
         text: str,
         /,
+        *,
+        mime: str | None = None,
     ) -> list[ChunkData]:
-        """Split text into sentence-boundary-respecting chunks.
-
-        Args:
-            text: The document text to chunk.
-
-        Returns:
-            List of ChunkData objects.
-        """
+        """Split text into sentence-boundary-respecting chunks."""
         return await asyncio.to_thread(self._chunk, text)

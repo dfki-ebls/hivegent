@@ -162,11 +162,15 @@ class DocumentChunker(ABC):
         self,
         text: str,
         /,
+        *,
+        mime: str | None = None,
     ) -> list[ChunkData]:
         """Split text into chunks.
 
         Args:
             text: The document text to chunk.
+            mime: Detected MIME type of the original file, when available.
+                Format-aware chunkers may use this to switch strategies.
 
         Returns:
             List of ChunkData objects (line numbers may be unset).
@@ -177,16 +181,19 @@ class DocumentChunker(ABC):
         self,
         text: str,
         /,
+        *,
+        mime: str | None = None,
     ) -> list[ChunkData]:
         """Split text into chunks and annotate line numbers.
 
         Args:
             text: The document text to chunk.
+            mime: Detected MIME type of the original file, when available.
 
         Returns:
             List of ChunkData objects with 1-based line numbers set.
         """
-        chunks = await self._split(text)
+        chunks = await self._split(text, mime=mime)
         if not chunks:
             return []
         line_starts = [0]

@@ -55,13 +55,8 @@ class CodeDocumentChunker(DocumentChunker):
         self,
         text: str,
         /,
+        *,
+        mime: str | None = None,
     ) -> list[ChunkData]:
-        """Split code using syntax-aware boundaries.
-
-        Args:
-            text: The source code text to chunk.
-
-        Returns:
-            List of ChunkData objects.
-        """
+        """Split code using syntax-aware boundaries."""
         return await asyncio.to_thread(self._chunk, text)
