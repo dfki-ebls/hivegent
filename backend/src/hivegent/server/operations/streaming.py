@@ -26,9 +26,8 @@ from ...types import (
     OperationStageEvent,
     PipelineSpec,
     UploadCompleteEvent,
-    resolve_llm_config,
 )
-from ..common import parse_pipeline_spec
+from ..common import parse_pipeline_spec, prepare_llm_config
 
 __all__ = [
     "PreparedCollection",
@@ -72,8 +71,9 @@ async def upload_file_stream(
         yield result
     except HTTPException as exc:
         yield OperationErrorEvent(detail=str(exc.detail))
-    except Exception as exc:
-        yield OperationErrorEvent(detail=str(exc))
+    except Exception:
+        logger.exception("Upload failed for %s", filepath)
+        yield OperationErrorEvent(detail="Upload failed")
 
 
 async def reconvert_single_stream(
@@ -97,8 +97,9 @@ async def reconvert_single_stream(
         yield result
     except HTTPException as exc:
         yield OperationErrorEvent(detail=str(exc.detail))
-    except Exception as exc:
-        yield OperationErrorEvent(detail=str(exc))
+    except Exception:
+        logger.exception("Reconvert failed for %s", safe)
+        yield OperationErrorEvent(detail="Reconvert failed")
 
 
 async def process_bulk_operation(
@@ -142,30 +143,36 @@ async def process_bulk_operation(
 # Collection upload request preparation
 # ---------------------------------------------------------------------------
 
+_UPLOAD_READ_CHUNK_SIZE = 1024 * 1024
 
-def validate_collection_upload(
+
+async def validate_collection_upload(
     pipeline_spec: str,
     llm_config: str,
 ) -> tuple[PipelineSpec, LlmConfig]:
-    """Parse and validate pipeline and LLM configuration for collection uploads."""
+    """Parse and validate pipeline and LLM configuration for collection uploads.
+
+    Async because the SSRF check runs DNS off the event loop.
+    """
     spec = parse_pipeline_spec(pipeline_spec)
-    llm = LlmConfig.model_validate_json(llm_config)
-    resolved = resolve_llm_config(llm, default_model=settings.llm.aux_model)
+    resolved = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     return spec, resolved
 
 
 async def read_collection_zip(file: UploadFile) -> bytes:
     """Read and validate a collection ZIP upload."""
-    raw = await file.read()
-    if len(raw) > settings.max_collection_size_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Collection too large. "
-                f"Maximum size: {settings.max_collection_size_bytes} bytes"
-            ),
-        )
-    return raw
+    buf = bytearray()
+    while chunk := await file.read(_UPLOAD_READ_CHUNK_SIZE):
+        buf.extend(chunk)
+        if len(buf) > settings.max_collection_size_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Collection too large. "
+                    f"Maximum size: {settings.max_collection_size_bytes} bytes"
+                ),
+            )
+    return bytes(buf)
 
 
 @dataclass(slots=True, frozen=True)
@@ -183,6 +190,6 @@ async def prepare_collection_upload(
     llm_config: str = Form(default="{}"),
 ) -> PreparedCollection:
     """FastAPI dependency that parses config and buffers the ZIP upload."""
-    spec, resolved = validate_collection_upload(pipeline_spec, llm_config)
+    spec, resolved = await validate_collection_upload(pipeline_spec, llm_config)
     raw = await read_collection_zip(file)
     return PreparedCollection(raw=raw, spec=spec, resolved=resolved)

@@ -1,5 +1,6 @@
 """Routes for user document and collection management."""
 
+import logging
 import mimetypes
 from collections.abc import AsyncIterable
 from typing import Annotated
@@ -34,7 +35,7 @@ from ...types import (
     UploadCompleteEvent,
     UploadDocumentResponse,
 )
-from ..common import parse_pipeline_spec, resolve_llm_config, safe_path, user_store
+from ..common import parse_pipeline_spec, prepare_llm_config, safe_path, user_store
 from ..models import (
     BulkDeleteRequest,
     BulkRechunkRequest,
@@ -43,6 +44,7 @@ from ..models import (
 )
 from ..operations import (
     PreparedCollection,
+    attachment_disposition,
     find_original,
     get_document_response,
     list_assets,
@@ -57,6 +59,7 @@ from ..operations import (
 
 __all__ = ["router"]
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -81,7 +84,7 @@ async def download_original(
     return Response(
         content=content,
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{original.name}"'},
+        headers={"Content-Disposition": attachment_disposition(original.name)},
     )
 
 
@@ -104,10 +107,7 @@ async def replace_original(
         )
 
     spec = parse_pipeline_spec(pipeline_spec)
-    llm = resolve_llm_config(
-        LlmConfig.model_validate_json(llm_config),
-        default_model=settings.llm.aux_model,
-    )
+    llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     return await workspace.replace_original(
         store,
         safe,
@@ -131,10 +131,7 @@ async def upload_document_stream(
     safe = safe_path(filepath)
     store = user_store(user)
     spec = parse_pipeline_spec(pipeline_spec)
-    llm = resolve_llm_config(
-        LlmConfig.model_validate_json(llm_config),
-        default_model=settings.llm.aux_model,
-    )
+    llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
 
     content = await file.read()
     if len(content) > settings.max_file_size_bytes:
@@ -167,10 +164,7 @@ async def upload_document(
     safe = safe_path(filepath)
     store = user_store(user)
     spec = parse_pipeline_spec(pipeline_spec)
-    llm = resolve_llm_config(
-        LlmConfig.model_validate_json(llm_config),
-        default_model=settings.llm.aux_model,
-    )
+    llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
 
     content = await file.read()
     if len(content) > settings.max_file_size_bytes:
@@ -200,7 +194,7 @@ async def reconvert_document_stream(
     """Re-convert a document with streaming progress events."""
     safe = safe_path(filepath)
     store = user_store(user)
-    resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
+    resolved = await prepare_llm_config(request.llm)
     async for event in reconvert_single_stream(store, safe, request.pipeline, resolved):
         yield event
 
@@ -225,8 +219,9 @@ async def rechunk_document_stream(
         )
     except HTTPException as exc:
         yield OperationErrorEvent(detail=str(exc.detail))
-    except Exception as exc:
-        yield OperationErrorEvent(detail=f"Chunking failed: {exc!s}")
+    except Exception:
+        logger.exception("Chunking failed for %s", safe)
+        yield OperationErrorEvent(detail="Chunking failed")
 
 
 @router.post("/documents/collections")
@@ -237,7 +232,7 @@ async def upload_collection(
     llm_config: str = Form(default="{}"),
 ) -> CollectionUploadResponse:
     """Upload a markdown collection as a ZIP archive."""
-    spec, resolved = validate_collection_upload(pipeline_spec, llm_config)
+    spec, resolved = await validate_collection_upload(pipeline_spec, llm_config)
     store = user_store(user)
     raw = await read_collection_zip(file)
 
@@ -298,7 +293,7 @@ async def bulk_reconvert_stream(
     """Bulk reconvert multiple documents with streaming progress."""
     store = user_store(user)
     spec = request.pipeline
-    resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
+    resolved = await prepare_llm_config(request.llm)
 
     async def _reconvert_one(filepath: str) -> None:
         await workspace.reconvert(store, safe_path(filepath), spec=spec, llm=resolved)
@@ -358,7 +353,7 @@ async def reconvert_document(
     """Re-convert a document from its original binary file."""
     safe = safe_path(filepath)
     store = user_store(user)
-    resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
+    resolved = await prepare_llm_config(request.llm)
     return await workspace.reconvert(store, safe, spec=request.pipeline, llm=resolved)
 
 

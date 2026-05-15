@@ -453,6 +453,7 @@ export function DocumentDialog({
           <div className="prose prose-sm dark:prose-invert max-w-none p-4">
             <Markdown
               options={{
+                disableParsingRawHTML: true,
                 overrides: {
                   img: {
                     component: ({ src, alt, ...props }: React.ComponentProps<"img">) => (
@@ -540,7 +541,9 @@ export function DocumentDialog({
               ) : (
                 <div className="prose prose-sm dark:prose-invert max-w-none">
                   {asset.description ? (
-                    <Markdown>{asset.description}</Markdown>
+                    <Markdown options={{ disableParsingRawHTML: true }}>
+                      {asset.description}
+                    </Markdown>
                   ) : (
                     <p className="text-muted-foreground italic">No description</p>
                   )}

@@ -69,37 +69,35 @@ async def test_response_contains_expected_text(
     annotations: list[dict[str, Any]],
 ) -> None:
     """Real LLM response contains keywords from the expected answer."""
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.openai import OpenAIProvider
-
     from hivegent.config import settings
+    from hivegent.http_client import shared_http_client_lifespan
+    from hivegent.llm import create_openai_chat_model
 
     deps = await _seed_and_get_deps(data_dir, user_store, annotations)
 
-    model = OpenAIChatModel(
-        settings.llm.model,
-        provider=OpenAIProvider(
+    async with shared_http_client_lifespan():
+        model = create_openai_chat_model(
+            settings.llm.model,
             api_key=settings.llm.api_key,
             base_url=settings.llm.base_url or None,
-        ),
-    )
+        )
 
-    for ann in annotations:
-        result = await user_agent.run(
-            ann["question"],
-            model=model,
-            deps=deps,
-            toolsets=[explore_toolset],
-        )
-        output_lower = result.output.lower()
-        # Check that at least some key words from expected answer appear
-        expected_words = [
-            w.lower()
-            for w in ann["expected_answer"].split()
-            if len(w) > 4  # skip short words
-        ]
-        matches = sum(1 for w in expected_words if w in output_lower)
-        assert matches > 0, (
-            f"Response for {ann['question']!r} did not contain any "
-            f"expected keywords. Output: {result.output[:200]}"
-        )
+        for ann in annotations:
+            result = await user_agent.run(
+                ann["question"],
+                model=model,
+                deps=deps,
+                toolsets=[explore_toolset],
+            )
+            output_lower = result.output.lower()
+            # Check that at least some key words from expected answer appear
+            expected_words = [
+                w.lower()
+                for w in ann["expected_answer"].split()
+                if len(w) > 4  # skip short words
+            ]
+            matches = sum(1 for w in expected_words if w in output_lower)
+            assert matches > 0, (
+                f"Response for {ann['question']!r} did not contain any "
+                f"expected keywords. Output: {result.output[:200]}"
+            )

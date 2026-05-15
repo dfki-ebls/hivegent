@@ -1,5 +1,6 @@
 """Routes for conversations and chat orchestration."""
 
+import logging
 import shutil
 from collections.abc import Sequence
 from typing import Annotated
@@ -8,8 +9,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from nanoid import generate
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -27,7 +26,8 @@ from ...agents import (
 from ...auth import User, get_current_user
 from ...compaction import compact_conversation
 from ...config import settings
-from ...mcp import build_mcp_server
+from ...llm import create_openai_chat_model
+from ...mcp import build_mcp_server, validate_mcp_servers
 from ...memory import load_memory
 from ...messages import (
     ConversationSummary,
@@ -66,12 +66,13 @@ from ...types import (
 from ..common import (
     group_stores,
     parse_document_filters,
-    resolve_llm_config,
+    prepare_llm_config,
     user_store,
 )
 
 __all__ = ["router"]
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -179,17 +180,15 @@ async def generate_conversation_title(
 The title should capture the main topic or question.
 Return ONLY the title, no quotes or extra text.
 """
-    resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
+    resolved = await prepare_llm_config(request.llm)
 
     try:
         result = await base_agent.run(
             f"Conversation:\n{conversation_preview}",
-            model=OpenAIChatModel(
+            model=create_openai_chat_model(
                 resolved.model,
-                provider=OpenAIProvider(
-                    api_key=resolved.api_key,
-                    base_url=resolved.base_url,
-                ),
+                api_key=resolved.api_key,
+                base_url=resolved.base_url,
             ),
             instructions=instructions,
         )
@@ -200,9 +199,10 @@ Return ONLY the title, no quotes or extra text.
         set_conversation_title(user.id, conversation_id, generated_title)
         return GenerateTitleResponse(title=generated_title)
     except Exception as exc:
+        logger.exception("Failed to generate title for conversation %s", conversation_id)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to generate title: {exc!s}",
+            detail="Failed to generate title",
         ) from exc
 
 
@@ -244,15 +244,16 @@ async def create_conversation_compaction(
     user: Annotated[User, Depends(get_current_user)],
 ) -> CompactConversationResponse:
     """Compact a conversation by summarizing it into a new conversation."""
-    llm_config = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
+    llm_config = await prepare_llm_config(request.llm)
     try:
         result = await compact_conversation(user.id, conversation_id, llm_config)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("Failed to compact conversation %s", conversation_id)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to compact conversation: {exc!s}",
+            detail="Failed to compact conversation",
         ) from exc
 
     return CompactConversationResponse(
@@ -275,9 +276,13 @@ async def get_conversation_messages(
 
 
 async def _parse_chat_config(request: Request) -> ChatRequestConfig:
-    """Parse chat configuration from the request body."""
+    """Parse chat configuration from the request body.
+
+    Defaults and the SSRF DNS check are applied later by
+    :func:`prepare_llm_config` at the request boundary.
+    """
     body = await request.json()
-    llm = resolve_llm_config(LlmConfig(**(body.get("llm") or {})))
+    llm = LlmConfig(**(body.get("llm") or {}))
     try:
         personality = Personality(body.get("personality", "default"))
     except ValueError:
@@ -318,6 +323,12 @@ async def create_conversation_chat(
     """Handle chat requests using the Vercel AI Data Stream Protocol."""
     config = await _parse_chat_config(request)
     config.conversation_id = conversation_id
+
+    config.llm = await prepare_llm_config(config.llm, default_model=settings.llm.model)
+    try:
+        await validate_mcp_servers(config.tools.mcp_servers)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     document_filter, group_filters = parse_document_filters(
         config.included_documents,
@@ -380,12 +391,10 @@ async def create_conversation_chat(
         ),
         sdk_version=6,
         output_type=[str, DeferredToolRequests],
-        model=OpenAIChatModel(
+        model=create_openai_chat_model(
             config.llm.model,
-            provider=OpenAIProvider(
-                api_key=config.llm.api_key,
-                base_url=config.llm.base_url,
-            ),
+            api_key=config.llm.api_key,
+            base_url=config.llm.base_url,
         ),
         toolsets=build_toolsets(
             TOOLSET_GROUPS,

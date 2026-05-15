@@ -2,15 +2,20 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .chunkers import ChunkingSpec
 from .config import settings
 from .converters import ConversionSpec
 from .messages import ConversationSummary
 from .prompts import Personality
+from .security import (
+    UnsafeUrlError,
+    require_safe_url_shape,
+    validate_external_headers,
+)
 
 __all__ = [
     "BulkDeleteConversationsResponse",
@@ -111,11 +116,23 @@ class User:
 
 
 class LlmConfig(BaseModel):
-    """Client-provided LLM configuration overrides."""
+    """Client-provided LLM configuration overrides.
+
+    ``base_url`` runs through the SSRF filter (see
+    :mod:`hivegent.security`). Operators that point at a self-hosted LLM
+    on a private network must set ``HIVEGENT_SECURITY__ALLOW_PRIVATE_URLS=1``;
+    this is independent of ``HIVEGENT_AUTH__ENABLE``.
+    """
 
     model: str = ""
     api_key: str = ""
     base_url: str | None = None
+
+    @model_validator(mode="after")
+    def _check_base_url(self) -> Self:
+        if self.base_url:
+            require_safe_url_shape(self.base_url, "LLM base_url")
+        return self
 
 
 def resolve_llm_config(
@@ -146,12 +163,26 @@ class McpOAuth2Config(BaseModel):
 
 
 class McpServerConfig(BaseModel):
-    """User-provided MCP server configuration."""
+    """User-provided MCP server configuration.
+
+    ``url`` and ``headers`` run through the SSRF / header-injection
+    filter; private hosts require ``HIVEGENT_SECURITY__ALLOW_PRIVATE_URLS=1``
+    (independent of the auth toggle).
+    """
 
     url: str
     headers: dict[str, str] = Field(default_factory=dict)
     tool_prefix: str | None = None
     oauth2: McpOAuth2Config | None = None
+
+    @model_validator(mode="after")
+    def _check_safety(self) -> Self:
+        require_safe_url_shape(self.url, "MCP server url")
+        try:
+            validate_external_headers(self.headers)
+        except UnsafeUrlError as exc:
+            raise ValueError(f"Unsafe MCP server headers: {exc}") from exc
+        return self
 
 
 class ToolsSpec(BaseModel):
@@ -357,7 +388,10 @@ class DeleteConversationResponse(BaseModel):
 class UpdateTitleRequest(BaseModel):
     """Request to update a conversation title."""
 
-    title: str = Field(description="The new title for the conversation")
+    title: str = Field(
+        description="The new title for the conversation",
+        max_length=200,
+    )
 
 
 class UserResponse(BaseModel):

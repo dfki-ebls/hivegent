@@ -58,16 +58,25 @@ def single_chunk_pipeline() -> PipelineSpec:
 
 @pytest.fixture()
 def app_client(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
-    """Return a Starlette ``TestClient`` with auth disabled."""
+    """Return a Starlette ``TestClient`` with auth disabled.
+
+    Used as a context manager so the FastAPI lifespan runs — required for
+    the shared HTTP client (and any other lifespan-owned resource) to be
+    initialised. SSRF policy is independent of auth: tests upload with a
+    localhost LLM base_url, so the SSRF filter must be opened explicitly
+    here.
+    """
     from hivegent.config import settings
 
     monkeypatch.setattr(settings.auth, "enable", False)
+    monkeypatch.setattr(settings.security, "allow_private_urls", True)
 
     from starlette.testclient import TestClient
 
     from hivegent.server import app
 
-    return TestClient(app, raise_server_exceptions=False)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        yield client
 
 
 @pytest.fixture()

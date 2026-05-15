@@ -4,9 +4,10 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from ..auth import User
-from ..config import sanitize_document_path, sanitize_group_id
+from ..config import sanitize_document_path, sanitize_group_id, settings
+from ..security import validate_optional_external_url
 from ..store import Casebase
-from ..types import DocumentFilter, resolve_llm_config
+from ..types import DocumentFilter, LlmConfig, resolve_llm_config
 from .models import PipelineSpec
 
 __all__ = [
@@ -14,13 +15,36 @@ __all__ = [
     "group_stores",
     "parse_document_filters",
     "parse_pipeline_spec",
+    "prepare_llm_config",
     "require_group_member",
     "require_group_write",
-    "resolve_llm_config",
     "safe_group_id",
     "safe_path",
     "user_store",
 ]
+
+
+async def prepare_llm_config(
+    llm: LlmConfig, *, default_model: str | None = None
+) -> LlmConfig:
+    """Resolve defaults and run the SSRF check on ``base_url``.
+
+    Centralizes the request-boundary check so each route can stay a
+    one-liner. Pydantic only checks URL shape; this is the async hook
+    that actually resolves the host and rejects private targets.
+
+    *default_model* defaults to :attr:`settings.llm.aux_model` so the many
+    ancillary routes (titles, compaction, image alt-text during upload)
+    are right by default; the chat route passes the main model explicitly.
+    """
+    if default_model is None:
+        default_model = settings.llm.aux_model
+    resolved = resolve_llm_config(llm, default_model=default_model)
+    try:
+        await validate_optional_external_url(resolved.base_url, "LLM base_url")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return resolved
 
 
 def parse_document_filters(

@@ -6,9 +6,9 @@ from typing import Annotated, Literal
 from pydantic import Field
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
 
 from ...config import settings
+from ...llm import create_openai_chat_model
 from ...prompts import EXPLORE_INSTRUCTIONS, join_instructions
 from ..app import user_agent
 from ..common import ExploreTaskArg, UserDeps
@@ -51,13 +51,7 @@ def _subagent_model(deps: UserDeps) -> OpenAIChatModel:
         api_key = settings.llm.api_key
         base_url = settings.llm.base_url or None
 
-    return OpenAIChatModel(
-        model,
-        provider=OpenAIProvider(
-            api_key=api_key,
-            base_url=base_url,
-        ),
-    )
+    return create_openai_chat_model(model, api_key=api_key, base_url=base_url)
 
 
 @dataclass(frozen=True, slots=True)

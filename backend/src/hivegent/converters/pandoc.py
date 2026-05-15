@@ -4,7 +4,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict
 
 from ..subprocesses import pandoc_convert
 from .base import ConversionResult, DocumentConverter, collect_dir_images
@@ -15,10 +15,7 @@ __all__ = ["PandocConverter", "PandocConverterConfig"]
 class PandocConverterConfig(BaseModel):
     """Configuration for the Pandoc conversion pipeline."""
 
-    extra_args: list[str] = Field(
-        default_factory=list,
-        description="Additional pandoc CLI arguments (e.g. '--wrap=none', '--toc').",
-    )
+    model_config = ConfigDict(extra="forbid")
 
 
 # Pandoc cannot always infer the input format from the file extension.
@@ -101,12 +98,11 @@ class PandocConverter(DocumentConverter):
         if suffix in _SANDBOX_INCOMPATIBLE:
             with tempfile.TemporaryDirectory() as media_dir:
                 media_path = Path(media_dir)
-                extra = [*self.config.extra_args, f"--extract-media={media_path}"]
                 markdown = await pandoc_convert(
                     path,
                     from_format=_FORMAT_OVERRIDES.get(suffix),
                     sandbox=use_sandbox,
-                    extra_args=extra,
+                    extra_args=[f"--extract-media={media_path}"],
                 )
                 image_data = collect_dir_images(media_path, media_path)
                 return ConversionResult(markdown=markdown, images=image_data)
@@ -115,6 +111,5 @@ class PandocConverter(DocumentConverter):
             path,
             from_format=_FORMAT_OVERRIDES.get(suffix),
             sandbox=use_sandbox,
-            extra_args=self.config.extra_args,
         )
         return ConversionResult(markdown=markdown)

@@ -19,6 +19,7 @@ import io
 import logging
 import mimetypes
 import shutil
+import stat
 import tempfile
 import threading
 import zipfile
@@ -926,6 +927,25 @@ async def move_document(store: Casebase, src: str, dst: str) -> MoveDocumentResp
         )
 
 
+def _resolve_asset_path(assets_path: Path, asset_name: str) -> tuple[str, Path]:
+    try:
+        safe_name = sanitize_document_path(asset_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if PurePosixPath(safe_name).name != safe_name:
+        raise HTTPException(status_code=400, detail="Asset name must be a filename")
+
+    root = assets_path.resolve()
+    asset_path = (assets_path / safe_name).resolve()
+    if not asset_path.is_relative_to(root):
+        raise HTTPException(
+            status_code=400,
+            detail="Asset path escapes assets directory",
+        )
+    return safe_name, asset_path
+
+
 async def update_asset_description(
     store: Casebase,
     safe: str,
@@ -941,13 +961,14 @@ async def update_asset_description(
         workspace = store.workspace_dir(settings.data_dir)
         assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
         assets_path = workspace / assets_dir
-        if not assets_path.exists() or not assets_path.is_dir():
+        safe_name, asset_path = _resolve_asset_path(assets_path, asset_name)
+
+        try:
+            size_bytes = asset_path.stat().st_size
+        except FileNotFoundError as exc:
             raise HTTPException(
-                status_code=404, detail="Document has no assets directory"
-            )
-        asset_path = assets_path / asset_name
-        if not asset_path.exists() or not asset_path.is_file():
-            raise HTTPException(status_code=404, detail="Asset file not found")
+                status_code=404, detail="Asset file not found"
+            ) from exc
 
         md_path = asset_path.with_suffix(DOCUMENT_EXTENSION)
         md_path.write_text(content, encoding="utf-8")
@@ -957,12 +978,12 @@ async def update_asset_description(
 
         await chunk_and_index_document(store, description_path, content)
         return AssetEntry(
-            name=asset_name,
+            name=safe_name,
             path=rel_path,
             description_path=description_path,
             description=content,
-            size_bytes=asset_path.stat().st_size,
-            media_type=mimetypes.guess_type(asset_name)[0],
+            size_bytes=size_bytes,
+            media_type=mimetypes.guess_type(safe_name)[0],
         )
 
 
@@ -1072,6 +1093,52 @@ async def on_agent_write(store: Casebase, filename: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
+    """Reject unsafe ZIP entries before extraction.
+
+    Catches symlinks, special files, traversal paths, and zip bombs
+    (per-entry and cumulative uncompressed size).
+    """
+    total_uncompressed = 0
+    for info in archive.infolist():
+        if info.is_dir():
+            continue
+
+        mode = (info.external_attr >> 16) & 0xFFFF
+        if mode and not stat.S_ISREG(mode):
+            raise HTTPException(
+                status_code=400,
+                detail=f"ZIP entry {info.filename!r} is not a regular file",
+            )
+
+        try:
+            sanitize_document_path(info.filename)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"ZIP contains unsafe path {info.filename!r}: {exc}",
+            ) from exc
+
+        if info.file_size > settings.max_file_size_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"File '{info.filename}' in ZIP is too large "
+                    f"({info.file_size} bytes decompressed). "
+                    f"Maximum: {settings.max_file_size_bytes} bytes"
+                ),
+            )
+        total_uncompressed += info.file_size
+        if total_uncompressed > settings.max_collection_size_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Collection decompresses to more than "
+                    f"{settings.max_collection_size_bytes} bytes"
+                ),
+            )
+
+
 async def process_collection(
     store: Casebase,
     raw: bytes,
@@ -1095,29 +1162,11 @@ async def process_collection(
 
             try:
                 with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-                    for info in archive.infolist():
-                        normalized = str(PurePosixPath(info.filename))
-                        if (
-                            normalized.startswith("/")
-                            or normalized.startswith("..")
-                            or "/.." in normalized
-                        ):
-                            raise HTTPException(
-                                status_code=400,
-                                detail=f"ZIP contains unsafe path: {info.filename}",
-                            )
-                        if (
-                            info.file_size > settings.max_file_size_bytes
-                            and not info.is_dir()
-                        ):
-                            raise HTTPException(
-                                status_code=400,
-                                detail=(
-                                    f"File '{info.filename}' in ZIP is too large "
-                                    f"({info.file_size} bytes decompressed). "
-                                    f"Maximum: {settings.max_file_size_bytes} bytes"
-                                ),
-                            )
+                    # ``_validate_zip_entries`` already rejects symlinks,
+                    # absolute / traversal paths, and oversize entries.
+                    # PEP 706's ``filter='data'`` is tarfile-only, so we
+                    # cannot layer it onto zipfile here.
+                    _validate_zip_entries(archive)
                     archive.extractall(extract_root)
             except zipfile.BadZipFile as exc:
                 raise HTTPException(status_code=400, detail="Invalid ZIP file") from exc

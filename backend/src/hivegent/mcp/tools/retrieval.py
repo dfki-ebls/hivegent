@@ -2,12 +2,11 @@
 
 from fastmcp import Context
 from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAccessIssue]
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
 
 from ...agents import UserDeps, explore_toolset, user_agent
 from ...chunkers.base import RetrievedChunk
 from ...config import settings
+from ...llm import create_openai_chat_model
 from ...prompts import EXPLORE_INSTRUCTIONS, join_instructions
 from ...retrieval import build_search_tool
 from ...store import Casebase, build_search_paths
@@ -61,12 +60,10 @@ async def explore_documents(
     if model_name:
         result = await user_agent.run(
             task,
-            model=OpenAIChatModel(
+            model=create_openai_chat_model(
                 model_name,
-                provider=OpenAIProvider(
-                    api_key=settings.llm.api_key,
-                    base_url=settings.llm.base_url or None,
-                ),
+                api_key=settings.llm.api_key,
+                base_url=settings.llm.base_url or None,
             ),
             deps=UserDeps(
                 user_id=user_id,

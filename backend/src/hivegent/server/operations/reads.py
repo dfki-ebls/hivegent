@@ -7,6 +7,7 @@ the filesystem to resolve URLs to bytes.  Mutations live in
 
 import mimetypes
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import HTTPException
 from starlette.responses import PlainTextResponse, Response
@@ -23,6 +24,7 @@ from ...store import Casebase
 from ...types import AssetEntry, AssetListResponse
 
 __all__ = [
+    "attachment_disposition",
     "find_original",
     "get_document_response",
     "list_assets",
@@ -50,27 +52,48 @@ def find_original(store: Casebase, safe: str) -> Path:
     return full_path
 
 
+def attachment_disposition(filename: str) -> str:
+    """Return an RFC 5987-encoded ``Content-Disposition: attachment`` value.
+
+    The ASCII fallback strips quotes, backslashes, and control characters
+    so a hostile filename cannot break out of the header; the ``filename*``
+    parameter carries the full UTF-8 name for compliant browsers.
+    """
+    ascii_safe = "".join(
+        ch if 32 <= ord(ch) < 127 and ch not in '"\\' else "_" for ch in filename
+    ) or "download"
+    encoded = quote(filename, safe="")
+    return f'attachment; filename="{ascii_safe}"; filename*=UTF-8\'\'{encoded}'
+
+
 def get_document_response(store: Casebase, safe: str) -> Response:
-    """Return the raw content of a document or asset as an HTTP response."""
+    """Return the raw content of a document or asset as an HTTP response.
+
+    Non-text responses force ``Content-Disposition: attachment`` so a user
+    who pastes the URL into a browser tab cannot execute attacker-uploaded
+    SVG/HTML in the app's same-origin context.
+    """
     workspace = store.workspace_dir(settings.data_dir)
     file_path = workspace / safe
-
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Document not found")
-    if not file_path.is_file():
-        raise HTTPException(status_code=400, detail="Path is not a file")
-
     media_type = mimetypes.guess_type(file_path.name)[0]
-    if media_type and not media_type.startswith("text/"):
-        return Response(content=file_path.read_bytes(), media_type=media_type)
 
     try:
-        return PlainTextResponse(file_path.read_text(encoding="utf-8"))
-    except UnicodeDecodeError:
-        return Response(
-            content=file_path.read_bytes(),
-            media_type=media_type or "application/octet-stream",
-        )
+        if not media_type or media_type.startswith("text/"):
+            try:
+                return PlainTextResponse(file_path.read_text(encoding="utf-8"))
+            except UnicodeDecodeError:
+                pass
+        content = file_path.read_bytes()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Document not found") from exc
+    except IsADirectoryError as exc:
+        raise HTTPException(status_code=400, detail="Path is not a file") from exc
+
+    return Response(
+        content=content,
+        media_type=media_type or "application/octet-stream",
+        headers={"Content-Disposition": attachment_disposition(file_path.name)},
+    )
 
 
 def list_assets(store: Casebase, safe: str) -> AssetListResponse:

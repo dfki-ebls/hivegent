@@ -10,6 +10,8 @@ import { ThemeProvider } from "../components/ThemeProvider";
 import { useOidc } from "../oidc";
 import { useSettingsStore } from "../stores/settings-store";
 
+const IS_DEV = import.meta.env.DEV;
+
 function RootComponent() {
   const { isUserLoggedIn } = useOidc();
   const initFromBackend = useSettingsStore((state) => state.initFromBackend);
@@ -28,17 +30,19 @@ function RootComponent() {
           <main className="flex-1 overflow-hidden">
             <Outlet />
           </main>
-          <TanStackDevtools
-            config={{
-              position: "bottom-left",
-            }}
-            plugins={[
-              {
-                name: "Tanstack Router",
-                render: <TanStackRouterDevtoolsPanel />,
-              },
-            ]}
-          />
+          {IS_DEV && (
+            <TanStackDevtools
+              config={{
+                position: "bottom-left",
+              }}
+              plugins={[
+                {
+                  name: "Tanstack Router",
+                  render: <TanStackRouterDevtoolsPanel />,
+                },
+              ]}
+            />
+          )}
         </div>
       </AppErrorBoundary>
     </ThemeProvider>

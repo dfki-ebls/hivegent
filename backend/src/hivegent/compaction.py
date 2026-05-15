@@ -16,11 +16,9 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
-
 from .agents import base_agent
 from .config import settings
+from .llm import create_openai_chat_model
 from .messages import ConversationData, load_conversation
 from .store import Casebase
 from .types import LlmConfig
@@ -133,12 +131,10 @@ async def _summarize_conversation(
 
     result = await base_agent.run(
         f"Conversation to summarize:\n\n{conversation_text}",
-        model=OpenAIChatModel(
+        model=create_openai_chat_model(
             llm_config.model,
-            provider=OpenAIProvider(
-                api_key=llm_config.api_key,
-                base_url=llm_config.base_url,
-            ),
+            api_key=llm_config.api_key,
+            base_url=llm_config.base_url,
         ),
         instructions=COMPACTION_INSTRUCTIONS,
     )

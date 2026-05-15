@@ -35,9 +35,9 @@ from ...types import (
 from ..common import (
     group_store,
     parse_pipeline_spec,
+    prepare_llm_config,
     require_group_member,
     require_group_write,
-    resolve_llm_config,
     safe_path,
 )
 from ..models import ReconvertRequest
@@ -137,10 +137,7 @@ async def upload_group_document_stream(
     store = group_store(safe_id)
 
     spec = parse_pipeline_spec(pipeline_spec)
-    llm = resolve_llm_config(
-        LlmConfig.model_validate_json(llm_config),
-        default_model=settings.llm.aux_model,
-    )
+    llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
 
     content = await file.read()
     if len(content) > settings.max_file_size_bytes:
@@ -176,10 +173,7 @@ async def upload_group_document(
     store = group_store(safe_id)
 
     spec = parse_pipeline_spec(pipeline_spec)
-    llm = resolve_llm_config(
-        LlmConfig.model_validate_json(llm_config),
-        default_model=settings.llm.aux_model,
-    )
+    llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
 
     content = await file.read()
     if len(content) > settings.max_file_size_bytes:
@@ -212,7 +206,7 @@ async def reconvert_group_document_stream(
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
     store = group_store(safe_id)
-    resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
+    resolved = await prepare_llm_config(request.llm)
     async for event in reconvert_single_stream(store, safe, request.pipeline, resolved):
         yield event
 
@@ -227,7 +221,7 @@ async def upload_group_collection(
 ) -> CollectionUploadResponse:
     """Upload a ZIP collection to a group's knowledge base."""
     safe_id = require_group_write(user, group_id)
-    spec, resolved = validate_collection_upload(pipeline_spec, llm_config)
+    spec, resolved = await validate_collection_upload(pipeline_spec, llm_config)
     store = group_store(safe_id)
     raw = await read_collection_zip(file)
 
@@ -318,7 +312,7 @@ async def reconvert_group_document(
     safe_id = require_group_write(user, group_id)
     safe = safe_path(filepath)
     store = group_store(safe_id)
-    resolved = resolve_llm_config(request.llm, default_model=settings.llm.aux_model)
+    resolved = await prepare_llm_config(request.llm)
     return await workspace.reconvert(store, safe, spec=request.pipeline, llm=resolved)
 
 

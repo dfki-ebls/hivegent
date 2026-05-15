@@ -17,6 +17,7 @@ __all__ = [
     "LlmSettings",
     "LogfireSettings",
     "McpSettings",
+    "SecuritySettings",
     "Settings",
     "sanitize_document_path",
     "sanitize_group_id",
@@ -209,6 +210,19 @@ class AuthSettings(BaseModel):
     jwks_cache_ttl: int = 3600
 
 
+class SecuritySettings(BaseModel):
+    """SSRF and transport-safety settings.
+
+    ``allow_private_urls`` opens the SSRF filter so user-supplied URLs
+    (LLM ``base_url``, MCP server URLs, ``WebFetch``) may dial private
+    or loopback addresses. Default off; turn on only for trusted
+    self-hosted deployments where every authenticated user is already
+    allowed to reach the same network.
+    """
+
+    allow_private_urls: bool = False
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -225,10 +239,11 @@ class Settings(BaseSettings):
     mcp: McpSettings = McpSettings()
     groups: GroupSettings = GroupSettings()
     auth: AuthSettings = AuthSettings()
+    security: SecuritySettings = SecuritySettings()
 
     data_dir: Path = Path("data")
     max_file_size_bytes: int = 50 * 1024 * 1024  # 50 MB
-    max_collection_size_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GB
+    max_collection_size_bytes: int = 512 * 1024 * 1024  # 512 MB
     max_collection_files: int = 10_000
     cors_origins: list[str] = ["http://localhost:3000"]
     # Background tick that retries any documents whose inline index

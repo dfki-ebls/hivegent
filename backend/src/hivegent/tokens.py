@@ -1,5 +1,6 @@
 """Personal Access Token storage and validation."""
 
+import os
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -8,7 +9,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from pydantic import BaseModel, TypeAdapter
 
-from .config import settings
+from .config import sanitize_user_id, settings
 from .store import Casebase
 from .types import TokenInfo, User
 
@@ -17,6 +18,10 @@ __all__ = [
     "TokenStore",
     "token_store",
 ]
+
+# Throttle ``last_used_at`` writes to avoid a contended JSON rewrite on every
+# authenticated request.
+_LAST_USED_THROTTLE_SECONDS = 60
 
 
 @dataclass(slots=True, frozen=True)
@@ -60,6 +65,8 @@ class TokenStore:
             memory_cost=19456,  # 19 MiB
             parallelism=1,
         )
+        # Verified on every miss path to flatten enumeration timing.
+        self._dummy_hash = self._hasher.hash("hivegent_dummy_for_timing_only")
 
     def _load_user_tokens(self, user_id: str) -> list[_StoredToken]:
         """Load all tokens for a user."""
@@ -69,10 +76,19 @@ class TokenStore:
         return _StoredTokenListAdapter.validate_json(path.read_bytes())
 
     def _save_user_tokens(self, user_id: str, tokens: list[_StoredToken]) -> None:
-        """Save all tokens for a user."""
+        """Save all tokens for a user using an atomic temp+rename."""
         path = Casebase.for_user(user_id).tokens_path(settings.data_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(_StoredTokenListAdapter.dump_json(tokens, indent=2))
+        payload = _StoredTokenListAdapter.dump_json(tokens, indent=2)
+        tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+        tmp.write_bytes(payload)
+        tmp.replace(path)
+
+    def _burn_dummy_verify(self) -> None:
+        try:
+            self._hasher.verify(self._dummy_hash, "incorrect")
+        except VerifyMismatchError:
+            pass
 
     def create_token(
         self,
@@ -127,6 +143,11 @@ class TokenStore:
     def validate_token(self, raw_token: str) -> User | None:
         """Validate a personal access token.
 
+        Every well-formed token performs exactly one Argon2 verify (real
+        for a token_id match, dummy otherwise) so an attacker can't use
+        response timing to enumerate user IDs or distinguish
+        "no such token" from "wrong secret".
+
         Args:
             raw_token: The raw token string (hivegent_<user_id>_<token_id>_<secret>).
 
@@ -143,28 +164,45 @@ class TokenStore:
 
         _, user_id, token_id, _ = parts
 
-        tokens = self._load_user_tokens(user_id)
-        for token in tokens:
-            if token.id != token_id:
-                continue
+        tokens: list[_StoredToken] = []
+        try:
+            sanitize_user_id(user_id)
+            tokens = self._load_user_tokens(user_id)
+        except ValueError:
+            pass
 
-            try:
-                self._hasher.verify(token.hash, raw_token)
-            except VerifyMismatchError:
-                continue
+        match = next((t for t in tokens if t.id == token_id), None)
+        if match is None:
+            self._burn_dummy_verify()
+            return None
 
-            # Check expiration
-            if token.expires_at is not None:
-                if datetime.now(UTC) > token.expires_at:
-                    return None
+        try:
+            self._hasher.verify(match.hash, raw_token)
+        except VerifyMismatchError:
+            return None
 
-            # Update last_used_at
-            token.last_used_at = datetime.now(UTC)
-            self._save_user_tokens(user_id, tokens)
+        if match.expires_at is not None and datetime.now(UTC) > match.expires_at:
+            return None
 
-            return User(id=token.user_id)
+        self._maybe_touch_last_used(user_id, tokens, match)
+        return User(id=match.user_id)
 
-        return None
+    def _maybe_touch_last_used(
+        self,
+        user_id: str,
+        tokens: list[_StoredToken],
+        token: _StoredToken,
+    ) -> None:
+        """Update ``last_used_at`` at most once per throttle window."""
+        now = datetime.now(UTC)
+        last = token.last_used_at
+        if last is not None and (now - last).total_seconds() < _LAST_USED_THROTTLE_SECONDS:
+            return
+        updated = [
+            t.model_copy(update={"last_used_at": now}) if t.id == token.id else t
+            for t in tokens
+        ]
+        self._save_user_tokens(user_id, updated)
 
     def list_tokens(self, user_id: str) -> list[TokenInfo]:
         """List all tokens for a user.

@@ -35,6 +35,7 @@ import cbrkit
 from .chunkers.base import DocumentMetadata, RetrievedChunk
 from .config import settings
 from .converters.base import DOCUMENT_EXTENSION
+from .llm import create_openai_client
 from .store import Casebase
 from .tools.base import SearchPathFilterFunc, apply_prefix
 from .tools.retrieval import IndexedStorage, LanceDBSearchTool, SearchResult
@@ -228,11 +229,9 @@ class _RetrievalState:
 
             cfg = settings.embedding
             if cfg.provider == "openai":
-                from openai import AsyncOpenAI
-
                 self._embedding_func = cbrkit.sim.embed.openai(
                     model=cfg.model,
-                    client=AsyncOpenAI(
+                    client=create_openai_client(
                         api_key=cfg.api_key or None,
                         base_url=cfg.base_url or None,
                     ),

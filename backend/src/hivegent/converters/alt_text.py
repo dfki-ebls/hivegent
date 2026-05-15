@@ -6,10 +6,9 @@ import re
 from pathlib import PurePosixPath
 
 from pydantic_ai import BinaryContent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..agents.app import base_agent
+from ..llm import create_openai_chat_model
 from ..types import LlmConfig
 from .images import guess_image_media_type, sanitize_image_bytes
 
@@ -57,12 +56,10 @@ async def describe_image(
     )
     result = await base_agent.run(
         [_ALT_TEXT_PROMPT, content],
-        model=OpenAIChatModel(
+        model=create_openai_chat_model(
             llm_options.model,
-            provider=OpenAIProvider(
-                api_key=llm_options.api_key,
-                base_url=llm_options.base_url,
-            ),
+            api_key=llm_options.api_key,
+            base_url=llm_options.base_url,
         ),
     )
     return str(result.output).strip()

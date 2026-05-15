@@ -8,7 +8,12 @@ All workspace, metadata, and search-index *mutations* live in
 """
 
 from .inventory import build_tree_response, list_documents_for_store
-from .reads import find_original, get_document_response, list_assets
+from .reads import (
+    attachment_disposition,
+    find_original,
+    get_document_response,
+    list_assets,
+)
 from .streaming import (
     PreparedCollection,
     prepare_collection_upload,
@@ -21,6 +26,7 @@ from .streaming import (
 
 __all__ = [
     "PreparedCollection",
+    "attachment_disposition",
     "build_tree_response",
     "find_original",
     "get_document_response",

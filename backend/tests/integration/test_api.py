@@ -67,6 +67,28 @@ def test_download_original_not_found(app_client, data_dir: Path) -> None:
     assert response.status_code == 404
 
 
+def test_download_original_uses_safe_content_disposition(
+    app_client,
+    data_dir: Path,
+) -> None:
+    """GET /api/documents/original/ sanitizes hostile filenames in headers."""
+    store = Casebase(kind="user", id="localhost")
+    workspace = store.workspace_dir(data_dir)
+    original = workspace / 'bad"name.pdf'
+    original.write_bytes(b"%PDF-fake")
+    (workspace / 'bad"name.md').write_text("# Converted report")
+
+    response = app_client.get('/api/documents/original/bad"name.md')
+
+    assert response.status_code == 200
+    assert response.headers["content-disposition"].startswith(
+        'attachment; filename="bad_name.pdf"'
+    )
+    assert 'filename*=UTF-8\'\'bad%22name.pdf' in response.headers[
+        "content-disposition"
+    ]
+
+
 def test_replace_original_route_is_not_captured_by_upload(
     app_client,
     data_dir: Path,
@@ -95,8 +117,8 @@ def test_upload_image_creates_original_and_description(
         b"\x89PNG\r\n\x1a\n"
         b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
         b"\x08\x02\x00\x00\x00\x90wS\xde"
-        b"\x00\x00\x00\x0cIDATx\x9cc``\x00\x00\x00\x02\x00\x01"
-        b"\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82"
+        b"\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01\x01"
+        b"\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82"
     )
     response = app_client.put(
         "/api/documents/diagram.png",
@@ -118,6 +140,27 @@ def test_upload_image_creates_original_and_description(
     meta = (store.metadata_dir(data_dir) / "diagram.json").read_text(encoding="utf-8")
     assert '"original_path": "diagram.png"' in meta
     assert '"entry_kind": "image"' in meta
+
+
+def test_patch_asset_description_rejects_path_traversal(
+    app_client,
+    data_dir: Path,
+) -> None:
+    """PATCH asset descriptions rejects names outside the assets directory."""
+    store = Casebase(kind="user", id="localhost")
+    workspace = store.workspace_dir(data_dir)
+    assets = workspace / "diagram.assets"
+    assets.mkdir()
+    (assets / "image.png").write_bytes(b"png")
+    (workspace / "outside.png").write_bytes(b"outside")
+
+    response = app_client.patch(
+        "/api/documents/assets/diagram.md",
+        json={"asset_name": "../outside.png", "content": "owned"},
+    )
+
+    assert response.status_code == 400
+    assert not (workspace / "outside.md").exists()
 
 
 def test_create_conversation(app_client) -> None:

@@ -46,13 +46,13 @@ async def test_get_jwks_uses_jwks_uri_from_discovery_doc(
     monkeypatch.setattr(httpx, "get", fake_sync_get)
 
     fetcher = JWKSFetcher()
-    monkeypatch.setattr(
-        fetcher,
-        "_get_client",
-        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-    )
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(auth, "get_shared_http_client", lambda: mock_client)
 
-    await fetcher.get_jwks()
+    try:
+        await fetcher.get_jwks()
+    finally:
+        await mock_client.aclose()
 
     assert requested_urls == [discovery_url, custom_jwks_uri]
 
@@ -149,10 +149,10 @@ async def test_validate_jwt_token_accepts_trailing_slash_iss_mismatch(
     assert user.id == "user-1"
 
 
-async def test_validate_jwt_token_rejects_mismatched_iss_with_helpful_detail(
+async def test_validate_jwt_token_rejects_mismatched_iss(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A real ``iss`` mismatch surfaces expected vs actual in the 401 detail."""
+    """A bad ``iss`` produces a 401 that names the claim but leaks no values."""
     monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
     monkeypatch.setattr(settings.auth, "audience", None)
 
@@ -168,14 +168,14 @@ async def test_validate_jwt_token_rejects_mismatched_iss_with_helpful_detail(
     detail = exc_info.value.detail
     assert isinstance(detail, str)
     assert "iss" in detail
-    assert "https://auth.example.com" in detail
-    assert "https://evil.example.com" in detail
+    assert "https://auth.example.com" not in detail
+    assert "https://evil.example.com" not in detail
 
 
-async def test_validate_jwt_token_rejects_mismatched_aud_with_helpful_detail(
+async def test_validate_jwt_token_rejects_mismatched_aud(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A bad ``aud`` is reported with both expected and actual values."""
+    """A bad ``aud`` produces a 401 that names the claim but leaks no values."""
     monkeypatch.setattr(settings.auth, "issuer", "")
     monkeypatch.setattr(settings.auth, "audience", "hivegent-api")
 
@@ -188,8 +188,8 @@ async def test_validate_jwt_token_rejects_mismatched_aud_with_helpful_detail(
     detail = exc_info.value.detail
     assert isinstance(detail, str)
     assert "aud" in detail
-    assert "hivegent-api" in detail
-    assert "other-api" in detail
+    assert "hivegent-api" not in detail
+    assert "other-api" not in detail
 
 
 async def test_validate_jwt_token_does_not_leak_sub_in_error_detail(

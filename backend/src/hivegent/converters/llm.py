@@ -5,11 +5,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 from pydantic_ai import BinaryContent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
 
 from ..agents.app import base_agent
+from ..llm import create_openai_chat_model
 from ..types import LlmConfig
 from .base import ConversionResult, DocumentConverter
 from .images import sanitize_image_bytes
@@ -92,12 +91,10 @@ class LLMConverter(DocumentConverter):
 
         result = await base_agent.run(
             [self.config.prompt, content],
-            model=OpenAIChatModel(
+            model=create_openai_chat_model(
                 self.llm_options.model,
-                provider=OpenAIProvider(
-                    api_key=self.llm_options.api_key,
-                    base_url=self.llm_options.base_url,
-                ),
+                api_key=self.llm_options.api_key,
+                base_url=self.llm_options.base_url,
             ),
             model_settings=ModelSettings(thinking=False),
         )

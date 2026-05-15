@@ -130,7 +130,17 @@ class LanceDBSearchTool[R = SearchResult](SyncTool[list[R]]):
                 ),
                 limit=max_results,
             )
-            result = cbrkit.retrieval.apply_query_indexed(query, retriever)
+            try:
+                result = cbrkit.retrieval.apply_query_indexed(query, retriever)
+            except RuntimeError as e:
+                # LanceDB FTS raises an Arrow length-mismatch error when a
+                # query tokenizes to nothing (e.g. single chars, stopwords).
+                if "lance error" not in str(e).lower():
+                    raise
+                logger.warning(
+                    "LanceDB %s query failed for %r: %s", search_type, query, e
+                )
+                continue
             step = result.final_step.queries["default"]
 
             for key in step.ranking:

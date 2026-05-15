@@ -19,7 +19,8 @@ from joserfc.jwk import KeySet
 from joserfc.jwt import ClaimsOption, JWTClaimsRegistry
 from pydantic import AnyHttpUrl, ValidationError
 
-from .config import settings
+from .config import sanitize_user_id, settings
+from .http_client import get_shared_http_client
 from .tokens import token_store
 from .types import User
 
@@ -73,12 +74,6 @@ class JWKSFetcher:
         self._cache_time: float = 0
         self._discovery_cache: OIDCConfiguration | None = None
         self._discovery_cache_time: float = 0
-        self._client: httpx.AsyncClient | None = None
-
-    def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient()
-        return self._client
 
     def _is_fresh(self, cached: object, cached_time: float) -> bool:
         return (
@@ -155,7 +150,7 @@ class JWKSFetcher:
         jwks_uri = str(config.jwks_uri)
 
         try:
-            response = await self._get_client().get(jwks_uri, timeout=10.0)
+            response = await get_shared_http_client().get(jwks_uri, timeout=10.0)
             response.raise_for_status()
             jwks_data = response.json()
         except httpx.HTTPError as e:
@@ -195,18 +190,13 @@ def _build_claims_registry() -> JWTClaimsRegistry:
     return JWTClaimsRegistry(leeway=300, **options)
 
 
-def _format_invalid_claim_detail(claim: str, claims: dict[str, Any]) -> str:
-    """Build a 401 detail for an invalid claim without leaking ``sub``."""
-    expected_by_claim = {
-        "iss": settings.auth.issuer,
-        "aud": settings.auth.audience,
-    }
-    expected = expected_by_claim.get(claim)
-    if expected:
-        return (
-            f"Invalid token claim {claim!r}: "
-            f"expected {expected!r}, got {claims.get(claim)!r}"
-        )
+def _format_invalid_claim_detail(claim: str) -> str:
+    """Build a 401 detail for an invalid claim.
+
+    Echoes only the claim name — never the expected or received value —
+    so an attacker can't probe the configured issuer/audience by sending
+    crafted tokens.
+    """
     return f"Invalid token claim: {claim!r}"
 
 
@@ -305,14 +295,24 @@ async def validate_jwt_token(token: str) -> User:
     except InvalidClaimError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=_format_invalid_claim_detail(e.claim, decoded.claims),
+            detail=_format_invalid_claim_detail(e.claim),
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
 
     claims = decoded.claims
+    sub = claims["sub"]
+    try:
+        sanitize_user_id(sub)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token subject is not a valid user identifier",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
     read_groups, write_groups = _extract_group_permissions(claims)
     return User(
-        id=claims["sub"],
+        id=sub,
         email=claims.get("email"),
         name=claims.get("name") or claims.get("preferred_username"),
         read_groups=read_groups,
@@ -368,9 +368,10 @@ async def get_current_user(
 
     token = credentials.credentials
 
-    # Check if this is a Personal Access Token (starts with hivegent_)
     if token.startswith("hivegent_"):
-        user = token_store.validate_token(token)
+        # Argon2 is CPU-bound (~10ms); run off the event loop so concurrent
+        # requests aren't blocked during PAT verification.
+        user = await asyncio.to_thread(token_store.validate_token, token)
         if user:
             return user
         raise HTTPException(
@@ -379,5 +380,4 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Otherwise validate as JWT
     return await validate_jwt_token(token)
