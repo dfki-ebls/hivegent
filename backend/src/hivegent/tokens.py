@@ -80,12 +80,6 @@ class TokenStore:
         tmp.write_bytes(payload)
         tmp.replace(path)
 
-    def _burn_dummy_verify(self) -> None:
-        try:
-            self._hasher.verify(self._dummy_hash, "incorrect")
-        except VerifyMismatchError:
-            pass
-
     def create_token(
         self,
         user_id: str,
@@ -168,13 +162,12 @@ class TokenStore:
             pass
 
         match = next((t for t in tokens if t.id == token_id), None)
-        if match is None:
-            self._burn_dummy_verify()
+        try:
+            self._hasher.verify(match.hash if match else self._dummy_hash, raw_token)
+        except VerifyMismatchError:
             return None
 
-        try:
-            self._hasher.verify(match.hash, raw_token)
-        except VerifyMismatchError:
+        if match is None:
             return None
 
         if match.expires_at is not None and datetime.now(UTC) > match.expires_at:
