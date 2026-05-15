@@ -10,12 +10,15 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastmcp.server.auth.oidc_proxy import OIDCConfiguration
 from joserfc import jwt
 from joserfc.errors import (
+    DecodeError,
     ExpiredTokenError,
     InvalidClaimError,
+    InvalidKeyIdError,
     JoseError,
     MissingClaimError,
 )
 from joserfc.jwk import KeySet
+from joserfc.jws import extract_compact
 from joserfc.jwt import ClaimsOption, JWTClaimsRegistry
 from pydantic import AnyHttpUrl, ValidationError
 
@@ -78,11 +81,18 @@ class JWKSFetcher:
         self._discovery_cache: OIDCConfiguration | None = None
         self._discovery_cache_time: float = 0
 
-    def _is_fresh(self, cached: object, cached_time: float) -> bool:
-        return (
-            cached is not None
-            and (time.time() - cached_time) < settings.auth.jwks_cache_ttl
+    def _cached_value[T](
+        self, cached: T | None, cached_time: float, *, force_refresh: bool
+    ) -> T | None:
+        if cached is None:
+            return None
+        age = time.time() - cached_time
+        ttl = (
+            settings.auth.jwks_force_refresh_min_interval_seconds
+            if force_refresh
+            else settings.auth.jwks_cache_ttl
         )
+        return cached if age < ttl else None
 
     async def _get_discovery(self, force_refresh: bool = False) -> OIDCConfiguration:
         """Fetch the OIDC discovery document.
@@ -91,11 +101,13 @@ class JWKSFetcher:
             HTTPException: 503 on transport failure, 500 on malformed payload
                 or missing configuration.
         """
-        if not force_refresh and self._is_fresh(
-            self._discovery_cache, self._discovery_cache_time
-        ):
-            assert self._discovery_cache is not None
-            return self._discovery_cache
+        cached = self._cached_value(
+            self._discovery_cache,
+            self._discovery_cache_time,
+            force_refresh=force_refresh,
+        )
+        if cached is not None:
+            return cached
 
         try:
             config = await asyncio.to_thread(
@@ -145,9 +157,11 @@ class JWKSFetcher:
         Raises:
             HTTPException: If JWKS cannot be fetched.
         """
-        if not force_refresh and self._is_fresh(self._cache, self._cache_time):
-            assert self._cache is not None
-            return self._cache
+        cached = self._cached_value(
+            self._cache, self._cache_time, force_refresh=force_refresh
+        )
+        if cached is not None:
+            return cached
 
         config = await self._get_discovery(force_refresh=force_refresh)
         jwks_uri = str(config.jwks_uri)
@@ -176,6 +190,28 @@ class JWKSFetcher:
 
 
 _jwks_fetcher = JWKSFetcher()
+_pat_verify_semaphore = asyncio.Semaphore(max(1, settings.auth.pat_verify_concurrency))
+
+
+def _should_refresh_jwks(token: str, key_set: KeySet) -> bool:
+    """Refresh JWKS only when the token names a key id absent from the cache.
+
+    Reading the header is safe because the signature isn't trusted yet — a
+    mismatched ``kid`` is the only signal that key rotation, rather than
+    tampering, caused the verification failure.
+    """
+    try:
+        header = extract_compact(token.encode("ascii")).headers()
+    except (DecodeError, UnicodeEncodeError):
+        return False
+    kid = header.get("kid")
+    if not isinstance(kid, str) or not kid:
+        return False
+    try:
+        key_set.get_by_kid(kid)
+    except InvalidKeyIdError:
+        return True
+    return False
 
 
 def _build_claims_registry() -> JWTClaimsRegistry:
@@ -265,8 +301,14 @@ async def validate_jwt_token(token: str) -> User:
 
     try:
         decoded = jwt.decode(token, key_set, algorithms=algorithms)
-    except JoseError:
-        # Try refreshing JWKS in case keys were rotated
+    except JoseError as e:
+        if not _should_refresh_jwks(token, key_set):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token signature",
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from e
+
         try:
             key_set = await _jwks_fetcher.get_jwks(force_refresh=True)
             algorithms = await _jwks_fetcher.get_allowed_algorithms(force_refresh=True)
@@ -274,7 +316,7 @@ async def validate_jwt_token(token: str) -> User:
         except JoseError as e:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid token signature: {e}",
+                detail="Invalid token signature",
                 headers={"WWW-Authenticate": "Bearer"},
             ) from e
 
@@ -376,7 +418,8 @@ async def get_current_user(
     if token.startswith("hivegent_"):
         # Argon2 is CPU-bound (~10ms); run off the event loop so concurrent
         # requests aren't blocked during PAT verification.
-        user = await asyncio.to_thread(token_store.validate_token, token)
+        async with _pat_verify_semaphore:
+            user = await asyncio.to_thread(token_store.validate_token, token)
         if user:
             return user
         raise HTTPException(

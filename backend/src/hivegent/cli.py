@@ -1,5 +1,6 @@
 """CLI for Hivegent service account management."""
 
+import ipaddress
 import json
 from collections.abc import Mapping
 from pathlib import Path
@@ -333,17 +334,54 @@ def whoami() -> None:
             typer.echo(f"Token: {token[:20]}...")
 
 
+def _is_loopback_host(host: str) -> bool:
+    """Return whether *host* binds only to the local machine."""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 @app.command()
 def serve(
     host: Annotated[
         str, typer.Option("--host", "-h", help="Host to bind to")
-    ] = "0.0.0.0",
+    ] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", "-p", help="Port to bind to")] = 8000,
     reload: Annotated[
         bool, typer.Option("--reload", "-r", help="Enable auto-reload")
     ] = False,
+    allow_unsafe_auth_disabled_bind: Annotated[
+        bool,
+        typer.Option(
+            "--allow-unsafe-auth-disabled-bind",
+            help="Allow auth-disabled mode on a non-loopback listener.",
+        ),
+    ] = False,
 ) -> None:
     """Start the Hivegent API server."""
+    from .config import settings
+
+    if not settings.auth.enable and not settings.auth.allow_disabled:
+        typer.echo(
+            "Authentication is disabled but HIVEGENT_AUTH__ALLOW_DISABLED is not set.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    if (
+        not settings.auth.enable
+        and not _is_loopback_host(host)
+        and not allow_unsafe_auth_disabled_bind
+    ):
+        typer.echo(
+            "Refusing to bind an auth-disabled server to a non-loopback host. "
+            "Use --host 127.0.0.1 or pass --allow-unsafe-auth-disabled-bind.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     import uvicorn
 
     uvicorn.run(

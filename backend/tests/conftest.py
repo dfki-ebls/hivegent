@@ -69,13 +69,14 @@ def app_client(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
     from hivegent.config import settings
 
     monkeypatch.setattr(settings.auth, "enable", False)
+    monkeypatch.setattr(settings.auth, "allow_disabled", True)
     monkeypatch.setattr(settings.security, "allow_private_urls", True)
 
     from starlette.testclient import TestClient
 
-    from hivegent.server import app
+    from hivegent.server.app import create_app
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    with TestClient(create_app(), raise_server_exceptions=False) as client:
         yield client
 
 

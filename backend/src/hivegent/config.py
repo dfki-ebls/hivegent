@@ -192,11 +192,12 @@ class McpSettings(BaseModel):
     registration, e.g. Rauthy; FastMCP only verifies JWTs).
     """
 
-    enable: bool = True
+    enable: bool = False
     mode: Literal["proxy", "remote"] = "proxy"
     client_id: str = ""
     client_secret: str = ""
     base_url: str = "http://localhost:8000/mcp"
+    allow_unauthenticated: bool = False
 
 
 class GroupSettings(BaseModel):
@@ -221,15 +222,18 @@ class AuthSettings(BaseModel):
     """
 
     enable: bool = True
+    allow_disabled: bool = False
     issuer: str = ""
     audience: str | None = None
     jwks_cache_ttl: int = 3600
+    jwks_force_refresh_min_interval_seconds: int = 60
     jwks_timeout_seconds: float = 10.0
     last_used_throttle_seconds: int = 60
+    pat_verify_concurrency: int = 8
 
 
 class SecuritySettings(BaseModel):
-    """SSRF, CORS, and transport-safety settings.
+    """SSRF and transport-safety settings.
 
     ``allow_private_urls`` opens the SSRF filter so user-supplied URLs
     (LLM ``base_url``, MCP server URLs, ``WebFetch``) may dial private
@@ -237,22 +241,12 @@ class SecuritySettings(BaseModel):
     self-hosted deployments where every authenticated user is already
     allowed to reach the same network.
 
-    ``cors_origins`` is an explicit allow-list; ``"*"`` is rejected at
-    startup because it silently disables credentialed CORS.
+    CORS, security headers, rate limiting, and body-size caps are
+    enforced by the Caddy reverse proxy, not here.
     """
 
     allow_private_urls: bool = False
-    cors_origins: list[str] = ["http://localhost:3000"]
-    cors_allow_credentials: bool = True
-    cors_allow_methods: list[str] = [
-        "GET",
-        "POST",
-        "PUT",
-        "PATCH",
-        "DELETE",
-        "OPTIONS",
-    ]
-    cors_allow_headers: list[str] = ["Authorization", "Content-Type", "Accept"]
+    expose_api_docs: bool = False
 
 
 class LimitsSettings(BaseModel):

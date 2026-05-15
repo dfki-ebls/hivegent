@@ -16,6 +16,7 @@ mkShell {
     uv --directory "$ROOT_DIR/backend" sync --all-extras
   '';
   HIVEGENT_AUTH__ENABLE = "0";
+  HIVEGENT_AUTH__ALLOW_DISABLED = "1";
   # SSRF policy is independent of auth: a dev shell that talks to a
   # localhost LLM/MCP server must opt into private URLs explicitly.
   HIVEGENT_SECURITY__ALLOW_PRIVATE_URLS = "1";
