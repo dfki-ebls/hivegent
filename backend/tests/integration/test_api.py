@@ -81,12 +81,10 @@ def test_download_original_uses_safe_content_disposition(
     response = app_client.get('/api/documents/original/bad"name.md')
 
     assert response.status_code == 200
-    assert response.headers["content-disposition"].startswith(
-        'attachment; filename="bad_name.pdf"'
+    assert (
+        response.headers["content-disposition"]
+        == "attachment; filename*=UTF-8''bad%22name.pdf"
     )
-    assert 'filename*=UTF-8\'\'bad%22name.pdf' in response.headers[
-        "content-disposition"
-    ]
 
 
 def test_replace_original_route_is_not_captured_by_upload(

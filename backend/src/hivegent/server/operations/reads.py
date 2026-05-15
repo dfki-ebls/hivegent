@@ -53,17 +53,8 @@ def find_original(store: Casebase, safe: str) -> Path:
 
 
 def attachment_disposition(filename: str) -> str:
-    """Return an RFC 5987-encoded ``Content-Disposition: attachment`` value.
-
-    The ASCII fallback strips quotes, backslashes, and control characters
-    so a hostile filename cannot break out of the header; the ``filename*``
-    parameter carries the full UTF-8 name for compliant browsers.
-    """
-    ascii_safe = "".join(
-        ch if 32 <= ord(ch) < 127 and ch not in '"\\' else "_" for ch in filename
-    ) or "download"
-    encoded = quote(filename, safe="")
-    return f'attachment; filename="{ascii_safe}"; filename*=UTF-8\'\'{encoded}'
+    """Return an RFC 6266 ``Content-Disposition: attachment`` header value."""
+    return f"attachment; filename*=UTF-8''{quote(filename, safe='')}"
 
 
 def get_document_response(store: Casebase, safe: str) -> Response:
