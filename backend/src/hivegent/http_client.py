@@ -11,14 +11,13 @@ from contextlib import asynccontextmanager
 import httpx
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, get_user_agent
 
+from .config import settings
 from .security import create_safe_async_client
 
 __all__ = [
     "get_shared_http_client",
     "shared_http_client_lifespan",
 ]
-
-_CONNECT_TIMEOUT_SECONDS = 5
 
 _shared_client: httpx.AsyncClient | None = None
 
@@ -38,7 +37,7 @@ async def shared_http_client_lifespan() -> AsyncIterator[httpx.AsyncClient]:
     client = create_safe_async_client(
         timeout=httpx.Timeout(
             timeout=DEFAULT_HTTP_TIMEOUT,
-            connect=_CONNECT_TIMEOUT_SECONDS,
+            connect=settings.network.connect_timeout_seconds,
         ),
         headers={"User-Agent": get_user_agent()},
     )

@@ -14,9 +14,11 @@ __all__ = [
     "AuthSettings",
     "EmbeddingSettings",
     "GroupSettings",
+    "LimitsSettings",
     "LlmSettings",
     "LogfireSettings",
     "McpSettings",
+    "NetworkSettings",
     "SecuritySettings",
     "Settings",
     "sanitize_document_path",
@@ -199,28 +201,83 @@ class GroupSettings(BaseModel):
 
 
 class AuthSettings(BaseModel):
-    """OIDC authentication settings.
+    """OIDC authentication and personal access token settings.
 
     Configurable via ``HIVEGENT_AUTH__*`` environment variables.
+
+    ``jwks_timeout_seconds`` caps both the OIDC discovery and JWKS
+    fetches; ``last_used_throttle_seconds`` debounces ``last_used_at``
+    writes for personal access tokens so an authenticated burst doesn't
+    rewrite the per-user token JSON on every request.
     """
 
     enable: bool = True
     issuer: str = ""
     audience: str | None = None
     jwks_cache_ttl: int = 3600
+    jwks_timeout_seconds: float = 10.0
+    last_used_throttle_seconds: int = 60
 
 
 class SecuritySettings(BaseModel):
-    """SSRF and transport-safety settings.
+    """SSRF, CORS, and transport-safety settings.
 
     ``allow_private_urls`` opens the SSRF filter so user-supplied URLs
     (LLM ``base_url``, MCP server URLs, ``WebFetch``) may dial private
     or loopback addresses. Default off; turn on only for trusted
     self-hosted deployments where every authenticated user is already
     allowed to reach the same network.
+
+    ``cors_origins`` is an explicit allow-list; ``"*"`` is rejected at
+    startup because it silently disables credentialed CORS.
     """
 
     allow_private_urls: bool = False
+    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_allow_credentials: bool = True
+    cors_allow_methods: list[str] = [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+    ]
+    cors_allow_headers: list[str] = ["Authorization", "Content-Type", "Accept"]
+
+
+class LimitsSettings(BaseModel):
+    """Upload, collection, and decoder size/count limits.
+
+    ``upload_read_chunk_size`` controls the streaming read buffer used
+    when ingesting collection ZIPs; larger values trade memory for
+    fewer ``await`` hops.
+
+    ``max_image_pixels`` raises Pillow's decompression-bomb threshold
+    so large embedded images inside PDFs (common with scanned pages)
+    decode successfully; the value still guards against truly
+    degenerate inputs.
+    """
+
+    max_file_size_bytes: int = 50 * 1024 * 1024  # 50 MB
+    max_collection_size_bytes: int = 512 * 1024 * 1024  # 512 MB
+    max_collection_files: int = 10_000
+    upload_read_chunk_size: int = 1024 * 1024  # 1 MB
+    max_image_pixels: int = 1_000_000_000  # ~3 GB uncompressed
+
+
+class NetworkSettings(BaseModel):
+    """Outbound HTTP client and WebFetch tunables.
+
+    ``connect_timeout_seconds`` applies to every outbound request made
+    through the shared HTTP client (LLM, embeddings, MCP, JWKS).  The
+    ``webfetch_*`` knobs only apply to the ``WebFetch`` agent tool.
+    """
+
+    connect_timeout_seconds: float = 5.0
+    webfetch_timeout_seconds: float = 10.0
+    webfetch_max_response_bytes: int = 1_000_000
+    webfetch_max_redirects: int = 5
 
 
 class Settings(BaseSettings):
@@ -240,12 +297,10 @@ class Settings(BaseSettings):
     groups: GroupSettings = GroupSettings()
     auth: AuthSettings = AuthSettings()
     security: SecuritySettings = SecuritySettings()
+    limits: LimitsSettings = LimitsSettings()
+    network: NetworkSettings = NetworkSettings()
 
     data_dir: Path = Path("data")
-    max_file_size_bytes: int = 50 * 1024 * 1024  # 50 MB
-    max_collection_size_bytes: int = 512 * 1024 * 1024  # 512 MB
-    max_collection_files: int = 10_000
-    cors_origins: list[str] = ["http://localhost:3000"]
     # Background tick that retries any documents whose inline index
     # write failed (``indexed_at = None``).  Set to 0 to disable.
     consistency_tick_interval_seconds: int = 600

@@ -143,8 +143,6 @@ async def process_bulk_operation(
 # Collection upload request preparation
 # ---------------------------------------------------------------------------
 
-_UPLOAD_READ_CHUNK_SIZE = 1024 * 1024
-
 
 async def validate_collection_upload(
     pipeline_spec: str,
@@ -162,14 +160,14 @@ async def validate_collection_upload(
 async def read_collection_zip(file: UploadFile) -> bytes:
     """Read and validate a collection ZIP upload."""
     buf = bytearray()
-    while chunk := await file.read(_UPLOAD_READ_CHUNK_SIZE):
+    while chunk := await file.read(settings.limits.upload_read_chunk_size):
         buf.extend(chunk)
-        if len(buf) > settings.max_collection_size_bytes:
+        if len(buf) > settings.limits.max_collection_size_bytes:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     f"Collection too large. "
-                    f"Maximum size: {settings.max_collection_size_bytes} bytes"
+                    f"Maximum size: {settings.limits.max_collection_size_bytes} bytes"
                 ),
             )
     return bytes(buf)

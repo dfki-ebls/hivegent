@@ -19,10 +19,6 @@ __all__ = [
     "token_store",
 ]
 
-# Throttle ``last_used_at`` writes to avoid a contended JSON rewrite on every
-# authenticated request.
-_LAST_USED_THROTTLE_SECONDS = 60
-
 
 @dataclass(slots=True, frozen=True)
 class CreatedToken:
@@ -196,7 +192,8 @@ class TokenStore:
         """Update ``last_used_at`` at most once per throttle window."""
         now = datetime.now(UTC)
         last = token.last_used_at
-        if last is not None and (now - last).total_seconds() < _LAST_USED_THROTTLE_SECONDS:
+        throttle = settings.auth.last_used_throttle_seconds
+        if last is not None and (now - last).total_seconds() < throttle:
             return
         updated = [
             t.model_copy(update={"last_used_at": now}) if t.id == token.id else t

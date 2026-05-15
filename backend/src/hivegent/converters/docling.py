@@ -15,13 +15,14 @@ from docling.document_converter import DocumentConverter as DoclingDocumentConve
 from docling_core.types.doc import PictureItem
 from pydantic import BaseModel, Field
 
+from ..config import settings
 from .base import ConversionResult, DocumentConverter, pil_to_png_bytes
 
 # Raise Pillow's decompression-bomb limit so that large embedded images/streams
 # inside PDFs (common with scanned pages) do not trigger DecompressionBombError.
-# The default ~178M pixels is too restrictive; 1 billion pixels (~3 GB
-# uncompressed) still guards against truly degenerate files.
-PIL.Image.MAX_IMAGE_PIXELS = 1_000_000_000
+# The default ~178M pixels is too restrictive; the configured value still
+# guards against truly degenerate files.
+PIL.Image.MAX_IMAGE_PIXELS = settings.limits.max_image_pixels
 
 # Raise the safe decompression block size for PNG text chunks (iTXt/zTXt).
 # The default 1 MB causes "Decompressed Data Too Large" for images with

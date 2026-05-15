@@ -8,6 +8,7 @@ import httpx
 from ddgs import DDGS
 from pydantic import Field
 
+from ..config import settings
 from ..security import (
     UnsafeUrlError,
     create_safe_async_client,
@@ -24,8 +25,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-_TIMEOUT_SECONDS = 10.0
 
 WebQueryArg = Annotated[
     str,
@@ -83,18 +82,19 @@ class WebSearch(SyncTool[list[dict[str, str]]]):
 
 @dataclass(slots=True, frozen=True)
 class WebFetch(AsyncTool[str]):
-    """Fetch web page content as plain text."""
+    """Fetch web page content as plain text.
 
-    max_response_bytes: int = 1_000_000
-    max_redirects: int = 5
+    Timeout, response cap, and redirect limit are read from
+    ``settings.network`` so deployments can tune them via
+    ``HIVEGENT_NETWORK__*`` environment variables.
+    """
 
     @override
     async def __call__(self, url: WebUrlArg) -> ToolOutput[str]:
         """Fetch the content of a web page as plain text.
 
-        Follows redirects manually, re-validating each hop against the SSRF
-        filter so a public URL cannot redirect to a private IP.
-        Limited to 1 MB response size and 10 second timeout.
+        Follows redirects manually, re-validating each hop against the
+        SSRF filter so a public URL cannot redirect to a private IP.
         """
         try:
             return await self._fetch(url)
@@ -111,10 +111,10 @@ class WebFetch(AsyncTool[str]):
     async def _fetch(self, url: str) -> ToolOutput[str]:
         current = url
         async with create_safe_async_client(
-            timeout=_TIMEOUT_SECONDS,
+            timeout=settings.network.webfetch_timeout_seconds,
             follow_redirects=False,
         ) as client:
-            for _ in range(self.max_redirects):
+            for _ in range(settings.network.webfetch_max_redirects):
                 await validate_external_url_async(current)
                 response = await client.get(current)
                 if not response.is_redirect or response.next_request is None:
@@ -128,6 +128,7 @@ class WebFetch(AsyncTool[str]):
         if "text/" not in content_type and "application/json" not in content_type:
             return ToolOutput(data=f"Error: unsupported content type '{content_type}'.")
         body = response.text
-        if len(body) > self.max_response_bytes:
-            body = body[: self.max_response_bytes] + "\n\n[truncated]"
+        cap = settings.network.webfetch_max_response_bytes
+        if len(body) > cap:
+            body = body[:cap] + "\n\n[truncated]"
         return ToolOutput(data=body)

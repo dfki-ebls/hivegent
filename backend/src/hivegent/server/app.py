@@ -135,7 +135,7 @@ def create_app() -> FastAPI:
             "enable this in production or expose the server to a non-loopback "
             "interface."
         )
-    cors_origins = _validate_cors_origins(settings.cors_origins)
+    cors_origins = _validate_cors_origins(settings.security.cors_origins)
 
     app = FastAPI(lifespan=lifespan)
     configure_observability(app)
@@ -143,9 +143,9 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,  # type: ignore[arg-type]
         allow_origins=cors_origins,
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "Accept"],
+        allow_credentials=settings.security.cors_allow_credentials,
+        allow_methods=settings.security.cors_allow_methods,
+        allow_headers=settings.security.cors_allow_headers,
     )
     app.add_exception_handler(ValidationError, validation_error_handler)
     app.include_router(public_router)

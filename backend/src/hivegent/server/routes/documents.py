@@ -100,10 +100,13 @@ async def replace_original(
     safe = safe_path(filepath)
     store = user_store(user)
     content = await file.read()
-    if len(content) > settings.max_file_size_bytes:
+    if len(content) > settings.limits.max_file_size_bytes:
         raise HTTPException(
             status_code=400,
-            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
+            detail=(
+                f"File too large. Maximum size: "
+                f"{settings.limits.max_file_size_bytes} bytes"
+            ),
         )
 
     spec = parse_pipeline_spec(pipeline_spec)
@@ -134,10 +137,13 @@ async def upload_document_stream(
     llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
 
     content = await file.read()
-    if len(content) > settings.max_file_size_bytes:
+    if len(content) > settings.limits.max_file_size_bytes:
         raise HTTPException(
             status_code=400,
-            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
+            detail=(
+                f"File too large. Maximum size: "
+                f"{settings.limits.max_file_size_bytes} bytes"
+            ),
         )
 
     async for event in upload_file_stream(
@@ -167,10 +173,13 @@ async def upload_document(
     llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
 
     content = await file.read()
-    if len(content) > settings.max_file_size_bytes:
+    if len(content) > settings.limits.max_file_size_bytes:
         raise HTTPException(
             status_code=400,
-            detail=f"File too large. Maximum size: {settings.max_file_size_bytes} bytes",
+            detail=(
+                f"File too large. Maximum size: "
+                f"{settings.limits.max_file_size_bytes} bytes"
+            ),
         )
 
     return await workspace.upload(

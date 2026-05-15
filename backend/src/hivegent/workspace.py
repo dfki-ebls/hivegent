@@ -1119,22 +1119,22 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
                 detail=f"ZIP contains unsafe path {info.filename!r}: {exc}",
             ) from exc
 
-        if info.file_size > settings.max_file_size_bytes:
+        if info.file_size > settings.limits.max_file_size_bytes:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     f"File '{info.filename}' in ZIP is too large "
                     f"({info.file_size} bytes decompressed). "
-                    f"Maximum: {settings.max_file_size_bytes} bytes"
+                    f"Maximum: {settings.limits.max_file_size_bytes} bytes"
                 ),
             )
         total_uncompressed += info.file_size
-        if total_uncompressed > settings.max_collection_size_bytes:
+        if total_uncompressed > settings.limits.max_collection_size_bytes:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     f"Collection decompresses to more than "
-                    f"{settings.max_collection_size_bytes} bytes"
+                    f"{settings.limits.max_collection_size_bytes} bytes"
                 ),
             )
 
@@ -1185,12 +1185,12 @@ async def process_collection(
                 for path in extract_root.rglob("*")
                 if path.is_file()
             )
-            if len(collection_files) > settings.max_collection_files:
+            if len(collection_files) > settings.limits.max_collection_files:
                 raise HTTPException(
                     status_code=400,
                     detail=(
                         f"Collection has too many files ({len(collection_files)}). "
-                        f"Maximum: {settings.max_collection_files}"
+                        f"Maximum: {settings.limits.max_collection_files}"
                     ),
                 )
 

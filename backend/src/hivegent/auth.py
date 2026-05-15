@@ -46,7 +46,7 @@ def build_discovery_url(issuer: str) -> str:
 
 
 def fetch_oidc_configuration(
-    issuer: str, *, timeout_seconds: int = 10
+    issuer: str, *, timeout_seconds: float | None = None
 ) -> OIDCConfiguration:
     """Fetch and parse the OIDC discovery document for ``issuer``.
 
@@ -61,8 +61,11 @@ def fetch_oidc_configuration(
     if not issuer:
         raise ValueError("OIDC issuer not configured")
     config_url = AnyHttpUrl(build_discovery_url(issuer))
+    timeout = (
+        settings.auth.jwks_timeout_seconds if timeout_seconds is None else timeout_seconds
+    )
     return OIDCConfiguration.get_oidc_configuration(
-        config_url, strict=False, timeout_seconds=timeout_seconds
+        config_url, strict=False, timeout_seconds=int(timeout)
     )
 
 
@@ -150,7 +153,9 @@ class JWKSFetcher:
         jwks_uri = str(config.jwks_uri)
 
         try:
-            response = await get_shared_http_client().get(jwks_uri, timeout=10.0)
+            response = await get_shared_http_client().get(
+                jwks_uri, timeout=settings.auth.jwks_timeout_seconds
+            )
             response.raise_for_status()
             jwks_data = response.json()
         except httpx.HTTPError as e:
