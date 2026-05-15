@@ -78,6 +78,7 @@ function TitleEditor({ value, onChange, onSave, onCancel }: TitleEditorProps) {
   return (
     <div
       role="toolbar"
+      tabIndex={-1}
       className="flex items-center gap-1"
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
@@ -116,6 +117,7 @@ function ConversationActions({
   return (
     <div
       role="toolbar"
+      tabIndex={-1}
       className="absolute right-2 top-2 flex items-center gap-1 rounded bg-background/90 p-0.5"
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
