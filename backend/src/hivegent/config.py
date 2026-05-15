@@ -1,13 +1,22 @@
 """Configuration settings for the hivegent application."""
 
+import os
 import re
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from pydantic import BaseModel
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
+)
 
 from .converters.base import DOCUMENT_EXTENSION
+
+CONFIG_FILE_ENV_VAR = "HIVEGENT_CONFIG_FILE"
+DEFAULT_CONFIG_FILE = Path("config.toml")
 
 __all__ = [
     "DOCUMENT_EXTENSION",
@@ -281,7 +290,10 @@ class NetworkSettings(BaseModel):
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+    """Application settings resolved from init kwargs, env, .env, TOML, defaults.
+
+    See :meth:`settings_customise_sources` for the layered source order.
+    """
 
     model_config = SettingsConfigDict(
         env_prefix="HIVEGENT_",
@@ -289,6 +301,29 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Layer a TOML config file underneath env vars but above defaults.
+
+        The path is read from ``HIVEGENT_CONFIG_FILE`` so deployments can
+        relocate it without code changes; a missing file is silently empty.
+        """
+        toml_path = Path(os.environ.get(CONFIG_FILE_ENV_VAR, DEFAULT_CONFIG_FILE))
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            TomlConfigSettingsSource(settings_cls, toml_file=toml_path),
+            file_secret_settings,
+        )
 
     llm: LlmSettings = LlmSettings()
     embedding: EmbeddingSettings = EmbeddingSettings()
