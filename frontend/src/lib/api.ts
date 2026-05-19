@@ -198,6 +198,20 @@ export function buildLlmConfig(s: {
   return config;
 }
 
+/** LLM config for auxiliary tasks (titles, compaction): prefer aux model, fall back to primary. */
+export function buildAuxLlmConfig(overrides: {
+  model: string;
+  auxModel: string;
+  apiKey: string;
+  baseUrl: string;
+}): LlmConfig {
+  return buildLlmConfig({
+    model: overrides.auxModel || overrides.model,
+    apiKey: overrides.apiKey,
+    baseUrl: overrides.baseUrl,
+  });
+}
+
 /**
  * Convert a frontend ToolsSpec to the snake_case backend payload.
  *

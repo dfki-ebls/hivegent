@@ -1,10 +1,10 @@
 import { CheckIcon, MessageSquare, PencilIcon, SparklesIcon, TrashIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { buildLlmConfig } from "../lib/api";
-import { useConversationsStore } from "../stores/conversations-store";
-import { useSettingsStore } from "../stores/settings-store";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { buildAuxLlmConfig } from "@/lib/api";
+import { useConversationsStore } from "@/stores/conversations-store";
+import { useSettingsStore } from "@/stores/settings-store";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 // --- Utility functions ---
 
@@ -289,14 +289,7 @@ export function ConversationsList({
   };
 
   const handleGenerateTitle = async (id: string) => {
-    await generateTitle(
-      id,
-      buildLlmConfig({
-        model: overrides.auxModel || overrides.model,
-        apiKey: overrides.apiKey,
-        baseUrl: overrides.baseUrl,
-      }),
-    );
+    await generateTitle(id, buildAuxLlmConfig(overrides));
   };
 
   if (isLoading) return <LoadingState />;
