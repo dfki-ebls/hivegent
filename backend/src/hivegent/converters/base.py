@@ -112,6 +112,8 @@ class DocumentConverter(ABC):
     """
 
     name: ClassVar[str]
+    label: ClassVar[str]
+    description: ClassVar[str]
     extensions: ClassVar[frozenset[str]]
 
     @abstractmethod

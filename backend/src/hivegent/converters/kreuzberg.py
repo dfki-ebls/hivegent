@@ -43,6 +43,8 @@ class KreuzbergConverter(DocumentConverter):
     """
 
     name = "kreuzberg"
+    label = "Kreuzberg"
+    description = "Text extraction from 75+ formats with OCR support"
     extensions = frozenset(
         {
             ".pdf",

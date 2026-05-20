@@ -39,6 +39,8 @@ class LateDocumentChunker(DocumentChunker):
     """
 
     name = "late"
+    label = "Late"
+    description = "Late-interaction embedding-aware chunk boundaries"
     config: LateChunkerConfig = field(default_factory=LateChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:

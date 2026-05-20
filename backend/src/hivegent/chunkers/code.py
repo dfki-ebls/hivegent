@@ -41,6 +41,8 @@ class CodeDocumentChunker(DocumentChunker):
     """
 
     name = "code"
+    label = "Code"
+    description = "Syntax-aware splitting using tree-sitter"
     config: CodeChunkerConfig = field(default_factory=CodeChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:

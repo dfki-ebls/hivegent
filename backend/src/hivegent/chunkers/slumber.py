@@ -43,6 +43,8 @@ class SlumberDocumentChunker(DocumentChunker):
     """
 
     name = "slumber"
+    label = "Slumber"
+    description = "LLM-guided intelligent chunk boundary decisions"
     config: SlumberChunkerConfig = field(default_factory=SlumberChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:

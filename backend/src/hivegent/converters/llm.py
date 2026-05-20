@@ -56,6 +56,8 @@ class LLMConverter(DocumentConverter):
     """
 
     name = "llm"
+    label = "LLM"
+    description = "Uses vision model for all files"
     extensions = frozenset(MEDIA_TYPES)
     config: LlmConverterConfig = field(default_factory=LlmConverterConfig)
     llm_options: LlmConfig = field(default_factory=LlmConfig)

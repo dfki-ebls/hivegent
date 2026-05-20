@@ -37,6 +37,8 @@ class NeuralDocumentChunker(DocumentChunker):
     """
 
     name = "neural"
+    label = "Neural"
+    description = "Neural model-based chunk boundary detection"
     config: NeuralChunkerConfig = field(default_factory=NeuralChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:

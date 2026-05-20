@@ -75,6 +75,11 @@ class PandocConverter(DocumentConverter):
     """
 
     name = "pandoc"
+    label = "Pandoc"
+    description = (
+        "Universal converter for ODT, RST, RTF, EPUB, LaTeX, Org, "
+        "DocBook, Typst, and more"
+    )
     extensions = frozenset(_FORMAT_OVERRIDES) | _SANDBOX_INCOMPATIBLE
     config: PandocConverterConfig = field(default_factory=PandocConverterConfig)
 

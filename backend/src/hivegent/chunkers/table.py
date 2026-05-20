@@ -36,6 +36,8 @@ class TableDocumentChunker(DocumentChunker):
     """
 
     name = "table"
+    label = "Table"
+    description = "Row-based splitting for tabular data"
     config: TableChunkerConfig = field(default_factory=TableChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:

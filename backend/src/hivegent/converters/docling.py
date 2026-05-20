@@ -66,6 +66,8 @@ class DoclingConverter(DocumentConverter):
     """
 
     name = "docling"
+    label = "Docling"
+    description = "Best for Office documents"
     extensions = frozenset(
         f".{ext}" for exts in FormatToExtensions.values() for ext in exts
     )

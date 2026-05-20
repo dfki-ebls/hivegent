@@ -1,24 +1,23 @@
 """Document chunking infrastructure for Hivegent."""
 
-import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, get_type_hints
 
 from cbrkit.helpers import optional_dependencies
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from .base import DocumentChunker
-from .fast import FastChunkerConfig, FastDocumentChunker
-from .late import LateChunkerConfig, LateDocumentChunker
-from .markdown import MarkdownChunkerConfig, MarkdownDocumentChunker
-from .neural import NeuralChunkerConfig, NeuralDocumentChunker
+from .fast import FastDocumentChunker
+from .late import LateDocumentChunker
+from .markdown import MarkdownDocumentChunker
+from .neural import NeuralDocumentChunker
 from .none import NoneDocumentChunker
-from .recursive import RecursiveChunkerConfig, RecursiveDocumentChunker
-from .sentence import SentenceChunkerConfig, SentenceDocumentChunker
-from .slumber import SlumberChunkerConfig, SlumberDocumentChunker
-from .table import TableChunkerConfig, TableDocumentChunker
-from .token import TokenChunkerConfig, TokenDocumentChunker
+from .recursive import RecursiveDocumentChunker
+from .sentence import SentenceDocumentChunker
+from .slumber import SlumberDocumentChunker
+from .table import TableDocumentChunker
+from .token import TokenDocumentChunker
 
 __all__ = [
     "ChunkingPipeline",
@@ -28,8 +27,6 @@ __all__ = [
     "get_chunker",
     "get_chunking_pipelines_info",
 ]
-
-logger = logging.getLogger(__name__)
 
 
 class ChunkingPipeline(StrEnum):
@@ -58,16 +55,6 @@ class ChunkingSpec(BaseModel):
 
 
 @dataclass(slots=True, frozen=True)
-class _ChunkerEntry:
-    """Internal registry entry mapping a pipeline to its implementation."""
-
-    chunker_class: type[DocumentChunker]
-    label: str
-    description: str
-    config_model: type[BaseModel] | None = None
-
-
-@dataclass(slots=True, frozen=True)
 class ChunkingPipelineInfo:
     """Public metadata for a chunking pipeline."""
 
@@ -78,98 +65,40 @@ class ChunkingPipelineInfo:
     config_defaults: dict[str, Any] = field(default_factory=dict)
 
 
-# Core chunkers (always available)
-_CHUNKER_CONFIG: dict[ChunkingPipeline, _ChunkerEntry] = {
-    ChunkingPipeline.NONE: _ChunkerEntry(
-        chunker_class=NoneDocumentChunker,
-        label="None",
-        description="Keep the full document as a single chunk",
-    ),
-    ChunkingPipeline.TOKEN: _ChunkerEntry(
-        chunker_class=TokenDocumentChunker,
-        label="Token",
-        description="Fixed token-count chunks for uniform processing",
-        config_model=TokenChunkerConfig,
-    ),
-    ChunkingPipeline.FAST: _ChunkerEntry(
-        chunker_class=FastDocumentChunker,
-        label="Fast",
-        description="High-throughput delimiter-based splitting",
-        config_model=FastChunkerConfig,
-    ),
-    ChunkingPipeline.SENTENCE: _ChunkerEntry(
-        chunker_class=SentenceDocumentChunker,
-        label="Sentence",
-        description="Respects sentence boundaries, good for prose and plain text",
-        config_model=SentenceChunkerConfig,
-    ),
-    ChunkingPipeline.RECURSIVE: _ChunkerEntry(
-        chunker_class=RecursiveDocumentChunker,
-        label="Recursive",
-        description="Hierarchical splitting by headings, paragraphs, and sentences",
-        config_model=RecursiveChunkerConfig,
-    ),
-    ChunkingPipeline.TABLE: _ChunkerEntry(
-        chunker_class=TableDocumentChunker,
-        label="Table",
-        description="Row-based splitting for tabular data",
-        config_model=TableChunkerConfig,
-    ),
-    ChunkingPipeline.MARKDOWN: _ChunkerEntry(
-        chunker_class=MarkdownDocumentChunker,
-        label="Markdown",
-        description="Parses markdown into semantic elements (text, tables, code)",
-        config_model=MarkdownChunkerConfig,
-    ),
-    ChunkingPipeline.NEURAL: _ChunkerEntry(
-        chunker_class=NeuralDocumentChunker,
-        label="Neural",
-        description="Neural model-based chunk boundary detection",
-        config_model=NeuralChunkerConfig,
-    ),
-    ChunkingPipeline.LATE: _ChunkerEntry(
-        chunker_class=LateDocumentChunker,
-        label="Late",
-        description="Late-interaction embedding-aware chunk boundaries",
-        config_model=LateChunkerConfig,
-    ),
-    ChunkingPipeline.SLUMBER: _ChunkerEntry(
-        chunker_class=SlumberDocumentChunker,
-        label="Slumber",
-        description="LLM-guided intelligent chunk boundary decisions",
-        config_model=SlumberChunkerConfig,
-    ),
+_CHUNKERS: dict[ChunkingPipeline, type[DocumentChunker]] = {
+    ChunkingPipeline.NONE: NoneDocumentChunker,
+    ChunkingPipeline.TOKEN: TokenDocumentChunker,
+    ChunkingPipeline.FAST: FastDocumentChunker,
+    ChunkingPipeline.SENTENCE: SentenceDocumentChunker,
+    ChunkingPipeline.RECURSIVE: RecursiveDocumentChunker,
+    ChunkingPipeline.TABLE: TableDocumentChunker,
+    ChunkingPipeline.MARKDOWN: MarkdownDocumentChunker,
+    ChunkingPipeline.NEURAL: NeuralDocumentChunker,
+    ChunkingPipeline.LATE: LateDocumentChunker,
+    ChunkingPipeline.SLUMBER: SlumberDocumentChunker,
 }
 
-# Optional chunkers (registered only when their dependencies are installed)
 with optional_dependencies():
-    from .semantic import SemanticChunkerConfig, SemanticDocumentChunker
+    from .semantic import SemanticDocumentChunker
 
-    _CHUNKER_CONFIG[ChunkingPipeline.SEMANTIC] = _ChunkerEntry(
-        chunker_class=SemanticDocumentChunker,
-        label="Semantic",
-        description="Splits by semantic similarity using embeddings",
-        config_model=SemanticChunkerConfig,
-    )
+    _CHUNKERS[ChunkingPipeline.SEMANTIC] = SemanticDocumentChunker
 
 with optional_dependencies():
-    from .code import CodeChunkerConfig, CodeDocumentChunker
+    from .code import CodeDocumentChunker
 
-    _CHUNKER_CONFIG[ChunkingPipeline.CODE] = _ChunkerEntry(
-        chunker_class=CodeDocumentChunker,
-        label="Code",
-        description="Syntax-aware splitting using tree-sitter",
-        config_model=CodeChunkerConfig,
-    )
+    _CHUNKERS[ChunkingPipeline.CODE] = CodeDocumentChunker
+
 
 _AUTO_FAST_THRESHOLD = 500_000
 """Content length (in characters) above which AUTO uses Fast instead of Recursive."""
 
 
-def _resolve_auto(content_length: int) -> ChunkingPipeline:
-    if content_length > _AUTO_FAST_THRESHOLD:
-        return ChunkingPipeline.FAST
-    return ChunkingPipeline.RECURSIVE
+def _config_model(cls: type[DocumentChunker]) -> type[BaseModel] | None:
+    """Derive a chunker's Pydantic config model from its ``config`` field."""
+    annotation = get_type_hints(cls).get("config")
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    return None
 
 
 def get_chunker(
@@ -194,9 +123,14 @@ def get_chunker(
         ValueError: If the pipeline is not recognized.
     """
     if pipeline == ChunkingPipeline.AUTO:
-        pipeline = _resolve_auto(content_length)
+        pipeline = (
+            ChunkingPipeline.FAST
+            if content_length > _AUTO_FAST_THRESHOLD
+            else ChunkingPipeline.RECURSIVE
+        )
 
-    if pipeline not in _CHUNKER_CONFIG:
+    cls = _CHUNKERS.get(pipeline)
+    if cls is None:
         if pipeline in ChunkingPipeline:
             raise ImportError(
                 f"Chunking pipeline '{pipeline.value}' is not available. "
@@ -204,13 +138,10 @@ def get_chunker(
             )
         raise ValueError(f"Unknown chunking pipeline: {pipeline}")
 
-    entry = _CHUNKER_CONFIG[pipeline]
-
     kwargs: dict[str, Any] = {}
-    if config and entry.config_model is not None:
-        kwargs["config"] = entry.config_model(**config)
-
-    return entry.chunker_class(**kwargs)
+    if config and (model := _config_model(cls)) is not None:
+        kwargs["config"] = model(**config)
+    return cls(**kwargs)
 
 
 def get_chunking_pipelines_info() -> list[ChunkingPipelineInfo]:
@@ -222,25 +153,15 @@ def get_chunking_pipelines_info() -> list[ChunkingPipelineInfo]:
             description="Automatically selects the best chunker based on file type",
         ),
     ]
-    for pipeline, entry in _CHUNKER_CONFIG.items():
-        config_schema: dict[str, Any] = {}
-        config_defaults: dict[str, Any] = {}
-        if entry.config_model is not None:
-            config_schema = entry.config_model.model_json_schema()
-            try:
-                config_defaults = entry.config_model().model_dump()
-            except ValidationError:
-                logger.warning(
-                    "Config model %s is not default-constructible",
-                    entry.config_model.__name__,
-                )
+    for pipeline, cls in _CHUNKERS.items():
+        model = _config_model(cls)
         infos.append(
             ChunkingPipelineInfo(
                 value=pipeline.value,
-                label=entry.label,
-                description=entry.description,
-                config_schema=config_schema,
-                config_defaults=config_defaults,
+                label=cls.label,
+                description=cls.description,
+                config_schema=model.model_json_schema() if model else {},
+                config_defaults=model().model_dump() if model else {},
             )
         )
     return infos

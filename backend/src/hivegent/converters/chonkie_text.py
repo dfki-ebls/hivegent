@@ -20,6 +20,8 @@ class ChonkieTextConverter(DocumentConverter):
     """
 
     name: ClassVar[str] = "text-chef"
+    label: ClassVar[str] = "Text Chef"
+    description: ClassVar[str] = "Plain text files as-is"
     extensions: ClassVar[frozenset[str]] = frozenset({".txt"})
 
     async def __call__(

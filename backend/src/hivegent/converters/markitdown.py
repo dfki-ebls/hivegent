@@ -28,6 +28,8 @@ class MarkItDownConverter(DocumentConverter):
     """
 
     name = "markitdown"
+    label = "MarkItDown"
+    description = "Microsoft's converter for Office, PDF, images, and more"
     extensions = frozenset(
         {
             ".pdf",

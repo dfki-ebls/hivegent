@@ -1,13 +1,13 @@
 """Document conversion infrastructure for Hivegent."""
 
 import importlib
-import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cache
-from typing import Any, Protocol
+from pathlib import Path
+from typing import Any, Protocol, get_type_hints
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from .base import ConversionResult, DocumentConverter
 
@@ -21,8 +21,6 @@ __all__ = [
     "get_converter",
     "resolve_auto_pipeline",
 ]
-
-logger = logging.getLogger(__name__)
 
 
 class ConversionPipeline(StrEnum):
@@ -49,17 +47,6 @@ class ConversionSpec(BaseModel):
 
 
 @dataclass(slots=True, frozen=True)
-class _ConverterEntry:
-    """Registry entry mapping a pipeline to its converter class and metadata."""
-
-    module_name: str
-    converter_class_name: str
-    label: str
-    description: str
-    config_model_name: str | None = None
-
-
-@dataclass(slots=True, frozen=True)
 class ConversionPipelineInfo:
     """Public metadata for a conversion pipeline."""
 
@@ -79,85 +66,21 @@ class _LlmOptions(Protocol):
     base_url: str | None
 
 
-# Core converters (always available)
-_CONVERTER_CONFIG: dict[ConversionPipeline, _ConverterEntry] = {
-    ConversionPipeline.LLM: _ConverterEntry(
-        module_name="hivegent.converters.llm",
-        converter_class_name="LLMConverter",
-        label="LLM",
-        description="Uses vision model for all files",
-        config_model_name="LlmConverterConfig",
-    ),
-    ConversionPipeline.PANDOC: _ConverterEntry(
-        module_name="hivegent.converters.pandoc",
-        converter_class_name="PandocConverter",
-        label="Pandoc",
-        description="Universal converter for ODT, RST, RTF, EPUB, LaTeX, Org, "
-        "DocBook, Typst, and more",
-        config_model_name="PandocConverterConfig",
-    ),
+# Lazy "module:Class" references so heavy imports (marker, docling, mineru, ...)
+# only run when the pipeline is actually used.
+_CONVERTERS: dict[ConversionPipeline, str] = {
+    ConversionPipeline.LLM: "hivegent.converters.llm:LLMConverter",
+    ConversionPipeline.PANDOC: "hivegent.converters.pandoc:PandocConverter",
+    ConversionPipeline.MARKER: "hivegent.converters.marker:MarkerConverter",
+    ConversionPipeline.DOCLING: "hivegent.converters.docling:DoclingConverter",
+    ConversionPipeline.MINERU: "hivegent.converters.mineru:MinerUConverter",
+    ConversionPipeline.MARKITDOWN: "hivegent.converters.markitdown:MarkItDownConverter",
+    ConversionPipeline.KREUZBERG: "hivegent.converters.kreuzberg:KreuzbergConverter",
+    ConversionPipeline.PDF_OXIDE: "hivegent.converters.pdf_oxide:PdfOxideConverter",
+    ConversionPipeline.TABLE_CHEF: "hivegent.converters.chonkie_table:ChonkieTableConverter",
+    ConversionPipeline.TEXT_CHEF: "hivegent.converters.chonkie_text:ChonkieTextConverter",
 }
-_CONVERTER_CONFIG[ConversionPipeline.MARKER] = _ConverterEntry(
-    module_name="hivegent.converters.marker",
-    converter_class_name="MarkerConverter",
-    label="Marker",
-    description="Best for PDF documents",
-    config_model_name="MarkerConverterConfig",
-)
 
-_CONVERTER_CONFIG[ConversionPipeline.DOCLING] = _ConverterEntry(
-    module_name="hivegent.converters.docling",
-    converter_class_name="DoclingConverter",
-    label="Docling",
-    description="Best for Office documents",
-    config_model_name="DoclingConverterConfig",
-)
-
-_CONVERTER_CONFIG[ConversionPipeline.MINERU] = _ConverterEntry(
-    module_name="hivegent.converters.mineru",
-    converter_class_name="MinerUConverter",
-    label="MinerU",
-    description="High-quality PDF parsing (no XLSX)",
-    config_model_name="MinerUConverterConfig",
-)
-
-_CONVERTER_CONFIG[ConversionPipeline.MARKITDOWN] = _ConverterEntry(
-    module_name="hivegent.converters.markitdown",
-    converter_class_name="MarkItDownConverter",
-    label="MarkItDown",
-    description="Microsoft's converter for Office, PDF, images, and more",
-    config_model_name="MarkItDownConverterConfig",
-)
-
-_CONVERTER_CONFIG[ConversionPipeline.KREUZBERG] = _ConverterEntry(
-    module_name="hivegent.converters.kreuzberg",
-    converter_class_name="KreuzbergConverter",
-    label="Kreuzberg",
-    description="Text extraction from 75+ formats with OCR support",
-    config_model_name="KreuzbergConverterConfig",
-)
-
-_CONVERTER_CONFIG[ConversionPipeline.PDF_OXIDE] = _ConverterEntry(
-    module_name="hivegent.converters.pdf_oxide",
-    converter_class_name="PdfOxideConverter",
-    label="pdf_oxide",
-    description="High-performance Rust-based PDF to markdown converter",
-    config_model_name="PdfOxideConverterConfig",
-)
-
-_CONVERTER_CONFIG[ConversionPipeline.TABLE_CHEF] = _ConverterEntry(
-    module_name="hivegent.converters.chonkie_table",
-    converter_class_name="ChonkieTableConverter",
-    label="Table Chef",
-    description="CSV/Excel to markdown tables via pandas",
-)
-
-_CONVERTER_CONFIG[ConversionPipeline.TEXT_CHEF] = _ConverterEntry(
-    module_name="hivegent.converters.chonkie_text",
-    converter_class_name="ChonkieTextConverter",
-    label="Text Chef",
-    description="Plain text files as-is",
-)
 
 _AUTO_MAPPING: dict[str, ConversionPipeline] = {
     # Text formats (converted to clean markdown via pandoc)
@@ -207,36 +130,29 @@ _AUTO_MAPPING: dict[str, ConversionPipeline] = {
 
 
 @cache
-def _load_module_attr(module_name: str, attr_name: str) -> Any:
-    """Import and return an attribute from a converter module."""
-    module = importlib.import_module(module_name)
-    return getattr(module, attr_name)
+def _load_converter(spec: str) -> type[DocumentConverter]:
+    """Import and return the converter class for a ``module:Class`` spec."""
+    module_name, _, class_name = spec.partition(":")
+    return getattr(importlib.import_module(module_name), class_name)
 
 
-def _get_converter_class(entry: _ConverterEntry) -> type[DocumentConverter]:
-    """Load the converter class for a registry entry."""
-    converter_class = _load_module_attr(entry.module_name, entry.converter_class_name)
-    return converter_class
+def _config_model(cls: type[DocumentConverter]) -> type[BaseModel] | None:
+    """Derive a converter's Pydantic config model from its ``config`` field."""
+    annotation = get_type_hints(cls).get("config")
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    return None
 
 
-def _get_config_model(entry: _ConverterEntry) -> type[BaseModel] | None:
-    """Load the config model for a registry entry when defined."""
-    if entry.config_model_name is None:
-        return None
-    return _load_module_attr(entry.module_name, entry.config_model_name)
-
-
-def _get_available_converter_classes() -> dict[
-    ConversionPipeline, type[DocumentConverter]
-]:
-    """Return registry entries whose converter classes can be imported."""
-    available: dict[ConversionPipeline, type[DocumentConverter]] = {}
-    for pipeline, entry in _CONVERTER_CONFIG.items():
+def _available_converters() -> dict[ConversionPipeline, type[DocumentConverter]]:
+    """Return converters whose modules and dependencies can be imported."""
+    result: dict[ConversionPipeline, type[DocumentConverter]] = {}
+    for pipeline, spec in _CONVERTERS.items():
         try:
-            available[pipeline] = _get_converter_class(entry)
+            result[pipeline] = _load_converter(spec)
         except ImportError:
             continue
-    return available
+    return result
 
 
 def resolve_auto_pipeline(filename: str) -> ConversionPipeline:
@@ -251,8 +167,7 @@ def resolve_auto_pipeline(filename: str) -> ConversionPipeline:
     Returns:
         The resolved conversion pipeline.
     """
-    suffix = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ""
-    return _AUTO_MAPPING.get(suffix, ConversionPipeline.LLM)
+    return _AUTO_MAPPING.get(Path(filename).suffix.lower(), ConversionPipeline.LLM)
 
 
 def get_converter(
@@ -281,52 +196,38 @@ def get_converter(
     if pipeline == ConversionPipeline.AUTO:
         pipeline = resolve_auto_pipeline(filename)
 
-    if pipeline not in _CONVERTER_CONFIG:
-        if pipeline in ConversionPipeline:
-            raise ImportError(
-                f"Conversion pipeline '{pipeline.value}' is not available. "
-                f"Install its dependencies to enable it."
-            )
+    spec = _CONVERTERS.get(pipeline)
+    if spec is None:
         raise ValueError(f"Unknown conversion pipeline: {pipeline}")
-
-    entry = _CONVERTER_CONFIG[pipeline]
     try:
-        converter_class = _get_converter_class(entry)
+        cls = _load_converter(spec)
     except ImportError as exc:
         raise ImportError(
             f"Conversion pipeline '{pipeline.value}' is not available. "
             "Install its dependencies to enable it."
         ) from exc
-    extensions = converter_class.extensions
 
-    if filename:
-        suffix = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ""
-        if suffix and extensions and suffix not in extensions:
-            raise ValueError(
-                f"Conversion pipeline '{pipeline.value}' does not support "
-                f"{suffix}. Supported: {', '.join(sorted(extensions))}"
-            )
+    suffix = Path(filename).suffix.lower()
+    if suffix and cls.extensions and suffix not in cls.extensions:
+        raise ValueError(
+            f"Conversion pipeline '{pipeline.value}' does not support "
+            f"{suffix}. Supported: {', '.join(sorted(cls.extensions))}"
+        )
 
     kwargs: dict[str, Any] = {}
-    if config:
-        config_model = _get_config_model(entry)
-        if config_model is not None:
-            kwargs["config"] = config_model(**config)
+    if config and (model := _config_model(cls)) is not None:
+        kwargs["config"] = model(**config)
     if pipeline == ConversionPipeline.LLM and llm_options is not None:
         kwargs["llm_options"] = llm_options
 
-    return converter_class(**kwargs)
+    return cls(**kwargs)
 
 
 def get_conversion_pipelines_info() -> list[ConversionPipelineInfo]:
     """Get metadata for all conversion pipelines."""
-    available = _get_available_converter_classes()
+    available = _available_converters()
     all_extensions = sorted(
-        {
-            ext
-            for converter_class in available.values()
-            for ext in converter_class.extensions
-        }
+        {ext for cls in available.values() for ext in cls.extensions}
     )
     infos = [
         ConversionPipelineInfo(
@@ -336,28 +237,16 @@ def get_conversion_pipelines_info() -> list[ConversionPipelineInfo]:
             extensions=all_extensions,
         ),
     ]
-    for pipeline, converter_class in available.items():
-        entry = _CONVERTER_CONFIG[pipeline]
-        config_schema: dict[str, Any] = {}
-        config_defaults: dict[str, Any] = {}
-        config_model = _get_config_model(entry)
-        if config_model is not None:
-            config_schema = config_model.model_json_schema()
-            try:
-                config_defaults = config_model().model_dump()
-            except ValidationError:
-                logger.warning(
-                    "Config model %s is not default-constructible",
-                    config_model.__name__,
-                )
+    for pipeline, cls in available.items():
+        model = _config_model(cls)
         infos.append(
             ConversionPipelineInfo(
                 value=pipeline.value,
-                label=entry.label,
-                description=entry.description,
-                extensions=sorted(converter_class.extensions),
-                config_schema=config_schema,
-                config_defaults=config_defaults,
+                label=cls.label,
+                description=cls.description,
+                extensions=sorted(cls.extensions),
+                config_schema=model.model_json_schema() if model else {},
+                config_defaults=model().model_dump() if model else {},
             )
         )
     return infos

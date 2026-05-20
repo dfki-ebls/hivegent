@@ -37,6 +37,8 @@ class TokenDocumentChunker(DocumentChunker):
     """
 
     name = "token"
+    label = "Token"
+    description = "Fixed token-count chunks for uniform processing"
     config: TokenChunkerConfig = field(default_factory=TokenChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:

@@ -29,6 +29,8 @@ class MarkerConverter(DocumentConverter):
     """
 
     name = "marker"
+    label = "Marker"
+    description = "Best for PDF documents"
     extensions = frozenset({".pdf"})
     config: MarkerConverterConfig = field(default_factory=MarkerConverterConfig)
 

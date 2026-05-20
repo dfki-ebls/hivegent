@@ -29,6 +29,8 @@ class MinerUConverter(DocumentConverter):
     """
 
     name = "mineru"
+    label = "MinerU"
+    description = "High-quality PDF parsing (no XLSX)"
     extensions = frozenset(
         {
             ".pdf",

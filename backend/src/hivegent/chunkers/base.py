@@ -156,6 +156,8 @@ class DocumentChunker(ABC):
     """
 
     name: ClassVar[str]
+    label: ClassVar[str]
+    description: ClassVar[str]
 
     @abstractmethod
     async def _split(

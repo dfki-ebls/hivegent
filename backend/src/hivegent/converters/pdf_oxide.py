@@ -26,6 +26,8 @@ class PdfOxideConverter(DocumentConverter):
     """
 
     name = "pdf-oxide"
+    label = "pdf_oxide"
+    description = "High-performance Rust-based PDF to markdown converter"
     extensions = frozenset({".pdf"})
     config: PdfOxideConverterConfig = field(default_factory=PdfOxideConverterConfig)
 
