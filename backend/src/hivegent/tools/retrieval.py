@@ -1,18 +1,22 @@
-"""Retrieval tools using cbrkit indexed backends."""
+"""Retrieval tool using a cbrkit LanceDB backend.
+
+One global storage; per-casebase scoping is enforced by an optional
+key predicate supplied by the caller.  Asynchronous so the result
+mapper can load chunk enrichment metadata from SQL on demand —
+without preloading the entire casebase at tool-build time.
+"""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Literal, cast, override
+from typing import Annotated, Any, Literal, cast, override
 
 import cbrkit
 from pydantic import Field
 
-from .base import SyncTool, ToolOutput, apply_prefix
+from .base import AsyncTool, ToolOutput
 
 __all__ = [
-    "IndexedStorage",
-    "IndexedStorageFilterFunc",
     "LanceDBSearchTool",
     "SearchMaxResultsArg",
     "SearchQueryArg",
@@ -25,13 +29,6 @@ logger = logging.getLogger(__name__)
 
 type SearchType = Literal["dense", "sparse", "hybrid"]
 
-IndexedStorageFilterFunc = Callable[[str], bool] | None
-"""Optional predicate on result keys.
-
-Receives the *unprefixed* key and should return ``True`` to keep the
-result.
-"""
-
 
 @dataclass(slots=True, frozen=True)
 class SearchResult:
@@ -40,32 +37,6 @@ class SearchResult:
     key: str
     text: str
     score: float
-
-
-@dataclass(slots=True, frozen=True)
-class IndexedStorage:
-    """A LanceDB storage with optional prefix and filter.
-
-    Mirrors :class:`~tools.base.SearchPath` for vector retrieval:
-    each storage may carry a display prefix and an independent filter
-    predicate.
-
-    Attributes:
-        storage: The cbrkit LanceDB storage instance.
-        prefix: Display prefix prepended to result keys from this
-            storage.  ``None`` means no prefix.
-        filter_func: Optional predicate on result keys.  Receives
-            the *unprefixed* key and should return ``True`` to keep
-            the result.
-    """
-
-    storage: cbrkit.indexable.lancedb[str]
-    prefix: str | None = None
-    filter_func: IndexedStorageFilterFunc = None
-
-    def prefixed(self, key: str) -> str:
-        """Return *key* with this storage's prefix prepended."""
-        return apply_prefix(self.prefix, key)
 
 
 SearchQueryArg = Annotated[
@@ -88,98 +59,102 @@ SearchTypeArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class LanceDBSearchTool[R = SearchResult](SyncTool[list[R]]):
-    """Search one or more LanceDB storages using cbrkit indexed retrieval.
-
-    Each :class:`IndexedStorage` is queried independently so that
-    per-storage filters and prefixes are applied correctly.
-    Results are merged and sorted by score.
+class LanceDBSearchTool[R = SearchResult](AsyncTool[list[R]]):
+    """Search a single LanceDB index with optional post-hoc filtering.
 
     Args:
-        storages: One or more indexed storage entries.
-        result_mapper: Optional callable that transforms each
-            :class:`SearchResult` before it is returned.  When ``None``,
-            raw :class:`SearchResult` objects are returned.
+        storage: The cbrkit LanceDB storage instance, or ``None`` for an
+            empty result (matches the empty-index path).
+        filter_func: Optional predicate on result keys.  Returns ``True``
+            to keep the result.  Callers use it to enforce per-casebase
+            access scoping against a globally shared index.
+        result_mapper: Optional async callable that receives the filtered,
+            ranked, truncated raw results and returns the final list.  The
+            batch shape lets callers load enrichment metadata from SQL in
+            one query instead of per-row.
     """
 
-    storages: tuple[IndexedStorage, ...] = ()
-    result_mapper: Callable[[SearchResult], R] | None = None
+    storage: cbrkit.indexable.lancedb[str] | None = None
+    filter_func: Callable[[str], bool] | None = None
+    result_mapper: Callable[[Sequence[SearchResult]], Awaitable[list[R]]] | None = None
 
     @override
-    def __call__(
+    async def __call__(
         self,
         query: SearchQueryArg,
         max_results: SearchMaxResultsArg = 5,
         search_type: SearchTypeArg = "hybrid",
     ) -> ToolOutput[list[R]]:
-        """Search indexed chunks using dense, sparse, or hybrid retrieval.
+        """Search indexed chunks using dense, sparse, or hybrid retrieval."""
+        raw = self._search(query, max_results, search_type)
+        if self.filter_func is not None:
+            raw = [r for r in raw if self.filter_func(r.key)]
+        raw.sort(key=lambda r: r.score, reverse=True)
+        raw = raw[:max_results]
 
-        Returns:
-            List of results sorted by score descending.
-        """
-        all_results: list[SearchResult] = []
-
-        for idx in self.storages:
-            if not idx.storage.has_index():
-                continue
-
-            retriever = cbrkit.retrieval.dropout(
-                cbrkit.retrieval.lancedb(
-                    storage=idx.storage,
-                    search_type=search_type,
-                ),
-                limit=max_results,
-            )
-            try:
-                result = cbrkit.retrieval.apply_query_indexed(query, retriever)
-            except RuntimeError as e:
-                # LanceDB FTS raises an Arrow length-mismatch error when a
-                # query tokenizes to nothing (e.g. single chars, stopwords).
-                if "lance error" not in str(e).lower():
-                    raise
-                logger.warning(
-                    "LanceDB %s query failed for %r: %s", search_type, query, e
-                )
-                continue
-            step = result.final_step.queries["default"]
-
-            for key in step.ranking:
-                str_key = cast(str, key)
-                if idx.filter_func is not None and not idx.filter_func(str_key):
-                    continue
-                all_results.append(
-                    SearchResult(
-                        key=idx.prefixed(str_key),
-                        text=step.casebase[key],
-                        score=float(step.similarities[key]),
-                    )
-                )
-
-        all_results.sort(key=lambda r: r.score, reverse=True)
-        all_results = all_results[:max_results]
-
-        final: list[R]
-        if self.result_mapper is not None:
-            final = [self.result_mapper(r) for r in all_results]
-        else:
-            final = cast(list[R], all_results)
+        final: list[R] = (
+            await self.result_mapper(raw)
+            if self.result_mapper is not None
+            else cast(list[R], raw)
+        )
 
         if not final:
             return ToolOutput(data=final, formatted="(no results)")
-        lines: list[str] = []
-        for i, r in enumerate(final, 1):
-            key = getattr(r, "key", None) or getattr(r, "filename", "?")
-            chunk_idx = getattr(r, "chunk_index", None)
-            score: float = getattr(r, "score", 0.0)
-            text: str = getattr(r, "text", "")
-            start_line = getattr(r, "start_line", None)
-            end_line = getattr(r, "end_line", None)
-            label = f"{key}#{chunk_idx}" if chunk_idx is not None else key
-            if start_line is not None and end_line is not None:
-                label += f" L{start_line}-{end_line}"
-                text = _annotate_lines(text, start_line)
-            lines.append(f"[{i}] {label} ({score:.0%})\n{text}")
-        return ToolOutput(data=final, formatted="\n\n".join(lines))
+        return ToolOutput(data=final, formatted=_format_results(final))
+
+    def _search(
+        self, query: str, max_results: int, search_type: SearchType
+    ) -> list[SearchResult]:
+        """Run the raw cbrkit query, returning unfiltered :class:`SearchResult`s."""
+        if self.storage is None or not self.storage.has_index():
+            return []
+        retriever = cbrkit.retrieval.dropout(
+            cbrkit.retrieval.lancedb(
+                storage=self.storage,
+                search_type=search_type,
+            ),
+            limit=max_results,
+        )
+        try:
+            result = cbrkit.retrieval.apply_query_indexed(query, retriever)
+        except RuntimeError as e:
+            # LanceDB FTS raises an Arrow length-mismatch when a query
+            # tokenizes to nothing (single chars, stopwords).
+            if "lance error" not in str(e).lower():
+                raise
+            logger.warning("LanceDB %s query failed for %r: %s", search_type, query, e)
+            return []
+        step = result.final_step.queries["default"]
+        return [
+            SearchResult(
+                key=cast(str, key),
+                text=step.casebase[key],
+                score=float(step.similarities[key]),
+            )
+            for key in step.ranking
+        ]
+
+
+def _format_results(results: Sequence[Any]) -> str:
+    """Render search results as a human/LLM-readable string block.
+
+    Accepts both :class:`SearchResult` and ``RetrievedChunk`` via attribute
+    lookup; either is a valid downstream of :class:`LanceDBSearchTool`.
+    """
+    lines: list[str] = []
+    for i, r in enumerate(results, 1):
+        key = getattr(r, "key", None) or getattr(r, "filename", "?")
+        chunk_idx = getattr(r, "chunk_index", None)
+        score: float = getattr(r, "score", 0.0)
+        text: str = getattr(r, "text", "")
+        start_line = getattr(r, "start_line", None)
+        end_line = getattr(r, "end_line", None)
+        label = f"{key}#{chunk_idx}" if chunk_idx is not None else key
+        if start_line is not None and end_line is not None:
+            label += f" L{start_line}-{end_line}"
+            text = _annotate_lines(text, start_line)
+        lines.append(f"[{i}] {label} ({score:.0%})\n{text}")
+    return "\n\n".join(lines)
 
 
 def _annotate_lines(text: str, start_line: int) -> str:

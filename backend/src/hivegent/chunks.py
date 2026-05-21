@@ -1,10 +1,18 @@
-"""Chunk persistence for chunked documents."""
+"""Document chunking and persistence coordinator.
+
+All operations flow through :mod:`hivegent.db.documents` (source of
+truth) and :mod:`hivegent.retrieval` (derived index).
+
+The two agent tools — :class:`ListChunksTool` and :class:`GetChunkTool`
+— live here for now until ``tools/chunks.py`` lands.
+"""
+
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, override
+from typing import Annotated, Any, cast, override
 
 from pydantic import Field
 
@@ -16,16 +24,15 @@ from .chunkers.base import (
     EntryMetadata,
 )
 from .config import settings
+from .db import documents as db_documents
 from .entries import (
-    cleanup_empty_parents,
     description_path_for_stem,
-    metadata_path_for_reference,
     resolve_entry_paths,
     stem_path_from_reference,
 )
 from .retrieval import index_document, unindex_paths
 from .store import Casebase
-from .tools.base import SyncPathTool, ToolOutput, file_allowed, resolve_search_path
+from .tools.base import AsyncPathTool, ToolOutput, file_allowed, resolve_search_path
 
 _NOT_FOUND_MSG = "(document not found)"
 
@@ -37,10 +44,7 @@ __all__ = [
     "GetChunkTool",
     "ListChunksTool",
     "chunk_and_index_document",
-    "delete_metadata",
-    "get_metadata",
-    "list_chunked_documents",
-    "load_document_metadata",
+    "delete_document",
 ]
 
 logger = logging.getLogger(__name__)
@@ -51,12 +55,32 @@ ChunkIndexArg = Annotated[
 ]
 
 
+# ─── Agent tools ───────────────────────────────────────────────────────
+
+
+def _path_to_casebase(workspace_path: Path) -> Casebase | None:
+    """Reverse-map ``data/workspace/<kind>/<id>/`` back to a Casebase."""
+    try:
+        rel = workspace_path.resolve().relative_to(
+            (settings.data_dir / "workspace").resolve()
+        )
+    except ValueError:
+        return None
+    parts = rel.parts
+    if len(parts) < 2 or parts[0] not in ("user", "group"):
+        return None
+    try:
+        return Casebase(kind=cast(Any, parts[0]), id=parts[1])
+    except ValueError:
+        return None
+
+
 @dataclass(slots=True, frozen=True)
-class ListChunksTool(SyncPathTool[list[ChunkSummary] | None]):
+class ListChunksTool(AsyncPathTool[list[ChunkSummary] | None]):
     """List chunk metadata for a document."""
 
     @override
-    def __call__(self, filename: str) -> ToolOutput[list[ChunkSummary] | None]:
+    async def __call__(self, filename: str) -> ToolOutput[list[ChunkSummary] | None]:
         """List chunk metadata for a document."""
         resolved = resolve_search_path(self.resolved_paths, filename)
         if resolved is None:
@@ -64,37 +88,39 @@ class ListChunksTool(SyncPathTool[list[ChunkSummary] | None]):
         sp, local = resolved
         if not file_allowed(sp.filter_func, local):
             return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
-        metadata = load_document_metadata(sp.path, local)
-        if not metadata:
+        store = _path_to_casebase(sp.path)
+        if store is None:
+            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
+        doc = await db_documents.get_document(store, local)
+        if doc is None:
             return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
         result = [
             ChunkSummary(
-                token_count=chunk.token_count,
-                start_index=chunk.start_index,
-                end_index=chunk.end_index,
-                start_line=chunk.start_line,
-                end_line=chunk.end_line,
+                token_count=c.token_count,
+                start_index=c.start_index,
+                end_index=c.end_index,
+                start_line=c.start_line,
+                end_line=c.end_line,
             )
-            for chunk in metadata.chunks
+            for c in doc.chunks
         ]
         if not result:
             return ToolOutput(data=result, formatted="(no chunks)")
-        lines: list[str] = []
-        for i, c in enumerate(result):
-            lines.append(
-                f"#{i}  lines {c.start_line}-{c.end_line}"
-                f"  chars {c.start_index}-{c.end_index}"
-                f"  ({c.token_count} tokens)"
-            )
+        lines = [
+            f"#{i}  lines {c.start_line}-{c.end_line}"
+            f"  chars {c.start_index}-{c.end_index}"
+            f"  ({c.token_count} tokens)"
+            for i, c in enumerate(result)
+        ]
         return ToolOutput(data=result, formatted="\n".join(lines))
 
 
 @dataclass(slots=True, frozen=True)
-class GetChunkTool(SyncPathTool[str | None]):
+class GetChunkTool(AsyncPathTool[str | None]):
     """Get the content of a specific chunk."""
 
     @override
-    def __call__(
+    async def __call__(
         self,
         filename: str,
         chunk_index: ChunkIndexArg,
@@ -106,12 +132,18 @@ class GetChunkTool(SyncPathTool[str | None]):
         sp, local = resolved
         if not file_allowed(sp.filter_func, local):
             return ToolOutput(data=None)
-        metadata = load_document_metadata(sp.path, local)
-        if not metadata:
+        store = _path_to_casebase(sp.path)
+        if store is None:
             return ToolOutput(data=None)
-        if 0 <= chunk_index < len(metadata.chunks):
-            return ToolOutput(data=metadata.chunks[chunk_index].text)
+        doc = await db_documents.get_document(store, local)
+        if doc is None:
+            return ToolOutput(data=None)
+        if 0 <= chunk_index < len(doc.chunks):
+            return ToolOutput(data=doc.chunks[chunk_index].text)
         return ToolOutput(data=None)
+
+
+# ─── Writer / coordinator ─────────────────────────────────────────────
 
 
 def _default_entry_metadata(
@@ -146,128 +178,59 @@ async def chunk_and_index_document(
     *,
     entry_metadata: EntryMetadata | None = None,
 ) -> DocumentMetadata:
-    """Chunk a document, persist metadata, and update the search index.
+    """Chunk a document, persist to SQL, and upsert into LanceDB.
 
     Args:
         store: The casebase.
-        filename: The document filename.
+        filename: The document filename (workspace-relative markdown).
         content: The document text content.
         chunking: The chunking spec (pipeline + config).
-        entry_metadata: Optional logical-entry metadata.
+        entry_metadata: Optional logical-entry metadata.  Defaults are
+            derived from the workspace layout when omitted.
 
     Returns:
-        The document metadata with chunks.
+        The persisted document metadata (chunks + entry header).
     """
     spec = chunking or ChunkingSpec()
 
-    if entry_metadata is not None:
-        resolved_entry_metadata = entry_metadata
-    else:
-        existing = get_metadata(store, filename)
+    if entry_metadata is None:
+        existing = await db_documents.get_document(store, filename)
         if existing is not None:
-            # DocumentMetadata is a subclass of EntryMetadata; extract base fields.
-            resolved_entry_metadata = EntryMetadata.model_validate(
+            entry_metadata = EntryMetadata.model_validate(
                 existing.model_dump(include=set(EntryMetadata.model_fields))
             )
         else:
             workspace_dir = store.workspace_dir(settings.data_dir)
             resolved = resolve_entry_paths(workspace_dir, filename)
-            resolved_entry_metadata = _default_entry_metadata(
+            entry_metadata = _default_entry_metadata(
                 resolved.description_path,
                 resolved.original_path,
                 resolved.assets_dir,
             )
 
-    # Generated descriptions are always stored as a single chunk.
-    if resolved_entry_metadata.generated_by in ("vision", "stub"):
+    if entry_metadata.generated_by in ("vision", "stub"):
         spec = ChunkingSpec(pipeline=ChunkingPipeline.NONE)
     chunker = get_chunker(
         spec.pipeline,
         content_length=len(content),
         config=spec.config,
     )
-    raw_chunks = await chunker(content, mime=resolved_entry_metadata.mime)
+    raw_chunks = await chunker(content, mime=entry_metadata.mime)
 
-    doc = DocumentMetadata(
-        **resolved_entry_metadata.model_dump(),
-        pipeline=chunker.name,
-        created_at=datetime.now(tz=UTC),
-        chunks=raw_chunks,
+    doc = await db_documents.upsert_document(
+        store, entry_metadata, pipeline=chunker.name, chunks=raw_chunks
     )
-
-    meta_path = metadata_path_for_reference(store, filename)
-    meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(
-        doc.model_dump_json(indent=2, exclude_none=True),
-        encoding="utf-8",
-    )
-
-    # Index failures must not abort the upload; the periodic consistency
-    # tick will reconcile.
-    try:
-        await index_document(store, filename, doc)
-    except Exception:
-        logger.warning(
-            "Failed to index %s/%s", store.store_key, filename, exc_info=True
-        )
+    await index_document(store, filename, doc)
     return doc
 
 
-def load_document_metadata(
-    metadata_dir: Path,
-    filename: str,
-) -> DocumentMetadata | None:
-    """Load document metadata from a directory by document filename.
-
-    Args:
-        metadata_dir: Directory containing metadata JSON files.
-        filename: The document filename (e.g. ``"report.md"``).
+async def delete_document(store: Casebase, filepath: str) -> bool:
+    """Remove a document and its chunks from SQL and LanceDB.
 
     Returns:
-        The document metadata, or ``None`` if not found.
+        ``True`` if the SQL row existed and was deleted.
     """
-    stem = stem_path_from_reference(filename)
-    meta_path = metadata_dir / f"{stem}.json"
-    try:
-        return DocumentMetadata.model_validate_json(
-            meta_path.read_text(encoding="utf-8")
-        )
-    except FileNotFoundError:
-        return None
-    except Exception as e:
-        logger.warning("Failed to load metadata for %s: %s", filename, e)
-        return None
-
-
-def get_metadata(store: Casebase, filename: str) -> DocumentMetadata | None:
-    """Load metadata for a document from disk.
-
-    Args:
-        store: The casebase.
-        filename: The document filename.
-
-    Returns:
-        The document metadata, or ``None`` if not found.
-    """
-    return load_document_metadata(store.metadata_path(settings.data_dir), filename)
-
-
-async def delete_metadata(store: Casebase, filepath: str) -> bool:
-    """Delete the metadata file and index entries for a document.
-
-    Cleans up empty parent directories up to the metadata root and
-    removes the corresponding rows from the LanceDB index.
-
-    Returns:
-        True if the metadata file was deleted, False if it didn't exist.
-    """
-    metadata_root = store.metadata_path(settings.data_dir)
-    meta_path = metadata_path_for_reference(store, filepath)
-    try:
-        meta_path.unlink()
-    except FileNotFoundError:
-        return False
-    cleanup_empty_parents(meta_path, metadata_root)
+    removed = await db_documents.delete_document(store, filepath)
     description_path = description_path_for_stem(stem_path_from_reference(filepath))
     try:
         await unindex_paths(store, [description_path])
@@ -275,33 +238,4 @@ async def delete_metadata(store: Casebase, filepath: str) -> bool:
         logger.warning(
             "Failed to unindex %s/%s", store.store_key, description_path, exc_info=True
         )
-    return True
-
-
-def list_chunked_documents(store: Casebase) -> dict[str, int]:
-    """List all chunked documents for a store with their chunk counts.
-
-    Reconstructs the workspace filename by appending ``DOCUMENT_EXTENSION``
-    since metadata files use the stem-only naming convention.
-
-    Args:
-        store: The casebase.
-
-    Returns:
-        Dict mapping document filename to chunk count.
-    """
-    metadata_dir = store.metadata_path(settings.data_dir)
-    if not metadata_dir.exists():
-        return {}
-
-    result: dict[str, int] = {}
-    for path in metadata_dir.rglob("*.json"):
-        try:
-            document = DocumentMetadata.model_validate_json(
-                path.read_text(encoding="utf-8")
-            )
-            result[document.description_path] = len(document.chunks)
-        except Exception:
-            continue
-
-    return result
+    return removed

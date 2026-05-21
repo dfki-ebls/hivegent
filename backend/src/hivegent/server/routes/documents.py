@@ -7,11 +7,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from fastapi.sse import EventSourceResponse
-from starlette.responses import Response
+from starlette.responses import FileResponse, Response
 
 from ... import workspace
 from ...auth import User, get_current_user
-from ...chunks import DocumentMetadata, get_metadata
+from ...chunkers.base import DocumentMetadata
+from ...db.documents import get_document
 from ...config import settings
 from ...types import (
     AssetEntry,
@@ -68,7 +69,7 @@ async def list_documents(
     user: Annotated[User, Depends(get_current_user)],
 ) -> DocumentListResponse:
     """List all documents in the user's data directory."""
-    return list_documents_for_store(user_store(user))
+    return await list_documents_for_store(user_store(user))
 
 
 @router.get("/documents/original/{filepath:path}")
@@ -78,11 +79,10 @@ async def download_original(
 ) -> Response:
     """Download the original binary file for a document."""
     safe = safe_path(filepath)
-    original = find_original(user_store(user), safe)
-    content = original.read_bytes()
+    original = await find_original(user_store(user), safe)
     media_type = mimetypes.guess_type(original.name)[0] or "application/octet-stream"
-    return Response(
-        content=content,
+    return FileResponse(
+        path=original,
         media_type=media_type,
         headers={"Content-Disposition": attachment_disposition(original.name)},
     )
@@ -335,7 +335,7 @@ async def get_document_chunks(
 ) -> DocumentMetadata:
     """Get chunks for a document."""
     safe = safe_path(filepath)
-    chunked = get_metadata(user_store(user), safe)
+    chunked = await get_document(user_store(user), safe)
     if not chunked:
         raise HTTPException(status_code=404, detail="No chunks found for this document")
     return chunked
@@ -412,7 +412,7 @@ async def get_document_content(
 ) -> Response:
     """Get the content of a document or asset."""
     safe = safe_path(filepath)
-    return get_document_response(user_store(user), safe)
+    return await get_document_response(user_store(user), safe)
 
 
 @router.delete("/documents/{filepath:path}")

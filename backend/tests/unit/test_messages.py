@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
-
+import pytest
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -15,11 +14,15 @@ from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai.request_types import DataUIPart
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
-from hivegent.messages import load_messages, save_messages
+from hivegent.db.conversations import append_messages, load_messages
 
 
-def test_load_messages_rehydrates_data_chunks(data_dir: Any) -> None:
+pytestmark = pytest.mark.asyncio
+
+
+async def test_load_messages_rehydrates_data_chunks(db_initialized: None) -> None:
     """save -> load -> dump_messages produces a data-tool-output DataUIPart."""
+    _ = db_initialized
     user_id = "testuser"
     conv_id = "conv-rt"
 
@@ -45,8 +48,8 @@ def test_load_messages_rehydrates_data_chunks(data_dir: Any) -> None:
             ],
         ),
     ]
-    save_messages(user_id, conv_id, messages)
-    loaded = load_messages(user_id, conv_id)
+    await append_messages(user_id, conv_id, messages)
+    loaded = await load_messages(user_id, conv_id)
 
     ui_messages = VercelAIAdapter.dump_messages(loaded)
     all_parts = [p for msg in ui_messages for p in msg.parts]
@@ -55,8 +58,11 @@ def test_load_messages_rehydrates_data_chunks(data_dir: Any) -> None:
     assert data_parts[0].data == [{"text": "hi"}]
 
 
-def test_save_messages_preserves_metadata_from_prior_turn(data_dir: Any) -> None:
+async def test_append_messages_preserves_metadata_from_prior_turn(
+    db_initialized: None,
+) -> None:
     """Prior tool-return metadata survives a turn where the UI round-trip drops it."""
+    _ = db_initialized
     user_id = "testuser"
     conv_id = "conv-preserve"
 
@@ -83,21 +89,12 @@ def test_save_messages_preserves_metadata_from_prior_turn(data_dir: Any) -> None
             ],
         ),
     ]
-    save_messages(user_id, conv_id, turn_1)
+    await append_messages(user_id, conv_id, turn_1)
 
-    # Simulate what pydantic-ai's Vercel load_messages produces on the
-    # next turn: the prior tool-return comes back with metadata=None.
+    # Simulate what pydantic-ai's Vercel load produces on the next turn:
+    # the prior tool-return comes back with metadata=None.
     turn_2 = [
-        ModelRequest(parts=[UserPromptPart(content="q1")]),
-        ModelResponse(
-            parts=[
-                PydanticToolCallPart(
-                    tool_name="search",
-                    tool_call_id="call_1",
-                    args={"query": "q"},
-                ),
-            ],
-        ),
+        *turn_1[:2],
         ModelRequest(
             parts=[
                 ToolReturnPart(
@@ -110,16 +107,19 @@ def test_save_messages_preserves_metadata_from_prior_turn(data_dir: Any) -> None
         ),
         ModelRequest(parts=[UserPromptPart(content="q2")]),
     ]
-    save_messages(user_id, conv_id, turn_2)
+    await append_messages(user_id, conv_id, turn_2)
 
-    loaded = load_messages(user_id, conv_id)
+    loaded = await load_messages(user_id, conv_id)
     tool_return = loaded[2].parts[0]
     assert isinstance(tool_return, ToolReturnPart)
     assert tool_return.metadata == original_metadata
 
 
-def test_load_messages_ignores_non_data_chunk_metadata(data_dir: Any) -> None:
+async def test_load_messages_ignores_non_data_chunk_metadata(
+    db_initialized: None,
+) -> None:
     """Tool metadata that isn't a DataChunk dict is left as-is."""
+    _ = db_initialized
     user_id = "testuser"
     conv_id = "conv-non-data"
 
@@ -145,10 +145,9 @@ def test_load_messages_ignores_non_data_chunk_metadata(data_dir: Any) -> None:
             ],
         ),
     ]
-    save_messages(user_id, conv_id, messages)
-    loaded = load_messages(user_id, conv_id)
+    await append_messages(user_id, conv_id, messages)
+    loaded = await load_messages(user_id, conv_id)
 
-    # The non-DataChunk metadata should survive unchanged
     tool_return = loaded[-1].parts[0]
     assert isinstance(tool_return, ToolReturnPart)
     assert tool_return.metadata == {"unrelated": "stuff"}

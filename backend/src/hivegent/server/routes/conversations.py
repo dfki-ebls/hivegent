@@ -1,7 +1,7 @@
 """Routes for conversations and chat orchestration."""
 
+import asyncio
 import logging
-import shutil
 from collections.abc import Sequence
 from typing import Annotated
 
@@ -28,16 +28,17 @@ from ...compaction import compact_conversation
 from ...config import settings
 from ...llm import create_openai_chat_model
 from ...mcp import build_mcp_server, validate_mcp_servers
-from ...memory import load_memory
-from ...messages import (
+from ...db.conversations import (
     ConversationSummary,
+    append_messages,
+    delete_all_conversations,
     list_conversations,
     load_conversation,
     load_messages,
     remove_conversation,
-    save_messages,
     set_conversation_title,
 )
+from ...db.memory import load_memory
 from ...prompts import (
     CITATION_INSTRUCTIONS,
     IMAGE_INSTRUCTIONS,
@@ -94,7 +95,7 @@ async def get_conversations(
     user: Annotated[User, Depends(get_current_user)],
 ) -> ConversationListResponse:
     """List all conversations with summary information."""
-    conversations = list_conversations(user.id)
+    conversations = await list_conversations(user.id)
     return ConversationListResponse(
         conversations=conversations,
         total_count=len(conversations),
@@ -107,7 +108,7 @@ async def get_conversation(
     user: Annotated[User, Depends(get_current_user)],
 ) -> ConversationSummary:
     """Get summary information for a specific conversation."""
-    conversation = load_conversation(user.id, conversation_id)
+    conversation = await load_conversation(user.id, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return ConversationSummary(
@@ -127,21 +128,10 @@ async def update_conversation_title(
     user: Annotated[User, Depends(get_current_user)],
 ) -> ConversationSummary:
     """Update the title of a conversation."""
-    if not set_conversation_title(user.id, conversation_id, request.title):
+    summary = await set_conversation_title(user.id, conversation_id, request.title)
+    if summary is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-
-    conversation = load_conversation(user.id, conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    return ConversationSummary(
-        id=conversation.id,
-        title=conversation.title,
-        created_at=conversation.created_at,
-        updated_at=conversation.updated_at,
-        message_count=len(conversation.messages),
-        compacted_from=conversation.compacted_from,
-    )
+    return summary
 
 
 def _extract_message_texts(
@@ -167,7 +157,7 @@ async def generate_conversation_title(
     user: Annotated[User, Depends(get_current_user)],
 ) -> GenerateTitleResponse:
     """Generate a title for a conversation using an LLM."""
-    conversation = load_conversation(user.id, conversation_id)
+    conversation = await load_conversation(user.id, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -196,7 +186,7 @@ Return ONLY the title, no quotes or extra text.
         if len(generated_title) > 100:
             generated_title = generated_title[:97] + "..."
 
-        set_conversation_title(user.id, conversation_id, generated_title)
+        await set_conversation_title(user.id, conversation_id, generated_title)
         return GenerateTitleResponse(title=generated_title)
     except Exception as exc:
         logger.exception("Failed to generate title for conversation %s", conversation_id)
@@ -212,7 +202,7 @@ async def delete_conversation(
     user: Annotated[User, Depends(get_current_user)],
 ) -> DeleteConversationResponse:
     """Delete a conversation."""
-    if not remove_conversation(user.id, conversation_id):
+    if not await remove_conversation(user.id, conversation_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
     return DeleteConversationResponse(
         id=conversation_id,
@@ -221,18 +211,12 @@ async def delete_conversation(
 
 
 @router.delete("/conversations")
-async def delete_all_conversations(
+async def delete_all_conversations_route(
     user: Annotated[User, Depends(get_current_user)],
 ) -> BulkDeleteConversationsResponse:
     """Delete all conversations for the authenticated user."""
-    conversations_dir = user_store(user).conversations_dir(settings.data_dir)
-    count = sum(
-        1 for file_path in conversations_dir.glob("*.json") if file_path.is_file()
-    )
-    if conversations_dir.exists():
-        shutil.rmtree(conversations_dir)
     return BulkDeleteConversationsResponse(
-        deleted_count=count,
+        deleted_count=await delete_all_conversations(user.id),
         message="All conversations deleted successfully",
     )
 
@@ -269,7 +253,7 @@ async def get_conversation_messages(
     user: Annotated[User, Depends(get_current_user)],
 ) -> list[UIMessage]:
     """Get messages for a conversation in Vercel AI format."""
-    messages = load_messages(user.id, conversation_id)
+    messages = await load_messages(user.id, conversation_id)
     if not messages:
         return []
     return VercelAIAdapter.dump_messages(messages)
@@ -353,7 +337,7 @@ async def create_conversation_chat(
 
     memory_enabled = "save_memory" not in (config.tools.disabled_tools or [])
     if memory_enabled:
-        memory_content = load_memory(user.id)
+        memory_content = await load_memory(user.id)
         if memory_content:
             parts.append(MEMORY_INSTRUCTIONS.format(memory_content=memory_content))
         else:
@@ -365,8 +349,17 @@ async def create_conversation_chat(
     user_group_stores = group_stores(user)
 
     def on_complete(result: AgentRunResult[str]) -> None:
-        """Save messages after the agent run completes."""
-        save_messages(user.id, config.conversation_id, result.all_messages())
+        """Persist messages after the agent run completes.
+
+        VercelAIAdapter calls this from within the running event loop, so
+        we schedule the async append on the same loop instead of blocking.
+        """
+        asyncio.create_task(
+            append_messages(
+                user.id, config.conversation_id, result.all_messages()
+            ),
+            name=f"hivegent-save-messages-{config.conversation_id}",
+        )
 
     thinking: str | bool
 

@@ -3,17 +3,17 @@
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.messages import ToolReturn
 
-from ...config import settings
-from ...messages import (
+from ...db.conversations import (
     list_conversations as _list_conversations,
+    load_conversation as _load_conversation,
 )
-from ...tools import JqTool
 from ...tools.base import ToolOutput
-from ...tools.pydantic_ai import for_pydantic_ai, wrap_tool_output
+from ...tools.pydantic_ai import wrap_tool_output
 from ..common import UserDeps
 
 __all__ = [
     "conversation_toolset",
+    "get_conversation",
     "list_conversations",
 ]
 
@@ -21,14 +21,14 @@ conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=
 
 
 @conversation_toolset.tool
-def list_conversations(
+async def list_conversations(
     ctx: RunContext[UserDeps],
 ) -> ToolReturn:
     """List past conversations with titles, dates, and message counts.
 
     Returns summaries sorted by most recent first.
     """
-    conversations = _list_conversations(ctx.deps.store.id)
+    conversations = await _list_conversations(ctx.deps.store.id)
     if not conversations:
         formatted = "(no conversations)"
     else:
@@ -39,11 +39,19 @@ def list_conversations(
     return wrap_tool_output(ToolOutput(data=conversations, formatted=formatted))
 
 
-def _jq_factory(deps: UserDeps) -> JqTool:
-    return JqTool(paths=deps.store.conversations_dir(settings.data_dir))
+@conversation_toolset.tool
+async def get_conversation(
+    ctx: RunContext[UserDeps],
+    conversation_id: str,
+) -> ToolReturn:
+    """Load a past conversation's full content for analysis.
 
-
-conversation_toolset.add_function(
-    for_pydantic_ai(_jq_factory, UserDeps),
-    name="query_conversations",
-)
+    Returns the conversation header plus messages so the LLM can scan
+    them with its own filtering rather than a jq query.
+    """
+    conv = await _load_conversation(ctx.deps.store.id, conversation_id)
+    if conv is None:
+        return wrap_tool_output(
+            ToolOutput(data=None, formatted="(conversation not found)")
+        )
+    return wrap_tool_output(ToolOutput(data=conv, formatted=conv.title or "(untitled)"))

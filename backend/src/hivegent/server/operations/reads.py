@@ -5,14 +5,15 @@ the filesystem to resolve URLs to bytes.  Mutations live in
 :mod:`hivegent.workspace`.
 """
 
+import asyncio
 import mimetypes
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import HTTPException
-from starlette.responses import PlainTextResponse, Response
+from starlette.responses import FileResponse, PlainTextResponse, Response
 
-from ...chunks import get_metadata
+from ...db.documents import get_document
 from ...config import settings
 from ...converters.base import DOCUMENT_EXTENSION
 from ...entries import (
@@ -31,10 +32,10 @@ __all__ = [
 ]
 
 
-def find_original(store: Casebase, safe: str) -> Path:
+async def find_original(store: Casebase, safe: str) -> Path:
     """Find the absolute path of the original binary for a logical entry."""
     workspace_dir = store.workspace_dir(settings.data_dir)
-    metadata = get_metadata(store, safe)
+    metadata = await get_document(store, safe)
     original_path = metadata.original_path if metadata else None
     if not original_path:
         original_path = resolve_entry_paths(workspace_dir, safe).original_path
@@ -57,7 +58,7 @@ def attachment_disposition(filename: str) -> str:
     return f"attachment; filename*=UTF-8''{quote(filename, safe='')}"
 
 
-def get_document_response(store: Casebase, safe: str) -> Response:
+async def get_document_response(store: Casebase, safe: str) -> Response:
     """Return the raw content of a document or asset as an HTTP response.
 
     Non-text responses force ``Content-Disposition: attachment`` so a user
@@ -68,20 +69,24 @@ def get_document_response(store: Casebase, safe: str) -> Response:
     file_path = workspace / safe
     media_type = mimetypes.guess_type(file_path.name)[0]
 
-    try:
-        if not media_type or media_type.startswith("text/"):
-            try:
-                return PlainTextResponse(file_path.read_text(encoding="utf-8"))
-            except UnicodeDecodeError:
-                pass
-        content = file_path.read_bytes()
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Document not found") from exc
-    except IsADirectoryError as exc:
-        raise HTTPException(status_code=400, detail="Path is not a file") from exc
+    if not media_type or media_type.startswith("text/"):
+        try:
+            text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
+            return PlainTextResponse(text)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Document not found") from exc
+        except IsADirectoryError as exc:
+            raise HTTPException(status_code=400, detail="Path is not a file") from exc
+        except UnicodeDecodeError:
+            pass
 
-    return Response(
-        content=content,
+    if not file_path.is_file():
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    return FileResponse(
+        path=file_path,
         media_type=media_type or "application/octet-stream",
         headers={"Content-Disposition": attachment_disposition(file_path.name)},
     )

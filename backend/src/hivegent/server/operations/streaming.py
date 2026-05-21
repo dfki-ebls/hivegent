@@ -14,7 +14,7 @@ from typing import Literal
 from fastapi import Form, HTTPException, UploadFile
 
 from ... import workspace
-from ...chunks import get_metadata
+from ...db.documents import get_document
 from ...config import settings
 from ...converters.base import is_image_suffix, is_markdown_suffix
 from ...store import Casebase
@@ -84,7 +84,7 @@ async def reconvert_single_stream(
 ) -> AsyncGenerator[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent]:
     """Re-convert a single document with SSE stage events for progress."""
     try:
-        metadata = get_metadata(store, safe)
+        metadata = await get_document(store, safe)
         if metadata and metadata.original_path:
             original_suffix = PurePosixPath(metadata.original_path).suffix.lower()
             if is_image_suffix(original_suffix):

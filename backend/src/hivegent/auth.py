@@ -24,7 +24,7 @@ from pydantic import AnyHttpUrl, ValidationError
 
 from .config import sanitize_user_id, settings
 from .http_client import get_shared_http_client
-from .tokens import token_store
+from .db.tokens import validate_token as _validate_pat
 from .types import User
 
 __all__ = [
@@ -416,10 +416,10 @@ async def get_current_user(
     token = credentials.credentials
 
     if token.startswith("hivegent_"):
-        # Argon2 is CPU-bound (~10ms); run off the event loop so concurrent
-        # requests aren't blocked during PAT verification.
+        # Argon2 is CPU-bound (~10ms); the repo offloads to a thread.
+        # The semaphore caps concurrent verifies under load.
         async with _pat_verify_semaphore:
-            user = await asyncio.to_thread(token_store.validate_token, token)
+            user = await _validate_pat(token)
         if user:
             return user
         raise HTTPException(

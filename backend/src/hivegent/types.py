@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 from .chunkers import ChunkingSpec
 from .config import settings
 from .converters import ConversionSpec
-from .messages import ConversationSummary
+from .db.conversations import ConversationSummary
 from .prompts import Personality
 from .security import (
     UnsafeUrlError,

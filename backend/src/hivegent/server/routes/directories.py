@@ -28,7 +28,7 @@ async def get_directories(
     user: Annotated[User, Depends(get_current_user)],
 ) -> DirectoryTreeResponse:
     """Build a recursive directory tree from the user's documents directory."""
-    return build_tree_response(user_store(user))
+    return await build_tree_response(user_store(user))
 
 
 @router.post("/directories")

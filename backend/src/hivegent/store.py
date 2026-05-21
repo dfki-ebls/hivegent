@@ -1,4 +1,12 @@
-"""Casebase identity for user and group storage namespaces."""
+"""Casebase identity for user and group storage namespaces.
+
+A :class:`Casebase` is an immutable identifier — ``(kind, id)`` — for
+one user or group's slice of the system.  Only the workspace files
+live on disk per casebase, under ``<data_dir>/workspace/<kind>/<id>/``.
+Everything else (documents, chunks, memory, conversations, tokens) is
+stored in the global SQL database; LanceDB rows are scoped by
+:attr:`Casebase.store_key` instead of separate directories.
+"""
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -11,16 +19,24 @@ from .tools.base import SearchPath, SearchPathFilterFunc
 __all__ = [
     "Casebase",
     "build_search_paths",
+    "lancedb_dir",
 ]
+
+
+def lancedb_dir(data_dir: Path) -> Path:
+    """Return the global LanceDB directory, creating it if needed."""
+    path = data_dir / "lancedb"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 @dataclass(slots=True, frozen=True)
 class Casebase:
     """Identifies a casebase namespace (user or group).
 
-    Each casebase maps to a filesystem directory under
-    ``data/{users,groups}/<id>/`` containing a workspace, metadata,
-    a LanceDB index, and conversation state.
+    Each casebase owns a workspace directory at
+    ``<data_dir>/workspace/<kind>/<id>/`` plus rows in the global SQL
+    database scoped by ``owner_user_id`` / ``owner_group_id``.
     """
 
     kind: Literal["user", "group"]
@@ -44,7 +60,7 @@ class Casebase:
 
     @property
     def store_key(self) -> str:
-        """Stable opaque key for caching and identification."""
+        """Stable opaque key for caching and SQL/LanceDB scoping."""
         return f"{self.kind}:{self.id}"
 
     @property
@@ -52,120 +68,19 @@ class Casebase:
         """Display prefix for document filenames from this store."""
         return f"@{self.id}" if self.kind == "group" else None
 
-    def root_path(self, data_dir: Path) -> Path:
-        """Return the root path for this store without creating directories.
-
-        Args:
-            data_dir: The application data root directory.
-
-        Returns:
-            Path to the store's root directory.
-        """
-        subdir = "users" if self.kind == "user" else "groups"
-        return data_dir / subdir / self.id
-
-    def root_dir(self, data_dir: Path) -> Path:
-        """Return the root directory for this store, creating it if needed.
-
-        Args:
-            data_dir: The application data root directory.
-
-        Returns:
-            Path to the store's root directory.
-        """
-        path = self.root_path(data_dir)
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
     def workspace_path(self, data_dir: Path) -> Path:
-        """Return the workspace path without creating directories.
-
-        Args:
-            data_dir: The application data root directory.
-
-        Returns:
-            Path to the store's workspace directory.
-        """
-        return self.root_path(data_dir) / "workspace"
+        """Return the workspace path without creating directories."""
+        return data_dir / "workspace" / self.kind / self.id
 
     def workspace_dir(self, data_dir: Path) -> Path:
-        """Return the workspace directory for this store, creating it if needed.
+        """Return the workspace directory, creating it if needed.
 
-        Contains source files, markdown companions, and recursive asset directories.
-
-        Args:
-            data_dir: The application data root directory.
-
-        Returns:
-            Path to the store's workspace directory.
+        Contains source files, markdown companions, and recursive
+        asset directories.  No other on-disk artifacts live here.
         """
         path = self.workspace_path(data_dir)
         path.mkdir(parents=True, exist_ok=True)
         return path
-
-    def metadata_path(self, data_dir: Path) -> Path:
-        """Return the metadata path without creating directories.
-
-        Args:
-            data_dir: The application data root directory.
-
-        Returns:
-            Path to the store's metadata directory.
-        """
-        return self.root_path(data_dir) / "metadata"
-
-    def metadata_dir(self, data_dir: Path) -> Path:
-        """Return the metadata directory for this store, creating it if needed.
-
-        Contains per-entry JSON files with chunk data and stem-entry metadata.
-
-        Args:
-            data_dir: The application data root directory.
-
-        Returns:
-            Path to the store's metadata directory.
-        """
-        path = self.metadata_path(data_dir)
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def lancedb_dir(self, data_dir: Path) -> Path:
-        """Return the LanceDB directory for this store.
-
-        Args:
-            data_dir: The application data root directory.
-
-        Returns:
-            Path to the store's LanceDB directory.
-        """
-        path = self.root_dir(data_dir) / "lancedb"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def conversations_dir(self, data_dir: Path) -> Path:
-        """Return the conversations directory for this store.
-
-        Args:
-            data_dir: The application data root directory.
-
-        Returns:
-            Path to the store's conversations directory.
-        """
-        path = self.root_dir(data_dir) / "conversations"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def conversation_path(self, data_dir: Path, conversation_id: str) -> Path:
-        """Return the path to a conversation JSON file for this store."""
-        return self.conversations_dir(data_dir) / f"{conversation_id}.json"
-
-    def tokens_path(self, data_dir: Path) -> Path:
-        """Return the tokens JSON path for this store."""
-        return self.root_dir(data_dir) / "tokens.json"
-
-    def memory_path(self, data_dir: Path) -> Path:
-        """Return the memory markdown path for this store."""
-        return self.root_dir(data_dir) / "memory.md"
 
 
 def build_search_paths(

@@ -21,6 +21,7 @@ DEFAULT_CONFIG_FILE = Path("config.toml")
 __all__ = [
     "DOCUMENT_EXTENSION",
     "AuthSettings",
+    "DatabaseSettings",
     "EmbeddingSettings",
     "GroupSettings",
     "LimitsSettings",
@@ -269,6 +270,19 @@ class LimitsSettings(BaseModel):
     max_image_pixels: int = 1_000_000_000  # ~3 GB uncompressed
 
 
+class DatabaseSettings(BaseModel):
+    """Database backend configuration.
+
+    ``url`` is a SQLAlchemy URL.  When empty, defaults to SQLite at
+    ``<data_dir>/hivegent.db`` so a fresh checkout works without any
+    setup.  Set to ``postgresql+asyncpg://...`` to switch to Postgres
+    without code changes.
+    """
+
+    url: str = ""
+    echo: bool = False
+
+
 class NetworkSettings(BaseModel):
     """Outbound HTTP client and WebFetch tunables.
 
@@ -328,11 +342,9 @@ class Settings(BaseSettings):
     security: SecuritySettings = SecuritySettings()
     limits: LimitsSettings = LimitsSettings()
     network: NetworkSettings = NetworkSettings()
+    db: DatabaseSettings = DatabaseSettings()
 
     data_dir: Path = Path("data")
-    # Background tick that retries any documents whose inline index
-    # write failed (``indexed_at = None``).  Set to 0 to disable.
-    consistency_tick_interval_seconds: int = 600
 
     def get_traces_dir(self) -> Path:
         """Get the directory for trace output files.

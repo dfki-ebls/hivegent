@@ -3,9 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from .config import settings
 from .converters.base import DOCUMENT_EXTENSION
-from .store import Casebase
 
 __all__ = [
     "EntryPaths",
@@ -15,7 +13,6 @@ __all__ = [
     "entry_exists",
     "find_original_for_reference",
     "is_assets_dir",
-    "metadata_path_for_reference",
     "resolve_entry_paths",
     "stem_display_name",
     "stem_path_from_reference",
@@ -55,18 +52,6 @@ def assets_dir_for_stem(stem_path: str) -> str:
     return f"{stem_path}.assets"
 
 
-def metadata_path_for_reference(store: Casebase, reference: str) -> Path:
-    """Return the metadata JSON path for a logical entry reference.
-
-    Pure path computation — does not create any directories.  Callers
-    that need to *write* the metadata file should call ``mkdir`` on the
-    returned path's parent themselves.
-    """
-    metadata_dir = store.metadata_path(settings.data_dir)
-    stem_path = stem_path_from_reference(reference)
-    return metadata_dir / f"{stem_path}.json"
-
-
 def find_original_for_reference(workspace_dir: Path, reference: str) -> str | None:
     """Return the workspace-relative original path for a logical entry."""
     stem_path = stem_path_from_reference(reference)
@@ -102,17 +87,19 @@ def resolve_entry_paths(workspace_dir: Path, reference: str) -> EntryPaths:
     )
 
 
-def entry_exists(workspace_dir: Path, metadata_dir: Path, reference: str) -> bool:
-    """Return whether a logical entry exists in workspace or metadata."""
+def entry_exists(workspace_dir: Path, reference: str) -> bool:
+    """Return whether a logical entry has any workspace files on disk.
+
+    SQL-backed metadata is no longer consulted here — workspace
+    presence is the on-disk signal.  Callers needing the SQL view
+    should query :mod:`hivegent.db.documents` directly.
+    """
     resolved = resolve_entry_paths(workspace_dir, reference)
-    meta_path = metadata_dir / f"{resolved.stem_path}.json"
     if (workspace_dir / resolved.description_path).exists():
         return True
     if resolved.original_path is not None:
         return True
-    if resolved.assets_dir is not None:
-        return True
-    return meta_path.exists()
+    return resolved.assets_dir is not None
 
 
 def stem_display_name(stem_path: str) -> str:

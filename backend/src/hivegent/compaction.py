@@ -7,20 +7,17 @@ as initial context, linking back to the original.
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
-from nanoid import generate
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
     TextPart,
     UserPromptPart,
 )
+
 from .agents import base_agent
-from .config import settings
+from .db.conversations import create_compacted_conversation, load_conversation
 from .llm import create_openai_chat_model
-from .messages import ConversationData, load_conversation
-from .store import Casebase
 from .types import LlmConfig
 
 __all__ = [
@@ -74,31 +71,20 @@ async def compact_conversation(
     Raises:
         ValueError: If the conversation is not found or has no messages.
     """
-    conversation = load_conversation(user_id, conversation_id)
+    conversation = await load_conversation(user_id, conversation_id)
     if not conversation or not conversation.messages:
         raise ValueError(f"Conversation {conversation_id} not found or empty")
 
     summary = await _summarize_conversation(conversation.messages, llm_config)
 
-    new_id = generate()
-    now = datetime.now(UTC)
-
-    summary_messages: list[ModelMessage] = [
-        ModelResponse(parts=[TextPart(content=summary)]),
-    ]
-
     original_title = conversation.title or "Untitled"
-    new_conversation = ConversationData(
-        id=new_id,
+    summary_message = ModelResponse(parts=[TextPart(content=summary)])
+    new_id = await create_compacted_conversation(
+        user_id,
+        original_conversation_id=conversation_id,
+        summary_message=summary_message,
         title=f"{original_title} (continued)",
-        created_at=now,
-        updated_at=now,
-        messages=summary_messages,
-        compacted_from=conversation_id,
     )
-
-    path = Casebase.for_user(user_id).conversation_path(settings.data_dir, new_id)
-    path.write_bytes(new_conversation.model_dump_json(indent=2).encode())
 
     logger.info(
         "Compacted conversation %s -> %s for user %s",

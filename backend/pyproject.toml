@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.13,<4"
 authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
 dependencies = [
+  "aiosqlite>=0.21,<1",
+  "alembic>=1.13,<2",
   "argon2-cffi>=25,<26",
   "cbrkit>=1.3,<2",
   "chonkie>=1,<2",
@@ -23,6 +25,7 @@ dependencies = [
   "pydantic-ai-slim[ui,openai,mcp]>=1,<2",
   "pydantic-settings>=2,<3",
   "sentence_transformers>=5,<6",
+  "sqlalchemy[asyncio]>=2,<3",
   "typer>=0.21,<1",
   "uvicorn[standard]>=0.40,<1",
   "zvec>=0.3,<1",
@@ -59,6 +62,14 @@ build-backend = "uv_build"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = ["slow: marks tests as slow (deselect with -m 'not slow')"]
+
+[tool.basedpyright]
+# SQLAlchemy 2.0 ``Mapped[T] = mapped_column(...)`` declarations are
+# initialized by the ORM metaclass at runtime, but basedpyright cannot see
+# through that and flags every column as uninitialized.  Disable globally
+# because every legitimate uninitialized-attribute case in this repo also
+# happens to be ORM-shaped.
+reportUninitializedInstanceVariable = false
 
 [tool.uv.exclude-newer-package]
 cbrkit = false

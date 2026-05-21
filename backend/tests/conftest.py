@@ -36,6 +36,36 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture()
+def db_initialized(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    """Rebuild the async engine against the temporary data dir and create tables.
+
+    The module-level engine is bound at import time, so tests that touch
+    SQL need to swap it for one pointed at the tmp_path SQLite file.
+    """
+    import asyncio
+    import importlib
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from hivegent.db.engine import _build_engine
+    from hivegent.db.models import Base
+
+    engine_mod = importlib.import_module("hivegent.db.engine")
+    new_engine = _build_engine()
+    new_sessionmaker = async_sessionmaker(new_engine, expire_on_commit=False)
+    monkeypatch.setattr(engine_mod, "engine", new_engine)
+    monkeypatch.setattr(engine_mod, "Session", new_sessionmaker)
+
+    async def _create_all() -> None:
+        async with new_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(_create_all())
+    yield
+    asyncio.run(new_engine.dispose())
+
+
+@pytest.fixture()
 def user_store(data_dir: Path) -> Casebase:
     """Return a user casebase rooted in the temporary data directory."""
     return Casebase(kind="user", id="testuser")

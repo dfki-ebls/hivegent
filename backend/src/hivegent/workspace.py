@@ -1,15 +1,15 @@
 """Single mutation gateway for casebase workspaces.
 
-Every operation that modifies the workspace, metadata, or search index for
-a :class:`~hivegent.store.Casebase` goes through this module.  Each public
-function acquires the per-store async lock so concurrent mutations on the
-same casebase are serialised, then performs workspace, metadata, and
-LanceDB writes in one step — :func:`hivegent.chunks.chunk_and_index_document`
-and :func:`hivegent.chunks.delete_metadata` keep the search index
-aligned with the metadata files inline.
+Every operation that modifies the workspace, SQL documents, or LanceDB
+index for a :class:`~hivegent.store.Casebase` goes through this module.
+Each public function acquires the per-store async lock so concurrent
+mutations on the same casebase are serialised, then performs the
+workspace, SQL, and LanceDB writes in one step — see
+:func:`hivegent.chunks.chunk_and_index_document` and
+:func:`hivegent.chunks.delete_document`.
 
-Routes, agents, and MCP tools never touch the workspace, metadata, or
-LanceDB directories directly — they call into this module instead.
+Routes, agents, and MCP tools never touch the workspace, the database,
+or LanceDB directly — they call into this module instead.
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ import threading
 import zipfile
 import zlib
 from collections.abc import AsyncGenerator, Collection
-from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
@@ -38,7 +37,10 @@ from .chunkers.base import (
     EntryMetadata,
     EntryOrigin,
 )
-from .chunks import chunk_and_index_document, delete_metadata, get_metadata
+from .chunks import (
+    chunk_and_index_document,
+    delete_document as _delete_chunked_document,
+)
 from .config import sanitize_document_path, settings
 from .converters import (
     ConversionPipeline,
@@ -49,19 +51,19 @@ from .converters.alt_text import describe_image
 from .converters.base import DOCUMENT_EXTENSION, is_image_suffix, is_markdown_suffix
 from .converters.images import guess_image_media_type, sanitize_image_bytes
 from .converters.wikilinks import preprocess_markdown
+from .db import documents as db_documents
 from .entries import (
     assets_dir_for_stem,
     cleanup_empty_parents,
     description_path_for_stem,
     entry_exists,
-    metadata_path_for_reference,
     resolve_entry_paths,
     stem_path_from_reference,
 )
 from .retrieval import (
     index_document,
-    invalidate_store,
     unindex_paths,
+    unindex_store,
     unindex_subtree,
 )
 from .store import Casebase
@@ -78,7 +80,6 @@ from .types import (
 )
 
 __all__ = [
-    "PathReplacement",
     "create_directory",
     "delete_all",
     "delete_directory",
@@ -90,7 +91,6 @@ __all__ = [
     "rechunk",
     "reconvert",
     "replace_original",
-    "store_lock",
     "update_asset_description",
     "upload",
 ]
@@ -107,12 +107,8 @@ _locks: dict[str, asyncio.Lock] = {}
 _locks_guard = threading.Lock()
 
 
-def store_lock(store: Casebase) -> asyncio.Lock:
-    """Return the asyncio lock guarding mutations on *store*.
-
-    Public so the consistency tick can serialise its incremental
-    reindex against in-flight workspace mutations.
-    """
+def _store_lock(store: Casebase) -> asyncio.Lock:
+    """Return the asyncio lock guarding mutations on *store*."""
     key = store.store_key
     with _locks_guard:
         lock = _locks.get(key)
@@ -125,8 +121,9 @@ def store_lock(store: Casebase) -> asyncio.Lock:
 async def _safe_unindex_subtree(store: Casebase, prefix: str) -> None:
     """Drop index rows under *prefix*, logging (not raising) on failure.
 
-    File-system mutations have already happened by the time we get here;
-    the next consistency sync will reconcile any leftover rows.
+    File-system + SQL mutations have already happened by the time we
+    get here.  Stale LanceDB rows are harmless — the search-tool result
+    mapper filters out chunks whose SQL row is gone.
     """
     try:
         await unindex_subtree(store, prefix)
@@ -238,18 +235,18 @@ def _build_binary_stub(filepath: str, size_bytes: int) -> str:
 
 
 async def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
-    """Delete a logical entry's child-assets subtree and its index rows."""
+    """Delete a logical entry's child-assets subtree from workspace + index.
+
+    Child documents are cascade-deleted in SQL when their parent is
+    removed; this only handles on-disk asset files plus their LanceDB
+    rows.
+    """
     workspace_dir = store.workspace_dir(settings.data_dir)
-    metadata_dir = store.metadata_dir(settings.data_dir)
     assets_dir = assets_dir_for_stem(stem_path)
     workspace_assets = workspace_dir / assets_dir
     if workspace_assets.exists():
         shutil.rmtree(workspace_assets)
         cleanup_empty_parents(workspace_assets, workspace_dir)
-    metadata_assets = metadata_dir / assets_dir
-    if metadata_assets.exists():
-        shutil.rmtree(metadata_assets)
-        cleanup_empty_parents(metadata_assets, metadata_dir)
     await _safe_unindex_subtree(store, assets_dir)
 
 
@@ -527,8 +524,7 @@ async def _upload_locked(
 async def _delete_single_locked(store: Casebase, safe: str) -> None:
     """Remove a logical entry's files, metadata, and index rows."""
     workspace = store.workspace_dir(settings.data_dir)
-    metadata_dir = store.metadata_dir(settings.data_dir)
-    metadata = get_metadata(store, safe)
+    metadata = await db_documents.get_document(store, safe)
     if not metadata:
         description_path = workspace / safe
         if not description_path.exists():
@@ -560,13 +556,9 @@ async def _delete_single_locked(store: Casebase, safe: str) -> None:
         if assets_path.exists():
             shutil.rmtree(assets_path)
             cleanup_empty_parents(assets_path, workspace)
-        metadata_assets = metadata_dir / assets_rel
-        if metadata_assets.exists():
-            shutil.rmtree(metadata_assets)
-            cleanup_empty_parents(metadata_assets, metadata_dir)
         await _safe_unindex_subtree(store, assets_rel)
 
-    await delete_metadata(store, safe)
+    await _delete_chunked_document(store, safe)
 
 
 async def _ensure_upload_slot_locked(
@@ -574,8 +566,7 @@ async def _ensure_upload_slot_locked(
 ) -> None:
     """Free up an upload slot for *reference*, raising 409 if occupied."""
     workspace_dir = store.workspace_dir(settings.data_dir)
-    metadata_dir = store.metadata_dir(settings.data_dir)
-    if not entry_exists(workspace_dir, metadata_dir, reference):
+    if not entry_exists(workspace_dir, reference):
         return
     if not overwrite:
         raise HTTPException(status_code=409, detail="Document already exists")
@@ -589,103 +580,29 @@ async def _ensure_upload_slot_locked(
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True, frozen=True)
-class PathReplacement:
-    """Prefix replacement applied to metadata path fields during moves."""
-
-    old: str
-    new: str
-
-
-def _replace_path_value(
-    value: str | None, replacements: list[PathReplacement]
-) -> str | None:
-    """Apply each replacement to a path-typed metadata field."""
-    if value is None:
-        return None
-    updated = value
-    for replacement in replacements:
-        if updated == replacement.old or updated.startswith(f"{replacement.old}/"):
-            updated = replacement.new + updated[len(replacement.old) :]
-    return updated
-
-
-def _rewrite_metadata_paths(
-    meta_path: Path, replacements: list[PathReplacement]
+async def _reindex_after_move(
+    store: Casebase, moves: list[tuple[str, str]]
 ) -> None:
-    """Rewrite path fields inside a metadata JSON file in place."""
-    try:
-        metadata = DocumentMetadata.model_validate_json(
-            meta_path.read_text(encoding="utf-8")
-        )
-    except Exception:
-        return
-    updated = metadata.model_copy(
-        update={
-            "stem_path": _replace_path_value(metadata.stem_path, replacements)
-            or metadata.stem_path,
-            "description_path": _replace_path_value(
-                metadata.description_path, replacements
-            )
-            or metadata.description_path,
-            "original_path": _replace_path_value(metadata.original_path, replacements),
-            "assets_dir": _replace_path_value(metadata.assets_dir, replacements),
-            "files": [
-                replaced
-                for f in metadata.files
-                if (replaced := _replace_path_value(f, replacements)) is not None
-            ],
-        }
-    )
-    meta_path.write_text(
-        updated.model_dump_json(indent=2, exclude_none=True),
-        encoding="utf-8",
-    )
+    """Push every renamed document into LanceDB under its new key.
 
-
-def _rewrite_metadata_tree(
-    metadata_root: Path, replacements: list[PathReplacement]
-) -> None:
-    """Rewrite path fields in every metadata JSON beneath a subtree."""
-    if metadata_root.is_file():
-        _rewrite_metadata_paths(metadata_root, replacements)
-        return
-    for meta_file in metadata_root.rglob("*.json"):
-        _rewrite_metadata_paths(meta_file, replacements)
-
-
-async def _reindex_metadata_subtree(store: Casebase, prefix: str) -> None:
-    """Reindex every metadata JSON beneath ``metadata/<prefix>`` (or at it).
-
-    Used after rename operations: the JSONs already contain their new
-    ``description_path`` so we just feed each through
-    :func:`hivegent.retrieval.index_document`.
+    *moves* is the ``(old_stem, new_stem)`` list returned by
+    :func:`db.documents.move_subtree`.  Old LanceDB rows were unindexed
+    before the SQL rename; here we re-upsert the chunks at their new
+    key.  A failure on one document is logged and the rest continue.
     """
-    metadata_root = store.metadata_path(settings.data_dir)
-    candidates = (
-        metadata_root / f"{prefix}.json",
-        metadata_root / prefix,
-    )
-    for candidate in candidates:
-        if not candidate.exists():
-            continue
-        meta_files = (
-            [candidate] if candidate.is_file() else list(candidate.rglob("*.json"))
-        )
-        for meta_file in meta_files:
-            try:
-                doc = DocumentMetadata.model_validate_json(
-                    meta_file.read_text(encoding="utf-8")
-                )
-                stem = str(
-                    meta_file.relative_to(metadata_root).as_posix()
-                ).removesuffix(".json")
-                description_path = doc.description_path or description_path_for_stem(
-                    stem
-                )
-                await index_document(store, description_path, doc)
-            except Exception:
-                logger.warning("Failed to reindex %s", meta_file, exc_info=True)
+    for _, new_stem in moves:
+        new_description_path = description_path_for_stem(new_stem)
+        try:
+            doc = await db_documents.get_document(store, new_description_path)
+            if doc is None:
+                continue
+            await index_document(store, new_description_path, doc)
+        except Exception:
+            logger.warning(
+                "Failed to reindex %s after move",
+                new_description_path,
+                exc_info=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -710,7 +627,7 @@ async def upload(
     """
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
-    async with store_lock(store):
+    async with _store_lock(store):
         await _ensure_upload_slot_locked(store, filepath, overwrite=overwrite)
         return await _upload_locked(store, filepath, content, spec, llm, origin=origin)
 
@@ -730,8 +647,8 @@ async def replace_original(
     """
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
-    async with store_lock(store):
-        metadata = get_metadata(store, safe)
+    async with _store_lock(store):
+        metadata = await db_documents.get_document(store, safe)
         workspace_dir = store.workspace_dir(settings.data_dir)
         existing_original_rel = (
             metadata.original_path
@@ -780,8 +697,8 @@ async def reconvert(
     """Re-run conversion and chunking for an entry's existing original."""
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
-    async with store_lock(store):
-        metadata = get_metadata(store, safe)
+    async with _store_lock(store):
+        metadata = await db_documents.get_document(store, safe)
         if not metadata or not metadata.original_path:
             raise HTTPException(
                 status_code=404,
@@ -813,7 +730,7 @@ async def rechunk(
 ) -> DocumentMetadata:
     """Re-chunk an existing markdown document."""
     spec = spec or PipelineSpec()
-    async with store_lock(store):
+    async with _store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
         file_path = workspace_dir / safe
         if not file_path.exists() or not file_path.is_file():
@@ -824,23 +741,22 @@ async def rechunk(
 
 async def delete_document(store: Casebase, safe: str) -> None:
     """Delete a logical entry and all of its files."""
-    async with store_lock(store):
+    async with _store_lock(store):
         await _delete_single_locked(store, safe)
 
 
 async def move_document(store: Casebase, src: str, dst: str) -> MoveDocumentResponse:
     """Move a logical entry, its original, and its child-assets subtree."""
-    async with store_lock(store):
+    async with _store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
-        metadata_dir = store.metadata_dir(settings.data_dir)
 
-        metadata = get_metadata(store, src)
+        metadata = await db_documents.get_document(store, src)
         if not metadata:
             raise HTTPException(status_code=404, detail="Document not found")
 
         src_stem = metadata.stem_path or stem_path_from_reference(src)
         dst_stem = stem_path_from_reference(dst)
-        if src_stem != dst_stem and entry_exists(workspace_dir, metadata_dir, dst):
+        if src_stem != dst_stem and entry_exists(workspace_dir, dst):
             raise HTTPException(status_code=409, detail="Destination already exists")
 
         src_description = metadata.description_path or description_path_for_stem(
@@ -856,7 +772,6 @@ async def move_document(store: Casebase, src: str, dst: str) -> MoveDocumentResp
         src_description_path.rename(dst_description_path)
         cleanup_empty_parents(src_description_path, workspace_dir)
 
-        dst_original: str | None = None
         if metadata.original_path:
             src_original_path = workspace_dir / metadata.original_path
             if src_original_path.exists():
@@ -866,8 +781,8 @@ async def move_document(store: Casebase, src: str, dst: str) -> MoveDocumentResp
                 src_original_path.rename(dst_original_path)
                 cleanup_empty_parents(src_original_path, workspace_dir)
 
-        dst_assets_dir: str | None = None
         src_assets_dir = metadata.assets_dir
+        dst_assets_dir: str | None = None
         if src_assets_dir:
             src_assets_path = workspace_dir / src_assets_dir
             if src_assets_path.exists():
@@ -884,41 +799,11 @@ async def move_document(store: Casebase, src: str, dst: str) -> MoveDocumentResp
                     body = body.replace(f"{src_assets_name}/", f"{dst_assets_name}/")
                     dst_description_path.write_text(body, encoding="utf-8")
 
-        src_meta_path = metadata_path_for_reference(store, src_stem)
-        dst_meta_path = metadata_path_for_reference(store, dst_stem)
-        if src_meta_path.exists():
-            dst_meta_path.parent.mkdir(parents=True, exist_ok=True)
-            src_meta_path.rename(dst_meta_path)
-            cleanup_empty_parents(src_meta_path, metadata_dir)
-
-        src_meta_assets = metadata_dir / assets_dir_for_stem(src_stem)
-        dst_meta_assets = metadata_dir / assets_dir_for_stem(dst_stem)
-        if src_meta_assets.exists():
-            dst_meta_assets.parent.mkdir(parents=True, exist_ok=True)
-            src_meta_assets.rename(dst_meta_assets)
-            cleanup_empty_parents(src_meta_assets, metadata_dir)
-
-        replacements = [
-            PathReplacement(old=src_stem, new=dst_stem),
-            PathReplacement(old=src_description, new=dst_description),
-        ]
-        if metadata.original_path and dst_original:
-            replacements.append(
-                PathReplacement(old=metadata.original_path, new=dst_original)
-            )
-        if src_assets_dir and dst_assets_dir:
-            replacements.append(PathReplacement(old=src_assets_dir, new=dst_assets_dir))
-        if dst_meta_path.exists():
-            _rewrite_metadata_paths(dst_meta_path, replacements)
-        if dst_meta_assets.exists():
-            _rewrite_metadata_tree(dst_meta_assets, replacements)
-
-        # Reindex dst before unindexing src: a partial failure leaves
-        # duplicate hits, never missing rows under dst.
-        await _reindex_metadata_subtree(store, dst_stem)
         await _safe_unindex_paths(store, [src_description])
         if src_assets_dir:
             await _safe_unindex_subtree(store, src_assets_dir)
+        moves = await db_documents.move_subtree(store, src_stem, dst_stem)
+        await _reindex_after_move(store, moves)
 
         return MoveDocumentResponse(
             source=src,
@@ -957,7 +842,7 @@ async def update_asset_description(
     Persists chunk metadata for the description so it is searchable
     immediately after the call returns.
     """
-    async with store_lock(store):
+    async with _store_lock(store):
         workspace = store.workspace_dir(settings.data_dir)
         assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
         assets_path = workspace / assets_dir
@@ -989,7 +874,7 @@ async def update_asset_description(
 
 async def create_directory(store: Casebase, path: str) -> None:
     """Create an empty workspace directory."""
-    async with store_lock(store):
+    async with _store_lock(store):
         directory_path = store.workspace_dir(settings.data_dir) / path
         if directory_path.exists():
             raise HTTPException(status_code=409, detail="Directory already exists")
@@ -997,10 +882,9 @@ async def create_directory(store: Casebase, path: str) -> None:
 
 
 async def move_directory(store: Casebase, src: str, dst: str) -> MoveDirectoryResponse:
-    """Move or rename a workspace directory and its metadata subtree."""
-    async with store_lock(store):
+    """Move or rename a workspace directory; document rows follow via SQL."""
+    async with _store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
-        metadata_dir = store.metadata_dir(settings.data_dir)
 
         src_dir = workspace_dir / src
         if not src_dir.exists() or not src_dir.is_dir():
@@ -1014,18 +898,9 @@ async def move_directory(store: Casebase, src: str, dst: str) -> MoveDirectoryRe
         shutil.move(str(src_dir), str(dst_dir))
         cleanup_empty_parents(src_dir, workspace_dir)
 
-        src_meta = metadata_dir / src
-        dst_meta = metadata_dir / dst
-        if src_meta.exists():
-            dst_meta.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(src_meta), str(dst_meta))
-            cleanup_empty_parents(src_meta, metadata_dir)
-            _rewrite_metadata_tree(dst_meta, [PathReplacement(old=src, new=dst)])
-
-        # Reindex at the new paths first, then drop the old keys — see
-        # ``move_document`` for the rationale.
-        await _reindex_metadata_subtree(store, dst)
         await _safe_unindex_subtree(store, src)
+        moves = await db_documents.move_subtree(store, src, dst)
+        await _reindex_after_move(store, moves)
 
         return MoveDirectoryResponse(
             source=src,
@@ -1036,10 +911,9 @@ async def move_directory(store: Casebase, src: str, dst: str) -> MoveDirectoryRe
 
 
 async def delete_directory(store: Casebase, path: str) -> int:
-    """Delete a workspace directory and its metadata subtree."""
-    async with store_lock(store):
+    """Delete a workspace directory; matching SQL documents cascade out."""
+    async with _store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
-        metadata_dir = store.metadata_dir(settings.data_dir)
         directory_path = workspace_dir / path
         if not directory_path.exists() or not directory_path.is_dir():
             raise HTTPException(status_code=404, detail="Directory not found")
@@ -1048,31 +922,29 @@ async def delete_directory(store: Casebase, path: str) -> int:
         )
         shutil.rmtree(directory_path)
         cleanup_empty_parents(directory_path, workspace_dir)
-        metadata_subdir = metadata_dir / path
-        if metadata_subdir.exists():
-            shutil.rmtree(metadata_subdir)
-            cleanup_empty_parents(metadata_subdir, metadata_dir)
+        await db_documents.delete_subtree(store, path)
         await _safe_unindex_subtree(store, path)
         return files_deleted
 
 
 async def delete_all(store: Casebase) -> None:
-    """Wipe a casebase's workspace, metadata, and search index."""
-    async with store_lock(store):
-        await invalidate_store(store)
-        data_dir = settings.data_dir
-        for directory in (
-            store.workspace_path(data_dir),
-            store.metadata_path(data_dir),
-            store.root_path(data_dir) / "lancedb",
-        ):
-            if directory.exists():
-                shutil.rmtree(directory)
+    """Wipe every trace of a casebase.
+
+    Removes its workspace directory on disk, its LanceDB chunks (via
+    ``unindex_store``), and its SQL rows (cascaded from ``users`` /
+    ``groups`` deletion by the caller, or directly from documents here).
+    """
+    async with _store_lock(store):
+        await unindex_store(store)
+        await db_documents.delete_all(store)
+        workspace_path = store.workspace_path(settings.data_dir)
+        if workspace_path.exists():
+            shutil.rmtree(workspace_path)
 
 
 async def on_agent_write(store: Casebase, filename: str) -> None:
     """Re-chunk a document after an agent or MCP write tool modified it."""
-    async with store_lock(store):
+    async with _store_lock(store):
         workspace = store.workspace_dir(settings.data_dir)
         file_path = workspace / filename
         try:
@@ -1156,16 +1028,12 @@ async def process_collection(
     converted_count = 0
     current = 0
 
-    async with store_lock(store):
+    async with _store_lock(store):
         with tempfile.TemporaryDirectory() as tmp_dir:
             extract_root = Path(tmp_dir)
 
             try:
                 with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-                    # ``_validate_zip_entries`` already rejects symlinks,
-                    # absolute / traversal paths, and oversize entries.
-                    # PEP 706's ``filter='data'`` is tarfile-only, so we
-                    # cannot layer it onto zipfile here.
                     _validate_zip_entries(archive)
                     archive.extractall(extract_root)
             except zipfile.BadZipFile as exc:
@@ -1195,7 +1063,6 @@ async def process_collection(
                 )
 
             workspace_dir = store.workspace_dir(settings.data_dir)
-            metadata_dir = store.metadata_dir(settings.data_dir)
             preprocessed_markdown: dict[str, bytes] = {}
             collection_stems: set[str] = set()
             companion_originals: set[str] = set()
@@ -1218,7 +1085,7 @@ async def process_collection(
                     preprocessed_markdown[safe] = normalized_md.content.encode("utf-8")
 
                 stem = stem_path_from_reference(safe)
-                if entry_exists(workspace_dir, metadata_dir, safe):
+                if entry_exists(workspace_dir, safe):
                     failed.append(relative_path)
                     continue
                 if stem in collection_stems:

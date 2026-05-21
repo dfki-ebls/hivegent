@@ -135,9 +135,9 @@ def test_upload_image_creates_original_and_description(
     assert (workspace / "diagram.png").exists()
     assert (workspace / "diagram.md").exists()
 
-    meta = (store.metadata_dir(data_dir) / "diagram.json").read_text(encoding="utf-8")
-    assert '"original_path": "diagram.png"' in meta
-    assert '"entry_kind": "image"' in meta
+    chunks = app_client.get("/api/documents/chunks/diagram.md").json()
+    assert chunks["original_path"] == "diagram.png"
+    assert chunks["entry_kind"] == "image"
 
 
 def test_patch_asset_description_rejects_path_traversal(

@@ -66,7 +66,7 @@ async def get_group_directories(
 ) -> DirectoryTreeResponse:
     """Get the directory tree for a group the user belongs to."""
     safe_id = require_group_member(user, group_id)
-    return build_tree_response(group_store(safe_id))
+    return await build_tree_response(group_store(safe_id))
 
 
 @router.get("/groups/{group_id}/documents")
@@ -76,7 +76,7 @@ async def list_group_documents(
 ) -> DocumentListResponse:
     """List all documents in a group's data directory."""
     safe_id = require_group_member(user, group_id)
-    return list_documents_for_store(group_store(safe_id))
+    return await list_documents_for_store(group_store(safe_id))
 
 
 @router.get("/groups/{group_id}/documents/assets/{filepath:path}")
@@ -115,7 +115,7 @@ async def get_group_document_content(
     """Get content of a group document or asset the user has access to."""
     safe_id = require_group_member(user, group_id)
     safe = safe_path(filepath)
-    return get_document_response(group_store(safe_id), safe)
+    return await get_document_response(group_store(safe_id), safe)
 
 
 @router.put(

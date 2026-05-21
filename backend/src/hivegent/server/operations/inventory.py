@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
-from ...chunks import list_chunked_documents
+from ...db.documents import list_document_paths
 from ...config import settings
 from ...converters.base import DOCUMENT_EXTENSION
 from ...entries import is_assets_dir
@@ -74,10 +74,10 @@ def _logical_entries_for_directory(
     return entries
 
 
-def list_documents_for_store(store: Casebase) -> DocumentListResponse:
+async def list_documents_for_store(store: Casebase) -> DocumentListResponse:
     """Build a logical-entry listing for a single casebase."""
     workspace = store.workspace_dir(settings.data_dir)
-    chunk_counts = list_chunked_documents(store)
+    chunk_counts = await list_document_paths(store)
     documents: list[DocumentInfo] = []
 
     if workspace.exists():
@@ -135,10 +135,10 @@ def _build_directory_tree(
     )
 
 
-def build_tree_response(store: Casebase) -> DirectoryTreeResponse:
+async def build_tree_response(store: Casebase) -> DirectoryTreeResponse:
     """Build a directory tree response for any casebase."""
     workspace_dir = store.workspace_dir(settings.data_dir)
-    chunk_counts = list_chunked_documents(store)
+    chunk_counts = await list_document_paths(store)
 
     root = _build_directory_tree(
         workspace_dir,

@@ -20,7 +20,7 @@ from .grep import GrepLine, GrepMatch, GrepTool
 from .jq import JqTool
 from .mutations import EditDocumentTool, WriteDocumentTool
 from .plan import CreatePlanTool
-from .retrieval import IndexedStorage, LanceDBSearchTool, SearchResult, SearchType
+from .retrieval import LanceDBSearchTool, SearchResult, SearchType
 from .web import WebFetch, WebSearch
 
 __all__ = [
@@ -34,7 +34,6 @@ __all__ = [
     "GrepLine",
     "GrepMatch",
     "GrepTool",
-    "IndexedStorage",
     "JqTool",
     "LanceDBSearchTool",
     "ListDocumentsTool",
