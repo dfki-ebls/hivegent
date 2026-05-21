@@ -21,6 +21,12 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 5000,
   },
+  server: {
+    proxy: {
+      "/api": { target: "http://localhost:8000", changeOrigin: true },
+      "/mcp": { target: "http://localhost:8000", changeOrigin: true, ws: true },
+    },
+  },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),

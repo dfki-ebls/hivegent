@@ -67,7 +67,7 @@ import { featureFlags } from "./feature-flags";
 
 import { getOidc } from "@/oidc";
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
 /**
  * Make an authenticated fetch request.
