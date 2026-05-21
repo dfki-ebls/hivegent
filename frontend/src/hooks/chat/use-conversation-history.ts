@@ -12,22 +12,23 @@ export function useConversationHistory(id: string, setMessages: (messages: UIMes
     let cancelled = false;
     setIsLoadingHistory(true);
     setCompactedFrom(null);
-    void getConversation(id)
-      .then(async (conv) => {
-        if (cancelled || !conv) return;
-        if (conv.compacted_from) {
-          setCompactedFrom(conv.compacted_from);
-        }
+    void (async () => {
+      try {
+        // POST /conversations only reserves an ID — the DB row isn't
+        // written until the first message. Fetch messages first so empty
+        // conversations skip the summary call (which would 404).
         const initialMessages = await getConversationMessages(id);
-        if (!cancelled && initialMessages.length > 0) {
-          setMessagesRef.current(initialMessages);
-        }
-      })
-      .finally(() => {
+        if (cancelled || initialMessages.length === 0) return;
+        setMessagesRef.current(initialMessages);
+        const conv = await getConversation(id);
+        if (cancelled || !conv?.compacted_from) return;
+        setCompactedFrom(conv.compacted_from);
+      } finally {
         if (!cancelled) {
           setIsLoadingHistory(false);
         }
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
