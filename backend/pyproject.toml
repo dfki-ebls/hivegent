@@ -64,6 +64,11 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = ["slow: marks tests as slow (deselect with -m 'not slow')"]
 
+[tool.logfire]
+# `configure_observability` is a no-op unless an OTLP endpoint or
+# `LOGFIRE_TOKEN` is set; suppress the noisy warning otherwise.
+ignore_no_config = true
+
 [tool.basedpyright]
 # SQLAlchemy 2.0 ``Mapped[T] = mapped_column(...)`` declarations are
 # initialized by the ORM metaclass at runtime, but basedpyright cannot see
