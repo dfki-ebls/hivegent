@@ -60,7 +60,9 @@ def _parse_and_check_scheme(url: str) -> str:
 
     scheme = str(parsed.scheme).lower()
     if scheme not in ("http", "https"):
-        raise UnsafeUrlError(f"URL scheme {scheme!r} is not allowed. Use http or https.")
+        raise UnsafeUrlError(
+            f"URL scheme {scheme!r} is not allowed. Use http or https."
+        )
 
     host = str(parsed.host)
     if not host:
@@ -69,7 +71,9 @@ def _parse_and_check_scheme(url: str) -> str:
 
 
 def _resolve_allow_private(allow_private: bool | None) -> bool:
-    return settings.security.allow_private_urls if allow_private is None else allow_private
+    return (
+        settings.security.allow_private_urls if allow_private is None else allow_private
+    )
 
 
 class _SafeAsyncNetworkBackend(httpcore.AsyncNetworkBackend):
@@ -170,7 +174,9 @@ def validate_external_headers(
     illegal = ("\r", "\n", "\x00")
     for name, value in pairs:
         if any(ch in name for ch in illegal) or any(ch in value for ch in illegal):
-            raise UnsafeUrlError(f"Header {name!r} contains illegal control characters.")
+            raise UnsafeUrlError(
+                f"Header {name!r} contains illegal control characters."
+            )
 
 
 def require_safe_url_shape(url: str, label: str) -> None:

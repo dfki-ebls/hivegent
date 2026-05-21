@@ -188,7 +188,9 @@ Return ONLY the title, no quotes or extra text.
         await set_conversation_title(user.id, conversation_id, generated_title)
         return GenerateTitleResponse(title=generated_title)
     except Exception as exc:
-        logger.exception("Failed to generate title for conversation %s", conversation_id)
+        logger.exception(
+            "Failed to generate title for conversation %s", conversation_id
+        )
         raise HTTPException(
             status_code=500,
             detail="Failed to generate title",
@@ -353,9 +355,7 @@ async def create_conversation_chat(
         Must be ``async`` — pydantic-ai runs sync callbacks in a worker
         thread without an event loop, which would break message saving.
         """
-        await append_messages(
-            user.id, config.conversation_id, result.all_messages()
-        )
+        await append_messages(user.id, config.conversation_id, result.all_messages())
 
     thinking: str | bool
 

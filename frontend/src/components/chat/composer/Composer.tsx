@@ -62,9 +62,7 @@ export function Composer({
         <PromptInputTextarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={
-            isStreaming ? "Steer the conversation..." : "Ask about your documents..."
-          }
+          placeholder={isStreaming ? "Steer the conversation..." : "Ask about your documents..."}
         />
       </PromptInputBody>
       <PromptInputFooter>
@@ -78,13 +76,8 @@ export function Composer({
             onTranscriptionChange={onTranscriptionChange}
           />
           <SettingsDialog />
-          <ReasoningEffortSelector
-            value={reasoningEffort}
-            onChange={onReasoningEffortChange}
-          />
-          {featureFlags.planning && (
-            <ModeSelector value={agentMode} onChange={onAgentModeChange} />
-          )}
+          <ReasoningEffortSelector value={reasoningEffort} onChange={onReasoningEffortChange} />
+          {featureFlags.planning && <ModeSelector value={agentMode} onChange={onAgentModeChange} />}
         </PromptInputTools>
         <PromptInputSubmit status={status} onStop={onStop} />
       </PromptInputFooter>

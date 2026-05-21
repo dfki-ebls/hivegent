@@ -17,10 +17,7 @@ export function TextPart({ text, showActions, onRegenerate }: TextPartProps) {
           <MessageAction onClick={onRegenerate} label="Retry">
             <RefreshCcwIcon className="size-3" />
           </MessageAction>
-          <MessageAction
-            onClick={() => void navigator.clipboard.writeText(text)}
-            label="Copy"
-          >
+          <MessageAction onClick={() => void navigator.clipboard.writeText(text)} label="Copy">
             <CopyIcon className="size-3" />
           </MessageAction>
         </MessageActions>

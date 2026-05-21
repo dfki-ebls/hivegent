@@ -91,10 +91,7 @@ def test_toml_config_overrides_defaults(
 
     config = tmp_path / "config.toml"
     config.write_text(
-        'data_dir = "/srv/hivegent"\n'
-        "\n"
-        "[network]\n"
-        "connect_timeout_seconds = 12.5\n",
+        'data_dir = "/srv/hivegent"\n\n[network]\nconnect_timeout_seconds = 12.5\n',
         encoding="utf-8",
     )
     monkeypatch.setenv(CONFIG_FILE_ENV_VAR, str(config))

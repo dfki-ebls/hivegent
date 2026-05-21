@@ -408,8 +408,7 @@ export const useSettingsStore = create<SettingsState>()(
             z.string().safeParse(data.customSystemMessage).data ?? UI_DEFAULTS.customSystemMessage,
           ...(featureFlags.llmSpec
             ? {
-                overrides:
-                  UserOverridesSchema.safeParse(data.overrides).data ?? EMPTY_OVERRIDES,
+                overrides: UserOverridesSchema.safeParse(data.overrides).data ?? EMPTY_OVERRIDES,
               }
             : {}),
           ...(featureFlags.pipelineSpec
@@ -430,8 +429,7 @@ export const useSettingsStore = create<SettingsState>()(
             : {}),
           ...(featureFlags.toolsSpec
             ? {
-                toolsSpec:
-                  ToolsSpecSchema.safeParse(data.toolsSpec).data ?? UI_DEFAULTS.toolsSpec,
+                toolsSpec: ToolsSpecSchema.safeParse(data.toolsSpec).data ?? UI_DEFAULTS.toolsSpec,
               }
             : {}),
         };

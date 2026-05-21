@@ -219,7 +219,8 @@ class _RetrievalState:
         if stored is not None and stored != current:
             logger.warning(
                 "Embedding config changed (was %s, now %s) — wiping LanceDB",
-                stored, current,
+                stored,
+                current,
             )
             self._storage = None
             self._embedding_func = None
@@ -244,9 +245,7 @@ _state = _RetrievalState()
 # ─── Mutators ─────────────────────────────────────────────────────────
 
 
-def _index_document_sync(
-    store: Casebase, filename: str, doc: DocumentMetadata
-) -> None:
+def _index_document_sync(store: Casebase, filename: str, doc: DocumentMetadata) -> None:
     storage = _state.get_storage()
     storage.replace_where(
         where=_where_doc(store, filename),
@@ -257,9 +256,7 @@ def _index_document_sync(
     )
 
 
-async def index_document(
-    store: Casebase, filename: str, doc: DocumentMetadata
-) -> None:
+async def index_document(store: Casebase, filename: str, doc: DocumentMetadata) -> None:
     """Replace the index entries for a single document.
 
     Embeds the new chunks and writes them to LanceDB, removing any rows
@@ -319,8 +316,7 @@ def build_search_tool(
     targeted at exactly the result keys.
     """
     allowed: dict[str, SearchPathFilterFunc] = {
-        s.store_key: filter_for_store(s) if filter_for_store else None
-        for s in stores
+        s.store_key: filter_for_store(s) if filter_for_store else None for s in stores
     }
 
     def key_filter(key: str) -> bool:
@@ -356,7 +352,9 @@ def build_search_tool(
                 if i not in needed_idx:
                     continue
                 chunk_payload[_build_key(store, filename, i)] = (
-                    store, filename, i,
+                    store,
+                    filename,
+                    i,
                     (chunk, image_path),
                 )
 

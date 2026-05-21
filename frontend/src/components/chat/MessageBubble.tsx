@@ -40,8 +40,7 @@ export function MessageBubble({
   const isAssistant = message.role === "assistant";
   const isUser = message.role === "user";
   const showActions = isAssistant && isLastMessage && status === "ready";
-  const canEdit =
-    isUser && (status === "ready" || status === "error") && editingId !== message.id;
+  const canEdit = isUser && (status === "ready" || status === "error") && editingId !== message.id;
   const parts = message.parts ?? [];
 
   return (

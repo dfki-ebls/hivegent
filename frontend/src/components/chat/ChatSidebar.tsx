@@ -86,14 +86,18 @@ export function ChatSidebar({
     handleSendMessage,
   );
 
-  const { compact, isCompacting, error: compactionError, clearError: clearCompactionError } =
-    useAutoCompact({
-      id,
-      chatError: error,
-      messages,
-      isLoadingHistory,
-      onRetry: handleSendMessage,
-    });
+  const {
+    compact,
+    isCompacting,
+    error: compactionError,
+    clearError: clearCompactionError,
+  } = useAutoCompact({
+    id,
+    chatError: error,
+    messages,
+    isLoadingHistory,
+    onRetry: handleSendMessage,
+  });
 
   useToolOutputSync(messages, addChunk, markFullDocument);
   useChatErrorLogger(error, id, messages, buildRequestBody);
@@ -184,12 +188,8 @@ export function ChatSidebar({
           onCancelEdit={clearEditing}
           onSubmitEdit={handleEditMessage}
           onRegenerate={handleRegenerate}
-          onApprove={(approvalId) =>
-            addToolApprovalResponse({ id: approvalId, approved: true })
-          }
-          onDeny={(approvalId) =>
-            addToolApprovalResponse({ id: approvalId, approved: false })
-          }
+          onApprove={(approvalId) => addToolApprovalResponse({ id: approvalId, approved: true })}
+          onDeny={(approvalId) => addToolApprovalResponse({ id: approvalId, approved: false })}
           onExecutePlan={agentMode === "plan" ? handleExecutePlan : undefined}
         />
 

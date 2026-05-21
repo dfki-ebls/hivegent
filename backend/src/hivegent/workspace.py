@@ -600,9 +600,11 @@ async def _rollback_on_failure(
     try:
         yield
     except BaseException:
+
         async def _rollback() -> None:
             for safe in touched:
                 await _safe_delete_locked(store, safe)
+
         await asyncio.shield(_rollback())
         raise
 
@@ -626,9 +628,7 @@ async def _ensure_upload_slot_locked(
 # ---------------------------------------------------------------------------
 
 
-async def _reindex_after_move(
-    store: Casebase, moves: list[tuple[str, str]]
-) -> None:
+async def _reindex_after_move(store: Casebase, moves: list[tuple[str, str]]) -> None:
     """Push every renamed document into LanceDB under its new key.
 
     *moves* is the ``(old_stem, new_stem)`` list returned by
@@ -905,9 +905,7 @@ async def update_asset_description(
         try:
             size_bytes = asset_path.stat().st_size
         except FileNotFoundError as exc:
-            raise HTTPException(
-                status_code=404, detail="Asset file not found"
-            ) from exc
+            raise HTTPException(status_code=404, detail="Asset file not found") from exc
 
         md_path = asset_path.with_suffix(DOCUMENT_EXTENSION)
         md_path.write_text(content, encoding="utf-8")

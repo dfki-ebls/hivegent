@@ -55,7 +55,9 @@ const walkEntry = async (
     const dirEntry = entry as FileSystemDirectoryEntry;
     const children = await readAllEntries(dirEntry.createReader(), signal);
     const currentPath = joinPath(basePath, entry.name);
-    const nested = await Promise.all(children.map((child) => walkEntry(child, currentPath, signal)));
+    const nested = await Promise.all(
+      children.map((child) => walkEntry(child, currentPath, signal)),
+    );
     return nested.flat();
   }
   return [];

@@ -120,9 +120,7 @@ async def validate_token(raw: str) -> UserModel | None:
     token_id = _decode_id(raw)
     async with session() as s:
         token = await s.get(Token, token_id) if token_id is not None else None
-        ok = await asyncio.to_thread(
-            _verify, token.hash if token else _DUMMY_HASH, raw
-        )
+        ok = await asyncio.to_thread(_verify, token.hash if token else _DUMMY_HASH, raw)
         if not ok or token is None:
             return None
         if token.expires_at is not None and datetime.now(UTC) > token.expires_at:
@@ -142,12 +140,16 @@ async def list_tokens(user_id: str) -> list[TokenInfo]:
     """Return all tokens owned by *user_id*, ordered by creation time."""
     async with session() as s:
         rows = (
-            await s.execute(
-                select(Token)
-                .where(Token.user_id == user_id)
-                .order_by(Token.created_at)
+            (
+                await s.execute(
+                    select(Token)
+                    .where(Token.user_id == user_id)
+                    .order_by(Token.created_at)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     return [_to_info(t) for t in rows]
 
 

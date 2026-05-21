@@ -36,7 +36,9 @@ class _SharedHttpClient:
     @asynccontextmanager
     async def lifespan(self) -> AsyncIterator[httpx.AsyncClient]:
         if self._client is not None:
-            raise RuntimeError("shared HTTP client lifespan entered while already active")
+            raise RuntimeError(
+                "shared HTTP client lifespan entered while already active"
+            )
         client = create_safe_async_client(
             timeout=httpx.Timeout(
                 timeout=DEFAULT_HTTP_TIMEOUT,

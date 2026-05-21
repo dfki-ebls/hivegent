@@ -66,7 +66,9 @@ def fetch_oidc_configuration(
         raise ValueError("OIDC issuer not configured")
     config_url = AnyHttpUrl(build_discovery_url(issuer))
     timeout = (
-        settings.auth.jwks_timeout_seconds if timeout_seconds is None else timeout_seconds
+        settings.auth.jwks_timeout_seconds
+        if timeout_seconds is None
+        else timeout_seconds
     )
     return OIDCConfiguration.get_oidc_configuration(
         config_url, strict=False, timeout_seconds=int(timeout)

@@ -14,7 +14,13 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    field_serializer,
+    field_validator,
+)
 from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
     ModelMessage,
@@ -120,7 +126,9 @@ def _extract_title(messages: Sequence[ModelMessage]) -> str | None:
     """Pull a one-line title from the first user prompt, if any."""
     for msg in messages:
         for part in msg.parts:
-            if not isinstance(part, UserPromptPart) or not isinstance(part.content, str):
+            if not isinstance(part, UserPromptPart) or not isinstance(
+                part.content, str
+            ):
                 continue
             text = part.content.strip()
             if not text:
@@ -133,19 +141,25 @@ def _extract_title(messages: Sequence[ModelMessage]) -> str | None:
 # ─── Reads ─────────────────────────────────────────────────────────────
 
 
-async def load_conversation(user_id: str, conversation_id: str) -> ConversationData | None:
+async def load_conversation(
+    user_id: str, conversation_id: str
+) -> ConversationData | None:
     """Return full conversation data, or ``None`` if missing or not owned."""
     async with session() as s:
         conv = await s.get(Conversation, conversation_id)
         if conv is None or conv.user_id != user_id:
             return None
         rows = (
-            await s.execute(
-                select(Message.payload)
-                .where(Message.conversation_id == conversation_id)
-                .order_by(Message.idx)
+            (
+                await s.execute(
+                    select(Message.payload)
+                    .where(Message.conversation_id == conversation_id)
+                    .order_by(Message.idx)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     return ConversationData(
         id=conv.id,
         title=conv.title or "",
@@ -160,16 +174,20 @@ async def load_messages(user_id: str, conversation_id: str) -> list[ModelMessage
     """Return just the message list for a conversation."""
     async with session() as s:
         rows = (
-            await s.execute(
-                select(Message.payload)
-                .join(Conversation, Message.conversation_id == Conversation.id)
-                .where(
-                    Conversation.id == conversation_id,
-                    Conversation.user_id == user_id,
+            (
+                await s.execute(
+                    select(Message.payload)
+                    .join(Conversation, Message.conversation_id == Conversation.id)
+                    .where(
+                        Conversation.id == conversation_id,
+                        Conversation.user_id == user_id,
+                    )
+                    .order_by(Message.idx)
                 )
-                .order_by(Message.idx)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     return _load_messages(rows)
 
 

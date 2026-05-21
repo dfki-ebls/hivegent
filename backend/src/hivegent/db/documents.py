@@ -82,9 +82,7 @@ def _walk_assets(workspace_root: Path, assets_dir: str) -> list[str]:
     )
 
 
-def _entry_from_row(
-    doc: Document, workspace_root: Path | None = None
-) -> EntryMetadata:
+def _entry_from_row(doc: Document, workspace_root: Path | None = None) -> EntryMetadata:
     """Build an :class:`EntryMetadata` from a row, deriving the path columns.
 
     ``description_path``, ``original_path``, ``assets_dir``, and the
@@ -94,9 +92,7 @@ def _entry_from_row(
     provided.
     """
     description_path = description_path_for_stem(doc.stem_path)
-    original_path = (
-        f"{doc.stem_path}.{doc.original_ext}" if doc.original_ext else None
-    )
+    original_path = f"{doc.stem_path}.{doc.original_ext}" if doc.original_ext else None
     assets_dir = assets_dir_for_stem(doc.stem_path) if doc.has_assets else None
 
     files = [description_path]
@@ -175,9 +171,7 @@ async def _find(
 # ─── Reads ─────────────────────────────────────────────────────────────
 
 
-async def get_document(
-    store: Casebase, reference: str
-) -> DocumentMetadata | None:
+async def get_document(store: Casebase, reference: str) -> DocumentMetadata | None:
     """Load a document and its chunks by workspace-relative reference."""
     stem_path = stem_path_from_reference(reference)
     async with session() as s:
@@ -264,9 +258,7 @@ async def upsert_document(
 
     # Reload for the boundary type (fresh session, eager-loaded chunks).
     async with session() as s:
-        row = await s.get(
-            Document, doc_id, options=[selectinload(Document.chunks)]
-        )
+        row = await s.get(Document, doc_id, options=[selectinload(Document.chunks)])
         assert row is not None
         workspace_root = store.workspace_path(settings.data_dir)
         return _document_from_row(row, workspace_root)
@@ -342,11 +334,9 @@ async def move_subtree(
             if old_stem == src_prefix:
                 new_stem = dst_prefix
             else:
-                new_stem = dst_prefix + old_stem[len(src_prefix):]
+                new_stem = dst_prefix + old_stem[len(src_prefix) :]
             await s.execute(
-                update(Document)
-                .where(Document.id == doc_id)
-                .values(stem_path=new_stem)
+                update(Document).where(Document.id == doc_id).values(stem_path=new_stem)
             )
             moves.append((old_stem, new_stem))
     return moves

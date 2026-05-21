@@ -13,13 +13,7 @@ interface ToolFallbackProps {
   onDeny: (id: string) => void;
 }
 
-export function ToolFallback({
-  toolName,
-  part,
-  formatted,
-  onApprove,
-  onDeny,
-}: ToolFallbackProps) {
+export function ToolFallback({ toolName, part, formatted, onApprove, onDeny }: ToolFallbackProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
   const approval = "approval" in part ? (part as ToolUIPart).approval : undefined;
   const input = parseJson<Record<string, unknown>>(part.input);

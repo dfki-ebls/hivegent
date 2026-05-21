@@ -45,9 +45,7 @@ if (!mockExplicit && !issuerUri && !import.meta.env.DEV) {
 }
 
 if (!mockExplicit && !issuerUri && import.meta.env.DEV) {
-  console.warn(
-    "[oidc] VITE_OIDC_ISSUER_URI is not set; falling back to mock mode (dev only).",
-  );
+  console.warn("[oidc] VITE_OIDC_ISSUER_URI is not set; falling back to mock mode (dev only).");
 }
 
 const useMock = import.meta.env.DEV && (mockExplicit || !issuerUri);

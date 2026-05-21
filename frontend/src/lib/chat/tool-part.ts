@@ -52,9 +52,7 @@ export function parseJson<T>(value: unknown): T | undefined {
 }
 
 /** Check whether a message part is a ``data-tool-output`` DataUIPart. */
-export function isToolDataPart(
-  part: unknown,
-): part is { type: "data-tool-output"; data: unknown } {
+export function isToolDataPart(part: unknown): part is { type: "data-tool-output"; data: unknown } {
   return (
     part != null &&
     typeof part === "object" &&
