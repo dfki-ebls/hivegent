@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal, cast, override
 
 import cbrkit
+import logfire
 from pydantic import Field
 
 from .base import AsyncTool, ToolOutput
@@ -108,31 +109,42 @@ class LanceDBSearchTool[R = SearchResult](AsyncTool[list[R]]):
         """Run the raw cbrkit query, returning unfiltered :class:`SearchResult`s."""
         if self.storage is None or not self.storage.has_index():
             return []
-        retriever = cbrkit.retrieval.dropout(
-            cbrkit.retrieval.lancedb(
-                storage=self.storage,
-                search_type=search_type,
-            ),
-            limit=max_results,
-        )
-        try:
-            result = cbrkit.retrieval.apply_query_indexed(query, retriever)
-        except RuntimeError as e:
-            # LanceDB FTS raises an Arrow length-mismatch when a query
-            # tokenizes to nothing (single chars, stopwords).
-            if "lance error" not in str(e).lower():
-                raise
-            logger.warning("LanceDB %s query failed for %r: %s", search_type, query, e)
-            return []
-        step = result.final_step.queries["default"]
-        return [
-            SearchResult(
-                key=cast(str, key),
-                text=step.casebase[key],
-                score=float(step.similarities[key]),
+        with logfire.span(
+            "lancedb.search",
+            search_type=search_type,
+            max_results=max_results,
+            query_length=len(query),
+        ) as span:
+            retriever = cbrkit.retrieval.dropout(
+                cbrkit.retrieval.lancedb(
+                    storage=self.storage,
+                    search_type=search_type,
+                ),
+                limit=max_results,
             )
-            for key in step.ranking
-        ]
+            try:
+                result = cbrkit.retrieval.apply_query_indexed(query, retriever)
+            except RuntimeError as e:
+                # LanceDB FTS raises an Arrow length-mismatch when a query
+                # tokenizes to nothing (single chars, stopwords).
+                if "lance error" not in str(e).lower():
+                    raise
+                logger.warning(
+                    "LanceDB %s query failed for %r: %s", search_type, query, e
+                )
+                span.set_attribute("result_count", 0)
+                return []
+            step = result.final_step.queries["default"]
+            results = [
+                SearchResult(
+                    key=cast(str, key),
+                    text=step.casebase[key],
+                    score=float(step.similarities[key]),
+                )
+                for key in step.ranking
+            ]
+            span.set_attribute("result_count", len(results))
+            return results
 
 
 def _format_results(results: Sequence[Any]) -> str:

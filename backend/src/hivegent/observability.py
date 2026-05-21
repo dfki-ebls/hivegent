@@ -1,19 +1,18 @@
-"""Local file-based observability using Logfire and OpenTelemetry."""
+"""OpenTelemetry tracing via Logfire.
+
+Tracing is opt-in.  When :attr:`LogfireSettings.otlp_endpoint` is set,
+spans are exported via OTLP/HTTP to a self-hosted backend (e.g. Grafana
+Tempo on the same systemd host).  When the ``LOGFIRE_TOKEN`` environment
+variable is set, spans additionally go to Pydantic Logfire SaaS — useful
+for local development.  When neither is configured, instrumentation is
+skipped entirely so there is no runtime overhead.
+"""
 
 import logging
-from collections.abc import Sequence
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+import os
 
 import logfire
 from fastapi import FastAPI
-from opentelemetry.sdk.trace import ReadableSpan
-from opentelemetry.sdk.trace.export import (
-    BatchSpanProcessor,
-    SpanExporter,
-    SpanExportResult,
-)
 
 from .config import settings
 
@@ -21,105 +20,47 @@ __all__ = ["configure_observability"]
 
 logger = logging.getLogger(__name__)
 
-# HTTP server spans for these methods carry no diagnostic value (CORS
-# preflights, browser HEAD probes) and dominate volume in browser-driven
-# traffic.  Dropped at export time so they never touch disk.
-_NOISY_HTTP_METHODS = frozenset({"OPTIONS", "HEAD"})
-
-
-def _is_noisy_span(span: ReadableSpan) -> bool:
-    """Return ``True`` for HTTP server spans whose method is uninteresting."""
-    attrs = span.attributes or {}
-    method = attrs.get("http.method") or attrs.get("http.request.method")
-    return isinstance(method, str) and method in _NOISY_HTTP_METHODS
-
-
-@dataclass(slots=True, frozen=True)
-class FileSpanExporter(SpanExporter):
-    """Exports spans as JSON Lines to daily-rotated files.
-
-    Each day's spans are appended to ``YYYY-MM-DD.jsonl`` inside
-    *traces_dir*.  Noisy HTTP server spans (see :data:`_NOISY_HTTP_METHODS`)
-    are dropped before writing.
-    """
-
-    traces_dir: Path
-
-    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
-        """Write each kept span as a single JSON line to the daily trace file."""
-        keep = [s for s in spans if not _is_noisy_span(s)]
-        if not keep:
-            return SpanExportResult.SUCCESS
-
-        today = datetime.now(UTC).strftime("%Y-%m-%d")
-        path = self.traces_dir / f"{today}.jsonl"
-
-        try:
-            self.traces_dir.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as f:
-                for span in keep:
-                    f.write(span.to_json(indent=None) + "\n")
-        except OSError:
-            logger.exception("Failed to write trace spans to %s", path)
-            return SpanExportResult.FAILURE
-
-        return SpanExportResult.SUCCESS
-
-    def shutdown(self) -> None:
-        """No resources to release."""
-
-
-def _prune_old_traces(traces_dir: Path, retention_days: int) -> None:
-    """Delete ``YYYY-MM-DD.jsonl`` files older than *retention_days* days.
-
-    Non-conforming filenames are left untouched.  ``retention_days <= 0``
-    disables pruning.
-    """
-    if retention_days <= 0 or not traces_dir.is_dir():
-        return
-
-    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).date()
-    for path in traces_dir.glob("????-??-??.jsonl"):
-        try:
-            file_date = datetime.strptime(path.stem, "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        if file_date < cutoff:
-            try:
-                path.unlink()
-            except OSError:
-                logger.exception("Failed to delete old trace file %s", path)
-
 
 def configure_observability(app: FastAPI) -> None:
-    """Set up local file-based tracing via Logfire.
+    """Set up tracing via Logfire when a destination is configured.
 
-    Configures Logfire with ``send_to_logfire=False`` and attaches a
-    :class:`FileSpanExporter` wrapped in :class:`BatchSpanProcessor` so
-    span writes are buffered and flushed off the request thread.  Files
-    older than ``settings.logfire.retention_days`` are pruned at startup.
-    FastAPI, Pydantic AI, and MCP are instrumented automatically.
+    Configures an OTLP/HTTP exporter pointed at
+    :attr:`LogfireSettings.otlp_endpoint` (e.g. ``http://127.0.0.1:4318``)
+    and enables Pydantic Logfire SaaS export when ``LOGFIRE_TOKEN`` is
+    set.  FastAPI, Pydantic AI, and MCP are instrumented automatically.
 
-    Does nothing when ``settings.logfire.enable`` is ``False``.
+    Does nothing when no destination is configured.
 
     Args:
         app: The FastAPI application instance to instrument.
     """
-    if not settings.logfire.enable:
+    endpoint = settings.logfire.otlp_endpoint
+    has_token = bool(os.environ.get("LOGFIRE_TOKEN"))
+
+    if not endpoint and not has_token:
         return
 
-    traces_dir = settings.get_traces_dir()
-    _prune_old_traces(traces_dir, settings.logfire.retention_days)
+    extra_processors = []
+    if endpoint:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-    exporter = FileSpanExporter(traces_dir)
-    processor = BatchSpanProcessor(exporter)
+        exporter = OTLPSpanExporter(endpoint=f"{endpoint.rstrip('/')}/v1/traces")
+        extra_processors.append(BatchSpanProcessor(exporter))
 
     logfire.configure(
-        send_to_logfire=False,
-        additional_span_processors=[processor],
+        service_name=settings.logfire.service_name,
+        send_to_logfire="if-token-present",
+        additional_span_processors=extra_processors,
     )
     logfire.instrument_fastapi(app)
     logfire.instrument_pydantic_ai()
     logfire.instrument_mcp()
 
-    logger.info("Observability configured — traces will be written to %s", traces_dir)
+    logger.info(
+        "Observability configured (otlp=%s, logfire_saas=%s)",
+        endpoint or "off",
+        has_token,
+    )

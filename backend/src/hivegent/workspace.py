@@ -27,6 +27,7 @@ import zlib
 from collections.abc import AsyncGenerator, Collection
 from pathlib import Path, PurePosixPath
 
+import logfire
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -417,7 +418,15 @@ async def _upload_convertible_locked(
         resolved_conversion = resolve_auto_pipeline(basename)
 
     try:
-        result = await converter(original_full_path)
+        with logfire.span(
+            "convert_document",
+            filepath=filepath,
+            converter=converter.name,
+            pipeline=resolved_conversion.value,
+        ) as span:
+            result = await converter(original_full_path)
+            span.set_attribute("markdown_length", len(result.markdown))
+            span.set_attribute("image_count", len(result.images))
     except Exception as exc:
         if conversion_pipeline == ConversionPipeline.AUTO:
             logger.warning("Falling back to stub markdown for %s: %s", filepath, exc)

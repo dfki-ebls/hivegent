@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 import cbrkit
+import logfire
 
 from .chunkers.base import DocumentMetadata, RetrievedChunk
 from .config import settings
@@ -168,7 +169,7 @@ class _RetrievalState:
                 return self._embedding_func
             cfg = settings.embedding
             if cfg.provider == "openai":
-                self._embedding_func = cbrkit.sim.embed.openai(
+                raw_func = cbrkit.sim.embed.openai(
                     model=cfg.model,
                     client=create_openai_client(
                         api_key=cfg.api_key or None,
@@ -176,9 +177,15 @@ class _RetrievalState:
                     ),
                 )
             else:
-                self._embedding_func = cbrkit.sim.embed.sentence_transformers(
-                    model=cfg.model
-                )
+                raw_func = cbrkit.sim.embed.sentence_transformers(model=cfg.model)
+
+            def instrumented(
+                batches: Sequence[str],
+            ) -> Sequence[cbrkit.typing.NumpyArray]:
+                with logfire.span("embed", batch_size=len(batches)):
+                    return raw_func(batches)
+
+            self._embedding_func = instrumented
             return self._embedding_func
 
     def get_storage(self) -> cbrkit.indexable.lancedb[str]:

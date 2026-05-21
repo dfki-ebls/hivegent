@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 
+import logfire
+
 from .chunkers import ChunkingPipeline, ChunkingSpec, get_chunker
 from .chunkers.base import (
     ChunkData,
@@ -103,18 +105,29 @@ async def chunk_and_index_document(
 
     if entry_metadata.generated_by in ("vision", "stub"):
         spec = ChunkingSpec(pipeline=ChunkingPipeline.NONE)
-    chunker = get_chunker(
-        spec.pipeline,
-        content_length=len(content),
-        config=spec.config,
-    )
-    raw_chunks = await chunker(content, mime=entry_metadata.mime)
 
-    doc = await db_documents.upsert_document(
-        store, entry_metadata, pipeline=chunker.name, chunks=raw_chunks
-    )
-    await index_document(store, filename, doc)
-    return doc
+    with logfire.span(
+        "chunk_and_index_document",
+        store_key=store.store_key,
+        filename=filename,
+        content_length=len(content),
+        pipeline=spec.pipeline.value,
+        entry_kind=entry_metadata.entry_kind,
+    ) as span:
+        chunker = get_chunker(
+            spec.pipeline,
+            content_length=len(content),
+            config=spec.config,
+        )
+        raw_chunks = await chunker(content, mime=entry_metadata.mime)
+        span.set_attribute("chunker", chunker.name)
+        span.set_attribute("chunk_count", len(raw_chunks))
+
+        doc = await db_documents.upsert_document(
+            store, entry_metadata, pipeline=chunker.name, chunks=raw_chunks
+        )
+        await index_document(store, filename, doc)
+        return doc
 
 
 async def delete_document(store: Casebase, filepath: str) -> bool:

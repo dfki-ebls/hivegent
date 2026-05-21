@@ -142,18 +142,20 @@ class LlmSettings(BaseModel):
 
 
 class LogfireSettings(BaseModel):
-    """Logfire observability settings.
+    """OpenTelemetry tracing settings.
 
-    Configurable via ``HIVEGENT_LOGFIRE__ENABLE``,
-    ``HIVEGENT_LOGFIRE__TRACES_DIR``, and
-    ``HIVEGENT_LOGFIRE__RETENTION_DAYS``.
+    Tracing is enabled when either ``otlp_endpoint`` is set (sends to a
+    self-hosted OTLP/HTTP backend such as Grafana Tempo) or the
+    ``LOGFIRE_TOKEN`` environment variable is set (sends to Pydantic
+    Logfire SaaS — convenient for local development).  When neither is
+    configured, no exporter is installed and instrumentation is skipped
+    entirely.
+
+    Configurable via ``HIVEGENT_LOGFIRE__*`` environment variables.
     """
 
-    enable: bool = True
-    traces_dir: Path | None = None
-    # Delete daily ``YYYY-MM-DD.jsonl`` files older than this many days at
-    # startup.  Set to 0 to keep files indefinitely.
-    retention_days: int = 7
+    otlp_endpoint: str | None = None
+    service_name: str = "hivegent"
 
 
 class EmbeddingSettings(BaseModel):
@@ -342,15 +344,6 @@ class Settings(BaseSettings):
     db: DatabaseSettings = DatabaseSettings()
 
     data_dir: Path = Path("data")
-
-    def get_traces_dir(self) -> Path:
-        """Get the directory for trace output files.
-
-        Returns:
-            The configured traces directory, or ``data_dir / "traces"`` by
-            default.
-        """
-        return self.logfire.traces_dir or self.data_dir / "traces"
 
 
 settings = Settings()

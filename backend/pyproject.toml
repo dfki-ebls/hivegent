@@ -20,6 +20,7 @@ dependencies = [
   "lancedb>=0.29,<1",
   "logfire>=4,<5",
   "nanoid>=2,<3",
+  "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
   "opentelemetry-instrumentation-fastapi>=0.60b1",
   "pydantic-ai-harness>=0.1,<1",
   "pydantic-ai-slim[ui,openai,mcp]>=1,<2",
