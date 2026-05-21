@@ -2,25 +2,28 @@
 
 A :class:`Casebase` is an immutable identifier — ``(kind, id)`` — for
 one user or group's slice of the system.  Only the workspace files
-live on disk per casebase, under ``<data_dir>/workspace/<kind>/<id>/``.
-Everything else (documents, chunks, memory, conversations, tokens) is
-stored in the global SQL database; LanceDB rows are scoped by
-:attr:`Casebase.store_key` instead of separate directories.
+live on disk per casebase, under ``<data_dir>/workspace/<store_key>/``
+where ``store_key`` is the same ``"user:<id>"`` / ``"group:<id>"`` token
+that scopes SQL ``owner_*`` columns and LanceDB rows — one identifier
+keys filesystem, SQL, and vector store end-to-end.
 """
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self, cast, get_args
 
 from .config import sanitize_group_id, sanitize_user_id
 from .tools.base import SearchPath, SearchPathFilterFunc
 
 __all__ = [
     "Casebase",
+    "CasebaseKind",
     "build_search_paths",
     "lancedb_dir",
 ]
+
+CasebaseKind = Literal["user", "group"]
 
 
 def lancedb_dir(data_dir: Path) -> Path:
@@ -35,22 +38,35 @@ class Casebase:
     """Identifies a casebase namespace (user or group).
 
     Each casebase owns a workspace directory at
-    ``<data_dir>/workspace/<kind>/<id>/`` plus rows in the global SQL
+    ``<data_dir>/workspace/<store_key>/`` and rows in the global SQL
     database scoped by ``owner_user_id`` / ``owner_group_id``.
     """
 
-    kind: Literal["user", "group"]
+    kind: CasebaseKind
     id: str
 
     @classmethod
-    def for_user(cls, user_id: str) -> "Casebase":
+    def for_user(cls, user_id: str) -> Self:
         """Build a user-scoped casebase."""
         return cls(kind="user", id=user_id)
 
     @classmethod
-    def for_group(cls, group_id: str) -> "Casebase":
+    def for_group(cls, group_id: str) -> Self:
         """Build a group-scoped casebase."""
         return cls(kind="group", id=group_id)
+
+    @classmethod
+    def from_store_key(cls, store_key: str) -> Self:
+        """Parse a ``store_key`` back into a :class:`Casebase`.
+
+        Inverse of :attr:`store_key`.  Raises :class:`ValueError` when
+        the input is not a recognised ``user:<id>`` / ``group:<id>``
+        token.
+        """
+        kind, sep, identifier = store_key.partition(":")
+        if not sep or kind not in get_args(CasebaseKind):
+            raise ValueError(f"Invalid store_key: {store_key!r}")
+        return cls(kind=cast(CasebaseKind, kind), id=identifier)
 
     def __post_init__(self) -> None:
         if self.kind == "user":
@@ -60,7 +76,7 @@ class Casebase:
 
     @property
     def store_key(self) -> str:
-        """Stable opaque key for caching and SQL/LanceDB scoping."""
+        """Stable opaque key for the filesystem, SQL, and LanceDB scoping."""
         return f"{self.kind}:{self.id}"
 
     @property
@@ -70,7 +86,7 @@ class Casebase:
 
     def workspace_path(self, data_dir: Path) -> Path:
         """Return the workspace path without creating directories."""
-        return data_dir / "workspace" / self.kind / self.id
+        return data_dir / "workspace" / self.store_key
 
     def workspace_dir(self, data_dir: Path) -> Path:
         """Return the workspace directory, creating it if needed.
@@ -84,12 +100,12 @@ class Casebase:
 
 
 def build_search_paths(
-    store: "Casebase",
-    group_stores: Sequence["Casebase"],
+    store: Casebase,
+    group_stores: Sequence[Casebase],
     data_dir: Path,
     *,
-    dir_fn: Callable[["Casebase", Path], Path] = Casebase.workspace_dir,
-    filter_for_store: Callable[["Casebase"], SearchPathFilterFunc] | None = None,
+    dir_fn: Callable[[Casebase, Path], Path] = Casebase.workspace_dir,
+    filter_for_store: Callable[[Casebase], SearchPathFilterFunc] | None = None,
 ) -> tuple[SearchPath, ...]:
     """Build :class:`SearchPath` entries for a user store and its groups.
 
@@ -103,19 +119,11 @@ def build_search_paths(
             each store.
     """
     get_filter = filter_for_store or (lambda _: None)
-    paths: list[SearchPath] = [
+    return tuple(
         SearchPath(
-            path=dir_fn(store, data_dir),
-            prefix=store.prefix,
-            filter_func=get_filter(store),
-        ),
-    ]
-    for gs in group_stores:
-        paths.append(
-            SearchPath(
-                path=dir_fn(gs, data_dir),
-                prefix=gs.prefix,
-                filter_func=get_filter(gs),
-            )
+            path=dir_fn(s, data_dir),
+            prefix=s.prefix,
+            filter_func=get_filter(s),
         )
-    return tuple(paths)
+        for s in (store, *group_stores)
+    )

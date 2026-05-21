@@ -40,7 +40,7 @@ def get_mcp_user_store(
     access_token: AccessToken | None = CurrentAccessToken(),
 ) -> Casebase:
     """Build the user's casebase from the MCP auth token."""
-    return Casebase(kind="user", id=get_mcp_user_id(access_token))
+    return Casebase.for_user(get_mcp_user_id(access_token))
 
 
 def get_mcp_group_stores(
@@ -64,7 +64,7 @@ def get_mcp_group_stores(
             continue
         seen.add(group_id)
         try:
-            stores.append(Casebase(kind="group", id=group_id))
+            stores.append(Casebase.for_group(group_id))
         except ValueError:
             continue
     return tuple(stores)

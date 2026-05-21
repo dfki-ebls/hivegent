@@ -29,7 +29,7 @@ import threading
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import cbrkit
 
@@ -50,7 +50,6 @@ __all__ = [
 ]
 
 KEY_SEP = "::"
-CASEBASE_SEP = ":"
 LANCEDB_TABLE = "chunks"
 STORE_METADATA_FILE = "metadata.json"
 CASEBASE_COLUMN = "casebase_key"
@@ -63,22 +62,15 @@ logger = logging.getLogger(__name__)
 
 
 def _build_key(store: Casebase, filename: str, chunk_index: int) -> str:
-    return (
-        f"{store.kind}{CASEBASE_SEP}{store.id}"
-        f"{KEY_SEP}{filename}{KEY_SEP}{chunk_index}"
-    )
+    return f"{store.store_key}{KEY_SEP}{filename}{KEY_SEP}{chunk_index}"
 
 
 def _parse_key(key: str) -> tuple[Casebase, str, int]:
     """Reverse of :func:`_build_key`."""
     try:
-        casebase_part, rest = key.split(KEY_SEP, maxsplit=1)
+        store_key, rest = key.split(KEY_SEP, maxsplit=1)
         filename, index_str = rest.rsplit(KEY_SEP, maxsplit=1)
-        kind, identifier = casebase_part.split(CASEBASE_SEP, maxsplit=1)
-        if kind not in ("user", "group"):
-            raise ValueError(f"unknown casebase kind {kind!r}")
-        store = Casebase(kind=cast(Any, kind), id=identifier)
-        return store, filename, int(index_str)
+        return Casebase.from_store_key(store_key), filename, int(index_str)
     except ValueError as exc:
         raise ValueError(f"Invalid chunk key format: {key!r}") from exc
 

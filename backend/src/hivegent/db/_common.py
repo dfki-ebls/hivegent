@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .engine import session
 from .models import Document, Group, User, _nid
 
 __all__ = [
     "affected_rows",
     "ensure_group",
     "ensure_user",
+    "list_group_ids",
     "new_id",
     "stem_subtree_filter",
 ]
@@ -35,6 +37,13 @@ async def ensure_group(s: AsyncSession, group_id: str) -> None:
     """Materialise a :class:`Group` row lazily before a dependent insert."""
     if await s.get(Group, group_id) is None:
         s.add(Group(id=group_id))
+
+
+async def list_group_ids() -> frozenset[str]:
+    """Return the set of every group ID registered in the database."""
+    async with session() as s:
+        result = await s.execute(select(Group.id))
+        return frozenset(result.scalars().all())
 
 
 def stem_subtree_filter(prefix: str):

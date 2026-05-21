@@ -93,12 +93,12 @@ def parse_document_filters(
 
 def user_store(user: User) -> Casebase:
     """Build the personal casebase for a user."""
-    return Casebase(kind="user", id=user.id)
+    return Casebase.for_user(user.id)
 
 
 def group_store(group_id: str) -> Casebase:
     """Build the casebase for a group."""
-    return Casebase(kind="group", id=group_id)
+    return Casebase.for_group(group_id)
 
 
 def group_stores(user: User) -> tuple[Casebase, ...]:

@@ -37,9 +37,6 @@ __all__ = [
     "settings",
 ]
 
-# Reserved top-level directory names in the data directory.
-_RESERVED_NAMES = frozenset({"users", "groups", "traces"})
-
 
 def sanitize_user_id(user_id: str) -> str:
     """Sanitize a user ID to prevent path traversal attacks.

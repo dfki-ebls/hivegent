@@ -24,7 +24,7 @@
 - Uses Pydantic AI to bind models, user-scoped dependencies, and toolsets into one runtime.
 - Processes uploaded files into recursive stem-based workspace entries, chunks searchable markdown companions, stores per-entry metadata, and refreshes retrieval indexes.
 - Uses LanceDB and cbrkit for dense, sparse, and hybrid retrieval.
-- Stores user and group data in separate casebases on disk.
+- Stores each user or group casebase under `data/workspace/<store_key>/`, keyed by the same `user:<id>` / `group:<id>` token used by SQL and LanceDB.
 - Persists conversations and long-term memory separately from the retrieval index.
 - Mounts a FastMCP server at `/mcp` and can also connect to external MCP servers.
 

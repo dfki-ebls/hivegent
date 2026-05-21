@@ -23,8 +23,9 @@ from joserfc.jwt import ClaimsOption, JWTClaimsRegistry
 from pydantic import AnyHttpUrl, ValidationError
 
 from .config import sanitize_user_id, settings
-from .http_client import get_shared_http_client
+from .db._common import list_group_ids
 from .db.tokens import validate_token as _validate_pat
+from .http_client import get_shared_http_client
 from .types import User
 
 __all__ = [
@@ -392,18 +393,12 @@ async def get_current_user(
     """
     # Bypass authentication in development mode
     if not settings.auth.enable:
-        # Give write access to all groups that exist on disk
-        groups_dir = settings.data_dir / "groups"
-        dev_groups = (
-            frozenset(d.name for d in groups_dir.iterdir() if d.is_dir())
-            if groups_dir.exists()
-            else frozenset[str]()
-        )
+        # Give write access to every group registered in the database.
         return User(
             id="localhost",
             email="dev@localhost",
             name="Localhost User",
-            write_groups=dev_groups,
+            write_groups=await list_group_ids(),
         )
 
     if credentials is None:

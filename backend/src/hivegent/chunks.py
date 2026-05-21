@@ -2,19 +2,11 @@
 
 All operations flow through :mod:`hivegent.db.documents` (source of
 truth) and :mod:`hivegent.retrieval` (derived index).
-
-The two agent tools — :class:`ListChunksTool` and :class:`GetChunkTool`
-— live here for now until ``tools/chunks.py`` lands.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Annotated, Any, cast, override
-
-from pydantic import Field
 
 from .chunkers import ChunkingPipeline, ChunkingSpec, get_chunker
 from .chunkers.base import (
@@ -32,115 +24,16 @@ from .entries import (
 )
 from .retrieval import index_document, unindex_paths
 from .store import Casebase
-from .tools.base import AsyncPathTool, ToolOutput, file_allowed, resolve_search_path
-
-_NOT_FOUND_MSG = "(document not found)"
 
 __all__ = [
     "ChunkData",
-    "ChunkIndexArg",
     "ChunkSummary",
     "DocumentMetadata",
-    "GetChunkTool",
-    "ListChunksTool",
     "chunk_and_index_document",
     "delete_document",
 ]
 
 logger = logging.getLogger(__name__)
-
-ChunkIndexArg = Annotated[
-    int,
-    Field(description="Zero-based index of the chunk to retrieve.", ge=0),
-]
-
-
-# ─── Agent tools ───────────────────────────────────────────────────────
-
-
-def _path_to_casebase(workspace_path: Path) -> Casebase | None:
-    """Reverse-map ``data/workspace/<kind>/<id>/`` back to a Casebase."""
-    try:
-        rel = workspace_path.resolve().relative_to(
-            (settings.data_dir / "workspace").resolve()
-        )
-    except ValueError:
-        return None
-    parts = rel.parts
-    if len(parts) < 2 or parts[0] not in ("user", "group"):
-        return None
-    try:
-        return Casebase(kind=cast(Any, parts[0]), id=parts[1])
-    except ValueError:
-        return None
-
-
-@dataclass(slots=True, frozen=True)
-class ListChunksTool(AsyncPathTool[list[ChunkSummary] | None]):
-    """List chunk metadata for a document."""
-
-    @override
-    async def __call__(self, filename: str) -> ToolOutput[list[ChunkSummary] | None]:
-        """List chunk metadata for a document."""
-        resolved = resolve_search_path(self.resolved_paths, filename)
-        if resolved is None:
-            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
-        sp, local = resolved
-        if not file_allowed(sp.filter_func, local):
-            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
-        store = _path_to_casebase(sp.path)
-        if store is None:
-            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
-        doc = await db_documents.get_document(store, local)
-        if doc is None:
-            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
-        result = [
-            ChunkSummary(
-                token_count=c.token_count,
-                start_index=c.start_index,
-                end_index=c.end_index,
-                start_line=c.start_line,
-                end_line=c.end_line,
-            )
-            for c in doc.chunks
-        ]
-        if not result:
-            return ToolOutput(data=result, formatted="(no chunks)")
-        lines = [
-            f"#{i}  lines {c.start_line}-{c.end_line}"
-            f"  chars {c.start_index}-{c.end_index}"
-            f"  ({c.token_count} tokens)"
-            for i, c in enumerate(result)
-        ]
-        return ToolOutput(data=result, formatted="\n".join(lines))
-
-
-@dataclass(slots=True, frozen=True)
-class GetChunkTool(AsyncPathTool[str | None]):
-    """Get the content of a specific chunk."""
-
-    @override
-    async def __call__(
-        self,
-        filename: str,
-        chunk_index: ChunkIndexArg,
-    ) -> ToolOutput[str | None]:
-        """Get the content of a specific chunk."""
-        resolved = resolve_search_path(self.resolved_paths, filename)
-        if resolved is None:
-            return ToolOutput(data=None)
-        sp, local = resolved
-        if not file_allowed(sp.filter_func, local):
-            return ToolOutput(data=None)
-        store = _path_to_casebase(sp.path)
-        if store is None:
-            return ToolOutput(data=None)
-        doc = await db_documents.get_document(store, local)
-        if doc is None:
-            return ToolOutput(data=None)
-        if 0 <= chunk_index < len(doc.chunks):
-            return ToolOutput(data=doc.chunks[chunk_index].text)
-        return ToolOutput(data=None)
 
 
 # ─── Writer / coordinator ─────────────────────────────────────────────
