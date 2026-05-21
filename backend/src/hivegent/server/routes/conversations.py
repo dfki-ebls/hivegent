@@ -1,6 +1,5 @@
 """Routes for conversations and chat orchestration."""
 
-import asyncio
 import logging
 from collections.abc import Sequence
 from typing import Annotated
@@ -348,17 +347,14 @@ async def create_conversation_chat(
     store = user_store(user)
     user_group_stores = group_stores(user)
 
-    def on_complete(result: AgentRunResult[str]) -> None:
+    async def on_complete(result: AgentRunResult[str]) -> None:
         """Persist messages after the agent run completes.
 
-        VercelAIAdapter calls this from within the running event loop, so
-        we schedule the async append on the same loop instead of blocking.
+        Must be ``async`` — pydantic-ai runs sync callbacks in a worker
+        thread without an event loop, which would break message saving.
         """
-        asyncio.create_task(
-            append_messages(
-                user.id, config.conversation_id, result.all_messages()
-            ),
-            name=f"hivegent-save-messages-{config.conversation_id}",
+        await append_messages(
+            user.id, config.conversation_id, result.all_messages()
         )
 
     thinking: str | bool
