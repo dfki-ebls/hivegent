@@ -12,6 +12,7 @@ interface ImportMetaEnv {
   readonly VITE_FEATURE_LLM_SPEC?: string;
   readonly VITE_FEATURE_PIPELINE_SPEC?: string;
   readonly VITE_FEATURE_TOOLS_SPEC?: string;
+  readonly VITE_FEATURE_PLANNING?: string;
 }
 
 interface ImportMeta {

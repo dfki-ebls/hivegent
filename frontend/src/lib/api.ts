@@ -2,6 +2,7 @@ import type { UIMessage } from "@ai-sdk/react";
 import { z } from "zod";
 
 import type {
+  AgentMode,
   BulkOperationCompleteEvent,
   BulkOperationStreamEvent,
   CollectionStreamEvent,
@@ -220,6 +221,19 @@ export function buildAuxLlmConfig(overrides: {
  * a frontend-only feature, so disabling it implicitly removes the data
  * from every outgoing request without touching the backend.
  */
+/**
+ * Build the agent mode value sent to the backend.
+ *
+ * When the {@link featureFlags.planning} flag is disabled, always returns
+ * `"execute"` — plan mode is a frontend-only feature, so disabling it
+ * implicitly prevents the backend from ever appending the plan instructions
+ * without a parallel flag system.
+ */
+export function buildModePayload(mode: AgentMode): AgentMode {
+  if (!featureFlags.planning) return "execute";
+  return mode;
+}
+
 export function buildToolsPayload(spec: ToolsSpec): Record<string, unknown> {
   if (!featureFlags.toolsSpec) {
     return { disabled_tools: [], mcp_servers: [] };

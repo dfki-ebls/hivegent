@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { buildLlmConfig, buildToolsPayload } from "@/lib/api";
+import { buildLlmConfig, buildModePayload, buildToolsPayload } from "@/lib/api";
 import { type AgentMode, type ReasoningEffort } from "@/lib/types";
 import { useSettingsStore } from "@/stores/settings-store";
 
@@ -25,7 +25,7 @@ export function useBuildRequestBody({
       personality,
       system_message: personality === "custom" ? customSystemMessage : undefined,
       reasoning_effort: reasoningEffort,
-      mode: modeOverride ?? agentMode,
+      mode: buildModePayload(modeOverride ?? agentMode),
       llm: buildLlmConfig(overrides),
       included_documents: includedDocuments,
       excluded_documents: excludedDocuments,

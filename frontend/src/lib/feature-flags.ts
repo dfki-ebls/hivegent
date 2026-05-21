@@ -54,12 +54,21 @@ export interface FeatureFlags {
    * custom MCP servers.
    */
   toolsSpec: boolean;
+
+  /**
+   * Allow users to switch the agent into plan mode from the composer.
+   * When disabled, the Mode selector is hidden and outgoing requests
+   * always send `mode: "execute"`, so the backend never appends the plan
+   * instructions and the "Execute the plan" follow-up never appears.
+   */
+  planning: boolean;
 }
 
 const FEATURE_DEFAULTS: FeatureFlags = {
   llmSpec: true,
   pipelineSpec: true,
   toolsSpec: true,
+  planning: true,
 };
 
 /**
@@ -72,6 +81,7 @@ const FEATURE_ENV: Record<keyof FeatureFlags, string | undefined> = {
   llmSpec: import.meta.env.VITE_FEATURE_LLM_SPEC,
   pipelineSpec: import.meta.env.VITE_FEATURE_PIPELINE_SPEC,
   toolsSpec: import.meta.env.VITE_FEATURE_TOOLS_SPEC,
+  planning: import.meta.env.VITE_FEATURE_PLANNING,
 };
 
 function resolveFeatureFlags(): FeatureFlags {

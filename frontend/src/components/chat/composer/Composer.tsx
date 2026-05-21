@@ -14,6 +14,7 @@ import { FileSelectButton } from "@/components/chat/composer/FileSelectButton";
 import { ModeSelector } from "@/components/chat/composer/ModeSelector";
 import { ReasoningEffortSelector } from "@/components/chat/composer/ReasoningEffortSelector";
 import { SettingsDialog } from "@/components/SettingsDialog";
+import { featureFlags } from "@/lib/feature-flags";
 import type { AgentMode, ReasoningEffort } from "@/lib/types";
 
 interface ComposerProps {
@@ -81,7 +82,9 @@ export function Composer({
             value={reasoningEffort}
             onChange={onReasoningEffortChange}
           />
-          <ModeSelector value={agentMode} onChange={onAgentModeChange} />
+          {featureFlags.planning && (
+            <ModeSelector value={agentMode} onChange={onAgentModeChange} />
+          )}
         </PromptInputTools>
         <PromptInputSubmit status={status} onStop={onStop} />
       </PromptInputFooter>
