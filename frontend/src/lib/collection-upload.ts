@@ -18,9 +18,13 @@ const classifyFile = (file: File, classification: DropClassification): void => {
   else classification.looseFiles.push(file);
 };
 
-const readAllEntries = async (reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> => {
+const readAllEntries = async (
+  reader: FileSystemDirectoryReader,
+  signal?: AbortSignal,
+): Promise<FileSystemEntry[]> => {
   const all: FileSystemEntry[] = [];
   while (true) {
+    signal?.throwIfAborted();
     const batch: FileSystemEntry[] = await new Promise((resolve, reject) => {
       reader.readEntries(resolve, reject);
     });
@@ -37,16 +41,21 @@ const readFileFromEntry = (entry: FileSystemFileEntry): Promise<File> =>
 
 const joinPath = (base: string, name: string): string => (base ? `${base}/${name}` : name);
 
-const walkEntry = async (entry: FileSystemEntry, basePath = ""): Promise<CollectedFile[]> => {
+const walkEntry = async (
+  entry: FileSystemEntry,
+  basePath = "",
+  signal?: AbortSignal,
+): Promise<CollectedFile[]> => {
+  signal?.throwIfAborted();
   if (entry.isFile) {
     const file = await readFileFromEntry(entry as FileSystemFileEntry);
     return [{ path: joinPath(basePath, entry.name), file }];
   }
   if (entry.isDirectory) {
     const dirEntry = entry as FileSystemDirectoryEntry;
-    const children = await readAllEntries(dirEntry.createReader());
+    const children = await readAllEntries(dirEntry.createReader(), signal);
     const currentPath = joinPath(basePath, entry.name);
-    const nested = await Promise.all(children.map((child) => walkEntry(child, currentPath)));
+    const nested = await Promise.all(children.map((child) => walkEntry(child, currentPath, signal)));
     return nested.flat();
   }
   return [];
@@ -60,6 +69,7 @@ const finalizeZip = async (zip: JSZip): Promise<File> => {
 export const classifyDropItems = async (
   items: DataTransferItemList,
   fallbackFiles: FileList,
+  signal?: AbortSignal,
 ): Promise<DropClassification> => {
   const classification: DropClassification = {
     looseFiles: [],
@@ -84,25 +94,27 @@ export const classifyDropItems = async (
       fileEntries.push(entry as FileSystemFileEntry);
     }
   }
+  signal?.throwIfAborted();
   const files = await Promise.all(fileEntries.map(readFileFromEntry));
   for (const file of files) classifyFile(file, classification);
 
   return classification;
 };
 
-export const buildCollectionZip = async ({
-  looseFiles,
-  directories,
-  zipFiles,
-}: DropClassification): Promise<File> => {
+export const buildCollectionZip = async (
+  { looseFiles, directories, zipFiles }: DropClassification,
+  signal?: AbortSignal,
+): Promise<File> => {
+  signal?.throwIfAborted();
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
 
   for (const file of looseFiles) zip.file(file.name, file);
 
-  const collectedPerDir = await Promise.all(directories.map((dir) => walkEntry(dir)));
+  const collectedPerDir = await Promise.all(directories.map((dir) => walkEntry(dir, "", signal)));
   for (const { path, file } of collectedPerDir.flat()) zip.file(path, file);
 
+  signal?.throwIfAborted();
   const archives = await Promise.all(zipFiles.map((archive) => JSZip.loadAsync(archive)));
   await Promise.all(
     archives.flatMap((inner) =>

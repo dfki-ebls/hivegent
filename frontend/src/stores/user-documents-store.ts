@@ -19,7 +19,6 @@ import {
   rechunkDocumentStream,
   reconvertDocumentStream,
   uploadCollectionStream,
-  uploadDocument,
   uploadDocumentStream,
 } from "../lib/api";
 import type {
@@ -31,6 +30,9 @@ import type {
   PipelineSpec,
   UploadProgress,
 } from "../lib/types";
+import { isAbortError } from "../lib/utils";
+
+type Signalled<T> = T & { signal?: AbortSignal };
 
 interface UserDocumentsStore {
   documents: DocumentInfo[];
@@ -43,11 +45,11 @@ interface UserDocumentsStore {
   operationStage: OperationStage | null;
   error: string | null;
   refresh: () => Promise<void>;
-  upload: (file: File, options?: UploadDocumentOptions) => Promise<void>;
-  uploadMultiple: (files: File[], options?: UploadDocumentOptions) => Promise<void>;
+  upload: (file: File, options?: Signalled<UploadDocumentOptions>) => Promise<void>;
+  uploadMultiple: (files: File[], options?: Signalled<UploadDocumentOptions>) => Promise<void>;
   uploadCol: (
     file: File,
-    options?: UploadCollectionOptions & { signal?: AbortSignal },
+    options?: Signalled<UploadCollectionOptions>,
   ) => Promise<CollectionUploadResponse>;
   remove: (filename: string) => Promise<void>;
   rechunk: (filename: string, spec?: PipelineSpec) => Promise<void>;
@@ -115,28 +117,27 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => {
 
     refresh: silentRefresh,
 
-    upload: async (file: File, options?: UploadDocumentOptions) => {
+    upload: async (file, options) => {
       set({ isUploading: true, operationStage: null, error: null });
       try {
-        await uploadDocumentStream(file.name, file, {
-          ...options,
-          ...stageOpts,
-        });
+        await uploadDocumentStream(file.name, file, { ...options, ...stageOpts });
         await silentRefresh();
       } catch (err) {
-        set({
-          error: err instanceof Error ? err.message : "Upload failed",
-        });
+        if (!isAbortError(err)) {
+          set({ error: err instanceof Error ? err.message : "Upload failed" });
+        }
       } finally {
         set({ isUploading: false, operationStage: null });
       }
     },
 
-    uploadMultiple: async (files: File[], options?: UploadDocumentOptions) => {
+    uploadMultiple: async (files, options) => {
+      const signal = options?.signal;
       set({ isUploading: true, error: null, uploadProgress: null });
       let failedSnapshot: string[] = [];
       try {
         for (let i = 0; i < files.length; i++) {
+          if (signal?.aborted) break;
           const file = files[i];
           set({
             uploadProgress: {
@@ -147,18 +148,19 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => {
             },
           });
           try {
-            await uploadDocument(file.name, file, options);
-          } catch {
+            await uploadDocumentStream(file.name, file, { ...options, ...stageOpts });
+          } catch (err) {
+            if (isAbortError(err)) break;
             failedSnapshot = [...failedSnapshot, file.name];
           }
         }
         await silentRefresh();
       } finally {
-        set({ isUploading: false, uploadProgress: null });
+        set({ isUploading: false, uploadProgress: null, operationStage: null });
       }
     },
 
-    uploadCol: async (file: File, options?: UploadCollectionOptions & { signal?: AbortSignal }) => {
+    uploadCol: async (file, options) => {
       set({ isUploading: true, error: null, uploadProgress: null });
       try {
         const result = await uploadCollectionStream(file, {
@@ -166,15 +168,14 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => {
           onProgress: (progress) => set({ uploadProgress: progress }),
         });
         await silentRefresh();
-        set({ isUploading: false, uploadProgress: null });
         return result;
       } catch (err) {
-        set({
-          error: err instanceof Error ? err.message : "Collection upload failed",
-          isUploading: false,
-          uploadProgress: null,
-        });
+        if (!isAbortError(err)) {
+          set({ error: err instanceof Error ? err.message : "Collection upload failed" });
+        }
         throw err;
+      } finally {
+        set({ isUploading: false, uploadProgress: null, operationStage: null });
       }
     },
 
@@ -190,7 +191,7 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => {
         reconvertDocumentStream(filename, { ...options, ...stageOpts }),
       ),
 
-    bulkRechunk: async (files: string[], spec?: PipelineSpec) => {
+    bulkRechunk: async (files, spec) => {
       set({ bulkProgress: null, error: null });
       try {
         await bulkRechunkStream(files, spec, {
@@ -198,15 +199,13 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => {
         });
         await silentRefresh();
       } catch (err) {
-        set({
-          error: err instanceof Error ? err.message : "Bulk rechunk failed",
-        });
+        set({ error: err instanceof Error ? err.message : "Bulk rechunk failed" });
       } finally {
         set({ bulkProgress: null });
       }
     },
 
-    bulkReconvert: async (files: string[], spec?: PipelineSpec, llm?: LlmConfig) => {
+    bulkReconvert: async (files, spec, llm) => {
       set({ bulkProgress: null, error: null });
       try {
         await bulkReconvertStream(files, spec, llm, {
@@ -214,15 +213,13 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => {
         });
         await silentRefresh();
       } catch (err) {
-        set({
-          error: err instanceof Error ? err.message : "Bulk reconvert failed",
-        });
+        set({ error: err instanceof Error ? err.message : "Bulk reconvert failed" });
       } finally {
         set({ bulkProgress: null });
       }
     },
 
-    bulkDelete: async (files: string[]) => {
+    bulkDelete: async (files) => {
       set({ bulkProgress: null, error: null });
       try {
         await bulkDeleteStream(files, {
@@ -230,9 +227,7 @@ export const useUserDocumentsStore = create<UserDocumentsStore>((set, get) => {
         });
         await silentRefresh();
       } catch (err) {
-        set({
-          error: err instanceof Error ? err.message : "Bulk delete failed",
-        });
+        set({ error: err instanceof Error ? err.message : "Bulk delete failed" });
       } finally {
         set({ bulkProgress: null });
       }

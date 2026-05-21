@@ -48,3 +48,6 @@ export function formatWebUrl(url: string): string {
     return url;
   }
 }
+
+export const isAbortError = (err: unknown): boolean =>
+  err instanceof DOMException && err.name === "AbortError";

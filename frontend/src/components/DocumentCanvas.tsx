@@ -51,7 +51,13 @@ import {
   buildCollectionZipFromDirectoryInput,
   classifyDropItems,
 } from "../lib/collection-upload";
-import { collectFilePaths, formatFileSize, formatWebUrl, isWebUrl } from "../lib/utils";
+import {
+  collectFilePaths,
+  formatFileSize,
+  formatWebUrl,
+  isAbortError,
+  isWebUrl,
+} from "../lib/utils";
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
 import { useUserDocumentsStore } from "../stores/user-documents-store";
 import { canWriteGroup, getAllGroups, useSettingsStore } from "../stores/settings-store";
@@ -334,6 +340,7 @@ function ErrorBanner({ message, onDismiss }: ErrorBannerProps) {
 interface UploadAreaProps {
   isDragging: boolean;
   isUploading: boolean;
+  isPreparing: boolean;
   uploadProgress: UploadProgress | null;
   operationStage: OperationStage | null;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
@@ -350,11 +357,13 @@ interface UploadAreaProps {
   onSelectZip: () => void;
   onNewDocument: () => void;
   onNewFolder: () => void;
+  onCancel: () => void;
 }
 
 function UploadArea({
   isDragging,
   isUploading,
+  isPreparing,
   uploadProgress,
   operationStage,
   fileInputRef,
@@ -371,7 +380,14 @@ function UploadArea({
   onSelectZip,
   onNewDocument,
   onNewFolder,
+  onCancel,
 }: UploadAreaProps) {
+  const busy = isPreparing || isUploading;
+  const busyLabel = isPreparing
+    ? "Preparing files..."
+    : operationStage
+      ? `${operationStage.stage}...`
+      : "Uploading...";
   return (
     <div className="border-b p-4">
       <div
@@ -384,36 +400,39 @@ function UploadArea({
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
-        {uploadProgress ? (
+        {busy ? (
           <div className="flex w-full flex-col items-center gap-2">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-sm font-medium">Uploading...</p>
-            <p className="max-w-full truncate text-xs text-muted-foreground">
-              {uploadProgress.currentFile}
-            </p>
-            <div className="flex w-full items-center gap-2">
-              <Progress
-                value={
-                  uploadProgress.total > 0
-                    ? (uploadProgress.current / uploadProgress.total) * 100
-                    : 0
-                }
-                className="flex-1"
-              />
-              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                {uploadProgress.current} / {uploadProgress.total}
-              </span>
-            </div>
-            {uploadProgress.failedFiles.length > 0 && (
-              <p className="text-xs text-destructive">{uploadProgress.failedFiles.length} failed</p>
+            <p className="text-sm font-medium">{busyLabel}</p>
+            {uploadProgress && (
+              <>
+                <p className="max-w-full truncate text-xs text-muted-foreground">
+                  {uploadProgress.currentFile}
+                </p>
+                <div className="flex w-full items-center gap-2">
+                  <Progress
+                    value={
+                      uploadProgress.total > 0
+                        ? (uploadProgress.current / uploadProgress.total) * 100
+                        : 0
+                    }
+                    className="flex-1"
+                  />
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    {uploadProgress.current} / {uploadProgress.total}
+                  </span>
+                </div>
+                {uploadProgress.failedFiles.length > 0 && (
+                  <p className="text-xs text-destructive">
+                    {uploadProgress.failedFiles.length} failed
+                  </p>
+                )}
+              </>
             )}
-          </div>
-        ) : isUploading ? (
-          <div className="flex w-full flex-col items-center gap-2">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-sm font-medium">
-              {operationStage ? `${operationStage.stage}...` : "Uploading..."}
-            </p>
+            <Button variant="outline" size="sm" onClick={onCancel}>
+              <X className="h-4 w-4 mr-1" />
+              Cancel
+            </Button>
           </div>
         ) : (
           <>
@@ -448,15 +467,15 @@ function UploadArea({
           onChange={onZipInputChange}
         />
         <div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={isUploading}>
+          <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={busy}>
             <Paperclip className="h-4 w-4 mr-1" />
             Select Files
           </Button>
-          <Button variant="secondary" size="sm" onClick={onSelectDirectory} disabled={isUploading}>
+          <Button variant="secondary" size="sm" onClick={onSelectDirectory} disabled={busy}>
             <FolderOpen className="h-4 w-4 mr-1" />
             Upload Folder
           </Button>
-          <Button variant="secondary" size="sm" onClick={onSelectZip} disabled={isUploading}>
+          <Button variant="secondary" size="sm" onClick={onSelectZip} disabled={busy}>
             <Archive className="h-4 w-4 mr-1" />
             Upload ZIP
           </Button>
@@ -466,11 +485,11 @@ function UploadArea({
             Or create and edit documents directly in the browser
           </p>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={onNewDocument} disabled={isUploading}>
+            <Button variant="outline" size="sm" onClick={onNewDocument} disabled={busy}>
               <Plus className="h-4 w-4 mr-1" />
               New Document
             </Button>
-            <Button variant="outline" size="sm" onClick={onNewFolder} disabled={isUploading}>
+            <Button variant="outline" size="sm" onClick={onNewFolder} disabled={busy}>
               <FolderPlus className="h-4 w-4 mr-1" />
               New Folder
             </Button>
@@ -843,6 +862,19 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const directoryInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const beginOp = useCallback((): AbortSignal => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    return ctrl.signal;
+  }, []);
+
+  const handleCancel = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
   const [dialogState, setDialogState] = useState<DialogState | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filteredDocuments, setFilteredDocuments] = useState(documents);
@@ -1148,13 +1180,14 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     if (!pendingOverwrite) return;
     const { files, options } = pendingOverwrite;
     setPendingOverwrite(null);
-    const overwriteOptions = { ...options, overwrite: true };
+    const signal = beginOp();
+    const overwriteOptions = { ...options, overwrite: true, signal };
     if (files.length === 1) {
       await upload(files[0], overwriteOptions);
     } else {
       await uploadMultiple(files, overwriteOptions);
     }
-  }, [pendingOverwrite, upload, uploadMultiple]);
+  }, [beginOp, pendingOverwrite, upload, uploadMultiple]);
 
   // --- File upload handlers ---
 
@@ -1196,13 +1229,14 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         return;
       }
 
+      const signal = beginOp();
       if (fileArray.length === 1) {
-        await upload(fileArray[0], uploadOptions);
+        await upload(fileArray[0], { ...uploadOptions, signal });
       } else {
-        await uploadMultiple(fileArray, uploadOptions);
+        await uploadMultiple(fileArray, { ...uploadOptions, signal });
       }
     },
-    [upload, uploadMultiple, uploadOptions, documents],
+    [beginOp, upload, uploadMultiple, uploadOptions, documents],
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -1223,19 +1257,28 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       const { items, files } = e.dataTransfer;
       if (files.length === 0 && items.length === 0) return;
 
-      const classification = await classifyDropItems(items, files);
-      const hasCollection =
-        classification.directories.length > 0 || classification.zipFiles.length > 0;
+      const signal = beginOp();
+      setIsPreparing(true);
+      try {
+        const classification = await classifyDropItems(items, files, signal);
+        const hasCollection =
+          classification.directories.length > 0 || classification.zipFiles.length > 0;
 
-      if (!hasCollection) {
-        void handleFiles(files);
-        return;
+        if (!hasCollection) {
+          void handleFiles(files);
+          return;
+        }
+
+        const collection = await buildCollectionZip(classification, signal);
+        setIsPreparing(false);
+        await uploadCol(collection, { ...uploadOptions, signal });
+      } catch (err) {
+        if (!isAbortError(err)) throw err;
+      } finally {
+        setIsPreparing(false);
       }
-
-      const collection = await buildCollectionZip(classification);
-      await uploadCol(collection, uploadOptions);
     },
-    [handleFiles, uploadCol, uploadOptions],
+    [beginOp, handleFiles, uploadCol, uploadOptions],
   );
 
   const handleFileInputChange = useCallback(
@@ -1253,14 +1296,22 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       const files = e.target.files;
       if (!files || files.length === 0) return;
 
-      const collection = await buildCollectionZipFromDirectoryInput(files);
-      await uploadCol(collection, uploadOptions);
-
-      if (directoryInputRef.current) {
-        directoryInputRef.current.value = "";
+      const signal = beginOp();
+      setIsPreparing(true);
+      try {
+        const collection = await buildCollectionZipFromDirectoryInput(files);
+        setIsPreparing(false);
+        await uploadCol(collection, { ...uploadOptions, signal });
+      } catch (err) {
+        if (!isAbortError(err)) throw err;
+      } finally {
+        setIsPreparing(false);
+        if (directoryInputRef.current) {
+          directoryInputRef.current.value = "";
+        }
       }
     },
-    [uploadCol, uploadOptions],
+    [beginOp, uploadCol, uploadOptions],
   );
 
   const handleZipInputChange = useCallback(
@@ -1271,13 +1322,18 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       const file = files[0];
       if (!file.name.toLowerCase().endsWith(".zip")) return;
 
-      await uploadCol(file, uploadOptions);
-
-      if (zipInputRef.current) {
-        zipInputRef.current.value = "";
+      const signal = beginOp();
+      try {
+        await uploadCol(file, { ...uploadOptions, signal });
+      } catch (err) {
+        if (!isAbortError(err)) throw err;
+      } finally {
+        if (zipInputRef.current) {
+          zipInputRef.current.value = "";
+        }
       }
     },
-    [uploadCol, uploadOptions],
+    [beginOp, uploadCol, uploadOptions],
   );
 
   // --- Directory handlers ---
@@ -1396,6 +1452,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       <UploadArea
         isDragging={isDragging}
         isUploading={isUploading}
+        isPreparing={isPreparing}
         uploadProgress={uploadProgress}
         operationStage={operationStage}
         fileInputRef={fileInputRef}
@@ -1412,6 +1469,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         onSelectZip={() => zipInputRef.current?.click()}
         onNewDocument={handleNew}
         onNewFolder={handleNewFolder}
+        onCancel={handleCancel}
       />
 
       <PipelineSettingsBar

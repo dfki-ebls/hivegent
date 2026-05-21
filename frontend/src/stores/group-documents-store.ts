@@ -10,6 +10,9 @@ import {
   uploadGroupDocument,
 } from "../lib/api";
 import type { CollectionUploadResponse, DirectoryTreeResponse, UploadProgress } from "../lib/types";
+import { isAbortError } from "../lib/utils";
+
+type Signalled<T> = T & { signal?: AbortSignal };
 
 interface GroupDocumentsStore {
   selectedGroupId: string | null;
@@ -21,10 +24,10 @@ interface GroupDocumentsStore {
   selectGroup: (groupId: string | null) => void;
   fetchDirectoryTree: () => Promise<void>;
   upload: (file: File, options?: UploadDocumentOptions) => Promise<void>;
-  uploadMultiple: (files: File[], options?: UploadDocumentOptions) => Promise<void>;
+  uploadMultiple: (files: File[], options?: Signalled<UploadDocumentOptions>) => Promise<void>;
   uploadCol: (
     file: File,
-    options?: UploadCollectionOptions & { signal?: AbortSignal },
+    options?: Signalled<UploadCollectionOptions>,
   ) => Promise<CollectionUploadResponse>;
   remove: (filename: string) => Promise<void>;
   createDir: (path: string) => Promise<void>;
@@ -39,7 +42,7 @@ export const useGroupDocumentsStore = create<GroupDocumentsStore>((set, get) => 
   uploadProgress: null,
   error: null,
 
-  selectGroup: (groupId: string | null) => {
+  selectGroup: (groupId) => {
     set({
       selectedGroupId: groupId,
       directoryTree: null,
@@ -60,7 +63,7 @@ export const useGroupDocumentsStore = create<GroupDocumentsStore>((set, get) => 
     }
   },
 
-  upload: async (file: File, options?: UploadDocumentOptions) => {
+  upload: async (file, options) => {
     const groupId = get().selectedGroupId;
     if (!groupId) return;
     set({ isLoading: true, error: null });
@@ -76,13 +79,15 @@ export const useGroupDocumentsStore = create<GroupDocumentsStore>((set, get) => 
     }
   },
 
-  uploadMultiple: async (files: File[], options?: UploadDocumentOptions) => {
+  uploadMultiple: async (files, options) => {
     const groupId = get().selectedGroupId;
     if (!groupId) return;
+    const signal = options?.signal;
     set({ isLoading: true, error: null, uploadProgress: null });
     let failedSnapshot: string[] = [];
     try {
       for (let i = 0; i < files.length; i++) {
+        if (signal?.aborted) break;
         const file = files[i];
         set({
           uploadProgress: {
@@ -94,7 +99,8 @@ export const useGroupDocumentsStore = create<GroupDocumentsStore>((set, get) => 
         });
         try {
           await uploadGroupDocument(groupId, file.name, file, options);
-        } catch {
+        } catch (err) {
+          if (isAbortError(err)) break;
           failedSnapshot = [...failedSnapshot, file.name];
         }
       }
@@ -104,7 +110,7 @@ export const useGroupDocumentsStore = create<GroupDocumentsStore>((set, get) => 
     }
   },
 
-  uploadCol: async (file: File, options?: UploadCollectionOptions & { signal?: AbortSignal }) => {
+  uploadCol: async (file, options) => {
     const groupId = get().selectedGroupId;
     if (!groupId) throw new Error("No group selected");
     set({ isLoading: true, error: null, uploadProgress: null });
@@ -114,19 +120,18 @@ export const useGroupDocumentsStore = create<GroupDocumentsStore>((set, get) => 
         onProgress: (progress) => set({ uploadProgress: progress }),
       });
       await get().fetchDirectoryTree();
-      set({ isLoading: false, uploadProgress: null });
       return result;
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Collection upload failed",
-        isLoading: false,
-        uploadProgress: null,
-      });
+      if (!isAbortError(err)) {
+        set({ error: err instanceof Error ? err.message : "Collection upload failed" });
+      }
       throw err;
+    } finally {
+      set({ isLoading: false, uploadProgress: null });
     }
   },
 
-  remove: async (filename: string) => {
+  remove: async (filename) => {
     const groupId = get().selectedGroupId;
     if (!groupId) return;
     set({ isLoading: true, error: null });
@@ -142,7 +147,7 @@ export const useGroupDocumentsStore = create<GroupDocumentsStore>((set, get) => 
     }
   },
 
-  createDir: async (path: string) => {
+  createDir: async (path) => {
     const groupId = get().selectedGroupId;
     if (!groupId) return;
     set({ isLoading: true, error: null });
@@ -158,7 +163,7 @@ export const useGroupDocumentsStore = create<GroupDocumentsStore>((set, get) => 
     }
   },
 
-  deleteDir: async (path: string) => {
+  deleteDir: async (path) => {
     const groupId = get().selectedGroupId;
     if (!groupId) return;
     set({ isLoading: true, error: null });

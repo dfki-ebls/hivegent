@@ -24,7 +24,8 @@ import tempfile
 import threading
 import zipfile
 import zlib
-from collections.abc import AsyncGenerator, Collection
+from collections.abc import AsyncGenerator, AsyncIterator, Collection, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
 
 import logfire
@@ -570,6 +571,42 @@ async def _delete_single_locked(store: Casebase, safe: str) -> None:
     await _delete_chunked_document(store, safe)
 
 
+async def _safe_delete_locked(store: Casebase, safe: str) -> None:
+    """Best-effort rollback delete.  Swallows the 404 raised when nothing was written."""
+    try:
+        await _delete_single_locked(store, safe)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            return
+        logger.warning(
+            "Rollback delete failed for %s/%s: %s", store.store_key, safe, exc.detail
+        )
+    except Exception:
+        logger.warning(
+            "Rollback delete failed for %s/%s", store.store_key, safe, exc_info=True
+        )
+
+
+@asynccontextmanager
+async def _rollback_on_failure(
+    store: Casebase, touched: Sequence[str]
+) -> AsyncIterator[None]:
+    """Run a block; on any exception, shield-delete every entry in *touched* and re-raise.
+
+    Caller must hold the casebase lock.  *touched* may be a live list that
+    the body appends to — it is read on exit, so accumulating call sites
+    work as expected.
+    """
+    try:
+        yield
+    except BaseException:
+        async def _rollback() -> None:
+            for safe in touched:
+                await _safe_delete_locked(store, safe)
+        await asyncio.shield(_rollback())
+        raise
+
+
 async def _ensure_upload_slot_locked(
     store: Casebase, reference: str, *, overwrite: bool
 ) -> None:
@@ -631,14 +668,17 @@ async def upload(
 ) -> UploadCompleteEvent:
     """Upload a document to *store*, sanitising and chunking as needed.
 
-    The casebase lock is held for the entire operation, including
-    extracted-asset child uploads.
+    The casebase lock is held for the entire operation.  On cancellation
+    or failure, partial artifacts are rolled back via :func:`_safe_delete_locked`.
     """
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
     async with _store_lock(store):
         await _ensure_upload_slot_locked(store, filepath, overwrite=overwrite)
-        return await _upload_locked(store, filepath, content, spec, llm, origin=origin)
+        async with _rollback_on_failure(store, (filepath,)):
+            return await _upload_locked(
+                store, filepath, content, spec, llm, origin=origin
+            )
 
 
 async def replace_original(
@@ -703,7 +743,11 @@ async def reconvert(
     spec: PipelineSpec | None = None,
     llm: LlmConfig | None = None,
 ) -> UploadCompleteEvent:
-    """Re-run conversion and chunking for an entry's existing original."""
+    """Re-run conversion and chunking for an entry's existing original.
+
+    On cancellation or failure the entry is dropped wholesale via
+    :func:`_safe_delete_locked`.  The user can retry by re-uploading.
+    """
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
     async with _store_lock(store):
@@ -721,14 +765,15 @@ async def reconvert(
                 detail=f"No original file found for '{safe}'",
             )
         await _clear_assets_subtree(store, metadata.stem_path)
-        return await _upload_locked(
-            store,
-            metadata.original_path,
-            original_path.read_bytes(),
-            spec,
-            llm,
-            origin=metadata.origin,
-        )
+        async with _rollback_on_failure(store, (safe,)):
+            return await _upload_locked(
+                store,
+                metadata.original_path,
+                original_path.read_bytes(),
+                spec,
+                llm,
+                origin=metadata.origin,
+            )
 
 
 async def rechunk(
@@ -1031,13 +1076,16 @@ async def process_collection(
     The casebase lock is held for the entire collection so a concurrent
     upload elsewhere cannot interleave.  Each per-file upload indexes
     its own chunks via :func:`hivegent.chunks.chunk_and_index_document`.
+    On cancellation or failure, every touched safe path is rolled back
+    via :func:`_safe_delete_locked`.
     """
+    touched: list[str] = []
     failed: list[str] = []
     markdown_count = 0
     converted_count = 0
     current = 0
 
-    async with _store_lock(store):
+    async with _store_lock(store), _rollback_on_failure(store, touched):
         with tempfile.TemporaryDirectory() as tmp_dir:
             extract_root = Path(tmp_dir)
 
@@ -1123,6 +1171,7 @@ async def process_collection(
                         original_bytes = (extract_root / relative_path).read_bytes()
                         original_path = workspace_dir / safe
                         original_path.parent.mkdir(parents=True, exist_ok=True)
+                        touched.append(safe)
                         original_path.write_bytes(original_bytes)
                         status = "ok"
                     except Exception as exc:
@@ -1149,6 +1198,7 @@ async def process_collection(
                     else:
                         content_bytes = (extract_root / relative_path).read_bytes()
                         converted_count += 1
+                    touched.append(safe)
                     await _upload_locked(
                         store,
                         safe,
