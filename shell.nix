@@ -3,7 +3,7 @@
   watch-dev,
   backend,
   mkShell,
-  nodejs_25,
+  nodejs,
   python3,
   uv,
   git,
@@ -27,7 +27,7 @@ mkShell {
   VITE_FEATURE_ALL = "false";
   UV_PYTHON = lib.getExe python3;
   packages = [
-    nodejs_25
+    nodejs
     python3
     treefmt
     uv
