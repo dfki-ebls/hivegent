@@ -45,6 +45,7 @@ from .tools.retrieval import LanceDBSearchTool, SearchResult
 __all__ = [
     "build_search_tool",
     "index_document",
+    "list_indexed_filenames",
     "unindex_paths",
     "unindex_store",
     "unindex_subtree",
@@ -297,6 +298,23 @@ def _unindex_store_sync(store: Casebase) -> None:
 async def unindex_store(store: Casebase) -> None:
     """Remove every chunk belonging to *store* from the global index."""
     await asyncio.to_thread(_unindex_store_sync, store)
+
+
+def _list_indexed_filenames_sync(store: Casebase) -> set[str]:
+    storage = _state.get_storage()
+    filenames: set[str] = set()
+    for key in storage.keys_where(_where_store(store)):
+        try:
+            _, filename, _ = _parse_key(key)
+        except ValueError:
+            continue
+        filenames.add(filename)
+    return filenames
+
+
+async def list_indexed_filenames(store: Casebase) -> set[str]:
+    """Return every distinct filename indexed in LanceDB for *store*."""
+    return await asyncio.to_thread(_list_indexed_filenames_sync, store)
 
 
 # ─── Search-tool builder ──────────────────────────────────────────────

@@ -448,6 +448,7 @@ function UploadArea({
           type="file"
           multiple
           className="hidden"
+          aria-label="Upload files"
           onChange={onFileInputChange}
         />
         <input
@@ -457,6 +458,7 @@ function UploadArea({
           webkitdirectory=""
           multiple
           className="hidden"
+          aria-label="Upload directory"
           onChange={onDirectoryInputChange}
         />
         <input
@@ -464,6 +466,7 @@ function UploadArea({
           type="file"
           accept=".zip"
           className="hidden"
+          aria-label="Upload zip archive"
           onChange={onZipInputChange}
         />
         <div className="flex gap-2">
@@ -875,6 +878,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
   }, []);
+
   const [dialogState, setDialogState] = useState<DialogState | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filteredDocuments, setFilteredDocuments] = useState(documents);
@@ -924,6 +928,17 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       return next;
     });
   }, []);
+
+  const uploadInFlight = isPreparing || isUploading || bulkProgress !== null;
+  useEffect(() => {
+    if (!uploadInFlight) return;
+    const handler = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [uploadInFlight]);
 
   useEffect(() => {
     if (!searchQuery.trim()) {

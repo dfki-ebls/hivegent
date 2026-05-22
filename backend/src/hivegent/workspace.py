@@ -10,6 +10,10 @@ workspace, SQL, and LanceDB writes in one step — see
 
 Routes, agents, and MCP tools never touch the workspace, the database,
 or LanceDB directly — they call into this module instead.
+
+SQL is the source of truth; workspace files and LanceDB rows are
+derived projections.  Orphans in either are reconciled at startup by
+:mod:`hivegent.reconcile`.
 """
 
 from __future__ import annotations
@@ -93,6 +97,7 @@ __all__ = [
     "rechunk",
     "reconvert",
     "replace_original",
+    "store_lock",
     "update_asset_description",
     "upload",
 ]
@@ -109,7 +114,7 @@ _locks: dict[str, asyncio.Lock] = {}
 _locks_guard = threading.Lock()
 
 
-def _store_lock(store: Casebase) -> asyncio.Lock:
+def store_lock(store: Casebase) -> asyncio.Lock:
     """Return the asyncio lock guarding mutations on *store*."""
     key = store.store_key
     with _locks_guard:
@@ -193,17 +198,24 @@ async def _write_markdown_projection(
     *,
     entry_metadata: EntryMetadata,
 ) -> tuple[int, str]:
-    """Write markdown content and persist its chunk metadata."""
+    """Write markdown content and persist its chunk metadata.
+
+    The chunk/index step touches both SQL and LanceDB; it is shielded
+    so cancellation cannot tear the two stores apart mid-write.  A
+    partial markdown file on disk is caught by the startup reconciler.
+    """
     workspace_dir = store.workspace_dir(settings.data_dir)
     full_path = workspace_dir / description_path
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
-    chunked = await chunk_and_index_document(
-        store,
-        description_path,
-        content,
-        spec.chunking,
-        entry_metadata=entry_metadata,
+    chunked = await asyncio.shield(
+        chunk_and_index_document(
+            store,
+            description_path,
+            content,
+            spec.chunking,
+            entry_metadata=entry_metadata,
+        )
     )
     return len(chunked.chunks), chunked.pipeline
 
@@ -673,7 +685,7 @@ async def upload(
     """
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
-    async with _store_lock(store):
+    async with store_lock(store):
         await _ensure_upload_slot_locked(store, filepath, overwrite=overwrite)
         async with _rollback_on_failure(store, (filepath,)):
             return await _upload_locked(
@@ -696,7 +708,7 @@ async def replace_original(
     """
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
-    async with _store_lock(store):
+    async with store_lock(store):
         metadata = await db_documents.get_document(store, safe)
         workspace_dir = store.workspace_dir(settings.data_dir)
         existing_original_rel = (
@@ -750,7 +762,7 @@ async def reconvert(
     """
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
-    async with _store_lock(store):
+    async with store_lock(store):
         metadata = await db_documents.get_document(store, safe)
         if not metadata or not metadata.original_path:
             raise HTTPException(
@@ -784,7 +796,7 @@ async def rechunk(
 ) -> DocumentMetadata:
     """Re-chunk an existing markdown document."""
     spec = spec or PipelineSpec()
-    async with _store_lock(store):
+    async with store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
         file_path = workspace_dir / safe
         if not file_path.exists() or not file_path.is_file():
@@ -795,13 +807,13 @@ async def rechunk(
 
 async def delete_document(store: Casebase, safe: str) -> None:
     """Delete a logical entry and all of its files."""
-    async with _store_lock(store):
+    async with store_lock(store):
         await _delete_single_locked(store, safe)
 
 
 async def move_document(store: Casebase, src: str, dst: str) -> MoveDocumentResponse:
     """Move a logical entry, its original, and its child-assets subtree."""
-    async with _store_lock(store):
+    async with store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
 
         metadata = await db_documents.get_document(store, src)
@@ -896,7 +908,7 @@ async def update_asset_description(
     Persists chunk metadata for the description so it is searchable
     immediately after the call returns.
     """
-    async with _store_lock(store):
+    async with store_lock(store):
         workspace = store.workspace_dir(settings.data_dir)
         assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
         assets_path = workspace / assets_dir
@@ -926,7 +938,7 @@ async def update_asset_description(
 
 async def create_directory(store: Casebase, path: str) -> None:
     """Create an empty workspace directory."""
-    async with _store_lock(store):
+    async with store_lock(store):
         directory_path = store.workspace_dir(settings.data_dir) / path
         if directory_path.exists():
             raise HTTPException(status_code=409, detail="Directory already exists")
@@ -935,7 +947,7 @@ async def create_directory(store: Casebase, path: str) -> None:
 
 async def move_directory(store: Casebase, src: str, dst: str) -> MoveDirectoryResponse:
     """Move or rename a workspace directory; document rows follow via SQL."""
-    async with _store_lock(store):
+    async with store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
 
         src_dir = workspace_dir / src
@@ -964,7 +976,7 @@ async def move_directory(store: Casebase, src: str, dst: str) -> MoveDirectoryRe
 
 async def delete_directory(store: Casebase, path: str) -> int:
     """Delete a workspace directory; matching SQL documents cascade out."""
-    async with _store_lock(store):
+    async with store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
         directory_path = workspace_dir / path
         if not directory_path.exists() or not directory_path.is_dir():
@@ -986,7 +998,7 @@ async def delete_all(store: Casebase) -> None:
     ``unindex_store``), and its SQL rows (cascaded from ``users`` /
     ``groups`` deletion by the caller, or directly from documents here).
     """
-    async with _store_lock(store):
+    async with store_lock(store):
         await unindex_store(store)
         await db_documents.delete_all(store)
         workspace_path = store.workspace_path(settings.data_dir)
@@ -996,7 +1008,7 @@ async def delete_all(store: Casebase) -> None:
 
 async def on_agent_write(store: Casebase, filename: str) -> None:
     """Re-chunk a document after an agent or MCP write tool modified it."""
-    async with _store_lock(store):
+    async with store_lock(store):
         workspace = store.workspace_dir(settings.data_dir)
         file_path = workspace / filename
         try:
@@ -1083,7 +1095,7 @@ async def process_collection(
     converted_count = 0
     current = 0
 
-    async with _store_lock(store), _rollback_on_failure(store, touched):
+    async with store_lock(store), _rollback_on_failure(store, touched):
         with tempfile.TemporaryDirectory() as tmp_dir:
             extract_root = Path(tmp_dir)
 

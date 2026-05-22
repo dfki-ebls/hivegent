@@ -14,6 +14,7 @@ from ..db import init_database
 from ..http_client import shared_http_client_lifespan
 from ..mcp import mcp_app
 from ..observability import configure_observability
+from ..reconcile import reconcile_all
 from .routes import api_router
 from .routes.public import router as public_router
 
@@ -34,6 +35,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open shared resources and delegate to MCP."""
     async with shared_http_client_lifespan():
         await init_database()
+        try:
+            reports = await reconcile_all()
+        except Exception:
+            logger.warning("Startup reconciliation failed", exc_info=True)
+        else:
+            for key, report in reports.items():
+                logger.info("Reconciled %s: %s", key, report)
         if mcp_http_app is None:
             yield
         else:

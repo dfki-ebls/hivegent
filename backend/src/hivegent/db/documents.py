@@ -44,6 +44,7 @@ __all__ = [
     "delete_subtree",
     "get_document",
     "list_document_paths",
+    "list_known_stores",
     "move_document",
     "move_subtree",
     "upsert_document",
@@ -195,6 +196,21 @@ async def list_document_paths(store: Casebase) -> dict[str, int]:
             )
         ).all()
     return {description_path_for_stem(stem): int(count) for stem, count in rows}
+
+
+async def _distinct_owner_ids(s: AsyncSession, column) -> list[str]:
+    result = await s.execute(select(column).where(column.is_not(None)).distinct())
+    return [oid for oid in result.scalars().all() if oid]
+
+
+async def list_known_stores() -> set[Casebase]:
+    """Return every casebase that owns at least one document row."""
+    async with session() as s:
+        user_ids = await _distinct_owner_ids(s, Document.owner_user_id)
+        group_ids = await _distinct_owner_ids(s, Document.owner_group_id)
+    return {Casebase.for_user(uid) for uid in user_ids} | {
+        Casebase.for_group(gid) for gid in group_ids
+    }
 
 
 # ─── Writes ────────────────────────────────────────────────────────────
