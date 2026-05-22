@@ -65,10 +65,10 @@ export interface FeatureFlags {
 }
 
 const FEATURE_DEFAULTS: FeatureFlags = {
-  llmSpec: true,
-  pipelineSpec: true,
-  toolsSpec: true,
-  planning: true,
+  llmSpec: false,
+  pipelineSpec: false,
+  toolsSpec: false,
+  planning: false,
 };
 
 /**
