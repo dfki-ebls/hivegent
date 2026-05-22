@@ -4,9 +4,7 @@ import { FileTextIcon } from "lucide-react";
 import type { HTMLAttributes, ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { type ChunkPosition, type FetchedChunk, makeChunkId } from "@/lib/types";
-import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { DocumentDialog } from "./DocumentDialog";
 
 /**
@@ -34,9 +32,6 @@ function extractText(node: ReactNode): string {
 
 export function Citation({ filename, line, children }: CitationProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
-  const doc = useFetchedDocumentsStore((state) =>
-    filename ? state.documents.get(filename) : undefined,
-  );
 
   const lineNumber = useMemo(() => {
     if (line === undefined) return null;
@@ -61,14 +56,6 @@ export function Citation({ filename, line, children }: CitationProps) {
     };
   }, [filename, lineNumber, citedText]);
 
-  const previewText = useMemo(() => {
-    if (lineNumber !== null) {
-      const lines = doc?.fullContent?.split("\n");
-      if (lines && lineNumber <= lines.length) return lines[lineNumber - 1];
-    }
-    return citedText || null;
-  }, [lineNumber, citedText, doc]);
-
   if (!filename) {
     return <span>{children}</span>;
   }
@@ -78,35 +65,16 @@ export function Citation({ filename, line, children }: CitationProps) {
 
   return (
     <span className="inline">
-      <span className="transition-colors hover:bg-accent/50 rounded-sm">{children}</span>
-      <HoverCard openDelay={200} closeDelay={100}>
-        <HoverCardTrigger asChild>
-          <Badge
-            variant="secondary"
-            className="ml-0.5 cursor-pointer rounded-full align-middle text-xs hover:bg-accent"
-            onClick={() => setDialogOpen(true)}
-          >
-            <FileTextIcon className="mr-1 h-3 w-3" />
-            {displayName}
-            {positionLabel && ` ${positionLabel}`}
-          </Badge>
-        </HoverCardTrigger>
-        <HoverCardContent className="w-80 p-4" side="top">
-          <div className="space-y-2">
-            <h4 className="truncate font-medium text-sm">{filename}</h4>
-            {positionLabel && <p className="text-xs text-muted-foreground">{positionLabel}</p>}
-            {previewText ? (
-              <blockquote className="border-l-2 border-muted pl-3 text-sm text-muted-foreground italic line-clamp-4">
-                {previewText}
-              </blockquote>
-            ) : (
-              <p className="text-xs text-muted-foreground italic">
-                Click to load and view in context
-              </p>
-            )}
-          </div>
-        </HoverCardContent>
-      </HoverCard>
+      {children}
+      <Badge
+        variant="secondary"
+        className="ml-0.5 cursor-pointer rounded-full align-middle text-xs hover:bg-accent"
+        onClick={() => setDialogOpen(true)}
+      >
+        <FileTextIcon className="mr-1 h-3 w-3" />
+        {displayName}
+        {positionLabel && ` ${positionLabel}`}
+      </Badge>
       <DocumentDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
