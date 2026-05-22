@@ -6,6 +6,9 @@
  * the UI for it is hidden and the matching request payload is omitted, so
  * the backend behavior follows implicitly without a parallel flag system.
  *
+ * Set `VITE_FEATURE_ALL` to flip every flag at once; per-flag env vars still
+ * win when set, so you can enable everything and then disable a single flag.
+ *
  * Add a new flag by:
  *   1. Adding a typed property to {@link FeatureFlags}.
  *   2. Adding a default to {@link FEATURE_DEFAULTS}.
@@ -84,24 +87,19 @@ const FEATURE_ENV: Record<keyof FeatureFlags, string | undefined> = {
   planning: import.meta.env.VITE_FEATURE_PLANNING,
 };
 
+function parseBool(raw: string | undefined, key: string): boolean | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const parsed = z.stringbool().safeParse(raw);
+  if (parsed.success) return parsed.data;
+  console.warn(`Invalid boolean "${raw}" for feature flag "${key}", ignoring`);
+  return undefined;
+}
+
 function resolveFeatureFlags(): FeatureFlags {
+  const master = parseBool(import.meta.env.VITE_FEATURE_ALL, "ALL");
   const resolved = {} as FeatureFlags;
   for (const key of Object.keys(FEATURE_DEFAULTS) as (keyof FeatureFlags)[]) {
-    const raw = FEATURE_ENV[key];
-    const fallback = FEATURE_DEFAULTS[key];
-    if (raw === undefined || raw === "") {
-      resolved[key] = fallback;
-      continue;
-    }
-    const parsed = z.stringbool().safeParse(raw);
-    if (parsed.success) {
-      resolved[key] = parsed.data;
-    } else {
-      console.warn(
-        `Invalid boolean "${raw}" for feature flag "${key}", falling back to default (${fallback})`,
-      );
-      resolved[key] = fallback;
-    }
+    resolved[key] = parseBool(FEATURE_ENV[key], key) ?? master ?? FEATURE_DEFAULTS[key];
   }
   return resolved;
 }

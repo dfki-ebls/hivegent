@@ -24,6 +24,7 @@ mkShell {
   HIVEGENT_LLM__MODEL = "qwen3.6-35b-a3b";
   HIVEGENT_LLM__AUX_MODEL = "qwen3.5-0.8b";
   HIVEGENT_LLM__BASE_URL = "http://localhost:18000/v1";
+  VITE_FEATURE_ALL = "false";
   UV_PYTHON = lib.getExe python3;
   packages = [
     nodejs_25
