@@ -16,6 +16,7 @@ __all__ = [
     "DEFAULT_EXCLUDE_DIRS",
     "AsyncPathTool",
     "AsyncTool",
+    "BinaryAttachment",
     "CallInfo",
     "IncludeIgnoredArg",
     "PathTool",
@@ -192,6 +193,20 @@ def resolve_accessible_file(
     return sp, local, absolute
 
 
+@dataclass(slots=True, frozen=True)
+class BinaryAttachment:
+    """Framework-neutral binary blob attached to a tool result.
+
+    Adapters convert it to the framework-specific representation:
+    pydantic-ai ``BinaryContent`` (inline in the tool return) or MCP
+    ``ImageContent`` / ``EmbeddedResource``.
+    """
+
+    data: bytes
+    media_type: str
+    identifier: str | None = None
+
+
 class ToolOutput[T](BaseModel):
     """Tool result carrying both structured data and a compact text form.
 
@@ -201,10 +216,17 @@ class ToolOutput[T](BaseModel):
     When ``formatted`` is ``None``, :attr:`text` derives the
     representation automatically: strings are used as-is, other types
     are serialized to JSON.
+
+    ``attachments`` carries framework-neutral binary blobs that the
+    adapter converts to its framework's multimodal type and sends
+    inline with the tool return.
     """
+
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
 
     data: T
     formatted: str | None = None
+    attachments: tuple[BinaryAttachment, ...] = ()
 
     @property
     def text(self) -> str:

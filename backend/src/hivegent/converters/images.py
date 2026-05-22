@@ -48,16 +48,10 @@ def guess_image_media_type(path: str) -> str | None:
 
 
 def sanitize_image_bytes(image_bytes: bytes, media_type: str) -> bytes:
-    """Strip PNG metadata that can break Pillow-based inference servers.
+    """Strip PNG ancillary chunks that can trip Pillow-based inference servers.
 
-    Non-PNG inputs are returned unchanged.
-
-    Args:
-        image_bytes: The raw image bytes.
-        media_type: The MIME type of the image.
-
-    Returns:
-        Sanitized image bytes.
+    Non-PNG inputs are returned unchanged: JPEG, WebP, and GIF have their own
+    container conventions that the vision providers handle natively.
 
     Raises:
         ValueError: If a PNG is structurally invalid.

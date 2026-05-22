@@ -74,7 +74,11 @@ export function MessagePart({
 
   const handler = getToolHandler(info.toolName);
   if (handler?.render) {
-    return handler.render({ part: part as ToolPart, onExecutePlan });
+    return handler.render({
+      part: part as ToolPart,
+      metadata: info.metadata,
+      onExecutePlan,
+    });
   }
 
   return (

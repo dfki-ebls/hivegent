@@ -5,11 +5,11 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Annotated, Any, cast
 
 from pydantic import BeforeValidator
-from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai import BinaryContent, FunctionToolset, RunContext
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
-from .base import CallInfo, Tool, ToolOutput, factory_tool_name
+from .base import BinaryAttachment, CallInfo, Tool, ToolOutput, factory_tool_name
 
 __all__ = ["for_pydantic_ai", "register_agent_tools", "wrap_tool_output"]
 
@@ -41,10 +41,26 @@ def _dequote_value(value: object) -> object:
 _DEQUOTE_VALIDATOR = BeforeValidator(_dequote_value)
 
 
+def _binary_attachment_to_content(att: BinaryAttachment) -> BinaryContent:
+    """Convert a framework-neutral attachment to a pydantic-ai BinaryContent."""
+    return BinaryContent(
+        data=att.data,
+        media_type=att.media_type,
+        identifier=att.identifier,
+    )
+
+
 def wrap_tool_output(result: ToolOutput[Any]) -> ToolReturn:
     """Wrap a :class:`ToolOutput` in a :class:`ToolReturn`.
 
     ``return_value`` carries the compact text the LLM sees directly.
+    When the tool produces binary ``attachments``, they are converted to
+    pydantic-ai :class:`BinaryContent` and embedded *inline* in the tool
+    return value (per the framework guidance: multimodal content sent
+    natively in the tool result belongs in ``return_value``, not in the
+    separate ``content`` channel which would surface as an extra user
+    turn).
+
     Structured ``data`` (anything that isn't a plain string) is attached
     as a :class:`DataChunk` in ``metadata`` so the frontend receives it
     without parsing the LLM-facing text.  String-valued ``data`` is
@@ -54,7 +70,14 @@ def wrap_tool_output(result: ToolOutput[Any]) -> ToolReturn:
     metadata: DataChunk | None = None
     if result.data is not None and not isinstance(result.data, str):
         metadata = DataChunk(type=DATA_CHUNK_TYPE, data=result.data)
-    return ToolReturn(return_value=result.text, metadata=metadata)
+
+    return_value: Any = result.text
+    if result.attachments:
+        return_value = [
+            result.text,
+            *(_binary_attachment_to_content(a) for a in result.attachments),
+        ]
+    return ToolReturn(return_value=return_value, metadata=metadata)
 
 
 def for_pydantic_ai[D](

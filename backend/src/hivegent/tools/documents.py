@@ -20,6 +20,7 @@ from .base import (
     is_in_excluded_dir,
     resolve_accessible_file,
 )
+from .binary import binary_media_type
 
 __all__ = [
     "DocumentFilePathArg",
@@ -454,6 +455,16 @@ class ReadDocumentTool(SyncPathTool[DocumentRange | None]):
         if resolved is None or not resolved[2].is_file():
             return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
         _sp, _local, absolute = resolved
+
+        media_type = binary_media_type(file_path)
+        if media_type is not None:
+            return ToolOutput(
+                data=None,
+                formatted=(
+                    f"({file_path} is a {media_type} binary — "
+                    "use read_binary_document to send it to a vision model)"
+                ),
+            )
 
         all_lines = absolute.read_text(encoding="utf-8").splitlines()
         total = len(all_lines)

@@ -2,11 +2,16 @@
 
 from .base import (
     DEFAULT_EXCLUDE_DIRS,
+    BinaryAttachment,
     SearchPath,
     SearchPathFilterFunc,
     Tool,
     file_allowed,
     tool_name,
+)
+from .binary import (
+    BinaryReadResult,
+    ReadBinaryDocumentTool,
 )
 from .documents import (
     DocumentRange,
@@ -25,6 +30,8 @@ from .web import WebFetch, WebSearch
 
 __all__ = [
     "DEFAULT_EXCLUDE_DIRS",
+    "BinaryAttachment",
+    "BinaryReadResult",
     "CreatePlanTool",
     "DocumentRange",
     "DocumentSummary",
@@ -37,6 +44,7 @@ __all__ = [
     "JqTool",
     "LanceDBSearchTool",
     "ListDocumentsTool",
+    "ReadBinaryDocumentTool",
     "ReadDocumentTool",
     "SearchPath",
     "SearchPathFilterFunc",

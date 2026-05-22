@@ -11,6 +11,7 @@ from ...tools import (
     GrepTool,
     LanceDBSearchTool,
     ListDocumentsTool,
+    ReadBinaryDocumentTool,
     ReadDocumentTool,
     SearchPath,
 )
@@ -41,6 +42,10 @@ def _read_document(deps: UserDeps) -> ReadDocumentTool:
     return ReadDocumentTool(paths=_workspace_paths(deps))
 
 
+def _read_binary_document(deps: UserDeps) -> ReadBinaryDocumentTool:
+    return ReadBinaryDocumentTool(paths=_workspace_paths(deps))
+
+
 def _grep(deps: UserDeps) -> GrepTool:
     return GrepTool(paths=_workspace_paths(deps))
 
@@ -58,6 +63,7 @@ register_agent_tools(
         _list_documents,
         _glob_documents,
         _read_document,
+        _read_binary_document,
         _grep,
         _search,
     ],

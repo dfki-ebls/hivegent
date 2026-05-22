@@ -1,21 +1,60 @@
 """Adapter utilities for registering Tool classes with FastMCP."""
 
+import base64
 import inspect
 from collections.abc import Callable, Sequence
 from typing import Any
+from urllib.parse import quote
 
 from fastmcp import FastMCP
 from fastmcp.dependencies import Depends
 from fastmcp.tools import ToolResult
+from mcp.types import (
+    BlobResourceContents,
+    ContentBlock,
+    EmbeddedResource,
+    ImageContent,
+    TextContent,
+)
 
-from .base import CallInfo, Tool, ToolOutput, factory_tool_name
+from .base import BinaryAttachment, CallInfo, Tool, ToolOutput, factory_tool_name
 
 __all__ = ["for_fastmcp", "register_mcp_tools"]
 
 
+def _attachment_to_block(att: BinaryAttachment) -> ContentBlock:
+    """Map a framework-neutral attachment to an MCP content block."""
+    encoded = base64.b64encode(att.data).decode("ascii")
+    if att.media_type.startswith("image/"):
+        return ImageContent(
+            type="image",
+            data=encoded,
+            mimeType=att.media_type,
+        )
+    # Percent-encode the identifier so pydantic AnyUrl doesn't silently
+    # collapse `..` segments or reinterpret `?`/`#`/space.
+    uri = f"hivegent://attachment/{quote(att.identifier or 'blob', safe='')}"
+    return EmbeddedResource(
+        type="resource",
+        resource=BlobResourceContents(
+            uri=uri,  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+            mimeType=att.media_type,
+            blob=encoded,
+        ),
+    )
+
+
 def wrap_tool_output(result: ToolOutput[Any]) -> ToolResult:
-    """Extract model-facing text from a :class:`ToolOutput`."""
-    return ToolResult(content=result.text)
+    """Convert a :class:`ToolOutput` into an MCP :class:`ToolResult`.
+
+    Text is always emitted as a :class:`TextContent` block; binary
+    attachments are converted to :class:`ImageContent` for images or
+    :class:`EmbeddedResource` for other media (e.g. PDFs) so MCP
+    clients can render them.
+    """
+    blocks: list[ContentBlock] = [TextContent(type="text", text=result.text)]
+    blocks.extend(_attachment_to_block(att) for att in result.attachments)
+    return ToolResult(content=blocks)
 
 
 def for_fastmcp(

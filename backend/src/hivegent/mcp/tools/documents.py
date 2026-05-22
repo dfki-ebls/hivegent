@@ -8,6 +8,7 @@ from ...tools import (
     GlobDocumentsTool,
     GrepTool,
     ListDocumentsTool,
+    ReadBinaryDocumentTool,
     ReadDocumentTool,
 )
 from ...tools.fastmcp import register_mcp_tools
@@ -44,6 +45,15 @@ def _read_document(
     )
 
 
+def _read_binary_document(
+    store: Casebase = Depends(get_mcp_user_store),
+    group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
+) -> ReadBinaryDocumentTool:
+    return ReadBinaryDocumentTool(
+        paths=build_search_paths(store, group_stores, settings.data_dir)
+    )
+
+
 def _grep(
     store: Casebase = Depends(get_mcp_user_store),
     group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
@@ -57,6 +67,7 @@ register_mcp_tools(
         _list_documents,
         _glob_documents,
         _read_document,
+        _read_binary_document,
         _grep,
     ],
 )
