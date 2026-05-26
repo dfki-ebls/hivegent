@@ -288,12 +288,20 @@ class NetworkSettings(BaseModel):
     ``connect_timeout_seconds`` applies to every outbound request made
     through the shared HTTP client (LLM, embeddings, MCP, JWKS).  The
     ``webfetch_*`` knobs only apply to the ``WebFetch`` agent tool.
+    ``llm_request_timeout_seconds`` caps individual non-streaming LLM
+    calls (image description, document conversion, title generation,
+    compaction, sub-agent / retrieval tool runs) so a hung inference
+    server cannot stall a handler indefinitely.  The default leaves
+    enough headroom for long PDFs and long compaction prompts; bump it
+    further if your provider is slow.  Streaming chat is governed by
+    client disconnect, not by this timeout.
     """
 
     connect_timeout_seconds: float = 5.0
     webfetch_timeout_seconds: float = 10.0
     webfetch_max_response_bytes: int = 1_000_000
     webfetch_max_redirects: int = 5
+    llm_request_timeout_seconds: float = 600.0
 
 
 class Settings(BaseSettings):

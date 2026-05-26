@@ -757,8 +757,9 @@ async def reconvert(
 ) -> UploadCompleteEvent:
     """Re-run conversion and chunking for an entry's existing original.
 
-    On cancellation or failure the entry is dropped wholesale via
-    :func:`_safe_delete_locked`.  The user can retry by re-uploading.
+    The assets-clear runs inside :func:`_rollback_on_failure` so a
+    cancel mid-clear (or mid-upload) drops the entry wholesale via
+    :func:`_safe_delete_locked`; the user can retry by re-uploading.
     """
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
@@ -776,8 +777,8 @@ async def reconvert(
                 status_code=404,
                 detail=f"No original file found for '{safe}'",
             )
-        await _clear_assets_subtree(store, metadata.stem_path)
         async with _rollback_on_failure(store, (safe,)):
+            await _clear_assets_subtree(store, metadata.stem_path)
             return await _upload_locked(
                 store,
                 metadata.original_path,
@@ -794,7 +795,12 @@ async def rechunk(
     *,
     spec: PipelineSpec | None = None,
 ) -> DocumentMetadata:
-    """Re-chunk an existing markdown document."""
+    """Re-chunk an existing markdown document.
+
+    The chunk/index step is shielded — same rationale as
+    :func:`_write_markdown_projection` — so a cancel mid-write cannot
+    tear SQL and LanceDB apart.
+    """
     spec = spec or PipelineSpec()
     async with store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
@@ -802,7 +808,9 @@ async def rechunk(
         if not file_path.exists() or not file_path.is_file():
             raise HTTPException(status_code=404, detail="Document not found")
         text = file_path.read_text(encoding="utf-8")
-        return await chunk_and_index_document(store, safe, text, spec.chunking)
+        return await asyncio.shield(
+            chunk_and_index_document(store, safe, text, spec.chunking)
+        )
 
 
 async def delete_document(store: Casebase, safe: str) -> None:
@@ -1085,17 +1093,17 @@ async def process_collection(
 
     The casebase lock is held for the entire collection so a concurrent
     upload elsewhere cannot interleave.  Each per-file upload indexes
-    its own chunks via :func:`hivegent.chunks.chunk_and_index_document`.
-    On cancellation or failure, every touched safe path is rolled back
-    via :func:`_safe_delete_locked`.
+    its own chunks via :func:`hivegent.chunks.chunk_and_index_document`,
+    and is wrapped in its own :func:`_rollback_on_failure` so only the
+    in-flight file is rolled back on cancel — successfully-uploaded
+    files survive a client disconnect mid-collection.
     """
-    touched: list[str] = []
     failed: list[str] = []
     markdown_count = 0
     converted_count = 0
     current = 0
 
-    async with store_lock(store), _rollback_on_failure(store, touched):
+    async with store_lock(store):
         with tempfile.TemporaryDirectory() as tmp_dir:
             extract_root = Path(tmp_dir)
 
@@ -1181,7 +1189,6 @@ async def process_collection(
                         original_bytes = (extract_root / relative_path).read_bytes()
                         original_path = workspace_dir / safe
                         original_path.parent.mkdir(parents=True, exist_ok=True)
-                        touched.append(safe)
                         original_path.write_bytes(original_bytes)
                         status = "ok"
                     except Exception as exc:
@@ -1208,15 +1215,15 @@ async def process_collection(
                     else:
                         content_bytes = (extract_root / relative_path).read_bytes()
                         converted_count += 1
-                    touched.append(safe)
-                    await _upload_locked(
-                        store,
-                        safe,
-                        content_bytes,
-                        spec,
-                        llm,
-                        origin="collection",
-                    )
+                    async with _rollback_on_failure(store, (safe,)):
+                        await _upload_locked(
+                            store,
+                            safe,
+                            content_bytes,
+                            spec,
+                            llm,
+                            origin="collection",
+                        )
                     status = "ok"
                 except Exception as exc:
                     logger.warning("Failed to process %s: %s", relative_path, exc)

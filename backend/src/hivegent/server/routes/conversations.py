@@ -23,9 +23,9 @@ from ...agents import (
     user_agent,
 )
 from ...auth import User, get_current_user
-from ...compaction import compact_conversation
+from ...compaction import CompactionResult, compact_conversation
 from ...config import settings
-from ...llm import create_openai_chat_model
+from ...llm import model_from_config
 from ...mcp import build_mcp_server, validate_mcp_servers
 from ...db.conversations import (
     ConversationSummary,
@@ -63,6 +63,7 @@ from ...types import (
     ToolsSpec,
     UpdateTitleRequest,
 )
+from ..cancellation import run_until_disconnect
 from ..common import (
     group_stores,
     parse_document_filters,
@@ -153,6 +154,7 @@ def _extract_message_texts(
 async def generate_conversation_title(
     conversation_id: str,
     request: GenerateTitleRequest,
+    http_request: Request,
     user: Annotated[User, Depends(get_current_user)],
 ) -> GenerateTitleResponse:
     """Generate a title for a conversation using an LLM."""
@@ -169,19 +171,19 @@ async def generate_conversation_title(
 The title should capture the main topic or question.
 Return ONLY the title, no quotes or extra text.
 """
-    resolved = await prepare_llm_config(request.llm)
 
-    try:
+    async def _generate() -> str:
+        resolved = await prepare_llm_config(request.llm)
         result = await base_agent.run(
             f"Conversation:\n{conversation_preview}",
-            model=create_openai_chat_model(
-                resolved.model,
-                api_key=resolved.api_key,
-                base_url=resolved.base_url,
-            ),
+            model=model_from_config(resolved),
             instructions=instructions,
         )
-        generated_title = result.output.strip().strip("\"'")
+        return result.output
+
+    try:
+        output = await run_until_disconnect(http_request, _generate())
+        generated_title = output.strip().strip("\"'")
         if len(generated_title) > 100:
             generated_title = generated_title[:97] + "..."
 
@@ -226,12 +228,17 @@ async def delete_all_conversations_route(
 async def create_conversation_compaction(
     conversation_id: str,
     request: CompactConversationRequest,
+    http_request: Request,
     user: Annotated[User, Depends(get_current_user)],
 ) -> CompactConversationResponse:
     """Compact a conversation by summarizing it into a new conversation."""
-    llm_config = await prepare_llm_config(request.llm)
+
+    async def _compact() -> CompactionResult:
+        llm_config = await prepare_llm_config(request.llm)
+        return await compact_conversation(user.id, conversation_id, llm_config)
+
     try:
-        result = await compact_conversation(user.id, conversation_id, llm_config)
+        result = await run_until_disconnect(http_request, _compact())
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
@@ -380,11 +387,7 @@ async def create_conversation_chat(
         ),
         sdk_version=6,
         output_type=[str, DeferredToolRequests],
-        model=create_openai_chat_model(
-            config.llm.model,
-            api_key=config.llm.api_key,
-            base_url=config.llm.base_url,
-        ),
+        model=model_from_config(config.llm),
         toolsets=build_toolsets(
             TOOLSET_GROUPS,
             config.tools,

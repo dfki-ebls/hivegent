@@ -5,11 +5,13 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from .http_client import get_shared_http_client
+from .types import LlmConfig
 
 __all__ = [
     "create_openai_chat_model",
     "create_openai_client",
     "create_openai_provider",
+    "model_from_config",
 ]
 
 
@@ -49,4 +51,18 @@ def create_openai_chat_model(
     return OpenAIChatModel(
         model,
         provider=create_openai_provider(api_key=api_key, base_url=base_url),
+    )
+
+
+def model_from_config(config: LlmConfig) -> OpenAIChatModel:
+    """Build an :class:`OpenAIChatModel` from an :class:`LlmConfig`.
+
+    Single canonical adapter from the pydantic-validated request shape to
+    the pydantic-ai model surface — keeps every call site honest about
+    which fields flow where.
+    """
+    return create_openai_chat_model(
+        config.model,
+        api_key=config.api_key,
+        base_url=config.base_url,
     )

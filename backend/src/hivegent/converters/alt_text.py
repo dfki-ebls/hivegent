@@ -8,7 +8,7 @@ from pathlib import PurePosixPath
 from pydantic_ai import BinaryContent
 
 from ..agents.app import base_agent
-from ..llm import create_openai_chat_model
+from ..llm import model_from_config
 from ..types import LlmConfig
 from .images import guess_image_media_type, sanitize_image_bytes
 
@@ -56,11 +56,7 @@ async def describe_image(
     )
     result = await base_agent.run(
         [_ALT_TEXT_PROMPT, content],
-        model=create_openai_chat_model(
-            llm_options.model,
-            api_key=llm_options.api_key,
-            base_url=llm_options.base_url,
-        ),
+        model=model_from_config(llm_options),
     )
     return str(result.output).strip()
 
@@ -108,21 +104,35 @@ async def generate_alt_texts(
         assert llm_options is not None
         semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
 
-        async def _gen(path: str, data: bytes) -> tuple[str, str]:
+        async def _gen(path: str, data: bytes) -> tuple[str, str, str]:
             media_type = guess_image_media_type(path)
             if media_type is None:
-                return path, PurePosixPath(path).stem
+                return path, PurePosixPath(path).stem, "skipped"
             async with semaphore:
                 try:
-                    return path, await describe_image(data, media_type, llm_options)
+                    desc = await describe_image(data, media_type, llm_options)
+                    return path, desc, "ok"
                 except Exception:
                     logger.warning(
                         "Alt text generation failed for %s", path, exc_info=True
                     )
-                    return path, PurePosixPath(path).stem
+                    return path, PurePosixPath(path).stem, "failed"
 
         results = await asyncio.gather(*[_gen(p, d) for p, d in tasks.items()])
-        for path, desc in results:
+        attempted = sum(1 for _, _, status in results if status != "skipped")
+        failed = sum(1 for _, _, status in results if status == "failed")
+        if attempted and failed == attempted:
+            logger.warning(
+                "Alt text generation fell back for every image (%d/%d); "
+                "the vision model may be unhealthy",
+                failed,
+                attempted,
+            )
+        elif failed:
+            logger.warning(
+                "Alt text generation fell back for %d/%d images", failed, attempted
+            )
+        for path, desc, _ in results:
             descriptions[path] = desc
     else:
         for path in tasks:

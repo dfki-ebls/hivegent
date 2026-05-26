@@ -8,7 +8,7 @@ from pydantic_ai import BinaryContent
 from pydantic_ai.settings import ModelSettings
 
 from ..agents.app import base_agent
-from ..llm import create_openai_chat_model
+from ..llm import model_from_config
 from ..types import LlmConfig
 from .base import ConversionResult, DocumentConverter
 from .images import sanitize_image_bytes
@@ -91,13 +91,12 @@ class LLMConverter(DocumentConverter):
             media_type=media_type,
         )
 
+        # `thinking=False` is layered on top of the agent's default
+        # ``model_settings`` (request timeout) via pydantic-ai's
+        # ``merge_model_settings``; no need to restate the timeout here.
         result = await base_agent.run(
             [self.config.prompt, content],
-            model=create_openai_chat_model(
-                self.llm_options.model,
-                api_key=self.llm_options.api_key,
-                base_url=self.llm_options.base_url,
-            ),
+            model=model_from_config(self.llm_options),
             model_settings=ModelSettings(thinking=False),
         )
 

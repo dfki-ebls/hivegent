@@ -17,7 +17,7 @@ from pydantic_ai.messages import (
 
 from .agents import base_agent
 from .db.conversations import create_compacted_conversation, load_conversation
-from .llm import create_openai_chat_model
+from .llm import model_from_config
 from .types import LlmConfig
 
 __all__ = [
@@ -117,11 +117,7 @@ async def _summarize_conversation(
 
     result = await base_agent.run(
         f"Conversation to summarize:\n\n{conversation_text}",
-        model=create_openai_chat_model(
-            llm_config.model,
-            api_key=llm_config.api_key,
-            base_url=llm_config.base_url,
-        ),
+        model=model_from_config(llm_config),
         instructions=COMPACTION_INSTRUCTIONS,
     )
 
