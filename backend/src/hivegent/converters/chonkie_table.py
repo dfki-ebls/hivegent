@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar
 
@@ -10,6 +11,11 @@ from chonkie import TableChef
 from .base import ConversionResult, DocumentConverter
 
 __all__ = ["ChonkieTableConverter"]
+
+
+@lru_cache(maxsize=4)
+def _build_chef() -> TableChef:
+    return TableChef()
 
 
 @dataclass(slots=True, frozen=True)
@@ -38,5 +44,5 @@ class ChonkieTableConverter(DocumentConverter):
         Returns:
             The conversion result with markdown table content.
         """
-        doc = await asyncio.to_thread(TableChef().process, path)
+        doc = await asyncio.to_thread(_build_chef().process, path)
         return ConversionResult(markdown=doc.content)

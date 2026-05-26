@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from chonkie import LateChunker
 from pydantic import Field
@@ -30,6 +31,16 @@ class LateChunkerConfig(BaseChonkieConfig):
     )
 
 
+@lru_cache(maxsize=4)
+def _build_chunker(config_json: str) -> LateChunker:
+    config = LateChunkerConfig.model_validate_json(config_json)
+    return LateChunker(
+        embedding_model=_DEFAULT_EMBEDDING_MODEL,
+        chunk_size=config.chunk_size,
+        min_characters_per_chunk=config.min_characters_per_chunk,
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class LateDocumentChunker(DocumentChunker):
     """Chunker that uses late-interaction embeddings for chunking.
@@ -44,11 +55,7 @@ class LateDocumentChunker(DocumentChunker):
     config: LateChunkerConfig = field(default_factory=LateChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        chunks = LateChunker(
-            embedding_model=_DEFAULT_EMBEDDING_MODEL,
-            chunk_size=self.config.chunk_size,
-            min_characters_per_chunk=self.config.min_characters_per_chunk,
-        ).chunk(text)
+        chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
     async def _split(

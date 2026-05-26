@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from chonkie import MarkdownChef
 from chonkie.tokenizer import AutoTokenizer
@@ -15,6 +16,16 @@ __all__ = ["MarkdownChunkerConfig", "MarkdownDocumentChunker"]
 
 class MarkdownChunkerConfig(BaseChonkieConfig):
     """Configuration for the Markdown chunking pipeline."""
+
+
+@lru_cache(maxsize=4)
+def _build_chef() -> MarkdownChef:
+    return MarkdownChef()
+
+
+@lru_cache(maxsize=4)
+def _build_tokenizer() -> AutoTokenizer:
+    return AutoTokenizer("character")
 
 
 @dataclass(slots=True, frozen=True)
@@ -32,8 +43,8 @@ class MarkdownDocumentChunker(DocumentChunker):
     config: MarkdownChunkerConfig = field(default_factory=MarkdownChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        doc = MarkdownChef().parse(text)
-        tokenizer = AutoTokenizer("character")
+        doc = _build_chef().parse(text)
+        tokenizer = _build_tokenizer()
 
         # Collect all elements: chunks, tables, code blocks
         elements: list[tuple[int, str]] = []

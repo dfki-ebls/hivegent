@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from chonkie import FastChunker
 from pydantic import Field
@@ -35,6 +36,17 @@ class FastChunkerConfig(BaseChonkieConfig):
     )
 
 
+@lru_cache(maxsize=4)
+def _build_chunker(config_json: str) -> FastChunker:
+    config = FastChunkerConfig.model_validate_json(config_json)
+    return FastChunker(
+        chunk_size=config.chunk_size,
+        delimiters=config.delimiters,
+        prefix=config.prefix,
+        consecutive=config.consecutive,
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class FastDocumentChunker(DocumentChunker):
     """Chunker that splits text using fast delimiter-based splitting.
@@ -49,12 +61,7 @@ class FastDocumentChunker(DocumentChunker):
     config: FastChunkerConfig = field(default_factory=FastChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        chunks = FastChunker(
-            chunk_size=self.config.chunk_size,
-            delimiters=self.config.delimiters,
-            prefix=self.config.prefix,
-            consecutive=self.config.consecutive,
-        ).chunk(text)
+        chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
     async def _split(

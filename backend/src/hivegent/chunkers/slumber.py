@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from chonkie import SlumberChunker
 from chonkie.genie.openai import OpenAIGenie
@@ -34,6 +35,20 @@ class SlumberChunkerConfig(BaseChonkieConfig):
     )
 
 
+@lru_cache(maxsize=4)
+def _build_chunker(
+    config_json: str, model: str, api_key: str, base_url: str | None
+) -> SlumberChunker:
+    config = SlumberChunkerConfig.model_validate_json(config_json)
+    genie = OpenAIGenie(model=model, api_key=api_key, base_url=base_url)
+    return SlumberChunker(
+        genie=genie,
+        chunk_size=config.chunk_size,
+        candidate_size=config.candidate_size,
+        min_characters_per_chunk=config.min_characters_per_chunk,
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class SlumberDocumentChunker(DocumentChunker):
     """Chunker that uses an LLM to guide chunk boundary decisions.
@@ -50,16 +65,11 @@ class SlumberDocumentChunker(DocumentChunker):
     def _chunk(self, text: str) -> list[ChunkData]:
         from ..config import settings
 
-        genie = OpenAIGenie(
-            model=settings.llm.aux_model or settings.llm.model,
-            api_key=settings.llm.api_key,
-            base_url=settings.llm.base_url or None,
-        )
-        chunks = SlumberChunker(
-            genie=genie,
-            chunk_size=self.config.chunk_size,
-            candidate_size=self.config.candidate_size,
-            min_characters_per_chunk=self.config.min_characters_per_chunk,
+        chunks = _build_chunker(
+            self.config.model_dump_json(),
+            settings.llm.aux_model or settings.llm.model,
+            settings.llm.api_key,
+            settings.llm.base_url or None,
         ).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 

@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from markitdown import MarkItDown
@@ -14,6 +15,12 @@ __all__ = ["MarkItDownConverter", "MarkItDownConverterConfig"]
 
 class MarkItDownConverterConfig(BaseModel):
     """Configuration for the MarkItDown conversion pipeline."""
+
+
+@lru_cache(maxsize=4)
+def _build_converter() -> MarkItDown:
+    """Build a MarkItDown converter; cached for reuse across calls."""
+    return MarkItDown()
 
 
 # MarkItDown has no public format listing API. Each converter in
@@ -64,8 +71,7 @@ class MarkItDownConverter(DocumentConverter):
 
     def _convert_sync(self, path: Path) -> ConversionResult:
         """Run the synchronous MarkItDown conversion."""
-        md = MarkItDown()
-        result = md.convert(str(path))
+        result = _build_converter().convert(str(path))
         return ConversionResult(markdown=str(result.text_content))
 
     async def __call__(

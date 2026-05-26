@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from chonkie import SemanticChunker
 from pydantic import Field
@@ -46,6 +47,19 @@ class SemanticChunkerConfig(BaseChonkieConfig):
     )
 
 
+@lru_cache(maxsize=4)
+def _build_chunker(config_json: str) -> SemanticChunker:
+    config = SemanticChunkerConfig.model_validate_json(config_json)
+    return SemanticChunker(
+        embedding_model=_DEFAULT_EMBEDDING_MODEL,
+        threshold=config.threshold,
+        chunk_size=config.chunk_size,
+        similarity_window=config.similarity_window,
+        min_sentences_per_chunk=config.min_sentences_per_chunk,
+        min_characters_per_sentence=config.min_characters_per_sentence,
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class SemanticDocumentChunker(DocumentChunker):
     """Chunker that splits text based on semantic similarity.
@@ -61,14 +75,7 @@ class SemanticDocumentChunker(DocumentChunker):
     config: SemanticChunkerConfig = field(default_factory=SemanticChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        chunks = SemanticChunker(
-            embedding_model=_DEFAULT_EMBEDDING_MODEL,
-            threshold=self.config.threshold,
-            chunk_size=self.config.chunk_size,
-            similarity_window=self.config.similarity_window,
-            min_sentences_per_chunk=self.config.min_sentences_per_chunk,
-            min_characters_per_sentence=self.config.min_characters_per_sentence,
-        ).chunk(text)
+        chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
     async def _split(

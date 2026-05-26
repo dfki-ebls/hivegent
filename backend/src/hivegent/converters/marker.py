@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from marker.converters.pdf import PdfConverter  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # ty: ignore[unresolved-import]
@@ -15,6 +16,12 @@ __all__ = ["MarkerConverter", "MarkerConverterConfig"]
 
 class MarkerConverterConfig(BaseModel):
     """Configuration for the Marker conversion pipeline."""
+
+
+@lru_cache(maxsize=4)
+def _build_converter() -> PdfConverter:
+    """Build a Marker PDF converter; cached because model loading is expensive."""
+    return PdfConverter(artifact_dict=create_model_dict())
 
 
 # Marker only converts PDFs. The provider registry lives in
@@ -36,8 +43,7 @@ class MarkerConverter(DocumentConverter):
 
     def _convert_sync(self, path: Path) -> ConversionResult:
         """Run the synchronous Marker conversion."""
-        converter = PdfConverter(artifact_dict=create_model_dict())
-        result = converter(str(path))
+        result = _build_converter()(str(path))
         image_data = {p: pil_to_png_bytes(img) for p, img in result.images.items()}
         return ConversionResult(markdown=str(result.markdown), images=image_data)
 

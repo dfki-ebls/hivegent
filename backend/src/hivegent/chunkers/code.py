@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from chonkie import CodeChunker
 from pydantic import Field
@@ -31,6 +32,16 @@ class CodeChunkerConfig(BaseChonkieConfig):
     )
 
 
+@lru_cache(maxsize=4)
+def _build_chunker(config_json: str) -> CodeChunker:
+    config = CodeChunkerConfig.model_validate_json(config_json)
+    return CodeChunker(
+        chunk_size=config.chunk_size,
+        language=config.language,
+        include_nodes=config.include_nodes,
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class CodeDocumentChunker(DocumentChunker):
     """Chunker that splits source code respecting syntax boundaries.
@@ -46,11 +57,7 @@ class CodeDocumentChunker(DocumentChunker):
     config: CodeChunkerConfig = field(default_factory=CodeChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        chunks = CodeChunker(
-            chunk_size=self.config.chunk_size,
-            language=self.config.language,
-            include_nodes=self.config.include_nodes,
-        ).chunk(text)
+        chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
     async def _split(

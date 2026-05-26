@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from chonkie import RecursiveChunker
 from pydantic import Field
@@ -28,6 +29,15 @@ class RecursiveChunkerConfig(BaseChonkieConfig):
     )
 
 
+@lru_cache(maxsize=4)
+def _build_chunker(config_json: str) -> RecursiveChunker:
+    config = RecursiveChunkerConfig.model_validate_json(config_json)
+    return RecursiveChunker(
+        chunk_size=config.chunk_size,
+        min_characters_per_chunk=config.min_characters_per_chunk,
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class RecursiveDocumentChunker(DocumentChunker):
     """Chunker that splits text hierarchically.
@@ -43,10 +53,7 @@ class RecursiveDocumentChunker(DocumentChunker):
     config: RecursiveChunkerConfig = field(default_factory=RecursiveChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        chunks = RecursiveChunker(
-            chunk_size=self.config.chunk_size,
-            min_characters_per_chunk=self.config.min_characters_per_chunk,
-        ).chunk(text)
+        chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
     async def _split(

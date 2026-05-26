@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from chonkie import TokenChunker
 from pydantic import Field
@@ -28,6 +29,15 @@ class TokenChunkerConfig(BaseChonkieConfig):
     )
 
 
+@lru_cache(maxsize=4)
+def _build_chunker(config_json: str) -> TokenChunker:
+    config = TokenChunkerConfig.model_validate_json(config_json)
+    return TokenChunker(
+        chunk_size=config.chunk_size,
+        chunk_overlap=config.chunk_overlap,
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class TokenDocumentChunker(DocumentChunker):
     """Chunker that splits text into fixed token-count chunks.
@@ -42,10 +52,7 @@ class TokenDocumentChunker(DocumentChunker):
     config: TokenChunkerConfig = field(default_factory=TokenChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        chunks = TokenChunker(
-            chunk_size=self.config.chunk_size,
-            chunk_overlap=self.config.chunk_overlap,
-        ).chunk(text)
+        chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
     async def _split(

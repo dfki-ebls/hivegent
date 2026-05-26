@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from chonkie import SentenceChunker
 from pydantic import Field
@@ -38,6 +39,17 @@ class SentenceChunkerConfig(BaseChonkieConfig):
     )
 
 
+@lru_cache(maxsize=4)
+def _build_chunker(config_json: str) -> SentenceChunker:
+    config = SentenceChunkerConfig.model_validate_json(config_json)
+    return SentenceChunker(
+        chunk_size=config.chunk_size,
+        chunk_overlap=config.chunk_overlap,
+        min_sentences_per_chunk=config.min_sentences_per_chunk,
+        min_characters_per_sentence=config.min_characters_per_sentence,
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class SentenceDocumentChunker(DocumentChunker):
     """Chunker that splits text respecting sentence boundaries.
@@ -52,12 +64,7 @@ class SentenceDocumentChunker(DocumentChunker):
     config: SentenceChunkerConfig = field(default_factory=SentenceChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        chunks = SentenceChunker(
-            chunk_size=self.config.chunk_size,
-            chunk_overlap=self.config.chunk_overlap,
-            min_sentences_per_chunk=self.config.min_sentences_per_chunk,
-            min_characters_per_sentence=self.config.min_characters_per_sentence,
-        ).chunk(text)
+        chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
     async def _split(

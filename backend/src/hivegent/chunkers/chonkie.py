@@ -1,6 +1,7 @@
 """Chonkie-specific utilities shared by all chonkie-based chunkers."""
 
 from collections.abc import Sequence
+from functools import lru_cache
 from typing import Annotated, Literal
 
 from chonkie import OverlapRefinery
@@ -37,6 +38,17 @@ class BaseChonkieConfig(BaseModel):
     refineries: list[ChonkieRefineryConfig] = Field(default_factory=list)
 
 
+@lru_cache(maxsize=4)
+def _build_overlap_refinery(config_json: str) -> OverlapRefinery:
+    cfg = ChonkieOverlapConfig.model_validate_json(config_json)
+    return OverlapRefinery(
+        context_size=cfg.context_size,
+        mode=cfg.mode,
+        method=cfg.method,
+        merge=cfg.merge,
+    )
+
+
 def apply_chonkie(
     chunks: Sequence[Chunk],
     refineries: Sequence[ChonkieRefineryConfig],
@@ -54,12 +66,7 @@ def apply_chonkie(
     raw: Sequence[Chunk] = chunks
     for cfg in refineries:
         if isinstance(cfg, ChonkieOverlapConfig):
-            raw = OverlapRefinery(
-                context_size=cfg.context_size,
-                mode=cfg.mode,
-                method=cfg.method,
-                merge=cfg.merge,
-            ).refine(list(raw))
+            raw = _build_overlap_refinery(cfg.model_dump_json()).refine(list(raw))
     return [
         ChunkData(
             text=c.text,

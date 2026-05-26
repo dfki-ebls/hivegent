@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar
 
@@ -10,6 +11,11 @@ from chonkie import TextChef
 from .base import ConversionResult, DocumentConverter
 
 __all__ = ["ChonkieTextConverter"]
+
+
+@lru_cache(maxsize=4)
+def _build_chef() -> TextChef:
+    return TextChef()
 
 
 @dataclass(slots=True, frozen=True)
@@ -37,5 +43,5 @@ class ChonkieTextConverter(DocumentConverter):
         Returns:
             The conversion result with text content.
         """
-        doc = await asyncio.to_thread(TextChef().process, path)
+        doc = await asyncio.to_thread(_build_chef().process, path)
         return ConversionResult(markdown=doc.content)

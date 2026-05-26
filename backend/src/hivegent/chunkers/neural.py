@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from chonkie import NeuralChunker
 from pydantic import Field
@@ -28,6 +29,16 @@ class NeuralChunkerConfig(BaseChonkieConfig):
     )
 
 
+@lru_cache(maxsize=4)
+def _build_chunker(config_json: str) -> NeuralChunker:
+    config = NeuralChunkerConfig.model_validate_json(config_json)
+    return NeuralChunker(
+        model=_DEFAULT_MODEL,
+        device_map=config.device_map,
+        min_characters_per_chunk=config.min_characters_per_chunk,
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class NeuralDocumentChunker(DocumentChunker):
     """Chunker that uses a neural model to find chunk boundaries.
@@ -42,11 +53,7 @@ class NeuralDocumentChunker(DocumentChunker):
     config: NeuralChunkerConfig = field(default_factory=NeuralChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        chunks = NeuralChunker(
-            model=_DEFAULT_MODEL,
-            device_map=self.config.device_map,
-            min_characters_per_chunk=self.config.min_characters_per_chunk,
-        ).chunk(text)
+        chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
     async def _split(

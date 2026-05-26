@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from chonkie import TableChunker
 from pydantic import Field
@@ -27,6 +28,15 @@ class TableChunkerConfig(BaseChonkieConfig):
     )
 
 
+@lru_cache(maxsize=4)
+def _build_chunker(config_json: str) -> TableChunker:
+    config = TableChunkerConfig.model_validate_json(config_json)
+    return TableChunker(
+        tokenizer=config.tokenizer,
+        chunk_size=config.chunk_size,
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class TableDocumentChunker(DocumentChunker):
     """Chunker that splits tabular text into row-based chunks.
@@ -41,10 +51,7 @@ class TableDocumentChunker(DocumentChunker):
     config: TableChunkerConfig = field(default_factory=TableChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        chunks = TableChunker(
-            tokenizer=self.config.tokenizer,
-            chunk_size=self.config.chunk_size,
-        ).chunk(text)
+        chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
     async def _split(

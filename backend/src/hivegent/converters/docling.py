@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import PIL.Image
@@ -55,6 +56,26 @@ class DoclingConverterConfig(BaseModel):
 _PDF_FORMATS = frozenset({InputFormat.PDF, InputFormat.IMAGE, InputFormat.METS_GBS})
 
 
+@lru_cache(maxsize=4)
+def _build_converter(config_json: str) -> DoclingDocumentConverter:
+    """Build and configure a Docling converter, cached by serialized config."""
+    config = DoclingConverterConfig.model_validate_json(config_json)
+    converter = DoclingDocumentConverter()
+    # Start from default format options (which include the correct backend
+    # and pipeline_cls) and only override pipeline_options.
+    for fmt in converter.format_to_options:
+        default = converter.format_to_options[fmt]
+        opts = (
+            config.pdf_options if fmt in _PDF_FORMATS else config.convert_options
+        )
+        if fmt in _PDF_FORMATS:
+            opts = opts.model_copy(update={"generate_picture_images": True})
+        converter.format_to_options[fmt] = default.model_copy(
+            update={"pipeline_options": opts}
+        )
+    return converter
+
+
 # Derived from docling.datamodel.base_models.FormatToExtensions.
 # https://github.com/docling-project/docling/blob/main/docling/datamodel/base_models.py
 @dataclass(slots=True, frozen=True)
@@ -75,22 +96,7 @@ class DoclingConverter(DocumentConverter):
 
     def _convert_sync(self, path: Path) -> ConversionResult:
         """Run the synchronous Docling conversion."""
-        # Start from default format options (which include the correct backend
-        # and pipeline_cls) and only override pipeline_options.
-        converter = DoclingDocumentConverter()
-        for fmt in converter.format_to_options:
-            default = converter.format_to_options[fmt]
-            opts = (
-                self.config.pdf_options
-                if fmt in _PDF_FORMATS
-                else self.config.convert_options
-            )
-            if fmt in _PDF_FORMATS:
-                opts = opts.model_copy(update={"generate_picture_images": True})
-            converter.format_to_options[fmt] = default.model_copy(
-                update={"pipeline_options": opts}
-            )
-
+        converter = _build_converter(self.config.model_dump_json())
         result = converter.convert(str(path))
         doc = result.document
 
