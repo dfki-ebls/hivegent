@@ -205,13 +205,21 @@ async def _distinct_owner_ids(s: AsyncSession, column) -> list[str]:
 
 
 async def list_known_stores() -> set[Casebase]:
-    """Return every casebase that owns at least one document row."""
+    """Return every casebase that owns at least one document row.
+
+    Ids that can no longer back a casebase (e.g. the admin marker) are
+    skipped so a single legacy row cannot break reconciliation.
+    """
     async with session() as s:
         user_ids = await _distinct_owner_ids(s, Document.owner_user_id)
         group_ids = await _distinct_owner_ids(s, Document.owner_group_id)
-    return {Casebase.for_user(uid) for uid in user_ids} | {
-        Casebase.for_group(gid) for gid in group_ids
-    }
+    stores: set[Casebase] = {Casebase.for_user(uid) for uid in user_ids}
+    for gid in group_ids:
+        try:
+            stores.add(Casebase.for_group(gid))
+        except ValueError:
+            continue
+    return stores
 
 
 # ─── Writes ────────────────────────────────────────────────────────────

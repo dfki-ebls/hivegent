@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Self, cast, get_args
 
-from .config import sanitize_group_id, sanitize_user_id
+from .config import is_admin_group, sanitize_group_id, sanitize_user_id
 from .tools.base import SearchPath, SearchPathFilterFunc
 
 __all__ = [
@@ -73,6 +73,12 @@ class Casebase:
             sanitize_user_id(self.id)
         else:
             sanitize_group_id(self.id)
+            # The admin group is a privilege marker, never a knowledge
+            # namespace; refuse to construct a casebase for it.
+            if is_admin_group(self.id):
+                raise ValueError(
+                    f"Admin group {self.id!r} cannot back a knowledge casebase"
+                )
 
     @property
     def store_key(self) -> str:

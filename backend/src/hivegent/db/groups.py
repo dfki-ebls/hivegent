@@ -8,9 +8,10 @@ operation; cross-cutting helpers stay in :mod:`._common`.
 
 from __future__ import annotations
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import settings
 from ._common import affected_rows
 from .engine import session
 from .models import Document, Group, GroupMember
@@ -29,10 +30,23 @@ async def ensure_group(s: AsyncSession, group_id: str) -> None:
         s.add(Group(id=group_id))
 
 
+def _exclude_admin[T: Select[tuple[str]] | Select[tuple[str, int, int]]](
+    stmt: T,
+) -> T:
+    """Filter the configured admin group out of a Group-keyed SELECT.
+
+    The admin group is a privilege marker and never a knowledge container;
+    every enumeration of knowledge groups must exclude it.  An empty
+    ``admin_group`` setting disables the filter.
+    """
+    admin = settings.groups.admin_group
+    return stmt.where(Group.id != admin) if admin else stmt
+
+
 async def list_group_ids() -> frozenset[str]:
-    """Return the set of every group ID registered in the database."""
+    """Return the set of knowledge group IDs registered in the database."""
     async with session() as s:
-        result = await s.execute(select(Group.id))
+        result = await s.execute(_exclude_admin(select(Group.id)))
         return frozenset(result.scalars().all())
 
 
@@ -63,14 +77,16 @@ async def list_groups_with_counts() -> list[tuple[str, int, int]]:
     async with session() as s:
         rows = (
             await s.execute(
-                select(
-                    Group.id,
-                    func.coalesce(docs_subq.c.n, 0),
-                    func.coalesce(members_subq.c.n, 0),
+                _exclude_admin(
+                    select(
+                        Group.id,
+                        func.coalesce(docs_subq.c.n, 0),
+                        func.coalesce(members_subq.c.n, 0),
+                    )
+                    .outerjoin(docs_subq, docs_subq.c.gid == Group.id)
+                    .outerjoin(members_subq, members_subq.c.gid == Group.id)
+                    .order_by(Group.id)
                 )
-                .outerjoin(docs_subq, docs_subq.c.gid == Group.id)
-                .outerjoin(members_subq, members_subq.c.gid == Group.id)
-                .order_by(Group.id)
             )
         ).all()
     return [(gid, int(docs), int(members)) for gid, docs, members in rows]

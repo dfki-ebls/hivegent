@@ -135,6 +135,23 @@ class User:
         admin_group = settings.groups.admin_group
         return bool(admin_group) and admin_group in self.all_groups
 
+    @property
+    def knowledge_read_groups(self) -> frozenset[str]:
+        """Read groups that hold knowledge — the admin marker is excluded."""
+        admin = settings.groups.admin_group
+        return self.read_groups - {admin} if admin else self.read_groups
+
+    @property
+    def knowledge_write_groups(self) -> frozenset[str]:
+        """Write groups that hold knowledge — the admin marker is excluded."""
+        admin = settings.groups.admin_group
+        return self.write_groups - {admin} if admin else self.write_groups
+
+    @property
+    def knowledge_groups(self) -> frozenset[str]:
+        """All groups that hold knowledge — the admin marker is excluded."""
+        return self.knowledge_read_groups | self.knowledge_write_groups
+
 
 class LlmConfig(BaseModel):
     """Client-provided LLM configuration overrides.

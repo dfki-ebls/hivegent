@@ -31,6 +31,7 @@ __all__ = [
     "NetworkSettings",
     "SecuritySettings",
     "Settings",
+    "is_admin_group",
     "sanitize_document_path",
     "sanitize_group_id",
     "sanitize_user_id",
@@ -361,3 +362,14 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def is_admin_group(group_id: str) -> bool:
+    """Return ``True`` when ``group_id`` is the configured admin marker.
+
+    The admin group is a privilege marker only — it never holds knowledge,
+    backs no casebase, and must be filtered out wherever the codebase
+    enumerates groups for storage purposes.
+    """
+    admin = settings.groups.admin_group
+    return bool(admin) and group_id == admin

@@ -329,7 +329,7 @@ async def create_conversation_chat(
     document_filter, group_filters = parse_document_filters(
         config.included_documents,
         config.excluded_documents,
-        user.all_groups,
+        user.knowledge_groups,
     )
 
     if config.personality == Personality.CUSTOM and config.system_message:

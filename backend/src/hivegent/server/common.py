@@ -52,7 +52,12 @@ def parse_document_filters(
     excluded_documents: list[str],
     user_groups: frozenset[str],
 ) -> tuple[DocumentFilter | None, dict[str, DocumentFilter]]:
-    """Parse include and exclude lists into per-store document filters."""
+    """Parse include and exclude lists into per-store document filters.
+
+    ``user_groups`` is the set of groups whose documents the caller may
+    address — pass :attr:`User.knowledge_groups` so the admin marker is
+    excluded automatically and `@admin/...` entries fall through.
+    """
     user_included: list[str] = []
     user_excluded: list[str] = []
     group_included: dict[str, list[str]] = {}
@@ -102,14 +107,12 @@ def group_store(group_id: str) -> Casebase:
 
 
 def group_stores(user: User) -> tuple[Casebase, ...]:
-    """Build group casebases from the user's memberships."""
-    stores: list[Casebase] = []
-    for group_id in user.all_groups:
-        try:
-            stores.append(group_store(group_id))
-        except ValueError:
-            continue
-    return tuple(stores)
+    """Build group casebases from the user's knowledge memberships.
+
+    Iterates :attr:`User.knowledge_groups`, so the admin marker is filtered
+    upstream and no per-request ``ValueError`` from :class:`Casebase` fires.
+    """
+    return tuple(group_store(group_id) for group_id in user.knowledge_groups)
 
 
 def parse_pipeline_spec(raw: str) -> PipelineSpec:
@@ -140,17 +143,21 @@ def safe_group_id(group_id: str) -> str:
 
 
 def require_group_member(user: User, group_id: str) -> str:
-    """Validate the group ID and require membership."""
+    """Validate the group ID and require knowledge-group membership.
+
+    Checks :attr:`User.knowledge_groups`, so the admin marker (which never
+    backs a knowledge namespace) is uniformly rejected with the same 403.
+    """
     safe_id = safe_group_id(group_id)
-    if safe_id not in user.all_groups:
+    if safe_id not in user.knowledge_groups:
         raise HTTPException(status_code=403, detail="Not a member of this group")
     return safe_id
 
 
 def require_group_write(user: User, group_id: str) -> str:
-    """Validate the group ID and require write access."""
+    """Validate the group ID and require knowledge-group write access."""
     safe_id = safe_group_id(group_id)
-    if safe_id not in user.write_groups:
+    if safe_id not in user.knowledge_write_groups:
         raise HTTPException(
             status_code=403,
             detail="Write access required for this group",

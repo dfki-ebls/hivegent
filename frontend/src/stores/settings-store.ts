@@ -448,16 +448,24 @@ export const useSettingsStore = create<SettingsState>()(
   ),
 );
 
-/** Return all groups the user belongs to (read + write). */
+/**
+ * Return knowledge groups the user belongs to (read + write).
+ *
+ * The configured admin group is filtered out — it is a privilege marker
+ * only, mirrors the server's `Casebase` rejection, and holds no documents.
+ */
 export function getAllGroups(): string[] {
-  const { readGroups, writeGroups } = useSettingsStore.getState();
+  const { readGroups, writeGroups, adminGroup } = useSettingsStore.getState();
   const union = new Set([...readGroups, ...writeGroups]);
+  if (adminGroup) union.delete(adminGroup);
   return [...union].sort();
 }
 
-/** Check whether the user has write access to a group. */
+/** Check whether the user has write access to a knowledge group. */
 export function canWriteGroup(groupId: string): boolean {
-  return useSettingsStore.getState().writeGroups.includes(groupId);
+  const { writeGroups, adminGroup } = useSettingsStore.getState();
+  if (adminGroup && groupId === adminGroup) return false;
+  return writeGroups.includes(groupId);
 }
 
 /**
