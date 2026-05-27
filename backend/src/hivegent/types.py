@@ -19,6 +19,13 @@ from .security import (
 )
 
 __all__ = [
+    "AdminFactoryResetResponse",
+    "AdminGroupInfo",
+    "AdminListGroupsResponse",
+    "AdminListUsersResponse",
+    "AdminReindexResponse",
+    "AdminResetResponse",
+    "AdminUserInfo",
     "BulkDeleteConversationsResponse",
     "BulkDeleteDocumentsResponse",
     "BulkDeleteUserDataResponse",
@@ -103,7 +110,13 @@ class DocumentFilter:
 
 @dataclass(slots=True, frozen=True)
 class User:
-    """Authenticated user information with group membership."""
+    """Authenticated user information with group membership.
+
+    Admin status is derived on every access from
+    :attr:`~hivegent.config.GroupSettings.admin_group` membership — no
+    duplicate flag is stored anywhere.  Grant admin by adding a user to
+    that group in the IdP (or in the local workspace for dev).
+    """
 
     id: str
     email: str | None = None
@@ -115,6 +128,12 @@ class User:
     def all_groups(self) -> frozenset[str]:
         """Return all groups the user belongs to."""
         return self.read_groups | self.write_groups
+
+    @property
+    def is_admin(self) -> bool:
+        """Whether the user is a member of the configured admin group."""
+        admin_group = settings.groups.admin_group
+        return bool(admin_group) and admin_group in self.all_groups
 
 
 class LlmConfig(BaseModel):
@@ -411,7 +430,12 @@ class UpdateTitleRequest(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """Serializable user information for API responses."""
+    """Serializable user information for API responses.
+
+    Admin status is intentionally not on the wire — the client derives
+    it the same way the server does, by checking ``admin_group`` against
+    ``read_groups | write_groups``.  See :class:`SettingsResponse`.
+    """
 
     id: str = Field(description="User identifier")
     email: str | None = Field(default=None, description="User email address")
@@ -451,6 +475,13 @@ class SettingsResponse(BaseModel):
     has_api_key: bool = Field(description="Whether a server-side API key is configured")
     base_url: str = Field(description="Default base URL for the LLM provider")
     user: UserResponse = Field(description="Authenticated user information")
+    admin_group: str = Field(
+        description=(
+            "Group name whose members are administrators.  Empty string "
+            "disables the admin gate.  Lets the client derive admin "
+            "status the same way the server does."
+        ),
+    )
 
 
 class GenerateTitleRequest(BaseModel):
@@ -723,3 +754,69 @@ class McpTestResponse(BaseModel):
         default=None,
         description="Error message if the test failed",
     )
+
+
+# ─── Admin responses ───────────────────────────────────────────────────
+
+
+class AdminResetResponse(BaseModel):
+    """Generic response for a single admin reset action."""
+
+    action: str = Field(description="The action that was performed")
+    message: str = Field(description="Human-readable status message")
+
+
+class AdminReindexResponse(BaseModel):
+    """Response for the global reindex action."""
+
+    stores_reconciled: int = Field(description="Number of casebases reconciled")
+    message: str = Field(description="Human-readable status message")
+
+
+class AdminFactoryResetResponse(BaseModel):
+    """Response for the composite factory-reset action."""
+
+    actions: list[str] = Field(description="Reset steps that were executed")
+    message: str = Field(description="Human-readable status message")
+
+
+class AdminUserInfo(BaseModel):
+    """Summary information about a user known to the system.
+
+    Only users that have left a footprint in the local database (a
+    conversation, document, token, or memory) appear here — Hivegent is
+    not an identity store, so it does not enumerate every account from
+    the upstream OIDC provider.
+    """
+
+    id: str = Field(description="User identifier")
+    email: str | None = Field(default=None, description="User email address")
+    name: str | None = Field(default=None, description="User display name")
+    document_count: int = Field(description="Number of documents owned by the user")
+    conversation_count: int = Field(description="Number of conversations owned")
+    has_workspace: bool = Field(
+        description="Whether a workspace directory exists on disk",
+    )
+
+
+class AdminListUsersResponse(BaseModel):
+    """Response for the admin list-users endpoint."""
+
+    users: list[AdminUserInfo] = Field(description="Users with local data")
+
+
+class AdminGroupInfo(BaseModel):
+    """Summary information about a group in the system."""
+
+    id: str = Field(description="Group identifier")
+    document_count: int = Field(description="Number of documents owned by the group")
+    member_count: int = Field(description="Number of members in the group")
+    has_workspace: bool = Field(
+        description="Whether a workspace directory exists on disk",
+    )
+
+
+class AdminListGroupsResponse(BaseModel):
+    """Response for the admin list-groups endpoint."""
+
+    groups: list[AdminGroupInfo] = Field(description="All groups known to the system")

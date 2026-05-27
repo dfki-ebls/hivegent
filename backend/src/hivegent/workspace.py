@@ -100,6 +100,7 @@ __all__ = [
     "delete_all",
     "delete_directory",
     "delete_document",
+    "delete_workspace_root",
     "move_directory",
     "move_document",
     "on_agent_write",
@@ -1064,6 +1065,24 @@ async def delete_all(store: Casebase) -> None:
         workspace_path = store.workspace_path(settings.data_dir)
         if workspace_path.exists():
             shutil.rmtree(workspace_path)
+
+
+async def delete_workspace_root() -> None:
+    """Wipe the entire workspace tree on disk.
+
+    Removes ``<data_dir>/workspace/`` and re-creates the empty root.
+    Used by the admin "reset workspace files" action; the caller is
+    responsible for clearing the matching SQL documents and LanceDB
+    rows, since this is a filesystem-only operation.
+    """
+    workspace_root = settings.data_dir / "workspace"
+
+    def _wipe() -> None:
+        if workspace_root.exists():
+            shutil.rmtree(workspace_root)
+        workspace_root.mkdir(parents=True, exist_ok=True)
+
+    await asyncio.to_thread(_wipe)
 
 
 async def on_agent_write(store: Casebase, filename: str) -> None:

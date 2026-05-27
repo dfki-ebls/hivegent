@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import { AppErrorBoundary } from "../components/AppErrorBoundary";
 import { Header } from "../components/Header";
 import { ThemeProvider } from "../components/ThemeProvider";
+import { Toaster } from "../components/ui/sonner";
 import { useOidc } from "../oidc";
 import { useSettingsStore } from "../stores/settings-store";
 
@@ -25,6 +26,7 @@ function RootComponent() {
   return (
     <ThemeProvider>
       <AppErrorBoundary>
+        <Toaster />
         <div className="flex h-screen flex-col">
           <Header />
           <main className="flex-1 overflow-hidden">

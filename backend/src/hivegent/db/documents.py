@@ -13,7 +13,9 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ._common import affected_rows, ensure_group, ensure_user, stem_subtree_filter
+from ._common import affected_rows, stem_subtree_filter
+from .groups import ensure_group
+from .users import ensure_user
 
 from ..chunkers.base import (
     ChunkData,
@@ -38,6 +40,7 @@ from .models import (
 
 __all__ = [
     "delete_all",
+    "delete_all_documents",
     "delete_document",
     "delete_subtree",
     "get_document",
@@ -305,6 +308,19 @@ async def delete_all(store: Casebase) -> int:
     """Delete every document owned by *store*.  Cascades to chunks."""
     async with session() as s:
         result = await s.execute(delete(Document).where(_owner_filter(store)))
+    return affected_rows(result)
+
+
+async def delete_all_documents() -> int:
+    """Delete every document row globally.  Cascades to chunks.
+
+    Used by the admin "reset workspace" action together with a
+    filesystem wipe; the workspace and the SQL projection must move in
+    lockstep, otherwise reconciliation will re-create one from the
+    other on next boot.
+    """
+    async with session() as s:
+        result = await s.execute(delete(Document))
     return affected_rows(result)
 
 

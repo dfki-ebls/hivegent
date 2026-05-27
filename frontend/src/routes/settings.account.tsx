@@ -1,13 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
+  DatabaseZapIcon,
+  FactoryIcon,
   FileX2Icon,
+  FolderXIcon,
   KeyRoundIcon,
   MessageSquareXIcon,
+  RefreshCwIcon,
   RotateCcwIcon,
+  ShieldAlertIcon,
   Trash2Icon,
   UserCogIcon,
+  UserXIcon,
+  UsersIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 import { BackendReadyGate } from "../components/BackendReadyGate";
 import { Button } from "../components/ui/button";
 import {
@@ -21,14 +29,24 @@ import {
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
 import {
+  adminDeleteGroupData,
+  adminDeleteUserData,
+  adminFactoryReset,
+  adminListGroups,
+  adminListUsers,
+  adminReindex,
+  adminResetDatabase,
+  adminResetVectorDb,
+  adminResetWorkspace,
   deleteAllConversations,
   deleteAllDocuments,
   deleteAllUserData,
   revokeAllTokens,
 } from "../lib/api";
+import type { AdminGroupInfo, AdminUserInfo } from "../lib/types";
 import { enforceLogin } from "../oidc";
 import { useConversationsStore } from "../stores/conversations-store";
-import { useSettingsStore } from "../stores/settings-store";
+import { selectIsAdmin, useSettingsStore } from "../stores/settings-store";
 import { clearAllStorage } from "../stores/storage";
 import { useUserDocumentsStore } from "../stores/user-documents-store";
 
@@ -41,143 +59,389 @@ export const Route = createFileRoute("/settings/account")({
   ),
 });
 
-// --- Danger Zone ---
+// --- Generic confirm-action dialog ---
+//
+// Both the user-scoped and admin-scoped danger zones funnel their
+// buttons through this single pending-action state machine.  Keeps the
+// confirm flow consistent and the page free of one-off useState pairs.
 
-type DangerAction = "conversations" | "documents" | "tokens" | "everything";
+interface DangerAction {
+  key: string;
+  title: string;
+  description: string;
+  confirm: string;
+  run: () => Promise<void>;
+}
 
-const DANGER_ACTIONS: Record<
-  DangerAction,
-  { title: string; description: string; confirm: string }
-> = {
-  conversations: {
-    title: "Delete All Conversations",
-    description:
-      "This will permanently delete all your chat conversations on the server. This action cannot be undone.",
-    confirm: "Delete All",
-  },
-  documents: {
-    title: "Delete All Documents",
-    description:
-      "This will permanently delete all your documents, chunks, originals, and the search index on the server. This action cannot be undone.",
-    confirm: "Delete All",
-  },
-  tokens: {
-    title: "Revoke All Tokens",
-    description:
-      "This will permanently revoke all your personal access tokens. Any applications using these tokens will lose API access.",
-    confirm: "Revoke All",
-  },
-  everything: {
-    title: "Reset Everything",
-    description:
-      "This will permanently delete all your server-side data (conversations, documents, tokens) and clear all local browser data. This action cannot be undone.",
-    confirm: "Reset Everything",
-  },
-};
+interface ConfirmDialogProps {
+  action: DangerAction | null;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
 
-function DangerZoneSection() {
-  const [confirmAction, setConfirmAction] = useState<DangerAction | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+function ConfirmDialog({ action, busy, onConfirm, onCancel }: ConfirmDialogProps) {
+  return (
+    <AlertDialog open={!!action} onOpenChange={(open) => !open && onCancel()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{action?.title}</AlertDialogTitle>
+          <AlertDialogDescription>{action?.description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={onConfirm}
+            disabled={busy}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {busy ? "Working..." : action?.confirm}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+// --- User Danger Zone ---
+
+function UserDangerZoneSection({
+  setAction,
+}: {
+  setAction: (a: DangerAction) => void;
+}) {
   const fetchConversations = useConversationsStore((s) => s.fetchConversations);
   const refreshDocuments = useUserDocumentsStore((s) => s.refresh);
 
-  const actionInfo = confirmAction ? DANGER_ACTIONS[confirmAction] : null;
+  return (
+    <div className="grid gap-3">
+      <h2 className="text-lg font-semibold text-destructive">Server — Danger Zone</h2>
+      <p className="text-sm text-muted-foreground">
+        These actions permanently delete your own data on the server.
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="justify-start"
+          onClick={() =>
+            setAction({
+              key: "user-chats",
+              title: "Delete All Conversations",
+              description:
+                "Permanently delete every chat you own on the server. This action cannot be undone.",
+              confirm: "Delete All",
+              run: async () => {
+                await deleteAllConversations();
+                await fetchConversations();
+              },
+            })
+          }
+        >
+          <MessageSquareXIcon className="h-4 w-4 mr-2" />
+          Delete All Chats
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="justify-start"
+          onClick={() =>
+            setAction({
+              key: "user-docs",
+              title: "Delete All Documents",
+              description:
+                "Permanently delete every document, chunk, original, and search-index entry you own. This action cannot be undone.",
+              confirm: "Delete All",
+              run: async () => {
+                await deleteAllDocuments();
+                await refreshDocuments();
+              },
+            })
+          }
+        >
+          <FileX2Icon className="h-4 w-4 mr-2" />
+          Delete All Documents
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="justify-start"
+          onClick={() =>
+            setAction({
+              key: "user-tokens",
+              title: "Revoke All Tokens",
+              description:
+                "Permanently revoke every personal access token you own. Applications using these tokens will immediately lose API access.",
+              confirm: "Revoke All",
+              run: () => revokeAllTokens(),
+            })
+          }
+        >
+          <KeyRoundIcon className="h-4 w-4 mr-2" />
+          Revoke All Tokens
+        </Button>
+        <Button
+          variant="destructive"
+          size="sm"
+          className="justify-start"
+          onClick={() =>
+            setAction({
+              key: "user-everything",
+              title: "Reset Everything",
+              description:
+                "Permanently delete every server-side trace of your account (conversations, documents, tokens, memory) and clear all local browser data. This action cannot be undone.",
+              confirm: "Reset Everything",
+              run: async () => {
+                await deleteAllUserData();
+                clearAllStorage();
+              },
+            })
+          }
+        >
+          <Trash2Icon className="h-4 w-4 mr-2" />
+          Reset Everything
+        </Button>
+      </div>
+    </div>
+  );
+}
 
-  const handleConfirm = async () => {
-    if (!confirmAction) return;
-    setIsDeleting(true);
+// --- Admin Danger Zone ---
+
+interface AdminTargetSelectorProps<T extends { id: string }> {
+  label: string;
+  items: T[];
+  loading: boolean;
+  onSelect: (item: T) => void;
+  renderMeta: (item: T) => string;
+  icon: React.ReactNode;
+  emptyLabel: string;
+}
+
+function AdminTargetList<T extends { id: string }>({
+  label,
+  items,
+  loading,
+  onSelect,
+  renderMeta,
+  icon,
+  emptyLabel,
+}: AdminTargetSelectorProps<T>) {
+  return (
+    <div className="grid gap-2 rounded-md border p-3">
+      <div className="flex items-center gap-2 text-sm font-medium">
+        {icon}
+        {label}
+      </div>
+      {loading ? (
+        <p className="text-xs text-muted-foreground">Loading...</p>
+      ) : items.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{emptyLabel}</p>
+      ) : (
+        <div className="grid gap-1.5 max-h-48 overflow-y-auto">
+          {items.map((item) => (
+            <Button
+              key={item.id}
+              variant="ghost"
+              size="sm"
+              className="justify-between font-normal text-xs h-auto py-1.5"
+              onClick={() => onSelect(item)}
+            >
+              <span className="truncate">{item.id}</span>
+              <span className="text-muted-foreground shrink-0 ml-2">{renderMeta(item)}</span>
+            </Button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminDangerZoneSection({
+  setAction,
+}: {
+  setAction: (a: DangerAction) => void;
+}) {
+  const [users, setUsers] = useState<AdminUserInfo[]>([]);
+  const [groups, setGroups] = useState<AdminGroupInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
     try {
-      switch (confirmAction) {
-        case "conversations":
-          await deleteAllConversations();
-          await fetchConversations();
-          break;
-        case "documents":
-          await deleteAllDocuments();
-          await refreshDocuments();
-          break;
-        case "tokens":
-          await revokeAllTokens();
-          break;
-        case "everything":
-          await deleteAllUserData();
-          clearAllStorage();
-          return;
-      }
+      const [u, g] = await Promise.all([adminListUsers(), adminListGroups()]);
+      setUsers(u);
+      setGroups(g);
     } catch (e) {
-      console.error("Bulk delete failed:", e);
+      console.error("Failed to load admin overview:", e);
     } finally {
-      setIsDeleting(false);
-      setConfirmAction(null);
+      setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   return (
-    <>
-      <div className="grid gap-3">
-        <h2 className="text-lg font-semibold text-destructive">Server — Danger Zone</h2>
-        <p className="text-sm text-muted-foreground">
-          These actions permanently delete data on the server.
-        </p>
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="justify-start"
-            onClick={() => setConfirmAction("conversations")}
-          >
-            <MessageSquareXIcon className="h-4 w-4 mr-2" />
-            Delete All Chats
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="justify-start"
-            onClick={() => setConfirmAction("documents")}
-          >
-            <FileX2Icon className="h-4 w-4 mr-2" />
-            Delete All Documents
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="justify-start"
-            onClick={() => setConfirmAction("tokens")}
-          >
-            <KeyRoundIcon className="h-4 w-4 mr-2" />
-            Revoke All Tokens
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            className="justify-start"
-            onClick={() => setConfirmAction("everything")}
-          >
-            <Trash2Icon className="h-4 w-4 mr-2" />
-            Reset Everything
-          </Button>
-        </div>
+    <div className="grid gap-3 border-t pt-8">
+      <div className="flex items-center gap-2">
+        <ShieldAlertIcon className="h-5 w-5 text-destructive" />
+        <h2 className="text-lg font-semibold text-destructive">Admin — Danger Zone</h2>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        System-wide destructive actions. These affect every user on this deployment.
+      </p>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="justify-start"
+          onClick={() =>
+            setAction({
+              key: "admin-vector",
+              title: "Reset Vector Storage",
+              description:
+                "Drop the global LanceDB index. SQL chunk rows survive, so a follow-up reindex will rebuild the index from the source of truth. Search will return no results until the reindex completes.",
+              confirm: "Reset Vector DB",
+              run: async () => {
+                await adminResetVectorDb();
+              },
+            })
+          }
+        >
+          <DatabaseZapIcon className="h-4 w-4 mr-2" />
+          Reset Vector Storage
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="justify-start"
+          onClick={() =>
+            setAction({
+              key: "admin-workspace",
+              title: "Reset Workspace Files",
+              description:
+                "Wipe every workspace file on disk, the matching document rows in SQL, and the vector index — the three must stay in sync. Conversations, tokens, memory, users, and groups are kept.",
+              confirm: "Reset Workspace",
+              run: async () => {
+                await adminResetWorkspace();
+                await refresh();
+              },
+            })
+          }
+        >
+          <FolderXIcon className="h-4 w-4 mr-2" />
+          Reset Workspace Files
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="justify-start"
+          onClick={() =>
+            setAction({
+              key: "admin-reindex",
+              title: "Reindex Knowledge",
+              description:
+                "Reconcile every casebase: rebuild the LanceDB index from SQL and prune orphans. Safe to run anytime; useful after a vector-storage reset or an embedding configuration change.",
+              confirm: "Reindex",
+              run: async () => {
+                await adminReindex();
+              },
+            })
+          }
+        >
+          <RefreshCwIcon className="h-4 w-4 mr-2" />
+          Reindex Knowledge
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="justify-start"
+          onClick={() =>
+            setAction({
+              key: "admin-database",
+              title: "Reset Database",
+              description:
+                "Drop every user and group row along with everything that cascades: tokens, memory, conversations, documents, chunks, and group memberships. Files on disk and the vector index survive.",
+              confirm: "Reset Database",
+              run: async () => {
+                await adminResetDatabase();
+                await refresh();
+              },
+            })
+          }
+        >
+          <DatabaseZapIcon className="h-4 w-4 mr-2" />
+          Reset Database
+        </Button>
+        <Button
+          variant="destructive"
+          size="sm"
+          className="justify-start col-span-2"
+          onClick={() =>
+            setAction({
+              key: "admin-factory",
+              title: "Factory Reset",
+              description:
+                "Wipe the vector index, every workspace file on disk, every user and group, and every dependent row. Local browser data is cleared too. The deployment returns to the state of a fresh checkout. This action cannot be undone.",
+              confirm: "Factory Reset",
+              run: async () => {
+                await adminFactoryReset();
+                clearAllStorage();
+              },
+            })
+          }
+        >
+          <FactoryIcon className="h-4 w-4 mr-2" />
+          Factory Reset
+        </Button>
       </div>
 
-      <AlertDialog open={!!confirmAction} onOpenChange={(open) => !open && setConfirmAction(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{actionInfo?.title}</AlertDialogTitle>
-            <AlertDialogDescription>{actionInfo?.description}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleConfirm}
-              disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {isDeleting ? "Deleting..." : actionInfo?.confirm}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+      <div className="grid md:grid-cols-2 gap-3 mt-2">
+        <AdminTargetList
+          label="Wipe one user's data"
+          items={users}
+          loading={loading}
+          icon={<UserXIcon className="h-4 w-4 text-destructive" />}
+          emptyLabel="No users have left a footprint yet."
+          renderMeta={(u) => `${u.document_count}d / ${u.conversation_count}c`}
+          onSelect={(u) =>
+            setAction({
+              key: `admin-user-${u.id}`,
+              title: `Wipe data for ${u.id}`,
+              description: `Delete every document, chunk, original, conversation, token, and memory entry owned by user ${u.id}. ${u.document_count} document(s) and ${u.conversation_count} conversation(s) will be removed. This action cannot be undone.`,
+              confirm: "Wipe User",
+              run: async () => {
+                await adminDeleteUserData(u.id);
+                await refresh();
+              },
+            })
+          }
+        />
+        <AdminTargetList
+          label="Wipe one group's data"
+          items={groups}
+          loading={loading}
+          icon={<UsersIcon className="h-4 w-4 text-destructive" />}
+          emptyLabel="No groups are registered yet."
+          renderMeta={(g) => `${g.document_count}d / ${g.member_count}m`}
+          onSelect={(g) =>
+            setAction({
+              key: `admin-group-${g.id}`,
+              title: `Wipe data for group ${g.id}`,
+              description: `Delete every document, chunk, and original owned by group ${g.id}. ${g.document_count} document(s) will be removed. Membership rows are kept so the group reappears the next time a member is granted access. This action cannot be undone.`,
+              confirm: "Wipe Group",
+              run: async () => {
+                await adminDeleteGroupData(g.id);
+                await refresh();
+              },
+            })
+          }
+        />
+      </div>
+    </div>
   );
 }
 
@@ -185,6 +449,26 @@ function DangerZoneSection() {
 
 function AccountPage() {
   const reset = useSettingsStore((s) => s.reset);
+  const isAdmin = useSettingsStore(selectIsAdmin);
+  const [action, setAction] = useState<DangerAction | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const handleConfirm = async () => {
+    if (!action) return;
+    setBusy(true);
+    try {
+      await action.run();
+      toast.success(`${action.title} — done`);
+    } catch (e) {
+      console.error(`${action.key} failed:`, e);
+      toast.error(`${action.title} failed`, {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBusy(false);
+      setAction(null);
+    }
+  };
 
   return (
     <div className="container max-w-4xl mx-auto py-8 px-4">
@@ -208,9 +492,17 @@ function AccountPage() {
           </div>
         </div>
 
-        {/* Danger Zone */}
-        <DangerZoneSection />
+        <UserDangerZoneSection setAction={setAction} />
+
+        {isAdmin && <AdminDangerZoneSection setAction={setAction} />}
       </div>
+
+      <ConfirmDialog
+        action={action}
+        busy={busy}
+        onConfirm={() => void handleConfirm()}
+        onCancel={() => setAction(null)}
+      />
     </div>
   );
 }

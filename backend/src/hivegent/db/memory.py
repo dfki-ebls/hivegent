@@ -6,9 +6,10 @@ materialized lazily so OIDC identities don't need pre-registration.
 
 from sqlalchemy import delete
 
-from ._common import affected_rows, ensure_user
+from ._common import affected_rows
 from .engine import session
 from .models import Memory
+from .users import ensure_user
 
 __all__ = ["clear_memory", "load_memory", "save_memory"]
 

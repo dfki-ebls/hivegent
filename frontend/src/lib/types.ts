@@ -87,7 +87,11 @@ export type UserOverrides = z.infer<typeof UserOverridesSchema>;
 // API response schemas
 // ============================================================
 
-/** Authenticated user information from the backend. */
+/** Authenticated user information from the backend.
+ *
+ * Admin status is derived client-side from `BackendSettings.admin_group`
+ * and the user's groups — mirrors the server's `User.is_admin` property.
+ */
 export const UserResponseSchema = z.object({
   id: z.string(),
   email: z.string().nullable().optional(),
@@ -97,6 +101,54 @@ export const UserResponseSchema = z.object({
 });
 export type UserResponse = z.infer<typeof UserResponseSchema>;
 
+// ============================================================
+// Admin response schemas
+// ============================================================
+
+export const AdminResetResponseSchema = z.object({
+  action: z.string(),
+  message: z.string(),
+});
+export type AdminResetResponse = z.infer<typeof AdminResetResponseSchema>;
+
+export const AdminReindexResponseSchema = z.object({
+  stores_reconciled: z.number(),
+  message: z.string(),
+});
+export type AdminReindexResponse = z.infer<typeof AdminReindexResponseSchema>;
+
+export const AdminFactoryResetResponseSchema = z.object({
+  actions: z.array(z.string()),
+  message: z.string(),
+});
+export type AdminFactoryResetResponse = z.infer<typeof AdminFactoryResetResponseSchema>;
+
+export const AdminUserInfoSchema = z.object({
+  id: z.string(),
+  email: z.string().nullable().optional(),
+  name: z.string().nullable().optional(),
+  document_count: z.number(),
+  conversation_count: z.number(),
+  has_workspace: z.boolean(),
+});
+export type AdminUserInfo = z.infer<typeof AdminUserInfoSchema>;
+
+export const AdminListUsersResponseSchema = z.object({
+  users: z.array(AdminUserInfoSchema),
+});
+
+export const AdminGroupInfoSchema = z.object({
+  id: z.string(),
+  document_count: z.number(),
+  member_count: z.number(),
+  has_workspace: z.boolean(),
+});
+export type AdminGroupInfo = z.infer<typeof AdminGroupInfoSchema>;
+
+export const AdminListGroupsResponseSchema = z.object({
+  groups: z.array(AdminGroupInfoSchema),
+});
+
 /** Settings exposed by the backend. */
 export const BackendSettingsSchema = z.object({
   model: z.string(),
@@ -104,6 +156,7 @@ export const BackendSettingsSchema = z.object({
   has_api_key: z.boolean(),
   base_url: z.string(),
   user: UserResponseSchema,
+  admin_group: z.string(),
 });
 export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
 

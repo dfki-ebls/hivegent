@@ -30,9 +30,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 from sqlalchemy import delete, func, select, update
 
-from ._common import affected_rows, ensure_user, new_id
+from ._common import affected_rows, new_id
 from .engine import session
 from .models import Conversation, Message, MessageKind
+from .users import ensure_user
 
 __all__ = [
     "ConversationData",

@@ -23,7 +23,7 @@ from joserfc.jwt import ClaimsOption, JWTClaimsRegistry
 from pydantic import AnyHttpUrl, ValidationError
 
 from .config import sanitize_user_id, settings
-from .db._common import list_group_ids
+from .db.groups import list_group_ids
 from .db.tokens import validate_token as _validate_pat
 from .http_client import get_shared_http_client
 from .types import User
@@ -34,6 +34,7 @@ __all__ = [
     "build_discovery_url",
     "fetch_oidc_configuration",
     "get_current_user",
+    "require_admin",
 ]
 
 # Fallback when the IdP's discovery document doesn't advertise
@@ -395,12 +396,18 @@ async def get_current_user(
     """
     # Bypass authentication in development mode
     if not settings.auth.enable:
-        # Give write access to every group registered in the database.
+        # Give write access to every group registered in the database
+        # plus the admin group, so destructive endpoints are reachable
+        # via the same property-derived `is_admin` check used in prod.
+        write_groups = set(await list_group_ids())
+        admin_group = settings.groups.admin_group
+        if admin_group:
+            write_groups.add(admin_group)
         return User(
             id="localhost",
             email="dev@localhost",
             name="Localhost User",
-            write_groups=await list_group_ids(),
+            write_groups=frozenset(write_groups),
         )
 
     if credentials is None:
@@ -426,3 +433,22 @@ async def get_current_user(
         )
 
     return await validate_jwt_token(token)
+
+
+async def require_admin(
+    user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """FastAPI dependency that gates a route on administrator privileges.
+
+    Admin status is the ``User.is_admin`` property — membership in
+    ``settings.groups.admin_group`` — derived live from the request's
+    group claims.  PATs carry no group context, so admin actions must
+    go through the OIDC flow.  Non-admins receive 403; the body
+    deliberately avoids hinting at the well-known admin group name.
+    """
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator privileges required",
+        )
+    return user

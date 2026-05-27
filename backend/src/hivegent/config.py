@@ -204,10 +204,16 @@ class GroupSettings(BaseModel):
     """Settings for group-based knowledge sharing.
 
     Configurable via ``HIVEGENT_GROUPS__*`` environment variables.
+
+    ``admin_group`` names the well-known group whose members are
+    administrators.  Membership is checked against the same OIDC
+    ``groups`` claim used for read/write access, so promoting a user
+    to admin is purely an IdP-side group assignment.
     """
 
     groups_claim: str = "groups"
     default_permission: str = "read"
+    admin_group: str = "admin"
 
 
 class AuthSettings(BaseModel):

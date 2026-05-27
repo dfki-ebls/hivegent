@@ -12,6 +12,16 @@ import type {
   UploadProgress,
 } from "./types";
 import {
+  type AdminFactoryResetResponse,
+  AdminFactoryResetResponseSchema,
+  type AdminGroupInfo,
+  AdminListGroupsResponseSchema,
+  AdminListUsersResponseSchema,
+  type AdminReindexResponse,
+  AdminReindexResponseSchema,
+  type AdminResetResponse,
+  AdminResetResponseSchema,
+  type AdminUserInfo,
   type AssetEntry,
   AssetEntrySchema,
   type AssetListResponse,
@@ -1360,4 +1370,87 @@ export async function deleteGroupDirectory(
   }
   const data: unknown = await res.json();
   return DeleteDirectoryResponseSchema.parse(data);
+}
+
+// ============================================================
+// Admin API functions (require user.is_admin)
+//
+// All admin endpoints share the same response shapes: a generic
+// `{action, message}` for single resets, a counter for reindex, and a
+// list of actions for the composite factory reset.  Helpers stay thin
+// so the UI can render confirmation dialogs and toast the message
+// directly.
+// ============================================================
+
+/** POST helper that validates an admin reset response, raising on HTTP errors. */
+async function adminPost<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+  const res = await authFetch(`${API_BASE_URL}${path}`, { method: "POST" });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Admin action failed" }));
+    throw new Error(error.detail || "Admin action failed");
+  }
+  return schema.parse(await res.json());
+}
+
+/** Wipe the global LanceDB index.  SQL chunk rows survive. */
+export function adminResetVectorDb(): Promise<AdminResetResponse> {
+  return adminPost("/api/admin/reset/vector-db", AdminResetResponseSchema);
+}
+
+/** Wipe the workspace tree on disk and the matching SQL document rows. */
+export function adminResetWorkspace(): Promise<AdminResetResponse> {
+  return adminPost("/api/admin/reset/workspace", AdminResetResponseSchema);
+}
+
+/** Wipe every user, group, and the rows that cascade from them. */
+export function adminResetDatabase(): Promise<AdminResetResponse> {
+  return adminPost("/api/admin/reset/database", AdminResetResponseSchema);
+}
+
+/** Reconcile every casebase: rebuild LanceDB from SQL, prune orphans. */
+export function adminReindex(): Promise<AdminReindexResponse> {
+  return adminPost("/api/admin/reindex", AdminReindexResponseSchema);
+}
+
+/** Composite factory reset: vector DB + workspace + database. */
+export function adminFactoryReset(): Promise<AdminFactoryResetResponse> {
+  return adminPost("/api/admin/reset/factory", AdminFactoryResetResponseSchema);
+}
+
+/** List every user known to the local database (footprint-bearing only). */
+export async function adminListUsers(): Promise<AdminUserInfo[]> {
+  const res = await authFetch(`${API_BASE_URL}/api/admin/users`);
+  if (!res.ok) throw new Error("Failed to list users");
+  return AdminListUsersResponseSchema.parse(await res.json()).users;
+}
+
+/** List every group known to the local database. */
+export async function adminListGroups(): Promise<AdminGroupInfo[]> {
+  const res = await authFetch(`${API_BASE_URL}/api/admin/groups`);
+  if (!res.ok) throw new Error("Failed to list groups");
+  return AdminListGroupsResponseSchema.parse(await res.json()).groups;
+}
+
+/** Wipe all data owned by a single user (workspace + SQL + index). */
+export async function adminDeleteUserData(userId: string): Promise<void> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}/data`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to delete user data" }));
+    throw new Error(error.detail || "Failed to delete user data");
+  }
+}
+
+/** Wipe all data owned by a single group (workspace + SQL + index). */
+export async function adminDeleteGroupData(groupId: string): Promise<void> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/admin/groups/${encodeURIComponent(groupId)}/data`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to delete group data" }));
+    throw new Error(error.detail || "Failed to delete group data");
+  }
 }

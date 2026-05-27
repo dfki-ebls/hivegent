@@ -16,9 +16,10 @@ from sqlalchemy import delete, select
 
 from ..config import settings
 from ..types import TokenInfo, User as UserModel
-from ._common import affected_rows, ensure_user
+from ._common import affected_rows
 from .engine import session
 from .models import Token
+from .users import ensure_user
 
 __all__ = [
     "CreatedToken",

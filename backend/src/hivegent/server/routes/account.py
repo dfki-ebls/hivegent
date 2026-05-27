@@ -1,15 +1,14 @@
 """Routes for tokens, memory, and user-wide cleanup."""
 
-import shutil
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from ... import workspace
 from ...auth import User, get_current_user
-from ...config import settings
 from ...db.memory import clear_memory
 from ...db.tokens import create_token, list_tokens, revoke_all_tokens, revoke_token
+from ...db.users import delete_user
 from ...types import (
     BulkDeleteUserDataResponse,
     BulkRevokeTokensResponse,
@@ -92,15 +91,15 @@ async def delete_all_user_data(
 ) -> BulkDeleteUserDataResponse:
     """Delete all data for the authenticated user.
 
-    Removes documents (cascades to chunks, memory, conversations,
-    tokens) plus the on-disk workspace directory.  LanceDB rows are
-    cleared via :func:`workspace.delete_all`.
+    ``workspace.delete_all`` clears documents (cascades to chunks),
+    LanceDB chunks, and the workspace directory.  ``delete_user`` then
+    drops the ``User`` row so memory, conversations, and tokens cascade
+    via FK ``ON DELETE CASCADE``.  The user re-materialises lazily on
+    the next request via :func:`ensure_user`.
     """
     store = user_store(user)
     await workspace.delete_all(store)
-    workspace_dir = store.workspace_path(settings.data_dir)
-    if workspace_dir.exists():
-        shutil.rmtree(workspace_dir)
+    await delete_user(user.id)
     return BulkDeleteUserDataResponse(
         message="All user data deleted successfully",
     )

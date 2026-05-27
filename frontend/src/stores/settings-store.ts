@@ -79,6 +79,7 @@ interface SettingsState {
   // User context (from backend, not persisted)
   readGroups: string[];
   writeGroups: string[];
+  adminGroup: string;
 
   // LLM actions
   setOverride: (partial: Partial<UserOverrides>) => void;
@@ -252,6 +253,7 @@ export const useSettingsStore = create<SettingsState>()(
       overrides: EMPTY_OVERRIDES,
       readGroups: [],
       writeGroups: [],
+      adminGroup: "",
       ...UI_DEFAULTS,
 
       setOverride: (partial) =>
@@ -269,6 +271,7 @@ export const useSettingsStore = create<SettingsState>()(
               backendDefaults: defaults,
               readGroups: defaults.user.read_groups,
               writeGroups: defaults.user.write_groups,
+              adminGroup: defaults.admin_group,
             });
             return;
           } catch {
@@ -455,4 +458,16 @@ export function getAllGroups(): string[] {
 /** Check whether the user has write access to a group. */
 export function canWriteGroup(groupId: string): boolean {
   return useSettingsStore.getState().writeGroups.includes(groupId);
+}
+
+/**
+ * Zustand selector: whether the user is an administrator.
+ *
+ * Derived from `adminGroup` membership — same rule as the server's
+ * `User.is_admin` property.  Empty `adminGroup` disables the gate.
+ */
+export function selectIsAdmin(state: SettingsState): boolean {
+  const { adminGroup, readGroups, writeGroups } = state;
+  if (!adminGroup) return false;
+  return readGroups.includes(adminGroup) || writeGroups.includes(adminGroup);
 }

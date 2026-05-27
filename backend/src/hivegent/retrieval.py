@@ -46,6 +46,7 @@ __all__ = [
     "build_search_tool",
     "index_document",
     "list_indexed_filenames",
+    "reset_index",
     "unindex_paths",
     "unindex_store",
     "unindex_subtree",
@@ -239,6 +240,20 @@ class _RetrievalState:
         with self._lock:
             self._storage = None
 
+    def reset(self) -> None:
+        """Wipe the LanceDB directory and the cached handle atomically.
+
+        Holds ``self._lock`` for the full wipe-and-recreate so that no
+        concurrent ``get_storage`` can cache a handle pointing at the
+        directory being deleted.
+        """
+        with self._lock:
+            self._storage = None
+            db_dir = lancedb_dir(settings.data_dir)
+            if db_dir.exists():
+                shutil.rmtree(db_dir)
+            db_dir.mkdir(parents=True, exist_ok=True)
+
 
 _state = _RetrievalState()
 
@@ -315,6 +330,17 @@ def _list_indexed_filenames_sync(store: Casebase) -> set[str]:
 async def list_indexed_filenames(store: Casebase) -> set[str]:
     """Return every distinct filename indexed in LanceDB for *store*."""
     return await asyncio.to_thread(_list_indexed_filenames_sync, store)
+
+
+async def reset_index() -> None:
+    """Wipe the global LanceDB index and re-create the empty directory.
+
+    Mirrors open-webui's ``POST /reset/db`` admin action.  Caller is
+    responsible for reindexing source data afterwards via
+    :func:`hivegent.reconcile.reconcile_all` if the SQL chunk rows still
+    exist.
+    """
+    await asyncio.to_thread(_state.reset)
 
 
 # ─── Search-tool builder ──────────────────────────────────────────────
