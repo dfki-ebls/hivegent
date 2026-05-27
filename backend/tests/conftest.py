@@ -37,10 +37,12 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture()
 def db_initialized(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
-    """Rebuild the async engine against the temporary data dir and create tables.
+    """Rebuild the async engine against the temporary data dir and upgrade it.
 
     The module-level engine is bound at import time, so tests that touch
     SQL need to swap it for one pointed at the tmp_path SQLite file.
+    Migrations run via the same Alembic path production uses, so the
+    test schema matches whatever ``alembic upgrade head`` would produce.
     """
     import asyncio
     import importlib
@@ -48,7 +50,7 @@ def db_initialized(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from hivegent.db.engine import _build_engine
-    from hivegent.db.models import Base
+    from hivegent.db.migrations import apply_migrations
 
     engine_mod = importlib.import_module("hivegent.db.engine")
     new_engine = _build_engine()
@@ -56,11 +58,7 @@ def db_initialized(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(engine_mod, "engine", new_engine)
     monkeypatch.setattr(engine_mod, "Session", new_sessionmaker)
 
-    async def _create_all() -> None:
-        async with new_engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_create_all())
+    asyncio.run(apply_migrations())
     yield
     asyncio.run(new_engine.dispose())
 

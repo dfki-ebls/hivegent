@@ -16,13 +16,16 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from ..config import settings
-from .models import Base
 
-__all__ = ["Session", "engine", "init_database", "session"]
+__all__ = ["Session", "engine", "resolve_database_url", "session"]
 
 
-def _resolve_url() -> str:
-    """Build the SQLAlchemy URL, defaulting to SQLite under ``data_dir``."""
+def resolve_database_url() -> str:
+    """Build the SQLAlchemy URL, defaulting to SQLite under ``data_dir``.
+
+    Shared by the runtime engine and the Alembic environment so both
+    target the same database without duplicating the fallback logic.
+    """
     if settings.db.url:
         return settings.db.url
     db_path = settings.data_dir / "hivegent.db"
@@ -32,7 +35,9 @@ def _resolve_url() -> str:
 
 def _build_engine() -> AsyncEngine:
     """Build the async engine with SQLite PRAGMAs attached if applicable."""
-    eng = create_async_engine(_resolve_url(), echo=settings.db.echo, future=True)
+    eng = create_async_engine(
+        resolve_database_url(), echo=settings.db.echo, future=True
+    )
     if eng.dialect.name == "sqlite":
         _attach_sqlite_pragmas(eng)
     return eng
@@ -65,13 +70,3 @@ async def session() -> AsyncIterator[AsyncSession]:
         except Exception:
             await s.rollback()
             raise
-
-
-async def init_database() -> None:
-    """Create tables from the model metadata.
-
-    Suitable for development and tests.  Production schema changes should
-    go through Alembic migrations.
-    """
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)

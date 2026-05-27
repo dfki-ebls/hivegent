@@ -15,3 +15,4 @@
 - FastAPI server for handling requests and responses
 - Pydantic AI for LLMs and agents
 - Workspace mutations must go through the API, files dropped into `data/workspace/` by hand are invisible to LanceDB
+- Schema is managed by Alembic, see `backend/README.md` for the workflow. Whenever you touch `backend/src/hivegent/db/models.py`, generate a matching revision in the same change (`uv run alembic revision --autogenerate -m "<summary>"`) so the database and the models stay in sync.

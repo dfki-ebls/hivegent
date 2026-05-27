@@ -10,7 +10,8 @@ package (for ``ConversationSummary``) and is depended on by it (for
 ``TokenInfo``).
 """
 
-from .engine import Session, engine, init_database, session
+from .engine import Session, engine, resolve_database_url, session
+from .migrations import apply_migrations, build_alembic_config
 from .models import (
     Base,
     Chunk,
@@ -50,7 +51,9 @@ __all__ = [
     "Timestamped",
     "Token",
     "User",
+    "apply_migrations",
+    "build_alembic_config",
     "engine",
-    "init_database",
+    "resolve_database_url",
     "session",
 ]

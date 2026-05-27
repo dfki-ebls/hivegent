@@ -345,6 +345,29 @@ def _is_loopback_host(host: str) -> bool:
 
 
 @app.command()
+def migrate(
+    revision: Annotated[
+        str,
+        typer.Argument(
+            help="Target revision; defaults to 'head'. Pass a specific hash "
+            "to roll forward/back to that point."
+        ),
+    ] = "head",
+) -> None:
+    """Run Alembic migrations against the configured database.
+
+    The API server upgrades the database automatically on startup, so this
+    command is only needed for ad-hoc operator use (dry runs, rolling back,
+    or applying migrations from a maintenance window).
+    """
+    from alembic import command
+
+    from .db.migrations import build_alembic_config
+
+    command.upgrade(build_alembic_config(), revision)
+
+
+@app.command()
 def serve(
     host: Annotated[
         str, typer.Option("--host", "-h", help="Host to bind to")

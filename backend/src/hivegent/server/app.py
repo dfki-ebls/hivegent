@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from starlette.responses import PlainTextResponse, Response
 
 from ..config import settings
-from ..db import init_database
+from ..db import apply_migrations
 from ..http_client import shared_http_client_lifespan
 from ..mcp import mcp_app
 from ..observability import configure_observability
@@ -34,7 +34,7 @@ mcp_http_app = mcp_app.http_app(path="/") if settings.mcp.enable else None
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open shared resources and delegate to MCP."""
     async with shared_http_client_lifespan():
-        await init_database()
+        await apply_migrations()
         try:
             reports = await reconcile_all()
         except Exception:
