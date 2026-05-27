@@ -1,7 +1,5 @@
 """Small helpers shared across repositories."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from sqlalchemy import or_, select

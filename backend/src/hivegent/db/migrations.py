@@ -8,8 +8,6 @@ runtime upgrades, and ``resolve_database_url`` keeps a single source
 of truth for the target database.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from pathlib import Path

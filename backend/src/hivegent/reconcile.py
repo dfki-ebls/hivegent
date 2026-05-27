@@ -5,8 +5,6 @@ derived projections; on boot, this module prunes anything that SQL does
 not vouch for and re-derives anything SQL says should exist.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass

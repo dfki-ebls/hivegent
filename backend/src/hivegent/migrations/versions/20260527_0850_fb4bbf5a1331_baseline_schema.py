@@ -5,8 +5,6 @@ Revises:
 Create Date: 2026-05-27 08:50:01.823740+00:00
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 
 from alembic import op

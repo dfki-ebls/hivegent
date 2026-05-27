@@ -8,8 +8,6 @@ from :func:`hivegent.db.engine.resolve_database_url`, so dev, tests,
 and prod hit the database the rest of the app uses.
 """
 
-from __future__ import annotations
-
 import asyncio
 
 from alembic import context

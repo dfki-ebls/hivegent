@@ -6,8 +6,6 @@ the API boundary; this module is the only translator between rows and
 that shape.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 

@@ -6,8 +6,6 @@ change.  Repositories convert these ORM rows to Pydantic models at their
 public surface; nothing outside :mod:`hivegent.db` sees an ORM object.
 """
 
-from __future__ import annotations
-
 import enum
 from datetime import UTC, datetime
 from typing import Any
@@ -137,21 +135,21 @@ class User(Timestamped, Base):
     email: Mapped[str | None]
     display_name: Mapped[str | None]
 
-    tokens: Mapped[list[Token]] = relationship(
+    tokens: Mapped[list["Token"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    memory: Mapped[Memory | None] = relationship(
+    memory: Mapped["Memory | None"] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False
     )
-    conversations: Mapped[list[Conversation]] = relationship(
+    conversations: Mapped[list["Conversation"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    documents: Mapped[list[Document]] = relationship(
+    documents: Mapped[list["Document"]] = relationship(
         back_populates="owner_user",
         cascade="all, delete-orphan",
         foreign_keys="Document.owner_user_id",
     )
-    memberships: Mapped[list[GroupMember]] = relationship(
+    memberships: Mapped[list["GroupMember"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -162,10 +160,10 @@ class Group(Timestamped, Base):
     id: Mapped[str] = mapped_column(primary_key=True)
     display_name: Mapped[str | None]
 
-    members: Mapped[list[GroupMember]] = relationship(
+    members: Mapped[list["GroupMember"]] = relationship(
         back_populates="group", cascade="all, delete-orphan"
     )
-    documents: Mapped[list[Document]] = relationship(
+    documents: Mapped[list["Document"]] = relationship(
         back_populates="owner_group",
         cascade="all, delete-orphan",
         foreign_keys="Document.owner_group_id",
@@ -234,7 +232,7 @@ class Conversation(Timestamped, Base):
     )
 
     user: Mapped[User] = relationship(back_populates="conversations")
-    messages: Mapped[list[Message]] = relationship(
+    messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
         order_by="Message.idx",
@@ -301,7 +299,7 @@ class Document(Timestamped, Base):
     owner_group: Mapped[Group | None] = relationship(
         back_populates="documents", foreign_keys=[owner_group_id]
     )
-    chunks: Mapped[list[Chunk]] = relationship(
+    chunks: Mapped[list["Chunk"]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",
         order_by="Chunk.idx",

@@ -7,8 +7,6 @@ payloads, so the SDK losing metadata in the next request matters only
 for what it sends us, not for what we have stored.
 """
 
-from __future__ import annotations
-
 import contextlib
 from collections.abc import Sequence
 from datetime import UTC, datetime

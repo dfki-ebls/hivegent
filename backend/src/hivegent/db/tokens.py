@@ -5,8 +5,6 @@ creation time.  The token format is ``hivegent_<token_id>_<secret>``;
 ``<token_id>`` is the global PK of the :class:`~hivegent.db.Token` row.
 """
 
-from __future__ import annotations
-
 import asyncio
 import secrets
 from dataclasses import dataclass

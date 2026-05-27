@@ -1,7 +1,5 @@
 """PNG sanitization helpers for vision-model inputs."""
 
-from __future__ import annotations
-
 import mimetypes
 
 __all__ = ["guess_image_media_type", "sanitize_image_bytes"]

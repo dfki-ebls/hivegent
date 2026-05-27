@@ -16,8 +16,6 @@ derived projections.  Orphans in either are reconciled at startup by
 :mod:`hivegent.reconcile`.
 """
 
-from __future__ import annotations
-
 import asyncio
 import io
 import logging

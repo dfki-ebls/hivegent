@@ -1,7 +1,5 @@
 """Shared URL safety helpers used by SSRF-sensitive code paths."""
 
-from __future__ import annotations
-
 import asyncio
 import ipaddress
 import socket

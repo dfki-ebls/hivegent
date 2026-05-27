@@ -1,7 +1,5 @@
 """Base chunking types and interfaces."""
 
-from __future__ import annotations
-
 import asyncio
 import bisect
 from abc import ABC, abstractmethod

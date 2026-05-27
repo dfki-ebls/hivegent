@@ -4,8 +4,6 @@ All operations flow through :mod:`hivegent.db.documents` (source of
 truth) and :mod:`hivegent.retrieval` (derived index).
 """
 
-from __future__ import annotations
-
 import logging
 
 import logfire

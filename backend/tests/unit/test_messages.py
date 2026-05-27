@@ -1,7 +1,5 @@
 """Tests for message persistence and metadata rehydration."""
 
-from __future__ import annotations
-
 import pytest
 from pydantic_ai.messages import (
     ModelRequest,

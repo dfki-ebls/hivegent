@@ -14,8 +14,6 @@ vision-model time on an extracted image:
    footer is described at most once per process.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import re

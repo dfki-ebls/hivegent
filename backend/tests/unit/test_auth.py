@@ -1,7 +1,5 @@
 """Unit tests for OIDC discovery and JWKS resolution."""
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from typing import Any
 

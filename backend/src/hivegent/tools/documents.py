@@ -269,7 +269,7 @@ class DocumentTreeNode:
     children: tuple["DocumentTreeNode", ...] = ()
 
 
-@dataclass
+@dataclass(slots=True)
 class _TreeBuildNode:
     """Mutable intermediate node used while constructing the tree."""
 

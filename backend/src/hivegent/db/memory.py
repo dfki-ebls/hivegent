@@ -4,8 +4,6 @@ Memory is a single markdown blob per user.  The :class:`User` row is
 materialized lazily so OIDC identities don't need pre-registration.
 """
 
-from __future__ import annotations
-
 from sqlalchemy import delete
 
 from ._common import affected_rows, ensure_user
