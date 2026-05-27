@@ -1,7 +1,7 @@
 """SQLAlchemy 2.0 schema for Hivegent.
 
 Single module — small enough to read top-to-bottom.  Stays dialect-neutral
-so swapping ``sqlite+aiosqlite`` for ``postgresql+asyncpg`` is a config
+so swapping ``sqlite+aiosqlite`` for ``postgresql+psycopg`` is a config
 change.  Repositories convert these ORM rows to Pydantic models at their
 public surface; nothing outside :mod:`hivegent.db` sees an ORM object.
 """

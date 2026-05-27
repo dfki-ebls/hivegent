@@ -274,7 +274,7 @@ class DatabaseSettings(BaseModel):
 
     ``url`` is a SQLAlchemy URL.  When empty, defaults to SQLite at
     ``<data_dir>/hivegent.db`` so a fresh checkout works without any
-    setup.  Set to ``postgresql+asyncpg://...`` to switch to Postgres
+    setup.  Set to ``postgresql+psycopg://...`` to switch to Postgres
     without code changes.
     """
 
