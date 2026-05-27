@@ -106,15 +106,20 @@ function ConfirmDialog({ action, busy, onConfirm, onCancel }: ConfirmDialogProps
 // --- User Danger Zone ---
 
 function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => void }) {
+  const resetLocalSettings = useSettingsStore((s) => s.reset);
   const fetchConversations = useConversationsStore((s) => s.fetchConversations);
   const refreshDocuments = useUserDocumentsStore((s) => s.refresh);
 
   return (
     <div className="grid gap-3">
-      <h2 className="text-lg font-semibold text-destructive">Server — Danger Zone</h2>
+      <div className="flex items-center gap-2">
+        <ShieldAlertIcon className="h-5 w-5 text-destructive" />
+        <h2 className="text-lg font-semibold text-destructive">User — Danger Zone</h2>
+      </div>
       <p className="text-sm text-muted-foreground">
-        These actions permanently delete your own data on the server.
+        Destructive actions scoped to your account. These affect only you.
       </p>
+
       <div className="grid grid-cols-2 gap-2">
         <Button
           variant="outline"
@@ -122,11 +127,31 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
           className="justify-start"
           onClick={() =>
             setAction({
+              key: "user-local",
+              title: "Reset Local Settings",
+              description:
+                "Discard your browser-side overrides and fall back to the server-configured defaults. Server-side data is untouched.",
+              confirm: "Reset Local Settings",
+              run: async () => {
+                resetLocalSettings();
+              },
+            })
+          }
+        >
+          <RotateCcwIcon className="h-4 w-4 mr-2" />
+          Reset Local Settings
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="justify-start"
+          onClick={() =>
+            setAction({
               key: "user-chats",
-              title: "Delete All Conversations",
+              title: "Delete All Chats",
               description:
                 "Permanently delete every chat you own on the server. This action cannot be undone.",
-              confirm: "Delete All",
+              confirm: "Delete All Chats",
               run: async () => {
                 await deleteAllConversations();
                 await fetchConversations();
@@ -147,7 +172,7 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
               title: "Delete All Documents",
               description:
                 "Permanently delete every document, chunk, original, and search-index entry you own. This action cannot be undone.",
-              confirm: "Delete All",
+              confirm: "Delete All Documents",
               run: async () => {
                 await deleteAllDocuments();
                 await refreshDocuments();
@@ -168,7 +193,7 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
               title: "Revoke All Tokens",
               description:
                 "Permanently revoke every personal access token you own. Applications using these tokens will immediately lose API access.",
-              confirm: "Revoke All",
+              confirm: "Revoke All Tokens",
               run: () => revokeAllTokens(),
             })
           }
@@ -179,7 +204,7 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
         <Button
           variant="destructive"
           size="sm"
-          className="justify-start"
+          className="justify-start col-span-2"
           onClick={() =>
             setAction({
               key: "user-everything",
@@ -282,7 +307,7 @@ function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) =>
         <h2 className="text-lg font-semibold text-destructive">Admin — Danger Zone</h2>
       </div>
       <p className="text-sm text-muted-foreground">
-        System-wide destructive actions. These affect every user on this deployment.
+        Destructive actions scoped to the whole deployment. These affect every user.
       </p>
 
       <div className="grid grid-cols-2 gap-2">
@@ -440,7 +465,6 @@ function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) =>
 // --- Main component ---
 
 function AccountPage() {
-  const reset = useSettingsStore((s) => s.reset);
   const isAdmin = useSettingsStore(selectIsAdmin);
   const [action, setAction] = useState<DangerAction | null>(null);
   const [busy, setBusy] = useState(false);
@@ -470,20 +494,6 @@ function AccountPage() {
       </div>
 
       <div className="grid gap-8">
-        {/* Local Settings */}
-        <div className="grid gap-3">
-          <h2 className="text-lg font-semibold">Local Settings</h2>
-          <p className="text-sm text-muted-foreground">
-            Clears browser overrides and uses server-configured defaults.
-          </p>
-          <div>
-            <Button variant="outline" size="sm" onClick={reset}>
-              <RotateCcwIcon className="h-4 w-4 mr-2" />
-              Reset to Server Defaults
-            </Button>
-          </div>
-        </div>
-
         <UserDangerZoneSection setAction={setAction} />
 
         {isAdmin && <AdminDangerZoneSection setAction={setAction} />}
