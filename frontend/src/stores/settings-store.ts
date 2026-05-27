@@ -395,7 +395,7 @@ export const useSettingsStore = create<SettingsState>()(
       merge: (persisted, current) => {
         const data = persisted as Record<string, unknown> | undefined;
         if (!data) return current;
-        const pick = <T,>(schema: z.ZodType<T>, value: unknown, fallback: T): T =>
+        const pick = <T>(schema: z.ZodType<T>, value: unknown, fallback: T): T =>
           schema.safeParse(value).data ?? fallback;
 
         // Flag-gated slices mirror `partialize`: when off, fall through to

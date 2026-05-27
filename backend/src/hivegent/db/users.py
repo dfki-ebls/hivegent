@@ -31,7 +31,9 @@ async def ensure_user(s: AsyncSession, user_id: str) -> None:
         s.add(User(id=user_id))
 
 
-async def list_users_with_counts() -> list[tuple[str, str | None, str | None, int, int]]:
+async def list_users_with_counts() -> list[
+    tuple[str, str | None, str | None, int, int]
+]:
     """Return ``(user_id, email, display_name, document_count, conversation_count)``.
 
     Only rows materialised in the local database are returned — Hivegent

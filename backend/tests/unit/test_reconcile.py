@@ -104,9 +104,7 @@ async def test_lance_orphan_removed_without_sql(
 ) -> None:
     """LanceDB rows without a SQL counterpart are unindexed."""
     _ = (db_initialized, fake_embeddings, data_dir)
-    await workspace.upload(
-        user_store, "doc.md", b"payload", spec=single_chunk_pipeline
-    )
+    await workspace.upload(user_store, "doc.md", b"payload", spec=single_chunk_pipeline)
     # Pull SQL out from under LanceDB.
     assert await db_documents.delete_document(user_store, "doc.md")
     storage = retrieval._state.get_storage()
@@ -127,9 +125,7 @@ async def test_lance_reindexed_when_missing(
 ) -> None:
     """A SQL document with chunks but no LanceDB rows is re-indexed."""
     _ = (db_initialized, fake_embeddings, data_dir)
-    await workspace.upload(
-        user_store, "doc.md", b"content", spec=single_chunk_pipeline
-    )
+    await workspace.upload(user_store, "doc.md", b"content", spec=single_chunk_pipeline)
     await retrieval.unindex_paths(user_store, ["doc.md"])
     storage = retrieval._state.get_storage()
     assert storage.index == {}
@@ -149,9 +145,7 @@ async def test_asset_file_under_known_stem_is_preserved(
 ) -> None:
     """Raw asset files under ``foo.assets/`` survive when ``foo`` is in SQL."""
     _ = (db_initialized, fake_embeddings)
-    await workspace.upload(
-        user_store, "report.md", b"body", spec=single_chunk_pipeline
-    )
+    await workspace.upload(user_store, "report.md", b"body", spec=single_chunk_pipeline)
     workspace_dir = user_store.workspace_dir(data_dir)
     asset = workspace_dir / "report.assets" / "image.png"
     asset.parent.mkdir(parents=True, exist_ok=True)

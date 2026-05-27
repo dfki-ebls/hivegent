@@ -105,11 +105,7 @@ function ConfirmDialog({ action, busy, onConfirm, onCancel }: ConfirmDialogProps
 
 // --- User Danger Zone ---
 
-function UserDangerZoneSection({
-  setAction,
-}: {
-  setAction: (a: DangerAction) => void;
-}) {
+function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => void }) {
   const fetchConversations = useConversationsStore((s) => s.fetchConversations);
   const refreshDocuments = useUserDocumentsStore((s) => s.refresh);
 
@@ -257,11 +253,7 @@ function AdminTargetList<T extends { id: string }>({
   );
 }
 
-function AdminDangerZoneSection({
-  setAction,
-}: {
-  setAction: (a: DangerAction) => void;
-}) {
+function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => void }) {
   const [users, setUsers] = useState<AdminUserInfo[]>([]);
   const [groups, setGroups] = useState<AdminGroupInfo[]>([]);
   const [loading, setLoading] = useState(true);

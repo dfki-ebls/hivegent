@@ -13,4 +13,3 @@ Everything else worth recording (retrieved chunks, model name, tool calls, compl
 2. Plumb the resolved `instructions` string from the chat route into `append_messages`.
 3. In `append_messages`, write the column once on conversation creation (when `existing_count == 0`); leave it untouched on subsequent turns.
 4. Known limitation: mid-conversation drift (e.g. memory updates between turns) is not captured; graduate to per-turn snapshots only if a concrete need arises.
-

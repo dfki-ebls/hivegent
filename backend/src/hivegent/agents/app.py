@@ -17,9 +17,7 @@ _default_model_settings = ModelSettings(
     timeout=settings.network.llm_request_timeout_seconds,
 )
 
-base_agent: Agent[None, str] = Agent(
-    retries=1, model_settings=_default_model_settings
-)
+base_agent: Agent[None, str] = Agent(retries=1, model_settings=_default_model_settings)
 user_agent: Agent[UserDeps, str] = Agent(
     deps_type=UserDeps, retries=1, model_settings=_default_model_settings
 )

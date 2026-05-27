@@ -203,5 +203,7 @@ async def reconcile_all() -> Mapping[str, ReconcileReport]:
         try:
             reports[store.store_key] = await reconcile_store(store)
         except Exception:
-            logger.warning("Reconciliation failed for %s", store.store_key, exc_info=True)
+            logger.warning(
+                "Reconciliation failed for %s", store.store_key, exc_info=True
+            )
     return reports

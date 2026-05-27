@@ -191,7 +191,8 @@ def _casebase_or_400(kind: str, identifier: str) -> Casebase:
     """
     try:
         return (
-            Casebase.for_user(identifier) if kind == "user"
+            Casebase.for_user(identifier)
+            if kind == "user"
             else Casebase.for_group(identifier)
         )
     except ValueError as exc:

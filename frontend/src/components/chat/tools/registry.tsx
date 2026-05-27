@@ -23,9 +23,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   search: { syncOutput: syncSearchOutput },
   read_document: { syncOutput: syncReadDocumentOutput },
   read_binary_document: {
-    render: ({ part, metadata }) => (
-      <ReadBinaryDocumentTool part={part} metadata={metadata} />
-    ),
+    render: ({ part, metadata }) => <ReadBinaryDocumentTool part={part} metadata={metadata} />,
   },
   grep: { syncOutput: syncGrepOutput },
   web_search: { syncOutput: syncWebSearchOutput },

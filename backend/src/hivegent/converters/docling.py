@@ -38,6 +38,7 @@ def _default_pdf_options() -> ThreadedPdfPipelineOptions:
     """
     return ThreadedPdfPipelineOptions(do_picture_classification=True)
 
+
 # Raise Pillow's decompression-bomb limit so that large embedded images/streams
 # inside PDFs (common with scanned pages) do not trigger DecompressionBombError.
 # The default ~178M pixels is too restrictive; the configured value still
@@ -84,9 +85,7 @@ def _build_converter(config_json: str) -> DoclingDocumentConverter:
     # and pipeline_cls) and only override pipeline_options.
     for fmt in converter.format_to_options:
         default = converter.format_to_options[fmt]
-        opts = (
-            config.pdf_options if fmt in _PDF_FORMATS else config.convert_options
-        )
+        opts = config.pdf_options if fmt in _PDF_FORMATS else config.convert_options
         if fmt in _PDF_FORMATS:
             opts = opts.model_copy(update={"generate_picture_images": True})
         converter.format_to_options[fmt] = default.model_copy(
@@ -151,44 +150,48 @@ class DoclingConverter(DocumentConverter):
 # :attr:`AssetRole.UNKNOWN` and the triage layer's byte-level
 # heuristics.  This is the only place in the codebase that mentions
 # ``PictureClassificationLabel`` values.
-_DECORATIVE_LABELS = frozenset({
-    PictureClassificationLabel.ICON,
-    PictureClassificationLabel.LOGO,
-    PictureClassificationLabel.SIGNATURE,
-    PictureClassificationLabel.STAMP,
-    PictureClassificationLabel.BAR_CODE,
-    PictureClassificationLabel.QR_CODE,
-    PictureClassificationLabel.PAGE_THUMBNAIL,
-})
-_INFORMATIVE_LABELS = frozenset({
-    PictureClassificationLabel.BAR_CHART,
-    PictureClassificationLabel.BOX_PLOT,
-    PictureClassificationLabel.FLOW_CHART,
-    PictureClassificationLabel.LINE_CHART,
-    PictureClassificationLabel.PIE_CHART,
-    PictureClassificationLabel.SCATTER_PLOT,
-    PictureClassificationLabel.SCATTER_CHART,
-    PictureClassificationLabel.STACKED_BAR_CHART,
-    PictureClassificationLabel.HEATMAP,
-    PictureClassificationLabel.TABLE,
-    PictureClassificationLabel.ENGINEERING_DRAWING,
-    PictureClassificationLabel.CAD_DRAWING,
-    PictureClassificationLabel.ELECTRICAL_DIAGRAM,
-    PictureClassificationLabel.CHEMISTRY_STRUCTURE,
-    PictureClassificationLabel.MARKUSH_STRUCTURE,
-    PictureClassificationLabel.MOLECULAR_STRUCTURE,
-    PictureClassificationLabel.PHOTOGRAPH,
-    PictureClassificationLabel.NATURAL_IMAGE,
-    PictureClassificationLabel.FULL_PAGE_IMAGE,
-    PictureClassificationLabel.SCREENSHOT_FROM_COMPUTER,
-    PictureClassificationLabel.SCREENSHOT_FROM_MANUAL,
-    PictureClassificationLabel.SCREENSHOT,
-    PictureClassificationLabel.GEOGRAPHICAL_MAP,
-    PictureClassificationLabel.GEOGRAPHIC_MAP,
-    PictureClassificationLabel.TOPOGRAPHICAL_MAP,
-    PictureClassificationLabel.REMOTE_SENSING,
-    PictureClassificationLabel.MUSIC,
-})
+_DECORATIVE_LABELS = frozenset(
+    {
+        PictureClassificationLabel.ICON,
+        PictureClassificationLabel.LOGO,
+        PictureClassificationLabel.SIGNATURE,
+        PictureClassificationLabel.STAMP,
+        PictureClassificationLabel.BAR_CODE,
+        PictureClassificationLabel.QR_CODE,
+        PictureClassificationLabel.PAGE_THUMBNAIL,
+    }
+)
+_INFORMATIVE_LABELS = frozenset(
+    {
+        PictureClassificationLabel.BAR_CHART,
+        PictureClassificationLabel.BOX_PLOT,
+        PictureClassificationLabel.FLOW_CHART,
+        PictureClassificationLabel.LINE_CHART,
+        PictureClassificationLabel.PIE_CHART,
+        PictureClassificationLabel.SCATTER_PLOT,
+        PictureClassificationLabel.SCATTER_CHART,
+        PictureClassificationLabel.STACKED_BAR_CHART,
+        PictureClassificationLabel.HEATMAP,
+        PictureClassificationLabel.TABLE,
+        PictureClassificationLabel.ENGINEERING_DRAWING,
+        PictureClassificationLabel.CAD_DRAWING,
+        PictureClassificationLabel.ELECTRICAL_DIAGRAM,
+        PictureClassificationLabel.CHEMISTRY_STRUCTURE,
+        PictureClassificationLabel.MARKUSH_STRUCTURE,
+        PictureClassificationLabel.MOLECULAR_STRUCTURE,
+        PictureClassificationLabel.PHOTOGRAPH,
+        PictureClassificationLabel.NATURAL_IMAGE,
+        PictureClassificationLabel.FULL_PAGE_IMAGE,
+        PictureClassificationLabel.SCREENSHOT_FROM_COMPUTER,
+        PictureClassificationLabel.SCREENSHOT_FROM_MANUAL,
+        PictureClassificationLabel.SCREENSHOT,
+        PictureClassificationLabel.GEOGRAPHICAL_MAP,
+        PictureClassificationLabel.GEOGRAPHIC_MAP,
+        PictureClassificationLabel.TOPOGRAPHICAL_MAP,
+        PictureClassificationLabel.REMOTE_SENSING,
+        PictureClassificationLabel.MUSIC,
+    }
+)
 _DOCLING_ROLE_MAP: dict[str, AssetRole] = {
     **{label.value: AssetRole.DECORATIVE for label in _DECORATIVE_LABELS},
     **{label.value: AssetRole.INFORMATIVE for label in _INFORMATIVE_LABELS},
@@ -198,7 +201,11 @@ _DOCLING_ROLE_MAP: dict[str, AssetRole] = {
 def _picture_role(item: PictureItem) -> AssetRole:
     """Map Docling's classifier output for *item* onto :class:`AssetRole`."""
     meta = item.meta
-    if meta is None or meta.classification is None or not meta.classification.predictions:
+    if (
+        meta is None
+        or meta.classification is None
+        or not meta.classification.predictions
+    ):
         return AssetRole.UNKNOWN
     prediction = meta.classification.get_main_prediction()
     return _DOCLING_ROLE_MAP.get(str(prediction.class_name), AssetRole.UNKNOWN)
@@ -212,9 +219,9 @@ def _normalized_bbox(item: PictureItem, doc: DoclingDocument) -> AssetBBox | Non
     page = doc.pages.get(prov.page_no)
     if page is None or page.size is None:
         return None
-    normalized = prov.bbox.to_top_left_origin(
-        page_height=page.size.height
-    ).normalized(page.size)
+    normalized = prov.bbox.to_top_left_origin(page_height=page.size.height).normalized(
+        page.size
+    )
     return AssetBBox(
         x_min=float(normalized.l),
         y_min=float(normalized.t),

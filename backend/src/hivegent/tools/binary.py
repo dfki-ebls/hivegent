@@ -177,9 +177,7 @@ class ReadBinaryDocumentTool(SyncPathTool[BinaryReadResult | None]):
             try:
                 raw = sanitize_image_bytes(raw, media_type)
             except ValueError as exc:
-                return ToolOutput(
-                    data=None, formatted=f"(image rejected: {exc})"
-                )
+                return ToolOutput(data=None, formatted=f"(image rejected: {exc})")
 
         canonical = sp.prefixed(local)
         page_text = (
@@ -198,8 +196,6 @@ class ReadBinaryDocumentTool(SyncPathTool[BinaryReadResult | None]):
                 f"attached {canonical}{page_text} ({media_type}, {len(raw)} bytes)"
             ),
             attachments=(
-                BinaryAttachment(
-                    data=raw, media_type=media_type, identifier=canonical
-                ),
+                BinaryAttachment(data=raw, media_type=media_type, identifier=canonical),
             ),
         )

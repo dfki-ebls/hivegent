@@ -259,9 +259,7 @@ def _build_binary_stub(filepath: str, size_bytes: int) -> str:
     return f"File name: {name}.\nMIME type: {mime}.\nSize: {size_bytes} bytes.\n"
 
 
-def _replace_image_references(
-    markdown: str, mapping: dict[str, str | None]
-) -> str:
+def _replace_image_references(markdown: str, mapping: dict[str, str | None]) -> str:
     """Rewrite or strip ``![alt](path)`` references in *markdown*.
 
     Bounded to real markdown image syntax so prose that mentions an
@@ -1258,9 +1256,7 @@ async def process_collection(
                 if relative_path in companion_originals:
                     try:
                         async with _rollback_on_failure(store, (safe,)):
-                            original_bytes = (
-                                extract_root / relative_path
-                            ).read_bytes()
+                            original_bytes = (extract_root / relative_path).read_bytes()
                             original_path = workspace_dir / safe
                             original_path.parent.mkdir(parents=True, exist_ok=True)
                             original_path.write_bytes(original_bytes)

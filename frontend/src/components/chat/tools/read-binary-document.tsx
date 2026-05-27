@@ -40,11 +40,7 @@ export function ReadBinaryDocumentTool({ part, metadata }: ReadBinaryDocumentToo
 
   return (
     <Tool defaultOpen={false}>
-      <ToolHeader
-        title="Read Binary Document"
-        type="tool-read_binary_document"
-        state={state}
-      />
+      <ToolHeader title="Read Binary Document" type="tool-read_binary_document" state={state} />
       <ToolContent>
         {input && <ToolParameters params={input} />}
         {result && (
@@ -57,9 +53,7 @@ export function ReadBinaryDocumentTool({ part, metadata }: ReadBinaryDocumentToo
               <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                 <span>{result.media_type}</span>
                 <span>{humanSize(result.size)}</span>
-                {result.pages.length > 0 && (
-                  <span>pages {result.pages.join(", ")}</span>
-                )}
+                {result.pages.length > 0 && <span>pages {result.pages.join(", ")}</span>}
                 <span className="flex items-center gap-1">
                   <Paperclip className="size-3" />
                   attached to model

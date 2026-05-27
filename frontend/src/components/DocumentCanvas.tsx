@@ -86,13 +86,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Progress } from "./ui/progress";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { ScrollArea } from "./ui/scroll-area";
 import { Spinner } from "./ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
