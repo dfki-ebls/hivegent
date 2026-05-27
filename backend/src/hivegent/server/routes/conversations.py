@@ -189,6 +189,8 @@ Return ONLY the title, no quotes or extra text.
 
         await set_conversation_title(user.id, conversation_id, generated_title)
         return GenerateTitleResponse(title=generated_title)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception(
             "Failed to generate title for conversation %s", conversation_id
@@ -239,6 +241,8 @@ async def create_conversation_compaction(
 
     try:
         result = await run_until_disconnect(http_request, _compact())
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:

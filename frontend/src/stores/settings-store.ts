@@ -14,6 +14,8 @@ import { getSettings } from "../lib/api";
 import { decryptApiKey, encryptApiKey, isEncrypted } from "../lib/crypto";
 import { featureFlags } from "../lib/feature-flags";
 import {
+  AssetProcessingMode,
+  AssetProcessingModeSchema,
   type BackendSettings,
   ChunkingPipeline,
   ChunkingPipelineSchema,
@@ -49,7 +51,7 @@ const UI_DEFAULTS = {
   expandedDirs: [""] as string[],
   personality: "default" as Personality,
   customSystemMessage: "",
-  processAssets: true,
+  assetMode: AssetProcessingMode.DESCRIBE,
   conversionConfigs: {} as PipelineConfigs,
   chunkingConfigs: {} as PipelineConfigs,
   toolsSpec: { disabledTools: [], mcpServers: [] } as ToolsSpec,
@@ -66,7 +68,7 @@ interface SettingsState {
   documentTab: DocumentTab;
   conversionPipeline: ConversionPipeline;
   chunkingPipeline: ChunkingPipeline;
-  processAssets: boolean;
+  assetMode: AssetProcessingMode;
   expandedDirs: string[];
   personality: Personality;
   customSystemMessage: string;
@@ -87,7 +89,7 @@ interface SettingsState {
   setDocumentTab: (tab: DocumentTab) => void;
   setConversionPipeline: (pipeline: ConversionPipeline) => void;
   setChunkingPipeline: (pipeline: ChunkingPipeline) => void;
-  setProcessAssets: (value: boolean) => void;
+  setAssetMode: (mode: AssetProcessingMode) => void;
   toggleExpandedDir: (path: string) => void;
   setExpandedDirs: (dirs: string[]) => void;
   setPersonality: (personality: Personality) => void;
@@ -109,7 +111,7 @@ interface PersistedSettings {
   documentTab: DocumentTab;
   conversionPipeline: ConversionPipeline;
   chunkingPipeline: ChunkingPipeline;
-  processAssets: boolean;
+  assetMode: AssetProcessingMode;
   expandedDirs: string[];
   personality: Personality;
   customSystemMessage: string;
@@ -281,7 +283,7 @@ export const useSettingsStore = create<SettingsState>()(
 
       setChunkingPipeline: (pipeline) => set({ chunkingPipeline: pipeline }),
 
-      setProcessAssets: (processAssets) => set({ processAssets }),
+      setAssetMode: (assetMode) => set({ assetMode }),
 
       toggleExpandedDir: (path) =>
         set((state) => {
@@ -369,7 +371,7 @@ export const useSettingsStore = create<SettingsState>()(
       storage: encryptedStorage,
       partialize: (state) => ({
         documentTab: state.documentTab,
-        processAssets: state.processAssets,
+        assetMode: state.assetMode,
         expandedDirs: state.expandedDirs,
         personality: state.personality,
         customSystemMessage: state.customSystemMessage,
@@ -390,47 +392,52 @@ export const useSettingsStore = create<SettingsState>()(
       merge: (persisted, current) => {
         const data = persisted as Record<string, unknown> | undefined;
         if (!data) return current;
+        const pick = <T,>(schema: z.ZodType<T>, value: unknown, fallback: T): T =>
+          schema.safeParse(value).data ?? fallback;
 
         // Flag-gated slices mirror `partialize`: when off, fall through to
         // `current`'s defaults so stale data from a previous build with the
         // flag on is ignored.
         return {
           ...current,
-          documentTab:
-            DocumentTabSchema.safeParse(data.documentTab).data ?? UI_DEFAULTS.documentTab,
-          processAssets:
-            z.boolean().safeParse(data.processAssets).data ?? UI_DEFAULTS.processAssets,
-          expandedDirs:
-            ExpandedDirsSchema.safeParse(data.expandedDirs).data ?? UI_DEFAULTS.expandedDirs,
-          personality:
-            PersonalitySchema.safeParse(data.personality).data ?? UI_DEFAULTS.personality,
-          customSystemMessage:
-            z.string().safeParse(data.customSystemMessage).data ?? UI_DEFAULTS.customSystemMessage,
+          documentTab: pick(DocumentTabSchema, data.documentTab, UI_DEFAULTS.documentTab),
+          assetMode: pick(AssetProcessingModeSchema, data.assetMode, UI_DEFAULTS.assetMode),
+          expandedDirs: pick(ExpandedDirsSchema, data.expandedDirs, UI_DEFAULTS.expandedDirs),
+          personality: pick(PersonalitySchema, data.personality, UI_DEFAULTS.personality),
+          customSystemMessage: pick(
+            z.string(),
+            data.customSystemMessage,
+            UI_DEFAULTS.customSystemMessage,
+          ),
           ...(featureFlags.llmSpec
-            ? {
-                overrides: UserOverridesSchema.safeParse(data.overrides).data ?? EMPTY_OVERRIDES,
-              }
+            ? { overrides: pick(UserOverridesSchema, data.overrides, EMPTY_OVERRIDES) }
             : {}),
           ...(featureFlags.pipelineSpec
             ? {
-                conversionPipeline:
-                  ConversionPipelineSchema.safeParse(data.conversionPipeline).data ??
+                conversionPipeline: pick(
+                  ConversionPipelineSchema,
+                  data.conversionPipeline,
                   UI_DEFAULTS.conversionPipeline,
-                chunkingPipeline:
-                  ChunkingPipelineSchema.safeParse(data.chunkingPipeline).data ??
+                ),
+                chunkingPipeline: pick(
+                  ChunkingPipelineSchema,
+                  data.chunkingPipeline,
                   UI_DEFAULTS.chunkingPipeline,
-                conversionConfigs:
-                  PipelineConfigsSchema.safeParse(data.conversionConfigs).data ??
+                ),
+                conversionConfigs: pick(
+                  PipelineConfigsSchema,
+                  data.conversionConfigs,
                   UI_DEFAULTS.conversionConfigs,
-                chunkingConfigs:
-                  PipelineConfigsSchema.safeParse(data.chunkingConfigs).data ??
+                ),
+                chunkingConfigs: pick(
+                  PipelineConfigsSchema,
+                  data.chunkingConfigs,
                   UI_DEFAULTS.chunkingConfigs,
+                ),
               }
             : {}),
           ...(featureFlags.toolsSpec
-            ? {
-                toolsSpec: ToolsSpecSchema.safeParse(data.toolsSpec).data ?? UI_DEFAULTS.toolsSpec,
-              }
+            ? { toolsSpec: pick(ToolsSpecSchema, data.toolsSpec, UI_DEFAULTS.toolsSpec) }
             : {}),
         };
       },

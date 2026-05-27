@@ -10,7 +10,7 @@ from collections.abc import Callable, Set
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from .alt_text import MD_IMAGE_RE
+from .asset_processing import MD_IMAGE_RE
 from .base import DOCUMENT_EXTENSION, IMAGE_EXTENSIONS
 
 __all__ = [

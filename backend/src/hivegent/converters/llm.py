@@ -62,19 +62,7 @@ class LLMConverter(DocumentConverter):
     config: LlmConverterConfig = field(default_factory=LlmConverterConfig)
     llm_options: LlmConfig = field(default_factory=LlmConfig)
 
-    async def __call__(
-        self,
-        path: Path,
-        /,
-    ) -> ConversionResult:
-        """Convert a document to markdown using an LLM with vision capabilities.
-
-        Args:
-            path: Path to the document to convert.
-
-        Returns:
-            The conversion result with markdown content.
-        """
+    async def _convert(self, path: Path, /) -> ConversionResult:
         if not self.llm_options.model:
             raise ValueError(
                 "No auxiliary model configured. "

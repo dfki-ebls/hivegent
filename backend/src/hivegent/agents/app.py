@@ -1,12 +1,8 @@
 """Agent assembly for Hivegent.
 
-The agent-level ``model_settings`` here is the single source of truth
-for project-wide LLM defaults (currently: request timeout).  Pydantic-AI
-runs ``merge_model_settings`` between the agent default and any
-per-call ``model_settings`` argument, so per-call overrides (e.g.
-``ModelSettings(thinking=False)`` on the document converter) layer on
-top without losing the default timeout.  Add new global defaults here,
-not at every call site.
+Project-wide LLM defaults live on ``model_settings`` here; pydantic-ai
+merges per-call ``model_settings`` on top, so add new global defaults
+in this file rather than at each call site.
 """
 
 from pydantic_ai import Agent

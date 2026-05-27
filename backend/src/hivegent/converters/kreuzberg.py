@@ -8,7 +8,7 @@ import PIL.Image
 from kreuzberg import ExtractionConfig, ImageExtractionConfig, extract_file
 from pydantic import BaseModel, Field
 
-from .base import ConversionResult, DocumentConverter, pil_to_png_bytes
+from .base import ConversionResult, DocumentConverter, ExtractedImage, pil_to_png_bytes
 
 __all__ = ["KreuzbergConverter", "KreuzbergConverterConfig"]
 
@@ -85,19 +85,7 @@ class KreuzbergConverter(DocumentConverter):
     )
     config: KreuzbergConverterConfig = field(default_factory=KreuzbergConverterConfig)
 
-    async def __call__(
-        self,
-        path: Path,
-        /,
-    ) -> ConversionResult:
-        """Convert a document to markdown using Kreuzberg.
-
-        Args:
-            path: Path to the document to convert.
-
-        Returns:
-            The conversion result with markdown content and extracted images.
-        """
+    async def _convert(self, path: Path, /) -> ConversionResult:
         extraction_config = ExtractionConfig(
             force_ocr=self.config.force_ocr,
             output_format="markdown",
@@ -113,7 +101,7 @@ class KreuzbergConverter(DocumentConverter):
         # Kreuzberg injects ``![](image)`` as a uniform placeholder for every
         # image.  Replace each occurrence sequentially (same approach as the
         # Docling converter with ``<!-- image -->``).
-        image_data: dict[str, bytes] = {}
+        image_data: dict[str, ExtractedImage] = {}
         if result.images:
             for img in sorted(result.images, key=lambda i: i.get("image_index", 0)):
                 img_name = f"image_{len(image_data):06}.png"
@@ -122,7 +110,11 @@ class KreuzbergConverter(DocumentConverter):
                 if fmt.lower() != "png":
                     pil_img = PIL.Image.open(BytesIO(raw))
                     raw = pil_to_png_bytes(pil_img)
-                image_data[img_name] = raw
+                page_no = img.get("page_number")
+                image_data[img_name] = ExtractedImage(
+                    data=raw,
+                    page_no=int(page_no) if page_no is not None else None,
+                )
                 markdown = markdown.replace("![](image)", f"![]({img_name})", 1)
 
         return ConversionResult(markdown=markdown, images=image_data)

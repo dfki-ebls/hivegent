@@ -30,18 +30,6 @@ class ChonkieTextConverter(DocumentConverter):
     description: ClassVar[str] = "Plain text files as-is"
     extensions: ClassVar[frozenset[str]] = frozenset({".txt"})
 
-    async def __call__(
-        self,
-        path: Path,
-        /,
-    ) -> ConversionResult:
-        """Convert a plain text file to markdown.
-
-        Args:
-            path: Path to the text file.
-
-        Returns:
-            The conversion result with text content.
-        """
+    async def _convert(self, path: Path, /) -> ConversionResult:
         doc = await asyncio.to_thread(_build_chef().process, path)
         return ConversionResult(markdown=doc.content)

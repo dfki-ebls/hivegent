@@ -48,17 +48,5 @@ class PdfOxideConverter(DocumentConverter):
             image_data = collect_dir_images(temp_path, temp_path)
             return ConversionResult(markdown="\n\n".join(pages), images=image_data)
 
-    async def __call__(
-        self,
-        path: Path,
-        /,
-    ) -> ConversionResult:
-        """Convert a PDF document to markdown using pdf_oxide.
-
-        Args:
-            path: Path to the PDF document to convert.
-
-        Returns:
-            The conversion result with markdown content.
-        """
+    async def _convert(self, path: Path, /) -> ConversionResult:
         return await asyncio.to_thread(self._convert_sync, path)

@@ -1,24 +1,10 @@
 """Cancel non-streaming handler work when the HTTP client disconnects.
 
-Streaming responses (sse-starlette ``EventSourceResponse`` and Starlette
-``StreamingResponse``) already detect disconnect natively — sse-starlette
-runs a push-based ``_listen_for_disconnect`` task that cancels the body
-iterator on ``http.disconnect``, and Starlette's ``StreamingResponse``
-on ASGI ≥ 2.4 turns a failed ``send`` into ``ClientDisconnect``.  Either
-way the ``CancelledError`` flows through our async generator → through
-``workspace`` / ``pydantic_ai`` → through ``httpx`` → closes the TCP
-connection to the LLM provider.  We do not wrap those routes.
-
-What does need help: plain ``POST`` / ``GET`` handlers that await a
-single long LLM call (title generation, conversation compaction, the
-pre-flight ``prepare_llm_config`` and ``UploadFile.read`` steps).
-Starlette pushes nothing for them, so we install our own watcher.
-
-The watcher is push-based: it blocks on ``request.receive()`` until the
-ASGI server delivers ``http.disconnect``.  Zero CPU while idle, reaction
-bounded only by ASGI delivery latency.  Safe so long as nothing else in
-the handler reads from ``receive`` after FastAPI's body parsing has
-finished — every current call site satisfies that.
+Streaming responses already detect disconnect natively (sse-starlette
+and Starlette's ``StreamingResponse``).  Plain ``POST`` / ``GET``
+handlers that await a single long LLM call do not — :func:`run_until_disconnect`
+installs a push-based watcher that blocks on ``request.receive()`` and
+cancels the work task on ``http.disconnect``.
 """
 
 import asyncio

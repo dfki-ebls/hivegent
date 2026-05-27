@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import bisect
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -153,11 +154,19 @@ class DocumentChunker(ABC):
     Subclasses implement :meth:`_split` to produce chunks with character
     offsets.  The base :meth:`__call__` automatically annotates each chunk
     with 1-based line numbers derived from those offsets.
+
+    The underlying chunker libraries (chonkie chunkers and tokenizers,
+    embedding models) are not documented thread-safe.  A single
+    process-wide :class:`asyncio.Lock` serializes every chunker call so
+    concurrent ``asyncio.to_thread`` workers cannot race on a shared
+    cached engine.  Chunking is fast enough that global serialization
+    is invisible against model-loading time.
     """
 
     name: ClassVar[str]
     label: ClassVar[str]
     description: ClassVar[str]
+    _invoke_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
 
     @abstractmethod
     async def _split(
@@ -195,7 +204,8 @@ class DocumentChunker(ABC):
         Returns:
             List of ChunkData objects with 1-based line numbers set.
         """
-        chunks = await self._split(text, mime=mime)
+        async with self._invoke_lock:
+            chunks = await self._split(text, mime=mime)
         if not chunks:
             return []
         line_starts = [0]

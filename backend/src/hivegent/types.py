@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
@@ -56,6 +57,7 @@ __all__ = [
     "McpTestResponse",
     "MoveDocumentRequest",
     "MoveDocumentResponse",
+    "AssetProcessingMode",
     "OperationErrorEvent",
     "OperationStageEvent",
     "PipelineSpec",
@@ -146,12 +148,26 @@ def resolve_llm_config(
     )
 
 
+class AssetProcessingMode(str, Enum):
+    """How extracted assets (images, etc.) are handled during ingestion.
+
+    ``off`` drops the assets entirely and strips their markdown
+    references; ``store`` persists the raw bytes alongside the document
+    without describing them; ``describe`` runs the asset-triage pipeline
+    and describes the assets it deems semantically meaningful.
+    """
+
+    OFF = "off"
+    STORE = "store"
+    DESCRIBE = "describe"
+
+
 class PipelineSpec(BaseModel):
     """Bundled conversion and chunking pipeline selection."""
 
     conversion: ConversionSpec = Field(default_factory=ConversionSpec)
     chunking: ChunkingSpec = Field(default_factory=ChunkingSpec)
-    process_assets: bool = Field(default=True)
+    process_assets: AssetProcessingMode = AssetProcessingMode.DESCRIBE
 
 
 class McpOAuth2Config(BaseModel):

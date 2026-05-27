@@ -22,6 +22,7 @@ import asyncio
 import io
 import logging
 import mimetypes
+import re
 import shutil
 import stat
 import tempfile
@@ -53,8 +54,18 @@ from .converters import (
     get_converter,
     resolve_auto_pipeline,
 )
-from .converters.alt_text import describe_image
-from .converters.base import DOCUMENT_EXTENSION, is_image_suffix, is_markdown_suffix
+from .converters.asset_processing import (
+    MD_IMAGE_RE,
+    TriageDecision,
+    describe_image,
+    triage_image,
+)
+from .converters.base import (
+    DOCUMENT_EXTENSION,
+    ExtractedImage,
+    is_image_suffix,
+    is_markdown_suffix,
+)
 from .converters.images import guess_image_media_type, sanitize_image_bytes
 from .converters.wikilinks import preprocess_markdown
 from .db import documents as db_documents
@@ -75,6 +86,7 @@ from .retrieval import (
 from .store import Casebase
 from .types import (
     AssetEntry,
+    AssetProcessingMode,
     CollectionCompleteEvent,
     CollectionProgressEvent,
     LlmConfig,
@@ -248,6 +260,29 @@ def _build_binary_stub(filepath: str, size_bytes: int) -> str:
     return f"File name: {name}.\nMIME type: {mime}.\nSize: {size_bytes} bytes.\n"
 
 
+def _replace_image_references(
+    markdown: str, mapping: dict[str, str | None]
+) -> str:
+    """Rewrite or strip ``![alt](path)`` references in *markdown*.
+
+    Bounded to real markdown image syntax so prose that mentions an
+    asset's filename (code blocks, file listings) is left untouched.
+    Mapping values: a string replaces the URL; ``None`` deletes the
+    image node entirely.
+    """
+    if not mapping:
+        return markdown
+
+    def _replace(match: re.Match[str]) -> str:
+        path = match.group(2)
+        if path not in mapping:
+            return match.group(0)
+        target = mapping[path]
+        return "" if target is None else f"![{match.group(1)}]({target})"
+
+    return MD_IMAGE_RE.sub(_replace, markdown)
+
+
 async def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
     """Delete a logical entry's child-assets subtree from workspace + index.
 
@@ -319,11 +354,12 @@ async def _upload_image_locked(
     """Persist an image and its generated description. Caller holds the lock."""
     workspace_dir = store.workspace_dir(settings.data_dir)
     media_type = guess_image_media_type(filepath) or ""
-    sanitized = sanitize_image_bytes(content, media_type)
-    _write_original_file(workspace_dir, filepath, sanitized)
+    _write_original_file(
+        workspace_dir, filepath, sanitize_image_bytes(content, media_type)
+    )
     stem_path = stem_path_from_reference(filepath)
     description_path = description_path_for_stem(stem_path)
-    markdown = await _build_image_description(filepath, sanitized, media_type, llm)
+    markdown = await _build_image_description(filepath, content, media_type, llm)
     chunk_count, chunking_used = await _write_markdown_projection(
         store,
         description_path,
@@ -461,37 +497,55 @@ async def _upload_convertible_locked(
     assets_dir = assets_dir_for_stem(stem_path)
     markdown = result.markdown
 
-    child_paths: list[tuple[str, str, bytes]] = []
-    for image_relpath, image_data in sorted(result.images.items()):
+    mode = spec.process_assets
+    children: list[tuple[str, str, ExtractedImage]] = []
+    ref_mapping: dict[str, str | None] = {}
+    for image_relpath, extracted in sorted(result.images.items()):
+        if mode is AssetProcessingMode.OFF:
+            ref_mapping[image_relpath] = None
+            continue
         image_media_type = guess_image_media_type(image_relpath) or ""
         child_path = str((PurePosixPath(assets_dir) / image_relpath).as_posix())
-        relative_from_doc = str(
+        ref_mapping[image_relpath] = str(
             PurePosixPath(PurePosixPath(assets_dir).name) / PurePosixPath(image_relpath)
         )
-        markdown = markdown.replace(image_relpath, relative_from_doc)
-        child_paths.append((child_path, image_media_type, image_data))
+        children.append((child_path, image_media_type, extracted))
+    markdown = _replace_image_references(markdown, ref_mapping)
 
-    if child_paths and spec.process_assets:
-        await asyncio.gather(
-            *(
-                _upload_locked(
-                    store,
-                    child_path,
-                    image_data,
-                    spec,
-                    llm,
-                    origin="extracted",
-                )
-                for child_path, _, image_data in child_paths
-            )
-        )
-    elif child_paths:
-        for child_path, image_media_type, image_data in child_paths:
+    if mode is AssetProcessingMode.STORE:
+        for child_path, image_media_type, extracted in children:
             _write_original_file(
                 workspace_dir,
                 child_path,
-                sanitize_image_bytes(image_data, image_media_type),
+                sanitize_image_bytes(extracted.data, image_media_type),
             )
+    elif mode is AssetProcessingMode.DESCRIBE:
+        describe_tasks: list[tuple[str, ExtractedImage]] = []
+        for child_path, image_media_type, extracted in children:
+            if triage_image(extracted) is TriageDecision.DESCRIBE:
+                describe_tasks.append((child_path, extracted))
+            else:
+                _write_original_file(
+                    workspace_dir,
+                    child_path,
+                    sanitize_image_bytes(extracted.data, image_media_type),
+                )
+        if describe_tasks:
+            await asyncio.gather(
+                *(
+                    _upload_locked(
+                        store,
+                        child_path,
+                        extracted.data,
+                        spec,
+                        llm,
+                        origin="extracted",
+                    )
+                    for child_path, extracted in describe_tasks
+                )
+            )
+
+    has_assets = bool(children)
 
     chunk_count, chunking_used = await _write_markdown_projection(
         store,
@@ -502,7 +556,7 @@ async def _upload_convertible_locked(
             stem_path=stem_path,
             description_path=description_path,
             original_path=filepath,
-            assets_dir=assets_dir if child_paths else None,
+            assets_dir=assets_dir if has_assets else None,
             entry_kind="convertible",
             origin=origin,
             generated_by="converter",
@@ -1186,10 +1240,13 @@ async def process_collection(
 
                 if relative_path in companion_originals:
                     try:
-                        original_bytes = (extract_root / relative_path).read_bytes()
-                        original_path = workspace_dir / safe
-                        original_path.parent.mkdir(parents=True, exist_ok=True)
-                        original_path.write_bytes(original_bytes)
+                        async with _rollback_on_failure(store, (safe,)):
+                            original_bytes = (
+                                extract_root / relative_path
+                            ).read_bytes()
+                            original_path = workspace_dir / safe
+                            original_path.parent.mkdir(parents=True, exist_ok=True)
+                            original_path.write_bytes(original_bytes)
                         status = "ok"
                     except Exception as exc:
                         logger.warning(

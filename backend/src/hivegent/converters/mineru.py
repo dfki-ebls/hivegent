@@ -71,17 +71,5 @@ class MinerUConverter(DocumentConverter):
             image_data = collect_dir_images(temp_path / "images", temp_path)
             return ConversionResult(markdown=str(md_content), images=image_data)
 
-    async def __call__(
-        self,
-        path: Path,
-        /,
-    ) -> ConversionResult:
-        """Convert a document to markdown using MinerU.
-
-        Args:
-            path: Path to the document to convert.
-
-        Returns:
-            The conversion result with markdown and extracted images.
-        """
+    async def _convert(self, path: Path, /) -> ConversionResult:
         return await asyncio.to_thread(self._convert_sync, path)

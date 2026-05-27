@@ -83,19 +83,7 @@ class PandocConverter(DocumentConverter):
     extensions = frozenset(_FORMAT_OVERRIDES) | _SANDBOX_INCOMPATIBLE
     config: PandocConverterConfig = field(default_factory=PandocConverterConfig)
 
-    async def __call__(
-        self,
-        path: Path,
-        /,
-    ) -> ConversionResult:
-        """Convert a document to markdown using pandoc.
-
-        Args:
-            path: Path to the document to convert.
-
-        Returns:
-            The conversion result with markdown and extracted images.
-        """
+    async def _convert(self, path: Path, /) -> ConversionResult:
         suffix = path.suffix.lower()
         use_sandbox = suffix not in _SANDBOX_INCOMPATIBLE
 

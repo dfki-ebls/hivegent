@@ -34,6 +34,7 @@ import {
 import { DOCUMENT_ACTIONS } from "../lib/document-actions";
 import { featureFlags } from "../lib/feature-flags";
 import {
+  AssetProcessingMode,
   type ChunkingPipeline,
   type ConversionPipeline,
   type DirectoryTreeResponse,
@@ -84,8 +85,14 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { Switch } from "./ui/switch";
 import { Progress } from "./ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 import { ScrollArea } from "./ui/scroll-area";
 import { Spinner } from "./ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
@@ -506,21 +513,21 @@ function UploadArea({
 interface PipelineSettingsBarProps {
   conversionPipeline: ConversionPipeline;
   chunkingPipeline: ChunkingPipeline;
-  processAssets: boolean;
+  assetMode: AssetProcessingMode;
   isBulkOperating: boolean;
   onConversionPipelineChange: (pipeline: ConversionPipeline) => void;
   onChunkingPipelineChange: (pipeline: ChunkingPipeline) => void;
-  onProcessAssetsChange: (value: boolean) => void;
+  onAssetModeChange: (mode: AssetProcessingMode) => void;
 }
 
 function PipelineSettingsBar({
   conversionPipeline,
   chunkingPipeline,
-  processAssets,
+  assetMode,
   isBulkOperating,
   onConversionPipelineChange,
   onChunkingPipelineChange,
-  onProcessAssetsChange,
+  onAssetModeChange,
 }: PipelineSettingsBarProps) {
   return (
     <div className="flex items-center justify-center gap-8 border-b px-4 py-3">
@@ -540,18 +547,28 @@ function PipelineSettingsBar({
       )}
       <div className="flex items-center gap-2">
         <Label
-          htmlFor="process-assets-switch"
+          htmlFor="asset-mode-select"
           className="text-sm text-muted-foreground flex items-center gap-1.5"
         >
           <Images className="h-4 w-4" />
-          Process assets
+          Assets
         </Label>
-        <Switch
-          id="process-assets-switch"
-          checked={processAssets}
-          onCheckedChange={onProcessAssetsChange}
+        <Select
+          value={assetMode}
+          onValueChange={(v) => onAssetModeChange(v as AssetProcessingMode)}
           disabled={isBulkOperating}
-        />
+        >
+          <SelectTrigger id="asset-mode-select" className="w-[120px]" size="sm">
+            <SelectValue placeholder="Select mode" />
+          </SelectTrigger>
+          <SelectContent>
+            {Object.values(AssetProcessingMode).map((mode) => (
+              <SelectItem key={mode} value={mode}>
+                {mode[0].toUpperCase() + mode.slice(1)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
     </div>
   );
@@ -859,8 +876,8 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const chunkingConfigs = useSettingsStore((state) => state.chunkingConfigs);
   const setConversionPipeline = useSettingsStore((state) => state.setConversionPipeline);
   const setChunkingPipeline = useSettingsStore((state) => state.setChunkingPipeline);
-  const processAssets = useSettingsStore((state) => state.processAssets);
-  const setProcessAssets = useSettingsStore((state) => state.setProcessAssets);
+  const assetMode = useSettingsStore((state) => state.assetMode);
+  const setAssetMode = useSettingsStore((state) => state.setAssetMode);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const directoryInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
@@ -1013,10 +1030,10 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
               pipeline: chunkingPipeline,
               config: chunkingConfigs[chunkingPipeline],
             },
-            process_assets: processAssets,
+            process_assets: assetMode,
           }
-        : { process_assets: processAssets },
-    [conversionPipeline, chunkingPipeline, conversionConfigs, chunkingConfigs, processAssets],
+        : { process_assets: assetMode },
+    [conversionPipeline, chunkingPipeline, conversionConfigs, chunkingConfigs, assetMode],
   );
 
   useEffect(() => {
@@ -1490,11 +1507,11 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
       <PipelineSettingsBar
         conversionPipeline={conversionPipeline}
         chunkingPipeline={chunkingPipeline}
-        processAssets={processAssets}
+        assetMode={assetMode}
         isBulkOperating={bulkProgress !== null}
         onConversionPipelineChange={setConversionPipeline}
         onChunkingPipelineChange={setChunkingPipeline}
-        onProcessAssetsChange={setProcessAssets}
+        onAssetModeChange={setAssetMode}
       />
 
       <div className="p-4 pb-2">

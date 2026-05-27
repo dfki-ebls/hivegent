@@ -49,6 +49,15 @@ export enum ChunkingPipeline {
 export const ConversionPipelineSchema = z.enum(ConversionPipeline);
 export const ChunkingPipelineSchema = z.enum(ChunkingPipeline);
 
+/** How extracted assets are handled during ingestion. */
+export enum AssetProcessingMode {
+  OFF = "off",
+  STORE = "store",
+  DESCRIBE = "describe",
+}
+
+export const AssetProcessingModeSchema = z.enum(AssetProcessingMode);
+
 const EntryKindSchema = z.enum(["user_markdown", "image", "convertible", "binary_stub"]);
 const EntryOriginSchema = z.enum(["upload", "collection", "extracted"]);
 const EntryGeneratedBySchema = z.enum(["user", "converter", "vision", "stub"]);
@@ -657,7 +666,7 @@ export interface PipelineSpec {
     pipeline?: ChunkingPipeline;
     config?: Record<string, unknown>;
   };
-  process_assets?: boolean;
+  process_assets?: AssetProcessingMode;
 }
 
 /** LLM provider configuration sent to the backend. */

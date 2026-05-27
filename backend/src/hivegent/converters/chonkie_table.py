@@ -31,18 +31,6 @@ class ChonkieTableConverter(DocumentConverter):
     description: ClassVar[str] = "CSV/Excel to markdown tables via pandas"
     extensions: ClassVar[frozenset[str]] = frozenset({".csv", ".xls", ".xlsx"})
 
-    async def __call__(
-        self,
-        path: Path,
-        /,
-    ) -> ConversionResult:
-        """Convert a tabular file to markdown.
-
-        Args:
-            path: Path to the CSV or Excel file.
-
-        Returns:
-            The conversion result with markdown table content.
-        """
+    async def _convert(self, path: Path, /) -> ConversionResult:
         doc = await asyncio.to_thread(_build_chef().process, path)
         return ConversionResult(markdown=doc.content)
