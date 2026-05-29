@@ -26,7 +26,6 @@ def _configure(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=Base.metadata,
-        render_as_batch=connection.dialect.name == "sqlite",
         compare_type=True,
         compare_server_default=True,
     )

@@ -23,8 +23,8 @@
 - Enforces authentication through OIDC bearer tokens or personal access tokens.
 - Uses Pydantic AI to bind models, user-scoped dependencies, and toolsets into one runtime.
 - Processes uploaded files into recursive stem-based workspace entries, chunks searchable markdown companions, stores per-entry metadata, and refreshes retrieval indexes.
-- Uses LanceDB and cbrkit for dense, sparse, and hybrid retrieval.
-- Stores each user or group casebase under `data/workspace/<store_key>/`, keyed by the same `user:<id>` / `group:<id>` token used by SQL and LanceDB.
+- Uses PostgreSQL with the `pgvector` extension and cbrkit for dense, sparse, and hybrid retrieval.
+- Stores each user or group casebase under `data/workspace/<store_key>/`, keyed by the same `user:<id>` / `group:<id>` token that scopes SQL rows; per-store search scoping is enforced by a SQL filter against the documents owner columns, not by denormalised columns on `chunks`.
 - Persists conversations and long-term memory separately from the retrieval index.
 - Mounts a FastMCP server at `/mcp` and can also connect to external MCP servers.
 
@@ -50,7 +50,7 @@ flowchart LR
     built_in_toolsets[Built-in Toolsets]
     external_mcp_servers[External MCP Servers]
     built_in_mcp_server[Built-in MCP Server]
-    retrieval_layer[Retrieval Layer: cbrkit + LanceDB]
+    retrieval_layer[Retrieval Layer: cbrkit + PostgreSQL/pgvector]
     conversation_memory_storage[Conversation and Memory Storage]
     llm_provider[LLM Provider]
 
@@ -129,7 +129,7 @@ flowchart LR
     extracted{Extracted child files?}
     recurse[Process each child file<br/>with the same rule]
     metadata[Write one metadata file<br/>for the stem]
-    index[Index markdown<br/>in LanceDB]
+    index[Embed + insert into<br/>chunks (one tx)]
 
     input --> decide
     decide -->|yes| markdown

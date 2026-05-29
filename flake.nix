@@ -31,6 +31,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     process-compose.url = "github:Platonic-Systems/process-compose-flake";
+    services-flake.url = "github:juspay/services-flake";
   };
   outputs =
     inputs:

@@ -5,13 +5,13 @@ via the router-level dependency.  The actions mirror the destructive
 operations exposed in open-webui's admin panel, mapped onto Hivegent's
 storage layout:
 
-* LanceDB lives in ``<data_dir>/lancedb/``
 * Workspace files live in ``<data_dir>/workspace/<store_key>/``
-* SQL is the source of truth for documents, chunks, conversations,
-  tokens, memory, users, groups, and group membership
+* PostgreSQL is the source of truth for documents, chunks (text +
+  vector), conversations, tokens, memory, users, groups, and group
+  membership.
 
-A full ``POST /admin/reset/factory`` wipes all three and leaves the
-deployment in the same state as a clean checkout, ready to be reseeded.
+A full ``POST /admin/reset/factory`` wipes workspace + database and
+leaves the deployment in the same state as a clean checkout.
 """
 
 import asyncio
@@ -28,7 +28,6 @@ from ...db.groups import delete_all_groups, list_groups_with_counts
 from ...db.models import Group, User
 from ...db.users import delete_all_users, delete_user, list_users_with_counts
 from ...reconcile import reconcile_all
-from ...retrieval import reset_index
 from ...store import Casebase
 from ...types import (
     AdminFactoryResetResponse,
@@ -100,35 +99,18 @@ async def list_groups() -> AdminListGroupsResponse:
 # ─── System-wide resets ───────────────────────────────────────────────
 
 
-@router.post("/reset/vector-db")
-async def admin_reset_vector_db() -> AdminResetResponse:
-    """Drop the global LanceDB index.
-
-    SQL chunk rows survive, so a follow-up :func:`reconcile_all` will
-    rebuild the index from the source of truth.
-    """
-    await reset_index()
-    return AdminResetResponse(
-        action="reset_vector_db",
-        message="Vector index dropped",
-    )
-
-
 @router.post("/reset/workspace")
 async def admin_reset_workspace() -> AdminResetResponse:
-    """Wipe every workspace file, document row, and LanceDB chunk.
+    """Wipe every workspace file and document row.
 
-    The three stores (disk, SQL documents, LanceDB) must stay in sync —
-    leaving any one populated would let reconciliation re-create the
-    others on the next boot and undo half the reset.  Conversations,
-    tokens, memory, users, and groups are kept.
+    Chunks (text + vector) cascade with the document rows.
+    Conversations, tokens, memory, users, and groups are kept.
     """
     await workspace.delete_workspace_root()
     await delete_all_documents()
-    await reset_index()
     return AdminResetResponse(
         action="reset_workspace",
-        message="Workspace files, document rows, and vector index cleared",
+        message="Workspace files and document rows cleared",
     )
 
 
@@ -137,9 +119,9 @@ async def admin_reset_database() -> AdminResetResponse:
     """Drop every user, group, and the rows that cascade from them.
 
     Cascade chain (see ``backend/src/hivegent/db/models.py``):
-    users → tokens, memory, conversations (→ messages), documents (→ chunks),
-    group memberships; groups → group documents and memberships.  The
-    workspace tree on disk and the LanceDB index are not touched.
+    users → tokens, memory, conversations (→ messages), documents
+    (→ chunks), group memberships; groups → group documents and
+    memberships.  The workspace tree on disk is not touched.
 
     Both deletes run in a single session so a crash between them cannot
     leave the database in a half-wiped state.
@@ -155,7 +137,7 @@ async def admin_reset_database() -> AdminResetResponse:
 
 @router.post("/reindex")
 async def admin_reindex() -> AdminReindexResponse:
-    """Reconcile every casebase: rebuild LanceDB from SQL, prune orphans."""
+    """Reconcile every casebase: prune disk and SQL orphans."""
     reports = await reconcile_all()
     return AdminReindexResponse(
         stores_reconciled=len(reports),
@@ -165,17 +147,16 @@ async def admin_reindex() -> AdminReindexResponse:
 
 @router.post("/reset/factory")
 async def admin_factory_reset() -> AdminFactoryResetResponse:
-    """Composite full reset: vector DB + workspace + SQL.
+    """Composite full reset: workspace + SQL.
 
     Idempotent — re-running on a clean tree is a no-op.  Leaves the
     deployment in the same shape as a fresh checkout.
     """
-    await reset_index()
     await workspace.delete_workspace_root()
     await delete_all_users()
     await delete_all_groups()
     return AdminFactoryResetResponse(
-        actions=["reset_vector_db", "reset_workspace", "reset_database"],
+        actions=["reset_workspace", "reset_database"],
         message="Factory reset complete",
     )
 
@@ -203,11 +184,11 @@ def _casebase_or_400(kind: str, identifier: str) -> Casebase:
 async def admin_delete_user_data(user_id: str) -> BulkDeleteUserDataResponse:
     """Wipe all data owned by a single user.
 
-    ``workspace.delete_all`` clears documents (cascades to chunks),
-    LanceDB chunks for the casebase, and the workspace directory.
-    Removing the ``User`` row then cascades to tokens, memory, and
-    conversations via FK ``ON DELETE CASCADE``.  The user
-    re-materialises lazily on the next request.
+    ``workspace.delete_all`` clears documents (cascades to chunks via
+    FK ``ON DELETE CASCADE``) and the workspace directory.  Removing
+    the ``User`` row then cascades to tokens, memory, and
+    conversations.  The user re-materialises lazily on the next
+    request.
     """
     store = _casebase_or_400("user", user_id)
     await workspace.delete_all(store)
@@ -221,9 +202,10 @@ async def admin_delete_user_data(user_id: str) -> BulkDeleteUserDataResponse:
 async def admin_delete_group_data(group_id: str) -> BulkDeleteUserDataResponse:
     """Wipe all data owned by a single group.
 
-    Removes the group's workspace directory, SQL document rows, and
-    LanceDB chunks.  Membership rows are kept so re-creating the group
-    is a no-op for the IdP-side group assignment.
+    Removes the group's workspace directory and SQL document rows
+    (which cascade to chunks).  Membership rows are kept so
+    re-creating the group is a no-op for the IdP-side group
+    assignment.
     """
     store = _casebase_or_400("group", group_id)
     await workspace.delete_all(store)

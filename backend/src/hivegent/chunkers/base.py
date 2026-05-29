@@ -97,6 +97,7 @@ class EntryMetadata(BaseModel):
 class DocumentMetadata(EntryMetadata):
     """Metadata for a processed logical entry."""
 
+    id: str = Field(description="The document's row id")
     pipeline: str = Field(description="The chunking pipeline used")
     created_at: datetime = Field(description="When the metadata was created")
     chunks: list[ChunkData] = Field(description="The document chunks")

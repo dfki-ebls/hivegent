@@ -1,432 +1,351 @@
-"""Global LanceDB storage and retrieval using cbrkit.
+"""Embedding + vector search over the global ``chunks`` table.
 
-The application uses one LanceDB table for all casebases.  Each row
-carries two metadata columns — ``casebase_key`` and ``filename`` —
-populated from the cbrkit key, so WHERE clauses stay simple and
-per-casebase scoping is enforced inline at the query layer.
-
-SQL is the source of truth for chunk metadata; the LanceDB index is
-derived and rebuildable.  The search tool's result mapper loads only
-the metadata it actually needs (one query per surviving result doc)
-instead of preloading every chunk in every accessible casebase.
+Hivegent owns the ``chunks`` table schema as a declarative ORM class
+in :mod:`hivegent.db.models`; cbrkit reads via
+:meth:`pgvector_async(model=Chunk)`.  Writes go through
+cbrkit's :meth:`storage.replace_where` with full row mappings
+(``id -> {text, document_id, idx, ...}``); cbrkit derives the
+``embedding`` from the ``text`` column and Postgres fills ``tsv``, so
+embedding, INSERT, and DELETE happen in one transaction while hivegent
+stays in charge of the schema.
 
 Public surface:
 
-- :func:`build_search_tool` builds a search tool restricted to the
+- :func:`index_document` chunk-indexes one document.  Calls cbrkit's
+  ``replace_where`` to atomically delete and re-insert that document's
+  chunk rows with fresh embeddings.
+- :func:`build_search_tool` builds a search tool scoped to the
   casebases the caller can access.
-- :func:`index_document` upserts the chunks of one document.
-- :func:`unindex_paths` removes the chunks of one or more documents.
-- :func:`unindex_subtree` removes every chunk whose path is at or
-  beneath a prefix within a casebase.
-- :func:`unindex_store` removes every chunk belonging to a casebase.
+- :func:`reconcile_index_state` re-embeds in place when the configured
+  embedding model differs from the persisted fingerprint.
 """
 
 import asyncio
-import json
 import logging
-import shutil
-import threading
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from datetime import UTC, datetime
 
 import cbrkit
 import logfire
+import sqlalchemy as sa
+from cbrkit import filter as cbrkit_filter
+from cbrkit.indexable import pgvector_async as PgvectorAsync
 
-from .chunkers.base import DocumentMetadata, RetrievedChunk
+from .chunkers.base import ChunkData, RetrievedChunk
 from .config import settings
 from .db import documents as db_documents
+from .db.engine import session
+from .db.models import Chunk, Document, IndexState
+from .entries import description_path_for_stem, original_path_for_stem
 from .llm import create_openai_client
-from .store import Casebase, lancedb_dir
+from .store import Casebase
 from .tools.base import SearchPathFilterFunc, apply_prefix
-from .tools.retrieval import LanceDBSearchTool, SearchResult
+from .tools.retrieval import SearchResult, VectorSearchTool
+
 
 __all__ = [
     "build_search_tool",
     "index_document",
-    "list_indexed_filenames",
-    "reset_index",
-    "unindex_paths",
-    "unindex_store",
-    "unindex_subtree",
+    "reconcile_index_state",
 ]
-
-KEY_SEP = "::"
-LANCEDB_TABLE = "chunks"
-STORE_METADATA_FILE = "metadata.json"
-CASEBASE_COLUMN = "casebase_key"
-FILENAME_COLUMN = "filename"
 
 logger = logging.getLogger(__name__)
 
 
-# ─── Key encoding ──────────────────────────────────────────────────────
-
-
-def _build_key(store: Casebase, filename: str, chunk_index: int) -> str:
-    return f"{store.store_key}{KEY_SEP}{filename}{KEY_SEP}{chunk_index}"
-
-
-def _parse_key(key: str) -> tuple[Casebase, str, int]:
-    """Reverse of :func:`_build_key`."""
-    try:
-        store_key, rest = key.split(KEY_SEP, maxsplit=1)
-        filename, index_str = rest.rsplit(KEY_SEP, maxsplit=1)
-        return Casebase.from_store_key(store_key), filename, int(index_str)
-    except ValueError as exc:
-        raise ValueError(f"Invalid chunk key format: {key!r}") from exc
-
-
-def _metadata_func(key: str, _text: str) -> dict[str, str]:
-    """Populate metadata columns from the cbrkit key (called per row)."""
-    store, filename, _idx = _parse_key(key)
-    return {CASEBASE_COLUMN: store.store_key, FILENAME_COLUMN: filename}
-
-
-# ─── WHERE-clause helpers ──────────────────────────────────────────────
-
-
-def _sql_str(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
-_SQL_LIKE_ESCAPE = "\\"
-
-
-def _sql_like_subtree(prefix: str) -> str:
-    """LIKE pattern matching everything strictly beneath ``prefix/``."""
-    escaped = (
-        prefix.replace(_SQL_LIKE_ESCAPE, _SQL_LIKE_ESCAPE * 2)
-        .replace("%", _SQL_LIKE_ESCAPE + "%")
-        .replace("_", _SQL_LIKE_ESCAPE + "_")
-    )
-    return _sql_str(escaped + "/%")
-
-
-_SQL_LIKE_ESCAPE_LITERAL = _sql_str(_SQL_LIKE_ESCAPE)
-
-
-def _where_store(store: Casebase) -> str:
-    return f"{CASEBASE_COLUMN} = {_sql_str(store.store_key)}"
-
-
-def _where_doc(store: Casebase, filename: str) -> str:
-    return f"{_where_store(store)} AND {FILENAME_COLUMN} = {_sql_str(filename)}"
-
-
-def _where_paths(store: Casebase, filenames: Collection[str]) -> str:
-    quoted = ", ".join(_sql_str(name) for name in filenames)
-    return f"{_where_store(store)} AND {FILENAME_COLUMN} IN ({quoted})"
-
-
-def _where_subtree(store: Casebase, prefix: str) -> str:
-    return (
-        f"{_where_store(store)} AND ("
-        f"{FILENAME_COLUMN} = {_sql_str(prefix)}"
-        f" OR {FILENAME_COLUMN} LIKE {_sql_like_subtree(prefix)}"
-        f" ESCAPE {_SQL_LIKE_ESCAPE_LITERAL})"
-    )
-
-
-# ─── Global fingerprint sidecar ────────────────────────────────────────
-
-
-def _read_global_metadata() -> dict[str, Any]:
-    """Read the global LanceDB sidecar, returning ``{}`` when absent."""
-    path = lancedb_dir(settings.data_dir) / STORE_METADATA_FILE
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-
-
-def _write_global_metadata(data: dict[str, Any]) -> None:
-    path = lancedb_dir(settings.data_dir) / STORE_METADATA_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-
-# ─── Global storage state ─────────────────────────────────────────────
+# ─── Global embedding + storage state ─────────────────────────────────
 
 
 @dataclass(slots=True)
 class _RetrievalState:
-    """Caches the global LanceDB storage and the embedding function."""
+    """Caches the global embedding function and pgvector storage handle."""
 
-    _storage: cbrkit.indexable.lancedb[str] | None = None
+    _storage: PgvectorAsync[str, Chunk] | None = None
     _embedding_func: (
         cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray] | None
     ) = field(default=None)
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def get_embedding_func(
         self,
     ) -> cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray]:
-        """Get or create the shared embedding function based on settings."""
+        """Build or return the shared embedding function based on settings."""
         if self._embedding_func is not None:
             return self._embedding_func
-        with self._lock:
-            if self._embedding_func is not None:
-                return self._embedding_func
-            cfg = settings.embedding
-            if cfg.provider == "openai":
-                raw_func = cbrkit.sim.embed.openai(
-                    model=cfg.model,
-                    client=create_openai_client(
-                        api_key=cfg.api_key or None,
-                        base_url=cfg.base_url or None,
-                    ),
-                )
-            else:
-                raw_func = cbrkit.sim.embed.sentence_transformers(model=cfg.model)
+        cfg = settings.embedding
+        if cfg.provider == "openai":
+            raw_func = cbrkit.sim.embed.openai(
+                model=cfg.model,
+                client=create_openai_client(
+                    api_key=cfg.api_key or None,
+                    base_url=cfg.base_url or None,
+                ),
+            )
+        else:
+            raw_func = cbrkit.sim.embed.sentence_transformers(model=cfg.model)
 
-            def instrumented(
-                batches: Sequence[str],
-            ) -> Sequence[cbrkit.typing.NumpyArray]:
-                with logfire.span("embed", batch_size=len(batches)):
-                    return raw_func(batches)
+        def instrumented(
+            batches: Sequence[str],
+        ) -> Sequence[cbrkit.typing.NumpyArray]:
+            with logfire.span("embed", batch_size=len(batches)):
+                return raw_func(batches)
 
-            self._embedding_func = instrumented
-            return self._embedding_func
+        self._embedding_func = instrumented
+        return self._embedding_func
 
-    def get_storage(self) -> cbrkit.indexable.lancedb[str]:
-        """Return the global LanceDB storage, lazily creating it."""
+    async def get_storage(self) -> PgvectorAsync[str, Chunk]:
+        """Return the cbrkit storage handle, lazily wiring it up."""
         if self._storage is not None:
             return self._storage
-        embedding_func = self.get_embedding_func()
-        with self._lock:
+        async with self._lock:
             if self._storage is not None:
                 return self._storage
-            db_dir = lancedb_dir(settings.data_dir)
-            self._validate_fingerprint(db_dir)
-            self._storage = cbrkit.indexable.lancedb(
-                uri=str(db_dir),
-                table_name=LANCEDB_TABLE,
+            from .db.engine import get_engine
+
+            self._storage = PgvectorAsync[str, Chunk](
+                engine=get_engine(),
+                model=Chunk,
+                conversion_func=self.get_embedding_func(),
                 index_type="hybrid",
-                conversion_func=embedding_func,
-                metadata_func=_metadata_func,
+                key_type="str",
+                key_column="id",
+                value_column="text",
+                pgvector_column="embedding",
+                tsvector_column="tsv",
             )
             return self._storage
-
-    def _validate_fingerprint(self, db_dir: Path) -> None:
-        """Wipe the LanceDB directory when the embedding fingerprint changes.
-
-        Must be called while ``self._lock`` is held.
-        """
-        metadata = _read_global_metadata()
-        stored = metadata.get("embedding")
-        current = settings.embedding.fingerprint()
-
-        if stored is not None and stored != current:
-            logger.warning(
-                "Embedding config changed (was %s, now %s) — wiping LanceDB",
-                stored,
-                current,
-            )
-            self._storage = None
-            self._embedding_func = None
-            if db_dir.exists():
-                shutil.rmtree(db_dir)
-            db_dir.mkdir(parents=True, exist_ok=True)
-            metadata = {}
-
-        if stored != current:
-            metadata["embedding"] = current
-            _write_global_metadata(metadata)
-
-    def invalidate(self) -> None:
-        """Drop the cached storage handle (used after wiping the dir)."""
-        with self._lock:
-            self._storage = None
-
-    def reset(self) -> None:
-        """Wipe the LanceDB directory and the cached handle atomically.
-
-        Holds ``self._lock`` for the full wipe-and-recreate so that no
-        concurrent ``get_storage`` can cache a handle pointing at the
-        directory being deleted.
-        """
-        with self._lock:
-            self._storage = None
-            db_dir = lancedb_dir(settings.data_dir)
-            if db_dir.exists():
-                shutil.rmtree(db_dir)
-            db_dir.mkdir(parents=True, exist_ok=True)
 
 
 _state = _RetrievalState()
 
 
-# ─── Mutators ─────────────────────────────────────────────────────────
+async def index_document(
+    document_id: str, chunks: Sequence[ChunkData]
+) -> None:
+    """Atomically replace *document_id*'s chunk rows with *chunks*.
+
+    Each chunk is passed to cbrkit as a :class:`Chunk` instance keyed by
+    its auto-generated nanoid; cbrkit derives the ``embedding`` from the
+    row's ``text`` via the storage's ``conversion_func`` and Postgres
+    generates ``tsv``, so embedding, INSERT, and DELETE all run inside
+    ``replace_where``.  The cbrkit PK (``chunks.id``) is the nanoid —
+    the real chunk identity is the UNIQUE ``(document_id, idx)`` pair,
+    kept normalised on its own columns.
+
+    Empty *chunks* just deletes any existing rows for the document.
+    """
+    storage = await _state.get_storage()
+    where = cbrkit_filter.Eq("document_id", document_id)
+    if not chunks:
+        await storage.delete_where(where)
+        return
+
+    rows = [
+        Chunk(
+            text=c.text,
+            document_id=document_id,
+            idx=i,
+            token_count=c.token_count,
+            start_index=c.start_index,
+            end_index=c.end_index,
+            start_line=c.start_line,
+            end_line=c.end_line,
+        )
+        for i, c in enumerate(chunks)
+    ]
+    data = {row.id: row for row in rows}
+
+    await asyncio.shield(storage.replace_where(where, data))
 
 
-def _index_document_sync(store: Casebase, filename: str, doc: DocumentMetadata) -> None:
-    storage = _state.get_storage()
-    storage.replace_where(
-        where=_where_doc(store, filename),
-        data={
-            _build_key(store, filename, i): chunk.text
-            for i, chunk in enumerate(doc.chunks)
-        },
+async def reconcile_index_state() -> None:
+    """Drive an in-place ``reembed_all`` when the embedding model changes.
+
+    Idempotent: on a clean install inserts the singleton
+    :class:`IndexState` row; subsequent calls only act when the
+    ``(provider, model)`` pair differs from the persisted one.  The new
+    fingerprint is committed only *after* the rebuild completes, so a
+    crash mid-rebuild leaves the previous fingerprint and the next
+    boot retries.
+    """
+    current = settings.embedding.fingerprint()
+    async with session() as s:
+        row = (await s.execute(sa.select(IndexState))).scalar_one_or_none()
+        if row is None:
+            s.add(
+                IndexState(
+                    embedding_provider=current["provider"],
+                    embedding_model=current["model"],
+                )
+            )
+            return
+        previous = {
+            "provider": row.embedding_provider,
+            "model": row.embedding_model,
+        }
+        if previous == current:
+            return
+
+    logger.warning(
+        "Embedding config changed (was %s, now %s) — re-embedding in place",
+        previous,
+        current,
     )
-
-
-async def index_document(store: Casebase, filename: str, doc: DocumentMetadata) -> None:
-    """Replace the index entries for a single document.
-
-    Embeds the new chunks and writes them to LanceDB, removing any rows
-    tied to the previous version of *filename*.
-    """
-    await asyncio.to_thread(_index_document_sync, store, filename, doc)
-
-
-def _unindex_paths_sync(store: Casebase, filenames: Collection[str]) -> None:
-    storage = _state.get_storage()
-    storage.delete_where(_where_paths(store, filenames))
-
-
-async def unindex_paths(store: Casebase, filenames: Collection[str]) -> None:
-    """Remove chunks for the given document paths from the index."""
-    if not filenames:
-        return
-    await asyncio.to_thread(_unindex_paths_sync, store, filenames)
-
-
-def _unindex_subtree_sync(store: Casebase, prefix: str) -> None:
-    storage = _state.get_storage()
-    storage.delete_where(_where_subtree(store, prefix))
-
-
-async def unindex_subtree(store: Casebase, prefix: str) -> None:
-    """Remove every chunk whose path equals *prefix* or starts with ``prefix/``."""
-    if not prefix:
-        return
-    await asyncio.to_thread(_unindex_subtree_sync, store, prefix)
-
-
-def _unindex_store_sync(store: Casebase) -> None:
-    storage = _state.get_storage()
-    storage.delete_where(_where_store(store))
-
-
-async def unindex_store(store: Casebase) -> None:
-    """Remove every chunk belonging to *store* from the global index."""
-    await asyncio.to_thread(_unindex_store_sync, store)
-
-
-def _list_indexed_filenames_sync(store: Casebase) -> set[str]:
-    storage = _state.get_storage()
-    filenames: set[str] = set()
-    for key in storage.keys_where(_where_store(store)):
-        try:
-            _, filename, _ = _parse_key(key)
-        except ValueError:
-            continue
-        filenames.add(filename)
-    return filenames
-
-
-async def list_indexed_filenames(store: Casebase) -> set[str]:
-    """Return every distinct filename indexed in LanceDB for *store*."""
-    return await asyncio.to_thread(_list_indexed_filenames_sync, store)
-
-
-async def reset_index() -> None:
-    """Wipe the global LanceDB index and re-create the empty directory.
-
-    Mirrors open-webui's ``POST /reset/db`` admin action.  Caller is
-    responsible for reindexing source data afterwards via
-    :func:`hivegent.reconcile.reconcile_all` if the SQL chunk rows still
-    exist.
-    """
-    await asyncio.to_thread(_state.reset)
+    storage = await _state.get_storage()
+    await storage.reembed_all()
+    async with session() as s:
+        row = (await s.execute(sa.select(IndexState))).scalar_one()
+        row.embedding_provider = current["provider"]
+        row.embedding_model = current["model"]
+        row.fingerprint_set_at = datetime.now(UTC)
 
 
 # ─── Search-tool builder ──────────────────────────────────────────────
+
+
+@dataclass(slots=True, frozen=True)
+class _EnrichedRow:
+    """One row joined from chunks + documents at search-time enrichment."""
+
+    key: str
+    idx: int
+    token_count: int
+    start_index: int
+    end_index: int
+    start_line: int
+    end_line: int
+    text: str
+    stem_path: str
+    original_ext: str | None
+    entry_kind: str
+    store_key: str
+
+
+def _store_key_for(owner_user_id: str | None, owner_group_id: str | None) -> str:
+    if owner_user_id is not None:
+        return Casebase.for_user(owner_user_id).store_key
+    assert owner_group_id is not None
+    return Casebase.for_group(owner_group_id).store_key
+
+
+async def _load_enriched(keys: Sequence[str]) -> list[_EnrichedRow]:
+    """Load chunk + document metadata for the keys in one JOIN query."""
+    async with session() as s:
+        stmt = (
+            sa.select(
+                Chunk.id,
+                Chunk.idx,
+                Chunk.token_count,
+                Chunk.start_index,
+                Chunk.end_index,
+                Chunk.start_line,
+                Chunk.end_line,
+                Chunk.text,
+                Document.stem_path,
+                Document.original_ext,
+                Document.entry_kind,
+                Document.owner_user_id,
+                Document.owner_group_id,
+            )
+            .select_from(Chunk)
+            .join(Document, Document.id == Chunk.document_id)
+            .where(Chunk.id.in_(list(keys)))
+        )
+        rows = (await s.execute(stmt)).all()
+    return [
+        _EnrichedRow(
+            key=key,
+            idx=idx,
+            token_count=token_count,
+            start_index=start_index,
+            end_index=end_index,
+            start_line=start_line,
+            end_line=end_line,
+            text=text,
+            stem_path=stem_path,
+            original_ext=original_ext,
+            entry_kind=entry_kind.value,
+            store_key=_store_key_for(owner_user_id, owner_group_id),
+        )
+        for (
+            key,
+            idx,
+            token_count,
+            start_index,
+            end_index,
+            start_line,
+            end_line,
+            text,
+            stem_path,
+            original_ext,
+            entry_kind,
+            owner_user_id,
+            owner_group_id,
+        ) in rows
+    ]
 
 
 def build_search_tool(
     stores: Sequence[Casebase],
     *,
     filter_for_store: Callable[[Casebase], SearchPathFilterFunc] | None = None,
-) -> LanceDBSearchTool[RetrievedChunk]:
+) -> VectorSearchTool[RetrievedChunk]:
     """Build a search tool restricted to *stores*.
 
-    The single global storage is paired with a key predicate that drops
-    rows belonging to other casebases — and, optionally, files inside
-    accessible casebases that fail a per-store filter.  Chunk-enrichment
-    metadata is loaded from SQL inside the tool's result mapper,
-    targeted at exactly the result keys.
+    Per-store scoping is enforced as a pre-filter at the SQL level: the
+    set of document ids owned by *stores* is resolved before the cbrkit
+    query, then passed as an ``In("document_id", ...)`` filter so the
+    HNSW/FTS scan never visits rows the caller cannot see.  The
+    optional *filter_for_store* prunes further per-file inside the
+    result mapper after the JOIN has loaded the filename.
     """
-    allowed: dict[str, SearchPathFilterFunc] = {
+    store_index = {s.store_key: s for s in stores}
+    file_filters = {
         s.store_key: filter_for_store(s) if filter_for_store else None for s in stores
     }
 
-    def key_filter(key: str) -> bool:
-        try:
-            store, filename, _idx = _parse_key(key)
-        except ValueError:
-            return False
-        if store.store_key not in allowed:
-            return False
-        file_filter = allowed[store.store_key]
-        return file_filter(filename) if file_filter is not None else True
+    async def resolve_filter() -> cbrkit_filter.Filter | None:
+        doc_ids = await db_documents.resolve_accessible_document_ids(stores)
+        if not doc_ids:
+            return cbrkit_filter.Eq("document_id", "")  # match nothing
+        return cbrkit_filter.In("document_id", doc_ids)
 
-    async def result_mapper(
-        results: Sequence[SearchResult],
-    ) -> list[RetrievedChunk]:
+    async def enrich(results: Sequence[SearchResult]) -> list[RetrievedChunk]:
         if not results:
             return []
-        by_doc: dict[tuple[Casebase, str], set[int]] = {}
-        for r in results:
-            try:
-                store, filename, chunk_idx = _parse_key(r.key)
-            except ValueError:
+        rows = await _load_enriched([r.key for r in results])
+        score_by_key = {r.key: r.score for r in results}
+        by_key: dict[str, RetrievedChunk] = {}
+        for row in rows:
+            store = store_index.get(row.store_key)
+            if store is None:
                 continue
-            by_doc.setdefault((store, filename), set()).add(chunk_idx)
-
-        chunk_payload: dict[str, tuple[Casebase, str, int, Any]] = {}
-        for (store, filename), needed_idx in by_doc.items():
-            doc = await db_documents.get_document(store, filename)
-            if doc is None:
+            filename = description_path_for_stem(row.stem_path)
+            file_filter = file_filters.get(row.store_key)
+            if file_filter is not None and not file_filter(filename):
                 continue
-            image_path = doc.original_path if doc.entry_kind == "image" else None
-            for i, chunk in enumerate(doc.chunks):
-                if i not in needed_idx:
-                    continue
-                chunk_payload[_build_key(store, filename, i)] = (
-                    store,
-                    filename,
-                    i,
-                    (chunk, image_path),
-                )
-
-        out: list[RetrievedChunk] = []
-        for r in results:
-            payload = chunk_payload.get(r.key)
-            if payload is None:
-                continue
-            store, filename, chunk_idx, (chunk, image_path) = payload
-            out.append(
-                RetrievedChunk(
-                    store_key=store.store_key,
-                    filename=apply_prefix(store.prefix, filename),
-                    chunk_index=chunk_idx,
-                    text=r.text,
-                    token_count=chunk.token_count,
-                    score=round(r.score, 4),
-                    start_line=chunk.start_line,
-                    end_line=chunk.end_line,
-                    start_index=chunk.start_index,
-                    end_index=chunk.end_index,
-                    image_path=image_path,
-                )
+            image_path = (
+                original_path_for_stem(row.stem_path, row.original_ext)
+                if row.entry_kind == "image"
+                else None
             )
-        return out
+            by_key[row.key] = RetrievedChunk(
+                store_key=row.store_key,
+                filename=apply_prefix(store.prefix, filename),
+                chunk_index=row.idx,
+                text=row.text,
+                token_count=row.token_count,
+                score=round(score_by_key.get(row.key, 0.0), 4),
+                start_line=row.start_line,
+                end_line=row.end_line,
+                start_index=row.start_index,
+                end_index=row.end_index,
+                image_path=image_path,
+            )
+        return [by_key[r.key] for r in results if r.key in by_key]
 
-    return LanceDBSearchTool(
-        storage=_state.get_storage(),
-        filter_func=key_filter,
-        result_mapper=result_mapper,
+    return VectorSearchTool(
+        storage_factory=_state.get_storage,
+        filter_factory=resolve_filter,
+        result_mapper=enrich,
     )

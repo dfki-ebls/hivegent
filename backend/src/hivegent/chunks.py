@@ -1,7 +1,9 @@
 """Document chunking and persistence coordinator.
 
-All operations flow through :mod:`hivegent.db.documents` (source of
-truth) and :mod:`hivegent.retrieval` (derived index).
+The high-level pipeline lives here: chunker → SQL upsert of the
+``Document`` row → cbrkit ``replace_where`` for chunks (embedding +
+INSERT in one cbrkit transaction).  Deletes flow through
+:mod:`hivegent.db.documents` and cascade via FK to chunks.
 """
 
 import logging
@@ -18,11 +20,10 @@ from .chunkers.base import (
 from .config import settings
 from .db import documents as db_documents
 from .entries import (
-    description_path_for_stem,
     resolve_entry_paths,
     stem_path_from_reference,
 )
-from .retrieval import index_document, unindex_paths
+from .retrieval import index_document
 from .store import Casebase
 
 __all__ = [
@@ -71,19 +72,7 @@ async def chunk_and_index_document(
     *,
     entry_metadata: EntryMetadata | None = None,
 ) -> DocumentMetadata:
-    """Chunk a document, persist to SQL, and upsert into LanceDB.
-
-    Args:
-        store: The casebase.
-        filename: The document filename (workspace-relative markdown).
-        content: The document text content.
-        chunking: The chunking spec (pipeline + config).
-        entry_metadata: Optional logical-entry metadata.  Defaults are
-            derived from the workspace layout when omitted.
-
-    Returns:
-        The persisted document metadata (chunks + entry header).
-    """
+    """Chunk a document, embed it, and persist everything in one transaction."""
     spec = chunking or ChunkingSpec()
 
     if entry_metadata is None:
@@ -122,24 +111,12 @@ async def chunk_and_index_document(
         span.set_attribute("chunk_count", len(raw_chunks))
 
         doc = await db_documents.upsert_document(
-            store, entry_metadata, pipeline=chunker.name, chunks=raw_chunks
+            store, entry_metadata, pipeline=chunker.name
         )
-        await index_document(store, filename, doc)
-        return doc
+        await index_document(doc.id, raw_chunks)
+        return doc.model_copy(update={"chunks": list(raw_chunks)})
 
 
 async def delete_document(store: Casebase, filepath: str) -> bool:
-    """Remove a document and its chunks from SQL and LanceDB.
-
-    Returns:
-        ``True`` if the SQL row existed and was deleted.
-    """
-    removed = await db_documents.delete_document(store, filepath)
-    description_path = description_path_for_stem(stem_path_from_reference(filepath))
-    try:
-        await unindex_paths(store, [description_path])
-    except Exception:
-        logger.warning(
-            "Failed to unindex %s/%s", store.store_key, description_path, exc_info=True
-        )
-    return removed
+    """Remove a document and its chunks (vectors cascade via FK)."""
+    return await db_documents.delete_document(store, filepath)

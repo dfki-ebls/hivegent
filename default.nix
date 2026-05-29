@@ -33,12 +33,28 @@
         frontend = pkgs.callPackage ./frontend { };
       };
       process-compose.watch-dev = {
+        imports = [
+          inputs.services-flake.processComposeModules.default
+        ];
+        services.postgres."hivegent-db" = {
+          enable = true;
+          package = pkgs.postgresql_18;
+          extensions = ext: [ ext.pgvector ];
+          initialDatabases = [ { name = "hivegent"; } ];
+          # Unix-socket only: drop TCP so the backend reaches the
+          # database through the Unix-domain socket in ``socketDir``
+          # (see the ``HIVEGENT_DB__URL`` default in ``shell.nix``).
+          listen_addresses = "";
+        };
         settings.processes = {
-          backend.command = ''
-            exec ${lib.getExe pkgs.uv} \
-              --directory backend \
-              run hivegent serve --host 127.0.0.1 --reload
-          '';
+          backend = {
+            depends_on."hivegent-db".condition = "process_healthy";
+            command = ''
+              exec ${lib.getExe pkgs.uv} \
+                --directory backend \
+                run hivegent serve --host 127.0.0.1 --reload
+            '';
+          };
           frontend.command = ''
             exec ${lib.getExe' pkgs.nodejs "npm"} \
               --prefix frontend \

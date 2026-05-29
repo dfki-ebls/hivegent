@@ -91,11 +91,11 @@ async def delete_all_user_data(
 ) -> BulkDeleteUserDataResponse:
     """Delete all data for the authenticated user.
 
-    ``workspace.delete_all`` clears documents (cascades to chunks),
-    LanceDB chunks, and the workspace directory.  ``delete_user`` then
-    drops the ``User`` row so memory, conversations, and tokens cascade
-    via FK ``ON DELETE CASCADE``.  The user re-materialises lazily on
-    the next request via :func:`ensure_user`.
+    ``workspace.delete_all`` clears documents (cascades to chunks via
+    FK ``ON DELETE CASCADE``) and the workspace directory.
+    ``delete_user`` then drops the ``User`` row so memory,
+    conversations, and tokens cascade.  The user re-materialises lazily
+    on the next request via :func:`ensure_user`.
     """
     store = user_store(user)
     await workspace.delete_all(store)

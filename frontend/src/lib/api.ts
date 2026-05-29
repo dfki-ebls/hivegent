@@ -1392,11 +1392,6 @@ async function adminPost<T>(path: string, schema: z.ZodType<T>): Promise<T> {
   return schema.parse(await res.json());
 }
 
-/** Wipe the global LanceDB index.  SQL chunk rows survive. */
-export function adminResetVectorDb(): Promise<AdminResetResponse> {
-  return adminPost("/api/admin/reset/vector-db", AdminResetResponseSchema);
-}
-
 /** Wipe the workspace tree on disk and the matching SQL document rows. */
 export function adminResetWorkspace(): Promise<AdminResetResponse> {
   return adminPost("/api/admin/reset/workspace", AdminResetResponseSchema);
@@ -1407,12 +1402,12 @@ export function adminResetDatabase(): Promise<AdminResetResponse> {
   return adminPost("/api/admin/reset/database", AdminResetResponseSchema);
 }
 
-/** Reconcile every casebase: rebuild LanceDB from SQL, prune orphans. */
+/** Reconcile every casebase: prune workspace and SQL orphans. */
 export function adminReindex(): Promise<AdminReindexResponse> {
   return adminPost("/api/admin/reindex", AdminReindexResponseSchema);
 }
 
-/** Composite factory reset: vector DB + workspace + database. */
+/** Composite factory reset: workspace + database. */
 export function adminFactoryReset(): Promise<AdminFactoryResetResponse> {
   return adminPost("/api/admin/reset/factory", AdminFactoryResetResponseSchema);
 }

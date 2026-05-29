@@ -1,10 +1,10 @@
 """FastAPI application assembly for Hivegent."""
 
 import logging
-import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import sqlalchemy as sa
 from fastapi import FastAPI, Request
 from pydantic import ValidationError
 from starlette.responses import PlainTextResponse, Response
@@ -15,6 +15,7 @@ from ..http_client import shared_http_client_lifespan
 from ..mcp import mcp_app
 from ..observability import configure_observability
 from ..reconcile import reconcile_all
+from ..retrieval import reconcile_index_state
 from .routes import api_router
 from .routes.public import router as public_router
 
@@ -22,12 +23,36 @@ __all__ = ["app", "create_app", "mcp_http_app"]
 
 logger = logging.getLogger(__name__)
 
-# LanceDB registers an os.register_at_fork() hook that warns on every
-# fork(), including the safe fork+exec used by uvicorn's reloader and
-# Python's subprocess module.  Filter it out to keep logs clean.
-warnings.filterwarnings("ignore", message="lance is not fork-safe")
-
 mcp_http_app = mcp_app.http_app(path="/") if settings.mcp.enable else None
+
+
+async def _verify_vector_dim() -> None:
+    """Fail loudly when the live ``chunks.embedding`` dim differs from settings.
+
+    pgvector stores the dimension in the column's ``atttypmod``.  We
+    compare it to ``settings.embedding.dimension`` at boot so an
+    operator who flipped the embedding model without generating a
+    follow-up migration sees the error here, not mid-request.
+    """
+    from ..db.engine import get_engine
+
+    expected = settings.embedding.dimension
+    async with get_engine().connect() as conn:
+        result = await conn.execute(
+            sa.text(
+                "SELECT atttypmod FROM pg_attribute "
+                "WHERE attrelid = 'chunks'::regclass AND attname = 'embedding'"
+            )
+        )
+        actual = result.scalar_one_or_none()
+    if actual is None:
+        raise RuntimeError("chunks.embedding column not found — did migrations run?")
+    if actual != expected:
+        raise RuntimeError(
+            f"Embedding dim mismatch: chunks.embedding is {actual}, "
+            f"settings.embedding resolves to {expected}.  Generate an Alembic "
+            "revision against the new model before booting."
+        )
 
 
 @asynccontextmanager
@@ -35,6 +60,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open shared resources and delegate to MCP."""
     async with shared_http_client_lifespan():
         await apply_migrations()
+        await _verify_vector_dim()
+        await reconcile_index_state()
         try:
             reports = await reconcile_all()
         except Exception:

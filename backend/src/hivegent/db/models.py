@@ -1,15 +1,23 @@
 """SQLAlchemy 2.0 schema for Hivegent.
 
-Single module — small enough to read top-to-bottom.  Stays dialect-neutral
-so swapping ``sqlite+aiosqlite`` for ``postgresql+psycopg`` is a config
-change.  Repositories convert these ORM rows to Pydantic models at their
-public surface; nothing outside :mod:`hivegent.db` sees an ORM object.
+Single module — small enough to read top-to-bottom.  Repositories convert
+these ORM rows to Pydantic models at their public surface; nothing
+outside :mod:`hivegent.db` sees an ORM object.
+
+The PostgreSQL/pgvector ``chunks`` table holds chunk metadata, text,
+and vectors in one normalised row.  cbrkit reads it via
+:class:`pgvector_async(model=...)` for search and re-embedding;
+hivegent writes to it via plain SQLAlchemy in the same session that
+inserts the parent ``documents`` row, so there is no ordering coupling
+between chunk metadata and vectors.
 """
 
 import enum
 from datetime import UTC, datetime
 from typing import Any
 
+import sqlalchemy as sa
+from cbrkit.indexable import PGVECTOR, TSVECTOR
 from nanoid import generate as _nanoid
 from sqlalchemy import (
     CheckConstraint,
@@ -19,8 +27,17 @@ from sqlalchemy import (
     MetaData,
     UniqueConstraint,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.types import JSON, DateTime
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    MappedAsDataclass,
+    mapped_column,
+    relationship,
+)
+from sqlalchemy.types import DateTime
+
+from ..config import settings
 
 __all__ = [
     "Base",
@@ -61,8 +78,8 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=_NAMING_CONVENTION)
     type_annotation_map = {
         datetime: DateTime(timezone=True),
-        dict[str, Any]: JSON,
-        list[str]: JSON,
+        dict[str, Any]: JSONB,
+        list[str]: JSONB,
     }
 
 
@@ -88,8 +105,13 @@ class Timestamped:
 
 
 def _enum(t: type[enum.StrEnum]) -> Enum:
-    """Portable enum column — VARCHAR + CHECK on both SQLite and Postgres."""
-    return Enum(t, native_enum=False, validate_strings=True)
+    """Native Postgres ENUM column backed by *t*.
+
+    Postgres-only schema, so we use real ``CREATE TYPE`` enums instead of
+    ``VARCHAR + CHECK`` — values live in one place (the type) rather than
+    being duplicated in a per-column check constraint.
+    """
+    return Enum(t, name=t.__name__.lower(), validate_strings=True)
 
 
 # ─── Enums ─────────────────────────────────────────────────────────────
@@ -132,7 +154,7 @@ class User(Timestamped, Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(primary_key=True)
-    email: Mapped[str | None]
+    email: Mapped[str | None] = mapped_column(unique=True)
     display_name: Mapped[str | None]
 
     tokens: Mapped[list["Token"]] = relationship(
@@ -299,40 +321,88 @@ class Document(Timestamped, Base):
     owner_group: Mapped[Group | None] = relationship(
         back_populates="documents", foreign_keys=[owner_group_id]
     )
-    chunks: Mapped[list["Chunk"]] = relationship(
-        back_populates="document",
-        cascade="all, delete-orphan",
-        order_by="Chunk.idx",
-    )
 
 
-class Chunk(Base):
+# ─── Chunks (metadata + text + vector, one row each) ──────────────────
+
+
+# Schema dim is the plain configured ``HIVEGENT_EMBEDDING__DIMENSION``
+# (never a model probe), so importing this module for Alembic
+# autogenerate, the server, or unit tests stays offline.  A
+# schema-vs-runtime mismatch is caught either by autogenerate (drift)
+# or by the boot-time guard in the FastAPI lifespan.
+_VECTOR_DIM = settings.embedding.dimension
+
+
+# ``MappedAsDataclass`` makes ``Chunk`` its own row contract: it is the
+# value type cbrkit exchanges (``pgvector_async[str, Chunk]``), and the
+# generated dataclass ``__init__`` is what statically verifies every
+# write — a column rename, retype, or new required column breaks every
+# ``Chunk(...)`` call site at type-check time.  ``init=False`` columns
+# are cbrkit-owned (``id`` nanoid key, ``embedding``, ``tsv``) and never
+# passed by the host; ``kw_only`` frees us from default-ordering rules.
+class Chunk(MappedAsDataclass, Base, kw_only=True):  # pyright: ignore[reportUnsafeMultipleInheritance]
+    """Per-row chunk content + embedding + host metadata, one row each.
+
+    The ``id`` PK and ``text`` column are the cbrkit query surface
+    (``value_column="text"``); ``embedding`` (:class:`PGVECTOR`) and
+    ``tsv`` (:class:`TSVECTOR`, Postgres-generated from ``text``) are
+    the dense/sparse index targets cbrkit populates on write, so they
+    are ``init=False`` and excluded from the row dump.  All columns are
+    declared explicitly here so hivegent owns the schema end-to-end —
+    cbrkit attaches to it via ``pgvector_async(model=...)``.
+    ``embedding``'s dimension is the embedding-model-derived
+    :data:`_VECTOR_DIM`.  Always written by the upload pipeline together
+    with their owning document; cascade-deleted with it.
+    """
+
     __tablename__ = "chunks"
-
-    document_id: Mapped[str] = mapped_column(
-        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    __table_args__ = (
+        UniqueConstraint("document_id", "idx"),
+        Index(
+            "ix_chunks_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index("ix_chunks_tsv", "tsv", postgresql_using="gin"),
     )
-    idx: Mapped[int] = mapped_column(primary_key=True)
+
+    id: Mapped[str] = mapped_column(
+        primary_key=True, init=False, default_factory=_nid
+    )
     text: Mapped[str]
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    idx: Mapped[int]
     token_count: Mapped[int]
     start_index: Mapped[int]
     end_index: Mapped[int]
     start_line: Mapped[int]
     end_line: Mapped[int]
-
-    document: Mapped[Document] = relationship(back_populates="chunks")
-
-
-# ─── LanceDB fingerprint ───────────────────────────────────────────────
+    embedding: Mapped[Any] = mapped_column(
+        PGVECTOR(_VECTOR_DIM), nullable=False, init=False, default=None
+    )
+    tsv: Mapped[Any] = mapped_column(
+        TSVECTOR(),
+        sa.Computed(
+            sa.func.to_tsvector(sa.literal("english"), sa.column("text")),
+            persisted=True,
+        ),
+        nullable=False,
+        init=False,
+        default=None,
+    )
 
 
 class IndexState(Base):
-    """Global embedding fingerprint for the LanceDB index.
+    """Global embedding fingerprint for the vector index.
 
     Singleton row (``id = 1``).  The application has one embedding model,
-    so one fingerprint covers the whole index.  A mismatch wipes the
-    LanceDB directory; the index then rebuilds from the source-of-truth
-    ``chunks`` table on the next sync.
+    so one fingerprint covers the whole index.  A mismatch drives an
+    in-place ``reembed_all`` against ``chunks`` — no truncate, no data
+    loss.
     """
 
     __tablename__ = "index_state"
@@ -341,4 +411,4 @@ class IndexState(Base):
     id: Mapped[int] = mapped_column(primary_key=True, default=1)
     embedding_provider: Mapped[str]
     embedding_model: Mapped[str]
-    fingerprint_set_at: Mapped[datetime] = mapped_column(default=_now)
+    fingerprint_set_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)

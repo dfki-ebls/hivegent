@@ -9,11 +9,11 @@ from ...store import build_search_paths
 from ...tools import (
     GlobDocumentsTool,
     GrepTool,
-    LanceDBSearchTool,
     ListDocumentsTool,
     ReadBinaryDocumentTool,
     ReadDocumentTool,
     SearchPath,
+    VectorSearchTool,
 )
 from ...tools.pydantic_ai import register_agent_tools
 from ..common import UserDeps
@@ -50,7 +50,7 @@ def _grep(deps: UserDeps) -> GrepTool:
     return GrepTool(paths=_workspace_paths(deps))
 
 
-def _search(deps: UserDeps) -> LanceDBSearchTool[RetrievedChunk]:
+def _search(deps: UserDeps) -> VectorSearchTool[RetrievedChunk]:
     return build_search_tool(deps.all_stores, filter_for_store=deps.filter_for_store)
 
 

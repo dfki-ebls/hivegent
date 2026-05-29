@@ -13,6 +13,7 @@ __all__ = [
     "entry_exists",
     "find_original_for_reference",
     "is_assets_dir",
+    "original_path_for_stem",
     "resolve_entry_paths",
     "stem_display_name",
     "stem_path_from_reference",
@@ -50,6 +51,17 @@ def description_path_for_stem(stem_path: str) -> str:
 def assets_dir_for_stem(stem_path: str) -> str:
     """Return the child-assets directory path for a logical stem."""
     return f"{stem_path}.assets"
+
+
+def original_path_for_stem(stem_path: str, original_ext: str | None) -> str | None:
+    """Return the original-file path for a stem, or ``None`` when there is none.
+
+    >>> original_path_for_stem("docs/report", "pdf")
+    'docs/report.pdf'
+    >>> original_path_for_stem("docs/note", None) is None
+    True
+    """
+    return f"{stem_path}.{original_ext}" if original_ext else None
 
 
 def find_original_for_reference(workspace_dir: Path, reference: str) -> str | None:

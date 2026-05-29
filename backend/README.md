@@ -9,7 +9,10 @@ The migration tree lives inside the package at `src/hivegent/migrations/`, so re
 
 `apply_migrations()` (`hivegent.db.migrations`) calls `alembic upgrade head` programmatically and is wired into the FastAPI lifespan in `server/app.py`.
 Every time the API server starts it brings the schema to head before accepting traffic; no separate deploy step is required.
-The test suite goes through the same path via the `db_initialized` fixture in `tests/conftest.py`, so tests exercise exactly the migrations production runs.
+After migrations apply, the lifespan also verifies that the live `chunks.vector` dimension equals `settings.embedding.resolve_dimension()` and refuses to boot on mismatch — a model change without a matching follow-up revision fails loudly at startup, not mid-request.
+
+The unit test tree is hermetic: no test touches a live database.
+Live-DB workflows (Alembic, the running server, manual smoke tests) cover the SQL surface end-to-end.
 
 ### Generating a new revision
 
@@ -20,16 +23,11 @@ cd backend
 uv run alembic revision --autogenerate -m "describe the change"
 ```
 
-The autogenerate runs against the configured `HIVEGENT_DB__URL`.
-For a clean diff against an empty database, point it at a throwaway SQLite file:
-
-```sh
-HIVEGENT_DB__URL="sqlite+aiosqlite:///$(mktemp -t hivegent-XXXXXX.db)" \
-  uv run alembic revision --autogenerate -m "describe the change"
-```
+The autogenerate runs against the configured `HIVEGENT_DB__URL`, which must point at a PostgreSQL database with the `pgvector` extension available.
+The dev shell sets this automatically to the `services-flake` instance under `data/hivegent-db/`; start the Postgres service first via `nix run .#watch-dev` or by booting the dev shell, then run autogenerate.
 
 Review the generated file in `src/hivegent/migrations/versions/`.
-Autogenerate is reliable for table/column/index changes but misses anything dialect-specific (partial indexes, server defaults, raw `op.execute(...)` data backfills) — edit the file by hand when needed.
+Autogenerate is reliable for table/column/index changes but misses dialect-specific bits (pgvector index ops, partial indexes, raw `op.execute(...)` data backfills) — edit the file by hand when needed.
 
 Verify there is no drift left over before committing:
 
@@ -38,7 +36,6 @@ uv run alembic check
 ```
 
 The constraint naming convention on `Base.metadata` produces stable names like `pk_users`, `fk_documents_owner_user_id_users`, etc.
-SQLite ALTERs go through Alembic's batch mode automatically (configured in `env.py`).
 
 ### Manual migration commands
 
@@ -56,11 +53,6 @@ uv run alembic history
 uv run alembic current
 uv run alembic downgrade -1
 ```
-
-### Switching from SQLite to PostgreSQL
-
-The schema is dialect-neutral.
-To switch backends, change `HIVEGENT_DB__URL` (e.g. `postgresql+psycopg://…`) and start the server — the lifespan applies the same migrations against the new database.
 
 ### Production (NixOS / systemd)
 

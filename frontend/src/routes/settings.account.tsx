@@ -36,7 +36,6 @@ import {
   adminListUsers,
   adminReindex,
   adminResetDatabase,
-  adminResetVectorDb,
   adminResetWorkspace,
   deleteAllConversations,
   deleteAllDocuments,
@@ -317,30 +316,10 @@ function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) =>
           className="justify-start"
           onClick={() =>
             setAction({
-              key: "admin-vector",
-              title: "Reset Vector Storage",
-              description:
-                "Drop the global LanceDB index. SQL chunk rows survive, so a follow-up reindex will rebuild the index from the source of truth. Search will return no results until the reindex completes.",
-              confirm: "Reset Vector DB",
-              run: async () => {
-                await adminResetVectorDb();
-              },
-            })
-          }
-        >
-          <DatabaseZapIcon className="h-4 w-4 mr-2" />
-          Reset Vector Storage
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="justify-start"
-          onClick={() =>
-            setAction({
               key: "admin-workspace",
               title: "Reset Workspace Files",
               description:
-                "Wipe every workspace file on disk, the matching document rows in SQL, and the vector index — the three must stay in sync. Conversations, tokens, memory, users, and groups are kept.",
+                "Wipe every workspace file on disk and the matching document rows in SQL — the two must stay in sync. Chunks (text + vector) cascade with the document rows. Conversations, tokens, memory, users, and groups are kept.",
               confirm: "Reset Workspace",
               run: async () => {
                 await adminResetWorkspace();
@@ -361,7 +340,7 @@ function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) =>
               key: "admin-reindex",
               title: "Reindex Knowledge",
               description:
-                "Reconcile every casebase: rebuild the LanceDB index from SQL and prune orphans. Safe to run anytime; useful after a vector-storage reset or an embedding configuration change.",
+                "Reconcile every casebase: prune workspace and SQL orphans so disk and database stay in sync. Safe to run anytime; useful after manual file changes or an embedding configuration change.",
               confirm: "Reindex",
               run: async () => {
                 await adminReindex();
@@ -381,7 +360,7 @@ function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) =>
               key: "admin-database",
               title: "Reset Database",
               description:
-                "Drop every user and group row along with everything that cascades: tokens, memory, conversations, documents, chunks, and group memberships. Files on disk and the vector index survive.",
+                "Drop every user and group row along with everything that cascades: tokens, memory, conversations, documents, chunks, and group memberships. Workspace files on disk survive.",
               confirm: "Reset Database",
               run: async () => {
                 await adminResetDatabase();
@@ -402,7 +381,7 @@ function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) =>
               key: "admin-factory",
               title: "Factory Reset",
               description:
-                "Wipe the vector index, every workspace file on disk, every user and group, and every dependent row. Local browser data is cleared too. The deployment returns to the state of a fresh checkout. This action cannot be undone.",
+                "Wipe every workspace file on disk, every user and group, and every dependent row (documents, chunks, conversations, tokens, memory). Local browser data is cleared too. The deployment returns to the state of a fresh checkout. This action cannot be undone.",
               confirm: "Factory Reset",
               run: async () => {
                 await adminFactoryReset();

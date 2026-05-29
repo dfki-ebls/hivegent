@@ -338,7 +338,7 @@ def factory_tool_name(factory: Callable[..., Any]) -> str:
 def resolve_tool_cls(factory: Callable[..., Tool[Any]]) -> type[Tool[Any]]:
     """Extract the Tool subclass from a factory's return type annotation.
 
-    Handles parameterized generics like ``LanceDBSearchTool[str]`` by
+    Handles parameterized generics like ``VectorSearchTool[str]`` by
     unwrapping via ``__origin__``.
 
     Args:

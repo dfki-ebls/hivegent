@@ -6,10 +6,9 @@ readme = "README.md"
 requires-python = ">=3.13,<4"
 authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
 dependencies = [
-  "aiosqlite>=0.21,<1",
   "alembic>=1.13,<2",
   "argon2-cffi>=25,<26",
-  "cbrkit>=1.3,<2",
+  "cbrkit[sql,pgvector]>=1.4,<2",
   "chonkie>=1,<2",
   "ddgs>=9,<10",
   "fastapi[standard]>=0.120,<1",
@@ -17,27 +16,26 @@ dependencies = [
   "frozendict>=2.4.7",
   "httpx>=0.28,<1",
   "joserfc>=1,<2",
-  "lancedb>=0.29,<1",
   "logfire>=4,<5",
   "nanoid>=2,<3",
   "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
   "opentelemetry-instrumentation-fastapi>=0.60b1",
+  "psycopg[binary]>=3.2,<4",
   "pydantic-ai-harness>=0.1,<1",
   "pydantic-ai-slim[ui,openai,mcp]>=1,<2",
-  "psycopg[binary]>=3.2,<4",
   "pydantic-settings>=2,<3",
   "pypdfium2>=5,<6",
   "sentence_transformers>=5,<6",
   "sqlalchemy[asyncio]>=2,<3",
   "typer>=0.21,<1",
   "uvicorn[standard]>=0.40,<1",
-  "zvec>=0.3,<1",
 ]
 
 [project.scripts]
 hivegent = "hivegent.cli:app"
 
 [project.optional-dependencies]
+all = ["hivegent[docling,markitdown,kreuzberg,pdf-oxide,semantic]"]
 # code = ["chonkie[code]>=1,<2"]
 # marker = ["marker-pdf[full]>=1,<2"]
 # mineru = ["mineru[all]>=3,<4"]
@@ -46,15 +44,14 @@ kreuzberg = ["kreuzberg>=4,<5"]
 markitdown = ["markitdown[all]>=0.1,<1"]
 pdf-oxide = ["pdf_oxide>=0.3,<1"]
 semantic = ["chonkie[semantic]>=1,<2"]
-all = ["hivegent[docling,markitdown,kreuzberg,pdf-oxide,semantic]"]
 
 [dependency-groups]
 dev = [
-  "pytest>=9,<10",
-  "pytest-asyncio>=1,<2",
+  "dirty-equals>=0.8,<1",
   "inline-snapshot>=0.19,<1",
   "pydantic-evals>=1,<2",
-  "dirty-equals>=0.8,<1",
+  "pytest>=9,<10",
+  "pytest-asyncio>=1,<2",
 ]
 
 [build-system]
@@ -67,16 +64,6 @@ prepend_sys_path = ["src"]
 timezone = "UTC"
 file_template = "%%(year)d%%(month).2d%%(day).2d_%%(hour).2d%%(minute).2d_%%(rev)s_%%(slug)s"
 
-[tool.pytest]
-asyncio_mode = "auto"
-testpaths = ["tests"]
-markers = ["slow: marks tests as slow (deselect with -m 'not slow')"]
-
-[tool.logfire]
-# `configure_observability` is a no-op unless an OTLP endpoint or
-# `LOGFIRE_TOKEN` is set; suppress the noisy warning otherwise.
-ignore_no_config = true
-
 [tool.basedpyright]
 # SQLAlchemy 2.0 ``Mapped[T] = mapped_column(...)`` declarations are
 # initialized by the ORM metaclass at runtime, but basedpyright cannot see
@@ -84,6 +71,16 @@ ignore_no_config = true
 # because every legitimate uninitialized-attribute case in this repo also
 # happens to be ORM-shaped.
 reportUninitializedInstanceVariable = false
+
+[tool.logfire]
+# `configure_observability` is a no-op unless an OTLP endpoint or
+# `LOGFIRE_TOKEN` is set; suppress the noisy warning otherwise.
+ignore_no_config = true
+
+[tool.pytest]
+markers = ["slow: marks tests as slow (deselect with -m 'not slow')"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [tool.uv.exclude-newer-package]
 cbrkit = false

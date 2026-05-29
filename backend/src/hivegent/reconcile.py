@@ -1,8 +1,10 @@
-"""Startup reconciliation between workspace, SQL, and LanceDB.
+"""Startup reconciliation between workspace files and SQL.
 
-SQL is the source of truth.  Workspace files and LanceDB rows are
-derived projections; on boot, this module prunes anything that SQL does
-not vouch for and re-derives anything SQL says should exist.
+SQL is the source of truth.  Workspace files are a derived projection;
+on boot, this module prunes files that SQL does not vouch for and drops
+SQL rows whose description file is missing on disk.  Chunks live in the
+same Postgres database as documents and cascade-delete with them, so
+no separate index sweep is needed.
 """
 
 import logging
@@ -14,7 +16,6 @@ from .chunks import delete_document as _delete_chunked_document
 from .config import settings
 from .db import documents as db_documents
 from .entries import cleanup_empty_parents, is_assets_dir, stem_path_from_reference
-from .retrieval import index_document, list_indexed_filenames, unindex_paths
 from .store import Casebase
 from .workspace import store_lock
 
@@ -33,8 +34,6 @@ class ReconcileReport:
 
     disk_orphans_removed: int = 0
     sql_orphans_removed: int = 0
-    lance_orphans_removed: int = 0
-    lance_reindexed: int = 0
 
 
 def _owning_stem_for_path(rel: PurePosixPath) -> str:
@@ -105,76 +104,22 @@ async def _sweep_sql_orphans(store: Casebase, sql_paths: dict[str, int]) -> int:
     return removed
 
 
-async def _sweep_lance_orphans(
-    store: Casebase, indexed: set[str], sql_filenames: set[str]
-) -> int:
-    """Drop LanceDB rows whose filename is unknown to SQL."""
-    orphans = indexed - sql_filenames
-    if not orphans:
-        return 0
-    try:
-        await unindex_paths(store, orphans)
-    except Exception:
-        logger.warning(
-            "Failed to drop LanceDB orphans for %s",
-            store.store_key,
-            exc_info=True,
-        )
-        return 0
-    return len(orphans)
-
-
-async def _sweep_lance_reindex(
-    store: Casebase, indexed: set[str], sql_paths: Mapping[str, int]
-) -> int:
-    """Re-index SQL documents that have chunks but no LanceDB rows."""
-    missing = {path for path, count in sql_paths.items() if count > 0} - indexed
-    if not missing:
-        return 0
-    reindexed = 0
-    for description_path in missing:
-        try:
-            doc = await db_documents.get_document(store, description_path)
-            if doc is None:
-                continue
-            await index_document(store, description_path, doc)
-        except Exception:
-            logger.warning(
-                "Failed to re-index %s/%s",
-                store.store_key,
-                description_path,
-                exc_info=True,
-            )
-            continue
-        reindexed += 1
-    return reindexed
-
-
 async def reconcile_store(store: Casebase) -> ReconcileReport:
-    """Bring *store*'s three layers back into agreement, with SQL as truth."""
+    """Bring *store*'s disk and SQL layers back into agreement.
+
+    SQL is the source of truth.  Chunks cascade with documents and
+    need no separate sweep.
+    """
     async with store_lock(store):
         sql_paths = dict(await db_documents.list_document_paths(store))
         sql_stems = {stem_path_from_reference(path) for path in sql_paths}
 
         disk_removed = await _sweep_disk_orphans(store, sql_stems)
         sql_removed = await _sweep_sql_orphans(store, sql_paths)
-        try:
-            indexed = await list_indexed_filenames(store)
-        except Exception:
-            logger.warning(
-                "Failed to enumerate LanceDB filenames for %s",
-                store.store_key,
-                exc_info=True,
-            )
-            indexed = set()
-        lance_removed = await _sweep_lance_orphans(store, indexed, set(sql_paths))
-        lance_reindexed = await _sweep_lance_reindex(store, indexed, sql_paths)
 
         return ReconcileReport(
             disk_orphans_removed=disk_removed,
             sql_orphans_removed=sql_removed,
-            lance_orphans_removed=lance_removed,
-            lance_reindexed=lance_reindexed,
         )
 
 

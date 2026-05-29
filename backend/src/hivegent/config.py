@@ -164,10 +164,21 @@ class EmbeddingSettings(BaseModel):
 
     Configurable via ``HIVEGENT_EMBEDDING__PROVIDER``,
     ``HIVEGENT_EMBEDDING__MODEL``, etc.
+
+    ``dimension`` is the vector size the ``chunks.embedding`` column and
+    every Alembic migration are built against.  It defaults to ``384``,
+    the output size of the default ``sentence-transformers`` model, and
+    must be set explicitly (``HIVEGENT_EMBEDDING__DIMENSION``) whenever
+    ``model`` is changed to one with a different size (e.g. ``1536`` for
+    ``text-embedding-3-small``).  Keeping it a plain configured value —
+    rather than probing the model — means importing the ORM never loads
+    embedding weights; the boot-time guard validates the live column
+    against this number.
     """
 
     provider: Literal["sentence-transformers", "openai"] = "sentence-transformers"
     model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    dimension: int = 384
     api_key: str = ""
     base_url: str = ""
 
@@ -279,10 +290,9 @@ class LimitsSettings(BaseModel):
 class DatabaseSettings(BaseModel):
     """Database backend configuration.
 
-    ``url`` is a SQLAlchemy URL.  When empty, defaults to SQLite at
-    ``<data_dir>/hivegent.db`` so a fresh checkout works without any
-    setup.  Set to ``postgresql+psycopg://...`` to switch to Postgres
-    without code changes.
+    ``url`` is a mandatory async SQLAlchemy URL (e.g.
+    ``postgresql+psycopg://...``).  The only supported dialect is
+    PostgreSQL with the ``pgvector`` extension; there is no fallback.
     """
 
     url: str = ""

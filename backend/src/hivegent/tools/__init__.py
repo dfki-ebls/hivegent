@@ -25,7 +25,7 @@ from .grep import GrepLine, GrepMatch, GrepTool
 from .jq import JqTool
 from .mutations import EditDocumentTool, WriteDocumentTool
 from .plan import CreatePlanTool
-from .retrieval import LanceDBSearchTool, SearchResult, SearchType
+from .retrieval import SearchResult, SearchType, VectorSearchTool
 from .web import WebFetch, WebSearch
 
 __all__ = [
@@ -42,7 +42,6 @@ __all__ = [
     "GrepMatch",
     "GrepTool",
     "JqTool",
-    "LanceDBSearchTool",
     "ListDocumentsTool",
     "ReadBinaryDocumentTool",
     "ReadDocumentTool",
@@ -51,6 +50,7 @@ __all__ = [
     "SearchResult",
     "SearchType",
     "Tool",
+    "VectorSearchTool",
     "WebFetch",
     "WebSearch",
     "WriteDocumentTool",

@@ -1,18 +1,21 @@
 """Single mutation gateway for casebase workspaces.
 
-Every operation that modifies the workspace, SQL documents, or LanceDB
-index for a :class:`~hivegent.store.Casebase` goes through this module.
-Each public function acquires the per-store async lock so concurrent
+Every operation that modifies the workspace or the SQL documents for a
+:class:`~hivegent.store.Casebase` goes through this module.  Each
+public function acquires the per-store async lock so concurrent
 mutations on the same casebase are serialised, then performs the
-workspace, SQL, and LanceDB writes in one step — see
+workspace and SQL writes in one step — see
 :func:`hivegent.chunks.chunk_and_index_document` and
 :func:`hivegent.chunks.delete_document`.
 
-Routes, agents, and MCP tools never touch the workspace, the database,
-or LanceDB directly — they call into this module instead.
+Chunks (text + vector) live next to documents in Postgres and cascade
+on delete: any operation that drops a Document row also drops its
+chunks in the same transaction.  Routes, agents, and MCP tools never
+touch the workspace or the database directly — they call into this
+module instead.
 
-SQL is the source of truth; workspace files and LanceDB rows are
-derived projections.  Orphans in either are reconciled at startup by
+SQL is the source of truth; workspace files are a derived projection.
+Disk-vs-SQL orphans are reconciled at startup by
 :mod:`hivegent.reconcile`.
 """
 
@@ -27,7 +30,7 @@ import tempfile
 import threading
 import zipfile
 import zlib
-from collections.abc import AsyncGenerator, AsyncIterator, Collection, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
 
@@ -74,12 +77,6 @@ from .entries import (
     entry_exists,
     resolve_entry_paths,
     stem_path_from_reference,
-)
-from .retrieval import (
-    index_document,
-    unindex_paths,
-    unindex_store,
-    unindex_subtree,
 )
 from .store import Casebase
 from .types import (
@@ -136,36 +133,6 @@ def store_lock(store: Casebase) -> asyncio.Lock:
     return lock
 
 
-async def _safe_unindex_subtree(store: Casebase, prefix: str) -> None:
-    """Drop index rows under *prefix*, logging (not raising) on failure.
-
-    File-system + SQL mutations have already happened by the time we
-    get here.  Stale LanceDB rows are harmless — the search-tool result
-    mapper filters out chunks whose SQL row is gone.
-    """
-    try:
-        await unindex_subtree(store, prefix)
-    except Exception:
-        logger.warning(
-            "Failed to unindex subtree %s/%s", store.store_key, prefix, exc_info=True
-        )
-
-
-async def _safe_unindex_paths(store: Casebase, paths: Collection[str]) -> None:
-    """Drop exact document index rows, logging (not raising) on failure."""
-    if not paths:
-        return
-    try:
-        await unindex_paths(store, paths)
-    except Exception:
-        logger.warning(
-            "Failed to unindex paths %s/%s",
-            store.store_key,
-            sorted(paths),
-            exc_info=True,
-        )
-
-
 def _build_entry_metadata(
     *,
     stem_path: str,
@@ -209,11 +176,11 @@ async def _write_markdown_projection(
     *,
     entry_metadata: EntryMetadata,
 ) -> tuple[int, str]:
-    """Write markdown content and persist its chunk metadata.
+    """Write markdown content and persist chunks (with vectors) in one tx.
 
-    The chunk/index step touches both SQL and LanceDB; it is shielded
-    so cancellation cannot tear the two stores apart mid-write.  A
-    partial markdown file on disk is caught by the startup reconciler.
+    The chunk + embed + SQL upsert step is shielded so a cancel cannot
+    leave the workspace markdown without its SQL rows.  A partial
+    markdown file on disk is caught by the startup reconciler.
     """
     workspace_dir = store.workspace_dir(settings.data_dir)
     full_path = workspace_dir / description_path
@@ -281,11 +248,11 @@ def _replace_image_references(markdown: str, mapping: dict[str, str | None]) -> 
 
 
 async def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
-    """Delete a logical entry's child-assets subtree from workspace + index.
+    """Delete a logical entry's child-assets directory from the workspace.
 
-    Child documents are cascade-deleted in SQL when their parent is
-    removed; this only handles on-disk asset files plus their LanceDB
-    rows.
+    SQL child-document rows that lived under the parent stem are
+    dropped by :func:`db_documents.delete_subtree`; chunks cascade with
+    them.  This helper handles only the on-disk asset files.
     """
     workspace_dir = store.workspace_dir(settings.data_dir)
     assets_dir = assets_dir_for_stem(stem_path)
@@ -293,7 +260,7 @@ async def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
     if workspace_assets.exists():
         shutil.rmtree(workspace_assets)
         cleanup_empty_parents(workspace_assets, workspace_dir)
-    await _safe_unindex_subtree(store, assets_dir)
+    await db_documents.delete_subtree(store, assets_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -629,7 +596,7 @@ async def _delete_single_locked(store: Casebase, safe: str) -> None:
         if assets_path.exists():
             shutil.rmtree(assets_path)
             cleanup_empty_parents(assets_path, workspace)
-        await _safe_unindex_subtree(store, assets_rel)
+        await db_documents.delete_subtree(store, assets_rel)
 
     await _delete_chunked_document(store, safe)
 
@@ -684,34 +651,6 @@ async def _ensure_upload_slot_locked(
     await _delete_single_locked(
         store, description_path_for_stem(stem_path_from_reference(reference))
     )
-
-
-# ---------------------------------------------------------------------------
-# Path-rewriting helpers for moves
-# ---------------------------------------------------------------------------
-
-
-async def _reindex_after_move(store: Casebase, moves: list[tuple[str, str]]) -> None:
-    """Push every renamed document into LanceDB under its new key.
-
-    *moves* is the ``(old_stem, new_stem)`` list returned by
-    :func:`db.documents.move_subtree`.  Old LanceDB rows were unindexed
-    before the SQL rename; here we re-upsert the chunks at their new
-    key.  A failure on one document is logged and the rest continue.
-    """
-    for _, new_stem in moves:
-        new_description_path = description_path_for_stem(new_stem)
-        try:
-            doc = await db_documents.get_document(store, new_description_path)
-            if doc is None:
-                continue
-            await index_document(store, new_description_path, doc)
-        except Exception:
-            logger.warning(
-                "Failed to reindex %s after move",
-                new_description_path,
-                exc_info=True,
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -848,9 +787,8 @@ async def rechunk(
 ) -> DocumentMetadata:
     """Re-chunk an existing markdown document.
 
-    The chunk/index step is shielded — same rationale as
-    :func:`_write_markdown_projection` — so a cancel mid-write cannot
-    tear SQL and LanceDB apart.
+    The chunk + embed + SQL upsert is shielded so a cancel mid-write
+    cannot tear the workspace markdown out of sync with SQL.
     """
     spec = spec or PipelineSpec()
     async with store_lock(store):
@@ -909,9 +847,9 @@ async def move_document(store: Casebase, src: str, dst: str) -> MoveDocumentResp
         src_assets_dir = metadata.assets_dir
         dst_assets_dir: str | None = None
         if src_assets_dir:
+            dst_assets_dir = assets_dir_for_stem(dst_stem)
             src_assets_path = workspace_dir / src_assets_dir
             if src_assets_path.exists():
-                dst_assets_dir = assets_dir_for_stem(dst_stem)
                 dst_assets_path = workspace_dir / dst_assets_dir
                 dst_assets_path.parent.mkdir(parents=True, exist_ok=True)
                 src_assets_path.rename(dst_assets_path)
@@ -924,11 +862,13 @@ async def move_document(store: Casebase, src: str, dst: str) -> MoveDocumentResp
                     body = body.replace(f"{src_assets_name}/", f"{dst_assets_name}/")
                     dst_description_path.write_text(body, encoding="utf-8")
 
-        await _safe_unindex_paths(store, [src_description])
-        if src_assets_dir:
-            await _safe_unindex_subtree(store, src_assets_dir)
-        moves = await db_documents.move_subtree(store, src_stem, dst_stem)
-        await _reindex_after_move(store, moves)
+        await db_documents.move_subtree(store, src_stem, dst_stem)
+        # The described/extracted asset children live under the ``.assets``
+        # sibling of ``src_stem``, which the parent subtree filter (matching
+        # ``src_stem`` / ``src_stem/…``) never covers — move their rows too so
+        # nothing stays searchable at a path that no longer exists.
+        if src_assets_dir and dst_assets_dir:
+            await db_documents.move_subtree(store, src_assets_dir, dst_assets_dir)
 
         return MoveDocumentResponse(
             source=src,
@@ -1021,9 +961,7 @@ async def move_directory(store: Casebase, src: str, dst: str) -> MoveDirectoryRe
         shutil.move(str(src_dir), str(dst_dir))
         cleanup_empty_parents(src_dir, workspace_dir)
 
-        await _safe_unindex_subtree(store, src)
-        moves = await db_documents.move_subtree(store, src, dst)
-        await _reindex_after_move(store, moves)
+        await db_documents.move_subtree(store, src, dst)
 
         return MoveDirectoryResponse(
             source=src,
@@ -1046,19 +984,15 @@ async def delete_directory(store: Casebase, path: str) -> int:
         shutil.rmtree(directory_path)
         cleanup_empty_parents(directory_path, workspace_dir)
         await db_documents.delete_subtree(store, path)
-        await _safe_unindex_subtree(store, path)
         return files_deleted
 
 
 async def delete_all(store: Casebase) -> None:
-    """Wipe every trace of a casebase.
+    """Wipe every trace of a casebase: workspace files + SQL rows.
 
-    Removes its workspace directory on disk, its LanceDB chunks (via
-    ``unindex_store``), and its SQL rows (cascaded from ``users`` /
-    ``groups`` deletion by the caller, or directly from documents here).
+    Chunks cascade-delete with the documents.
     """
     async with store_lock(store):
-        await unindex_store(store)
         await db_documents.delete_all(store)
         workspace_path = store.workspace_path(settings.data_dir)
         if workspace_path.exists():
@@ -1070,8 +1004,8 @@ async def delete_workspace_root() -> None:
 
     Removes ``<data_dir>/workspace/`` and re-creates the empty root.
     Used by the admin "reset workspace files" action; the caller is
-    responsible for clearing the matching SQL documents and LanceDB
-    rows, since this is a filesystem-only operation.
+    responsible for clearing the matching SQL documents (cascade then
+    drops the vector rows), since this is a filesystem-only operation.
     """
     workspace_root = settings.data_dir / "workspace"
 

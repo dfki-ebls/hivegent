@@ -1,17 +1,19 @@
 """Document + chunk repository.
 
-Replaces ``hivegent.chunks``' on-disk metadata JSONs with SQL rows.
-The Pydantic ``DocumentMetadata`` shape stays the schema of record at
-the API boundary; this module is the only translator between rows and
-that shape.
+A single ``chunks`` table holds chunk metadata, text, and vectors.
+``upsert_document`` writes the document row (returning a freshly-loaded
+:class:`DocumentMetadata`); the chunk rows are written via cbrkit in
+:func:`hivegent.retrieval.index_document` immediately after.  Chunks
+cascade-delete with their owning document, so deletes only need to
+touch ``documents``.
 """
 
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 
+import sqlalchemy as sa
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from ._common import affected_rows, stem_subtree_filter
 from .groups import ensure_group
@@ -26,6 +28,7 @@ from ..config import settings
 from ..entries import (
     assets_dir_for_stem,
     description_path_for_stem,
+    original_path_for_stem,
     stem_path_from_reference,
 )
 from ..store import Casebase
@@ -48,6 +51,7 @@ __all__ = [
     "list_known_stores",
     "move_document",
     "move_subtree",
+    "resolve_accessible_document_ids",
     "upsert_document",
 ]
 
@@ -85,16 +89,9 @@ def _walk_assets(workspace_root: Path, assets_dir: str) -> list[str]:
 
 
 def _entry_from_row(doc: Document, workspace_root: Path | None = None) -> EntryMetadata:
-    """Build an :class:`EntryMetadata` from a row, deriving the path columns.
-
-    ``description_path``, ``original_path``, ``assets_dir``, and the
-    ``files`` array are derived from ``stem_path`` + ``original_ext`` +
-    ``has_assets``.  ``files`` for an entry with assets includes a
-    recursive walk of its assets directory when *workspace_root* is
-    provided.
-    """
+    """Build an :class:`EntryMetadata` from a row, deriving the path columns."""
     description_path = description_path_for_stem(doc.stem_path)
-    original_path = f"{doc.stem_path}.{doc.original_ext}" if doc.original_ext else None
+    original_path = original_path_for_stem(doc.stem_path, doc.original_ext)
     assets_dir = assets_dir_for_stem(doc.stem_path) if doc.has_assets else None
 
     files = [description_path]
@@ -117,26 +114,49 @@ def _entry_from_row(doc: Document, workspace_root: Path | None = None) -> EntryM
 
 
 def _document_from_row(
-    doc: Document, workspace_root: Path | None = None
+    doc: Document,
+    chunks_data: Sequence[ChunkData],
+    workspace_root: Path | None = None,
 ) -> DocumentMetadata:
+    """Assemble a :class:`DocumentMetadata` from a row + prepared chunks."""
     entry = _entry_from_row(doc, workspace_root)
     return DocumentMetadata(
         **entry.model_dump(),
+        id=doc.id,
         pipeline=doc.pipeline,
         created_at=doc.created_at,
-        chunks=[
-            ChunkData(
-                text=c.text,
-                token_count=c.token_count,
-                start_index=c.start_index,
-                end_index=c.end_index,
-                start_line=c.start_line,
-                end_line=c.end_line,
-                index=c.idx,
-            )
-            for c in doc.chunks
-        ],
+        chunks=list(chunks_data),
     )
+
+
+async def _load_chunks(s: AsyncSession, doc_id: str) -> list[ChunkData]:
+    """Load a document's chunks in idx order, reading text from ``chunks.text``."""
+    stmt = (
+        select(
+            Chunk.idx,
+            Chunk.text,
+            Chunk.token_count,
+            Chunk.start_index,
+            Chunk.end_index,
+            Chunk.start_line,
+            Chunk.end_line,
+        )
+        .where(Chunk.document_id == doc_id)
+        .order_by(Chunk.idx)
+    )
+    rows = (await s.execute(stmt)).all()
+    return [
+        ChunkData(
+            text=text,
+            token_count=token_count,
+            start_index=start_index,
+            end_index=end_index,
+            start_line=start_line,
+            end_line=end_line,
+            index=idx,
+        )
+        for idx, text, token_count, start_index, end_index, start_line, end_line in rows
+    ]
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────
@@ -158,15 +178,9 @@ async def _ensure_owner(s: AsyncSession, store: Casebase) -> None:
 
 
 async def _find(
-    s: AsyncSession,
-    store: Casebase,
-    stem_path: str,
-    *,
-    with_chunks: bool = False,
+    s: AsyncSession, store: Casebase, stem_path: str
 ) -> Document | None:
     stmt = select(Document).where(_owner_filter(store), Document.stem_path == stem_path)
-    if with_chunks:
-        stmt = stmt.options(selectinload(Document.chunks))
     return (await s.execute(stmt)).scalar_one_or_none()
 
 
@@ -177,11 +191,12 @@ async def get_document(store: Casebase, reference: str) -> DocumentMetadata | No
     """Load a document and its chunks by workspace-relative reference."""
     stem_path = stem_path_from_reference(reference)
     async with session() as s:
-        row = await _find(s, store, stem_path, with_chunks=True)
+        row = await _find(s, store, stem_path)
         if row is None:
             return None
+        chunks_data = await _load_chunks(s, row.id)
         workspace_root = store.workspace_path(settings.data_dir)
-        return _document_from_row(row, workspace_root)
+        return _document_from_row(row, chunks_data, workspace_root)
 
 
 async def list_document_paths(store: Casebase) -> dict[str, int]:
@@ -222,6 +237,28 @@ async def list_known_stores() -> set[Casebase]:
     return stores
 
 
+async def resolve_accessible_document_ids(stores: Sequence[Casebase]) -> list[str]:
+    """Return every document id owned by any of *stores*.
+
+    Used at search time to scope the cbrkit vector query without
+    denormalising owner columns onto the chunks table.
+    """
+    if not stores:
+        return []
+    user_ids = [s.id for s in stores if s.kind == "user"]
+    group_ids = [s.id for s in stores if s.kind == "group"]
+    conditions: list[sa.ColumnElement[bool]] = []
+    if user_ids:
+        conditions.append(Document.owner_user_id.in_(user_ids))
+    if group_ids:
+        conditions.append(Document.owner_group_id.in_(group_ids))
+    if not conditions:
+        return []
+    async with session() as s:
+        result = await s.execute(select(Document.id).where(sa.or_(*conditions)))
+    return list(result.scalars().all())
+
+
 # ─── Writes ────────────────────────────────────────────────────────────
 
 
@@ -229,13 +266,16 @@ async def upsert_document(
     store: Casebase,
     entry: EntryMetadata,
     pipeline: str,
-    chunks: Sequence[ChunkData],
     *,
     content_sha256: str | None = None,
 ) -> DocumentMetadata:
-    """Insert or replace a document and its chunks in one transaction.
+    """Insert or replace the SQL row for a document.
 
-    The returned ``DocumentMetadata`` reflects the persisted state.
+    Chunk rows are written separately by
+    :func:`hivegent.retrieval.index_document` so the embedding +
+    INSERT happen inside cbrkit's transaction.  The returned
+    :class:`DocumentMetadata` carries an empty ``chunks`` list; the
+    orchestrator fills it after calling the indexer.
     """
     async with session() as s:
         await _ensure_owner(s, store)
@@ -264,29 +304,9 @@ async def upsert_document(
             doc.mime = entry.mime
             doc.pipeline = pipeline
             doc.content_sha256 = content_sha256
-            await s.execute(delete(Chunk).where(Chunk.document_id == doc.id))
 
-        for i, c in enumerate(chunks):
-            s.add(
-                Chunk(
-                    document_id=doc.id,
-                    idx=i,
-                    text=c.text,
-                    token_count=c.token_count,
-                    start_index=c.start_index,
-                    end_index=c.end_index,
-                    start_line=c.start_line,
-                    end_line=c.end_line,
-                )
-            )
-        doc_id = doc.id
-
-    # Reload for the boundary type (fresh session, eager-loaded chunks).
-    async with session() as s:
-        row = await s.get(Document, doc_id, options=[selectinload(Document.chunks)])
-        assert row is not None
         workspace_root = store.workspace_path(settings.data_dir)
-        return _document_from_row(row, workspace_root)
+        return _document_from_row(doc, [], workspace_root)
 
 
 async def delete_document(store: Casebase, reference: str) -> bool:
@@ -335,7 +355,11 @@ async def delete_all_documents() -> int:
 async def move_document(
     store: Casebase, src_reference: str, dst_reference: str
 ) -> bool:
-    """Rename a document's ``stem_path``.  No chunk-row work needed (FK is by id)."""
+    """Rename a document's ``stem_path``.
+
+    Chunks reference the document by id (which never changes) so the
+    vector index needs no reindex after a rename.
+    """
     src_stem = stem_path_from_reference(src_reference)
     dst_stem = stem_path_from_reference(dst_reference)
     if src_stem == dst_stem:
@@ -349,32 +373,22 @@ async def move_document(
     return affected_rows(result) > 0
 
 
-async def move_subtree(
-    store: Casebase, src_prefix: str, dst_prefix: str
-) -> list[tuple[str, str]]:
+async def move_subtree(store: Casebase, src_prefix: str, dst_prefix: str) -> None:
     """Rename every document under ``src_prefix`` to live under ``dst_prefix``.
 
-    Returns a list of ``(old_stem, new_stem)`` pairs so the caller can
-    reindex LanceDB for each renamed document.
+    A single bulk UPDATE rewrites the ``src_prefix`` portion of each
+    matched ``stem_path`` to ``dst_prefix``.  No vector reindex needed —
+    chunks reference the immutable document id.
     """
     if not src_prefix or src_prefix == dst_prefix:
-        return []
+        return
     async with session() as s:
-        rows = (
-            await s.execute(
-                select(Document.id, Document.stem_path).where(
-                    _owner_filter(store), stem_subtree_filter(src_prefix)
+        await s.execute(
+            update(Document)
+            .where(_owner_filter(store), stem_subtree_filter(src_prefix))
+            .values(
+                stem_path=func.concat(
+                    dst_prefix, func.substr(Document.stem_path, len(src_prefix) + 1)
                 )
             )
-        ).all()
-        moves: list[tuple[str, str]] = []
-        for doc_id, old_stem in rows:
-            if old_stem == src_prefix:
-                new_stem = dst_prefix
-            else:
-                new_stem = dst_prefix + old_stem[len(src_prefix) :]
-            await s.execute(
-                update(Document).where(Document.id == doc_id).values(stem_path=new_stem)
-            )
-            moves.append((old_stem, new_stem))
-    return moves
+        )

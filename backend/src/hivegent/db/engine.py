@@ -1,13 +1,16 @@
 """Async engine and session factory.
 
-One database per deployment, addressed by ``settings.db.url``.  Defaults
-to SQLite under ``data_dir`` so a fresh checkout runs with no setup.
+One PostgreSQL database per deployment, addressed by
+``settings.db.url``.  The engine and session-maker are built lazily on
+first use so modules that import this one do not need a configured
+URL until they actually connect — keeps tests, doc builds, and tooling
+imports cheap.
 """
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import cache
 
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -17,53 +20,42 @@ from sqlalchemy.ext.asyncio import (
 
 from ..config import settings
 
-__all__ = ["Session", "engine", "resolve_database_url", "session"]
+__all__ = ["get_engine", "get_sessionmaker", "resolve_database_url", "session"]
 
 
 def resolve_database_url() -> str:
-    """Build the SQLAlchemy URL, defaulting to SQLite under ``data_dir``.
+    """Return the configured SQLAlchemy URL.
 
-    Shared by the runtime engine and the Alembic environment so both
-    target the same database without duplicating the fallback logic.
+    The URL is required at the point of first connect; there is no
+    fallback dialect because PostgreSQL with ``pgvector`` is the only
+    supported backend.
     """
-    if settings.db.url:
-        return settings.db.url
-    db_path = settings.data_dir / "hivegent.db"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    return f"sqlite+aiosqlite:///{db_path}"
+    if not settings.db.url:
+        raise RuntimeError(
+            "settings.db.url is unset.  Set HIVEGENT_DB__URL to a "
+            "PostgreSQL async URL (e.g. postgresql+psycopg://...)."
+        )
+    return settings.db.url
 
 
-def _build_engine() -> AsyncEngine:
-    """Build the async engine with SQLite PRAGMAs attached if applicable."""
-    eng = create_async_engine(
+@cache
+def get_engine() -> AsyncEngine:
+    """Build (or return the cached) async PostgreSQL engine."""
+    return create_async_engine(
         resolve_database_url(), echo=settings.db.echo, future=True
     )
-    if eng.dialect.name == "sqlite":
-        _attach_sqlite_pragmas(eng)
-    return eng
 
 
-def _attach_sqlite_pragmas(eng: AsyncEngine) -> None:
-    """Enable foreign keys, WAL, and a sane busy timeout on every connection."""
-
-    @event.listens_for(eng.sync_engine, "connect")
-    def _on_connect(dbapi_conn, _record):  # type: ignore[no-untyped-def]
-        cur = dbapi_conn.cursor()
-        cur.execute("PRAGMA foreign_keys=ON")
-        cur.execute("PRAGMA journal_mode=WAL")
-        cur.execute("PRAGMA synchronous=NORMAL")
-        cur.execute("PRAGMA busy_timeout=5000")
-        cur.close()
-
-
-engine: AsyncEngine = _build_engine()
-Session = async_sessionmaker(engine, expire_on_commit=False)
+@cache
+def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    """Return the cached :class:`async_sessionmaker` bound to :func:`get_engine`."""
+    return async_sessionmaker(get_engine(), expire_on_commit=False)
 
 
 @asynccontextmanager
 async def session() -> AsyncIterator[AsyncSession]:
     """Yield an :class:`AsyncSession` that commits on success, rolls back on error."""
-    async with Session() as s:
+    async with get_sessionmaker()() as s:
         try:
             yield s
             await s.commit()

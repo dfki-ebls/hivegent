@@ -4,8 +4,9 @@ A :class:`Casebase` is an immutable identifier — ``(kind, id)`` — for
 one user or group's slice of the system.  Only the workspace files
 live on disk per casebase, under ``<data_dir>/workspace/<store_key>/``
 where ``store_key`` is the same ``"user:<id>"`` / ``"group:<id>"`` token
-that scopes SQL ``owner_*`` columns and LanceDB rows — one identifier
-keys filesystem, SQL, and vector store end-to-end.
+that scopes the ``owner_*`` columns on ``documents``; chunk visibility
+derives from the document FK — one identifier keys filesystem and SQL
+end-to-end.
 """
 
 from collections.abc import Callable, Sequence
@@ -20,17 +21,9 @@ __all__ = [
     "Casebase",
     "CasebaseKind",
     "build_search_paths",
-    "lancedb_dir",
 ]
 
 CasebaseKind = Literal["user", "group"]
-
-
-def lancedb_dir(data_dir: Path) -> Path:
-    """Return the global LanceDB directory, creating it if needed."""
-    path = data_dir / "lancedb"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 @dataclass(slots=True, frozen=True)
@@ -82,7 +75,7 @@ class Casebase:
 
     @property
     def store_key(self) -> str:
-        """Stable opaque key for the filesystem, SQL, and LanceDB scoping."""
+        """Stable opaque key for the filesystem, SQL, and vector index scoping."""
         return f"{self.kind}:{self.id}"
 
     @property

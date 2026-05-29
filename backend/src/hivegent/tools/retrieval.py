@@ -1,34 +1,39 @@
-"""Retrieval tool using a cbrkit LanceDB backend.
+"""Retrieval tool over the global cbrkit-backed vector index.
 
-One global storage; per-casebase scoping is enforced by an optional
-key predicate supplied by the caller.  Asynchronous so the result
-mapper can load chunk enrichment metadata from SQL on demand —
-without preloading the entire casebase at tool-build time.
+One storage backs every casebase; per-casebase scoping is enforced by
+an optional ``filter_factory`` the caller supplies — its async return
+is compiled to a SQL-level WHERE on the cbrkit query, so rows outside
+the caller's scope never enter the candidate set.
 """
 
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, cast, override
 
 import cbrkit
 import logfire
+from cbrkit import filter as cbrkit_filter
 from pydantic import Field
 
 from .base import AsyncTool, ToolOutput
 
 __all__ = [
-    "LanceDBSearchTool",
     "SearchMaxResultsArg",
     "SearchQueryArg",
     "SearchResult",
     "SearchType",
     "SearchTypeArg",
+    "VectorSearchTool",
 ]
 
 logger = logging.getLogger(__name__)
 
 type SearchType = Literal["dense", "sparse", "hybrid"]
+
+VectorStorage = cbrkit.typing.AsyncFilterableIndexableFunc[
+    cbrkit.typing.Casebase[str, Any], Collection[str]
+]
 
 
 @dataclass(slots=True, frozen=True)
@@ -60,24 +65,30 @@ SearchTypeArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class LanceDBSearchTool[R = SearchResult](AsyncTool[list[R]]):
-    """Search a single LanceDB index with optional post-hoc filtering.
+class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
+    """Search the global vector index with SQL-level scope filtering.
 
     Args:
-        storage: The cbrkit LanceDB storage instance, or ``None`` for an
-            empty result (matches the empty-index path).
-        filter_func: Optional predicate on result keys.  Returns ``True``
-            to keep the result.  Callers use it to enforce per-casebase
-            access scoping against a globally shared index.
-        result_mapper: Optional async callable that receives the filtered,
-            ranked, truncated raw results and returns the final list.  The
-            batch shape lets callers load enrichment metadata from SQL in
-            one query instead of per-row.
+        storage_factory: Async callable returning the cbrkit storage
+            handle.  Resolved lazily so the tool can be constructed
+            before storage is initialised.
+        filter_factory: Async callable returning a cbrkit
+            :class:`cbrkit_filter.Filter` (or ``None``) that scopes the
+            search to the caller's accessible documents.  Resolved per
+            call so the filter sees fresh data (e.g. newly accessible
+            groups).
+        result_mapper: Async callable that maps the raw ranked results
+            to the final type — typically enriches with metadata from
+            SQL.
     """
 
-    storage: cbrkit.indexable.lancedb[str] | None = None
-    filter_func: Callable[[str], bool] | None = None
-    result_mapper: Callable[[Sequence[SearchResult]], Awaitable[list[R]]] | None = None
+    storage_factory: Callable[[], Awaitable[VectorStorage]] | None = None
+    filter_factory: (
+        Callable[[], Awaitable[cbrkit_filter.Filter | None]] | None
+    ) = None
+    result_mapper: (
+        Callable[[Sequence[SearchResult]], Awaitable[list[R]]] | None
+    ) = None
 
     @override
     async def __call__(
@@ -87,9 +98,7 @@ class LanceDBSearchTool[R = SearchResult](AsyncTool[list[R]]):
         search_type: SearchTypeArg = "hybrid",
     ) -> ToolOutput[list[R]]:
         """Search indexed chunks using dense, sparse, or hybrid retrieval."""
-        raw = self._search(query, max_results, search_type)
-        if self.filter_func is not None:
-            raw = [r for r in raw if self.filter_func(r.key)]
+        raw = await self._search(query, max_results, search_type)
         raw.sort(key=lambda r: r.score, reverse=True)
         raw = raw[:max_results]
 
@@ -103,37 +112,31 @@ class LanceDBSearchTool[R = SearchResult](AsyncTool[list[R]]):
             return ToolOutput(data=final, formatted="(no results)")
         return ToolOutput(data=final, formatted=_format_results(final))
 
-    def _search(
+    async def _search(
         self, query: str, max_results: int, search_type: SearchType
     ) -> list[SearchResult]:
-        """Run the raw cbrkit query, returning unfiltered :class:`SearchResult`s."""
-        if self.storage is None or not self.storage.has_index():
+        """Run the cbrkit query with the scope filter applied at SQL level."""
+        if self.storage_factory is None:
             return []
+        storage = await self.storage_factory()
+        if not await storage.has_index():
+            return []
+        where = (
+            await self.filter_factory() if self.filter_factory is not None else None
+        )
         with logfire.span(
-            "lancedb.search",
+            "vector.search",
             search_type=search_type,
             max_results=max_results,
             query_length=len(query),
         ) as span:
-            retriever = cbrkit.retrieval.dropout(
-                cbrkit.retrieval.lancedb(
-                    storage=self.storage,
-                    search_type=search_type,
-                ),
+            retriever = cbrkit.retrieval.pgvector_async(
+                storage=cast(Any, storage),
+                search_type=search_type,
+                where=where,
                 limit=max_results,
             )
-            try:
-                result = cbrkit.retrieval.apply_query_indexed(query, retriever)
-            except RuntimeError as e:
-                # LanceDB FTS raises an Arrow length-mismatch when a query
-                # tokenizes to nothing (single chars, stopwords).
-                if "lance error" not in str(e).lower():
-                    raise
-                logger.warning(
-                    "LanceDB %s query failed for %r: %s", search_type, query, e
-                )
-                span.set_attribute("result_count", 0)
-                return []
+            result = await cbrkit.retrieval.apply_query_indexed_async(query, retriever)
             step = result.final_step.queries["default"]
             results = [
                 SearchResult(
@@ -151,7 +154,7 @@ def _format_results(results: Sequence[Any]) -> str:
     """Render search results as a human/LLM-readable string block.
 
     Accepts both :class:`SearchResult` and ``RetrievedChunk`` via attribute
-    lookup; either is a valid downstream of :class:`LanceDBSearchTool`.
+    lookup; either is a valid downstream of :class:`VectorSearchTool`.
     """
     lines: list[str] = []
     for i, r in enumerate(results, 1):

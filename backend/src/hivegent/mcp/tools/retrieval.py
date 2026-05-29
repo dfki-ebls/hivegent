@@ -13,9 +13,9 @@ from ...store import Casebase, build_search_paths
 from ...tools import (
     GlobDocumentsTool,
     GrepTool,
-    LanceDBSearchTool,
     ListDocumentsTool,
     ReadDocumentTool,
+    VectorSearchTool,
 )
 from ...tools.fastmcp import register_mcp_tools
 from ..app import mcp_app
@@ -34,7 +34,7 @@ __all__ = [
 def _search(
     store: Casebase = Depends(get_mcp_user_store),
     group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
-) -> LanceDBSearchTool[RetrievedChunk]:
+) -> VectorSearchTool[RetrievedChunk]:
     return build_search_tool((store, *group_stores))
 
 

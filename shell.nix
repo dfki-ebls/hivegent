@@ -12,6 +12,11 @@
 mkShell {
   shellHook = ''
     ROOT_DIR="$(${lib.getExe git} rev-parse --show-toplevel)"
+    # services-flake puts the postgres Unix socket inside its data dir,
+    # which defaults to ``$ROOT_DIR/data/hivegent-db/``.  Connecting via
+    # the socket means dev/test sessions reach the same DB as ``nix run
+    # .#watch-dev`` without any TCP listener.
+    export HIVEGENT_DB__URL="postgresql+psycopg:///hivegent?host=$ROOT_DIR/data/hivegent-db"
     npm --prefix "$ROOT_DIR/frontend" install
     uv --directory "$ROOT_DIR/backend" sync --all-extras
   '';
