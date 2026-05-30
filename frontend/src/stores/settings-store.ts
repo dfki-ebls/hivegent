@@ -189,8 +189,8 @@ const encryptedStorage = createJSONStorage(() => ({
       return null;
     }
 
-    // Decrypt LLM API key
-    const apiKey = stored.state.overrides.apiKey;
+    // Decrypt LLM API key (overrides is absent when the llmSpec flag is off)
+    const apiKey = stored.state.overrides?.apiKey;
     if (typeof apiKey === "string" && isEncrypted(apiKey)) {
       try {
         stored.state.overrides.apiKey = await decryptApiKey(apiKey);
@@ -217,8 +217,8 @@ const encryptedStorage = createJSONStorage(() => ({
   setItem: async (name: string, value: string): Promise<void> => {
     const stored = JSON.parse(value) as StorageValue<PersistedSettings>;
 
-    // Encrypt LLM API key
-    const apiKey = stored.state.overrides.apiKey;
+    // Encrypt LLM API key (overrides is absent when the llmSpec flag is off)
+    const apiKey = stored.state.overrides?.apiKey;
     if (typeof apiKey === "string" && apiKey && !isEncrypted(apiKey)) {
       try {
         stored.state.overrides.apiKey = await encryptApiKey(apiKey);
