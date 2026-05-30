@@ -110,8 +110,17 @@ def _enum(t: type[enum.StrEnum]) -> Enum:
     Postgres-only schema, so we use real ``CREATE TYPE`` enums instead of
     ``VARCHAR + CHECK`` — values live in one place (the type) rather than
     being duplicated in a per-column check constraint.
+
+    ``values_callable`` makes the column store each member's ``value`` (e.g.
+    ``binary_stub``) rather than SQLAlchemy's default of the member ``name``
+    (``BINARY_STUB``), matching the lowercase labels in the ``CREATE TYPE``.
     """
-    return Enum(t, name=t.__name__.lower(), validate_strings=True)
+    return Enum(
+        t,
+        name=t.__name__.lower(),
+        validate_strings=True,
+        values_callable=lambda enum_cls: [member.value for member in enum_cls],
+    )
 
 
 # ─── Enums ─────────────────────────────────────────────────────────────
