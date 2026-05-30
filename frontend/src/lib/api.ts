@@ -43,7 +43,6 @@ import {
   ConversationSummarySchema,
   type ConversionPipelineInfo,
   ConversionPipelineInfoSchema,
-  CreateConversationResponseSchema,
   type CreateDirectoryResponse,
   CreateDirectoryResponseSchema,
   type CreateTokenRequest,
@@ -263,14 +262,6 @@ export function buildToolsPayload(spec: ToolsSpec): Record<string, unknown> {
         : null,
     })),
   };
-}
-
-export async function createConversation(): Promise<string> {
-  const res = await authFetch(`${API_BASE_URL}/api/conversations`, {
-    method: "POST",
-  });
-  const data: unknown = await res.json();
-  return CreateConversationResponseSchema.parse(data).id;
 }
 
 export async function getConversationMessages(conversationId: string): Promise<UIMessage[]> {

@@ -40,7 +40,6 @@ __all__ = [
     "CompactConversationRequest",
     "CompactConversationResponse",
     "ConversationListResponse",
-    "CreateConversationResponse",
     "CreateDirectoryRequest",
     "CreateDirectoryResponse",
     "CreateTokenRequest",
@@ -296,12 +295,6 @@ class ClearMemoryResponse(BaseModel):
 
     cleared: bool = Field(description="Whether memory was cleared")
     message: str = Field(description="Status message")
-
-
-class CreateConversationResponse(BaseModel):
-    """Response for conversation creation."""
-
-    id: str = Field(description="The unique conversation ID")
 
 
 class DocumentInfo(BaseModel):

@@ -160,11 +160,6 @@ export const BackendSettingsSchema = z.object({
 });
 export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
 
-export const CreateConversationResponseSchema = z.object({
-  id: z.string(),
-});
-export type CreateConversationResponse = z.infer<typeof CreateConversationResponseSchema>;
-
 /** Metadata for a conversion pipeline, fetched from the backend. */
 export const ConversionPipelineInfoSchema = z.object({
   value: z.string(),

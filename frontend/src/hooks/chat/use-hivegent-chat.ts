@@ -4,7 +4,7 @@ import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithApprovalResponses,
 } from "ai";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 
 export interface SendUserMessageInput {
@@ -13,14 +13,38 @@ export interface SendUserMessageInput {
   messageId?: string;
 }
 
-export function useHivegentChat(id: string) {
+export interface UseHivegentChatOptions {
+  /** When set, the first turn is sent to the id-less mint endpoint and the
+   * server-issued ID is reported back via `onConversationCreated`. */
+  draft?: boolean;
+  onConversationCreated?: (id: string) => void;
+}
+
+export function useHivegentChat(id: string, { draft, onConversationCreated }: UseHivegentChatOptions = {}) {
+  const onCreatedRef = useRef(onConversationCreated);
+  onCreatedRef.current = onConversationCreated;
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
-        api: `${API_BASE_URL}/api/conversations/${id}/chat`,
+        api: draft
+          ? `${API_BASE_URL}/api/conversations/chat`
+          : `${API_BASE_URL}/api/conversations/${id}/chat`,
         headers: () => getAuthHeaders(),
+        // The server mints the conversation ID on the first turn and returns
+        // it in a response header; capture it so the client can adopt it.
+        // Cross-origin reads require the proxy to expose X-Conversation-Id via
+        // Access-Control-Expose-Headers; same-origin (the default) needs none.
+        fetch: draft
+          ? async (input, init) => {
+              const res = await fetch(input, init);
+              const newId = res.headers.get("X-Conversation-Id");
+              if (newId) onCreatedRef.current?.(newId);
+              return res;
+            }
+          : undefined,
       }),
-    [id],
+    [id, draft],
   );
 
   const chat = useChat({

@@ -39,6 +39,7 @@ __all__ = [
     "ConversationData",
     "ConversationSummary",
     "append_messages",
+    "conversation_exists",
     "create_compacted_conversation",
     "delete_all_conversations",
     "list_conversations",
@@ -227,6 +228,15 @@ async def list_conversations(user_id: str) -> list[ConversationSummary]:
     ]
 
 
+async def conversation_exists(user_id: str, conversation_id: str) -> bool:
+    """Return whether *conversation_id* exists and is owned by *user_id*."""
+    async with session() as s:
+        owner = await s.scalar(
+            select(Conversation.user_id).where(Conversation.id == conversation_id)
+        )
+    return owner == user_id
+
+
 # ─── Writes ────────────────────────────────────────────────────────────
 
 
@@ -236,6 +246,12 @@ async def append_messages(
     messages: Sequence[ModelMessage],
 ) -> None:
     """Persist new messages for *conversation_id*.
+
+    The row is created lazily on the first turn — the id-less ``/chat``
+    endpoint mints a server ID and only here does it become a real record,
+    so abandoned chats never leave an empty row behind.  Existing-conversation
+    chats are guarded at the route boundary, so an unknown ID only reaches
+    this path as a fresh mint.
 
     The SDK hands us the full message history on every turn — we only
     insert rows past the current count, so prior payloads (including

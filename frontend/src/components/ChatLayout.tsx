@@ -8,9 +8,10 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 
 interface ChatLayoutProps {
   id: string;
+  draft?: boolean;
 }
 
-export function ChatLayout({ id }: ChatLayoutProps) {
+export function ChatLayout({ id, draft = false }: ChatLayoutProps) {
   const [mobileDocumentsOpen, setMobileDocumentsOpen] = useState(false);
   const [includedDocuments, setIncludedDocuments] = useState<string[]>([]);
   const [excludedDocuments, setExcludedDocuments] = useState<string[]>([]);
@@ -73,6 +74,7 @@ export function ChatLayout({ id }: ChatLayoutProps) {
         <div className="flex-1 overflow-hidden">
           <ChatSidebar
             id={id}
+            draft={draft}
             includedDocuments={includedDocuments}
             excludedDocuments={excludedDocuments}
             onRemoveDocument={handleRemoveDocument}

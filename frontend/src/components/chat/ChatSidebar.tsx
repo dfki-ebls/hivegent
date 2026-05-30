@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { type FileUIPart } from "ai";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Composer } from "@/components/chat/composer/Composer";
 import { MessageList } from "@/components/chat/MessageList";
@@ -17,13 +17,14 @@ import { useMessageEditing } from "@/hooks/chat/use-message-editing";
 import { useSteeringQueue } from "@/hooks/chat/use-steering-queue";
 import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
 import { getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
-import { createConversation } from "@/lib/api";
 import { type AgentMode, type ReasoningEffort } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
+import { useDraftHandoffStore } from "@/stores/draft-handoff-store";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 
 interface ChatSidebarProps {
   id: string;
+  draft?: boolean;
   includedDocuments: string[];
   excludedDocuments: string[];
   onRemoveDocument: (filename: string) => void;
@@ -32,6 +33,7 @@ interface ChatSidebarProps {
 
 export function ChatSidebar({
   id,
+  draft = false,
   includedDocuments,
   excludedDocuments,
   onRemoveDocument,
@@ -42,6 +44,8 @@ export function ChatSidebar({
   const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const fetchConversations = useConversationsStore((state) => state.fetchConversations);
+  const stashHandoff = useDraftHandoffStore((state) => state.stash);
+  const createdIdRef = useRef<string | null>(null);
 
   const [inputValue, setInputValue] = useState("");
   const [activeTab, setActiveTab] = useState("chat");
@@ -66,10 +70,29 @@ export function ChatSidebar({
     sendUserMessage,
     regenerateWithBody,
     isStreaming,
-  } = useHivegentChat(id);
+  } = useHivegentChat(id, {
+    draft,
+    onConversationCreated: (newId) => {
+      createdIdRef.current = newId;
+    },
+  });
 
-  const { isLoadingHistory, compactedFrom } = useConversationHistory(id, setMessages);
+  const { isLoadingHistory, compactedFrom } = useConversationHistory(id, setMessages, draft);
   const { editingId, setEditing, clear: clearEditing } = useMessageEditing(status);
+
+  // Once the first turn of a draft has settled, adopt the server-issued ID:
+  // hand the streamed messages to that route and navigate so reloads and the
+  // sidebar reflect the now-persisted conversation.
+  useEffect(() => {
+    const newId = createdIdRef.current;
+    if (!draft || !newId || status !== "ready" || messages.length === 0) return;
+    createdIdRef.current = null;
+    stashHandoff(newId, messages);
+    void fetchConversations();
+    // Replace, not push: the transient draft URL ("/") shouldn't be a
+    // back-button target once it has become a real conversation.
+    void navigate({ to: "/conversations/$id", params: { id: newId }, replace: true });
+  }, [draft, status, messages, stashHandoff, fetchConversations, navigate]);
 
   const handleSendMessage = useCallback(
     async (text: string, files?: FileUIPart[]) => {
@@ -130,10 +153,10 @@ export function ChatSidebar({
   }, [buildRequestBody, sendUserMessage, onClearDocuments]);
 
   const handleNewChat = useCallback(async () => {
-    const newId = await createConversation();
     clearAll();
     setActiveTab("chat");
-    await navigate({ to: "/conversations/$id", params: { id: newId } });
+    // The new chat is a draft until its first message mints a server ID.
+    await navigate({ to: "/" });
   }, [clearAll, navigate]);
 
   const handleConversationSelect = useCallback(

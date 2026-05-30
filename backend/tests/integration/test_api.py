@@ -161,10 +161,14 @@ def test_patch_asset_description_rejects_path_traversal(
     assert not (workspace / "outside.md").exists()
 
 
-def test_create_conversation(app_client) -> None:
-    """POST /api/conversations creates a new conversation."""
-    response = app_client.post("/api/conversations")
-    assert response.status_code == 200
-    data = response.json()
-    assert "id" in data
-    assert len(data["id"]) > 0
+def test_chat_unknown_conversation_rejected(app_client) -> None:
+    """POST to a conversation ID the server never issued returns 404.
+
+    IDs only exist once their first message is persisted, so a client cannot
+    chat against (or mint) an arbitrary ID.
+    """
+    response = app_client.post(
+        "/api/conversations/never-issued/chat",
+        json={"text": "hello"},
+    )
+    assert response.status_code == 404

@@ -1,11 +1,11 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { FileSearch, LogIn } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import { BackendReadyGate } from "../components/BackendReadyGate";
+import { ChatLayout } from "../components/ChatLayout";
 import { Button } from "../components/ui/button";
 import { Spinner } from "../components/ui/spinner";
-import { createConversation } from "../lib/api";
 import { useOidc } from "../oidc";
 
 export const Route = createFileRoute("/")({
@@ -19,7 +19,7 @@ function IndexPage() {
   if (isUserLoggedIn) {
     return (
       <BackendReadyGate>
-        <NewConversationRedirect />
+        <DraftConversation />
       </BackendReadyGate>
     );
   }
@@ -51,26 +51,10 @@ function IndexPage() {
   );
 }
 
-function NewConversationRedirect() {
-  const navigate = useNavigate();
-  const startedRef = useRef(false);
-
-  useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    createConversation()
-      .then((id) => {
-        void navigate({ to: "/conversations/$id", params: { id } });
-      })
-      .catch((error) => {
-        console.error("Failed to create conversation:", error);
-        startedRef.current = false;
-      });
-  }, [navigate]);
-
-  return (
-    <div className="flex h-full items-center justify-center">
-      <Spinner className="h-8 w-8 text-muted-foreground" />
-    </div>
-  );
+function DraftConversation() {
+  // A new chat has no server ID until its first message; key the chat on a
+  // throwaway client ID purely so the SDK state survives until the server
+  // mints the real one. It is never sent to or stored by the backend.
+  const [draftId] = useState(() => crypto.randomUUID());
+  return <ChatLayout id={draftId} draft />;
 }

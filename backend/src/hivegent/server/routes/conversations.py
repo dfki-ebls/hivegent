@@ -5,7 +5,6 @@ from collections.abc import Sequence
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from nanoid import generate
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
 from pydantic_ai.run import AgentRunResult
@@ -27,9 +26,11 @@ from ...compaction import CompactionResult, compact_conversation
 from ...config import settings
 from ...llm import model_from_config
 from ...mcp import build_mcp_server, validate_mcp_servers
+from ...db._common import new_id
 from ...db.conversations import (
     ConversationSummary,
     append_messages,
+    conversation_exists,
     delete_all_conversations,
     list_conversations,
     load_conversation,
@@ -55,7 +56,6 @@ from ...types import (
     CompactConversationRequest,
     CompactConversationResponse,
     ConversationListResponse,
-    CreateConversationResponse,
     DeleteConversationResponse,
     GenerateTitleRequest,
     GenerateTitleResponse,
@@ -75,19 +75,6 @@ __all__ = ["router"]
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-@router.post("/conversations")
-async def create_conversation(
-    _user: Annotated[User, Depends(get_current_user)],
-) -> CreateConversationResponse:
-    """Issue a server-generated conversation ID.
-
-    No file is written until the first message is saved; until then the
-    ID is just a reservation that the client can navigate to.  The auth
-    dependency is required so anonymous clients cannot mint IDs.
-    """
-    return CreateConversationResponse(id=generate())
 
 
 @router.get("/conversations")
@@ -310,13 +297,8 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     )
 
 
-@router.post("/conversations/{conversation_id}/chat")
-async def create_conversation_chat(
-    conversation_id: str,
-    request: Request,
-    user: Annotated[User, Depends(get_current_user)],
-) -> Response:
-    """Handle chat requests using the Vercel AI Data Stream Protocol."""
+async def _run_chat(conversation_id: str, request: Request, user: User) -> Response:
+    """Stream a chat turn for *conversation_id* via the Vercel AI protocol."""
     config = await _parse_chat_config(request)
     config.conversation_id = conversation_id
 
@@ -407,3 +389,43 @@ async def create_conversation_chat(
         ),
         on_complete=on_complete,
     )
+
+
+@router.post("/conversations/chat")
+async def create_new_conversation_chat(
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    """Start a new conversation: mint a server ID and stream the first turn.
+
+    The conversation row is created lazily when the first message is
+    persisted (see :func:`append_messages`), so an abandoned chat never
+    leaves an empty row behind.  The minted ID is returned in the
+    ``X-Conversation-Id`` response header for the client to adopt.
+
+    CORS constraint: the frontend can only read this header same-origin or
+    when the edge proxy lists it under ``Access-Control-Expose-Headers``.
+    Same-origin needs no config; cross-origin deployments must expose it
+    explicitly (custom response headers are hidden from JS otherwise).
+    """
+    conversation_id = new_id()
+    response = await _run_chat(conversation_id, request, user)
+    response.headers["X-Conversation-Id"] = conversation_id
+    return response
+
+
+@router.post("/conversations/{conversation_id}/chat")
+async def create_conversation_chat(
+    conversation_id: str,
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    """Continue an existing conversation.
+
+    Only conversations that already hold a message exist as rows, so an ID
+    the server never issued is a 404 rather than a silently created
+    conversation — clients cannot mint their own IDs.
+    """
+    if not await conversation_exists(user.id, conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return await _run_chat(conversation_id, request, user)
