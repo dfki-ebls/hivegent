@@ -51,7 +51,7 @@ const UI_DEFAULTS = {
   expandedDirs: [""] as string[],
   personality: "default" as Personality,
   customSystemMessage: "",
-  assetMode: AssetProcessingMode.DESCRIBE,
+  assetMode: AssetProcessingMode.STORE,
   conversionConfigs: {} as PipelineConfigs,
   chunkingConfigs: {} as PipelineConfigs,
   toolsSpec: { disabledTools: [], mcpServers: [] } as ToolsSpec,

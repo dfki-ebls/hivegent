@@ -202,7 +202,7 @@ class PipelineSpec(BaseModel):
 
     conversion: ConversionSpec = Field(default_factory=ConversionSpec)
     chunking: ChunkingSpec = Field(default_factory=ChunkingSpec)
-    process_assets: AssetProcessingMode = AssetProcessingMode.DESCRIBE
+    process_assets: AssetProcessingMode = AssetProcessingMode.STORE
 
 
 class McpOAuth2Config(BaseModel):
