@@ -26,7 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   type UploadDocumentOptions,
-  buildLlmConfig,
+  buildAuxLlmConfig,
   getGroupDirectories,
   getGroupDocumentContent,
   uploadDocument,
@@ -1096,11 +1096,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     async (filepath: string) => {
       await storeReconvert(filepath, {
         spec: pipelineSpec,
-        llm: buildLlmConfig({
-          model: overrides.auxModel,
-          apiKey: overrides.apiKey,
-          baseUrl: overrides.baseUrl,
-        }),
+        llm: buildAuxLlmConfig(overrides),
       });
     },
     [storeReconvert, pipelineSpec, overrides],
@@ -1135,15 +1131,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const handleBulkReconvert = useCallback(async () => {
     const files = [...selectedReconvertable];
     clearSelection();
-    await storeBulkReconvert(
-      files,
-      pipelineSpec,
-      buildLlmConfig({
-        model: overrides.auxModel,
-        apiKey: overrides.apiKey,
-        baseUrl: overrides.baseUrl,
-      }),
-    );
+    await storeBulkReconvert(files, pipelineSpec, buildAuxLlmConfig(overrides));
   }, [selectedReconvertable, clearSelection, storeBulkReconvert, pipelineSpec, overrides]);
 
   const handleBulkDelete = useCallback(() => {
@@ -1220,11 +1208,7 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
   const uploadOptions = useMemo<UploadDocumentOptions>(
     () => ({
       spec: pipelineSpec,
-      llm: buildLlmConfig({
-        model: overrides.auxModel,
-        apiKey: overrides.apiKey,
-        baseUrl: overrides.baseUrl,
-      }),
+      llm: buildAuxLlmConfig(overrides),
     }),
     [pipelineSpec, overrides],
   );

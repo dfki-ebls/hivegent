@@ -50,7 +50,7 @@ router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
 def _workspace_children() -> set[str]:
     """Return the set of casebase ``store_key`` names present on disk."""
-    workspace_root = settings.data_dir / "workspace"
+    workspace_root = Casebase.workspace_root(settings.data_dir)
     if not workspace_root.exists():
         return set()
     return {child.name for child in workspace_root.iterdir() if child.is_dir()}

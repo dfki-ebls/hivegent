@@ -46,6 +46,7 @@ __all__ = [
     "delete_all",
     "delete_all_documents",
     "delete_document",
+    "delete_documents",
     "delete_subtree",
     "get_document",
     "list_document_paths",
@@ -322,6 +323,24 @@ async def delete_document(store: Casebase, reference: str) -> bool:
             )
         )
     return affected_rows(result) > 0
+
+
+async def delete_documents(store: Casebase, references: Sequence[str]) -> int:
+    """Delete every document in *references* in one statement.
+
+    Cascades to chunks.  Returns the number of rows removed; batching
+    avoids the N+1 of deleting one reference at a time.
+    """
+    stems = {stem_path_from_reference(ref) for ref in references}
+    if not stems:
+        return 0
+    async with session() as s:
+        result = await s.execute(
+            delete(Document).where(
+                _owner_filter(store), Document.stem_path.in_(stems)
+            )
+        )
+    return affected_rows(result)
 
 
 async def delete_subtree(store: Casebase, prefix: str) -> int:

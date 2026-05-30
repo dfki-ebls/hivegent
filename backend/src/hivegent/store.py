@@ -83,9 +83,14 @@ class Casebase:
         """Display prefix for document filenames from this store."""
         return f"@{self.id}" if self.kind == "group" else None
 
+    @staticmethod
+    def workspace_root(data_dir: Path) -> Path:
+        """Return the root directory holding every casebase workspace."""
+        return data_dir / "workspace"
+
     def workspace_path(self, data_dir: Path) -> Path:
         """Return the workspace path without creating directories."""
-        return data_dir / "workspace" / self.store_key
+        return self.workspace_root(data_dir) / self.store_key
 
     def workspace_dir(self, data_dir: Path) -> Path:
         """Return the workspace directory, creating it if needed.

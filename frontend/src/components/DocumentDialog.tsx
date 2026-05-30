@@ -1,5 +1,5 @@
 import { ExternalLink, FileText, ImageIcon, Pencil, RefreshCw, Sparkles } from "lucide-react";
-import { isWebUrl } from "@/lib/utils";
+import { formatFileSize, isWebUrl } from "@/lib/utils";
 import Markdown from "markdown-to-jsx";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -608,7 +608,7 @@ export function DocumentDialog({
                   </Badge>
                 )}
                 <Badge variant="outline" className="text-xs">
-                  {(asset.size_bytes / 1024).toFixed(1)} KB
+                  {formatFileSize(asset.size_bytes)}
                 </Badge>
               </div>
             </div>

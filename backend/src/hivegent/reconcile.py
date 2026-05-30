@@ -7,12 +7,13 @@ same Postgres database as documents and cascade-delete with them, so
 no separate index sweep is needed.
 """
 
+import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-from .chunks import delete_document as _delete_chunked_document
+from .chunks import delete_documents as _delete_chunked_documents
 from .config import settings
 from .db import documents as db_documents
 from .entries import cleanup_empty_parents, is_assets_dir, stem_path_from_reference
@@ -79,28 +80,19 @@ async def _sweep_disk_orphans(store: Casebase, sql_stems: set[str]) -> int:
     return removed
 
 
-async def _sweep_sql_orphans(store: Casebase, sql_paths: dict[str, int]) -> int:
-    """Drop SQL documents whose description file is missing on disk.
-
-    Mutates *sql_paths* in place to drop successfully-removed entries so
-    the caller observes the post-sweep SQL state.
-    """
+async def _sweep_sql_orphans(store: Casebase, sql_paths: Mapping[str, int]) -> int:
+    """Drop SQL documents whose description file is missing on disk."""
     workspace = store.workspace_path(settings.data_dir)
     missing = [path for path in sql_paths if not (workspace / path).exists()]
-    removed = 0
-    for description_path in missing:
-        try:
-            await _delete_chunked_document(store, description_path)
-        except Exception:
-            logger.warning(
-                "Failed to remove SQL orphan %s/%s",
-                store.store_key,
-                description_path,
-                exc_info=True,
-            )
-            continue
-        sql_paths.pop(description_path, None)
-        removed += 1
+    if not missing:
+        return 0
+    try:
+        removed = await _delete_chunked_documents(store, missing)
+    except Exception:
+        logger.warning(
+            "Failed to remove SQL orphans for %s", store.store_key, exc_info=True
+        )
+        return 0
     return removed
 
 
@@ -111,7 +103,7 @@ async def reconcile_store(store: Casebase) -> ReconcileReport:
     need no separate sweep.
     """
     async with store_lock(store):
-        sql_paths = dict(await db_documents.list_document_paths(store))
+        sql_paths = await db_documents.list_document_paths(store)
         sql_stems = {stem_path_from_reference(path) for path in sql_paths}
 
         disk_removed = await _sweep_disk_orphans(store, sql_stems)
@@ -125,7 +117,7 @@ async def reconcile_store(store: Casebase) -> ReconcileReport:
 
 def _disk_known_stores() -> set[Casebase]:
     """Return casebases with an existing workspace directory."""
-    root = settings.data_dir / "workspace"
+    root = Casebase.workspace_root(settings.data_dir)
     if not root.is_dir():
         return set()
     stores: set[Casebase] = set()
@@ -140,15 +132,25 @@ def _disk_known_stores() -> set[Casebase]:
 
 
 async def reconcile_all() -> Mapping[str, ReconcileReport]:
-    """Reconcile every casebase known to SQL or present on disk."""
+    """Reconcile every casebase known to SQL or present on disk.
+
+    Each store holds its own lock, so reconciliation runs concurrently.
+    """
     sql_stores = await db_documents.list_known_stores()
-    stores = sql_stores | _disk_known_stores()
-    reports: dict[str, ReconcileReport] = {}
-    for store in sorted(stores, key=lambda s: s.store_key):
+    stores = sorted(sql_stores | _disk_known_stores(), key=lambda s: s.store_key)
+
+    async def _reconcile_safe(store: Casebase) -> ReconcileReport | None:
         try:
-            reports[store.store_key] = await reconcile_store(store)
+            return await reconcile_store(store)
         except Exception:
             logger.warning(
                 "Reconciliation failed for %s", store.store_key, exc_info=True
             )
-    return reports
+            return None
+
+    reports = await asyncio.gather(*(_reconcile_safe(store) for store in stores))
+    return {
+        store.store_key: report
+        for store, report in zip(stores, reports, strict=True)
+        if report is not None
+    }

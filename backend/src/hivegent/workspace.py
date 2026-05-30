@@ -659,6 +659,16 @@ async def _ensure_upload_slot_locked(
 # ---------------------------------------------------------------------------
 
 
+def _enforce_file_size(content: bytes) -> None:
+    """Reject content exceeding the configured maximum upload size."""
+    limit = settings.limits.max_file_size_bytes
+    if len(content) > limit:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size: {limit} bytes",
+        )
+
+
 async def upload(
     store: Casebase,
     filepath: str,
@@ -674,6 +684,7 @@ async def upload(
     The casebase lock is held for the entire operation.  On cancellation
     or failure, partial artifacts are rolled back via :func:`_safe_delete_locked`.
     """
+    _enforce_file_size(content)
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
     async with store_lock(store):
@@ -697,6 +708,7 @@ async def replace_original(
 
     The new original keeps the entry's stem; only the suffix may change.
     """
+    _enforce_file_size(new_content)
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
     async with store_lock(store):
@@ -1059,7 +1071,7 @@ async def delete_workspace_root() -> None:
     responsible for clearing the matching SQL documents (cascade then
     drops the vector rows), since this is a filesystem-only operation.
     """
-    workspace_root = settings.data_dir / "workspace"
+    workspace_root = Casebase.workspace_root(settings.data_dir)
 
     def _wipe() -> None:
         if workspace_root.exists():

@@ -6,6 +6,7 @@ from fastmcp.dependencies import CurrentAccessToken
 from fastmcp.server.auth import AccessToken
 from pydantic import Field
 
+from ..auth import parse_group_claim
 from ..config import settings
 from ..store import Casebase
 
@@ -51,15 +52,9 @@ def get_mcp_group_stores(
         return ()
     if access_token is None:
         return ()
-    raw = access_token.claims.get(settings.groups.groups_claim, [])
-    if not isinstance(raw, list):
-        return ()
     stores: list[Casebase] = []
     seen: set[str] = set()
-    for entry in raw:
-        if not isinstance(entry, str) or not entry:
-            continue
-        group_id = entry.rpartition(":")[0] if ":" in entry else entry
+    for group_id, _ in parse_group_claim(access_token.claims):
         if group_id in seen:
             continue
         seen.add(group_id)

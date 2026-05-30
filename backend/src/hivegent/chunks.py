@@ -7,6 +7,7 @@ INSERT in one cbrkit transaction).  Deletes flow through
 """
 
 import logging
+from collections.abc import Sequence
 
 import logfire
 
@@ -32,6 +33,7 @@ __all__ = [
     "DocumentMetadata",
     "chunk_and_index_document",
     "delete_document",
+    "delete_documents",
 ]
 
 logger = logging.getLogger(__name__)
@@ -120,3 +122,8 @@ async def chunk_and_index_document(
 async def delete_document(store: Casebase, filepath: str) -> bool:
     """Remove a document and its chunks (vectors cascade via FK)."""
     return await db_documents.delete_document(store, filepath)
+
+
+async def delete_documents(store: Casebase, filepaths: Sequence[str]) -> int:
+    """Remove many documents and their chunks in one statement."""
+    return await db_documents.delete_documents(store, filepaths)

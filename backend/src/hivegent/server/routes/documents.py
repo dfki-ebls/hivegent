@@ -13,7 +13,6 @@ from ... import workspace
 from ...auth import User, get_current_user
 from ...chunkers.base import DocumentMetadata
 from ...db.documents import get_document
-from ...config import settings
 from ...types import (
     AssetEntry,
     AssetListResponse,
@@ -106,15 +105,6 @@ async def replace_original(
     safe = safe_path(filepath)
     store = user_store(user)
     content = await file.read()
-    if len(content) > settings.limits.max_file_size_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"File too large. Maximum size: "
-                f"{settings.limits.max_file_size_bytes} bytes"
-            ),
-        )
-
     spec = parse_pipeline_spec(pipeline_spec)
     llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     return await workspace.replace_original(
@@ -143,15 +133,6 @@ async def upload_document_stream(
     llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
 
     content = await file.read()
-    if len(content) > settings.limits.max_file_size_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"File too large. Maximum size: "
-                f"{settings.limits.max_file_size_bytes} bytes"
-            ),
-        )
-
     async for event in upload_file_stream(
         store=store,
         filepath=safe,
@@ -179,15 +160,6 @@ async def upload_document(
     llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
 
     content = await file.read()
-    if len(content) > settings.limits.max_file_size_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"File too large. Maximum size: "
-                f"{settings.limits.max_file_size_bytes} bytes"
-            ),
-        )
-
     return await workspace.upload(
         store,
         safe,

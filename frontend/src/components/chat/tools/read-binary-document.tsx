@@ -2,18 +2,13 @@ import { FileImage, FileText, Paperclip } from "lucide-react";
 import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
 import { ToolParameters } from "@/components/ToolDisplay";
 import { parseJson, type ToolPart } from "@/lib/chat/tool-part";
+import { formatFileSize } from "@/lib/utils";
 
 interface BinaryReadResult {
   file_path: string;
   media_type: string;
   size: number;
   pages: number[];
-}
-
-function humanSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function isBinaryReadResult(value: unknown): value is BinaryReadResult {
@@ -52,7 +47,7 @@ export function ReadBinaryDocumentTool({ part, metadata }: ReadBinaryDocumentToo
               </div>
               <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                 <span>{result.media_type}</span>
-                <span>{humanSize(result.size)}</span>
+                <span>{formatFileSize(result.size)}</span>
                 {result.pages.length > 0 && <span>pages {result.pages.join(", ")}</span>}
                 <span className="flex items-center gap-1">
                   <Paperclip className="size-3" />

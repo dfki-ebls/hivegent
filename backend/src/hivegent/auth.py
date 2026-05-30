@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from collections.abc import Iterator, Mapping
 from typing import Annotated, Any
 
 import httpx
@@ -34,6 +35,7 @@ __all__ = [
     "build_discovery_url",
     "fetch_oidc_configuration",
     "get_current_user",
+    "parse_group_claim",
     "require_admin",
 ]
 
@@ -245,46 +247,45 @@ def _format_invalid_claim_detail(claim: str) -> str:
     return f"Invalid token claim: {claim!r}"
 
 
-def _extract_group_permissions(
-    claims: dict[str, Any],
-) -> tuple[frozenset[str], frozenset[str]]:
-    """Extract group memberships and permissions from JWT claims.
+def parse_group_claim(claims: Mapping[str, Any]) -> Iterator[tuple[str, str | None]]:
+    """Yield ``(group_id, permission)`` pairs from the OIDC groups claim.
 
     Each entry in the groups claim can be:
-    - ``"engineering:write"`` -- write (and read) access
-    - ``"sales:read"`` -- explicit read-only access
-    - ``"sales"`` -- bare name, uses ``default_permission`` setting
+    - ``"engineering:write"`` -- permission ``"write"``
+    - ``"sales:read"`` -- permission ``"read"``
+    - ``"sales"`` -- bare name, permission ``None``
 
-    Args:
-        claims: The decoded JWT claims dictionary.
-
-    Returns:
-        Tuple of ``(read_groups, write_groups)``.
+    Malformed entries (non-strings, empties, suffix-only) are skipped.
     """
     raw = claims.get(settings.groups.groups_claim, [])
     if not isinstance(raw, list):
-        return frozenset(), frozenset()
-
-    read_groups: set[str] = set()
-    write_groups: set[str] = set()
-
+        return
     for entry in raw:
         if not isinstance(entry, str) or not entry:
             continue
         if ":" in entry:
             group_id, _, suffix = entry.rpartition(":")
-            if not group_id:
-                continue
-            if suffix == "write":
-                write_groups.add(group_id)
-            else:
-                read_groups.add(group_id)
+            if group_id:
+                yield group_id, suffix
         else:
-            if settings.groups.default_permission == "write":
-                write_groups.add(entry)
-            else:
-                read_groups.add(entry)
+            yield entry, None
 
+
+def _extract_group_permissions(
+    claims: dict[str, Any],
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Split the groups claim into ``(read_groups, write_groups)``.
+
+    Bare names without an explicit permission use the
+    ``default_permission`` setting.
+    """
+    read_groups: set[str] = set()
+    write_groups: set[str] = set()
+    for group_id, permission in parse_group_claim(claims):
+        write = permission == "write" or (
+            permission is None and settings.groups.default_permission == "write"
+        )
+        (write_groups if write else read_groups).add(group_id)
     return frozenset(read_groups), frozenset(write_groups)
 
 
