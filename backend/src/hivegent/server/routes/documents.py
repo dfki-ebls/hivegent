@@ -25,6 +25,7 @@ from ...types import (
     CollectionUploadResponse,
     DeleteDocumentResponse,
     DocumentListResponse,
+    GenerateAssetDescriptionRequest,
     LlmConfig,
     MoveDocumentRequest,
     MoveDocumentResponse,
@@ -36,7 +37,12 @@ from ...types import (
     UploadCompleteEvent,
     UploadDocumentResponse,
 )
-from ..common import parse_pipeline_spec, prepare_llm_config, safe_path, user_store
+from ..common import (
+    parse_pipeline_spec,
+    prepare_llm_config,
+    safe_path,
+    user_store,
+)
 from ..models import (
     BulkDeleteRequest,
     BulkRechunkRequest,
@@ -402,6 +408,20 @@ async def patch_asset_description(
     safe = safe_path(filepath)
     return await workspace.update_asset_description(
         user_store(user), safe, request.asset_name, request.content
+    )
+
+
+@router.post("/documents/assets/{filepath:path}")
+async def generate_asset_description(
+    filepath: str,
+    request: GenerateAssetDescriptionRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> AssetEntry:
+    """Generate an asset's companion .md description with the vision model."""
+    safe = safe_path(filepath)
+    llm = await prepare_llm_config(request.llm)
+    return await workspace.generate_asset_description(
+        user_store(user), safe, request.asset_name, llm
     )
 
 

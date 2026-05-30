@@ -367,6 +367,13 @@ class UpdateAssetDescriptionRequest(BaseModel):
     content: str = Field(description="New content for the .md description file")
 
 
+class GenerateAssetDescriptionRequest(BaseModel):
+    """Request to generate an asset's companion .md description with the vision model."""
+
+    asset_name: str = Field(description="Filename of the asset to describe")
+    llm: LlmConfig = Field(default_factory=LlmConfig)
+
+
 class DocumentListResponse(BaseModel):
     """Response for listing documents."""
 

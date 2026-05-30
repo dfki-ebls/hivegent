@@ -790,6 +790,25 @@ export async function updateAssetDescription(
   return AssetEntrySchema.parse(data);
 }
 
+/** Generate an asset's companion .md description with the vision model. */
+export async function generateAssetDescription(
+  filename: string,
+  assetName: string,
+  llm?: LlmConfig,
+): Promise<AssetEntry> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ asset_name: assetName, llm: llm ?? {} }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to generate description" }));
+    throw new Error(error.detail || "Failed to generate description");
+  }
+  const data: unknown = await res.json();
+  return AssetEntrySchema.parse(data);
+}
+
 /** List assets for a group document. */
 export async function listGroupDocumentAssets(
   groupId: string,
@@ -824,6 +843,29 @@ export async function updateGroupAssetDescription(
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Failed to update description" }));
     throw new Error(error.detail || "Failed to update description");
+  }
+  const data: unknown = await res.json();
+  return AssetEntrySchema.parse(data);
+}
+
+/** Generate an asset's companion .md description in a group. */
+export async function generateGroupAssetDescription(
+  groupId: string,
+  filename: string,
+  assetName: string,
+  llm?: LlmConfig,
+): Promise<AssetEntry> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/assets/${encodeFilePath(filename)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asset_name: assetName, llm: llm ?? {} }),
+    },
+  );
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to generate description" }));
+    throw new Error(error.detail || "Failed to generate description");
   }
   const data: unknown = await res.json();
   return AssetEntrySchema.parse(data);

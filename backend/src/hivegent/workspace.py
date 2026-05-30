@@ -98,6 +98,7 @@ __all__ = [
     "delete_directory",
     "delete_document",
     "delete_workspace_root",
+    "generate_asset_description",
     "move_directory",
     "move_document",
     "on_agent_write",
@@ -896,6 +897,37 @@ def _resolve_asset_path(assets_path: Path, asset_name: str) -> tuple[str, Path]:
     return safe_name, asset_path
 
 
+async def _persist_asset_description(
+    store: Casebase,
+    workspace: Path,
+    asset_path: Path,
+    safe_name: str,
+    content: str,
+    size_bytes: int,
+) -> AssetEntry:
+    """Write a companion ``.md`` file, index it, and return the asset entry.
+
+    Callers pass the asset's *size_bytes* since they already hold either a
+    ``stat`` (update) or the raw bytes (generate), avoiding a redundant
+    filesystem round-trip here.
+    """
+    md_path = asset_path.with_suffix(DOCUMENT_EXTENSION)
+    md_path.write_text(content, encoding="utf-8")
+
+    description_path = str(md_path.relative_to(workspace).as_posix())
+    rel_path = str(asset_path.relative_to(workspace).as_posix())
+
+    await chunk_and_index_document(store, description_path, content)
+    return AssetEntry(
+        name=safe_name,
+        path=rel_path,
+        description_path=description_path,
+        description=content,
+        size_bytes=size_bytes,
+        media_type=mimetypes.guess_type(safe_name)[0],
+    )
+
+
 async def update_asset_description(
     store: Casebase,
     safe: str,
@@ -918,20 +950,40 @@ async def update_asset_description(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Asset file not found") from exc
 
-        md_path = asset_path.with_suffix(DOCUMENT_EXTENSION)
-        md_path.write_text(content, encoding="utf-8")
+        return await _persist_asset_description(
+            store, workspace, asset_path, safe_name, content, size_bytes
+        )
 
-        description_path = str(md_path.relative_to(workspace).as_posix())
-        rel_path = str(asset_path.relative_to(workspace).as_posix())
 
-        await chunk_and_index_document(store, description_path, content)
-        return AssetEntry(
-            name=safe_name,
-            path=rel_path,
-            description_path=description_path,
-            description=content,
-            size_bytes=size_bytes,
-            media_type=mimetypes.guess_type(safe_name)[0],
+async def generate_asset_description(
+    store: Casebase,
+    safe: str,
+    asset_name: str,
+    llm: LlmConfig,
+) -> AssetEntry:
+    """Describe an asset with the vision model and persist the result.
+
+    Mirrors :func:`update_asset_description` but derives the companion
+    ``.md`` content from the asset bytes via the same describe pipeline used
+    during ingestion, instead of receiving it from the caller.
+    """
+    async with store_lock(store):
+        workspace = store.workspace_dir(settings.data_dir)
+        assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
+        assets_path = workspace / assets_dir
+        safe_name, asset_path = _resolve_asset_path(assets_path, asset_name)
+
+        try:
+            content_bytes = asset_path.read_bytes()
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Asset file not found") from exc
+
+        media_type = guess_image_media_type(safe_name) or ""
+        description = await _build_image_description(
+            safe_name, content_bytes, media_type, llm
+        )
+        return await _persist_asset_description(
+            store, workspace, asset_path, safe_name, description, len(content_bytes)
         )
 
 

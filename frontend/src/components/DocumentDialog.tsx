@@ -1,9 +1,12 @@
-import { ExternalLink, FileText, ImageIcon, Pencil, RefreshCw } from "lucide-react";
+import { ExternalLink, FileText, ImageIcon, Pencil, RefreshCw, Sparkles } from "lucide-react";
 import { isWebUrl } from "@/lib/utils";
 import Markdown from "markdown-to-jsx";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  buildAuxLlmConfig,
+  generateAssetDescription,
+  generateGroupAssetDescription,
   getDocumentChunks,
   getDocumentContent,
   listDocumentAssets,
@@ -11,8 +14,10 @@ import {
   updateAssetDescription,
   updateGroupAssetDescription,
 } from "@/lib/api";
+import { useSettingsStore } from "@/stores/settings-store";
 import { WorkspaceImage } from "./WorkspaceImage";
 import {
+  type AssetEntry,
   type AssetListResponse,
   type ChunkedDocumentResponse,
   type FetchedChunk,
@@ -158,6 +163,7 @@ export function DocumentDialog({
   const [assetDescriptionDraft, setAssetDescriptionDraft] = useState("");
   const [isEditingAssetDescription, setIsEditingAssetDescription] = useState(false);
   const [isSavingAssetDescription, setIsSavingAssetDescription] = useState(false);
+  const [isGeneratingAssetDescription, setIsGeneratingAssetDescription] = useState(false);
 
   // When true, the next scroll-into-view uses "instant" instead of "smooth".
   const isInitialScrollRef = useRef(true);
@@ -166,6 +172,7 @@ export function DocumentDialog({
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
   const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
+  const overrides = useSettingsStore((state) => state.overrides);
 
   const isManagedMode = showMetadata || onRechunk != null;
   const filename = chunk?.filename ?? fallbackFilename ?? filenameProp;
@@ -318,15 +325,8 @@ export function DocumentDialog({
       .finally(() => setAssetsLoading(false));
   }, [open, isManagedMode, managedData?.assets_dir, filename, groupId]);
 
-  const handleSaveAssetDescription = useCallback(async () => {
-    if (activeAssetIndex == null || !assetsData?.assets[activeAssetIndex]) return;
-    const asset = assetsData.assets[activeAssetIndex];
-    setIsSavingAssetDescription(true);
-    try {
-      const updater = groupId
-        ? () => updateGroupAssetDescription(groupId, filename, asset.name, assetDescriptionDraft)
-        : () => updateAssetDescription(filename, asset.name, assetDescriptionDraft);
-      const updated = await updater();
+  const replaceActiveAsset = useCallback(
+    (updated: AssetEntry) => {
       setAssetsData((prev) =>
         prev
           ? {
@@ -335,11 +335,43 @@ export function DocumentDialog({
             }
           : prev,
       );
+    },
+    [activeAssetIndex],
+  );
+
+  const handleSaveAssetDescription = useCallback(async () => {
+    if (activeAssetIndex == null || !assetsData?.assets[activeAssetIndex]) return;
+    const asset = assetsData.assets[activeAssetIndex];
+    setIsSavingAssetDescription(true);
+    try {
+      const updater = groupId
+        ? () => updateGroupAssetDescription(groupId, filename, asset.name, assetDescriptionDraft)
+        : () => updateAssetDescription(filename, asset.name, assetDescriptionDraft);
+      replaceActiveAsset(await updater());
       setIsEditingAssetDescription(false);
     } finally {
       setIsSavingAssetDescription(false);
     }
-  }, [activeAssetIndex, assetsData, assetDescriptionDraft, filename, groupId]);
+  }, [activeAssetIndex, assetsData, assetDescriptionDraft, filename, groupId, replaceActiveAsset]);
+
+  const handleGenerateAssetDescription = useCallback(async () => {
+    if (activeAssetIndex == null || !assetsData?.assets[activeAssetIndex]) return;
+    const asset = assetsData.assets[activeAssetIndex];
+    // Image alt-text uses the auxiliary model, matching the import-time describe pipeline.
+    const llm = buildAuxLlmConfig(overrides);
+    setIsGeneratingAssetDescription(true);
+    try {
+      const generator = groupId
+        ? () => generateGroupAssetDescription(groupId, filename, asset.name, llm)
+        : () => generateAssetDescription(filename, asset.name, llm);
+      const updated = await generator();
+      replaceActiveAsset(updated);
+      setAssetDescriptionDraft(updated.description);
+      setIsEditingAssetDescription(false);
+    } finally {
+      setIsGeneratingAssetDescription(false);
+    }
+  }, [activeAssetIndex, assetsData, filename, groupId, overrides, replaceActiveAsset]);
 
   // --- Save handler ---
   const handleSave = async () => {
@@ -499,17 +531,33 @@ export function DocumentDialog({
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium">Description</h3>
                 {editable && !isEditingAssetDescription && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setAssetDescriptionDraft(asset.description);
-                      setIsEditingAssetDescription(true);
-                    }}
-                  >
-                    <Pencil className="h-3 w-3 mr-1" />
-                    Edit
-                  </Button>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={isGeneratingAssetDescription}
+                      onClick={handleGenerateAssetDescription}
+                    >
+                      {isGeneratingAssetDescription ? (
+                        <Spinner className="h-3 w-3 mr-1" />
+                      ) : (
+                        <Sparkles className="h-3 w-3 mr-1" />
+                      )}
+                      Generate
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={isGeneratingAssetDescription}
+                      onClick={() => {
+                        setAssetDescriptionDraft(asset.description);
+                        setIsEditingAssetDescription(true);
+                      }}
+                    >
+                      <Pencil className="h-3 w-3 mr-1" />
+                      Edit
+                    </Button>
+                  </div>
                 )}
               </div>
 

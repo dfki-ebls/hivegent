@@ -23,6 +23,7 @@ from ...types import (
     DeleteDocumentResponse,
     DirectoryTreeResponse,
     DocumentListResponse,
+    GenerateAssetDescriptionRequest,
     LlmConfig,
     MoveDocumentRequest,
     MoveDocumentResponse,
@@ -103,6 +104,22 @@ async def patch_group_asset_description(
     safe = safe_path(filepath)
     return await workspace.update_asset_description(
         group_store(safe_id), safe, request.asset_name, request.content
+    )
+
+
+@router.post("/groups/{group_id}/documents/assets/{filepath:path}")
+async def generate_group_asset_description(
+    group_id: str,
+    filepath: str,
+    request: GenerateAssetDescriptionRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> AssetEntry:
+    """Generate an asset's companion .md description in a group."""
+    safe_id = require_group_write(user, group_id)
+    safe = safe_path(filepath)
+    llm = await prepare_llm_config(request.llm)
+    return await workspace.generate_asset_description(
+        group_store(safe_id), safe, request.asset_name, llm
     )
 
 
