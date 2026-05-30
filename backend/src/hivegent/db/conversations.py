@@ -244,6 +244,16 @@ async def append_messages(
     msg_list = list(messages)
 
     async with session() as s:
+        # Serialise concurrent appends to the same conversation: the
+        # existence check, message-count read, and idx-assigned inserts
+        # below form a read-then-write sequence that two racing turns
+        # (duplicate submit, multiple tabs) would otherwise interleave —
+        # tripping the conversations PK or the (conversation_id, idx) PK
+        # and rolling back the turn.  The transaction-scoped advisory
+        # lock auto-releases on commit/rollback.
+        await s.execute(
+            select(func.pg_advisory_xact_lock(func.hashtextextended(conversation_id, 0)))
+        )
         await ensure_user(s, user_id)
 
         conv = await s.get(Conversation, conversation_id)

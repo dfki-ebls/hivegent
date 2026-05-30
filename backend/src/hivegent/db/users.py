@@ -13,7 +13,7 @@ from __future__ import annotations
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ._common import affected_rows
+from ._common import affected_rows, ensure_row
 from .engine import session
 from .models import Conversation, Document, User
 
@@ -27,8 +27,7 @@ __all__ = [
 
 async def ensure_user(s: AsyncSession, user_id: str) -> None:
     """Materialise a :class:`User` row lazily before a dependent insert."""
-    if await s.get(User, user_id) is None:
-        s.add(User(id=user_id))
+    await ensure_row(s, User, id=user_id)
 
 
 async def list_users_with_counts() -> list[

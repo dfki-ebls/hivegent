@@ -31,6 +31,7 @@ import logfire
 import sqlalchemy as sa
 from cbrkit import filter as cbrkit_filter
 from cbrkit.indexable import pgvector_async as PgvectorAsync
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .chunkers.base import ChunkData, RetrievedChunk
 from .config import settings
@@ -172,11 +173,17 @@ async def reconcile_index_state() -> None:
     async with session() as s:
         row = (await s.execute(sa.select(IndexState))).scalar_one_or_none()
         if row is None:
-            s.add(
-                IndexState(
+            # Idempotent: a concurrent fresh boot may insert the singleton
+            # between our SELECT and this INSERT.  DO NOTHING means both
+            # bootstrappers settle on the same fingerprint without reembed.
+            await s.execute(
+                pg_insert(IndexState)
+                .values(
+                    id=1,
                     embedding_provider=current["provider"],
                     embedding_model=current["model"],
                 )
+                .on_conflict_do_nothing()
             )
             return
         previous = {

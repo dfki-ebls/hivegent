@@ -12,7 +12,7 @@ from sqlalchemy import Select, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ._common import affected_rows
+from ._common import affected_rows, ensure_row
 from .engine import session
 from .models import Document, Group, GroupMember
 
@@ -26,8 +26,7 @@ __all__ = [
 
 async def ensure_group(s: AsyncSession, group_id: str) -> None:
     """Materialise a :class:`Group` row lazily before a dependent insert."""
-    if await s.get(Group, group_id) is None:
-        s.add(Group(id=group_id))
+    await ensure_row(s, Group, id=group_id)
 
 
 def _exclude_admin[T: Select[tuple[str]] | Select[tuple[str, int, int]]](

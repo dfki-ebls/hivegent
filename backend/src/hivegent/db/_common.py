@@ -8,11 +8,14 @@ identity table lives in that table's own module (:mod:`.users`,
 from typing import Any
 
 from sqlalchemy import or_
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Document, _nid
+from .models import Base, Document, _nid
 
 __all__ = [
     "affected_rows",
+    "ensure_row",
     "new_id",
     "stem_subtree_filter",
 ]
@@ -23,6 +26,17 @@ def affected_rows(result: Any) -> int:
 
 
 new_id = _nid
+
+
+async def ensure_row(s: AsyncSession, model: type[Base], /, **values: Any) -> None:
+    """Idempotently insert an identity row, ignoring an existing primary key.
+
+    Concurrency-safe ``INSERT ... ON CONFLICT DO NOTHING`` for rows that
+    are materialised lazily on first reference: two requests racing to
+    create the same row in separate transactions cannot trip the primary
+    key and roll back the surrounding insert that triggered it.
+    """
+    await s.execute(pg_insert(model).values(**values).on_conflict_do_nothing())
 
 
 def stem_subtree_filter(prefix: str):

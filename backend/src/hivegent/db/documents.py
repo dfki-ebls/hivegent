@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 
 import sqlalchemy as sa
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ._common import affected_rows, stem_subtree_filter
@@ -276,35 +277,37 @@ async def upsert_document(
     INSERT happen inside cbrkit's transaction.  The returned
     :class:`DocumentMetadata` carries an empty ``chunks`` list; the
     orchestrator fills it after calling the indexer.
+
+    Concurrency-safe ``INSERT ... ON CONFLICT DO UPDATE`` keyed on the
+    ``(owner, stem_path)`` unique constraint: two requests racing to
+    index the same stem cannot trip the constraint and roll back the
+    transaction (losing the document).
     """
+    mutable = {
+        "original_ext": _original_ext(entry.original_path),
+        "has_assets": entry.assets_dir is not None,
+        "entry_kind": EntryKind(entry.entry_kind),
+        "origin": Origin(entry.origin),
+        "generated_by": GeneratedBy(entry.generated_by),
+        "mime": entry.mime,
+        "pipeline": pipeline,
+        "content_sha256": content_sha256,
+    }
+    owner_col = (
+        Document.owner_user_id if store.kind == "user" else Document.owner_group_id
+    )
     async with session() as s:
         await _ensure_owner(s, store)
-        doc = await _find(s, store, entry.stem_path)
-        if doc is None:
-            doc = Document(
-                **_owner_kwargs(store),
-                stem_path=entry.stem_path,
-                original_ext=_original_ext(entry.original_path),
-                has_assets=entry.assets_dir is not None,
-                entry_kind=EntryKind(entry.entry_kind),
-                origin=Origin(entry.origin),
-                generated_by=GeneratedBy(entry.generated_by),
-                mime=entry.mime,
-                pipeline=pipeline,
-                content_sha256=content_sha256,
+        stmt = (
+            pg_insert(Document)
+            .values(**_owner_kwargs(store), stem_path=entry.stem_path, **mutable)
+            .on_conflict_do_update(
+                index_elements=[owner_col, Document.stem_path],
+                set_={**mutable, "updated_at": func.now()},
             )
-            s.add(doc)
-            await s.flush()
-        else:
-            doc.original_ext = _original_ext(entry.original_path)
-            doc.has_assets = entry.assets_dir is not None
-            doc.entry_kind = EntryKind(entry.entry_kind)
-            doc.origin = Origin(entry.origin)
-            doc.generated_by = GeneratedBy(entry.generated_by)
-            doc.mime = entry.mime
-            doc.pipeline = pipeline
-            doc.content_sha256 = content_sha256
-
+            .returning(Document)
+        )
+        doc = (await s.scalars(stmt)).one()
         workspace_root = store.workspace_path(settings.data_dir)
         return _document_from_row(doc, [], workspace_root)
 

@@ -1,5 +1,23 @@
 # Hivegent Backend
 
+## Concurrency-safe repository writes
+
+Repository functions that create or update a row must do so atomically, never as a non-atomic read-then-write.
+A `s.get(...)` (or `_find(...)`) followed by a conditional `s.add(...)` or field assignment is a time-of-check-to-time-of-use race: two requests in separate transactions both observe the row missing, both insert, and all but one fail the primary key or a unique constraint.
+The loser's `IntegrityError` rolls back its whole transaction — and when the materialise happens inside a larger write, that silently drops the document, conversation, or memory that triggered it (the original "documents vanish after upload" bug).
+
+Use one of two PostgreSQL-native tools:
+
+- `INSERT ... ON CONFLICT` for single-row inserts and upserts.
+  Lazy "materialise on first reference" identity rows use the `ensure_row` helper in `db/_common.py` (`ON CONFLICT DO NOTHING`); see `ensure_user` and `ensure_group`.
+  Upserts that overwrite columns use `.on_conflict_do_update(index_elements=[...], set_={...})`, keyed on the relevant primary key or unique constraint; see `db.documents.upsert_document` and `db.memory.save_memory`.
+  A core upsert does not fire the ORM `onupdate=_now`, so bump `updated_at` explicitly in `set_` with `func.now()`.
+- A transaction-scoped advisory lock (`pg_advisory_xact_lock`) for multi-row read-then-write sequences that no single constraint can guard, such as appending messages at a computed `idx`.
+  See `db.conversations.append_messages`, which serialises concurrent turns on the same conversation; the lock auto-releases on commit/rollback.
+
+The schema's constraints are the safety net, not the obstacle: keep the primary keys, unique constraints, and the `documents.single_owner` check, and make the application cooperate with them atomically rather than racing them.
+The one accepted exception is a best-effort last-write-wins update with no constraint to violate — e.g. the throttled `last_used_at` bump in `tokens.validate_token` — where serialising would add cost for no correctness gain.
+
 ## Database migrations
 
 Schema changes are managed by [Alembic](https://alembic.sqlalchemy.org/).
