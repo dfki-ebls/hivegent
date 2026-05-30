@@ -36,20 +36,25 @@
         imports = [
           inputs.services-flake.processComposeModules.default
         ];
-        services.postgres."hivegent-db" = {
+        services.postgres.db = {
           enable = true;
           package = pkgs.postgresql_18;
           extensions = ext: [ ext.pgvector ];
           initialDatabases = [ { name = "hivegent"; } ];
           listen_addresses = "";
-          socketDir = "/tmp/hivegent-db";
+          # Relative to the process-compose working directory (repo root);
+          # services-flake resolves it with `readlink -f` at boot.  Keeps the
+          # socket beside the cluster under the top-level `data/` instead of
+          # `/tmp`.  NOTE: the absolute form must stay under ~104 chars (macOS
+          # Unix-socket limit) — move it back to /tmp if your checkout path is long.
+          socketDir = "data/db";
         };
         settings.processes = {
           backend = {
-            depends_on."hivegent-db".condition = "process_healthy";
+            depends_on.db.condition = "process_healthy";
             command = ''
               exec ${lib.getExe pkgs.uv} \
-                --directory backend \
+                --project backend \
                 run hivegent serve --host 127.0.0.1 --reload
             '';
           };
