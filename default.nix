@@ -41,10 +41,8 @@
           package = pkgs.postgresql_18;
           extensions = ext: [ ext.pgvector ];
           initialDatabases = [ { name = "hivegent"; } ];
-          # Unix-socket only: drop TCP so the backend reaches the
-          # database through the Unix-domain socket in ``socketDir``
-          # (see the ``HIVEGENT_DB__URL`` default in ``shell.nix``).
           listen_addresses = "";
+          socketDir = "/tmp/hivegent-db";
         };
         settings.processes = {
           backend = {
