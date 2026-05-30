@@ -51,7 +51,7 @@ export const ChunkingPipelineSchema = z.enum(ChunkingPipeline);
 
 /** How extracted assets are handled during ingestion. */
 export enum AssetProcessingMode {
-  OFF = "off",
+  IGNORE = "ignore",
   STORE = "store",
   DESCRIBE = "describe",
 }

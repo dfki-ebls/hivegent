@@ -187,13 +187,13 @@ def resolve_llm_config(
 class AssetProcessingMode(str, Enum):
     """How extracted assets (images, etc.) are handled during ingestion.
 
-    ``off`` drops the assets entirely and strips their markdown
+    ``ignore`` drops the assets entirely and strips their markdown
     references; ``store`` persists the raw bytes alongside the document
     without describing them; ``describe`` runs the asset-triage pipeline
     and describes the assets it deems semantically meaningful.
     """
 
-    OFF = "off"
+    IGNORE = "ignore"
     STORE = "store"
     DESCRIBE = "describe"
 

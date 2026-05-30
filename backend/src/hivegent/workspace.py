@@ -465,7 +465,7 @@ async def _upload_convertible_locked(
     children: list[tuple[str, str, ExtractedImage]] = []
     ref_mapping: dict[str, str | None] = {}
     for image_relpath, extracted in sorted(result.images.items()):
-        if mode is AssetProcessingMode.OFF:
+        if mode is AssetProcessingMode.IGNORE:
             ref_mapping[image_relpath] = None
             continue
         image_media_type = guess_image_media_type(image_relpath) or ""
