@@ -10,7 +10,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
-from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+from sqlalchemy.dialects.postgresql import ENUM, JSONB, TSVECTOR
 
 
 revision: str = "e5a1b2c3d4f5"
@@ -24,13 +24,19 @@ depends_on: str | Sequence[str] | None = None
 # follow-up revision ALTERing ``chunks.embedding`` to the matching dim.
 _VECTOR_DIM = 384
 
-_PERMISSION = sa.Enum("read", "write", name="permission")
-_ENTRY_KIND = sa.Enum(
-    "user_markdown", "image", "convertible", "binary_stub", name="entrykind"
+# ``create_type=False`` keeps SQLAlchemy from auto-emitting ``CREATE TYPE``
+# while building the referencing tables; the enums are created once,
+# idempotently, by the explicit loop in ``upgrade`` below.
+_PERMISSION = ENUM("read", "write", name="permission", create_type=False)
+_ENTRY_KIND = ENUM(
+    "user_markdown", "image", "convertible", "binary_stub",
+    name="entrykind", create_type=False,
 )
-_ORIGIN = sa.Enum("upload", "collection", "extracted", name="origin")
-_GENERATED_BY = sa.Enum("user", "converter", "vision", "stub", name="generatedby")
-_MESSAGE_KIND = sa.Enum("request", "response", name="messagekind")
+_ORIGIN = ENUM("upload", "collection", "extracted", name="origin", create_type=False)
+_GENERATED_BY = ENUM(
+    "user", "converter", "vision", "stub", name="generatedby", create_type=False
+)
+_MESSAGE_KIND = ENUM("request", "response", name="messagekind", create_type=False)
 
 
 def upgrade() -> None:
@@ -44,7 +50,7 @@ def upgrade() -> None:
         _GENERATED_BY,
         _MESSAGE_KIND,
     ):
-        enum_type.create(bind, checkfirst=True)
+        enum_type.create(bind)
 
     op.create_table(
         "groups",
@@ -295,6 +301,6 @@ def downgrade() -> None:
         _ENTRY_KIND,
         _PERMISSION,
     ):
-        enum_type.drop(bind, checkfirst=True)
+        enum_type.drop(bind)
 
     op.execute("DROP EXTENSION IF EXISTS vector")
