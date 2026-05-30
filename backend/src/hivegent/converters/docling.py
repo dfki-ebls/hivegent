@@ -71,15 +71,24 @@ class DoclingConverterConfig(BaseModel):
         description="Options for Office and text formats (DOCX, PPTX, HTML, etc.)",
     )
 
+    def __hash__(self) -> int:
+        # Content hash so instances can key the ``_build_converter`` LRU cache.
+        return hash(self.model_dump_json())
+
 
 # Formats that use the threaded PDF pipeline options.
 _PDF_FORMATS = frozenset({InputFormat.PDF, InputFormat.IMAGE, InputFormat.METS_GBS})
 
 
 @lru_cache(maxsize=4)
-def _build_converter(config_json: str) -> DoclingDocumentConverter:
-    """Build and configure a Docling converter, cached by serialized config."""
-    config = DoclingConverterConfig.model_validate_json(config_json)
+def _build_converter(config: DoclingConverterConfig) -> DoclingDocumentConverter:
+    """Build and configure a Docling converter, cached by config.
+
+    Keyed on the live ``config`` object (hashable via its JSON form) and
+    built from it directly — re-parsing JSON would degrade polymorphic
+    option fields such as ``picture_description_options`` to their base
+    class, which docling's pipeline cannot consume.
+    """
     converter = DoclingDocumentConverter()
     # Start from default format options (which include the correct backend
     # and pipeline_cls) and only override pipeline_options.
@@ -113,7 +122,7 @@ class DoclingConverter(DocumentConverter):
     config: DoclingConverterConfig = field(default_factory=DoclingConverterConfig)
 
     def _convert_sync(self, path: Path) -> ConversionResult:
-        converter = _build_converter(self.config.model_dump_json())
+        converter = _build_converter(self.config)
         result = converter.convert(str(path))
         doc = result.document
 
