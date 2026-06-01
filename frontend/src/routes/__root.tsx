@@ -1,5 +1,4 @@
 import { TanStackDevtools } from "@tanstack/react-devtools";
-
 import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { useEffect } from "react";
@@ -10,8 +9,6 @@ import { ThemeProvider } from "../components/ThemeProvider";
 import { Toaster } from "../components/ui/sonner";
 import { useOidc } from "../oidc";
 import { useSettingsStore } from "../stores/settings-store";
-
-const IS_DEV = import.meta.env.DEV;
 
 function RootComponent() {
   const { isUserLoggedIn } = useOidc();
@@ -32,19 +29,15 @@ function RootComponent() {
           <main className="flex-1 overflow-hidden">
             <Outlet />
           </main>
-          {IS_DEV && (
-            <TanStackDevtools
-              config={{
-                position: "bottom-left",
-              }}
-              plugins={[
-                {
-                  name: "Tanstack Router",
-                  render: <TanStackRouterDevtoolsPanel />,
-                },
-              ]}
-            />
-          )}
+          <TanStackDevtools
+            config={{ position: "bottom-left" }}
+            plugins={[
+              {
+                name: "Tanstack Router",
+                render: <TanStackRouterDevtoolsPanel />,
+              },
+            ]}
+          />
         </div>
       </AppErrorBoundary>
     </ThemeProvider>
