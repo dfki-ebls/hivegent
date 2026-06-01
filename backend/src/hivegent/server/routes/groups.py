@@ -49,6 +49,7 @@ from ..operations import (
     list_documents_for_store,
     prepare_collection_upload,
     read_collection_zip,
+    read_upload_file,
     reconvert_single_stream,
     upload_file_stream,
     validate_collection_upload,
@@ -155,7 +156,7 @@ async def upload_group_document_stream(
     spec = parse_pipeline_spec(pipeline_spec)
     llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
 
-    content = await file.read()
+    content = await read_upload_file(file)
 
     async for event in upload_file_stream(
         store=store,
@@ -186,7 +187,7 @@ async def upload_group_document(
     spec = parse_pipeline_spec(pipeline_spec)
     llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
 
-    content = await file.read()
+    content = await read_upload_file(file)
 
     return await workspace.upload(
         store,

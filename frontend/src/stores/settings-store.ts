@@ -1,17 +1,18 @@
 /**
  * Zustand store for all persisted user settings.
  *
- * Holds raw LLM override strings (empty = no override; backend applies its
- * own default at request time) alongside UI preferences, persisted with
- * Zod-validated rehydration.
+ * Holds LLM override strings (empty = no override; backend applies its own
+ * default at request time) alongside UI preferences.
+ *
+ * Sensitive fields stay in memory only; persisted state is Zod-validated and
+ * stripped of BYO API keys, MCP headers, and OAuth client secrets.
  */
 
 import { z } from "zod";
 import { create } from "zustand";
-import { createJSONStorage, persist, type StorageValue } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 
 import { getSettings } from "../lib/api";
-import { decryptApiKey, encryptApiKey, isEncrypted } from "../lib/crypto";
 import { featureFlags } from "../lib/feature-flags";
 import {
   AssetProcessingMode,
@@ -27,11 +28,13 @@ import {
   type McpServerEntry,
   type Personality,
   PersonalitySchema,
+  type PersistedOverrides,
+  PersistedOverridesSchema,
+  type PersistedToolsSpec,
+  PersistedToolsSpecSchema,
   PipelineConfigsSchema,
   type ToolsSpec,
-  ToolsSpecSchema,
   type UserOverrides,
-  UserOverridesSchema,
 } from "../lib/types";
 
 const EMPTY_OVERRIDES: UserOverrides = {
@@ -43,6 +46,26 @@ const EMPTY_OVERRIDES: UserOverrides = {
 
 /** Per-pipeline configuration overrides, keyed by pipeline value. */
 export type PipelineConfigs = Record<string, Record<string, unknown>>;
+
+/**
+ * Exact shape written to localStorage — the persist middleware's persisted-state
+ * type. Flag-gated slices are optional (omitted when their flag is off), and the
+ * secret fields are absent by construction via {@link PersistedOverrides} and
+ * {@link PersistedToolsSpec}, so the `partialize` return below cannot leak them.
+ */
+interface PersistedSettings {
+  documentTab: DocumentTab;
+  assetMode: AssetProcessingMode;
+  expandedDirs: string[];
+  personality: Personality;
+  customSystemMessage: string;
+  overrides?: PersistedOverrides;
+  conversionPipeline?: ConversionPipeline;
+  chunkingPipeline?: ChunkingPipeline;
+  conversionConfigs?: PipelineConfigs;
+  chunkingConfigs?: PipelineConfigs;
+  toolsSpec?: PersistedToolsSpec;
+}
 
 const UI_DEFAULTS = {
   documentTab: "fetched" as DocumentTab,
@@ -106,145 +129,33 @@ interface SettingsState {
   updateMcpServer: (index: number, server: McpServerEntry) => void;
 }
 
-/** Shape of the partialized state written to localStorage. */
-interface PersistedSettings {
-  overrides: UserOverrides;
-  documentTab: DocumentTab;
-  conversionPipeline: ConversionPipeline;
-  chunkingPipeline: ChunkingPipeline;
-  assetMode: AssetProcessingMode;
-  expandedDirs: string[];
-  personality: Personality;
-  customSystemMessage: string;
-  conversionConfigs: PipelineConfigs;
-  chunkingConfigs: PipelineConfigs;
-  toolsSpec: ToolsSpec;
+// The persisted types omit the secret fields outright (apiKey; MCP header
+// values and the oauth2 block), so the compiler rejects any attempt to store
+// them. Both helpers build their result field-by-field — an allowlist — so a
+// future sensitive field is dropped from storage until consciously added here.
+function persistedOverrides(overrides: UserOverrides): PersistedOverrides {
+  return { model: overrides.model, baseUrl: overrides.baseUrl, auxModel: overrides.auxModel };
 }
 
-/** Encrypt a single string value if it is non-empty and not already encrypted. */
-async function tryEncrypt(value: string): Promise<string> {
-  if (!value || isEncrypted(value)) return value;
-  return encryptApiKey(value);
+function persistedToolsSpec(toolsSpec: ToolsSpec): PersistedToolsSpec {
+  return {
+    disabledTools: toolsSpec.disabledTools,
+    mcpServers: toolsSpec.mcpServers.map((server) => ({
+      url: server.url,
+      toolPrefix: server.toolPrefix,
+    })),
+  };
 }
 
-/** Decrypt a single string value if it looks encrypted. */
-async function tryDecrypt(value: string): Promise<string> {
-  if (!isEncrypted(value)) return value;
-  return decryptApiKey(value);
+// Restore the in-memory ToolsSpec from its persisted form: the omitted secret
+// fields come back empty (matching a freshly-added server before the user
+// re-enters them this session).
+function rehydrateToolsSpec(spec: PersistedToolsSpec): ToolsSpec {
+  return {
+    disabledTools: spec.disabledTools,
+    mcpServers: spec.mcpServers.map((server) => ({ ...server, headers: {} })),
+  };
 }
-
-/** Encrypt sensitive fields inside MCP server entries (header values, OAuth2 secrets). */
-async function encryptMcpServers(servers: McpServerEntry[]): Promise<McpServerEntry[]> {
-  return Promise.all(
-    servers.map(async (s) => {
-      const encHeaders: Record<string, string> = {};
-      for (const [k, v] of Object.entries(s.headers)) {
-        encHeaders[k] = await tryEncrypt(v);
-      }
-      return {
-        ...s,
-        headers: encHeaders,
-        oauth2: s.oauth2
-          ? { ...s.oauth2, clientSecret: await tryEncrypt(s.oauth2.clientSecret) }
-          : undefined,
-      };
-    }),
-  );
-}
-
-/** Decrypt sensitive fields inside MCP server entries. */
-async function decryptMcpServers(servers: McpServerEntry[]): Promise<McpServerEntry[]> {
-  return Promise.all(
-    servers.map(async (s) => {
-      const decHeaders: Record<string, string> = {};
-      for (const [k, v] of Object.entries(s.headers)) {
-        decHeaders[k] = await tryDecrypt(v);
-      }
-      return {
-        ...s,
-        headers: decHeaders,
-        oauth2: s.oauth2
-          ? { ...s.oauth2, clientSecret: await tryDecrypt(s.oauth2.clientSecret) }
-          : undefined,
-      };
-    }),
-  );
-}
-
-/**
- * Custom storage that encrypts sensitive values before writing to localStorage
- * and decrypts them on read.  Covers the LLM API key and MCP server secrets
- * (header values, OAuth2 client secrets).
- */
-const encryptedStorage = createJSONStorage(() => ({
-  getItem: async (name: string): Promise<string | null> => {
-    const raw = localStorage.getItem(name);
-    if (!raw) return null;
-
-    let stored: StorageValue<PersistedSettings>;
-    try {
-      stored = JSON.parse(raw) as StorageValue<PersistedSettings>;
-    } catch {
-      console.warn("Corrupted settings in localStorage, resetting to defaults");
-      return null;
-    }
-
-    // Decrypt LLM API key (overrides is absent when the llmSpec flag is off)
-    const apiKey = stored.state.overrides?.apiKey;
-    if (typeof apiKey === "string" && isEncrypted(apiKey)) {
-      try {
-        stored.state.overrides.apiKey = await decryptApiKey(apiKey);
-      } catch (err) {
-        console.warn("Failed to decrypt API key, clearing stored value:", err);
-        stored.state.overrides.apiKey = "";
-      }
-    }
-
-    // Decrypt MCP server secrets
-    if (stored.state.toolsSpec?.mcpServers?.length) {
-      try {
-        stored.state.toolsSpec.mcpServers = await decryptMcpServers(
-          stored.state.toolsSpec.mcpServers,
-        );
-      } catch (err) {
-        console.warn("Failed to decrypt MCP server secrets:", err);
-      }
-    }
-
-    return JSON.stringify(stored);
-  },
-
-  setItem: async (name: string, value: string): Promise<void> => {
-    const stored = JSON.parse(value) as StorageValue<PersistedSettings>;
-
-    // Encrypt LLM API key (overrides is absent when the llmSpec flag is off)
-    const apiKey = stored.state.overrides?.apiKey;
-    if (typeof apiKey === "string" && apiKey && !isEncrypted(apiKey)) {
-      try {
-        stored.state.overrides.apiKey = await encryptApiKey(apiKey);
-      } catch (err) {
-        console.warn("Failed to encrypt API key, storing in plain text:", err);
-      }
-    }
-
-    // Encrypt MCP server secrets
-    if (stored.state.toolsSpec?.mcpServers?.length) {
-      try {
-        stored.state.toolsSpec.mcpServers = await encryptMcpServers(
-          stored.state.toolsSpec.mcpServers,
-        );
-      } catch (err) {
-        console.warn("Failed to encrypt MCP server secrets:", err);
-      }
-    }
-
-    localStorage.setItem(name, JSON.stringify(stored));
-  },
-
-  removeItem: async (name: string): Promise<void> => {
-    localStorage.removeItem(name);
-  },
-}));
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
@@ -371,8 +282,8 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: "hivegent-settings",
-      storage: encryptedStorage,
-      partialize: (state) => ({
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state): PersistedSettings => ({
         documentTab: state.documentTab,
         assetMode: state.assetMode,
         expandedDirs: state.expandedDirs,
@@ -381,7 +292,9 @@ export const useSettingsStore = create<SettingsState>()(
         // Each block below is gated by its feature flag.  When off, the
         // slice is omitted from persisted state so secrets and stale user
         // input never touch localStorage and don't survive a flag flip.
-        ...(featureFlags.llmSpec ? { overrides: state.overrides } : {}),
+        ...(featureFlags.llmSpec
+          ? { overrides: persistedOverrides(state.overrides) }
+          : {}),
         ...(featureFlags.pipelineSpec
           ? {
               conversionPipeline: state.conversionPipeline,
@@ -390,7 +303,9 @@ export const useSettingsStore = create<SettingsState>()(
               chunkingConfigs: state.chunkingConfigs,
             }
           : {}),
-        ...(featureFlags.toolsSpec ? { toolsSpec: state.toolsSpec } : {}),
+        ...(featureFlags.toolsSpec
+          ? { toolsSpec: persistedToolsSpec(state.toolsSpec) }
+          : {}),
       }),
       merge: (persisted, current) => {
         const data = persisted as Record<string, unknown> | undefined;
@@ -413,7 +328,16 @@ export const useSettingsStore = create<SettingsState>()(
             UI_DEFAULTS.customSystemMessage,
           ),
           ...(featureFlags.llmSpec
-            ? { overrides: pick(UserOverridesSchema, data.overrides, EMPTY_OVERRIDES) }
+            ? {
+                overrides: {
+                  ...EMPTY_OVERRIDES,
+                  ...pick(
+                    PersistedOverridesSchema,
+                    data.overrides,
+                    persistedOverrides(EMPTY_OVERRIDES),
+                  ),
+                },
+              }
             : {}),
           ...(featureFlags.pipelineSpec
             ? {
@@ -440,7 +364,15 @@ export const useSettingsStore = create<SettingsState>()(
               }
             : {}),
           ...(featureFlags.toolsSpec
-            ? { toolsSpec: pick(ToolsSpecSchema, data.toolsSpec, UI_DEFAULTS.toolsSpec) }
+            ? {
+                toolsSpec: rehydrateToolsSpec(
+                  pick(
+                    PersistedToolsSpecSchema,
+                    data.toolsSpec,
+                    persistedToolsSpec(UI_DEFAULTS.toolsSpec),
+                  ),
+                ),
+              }
             : {}),
         };
       },

@@ -74,7 +74,7 @@ export const ExpandedDirsSchema = z.array(z.string());
 /** Per-pipeline configuration overrides, keyed by pipeline value. */
 export const PipelineConfigsSchema = z.record(z.string(), z.record(z.string(), z.unknown()));
 
-/** User-provided overrides stored in localStorage. Empty string = use backend default. */
+/** User-provided overrides. Sensitive values are not persisted. */
 export const UserOverridesSchema = z.object({
   model: z.string(),
   apiKey: z.string(),
@@ -82,6 +82,10 @@ export const UserOverridesSchema = z.object({
   auxModel: z.string(),
 });
 export type UserOverrides = z.infer<typeof UserOverridesSchema>;
+
+/** Persisted subset of {@link UserOverrides}: the API key never reaches disk. */
+export const PersistedOverridesSchema = UserOverridesSchema.omit({ apiKey: true });
+export type PersistedOverrides = z.infer<typeof PersistedOverridesSchema>;
 
 // ============================================================
 // API response schemas
@@ -586,6 +590,13 @@ export const ToolsSpecSchema = z.object({
   mcpServers: z.array(McpServerEntrySchema).default([]),
 });
 export type ToolsSpec = z.infer<typeof ToolsSpecSchema>;
+
+/** Persisted subset of {@link ToolsSpec}: MCP header values and OAuth secrets never reach disk. */
+export const PersistedToolsSpecSchema = z.object({
+  disabledTools: z.array(z.string()).default([]),
+  mcpServers: z.array(McpServerEntrySchema.omit({ headers: true, oauth2: true })).default([]),
+});
+export type PersistedToolsSpec = z.infer<typeof PersistedToolsSpecSchema>;
 
 // ============================================================
 // Frontend-only types (no runtime validation needed)

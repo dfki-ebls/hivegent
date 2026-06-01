@@ -16,10 +16,8 @@ interface WorkspaceImageProps {
 /**
  * Renders workspace images with authenticated fetch.
  *
- * External URLs and data URIs are passed through directly.
- * Relative paths are resolved against the document's directory,
- * fetched via the authenticated documents API, and displayed
- * using a temporary blob URL.
+ * Relative paths are resolved against the document's directory, fetched via
+ * the authenticated documents API, and displayed using a temporary blob URL.
  */
 export function WorkspaceImage({ src, alt, documentPath, groupId }: WorkspaceImageProps) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
@@ -27,10 +25,11 @@ export function WorkspaceImage({ src, alt, documentPath, groupId }: WorkspaceIma
 
   useEffect(() => {
     if (!src) return;
+    setError(false);
+    setBlobUrl(null);
 
-    // External URLs and data URIs: use directly.
     if (src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://")) {
-      setBlobUrl(src);
+      setError(true);
       return;
     }
 

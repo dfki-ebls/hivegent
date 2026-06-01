@@ -1,10 +1,11 @@
 """Document mutation tool callables — edit and write."""
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Annotated, Literal, override
 
+from fastapi import HTTPException
 from pydantic import Field
 
 from .base import AsyncPathTool, ToolOutput, resolve_accessible_file
@@ -16,8 +17,9 @@ __all__ = [
     "EditNewStringArg",
     "EditOldStringArg",
     "EditReplaceAllArg",
-    "MutationHook",
+    "EditMutation",
     "WriteDocumentTool",
+    "WriteMutation",
     "WriteModeArg",
 ]
 
@@ -58,18 +60,29 @@ WriteModeArg = Annotated[
     ),
 ]
 
-MutationHook = Callable[[str], Awaitable[None]] | None
-"""Optional async callback invoked after a successful write.
+EditMutation = Callable[[str, str, str, bool], Awaitable[str]]
+"""Canonical edit operation for a resolved local document path."""
 
-Receives the local (unprefixed) filename that was modified.
-"""
+WriteMutation = Callable[[str, str, WriteModeArg], Awaitable[str]]
+"""Canonical write operation for a resolved local document path."""
+
+
+def _mutation_error(exc: HTTPException | ValueError) -> ToolOutput[str]:
+    """Render a failed mutation as a tool error message."""
+    detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+    return ToolOutput(data=f"Error: {detail}")
 
 
 @dataclass(slots=True, frozen=True)
 class EditDocumentTool(AsyncPathTool[str]):
-    """Edit a document by replacing an exact string with a new string."""
+    """Edit a document by replacing an exact string with a new string.
 
-    hook: MutationHook = None
+    Resolves and access-checks the path, then delegates the mutation to
+    :attr:`mutator` — the canonical workspace gateway that owns the
+    string-replacement semantics and re-indexing.
+    """
+
+    mutator: EditMutation = field(kw_only=True)
 
     @override
     async def __call__(
@@ -88,41 +101,25 @@ class EditDocumentTool(AsyncPathTool[str]):
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None:
             return ToolOutput(data=f"Error: '{file_path}' is not accessible.")
-        _sp, local, absolute = resolved
-        if not absolute.is_file():
-            return ToolOutput(data=f"Error: '{file_path}' does not exist.")
-
-        content = absolute.read_text(encoding="utf-8")
-        count = content.count(old_string)
-        if count == 0:
-            return ToolOutput(data=f"Error: old_string not found in '{file_path}'.")
-        if count > 1 and not replace_all:
-            return ToolOutput(
-                data=(
-                    f"Error: old_string appears {count} times in '{file_path}'; "
-                    "must be unique or call with replace_all=True."
-                ),
-            )
-
-        new_content = (
-            content.replace(old_string, new_string)
-            if replace_all
-            else content.replace(old_string, new_string, 1)
-        )
-        absolute.write_text(new_content, encoding="utf-8")
-        if self.hook:
-            await self.hook(local)
-        replaced = count if replace_all else 1
-        noun = "occurrence" if replaced == 1 else "occurrences"
-        return ToolOutput(data=f"Replaced {replaced} {noun} in '{file_path}'.")
+        _sp, local, _absolute = resolved
+        try:
+            data = await self.mutator(local, old_string, new_string, replace_all)
+        except (HTTPException, ValueError) as exc:
+            return _mutation_error(exc)
+        return ToolOutput(data=data)
 
 
 @dataclass(slots=True, frozen=True)
 class WriteDocumentTool(AsyncPathTool[str]):
-    """Write content to a document using prepend, append, or replace mode."""
+    """Write content to a document using prepend, append, or replace mode.
+
+    Resolves and access-checks the path (optionally enforcing :attr:`glob`),
+    then delegates the mutation to :attr:`mutator` — the canonical workspace
+    gateway that owns the write-mode semantics and re-indexing.
+    """
 
     glob: str | None = None
-    hook: MutationHook = None
+    mutator: WriteMutation = field(kw_only=True)
 
     @override
     async def __call__(
@@ -135,32 +132,13 @@ class WriteDocumentTool(AsyncPathTool[str]):
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None:
             return ToolOutput(data=f"Error: '{file_path}' is not accessible.")
-        _sp, local, absolute = resolved
+        _sp, local, _absolute = resolved
         if self.glob and not PurePosixPath(local).match(self.glob):
             return ToolOutput(
                 data=f"Error: '{file_path}' does not match pattern '{self.glob}'.",
             )
-
-        if mode == "replace":
-            absolute.parent.mkdir(parents=True, exist_ok=True)
-            absolute.write_text(content, encoding="utf-8")
-            message = f"Wrote {len(content)} characters to '{file_path}'."
-        elif not absolute.is_file():
-            return ToolOutput(
-                data=(
-                    f"Error: '{file_path}' does not exist "
-                    "(use mode='replace' to create)."
-                ),
-            )
-        elif mode == "append":
-            existing = absolute.read_text(encoding="utf-8")
-            absolute.write_text(existing + content, encoding="utf-8")
-            message = f"Appended {len(content)} characters to '{file_path}'."
-        else:
-            existing = absolute.read_text(encoding="utf-8")
-            absolute.write_text(content + existing, encoding="utf-8")
-            message = f"Prepended {len(content)} characters to '{file_path}'."
-
-        if self.hook:
-            await self.hook(local)
-        return ToolOutput(data=message)
+        try:
+            data = await self.mutator(local, content, mode)
+        except (HTTPException, ValueError) as exc:
+            return _mutation_error(exc)
+        return ToolOutput(data=data)

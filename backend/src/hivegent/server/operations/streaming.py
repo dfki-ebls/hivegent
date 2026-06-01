@@ -34,6 +34,7 @@ __all__ = [
     "prepare_collection_upload",
     "process_bulk_operation",
     "read_collection_zip",
+    "read_upload_file",
     "reconvert_single_stream",
     "upload_file_stream",
     "validate_collection_upload",
@@ -159,15 +160,33 @@ async def validate_collection_upload(
 
 async def read_collection_zip(file: UploadFile) -> bytes:
     """Read and validate a collection ZIP upload."""
+    return await _read_bounded_upload(
+        file,
+        limit=settings.limits.max_collection_size_bytes,
+        label="Collection",
+    )
+
+
+async def read_upload_file(file: UploadFile) -> bytes:
+    """Read and validate a single document upload."""
+    return await _read_bounded_upload(
+        file,
+        limit=settings.limits.max_file_size_bytes,
+        label="File",
+    )
+
+
+async def _read_bounded_upload(file: UploadFile, *, limit: int, label: str) -> bytes:
+    """Read an upload in chunks and reject it as soon as *limit* is exceeded."""
     buf = bytearray()
     while chunk := await file.read(settings.limits.upload_read_chunk_size):
         buf.extend(chunk)
-        if len(buf) > settings.limits.max_collection_size_bytes:
+        if len(buf) > limit:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Collection too large. "
-                    f"Maximum size: {settings.limits.max_collection_size_bytes} bytes"
+                    f"{label} too large. "
+                    f"Maximum size: {limit} bytes"
                 ),
             )
     return bytes(buf)

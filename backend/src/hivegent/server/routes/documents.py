@@ -58,6 +58,7 @@ from ..operations import (
     prepare_collection_upload,
     process_bulk_operation,
     read_collection_zip,
+    read_upload_file,
     reconvert_single_stream,
     upload_file_stream,
     validate_collection_upload,
@@ -104,7 +105,7 @@ async def replace_original(
     """Replace the original binary file and reconvert the document."""
     safe = safe_path(filepath)
     store = user_store(user)
-    content = await file.read()
+    content = await read_upload_file(file)
     spec = parse_pipeline_spec(pipeline_spec)
     llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     return await workspace.replace_original(
@@ -132,7 +133,7 @@ async def upload_document_stream(
     spec = parse_pipeline_spec(pipeline_spec)
     llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
 
-    content = await file.read()
+    content = await read_upload_file(file)
     async for event in upload_file_stream(
         store=store,
         filepath=safe,
@@ -159,7 +160,7 @@ async def upload_document(
     spec = parse_pipeline_spec(pipeline_spec)
     llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
 
-    content = await file.read()
+    content = await read_upload_file(file)
     return await workspace.upload(
         store,
         safe,

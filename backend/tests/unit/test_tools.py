@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from hivegent.tools.base import SearchPath
 from hivegent.tools.documents import (
     DocumentRange,
@@ -450,90 +452,90 @@ class TestReadDocumentTool:
 
 
 class TestEditDocumentTool:
-    """Tests for EditDocumentTool."""
+    """The tool resolves and access-checks the path, then delegates to its mutator.
 
-    async def test_replaces_string(self, tmp_path: Path) -> None:
-        (tmp_path / "doc.md").write_text("hello world")
-        tool = EditDocumentTool(paths=tmp_path)
-        result = (await tool("doc.md", "hello", "goodbye")).data
-        assert "Replaced 1 occurrence" in result
-        assert (tmp_path / "doc.md").read_text() == "goodbye world"
+    The edit algorithm itself lives in ``workspace.edit_document_text`` and is
+    covered by ``TestEditDocumentText``.
+    """
 
-    async def test_calls_on_write(self, tmp_path: Path) -> None:
-        (tmp_path / "doc.md").write_text("hello world")
-        written: list[str] = []
+    async def test_delegates_to_mutator(self, tmp_path: Path) -> None:
+        calls: list[tuple[str, str, str, bool]] = []
 
-        async def _on_write(filename: str) -> None:
-            written.append(filename)
+        async def _mutate(
+            filename: str,
+            old_string: str,
+            new_string: str,
+            replace_all: bool,
+        ) -> str:
+            calls.append((filename, old_string, new_string, replace_all))
+            return "edited"
 
-        tool = EditDocumentTool(paths=tmp_path, hook=_on_write)
-        await tool("doc.md", "hello", "goodbye")
-        assert written == ["doc.md"]
+        tool = EditDocumentTool(paths=tmp_path, mutator=_mutate)
+        result = (await tool("doc.md", "hello", "goodbye", replace_all=True)).data
+        assert result == "edited"
+        assert calls == [("doc.md", "hello", "goodbye", True)]
 
-    async def test_error_on_missing_string(self, tmp_path: Path) -> None:
-        (tmp_path / "doc.md").write_text("hello world")
-        tool = EditDocumentTool(paths=tmp_path)
-        result = (await tool("doc.md", "missing", "new")).data
-        assert "Error" in result
+    async def test_rejects_inaccessible_path(self, tmp_path: Path) -> None:
+        tool = EditDocumentTool(paths=tmp_path, mutator=_unreachable_edit)
+        result = (await tool("../escape.md", "a", "b")).data
+        assert "not accessible" in result
 
-    async def test_error_on_duplicate_string(self, tmp_path: Path) -> None:
-        (tmp_path / "doc.md").write_text("hello hello")
-        tool = EditDocumentTool(paths=tmp_path)
-        result = (await tool("doc.md", "hello", "goodbye")).data
-        assert "Error" in result
-        assert "2 times" in result
+    async def test_translates_mutator_error(self, tmp_path: Path) -> None:
+        async def _mutate(*_: object) -> str:
+            raise HTTPException(status_code=404, detail="Document not found")
 
-    async def test_replace_all(self, tmp_path: Path) -> None:
-        (tmp_path / "doc.md").write_text("foo foo foo")
-        tool = EditDocumentTool(paths=tmp_path)
-        result = (await tool("doc.md", "foo", "bar", replace_all=True)).data
-        assert "Replaced 3 occurrences" in result
-        assert (tmp_path / "doc.md").read_text() == "bar bar bar"
+        tool = EditDocumentTool(paths=tmp_path, mutator=_mutate)
+        result = (await tool("doc.md", "a", "b")).data
+        assert result == "Error: Document not found"
 
 
 class TestWriteDocumentTool:
-    """Tests for WriteDocumentTool."""
+    """The tool resolves, access-checks, and glob-filters the path, then delegates.
 
-    async def test_replace_creates_file(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(paths=tmp_path, glob="*.md")
-        result = (await tool("new.md", "content")).data
-        assert "Wrote" in result
-        assert (tmp_path / "new.md").read_text() == "content"
+    The write algorithm itself lives in ``workspace.write_document_text`` and is
+    covered by ``TestWriteDocumentText``.
+    """
 
-    async def test_append(self, tmp_path: Path) -> None:
-        (tmp_path / "doc.md").write_text("start")
-        tool = WriteDocumentTool(paths=tmp_path, glob="*.md")
-        result = (await tool("doc.md", " end", mode="append")).data
-        assert "Appended" in result
-        assert (tmp_path / "doc.md").read_text() == "start end"
+    async def test_delegates_to_mutator(self, tmp_path: Path) -> None:
+        calls: list[tuple[str, str, str]] = []
 
-    async def test_prepend(self, tmp_path: Path) -> None:
-        (tmp_path / "doc.md").write_text("end")
-        tool = WriteDocumentTool(paths=tmp_path, glob="*.md")
-        result = (await tool("doc.md", "start ", mode="prepend")).data
-        assert "Prepended" in result
-        assert (tmp_path / "doc.md").read_text() == "start end"
+        async def _mutate(filename: str, content: str, mode: str) -> str:
+            calls.append((filename, content, mode))
+            return "written"
+
+        tool = WriteDocumentTool(paths=tmp_path, glob="*.md", mutator=_mutate)
+        result = (await tool("doc.md", "content", mode="append")).data
+        assert result == "written"
+        assert calls == [("doc.md", "content", "append")]
 
     async def test_rejects_non_matching_glob(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(paths=tmp_path, glob="*.md")
+        tool = WriteDocumentTool(paths=tmp_path, glob="*.md", mutator=_unreachable_write)
         result = (await tool("doc.txt", "content")).data
         assert "Error" in result
 
     async def test_none_glob_allows_any(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(paths=tmp_path)
+        async def _mutate(filename: str, content: str, mode: str) -> str:
+            return f"wrote {filename}"
+
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_mutate)
         result = (await tool("data.txt", "content")).data
-        assert "Wrote" in result
-        assert (tmp_path / "data.txt").read_text() == "content"
+        assert result == "wrote data.txt"
 
-    async def test_calls_on_write(self, tmp_path: Path) -> None:
-        written: list[str] = []
+    async def test_translates_mutator_error(self, tmp_path: Path) -> None:
+        async def _mutate(*_: object) -> str:
+            raise HTTPException(status_code=400, detail="Unsupported write mode: x")
 
-        async def _on_write(filename: str) -> None:
-            written.append(filename)
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_mutate)
+        result = (await tool("doc.md", "content")).data
+        assert result == "Error: Unsupported write mode: x"
 
-        tool = WriteDocumentTool(paths=tmp_path, glob="*.md", hook=_on_write)
-        await tool("doc.md", "content")
-        assert written == ["doc.md"]
+
+async def _unreachable_edit(*_: object) -> str:
+    raise AssertionError("mutator must not run when the path is rejected")
+
+
+async def _unreachable_write(*_: object) -> str:
+    raise AssertionError("mutator must not run when the path is rejected")
 
 
 class TestJqTool:

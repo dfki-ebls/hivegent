@@ -7,7 +7,6 @@
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
-import { deleteAllUserData } from "../lib/api";
 import { clearAllStorage } from "../stores/storage";
 
 interface Props {
@@ -17,13 +16,12 @@ interface Props {
 interface State {
   hasError: boolean;
   error: Error | null;
-  isResetting: boolean;
 }
 
 export class AppErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false, error: null, isResetting: false };
+    this.state = { hasError: false, error: null };
   }
 
   static getDerivedStateFromError(error: Error): Partial<State> {
@@ -33,13 +31,6 @@ export class AppErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("AppErrorBoundary caught an error:", error, info.componentStack);
   }
-
-  private handleResetEverything = () => {
-    this.setState({ isResetting: true });
-    deleteAllUserData()
-      .catch((e) => console.error("Failed to delete server data:", e))
-      .finally(() => clearAllStorage());
-  };
 
   render() {
     if (!this.state.hasError) {
@@ -73,14 +64,6 @@ export class AppErrorBoundary extends Component<Props, State> {
               className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground"
             >
               Clear local data &amp; reload
-            </button>
-            <button
-              type="button"
-              disabled={this.state.isResetting}
-              onClick={this.handleResetEverything}
-              className="inline-flex items-center justify-center rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
-            >
-              {this.state.isResetting ? "Resetting..." : "Reset everything"}
             </button>
           </div>
         </div>

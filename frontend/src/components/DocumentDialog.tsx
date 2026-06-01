@@ -14,6 +14,10 @@ import {
   updateAssetDescription,
   updateGroupAssetDescription,
 } from "@/lib/api";
+import {
+  MARKDOWN_BASE_OPTIONS,
+  workspaceMarkdownOptions,
+} from "@/components/chat/markdown/config";
 import { useSettingsStore } from "@/stores/settings-store";
 import { WorkspaceImage } from "./WorkspaceImage";
 import {
@@ -483,24 +487,7 @@ export function DocumentDialog({
       return (
         <ScrollArea className="flex-1 min-h-0">
           <div className="prose prose-sm dark:prose-invert max-w-none p-4">
-            <Markdown
-              options={{
-                disableParsingRawHTML: true,
-                overrides: {
-                  img: {
-                    component: ({ src, alt, ...props }: React.ComponentProps<"img">) => (
-                      <WorkspaceImage
-                        src={src}
-                        alt={alt ?? undefined}
-                        documentPath={filename}
-                        groupId={groupId}
-                        {...props}
-                      />
-                    ),
-                  },
-                },
-              }}
-            >
+            <Markdown options={workspaceMarkdownOptions(filename, groupId)}>
               {fullContent}
             </Markdown>
           </div>
@@ -589,7 +576,7 @@ export function DocumentDialog({
               ) : (
                 <div className="prose prose-sm dark:prose-invert max-w-none">
                   {asset.description ? (
-                    <Markdown options={{ disableParsingRawHTML: true }}>
+                    <Markdown options={MARKDOWN_BASE_OPTIONS}>
                       {asset.description}
                     </Markdown>
                   ) : (

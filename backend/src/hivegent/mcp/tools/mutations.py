@@ -45,7 +45,7 @@ async def edit_document(
 
     tool = EditDocumentTool(
         paths=store.workspace_dir(settings.data_dir),
-        hook=partial(workspace.on_agent_write, store),
+        mutator=partial(workspace.edit_document_text, store),
     )
     result = await tool(file_path, old_string, new_string, replace_all)
     return result.data
@@ -69,7 +69,7 @@ async def write_document(
 
     tool = WriteDocumentTool(
         paths=store.workspace_dir(settings.data_dir),
-        hook=partial(workspace.on_agent_write, store),
+        mutator=partial(workspace.write_document_text, store),
     )
     result = await tool(file_path, content, mode)
     return result.data

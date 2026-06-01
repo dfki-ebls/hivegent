@@ -20,7 +20,7 @@ def _edit_document(deps: UserDeps) -> EditDocumentTool:
             path=deps.store.workspace_dir(settings.data_dir),
             filter_func=deps.document_filter,
         ),
-        hook=partial(workspace.on_agent_write, deps.store),
+        mutator=partial(workspace.edit_document_text, deps.store),
     )
 
 
@@ -30,7 +30,7 @@ def _write_document(deps: UserDeps) -> WriteDocumentTool:
             path=deps.store.workspace_dir(settings.data_dir),
             filter_func=deps.document_filter,
         ),
-        hook=partial(workspace.on_agent_write, deps.store),
+        mutator=partial(workspace.write_document_text, deps.store),
     )
 
 

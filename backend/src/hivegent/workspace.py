@@ -98,10 +98,10 @@ __all__ = [
     "delete_directory",
     "delete_document",
     "delete_workspace_root",
+    "edit_document_text",
     "generate_asset_description",
     "move_directory",
     "move_document",
-    "on_agent_write",
     "process_collection",
     "rechunk",
     "reconvert",
@@ -109,6 +109,7 @@ __all__ = [
     "store_lock",
     "update_asset_description",
     "upload",
+    "write_document_text",
 ]
 
 logger = logging.getLogger(__name__)
@@ -806,13 +807,94 @@ async def rechunk(
     spec = spec or PipelineSpec()
     async with store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
-        file_path = workspace_dir / safe
-        if not file_path.exists() or not file_path.is_file():
-            raise HTTPException(status_code=404, detail="Document not found")
-        text = file_path.read_text(encoding="utf-8")
+        text = _read_text_file(workspace_dir / safe)
         return await asyncio.shield(
             chunk_and_index_document(store, safe, text, spec.chunking)
         )
+
+
+def _read_text_file(file_path: Path) -> str:
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Document not found")
+    return file_path.read_text(encoding="utf-8")
+
+
+async def _replace_text_locked(
+    store: Casebase, safe: str, full_path: Path, content: str
+) -> None:
+    _enforce_file_size(content.encode("utf-8"))
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    full_path.write_text(content, encoding="utf-8")
+    await asyncio.shield(chunk_and_index_document(store, safe, content))
+
+
+async def edit_document_text(
+    store: Casebase,
+    safe: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
+) -> str:
+    """Edit a workspace text document through the canonical mutation gateway."""
+    safe = sanitize_document_path(safe)
+    async with store_lock(store):
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        file_path = workspace_dir / safe
+        content = _read_text_file(file_path)
+        count = content.count(old_string)
+        if count == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"old_string not found in '{safe}'",
+            )
+        if count > 1 and not replace_all:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"old_string appears {count} times in '{safe}'; "
+                    "must be unique or call with replace_all=True"
+                ),
+            )
+        new_content = (
+            content.replace(old_string, new_string)
+            if replace_all
+            else content.replace(old_string, new_string, 1)
+        )
+        await _replace_text_locked(store, safe, file_path, new_content)
+    replaced = count if replace_all else 1
+    noun = "occurrence" if replaced == 1 else "occurrences"
+    return f"Replaced {replaced} {noun} in '{safe}'."
+
+
+async def write_document_text(
+    store: Casebase,
+    safe: str,
+    content: str,
+    mode: str = "replace",
+) -> str:
+    """Write a workspace text document through the canonical mutation gateway."""
+    safe = sanitize_document_path(safe)
+    async with store_lock(store):
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        file_path = workspace_dir / safe
+        if mode == "replace":
+            new_content = content
+            message = f"Wrote {len(content)} characters to '{safe}'."
+        elif not file_path.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail=f"'{safe}' does not exist (use mode='replace' to create)",
+            )
+        elif mode == "append":
+            new_content = file_path.read_text(encoding="utf-8") + content
+            message = f"Appended {len(content)} characters to '{safe}'."
+        elif mode == "prepend":
+            new_content = content + file_path.read_text(encoding="utf-8")
+            message = f"Prepended {len(content)} characters to '{safe}'."
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported write mode: {mode}")
+        await _replace_text_locked(store, safe, file_path, new_content)
+    return message
 
 
 async def delete_document(store: Casebase, safe: str) -> None:
@@ -1081,24 +1163,6 @@ async def delete_workspace_root() -> None:
     await asyncio.to_thread(_wipe)
 
 
-async def on_agent_write(store: Casebase, filename: str) -> None:
-    """Re-chunk a document after an agent or MCP write tool modified it."""
-    async with store_lock(store):
-        workspace = store.workspace_dir(settings.data_dir)
-        file_path = workspace / filename
-        try:
-            text = file_path.read_text(encoding="utf-8")
-        except OSError:
-            logger.warning("Re-chunking failed for %s after write", filename)
-            return
-        try:
-            await chunk_and_index_document(store, filename, text)
-        except Exception:
-            logger.warning(
-                "Re-chunking failed for %s after write", filename, exc_info=True
-            )
-
-
 # ---------------------------------------------------------------------------
 # Collection upload
 # ---------------------------------------------------------------------------
@@ -1110,10 +1174,20 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
     Catches symlinks, special files, traversal paths, and zip bombs
     (per-entry and cumulative uncompressed size).
     """
+    file_count = 0
     total_uncompressed = 0
     for info in archive.infolist():
         if info.is_dir():
             continue
+        file_count += 1
+        if file_count > settings.limits.max_collection_files:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Collection has too many files ({file_count}). "
+                    f"Maximum: {settings.limits.max_collection_files}"
+                ),
+            )
 
         mode = (info.external_attr >> 16) & 0xFFFF
         if mode and not stat.S_ISREG(mode):
@@ -1195,15 +1269,6 @@ async def process_collection(
                 for path in extract_root.rglob("*")
                 if path.is_file()
             )
-            if len(collection_files) > settings.limits.max_collection_files:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"Collection has too many files ({len(collection_files)}). "
-                        f"Maximum: {settings.limits.max_collection_files}"
-                    ),
-                )
-
             workspace_dir = store.workspace_dir(settings.data_dir)
             preprocessed_markdown: dict[str, bytes] = {}
             collection_stems: set[str] = set()
