@@ -7,8 +7,7 @@ storage layout:
 
 * Workspace files live in ``<data_dir>/workspace/<store_key>/``
 * PostgreSQL is the source of truth for documents, chunks (text +
-  vector), conversations, tokens, memory, users, groups, and group
-  membership.
+  vector), conversations, memory, users, groups, and group membership.
 
 A full ``POST /admin/reset/factory`` wipes workspace + database and
 leaves the deployment in the same state as a clean checkout.
@@ -104,7 +103,7 @@ async def admin_reset_workspace() -> AdminResetResponse:
     """Wipe every workspace file and document row.
 
     Chunks (text + vector) cascade with the document rows.
-    Conversations, tokens, memory, users, and groups are kept.
+    Conversations, memory, users, and groups are kept.
     """
     await workspace.delete_workspace_root()
     await delete_all_documents()
@@ -119,9 +118,9 @@ async def admin_reset_database() -> AdminResetResponse:
     """Drop every user, group, and the rows that cascade from them.
 
     Cascade chain (see ``backend/src/hivegent/db/models.py``):
-    users → tokens, memory, conversations (→ messages), documents
-    (→ chunks), group memberships; groups → group documents and
-    memberships.  The workspace tree on disk is not touched.
+    users → memory, conversations (→ messages), documents (→ chunks),
+    group memberships; groups → group documents and memberships.  The
+    workspace tree on disk is not touched.
 
     Both deletes run in a single session so a crash between them cannot
     leave the database in a half-wiped state.
@@ -186,9 +185,8 @@ async def admin_delete_user_data(user_id: str) -> BulkDeleteUserDataResponse:
 
     ``workspace.delete_all`` clears documents (cascades to chunks via
     FK ``ON DELETE CASCADE``) and the workspace directory.  Removing
-    the ``User`` row then cascades to tokens, memory, and
-    conversations.  The user re-materialises lazily on the next
-    request.
+    the ``User`` row then cascades to memory and conversations.  The
+    user re-materialises lazily on the next request.
     """
     store = _casebase_or_400("user", user_id)
     await workspace.delete_all(store)

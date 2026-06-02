@@ -55,7 +55,6 @@ __all__ = [
     "Origin",
     "Permission",
     "Timestamped",
-    "Token",
     "User",
 ]
 
@@ -166,9 +165,6 @@ class User(Timestamped, Base):
     email: Mapped[str | None] = mapped_column(unique=True)
     display_name: Mapped[str | None]
 
-    tokens: Mapped[list["Token"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
     memory: Mapped["Memory | None"] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False
     )
@@ -214,24 +210,6 @@ class GroupMember(Base):
 
     group: Mapped[Group] = relationship(back_populates="members")
     user: Mapped[User] = relationship(back_populates="memberships")
-
-
-# ─── Personal access tokens ────────────────────────────────────────────
-
-
-class Token(Timestamped, Base):
-    __tablename__ = "tokens"
-
-    id: Mapped[str] = mapped_column(primary_key=True, default=_nid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    name: Mapped[str]
-    hash: Mapped[str]
-    expires_at: Mapped[datetime | None]
-    last_used_at: Mapped[datetime | None]
-
-    user: Mapped[User] = relationship(back_populates="tokens")
 
 
 # ─── Memory ────────────────────────────────────────────────────────────

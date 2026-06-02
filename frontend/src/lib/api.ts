@@ -45,9 +45,6 @@ import {
   ConversionPipelineInfoSchema,
   type CreateDirectoryResponse,
   CreateDirectoryResponseSchema,
-  type CreateTokenRequest,
-  type CreateTokenResponse,
-  CreateTokenResponseSchema,
   type DeleteDirectoryResponse,
   DeleteDirectoryResponseSchema,
   type DirectoryTreeResponse,
@@ -66,8 +63,6 @@ import {
   type PipelineSpec,
   type RechunkCompleteEvent,
   RechunkStreamEventSchema,
-  type TokenInfo,
-  TokenInfoSchema,
   type UploadDocumentResponse,
   UploadDocumentResponseSchema,
   UploadStreamEventSchema,
@@ -665,52 +660,6 @@ export async function deleteConversation(conversationId: string): Promise<void> 
   }
 }
 
-// Token management API functions
-
-export async function createToken(
-  name: string,
-  expiresInDays?: number,
-): Promise<CreateTokenResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/tokens`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name,
-      expires_in_days: expiresInDays ?? null,
-    } satisfies CreateTokenRequest),
-  });
-
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to create token" }));
-    throw new Error(error.detail || "Failed to create token");
-  }
-
-  const data: unknown = await res.json();
-  return CreateTokenResponseSchema.parse(data);
-}
-
-export async function listTokens(): Promise<TokenInfo[]> {
-  const res = await authFetch(`${API_BASE_URL}/api/tokens`);
-
-  if (!res.ok) {
-    throw new Error("Failed to list tokens");
-  }
-
-  const data: unknown = await res.json();
-  return z.array(TokenInfoSchema).parse(data);
-}
-
-export async function revokeToken(tokenId: string): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/tokens/${tokenId}`, {
-    method: "DELETE",
-  });
-
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to revoke token" }));
-    throw new Error(error.detail || "Failed to revoke token");
-  }
-}
-
 // Conversion pipeline API functions
 
 export async function listConversionPipelines(): Promise<ConversionPipelineInfo[]> {
@@ -1222,17 +1171,6 @@ export async function deleteAllDocuments(): Promise<void> {
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Failed to delete documents" }));
     throw new Error(error.detail || "Failed to delete documents");
-  }
-}
-
-/** Revoke all personal access tokens. */
-export async function revokeAllTokens(): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/tokens`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to revoke tokens" }));
-    throw new Error(error.detail || "Failed to revoke tokens");
   }
 }
 

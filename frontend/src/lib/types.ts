@@ -93,8 +93,8 @@ export type PersistedOverrides = z.infer<typeof PersistedOverridesSchema>;
 
 /** Authenticated user information from the backend.
  *
- * Admin status is derived client-side from `BackendSettings.admin_group`
- * and the user's groups — mirrors the server's `User.is_admin` property.
+ * Admin status is derived client-side from the fixed `admin` role being
+ * present in `roles` — mirrors the server's `User.is_admin` property.
  */
 export const UserResponseSchema = z.object({
   id: z.string(),
@@ -102,6 +102,7 @@ export const UserResponseSchema = z.object({
   name: z.string().nullable().optional(),
   read_groups: z.array(z.string()).default([]),
   write_groups: z.array(z.string()).default([]),
+  roles: z.array(z.string()).default([]),
 });
 export type UserResponse = z.infer<typeof UserResponseSchema>;
 
@@ -160,7 +161,6 @@ export const BackendSettingsSchema = z.object({
   has_api_key: z.boolean(),
   base_url: z.string(),
   user: UserResponseSchema,
-  admin_group: z.string(),
 });
 export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
 
@@ -321,26 +321,6 @@ export const GenerateTitleResponseSchema = z.object({
   title: z.string(),
 });
 export type GenerateTitleResponse = z.infer<typeof GenerateTitleResponseSchema>;
-
-/** Response from token creation. */
-export const CreateTokenResponseSchema = z.object({
-  token: z.string(),
-  id: z.string(),
-  name: z.string(),
-  created_at: z.string(),
-  expires_at: z.string().nullable(),
-});
-export type CreateTokenResponse = z.infer<typeof CreateTokenResponseSchema>;
-
-/** Information about a personal access token (without the token value). */
-export const TokenInfoSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  created_at: z.string(),
-  expires_at: z.string().nullable(),
-  last_used_at: z.string().nullable(),
-});
-export type TokenInfo = z.infer<typeof TokenInfoSchema>;
 
 /** A file or directory entry in the document tree (recursive). */
 export interface DirectoryEntry {
@@ -733,12 +713,6 @@ export interface LlmConfig {
   model?: string;
   api_key?: string;
   base_url?: string | null;
-}
-
-/** Request to create a personal access token. */
-export interface CreateTokenRequest {
-  name: string;
-  expires_in_days: number | null;
 }
 
 // ============================================================

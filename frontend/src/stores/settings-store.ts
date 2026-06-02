@@ -102,7 +102,7 @@ interface SettingsState {
   // User context (from backend, not persisted)
   readGroups: string[];
   writeGroups: string[];
-  adminGroup: string;
+  roles: string[];
 
   // LLM actions
   setOverride: (partial: Partial<UserOverrides>) => void;
@@ -164,7 +164,7 @@ export const useSettingsStore = create<SettingsState>()(
       overrides: EMPTY_OVERRIDES,
       readGroups: [],
       writeGroups: [],
-      adminGroup: "",
+      roles: [],
       ...UI_DEFAULTS,
 
       setOverride: (partial) =>
@@ -182,7 +182,7 @@ export const useSettingsStore = create<SettingsState>()(
               backendDefaults: defaults,
               readGroups: defaults.user.read_groups,
               writeGroups: defaults.user.write_groups,
-              adminGroup: defaults.admin_group,
+              roles: defaults.user.roles,
             });
             return;
           } catch {
@@ -380,34 +380,26 @@ export const useSettingsStore = create<SettingsState>()(
   ),
 );
 
-/**
- * Return knowledge groups the user belongs to (read + write).
- *
- * The configured admin group is filtered out — it is a privilege marker
- * only, mirrors the server's `Casebase` rejection, and holds no documents.
- */
+/** Return the knowledge groups the user belongs to (read + write). */
 export function getAllGroups(): string[] {
-  const { readGroups, writeGroups, adminGroup } = useSettingsStore.getState();
-  const union = new Set([...readGroups, ...writeGroups]);
-  if (adminGroup) union.delete(adminGroup);
-  return [...union].sort();
+  const { readGroups, writeGroups } = useSettingsStore.getState();
+  return [...new Set([...readGroups, ...writeGroups])].sort();
 }
 
 /** Check whether the user has write access to a knowledge group. */
 export function canWriteGroup(groupId: string): boolean {
-  const { writeGroups, adminGroup } = useSettingsStore.getState();
-  if (adminGroup && groupId === adminGroup) return false;
-  return writeGroups.includes(groupId);
+  return useSettingsStore.getState().writeGroups.includes(groupId);
 }
+
+/** The fixed role name that grants administrator privileges. */
+const ADMIN_ROLE = "admin";
 
 /**
  * Zustand selector: whether the user is an administrator.
  *
- * Derived from `adminGroup` membership — same rule as the server's
- * `User.is_admin` property.  Empty `adminGroup` disables the gate.
+ * Derived from the fixed `admin` role in the user's roles — same rule as
+ * the server's `User.is_admin` property.
  */
 export function selectIsAdmin(state: SettingsState): boolean {
-  const { adminGroup, readGroups, writeGroups } = state;
-  if (!adminGroup) return false;
-  return readGroups.includes(adminGroup) || writeGroups.includes(adminGroup);
+  return state.roles.includes(ADMIN_ROLE);
 }

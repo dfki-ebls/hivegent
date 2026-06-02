@@ -10,18 +10,12 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as SettingsTokensRouteImport } from './routes/settings.tokens'
 import { Route as SettingsAccountRouteImport } from './routes/settings.account'
 import { Route as ConversationsIdRouteImport } from './routes/conversations.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsTokensRoute = SettingsTokensRouteImport.update({
-  id: '/settings/tokens',
-  path: '/settings/tokens',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsAccountRoute = SettingsAccountRouteImport.update({
@@ -39,43 +33,30 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/conversations/$id': typeof ConversationsIdRoute
   '/settings/account': typeof SettingsAccountRoute
-  '/settings/tokens': typeof SettingsTokensRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/conversations/$id': typeof ConversationsIdRoute
   '/settings/account': typeof SettingsAccountRoute
-  '/settings/tokens': typeof SettingsTokensRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/conversations/$id': typeof ConversationsIdRoute
   '/settings/account': typeof SettingsAccountRoute
-  '/settings/tokens': typeof SettingsTokensRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/conversations/$id'
-    | '/settings/account'
-    | '/settings/tokens'
+  fullPaths: '/' | '/conversations/$id' | '/settings/account'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/conversations/$id' | '/settings/account' | '/settings/tokens'
-  id:
-    | '__root__'
-    | '/'
-    | '/conversations/$id'
-    | '/settings/account'
-    | '/settings/tokens'
+  to: '/' | '/conversations/$id' | '/settings/account'
+  id: '__root__' | '/' | '/conversations/$id' | '/settings/account'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ConversationsIdRoute: typeof ConversationsIdRoute
   SettingsAccountRoute: typeof SettingsAccountRoute
-  SettingsTokensRoute: typeof SettingsTokensRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -85,13 +66,6 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/tokens': {
-      id: '/settings/tokens'
-      path: '/settings/tokens'
-      fullPath: '/settings/tokens'
-      preLoaderRoute: typeof SettingsTokensRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/account': {
@@ -115,7 +89,6 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ConversationsIdRoute: ConversationsIdRoute,
   SettingsAccountRoute: SettingsAccountRoute,
-  SettingsTokensRoute: SettingsTokensRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

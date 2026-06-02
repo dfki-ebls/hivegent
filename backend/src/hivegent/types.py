@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 from pydantic_ai.settings import ThinkingEffort
 
 from .chunkers import ChunkingSpec
-from .config import settings
+from .config import ADMIN_ROLE, settings
 from .converters import ConversionSpec
 from .db.conversations import ConversationSummary
 from .prompts import Personality
@@ -32,7 +32,6 @@ __all__ = [
     "BulkDeleteUserDataResponse",
     "BulkOperationCompleteEvent",
     "BulkOperationProgressEvent",
-    "BulkRevokeTokensResponse",
     "ChatRequestConfig",
     "ClearMemoryResponse",
     "CollectionCompleteEvent",
@@ -43,8 +42,6 @@ __all__ = [
     "ConversationListResponse",
     "CreateDirectoryRequest",
     "CreateDirectoryResponse",
-    "CreateTokenRequest",
-    "CreateTokenResponse",
     "DeleteConversationResponse",
     "DeleteDirectoryRequest",
     "DeleteDirectoryResponse",
@@ -70,7 +67,6 @@ __all__ = [
     "PipelineSpec",
     "RechunkCompleteEvent",
     "SettingsResponse",
-    "TokenInfo",
     "ToolInfo",
     "ToolsSpec",
     "UpdateTitleRequest",
@@ -110,12 +106,14 @@ class DocumentFilter:
 
 @dataclass(slots=True, frozen=True)
 class User:
-    """Authenticated user information with group membership.
+    """Authenticated user with group membership and roles.
 
-    Admin status is derived on every access from
-    :attr:`~hivegent.config.GroupSettings.admin_group` membership — no
-    duplicate flag is stored anywhere.  Grant admin by adding a user to
-    that group in the IdP (or in the local workspace for dev).
+    Groups model shared knowledge containers (read/write per group);
+    roles model global capabilities.  Admin status is derived on every
+    access from the fixed :data:`~hivegent.config.ADMIN_ROLE` being
+    present in :attr:`roles` — no duplicate flag is stored anywhere.
+    Grant admin by adding a user to that role in the IdP (or, for dev,
+    auth is disabled and the local user is admin).
     """
 
     id: str
@@ -123,6 +121,7 @@ class User:
     name: str | None = None
     read_groups: frozenset[str] = field(default_factory=frozenset)
     write_groups: frozenset[str] = field(default_factory=frozenset)
+    roles: frozenset[str] = field(default_factory=frozenset)
 
     @property
     def all_groups(self) -> frozenset[str]:
@@ -131,26 +130,8 @@ class User:
 
     @property
     def is_admin(self) -> bool:
-        """Whether the user is a member of the configured admin group."""
-        admin_group = settings.groups.admin_group
-        return bool(admin_group) and admin_group in self.all_groups
-
-    @property
-    def knowledge_read_groups(self) -> frozenset[str]:
-        """Read groups that hold knowledge — the admin marker is excluded."""
-        admin = settings.groups.admin_group
-        return self.read_groups - {admin} if admin else self.read_groups
-
-    @property
-    def knowledge_write_groups(self) -> frozenset[str]:
-        """Write groups that hold knowledge — the admin marker is excluded."""
-        admin = settings.groups.admin_group
-        return self.write_groups - {admin} if admin else self.write_groups
-
-    @property
-    def knowledge_groups(self) -> frozenset[str]:
-        """All groups that hold knowledge — the admin marker is excluded."""
-        return self.knowledge_read_groups | self.knowledge_write_groups
+        """Whether the user holds the fixed admin role."""
+        return ADMIN_ROLE in self.roles
 
 
 class LlmConfig(BaseModel):
@@ -250,22 +231,6 @@ class ToolInfo(BaseModel):
     name: str
     description: str
     group: str
-
-
-class TokenInfo(BaseModel):
-    """Information about a personal access token without the token value."""
-
-    id: str = Field(description="The token ID")
-    name: str = Field(description="The token name")
-    created_at: datetime = Field(description="When the token was created")
-    expires_at: datetime | None = Field(
-        default=None,
-        description="When the token expires",
-    )
-    last_used_at: datetime | None = Field(
-        default=None,
-        description="When the token was last used",
-    )
 
 
 type ReasoningEffort = Literal["auto", "none"] | ThinkingEffort
@@ -463,8 +428,8 @@ class UserResponse(BaseModel):
     """Serializable user information for API responses.
 
     Admin status is intentionally not on the wire — the client derives
-    it the same way the server does, by checking ``admin_group`` against
-    ``read_groups | write_groups``.  See :class:`SettingsResponse`.
+    it the same way the server does, by checking for the fixed ``admin``
+    role in ``roles``.
     """
 
     id: str = Field(description="User identifier")
@@ -478,6 +443,10 @@ class UserResponse(BaseModel):
         default_factory=list,
         description="Groups with write access",
     )
+    roles: list[str] = Field(
+        default_factory=list,
+        description="Global roles held by the user",
+    )
 
     @staticmethod
     def from_user(user: User) -> "UserResponse":
@@ -489,6 +458,7 @@ class UserResponse(BaseModel):
             name=user.name,
             read_groups=sorted(user.read_groups),
             write_groups=sorted(user.write_groups),
+            roles=sorted(user.roles),
         )
 
 
@@ -505,13 +475,6 @@ class SettingsResponse(BaseModel):
     has_api_key: bool = Field(description="Whether a server-side API key is configured")
     base_url: str = Field(description="Default base URL for the LLM provider")
     user: UserResponse = Field(description="Authenticated user information")
-    admin_group: str = Field(
-        description=(
-            "Group name whose members are administrators.  Empty string "
-            "disables the admin gate.  Lets the client derive admin "
-            "status the same way the server does."
-        ),
-    )
 
 
 class GenerateTitleRequest(BaseModel):
@@ -524,29 +487,6 @@ class GenerateTitleResponse(BaseModel):
     """Response from title generation."""
 
     title: str = Field(description="The generated title")
-
-
-class CreateTokenRequest(BaseModel):
-    """Request to create a personal access token."""
-
-    name: str = Field(description="A name for the token")
-    expires_in_days: int | None = Field(
-        default=None,
-        description="Optional expiration in days",
-    )
-
-
-class CreateTokenResponse(BaseModel):
-    """Response from token creation."""
-
-    token: str = Field(description="The raw token (only shown once)")
-    id: str = Field(description="The token ID for management")
-    name: str = Field(description="The token name")
-    created_at: datetime = Field(description="When the token was created")
-    expires_at: datetime | None = Field(
-        default=None,
-        description="When the token expires",
-    )
 
 
 class DirectoryEntry(BaseModel):
@@ -657,13 +597,6 @@ class BulkDeleteConversationsResponse(BaseModel):
 class BulkDeleteDocumentsResponse(BaseModel):
     """Response for bulk document deletion."""
 
-    message: str = Field(description="Status message")
-
-
-class BulkRevokeTokensResponse(BaseModel):
-    """Response for bulk token revocation."""
-
-    revoked_count: int = Field(description="Number of tokens revoked")
     message: str = Field(description="Status message")
 
 

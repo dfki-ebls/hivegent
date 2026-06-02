@@ -308,7 +308,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     document_filter, group_filters = parse_document_filters(
         config.included_documents,
         config.excluded_documents,
-        user.knowledge_groups,
+        user.all_groups,
     )
 
     if config.personality == Personality.CUSTOM and config.system_message:

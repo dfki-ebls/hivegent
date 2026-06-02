@@ -190,26 +190,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("user_id", name=op.f("pk_memory")),
     )
     op.create_table(
-        "tokens",
-        sa.Column("id", sa.String(), nullable=False),
-        sa.Column("user_id", sa.String(), nullable=False),
-        sa.Column("name", sa.String(), nullable=False),
-        sa.Column("hash", sa.String(), nullable=False),
-        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["user_id"],
-            ["users.id"],
-            name=op.f("fk_tokens_user_id_users"),
-            ondelete="CASCADE",
-        ),
-        sa.PrimaryKeyConstraint("id", name=op.f("pk_tokens")),
-    )
-    op.create_index(op.f("ix_tokens_user_id"), "tokens", ["user_id"], unique=False)
-
-    op.create_table(
         "messages",
         sa.Column("conversation_id", sa.String(), nullable=False),
         sa.Column("idx", sa.Integer(), nullable=False),
@@ -279,8 +259,6 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_chunks_document_id"), table_name="chunks")
     op.drop_table("chunks")
     op.drop_table("messages")
-    op.drop_index(op.f("ix_tokens_user_id"), table_name="tokens")
-    op.drop_table("tokens")
     op.drop_table("memory")
     op.drop_index(op.f("ix_group_members_user_id"), table_name="group_members")
     op.drop_table("group_members")

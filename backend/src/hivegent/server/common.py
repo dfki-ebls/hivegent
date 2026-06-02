@@ -55,8 +55,7 @@ def parse_document_filters(
     """Parse include and exclude lists into per-store document filters.
 
     ``user_groups`` is the set of groups whose documents the caller may
-    address — pass :attr:`User.knowledge_groups` so the admin marker is
-    excluded automatically and `@admin/...` entries fall through.
+    address — pass :attr:`User.all_groups`.
     """
     user_included: list[str] = []
     user_excluded: list[str] = []
@@ -107,12 +106,8 @@ def group_store(group_id: str) -> Casebase:
 
 
 def group_stores(user: User) -> tuple[Casebase, ...]:
-    """Build group casebases from the user's knowledge memberships.
-
-    Iterates :attr:`User.knowledge_groups`, so the admin marker is filtered
-    upstream and no per-request ``ValueError`` from :class:`Casebase` fires.
-    """
-    return tuple(group_store(group_id) for group_id in user.knowledge_groups)
+    """Build group casebases for every group the user belongs to."""
+    return tuple(group_store(group_id) for group_id in user.all_groups)
 
 
 def parse_pipeline_spec(raw: str) -> PipelineSpec:
@@ -143,21 +138,17 @@ def safe_group_id(group_id: str) -> str:
 
 
 def require_group_member(user: User, group_id: str) -> str:
-    """Validate the group ID and require knowledge-group membership.
-
-    Checks :attr:`User.knowledge_groups`, so the admin marker (which never
-    backs a knowledge namespace) is uniformly rejected with the same 403.
-    """
+    """Validate the group ID and require group membership."""
     safe_id = safe_group_id(group_id)
-    if safe_id not in user.knowledge_groups:
+    if safe_id not in user.all_groups:
         raise HTTPException(status_code=403, detail="Not a member of this group")
     return safe_id
 
 
 def require_group_write(user: User, group_id: str) -> str:
-    """Validate the group ID and require knowledge-group write access."""
+    """Validate the group ID and require group write access."""
     safe_id = safe_group_id(group_id)
-    if safe_id not in user.knowledge_write_groups:
+    if safe_id not in user.write_groups:
         raise HTTPException(
             status_code=403,
             detail="Write access required for this group",

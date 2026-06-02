@@ -4,7 +4,6 @@ import {
   FactoryIcon,
   FileX2Icon,
   FolderXIcon,
-  KeyRoundIcon,
   MessageSquareXIcon,
   RefreshCwIcon,
   RotateCcwIcon,
@@ -40,7 +39,6 @@ import {
   deleteAllConversations,
   deleteAllDocuments,
   deleteAllUserData,
-  revokeAllTokens,
 } from "../lib/api";
 import type { AdminGroupInfo, AdminUserInfo } from "../lib/types";
 import { enforceLogin } from "../oidc";
@@ -181,24 +179,6 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
         >
           <FileX2Icon className="h-4 w-4 mr-2" />
           Delete All Documents
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="justify-start"
-          onClick={() =>
-            setAction({
-              key: "user-tokens",
-              title: "Revoke All Tokens",
-              description:
-                "Permanently revoke every personal access token you own. Applications using these tokens will immediately lose API access.",
-              confirm: "Revoke All Tokens",
-              run: () => revokeAllTokens(),
-            })
-          }
-        >
-          <KeyRoundIcon className="h-4 w-4 mr-2" />
-          Revoke All Tokens
         </Button>
         <Button
           variant="destructive"

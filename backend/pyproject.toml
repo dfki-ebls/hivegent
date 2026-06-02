@@ -7,7 +7,6 @@ requires-python = ">=3.13,<4"
 authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
 dependencies = [
   "alembic>=1.13,<2",
-  "argon2-cffi>=25,<26",
   "cbrkit[sql,pgvector]>=1.4,<2",
   "chonkie>=1,<2",
   "ddgs>=9,<10",

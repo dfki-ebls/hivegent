@@ -23,9 +23,8 @@ from joserfc.jws import extract_compact
 from joserfc.jwt import ClaimsOption, JWTClaimsRegistry
 from pydantic import AnyHttpUrl, ValidationError
 
-from .config import sanitize_user_id, settings
+from .config import ADMIN_ROLE, sanitize_user_id, settings
 from .db.groups import list_group_ids
-from .db.tokens import validate_token as _validate_pat
 from .http_client import get_shared_http_client
 from .types import User
 
@@ -196,7 +195,6 @@ class JWKSFetcher:
 
 
 _jwks_fetcher = JWKSFetcher()
-_pat_verify_semaphore = asyncio.Semaphore(max(1, settings.auth.pat_verify_concurrency))
 
 
 def _should_refresh_jwks(token: str, key_set: KeySet) -> bool:
@@ -220,6 +218,41 @@ def _should_refresh_jwks(token: str, key_set: KeySet) -> bool:
     return False
 
 
+def _audience_matches(aud: str) -> bool:
+    """Whether a token ``aud`` matches any configured audience pattern.
+
+    A pattern ending in ``*`` matches by prefix — ``hivegent-*`` accepts
+    every client whose id starts with ``hivegent-``, so new clients need
+    no config change — while any other pattern matches exactly.
+    """
+    for pattern in settings.auth.audience:
+        if pattern.endswith("*"):
+            if aud.startswith(pattern[:-1]):
+                return True
+        elif aud == pattern:
+            return True
+    return False
+
+
+class _ClaimsRegistry(JWTClaimsRegistry):
+    """JWT claims registry whose ``aud`` honours a trailing-``*`` prefix.
+
+    joserfc's :class:`ClaimsOption` only matches audiences exactly, so the
+    prefix case rides its per-claim ``validate_<name>`` hook — the same
+    mechanism the library uses for ``exp``/``nbf`` — keeping audience
+    inside the standard claims pipeline.  A mismatch raises the library's
+    :class:`InvalidClaimError`, mapped to 401 like every other claim.  The
+    claim is checked only when an audience is configured.
+    """
+
+    def validate_aud(self, value: Any) -> None:
+        if not settings.auth.audience:
+            return
+        auds = value if isinstance(value, list) else [value]
+        if not any(isinstance(a, str) and _audience_matches(a) for a in auds):
+            raise InvalidClaimError("aud")
+
+
 def _build_claims_registry() -> JWTClaimsRegistry:
     """Build a JWT claims registry based on current auth settings.
 
@@ -227,14 +260,16 @@ def _build_claims_registry() -> JWTClaimsRegistry:
     and several other IdPs emit ``iss`` with a trailing slash even when
     the configured URL doesn't, and OIDC mandates exact match. The
     expected value is normalized here; the actual claim is normalized in
-    ``validate_jwt_token`` before validation.
+    ``validate_jwt_token`` before validation.  ``aud`` is required and
+    matched (:meth:`_ClaimsRegistry.validate_aud`) only when an audience
+    is configured.
     """
     options: dict[str, Any] = {"sub": ClaimsOption(essential=True)}
     if settings.auth.issuer:
         options["iss"] = ClaimsOption(value=settings.auth.issuer.rstrip("/"))
     if settings.auth.audience:
-        options["aud"] = ClaimsOption(value=settings.auth.audience)
-    return JWTClaimsRegistry(leeway=300, **options)
+        options["aud"] = ClaimsOption(essential=True)
+    return _ClaimsRegistry(leeway=300, **options)
 
 
 def _format_invalid_claim_detail(claim: str) -> str:
@@ -257,7 +292,7 @@ def parse_group_claim(claims: Mapping[str, Any]) -> Iterator[tuple[str, str | No
 
     Malformed entries (non-strings, empties, suffix-only) are skipped.
     """
-    raw = claims.get(settings.groups.groups_claim, [])
+    raw = claims.get(settings.claims.groups, [])
     if not isinstance(raw, list):
         return
     for entry in raw:
@@ -277,16 +312,29 @@ def _extract_group_permissions(
     """Split the groups claim into ``(read_groups, write_groups)``.
 
     Bare names without an explicit permission use the
-    ``default_permission`` setting.
+    ``default_group_permission`` setting.
     """
     read_groups: set[str] = set()
     write_groups: set[str] = set()
     for group_id, permission in parse_group_claim(claims):
         write = permission == "write" or (
-            permission is None and settings.groups.default_permission == "write"
+            permission is None and settings.claims.default_group_permission == "write"
         )
         (write_groups if write else read_groups).add(group_id)
     return frozenset(read_groups), frozenset(write_groups)
+
+
+def _extract_roles(claims: Mapping[str, Any]) -> frozenset[str]:
+    """Return the role names from the OIDC roles claim.
+
+    Roles are global capabilities (e.g. admin), kept separate from the
+    groups claim that models shared knowledge.  Non-string and empty
+    entries are skipped.
+    """
+    raw = claims.get(settings.claims.roles, [])
+    if not isinstance(raw, list):
+        return frozenset()
+    return frozenset(role for role in raw if isinstance(role, str) and role)
 
 
 async def validate_jwt_token(token: str) -> User:
@@ -369,6 +417,7 @@ async def validate_jwt_token(token: str) -> User:
         name=claims.get("name") or claims.get("preferred_username"),
         read_groups=read_groups,
         write_groups=write_groups,
+        roles=_extract_roles(claims),
     )
 
 
@@ -381,8 +430,7 @@ async def get_current_user(
 ) -> User:
     """FastAPI dependency to get the current authenticated user.
 
-    Validates the Bearer token from the Authorization header.
-    Supports both JWT tokens and Personal Access Tokens (PATs).
+    Validates the OIDC Bearer JWT from the Authorization header.
 
     When HIVEGENT_AUTH__ENABLE=false, returns a dev user without validation.
 
@@ -397,18 +445,15 @@ async def get_current_user(
     """
     # Bypass authentication in development mode
     if not settings.auth.enable:
-        # Give write access to every group registered in the database
-        # plus the admin group, so destructive endpoints are reachable
-        # via the same property-derived `is_admin` check used in prod.
-        write_groups = set(await list_group_ids())
-        admin_group = settings.groups.admin_group
-        if admin_group:
-            write_groups.add(admin_group)
+        # Give write access to every group registered in the database and
+        # the admin role, so destructive endpoints are reachable via the
+        # same property-derived `is_admin` check used in prod.
         return User(
             id="localhost",
             email="dev@localhost",
             name="Localhost User",
-            write_groups=frozenset(write_groups),
+            write_groups=await list_group_ids(),
+            roles=frozenset({ADMIN_ROLE}),
         )
 
     if credentials is None:
@@ -418,22 +463,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    token = credentials.credentials
-
-    if token.startswith("hivegent_"):
-        # Argon2 is CPU-bound (~10ms); the repo offloads to a thread.
-        # The semaphore caps concurrent verifies under load.
-        async with _pat_verify_semaphore:
-            user = await _validate_pat(token)
-        if user:
-            return user
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid personal access token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    return await validate_jwt_token(token)
+    return await validate_jwt_token(credentials.credentials)
 
 
 async def require_admin(
@@ -441,11 +471,10 @@ async def require_admin(
 ) -> User:
     """FastAPI dependency that gates a route on administrator privileges.
 
-    Admin status is the ``User.is_admin`` property — membership in
-    ``settings.groups.admin_group`` — derived live from the request's
-    group claims.  PATs carry no group context, so admin actions must
-    go through the OIDC flow.  Non-admins receive 403; the body
-    deliberately avoids hinting at the well-known admin group name.
+    Admin status is the ``User.is_admin`` property — the fixed ``admin``
+    role present in the request's ``roles`` claim.  PATs carry no roles,
+    so admin actions must go through the OIDC flow.  Non-admins receive
+    403.
     """
     if not user.is_admin:
         raise HTTPException(

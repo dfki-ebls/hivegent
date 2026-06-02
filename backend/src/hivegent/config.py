@@ -18,12 +18,18 @@ from .converters.base import DOCUMENT_EXTENSION
 CONFIG_FILE_ENV_VAR = "HIVEGENT_CONFIG_FILE"
 DEFAULT_CONFIG_FILE = Path("config.toml")
 
+#: The fixed role name that grants administrator privileges.  Not
+#: configurable: admin is a global capability, fully independent of the
+#: groups used to share knowledge.
+ADMIN_ROLE = "admin"
+
 __all__ = [
+    "ADMIN_ROLE",
     "DOCUMENT_EXTENSION",
     "AuthSettings",
+    "ClaimSettings",
     "DatabaseSettings",
     "EmbeddingSettings",
-    "GroupSettings",
     "LimitsSettings",
     "LlmSettings",
     "LogfireSettings",
@@ -31,7 +37,6 @@ __all__ = [
     "NetworkSettings",
     "SecuritySettings",
     "Settings",
-    "is_admin_group",
     "sanitize_document_path",
     "sanitize_group_id",
     "sanitize_user_id",
@@ -212,42 +217,45 @@ class McpSettings(BaseModel):
     allow_unauthenticated: bool = False
 
 
-class GroupSettings(BaseModel):
-    """Settings for group-based knowledge sharing.
+class ClaimSettings(BaseModel):
+    """OIDC claim names and how their group entries are interpreted.
 
-    Configurable via ``HIVEGENT_GROUPS__*`` environment variables.
+    Configurable via ``HIVEGENT_CLAIMS__*`` environment variables.
 
-    ``admin_group`` names the well-known group whose members are
-    administrators.  Membership is checked against the same OIDC
-    ``groups`` claim used for read/write access, so promoting a user
-    to admin is purely an IdP-side group assignment.
+    ``groups`` is the claim carrying shared-knowledge group memberships
+    (entries like ``"engineering:write"``); ``roles`` is the claim
+    carrying global roles (e.g. the fixed :data:`ADMIN_ROLE`).
+    ``default_group_permission`` is the permission granted to a bare
+    group entry — one without a ``:read``/``:write`` suffix.
     """
 
-    groups_claim: str = "groups"
-    default_permission: str = "read"
-    admin_group: str = "admin"
+    groups: str = "groups"
+    roles: str = "roles"
+    default_group_permission: Literal["read", "write"] = "write"
 
 
 class AuthSettings(BaseModel):
-    """OIDC authentication and personal access token settings.
+    """OIDC authentication settings.
 
     Configurable via ``HIVEGENT_AUTH__*`` environment variables.
 
-    ``jwks_timeout_seconds`` caps both the OIDC discovery and JWKS
-    fetches; ``last_used_throttle_seconds`` debounces ``last_used_at``
-    writes for personal access tokens so an authenticated burst doesn't
-    rewrite the per-user token JSON on every request.
+    ``audience`` is the set of accepted token audiences.  The IdP stamps
+    each token's ``aud`` with the issuing client's id, so this confines
+    the API to its own clients.  An entry ending in ``*`` matches by
+    prefix, so a single ``"hivegent-*"`` accepts every current and future
+    ``hivegent-`` client without a config change; other entries match
+    exactly.  A token whose ``aud`` matches nothing is rejected.  Required
+    when ``enable`` is true.  ``jwks_timeout_seconds`` caps both the OIDC
+    discovery and JWKS fetches.
     """
 
     enable: bool = True
     allow_disabled: bool = False
     issuer: str = ""
-    audience: str | None = None
+    audience: list[str] = []
     jwks_cache_ttl: int = 3600
     jwks_force_refresh_min_interval_seconds: int = 60
     jwks_timeout_seconds: float = 10.0
-    last_used_throttle_seconds: int = 60
-    pat_verify_concurrency: int = 8
 
 
 class SecuritySettings(BaseModel):
@@ -361,7 +369,7 @@ class Settings(BaseSettings):
     embedding: EmbeddingSettings = EmbeddingSettings()
     logfire: LogfireSettings = LogfireSettings()
     mcp: McpSettings = McpSettings()
-    groups: GroupSettings = GroupSettings()
+    claims: ClaimSettings = ClaimSettings()
     auth: AuthSettings = AuthSettings()
     security: SecuritySettings = SecuritySettings()
     limits: LimitsSettings = LimitsSettings()
@@ -372,14 +380,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-
-def is_admin_group(group_id: str) -> bool:
-    """Return ``True`` when ``group_id`` is the configured admin marker.
-
-    The admin group is a privilege marker only — it never holds knowledge,
-    backs no casebase, and must be filtered out wherever the codebase
-    enumerates groups for storage purposes.
-    """
-    admin = settings.groups.admin_group
-    return bool(admin) and group_id == admin

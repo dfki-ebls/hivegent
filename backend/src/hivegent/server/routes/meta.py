@@ -35,7 +35,6 @@ async def get_settings(
         has_api_key=bool(settings.llm.api_key),
         base_url=settings.llm.base_url,
         user=UserResponse.from_user(user),
-        admin_group=settings.groups.admin_group,
     )
 
 

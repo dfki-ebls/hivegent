@@ -63,6 +63,7 @@ describe("getSettings", () => {
         name: "Test User",
         read_groups: [],
         write_groups: [],
+        roles: [],
       },
     };
 

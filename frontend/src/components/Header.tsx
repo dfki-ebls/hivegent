@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { FileSearch, Key, LogOut, User, UserCog } from "lucide-react";
+import { FileSearch, LogOut, User, UserCog } from "lucide-react";
 import { useOidc } from "../oidc";
 import { Button } from "./ui/button";
 import {
@@ -34,12 +34,6 @@ function UserMenu() {
           <Link to="/settings/account" className="flex items-center gap-2">
             <UserCog className="h-4 w-4" />
             Account
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link to="/settings/tokens" className="flex items-center gap-2">
-            <Key className="h-4 w-4" />
-            API Tokens
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />

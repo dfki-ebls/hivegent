@@ -32,7 +32,10 @@ if settings.mcp.enable and settings.auth.enable:
             token_verifier=JWTVerifier(
                 jwks_uri=str(oidc_config.jwks_uri),
                 issuer=settings.auth.issuer,
-                audience=settings.auth.audience,
+                # FastMCP matches audience exactly, so the API's ``hivegent-*``
+                # prefix list does not apply here.  The /mcp resource validates
+                # its own client id; an empty id leaves the check disabled.
+                audience=settings.mcp.client_id,
             ),
             authorization_servers=[AnyHttpUrl(settings.auth.issuer)],
             base_url=settings.mcp.base_url,

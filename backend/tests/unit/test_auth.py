@@ -66,7 +66,7 @@ async def test_validate_jwt_token_passes_discovery_algorithms(
     passing ``algorithms=`` explicitly.
     """
     monkeypatch.setattr(settings.auth, "issuer", "")
-    monkeypatch.setattr(settings.auth, "audience", None)
+    monkeypatch.setattr(settings.auth, "audience", [])
 
     fake_keyset = KeySet.import_key_set({"keys": [OctKey.generate_key().as_dict()]})
     fake_config = SimpleNamespace(
@@ -139,7 +139,7 @@ async def test_validate_jwt_token_accepts_trailing_slash_iss_mismatch(
 ) -> None:
     """A trailing ``/`` on ``iss`` must not cause a rejection either way."""
     monkeypatch.setattr(settings.auth, "issuer", configured_iss)
-    monkeypatch.setattr(settings.auth, "audience", None)
+    monkeypatch.setattr(settings.auth, "audience", [])
 
     _install_fake_jwt_pipeline(monkeypatch, {"sub": "user-1", "iss": token_iss})
 
@@ -152,7 +152,7 @@ async def test_validate_jwt_token_rejects_mismatched_iss(
 ) -> None:
     """A bad ``iss`` produces a 401 that names the claim but leaks no values."""
     monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
-    monkeypatch.setattr(settings.auth, "audience", None)
+    monkeypatch.setattr(settings.auth, "audience", [])
 
     _install_fake_jwt_pipeline(
         monkeypatch,
@@ -175,7 +175,7 @@ async def test_validate_jwt_token_rejects_mismatched_aud(
 ) -> None:
     """A bad ``aud`` produces a 401 that names the claim but leaks no values."""
     monkeypatch.setattr(settings.auth, "issuer", "")
-    monkeypatch.setattr(settings.auth, "audience", "hivegent-api")
+    monkeypatch.setattr(settings.auth, "audience", ["hivegent-api"])
 
     _install_fake_jwt_pipeline(monkeypatch, {"sub": "user-1", "aud": "other-api"})
 
@@ -190,12 +190,49 @@ async def test_validate_jwt_token_rejects_mismatched_aud(
     assert "other-api" not in detail
 
 
+async def test_validate_jwt_token_accepts_audience_by_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``*`` audience pattern accepts any client id with that prefix."""
+    monkeypatch.setattr(settings.auth, "issuer", "")
+    monkeypatch.setattr(settings.auth, "audience", ["hivegent-*"])
+
+    _install_fake_jwt_pipeline(monkeypatch, {"sub": "svc", "aud": "hivegent-integration"})
+
+    user = await auth.validate_jwt_token("dummy.jwt.token")
+    assert user.id == "svc"
+
+
+async def test_admin_is_a_role_not_a_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Admin derives from the roles claim; the same name in groups must not grant it."""
+    monkeypatch.setattr(settings.auth, "issuer", "")
+    monkeypatch.setattr(settings.auth, "audience", [])
+
+    # "admin" only in the groups claim is an ordinary group, not a privilege.
+    _install_fake_jwt_pipeline(
+        monkeypatch, {"sub": "u", "groups": ["admin", "eng:write"]}
+    )
+    user = await auth.validate_jwt_token("t")
+    assert not user.is_admin
+    assert "admin" in user.all_groups
+    assert "eng" in user.write_groups
+
+    # "admin" in the roles claim grants the privilege without joining a group.
+    _install_fake_jwt_pipeline(monkeypatch, {"sub": "u", "roles": ["admin"]})
+    user = await auth.validate_jwt_token("t")
+    assert user.is_admin
+    assert user.roles == frozenset({"admin"})
+    assert not user.all_groups
+
+
 async def test_validate_jwt_token_does_not_leak_sub_in_error_detail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``sub`` is a user identifier and must never appear in error details."""
     monkeypatch.setattr(settings.auth, "issuer", "")
-    monkeypatch.setattr(settings.auth, "audience", "hivegent-api")
+    monkeypatch.setattr(settings.auth, "audience", ["hivegent-api"])
 
     secret_sub = "personally-identifying-subject-id"
     _install_fake_jwt_pipeline(monkeypatch, {"sub": secret_sub, "aud": "other-api"})

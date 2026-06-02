@@ -93,8 +93,8 @@ def _validate_auth_settings() -> None:
         )
     if settings.auth.enable and not settings.auth.audience:
         raise ValueError(
-            "Authentication is enabled but HIVEGENT_AUTH__AUDIENCE is unset. "
-            "Set it to the API audience expected in bearer tokens."
+            "Authentication is enabled but HIVEGENT_AUTH__AUDIENCE is empty. "
+            "Set it to the client IDs allowed to call the API (token audiences)."
         )
     if settings.auth.enable:
         return

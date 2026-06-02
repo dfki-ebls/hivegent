@@ -62,7 +62,7 @@ def _get_token() -> str | None:
     creds = _get_credentials()
     if not creds:
         return None
-    return creds.get("token") or creds.get("access_token")
+    return creds.get("access_token")
 
 
 def _require_auth() -> str:
@@ -123,44 +123,28 @@ def login(
             help="Client secret (will prompt if not provided)",
         ),
     ] = None,
-    pat: Annotated[
-        str | None, typer.Option("--pat", "-p", help="Personal access token")
-    ] = None,
     api_url: Annotated[
         str, typer.Option("--api-url", "-u", help="API base URL")
     ] = DEFAULT_API_URL,
 ) -> None:
-    """Authenticate with Hivegent.
-
-    Supports both OIDC client credentials and personal access tokens (PATs).
-    """
-    if pat:
-        # Use PAT authentication
-        _save_credentials(
-            {
-                "token": pat,
-                "api_url": api_url,
-                "auth_type": "pat",
-            }
-        )
-        typer.echo("Logged in with personal access token.")
-        return
-
+    """Authenticate with Hivegent using an OIDC client-credentials grant."""
     if not issuer or not client_id:
-        typer.echo(
-            "Either --pat or both --issuer and --client-id are required.", err=True
-        )
+        typer.echo("Both --issuer and --client-id are required.", err=True)
         raise typer.Exit(1)
 
     # Prompt for client secret if not provided
     if not client_secret:
         client_secret = typer.prompt("Client secret", hide_input=True)
 
-    # Get token using client credentials grant
-    token_url = f"{issuer.rstrip('/')}/protocol/openid-connect/token"
+    # Resolve the token endpoint from the IdP's discovery document so the CLI
+    # works against any OIDC provider rather than a hard-coded vendor path.
+    discovery_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
 
     try:
         with httpx.Client(timeout=30.0) as client:
+            discovery = client.get(discovery_url)
+            discovery.raise_for_status()
+            token_url = discovery.json()["token_endpoint"]
             response = client.post(
                 token_url,
                 data={
@@ -173,6 +157,9 @@ def login(
             token_data = response.json()
     except httpx.HTTPError as e:
         typer.echo(f"Failed to authenticate: {e}", err=True)
+        raise typer.Exit(1)
+    except (KeyError, ValueError) as e:
+        typer.echo(f"Invalid OIDC discovery document: {e}", err=True)
         raise typer.Exit(1)
 
     access_token = token_data.get("access_token")
@@ -188,7 +175,6 @@ def login(
             "client_id": client_id,
             "client_secret": client_secret,
             "api_url": api_url,
-            "auth_type": "oidc",
         }
     )
     typer.echo("Logged in successfully.")
@@ -318,20 +304,11 @@ def whoami() -> None:
         typer.echo("Not authenticated.")
         return
 
-    auth_type = creds.get("auth_type", "unknown")
     api_url = creds.get("api_url", DEFAULT_API_URL)
 
-    typer.echo(f"Auth type: {auth_type}")
     typer.echo(f"API URL: {api_url}")
-
-    if auth_type == "oidc":
-        typer.echo(f"Issuer: {creds.get('issuer', 'N/A')}")
-        typer.echo(f"Client ID: {creds.get('client_id', 'N/A')}")
-    elif auth_type == "pat":
-        token = creds.get("token", "")
-        if token:
-            # Show first few characters of the token
-            typer.echo(f"Token: {token[:20]}...")
+    typer.echo(f"Issuer: {creds.get('issuer', 'N/A')}")
+    typer.echo(f"Client ID: {creds.get('client_id', 'N/A')}")
 
 
 def _is_loopback_host(host: str) -> bool:

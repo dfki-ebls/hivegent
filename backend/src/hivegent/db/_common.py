@@ -2,7 +2,7 @@
 
 Strictly cross-cutting utilities only — anything that touches a single
 identity table lives in that table's own module (:mod:`.users`,
-:mod:`.groups`, :mod:`.tokens`, …).
+:mod:`.groups`, …).
 """
 
 from typing import Any
