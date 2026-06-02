@@ -2,47 +2,34 @@
 
 import asyncio
 import warnings
-from collections.abc import AsyncIterator, Iterable
-from contextlib import AsyncExitStack, asynccontextmanager
+from collections.abc import Iterable
 from typing import Any
 
 import httpx
-from mcp.client.streamable_http import streamable_http_client
-from pydantic_ai.mcp import MCPServerStreamableHTTP
+from fastmcp.client.transports import StreamableHttpTransport
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.toolsets import AbstractToolset
 
 from ..security import create_safe_async_client, validate_optional_external_url
 from ..types import McpServerConfig
 
-__all__ = ["build_mcp_server", "validate_mcp_servers"]
+__all__ = ["build_mcp_server", "build_mcp_toolset", "validate_mcp_servers"]
 
 
-class _SafeMCPServerStreamableHTTP(MCPServerStreamableHTTP):
-    def __init__(
-        self,
-        url: str,
-        *,
-        auth: Any = None,
-        headers: dict[str, str] | None = None,
-        tool_prefix: str | None = None,
-    ) -> None:
-        super().__init__(url=url, headers=headers, tool_prefix=tool_prefix)
-        self._auth = auth
+def _safe_httpx_client_factory(
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+    **kwargs: Any,
+) -> httpx.AsyncClient:
+    """Adapt :func:`create_safe_async_client` to FastMCP's client factory protocol.
 
-    @asynccontextmanager
-    async def client_streams(self) -> AsyncIterator[Any]:
-        timeout = httpx.Timeout(self.timeout, read=self.read_timeout)
-        async with AsyncExitStack() as stack:
-            http_client = await stack.enter_async_context(
-                create_safe_async_client(
-                    timeout=timeout,
-                    headers=self.headers,
-                    auth=self._auth,
-                )
-            )
-            read_stream, write_stream, *_ = await stack.enter_async_context(
-                streamable_http_client(self.url, http_client=http_client)
-            )
-            yield read_stream, write_stream
+    The explicit positional-or-keyword parameters match ``McpHttpClientFactory``;
+    ``**kwargs`` absorbs transport-supplied extras such as ``follow_redirects``.
+    """
+    return create_safe_async_client(
+        headers=headers, timeout=timeout, auth=auth, **kwargs
+    )
 
 
 async def validate_mcp_servers(servers: Iterable[McpServerConfig]) -> None:
@@ -57,15 +44,16 @@ async def validate_mcp_servers(servers: Iterable[McpServerConfig]) -> None:
     )
 
 
-def build_mcp_server(server_cfg: McpServerConfig) -> MCPServerStreamableHTTP:
-    """Build an external MCP server from a user-provided config.
+def build_mcp_toolset(server_cfg: McpServerConfig) -> MCPToolset[Any]:
+    """Build an SSRF-safe MCP toolset from a user-provided config.
 
-    Callers that hand the server to an agent should wrap the result with
-    ``.defer_loading()`` so its tools are hidden from the model's initial
-    context and discovered on demand via tool search. This keeps user-
-    supplied MCP servers (which can expose dozens of endpoints) from
-    bloating the prompt.
+    Each connection is opened through :func:`create_safe_async_client`, which
+    FastMCP closes after every session, so the factory mints a fresh client
+    per connection. Routing all HTTP traffic (including the OAuth2 token
+    exchange) through it rejects private and reserved hosts at connect time,
+    even after DNS rebinding.
     """
+    auth: httpx.Auth | None = None
     if server_cfg.oauth2:
         from fastmcp.client.auth.oauth import TokenStorageAdapter
         from key_value.aio.stores.memory import MemoryStore
@@ -77,23 +65,33 @@ def build_mcp_server(server_cfg: McpServerConfig) -> MCPServerStreamableHTTP:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             storage = TokenStorageAdapter(store, server_url=server_cfg.url)
-        oauth_provider = ClientCredentialsOAuthProvider(
+        auth = ClientCredentialsOAuthProvider(
             server_url=server_cfg.url,
             storage=storage,
             client_id=server_cfg.oauth2.client_id,
             client_secret=server_cfg.oauth2.client_secret,
             scopes=server_cfg.oauth2.scopes,
         )
-        server = _SafeMCPServerStreamableHTTP(
-            url=server_cfg.url,
-            auth=oauth_provider,
-            tool_prefix=server_cfg.tool_prefix,
-        )
-    else:
-        server = _SafeMCPServerStreamableHTTP(
-            url=server_cfg.url,
-            headers=server_cfg.headers or {},
-            tool_prefix=server_cfg.tool_prefix,
-        )
 
-    return server
+    transport = StreamableHttpTransport(
+        url=server_cfg.url,
+        headers=server_cfg.headers or None,
+        auth=auth,
+        httpx_client_factory=_safe_httpx_client_factory,
+    )
+    return MCPToolset(transport)
+
+
+def build_mcp_server(server_cfg: McpServerConfig) -> AbstractToolset[Any]:
+    """Build an agent-ready toolset for an MCP server, applying its tool prefix.
+
+    Callers that hand the toolset to an agent should wrap the result with
+    ``.defer_loading()`` so its tools are hidden from the model's initial
+    context and discovered on demand via tool search. This keeps user-
+    supplied MCP servers (which can expose dozens of endpoints) from
+    bloating the prompt.
+    """
+    toolset = build_mcp_toolset(server_cfg)
+    if server_cfg.tool_prefix:
+        return toolset.prefixed(server_cfg.tool_prefix)
+    return toolset

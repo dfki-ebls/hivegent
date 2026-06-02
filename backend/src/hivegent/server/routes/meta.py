@@ -10,7 +10,7 @@ from ...auth import User, get_current_user
 from ...chunkers import ChunkingPipelineInfo, get_chunking_pipelines_info
 from ...config import settings
 from ...converters import ConversionPipelineInfo, get_conversion_pipelines_info
-from ...mcp import build_mcp_server, validate_mcp_servers
+from ...mcp import build_mcp_toolset, validate_mcp_servers
 from ...types import (
     McpServerConfig,
     McpTestResponse,
@@ -57,11 +57,11 @@ async def test_mcp_server(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    mcp_server = build_mcp_server(config)
+    mcp_toolset = build_mcp_toolset(config)
     try:
         async with asyncio.timeout(10):
-            async with mcp_server:
-                tools = await mcp_server.list_tools()
+            async with mcp_toolset:
+                tools = await mcp_toolset.list_tools()
                 return McpTestResponse(ok=True, tool_count=len(tools))
     except Exception as exc:
         return McpTestResponse(ok=False, error=str(exc))
