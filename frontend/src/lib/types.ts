@@ -797,8 +797,20 @@ export const AGENT_MODE_OPTIONS: AgentModeOption[] = [
   { value: "plan", label: "Plan" },
 ];
 
-/** Reasoning effort level for the LLM. */
-export type ReasoningEffort = "auto" | "none" | "low" | "medium" | "high";
+/**
+ * Reasoning effort level for the LLM.
+ *
+ * Mirrors pydantic-ai's native effort levels plus the `auto` (provider
+ * default) and `none` (disabled) sentinels.
+ */
+export type ReasoningEffort =
+  | "auto"
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh";
 
 /** Reasoning effort option for display in UI. */
 export interface ReasoningEffortOption {
@@ -810,7 +822,9 @@ export interface ReasoningEffortOption {
 export const REASONING_EFFORT_OPTIONS: ReasoningEffortOption[] = [
   { value: "auto", label: "Auto" },
   { value: "none", label: "None" },
+  { value: "minimal", label: "Minimal" },
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra High" },
 ];

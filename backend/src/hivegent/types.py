@@ -3,9 +3,10 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Literal, Self
+from typing import Literal, Self, get_args
 
 from pydantic import BaseModel, Field, model_validator
+from pydantic_ai.settings import ThinkingEffort
 
 from .chunkers import ChunkingSpec
 from .config import settings
@@ -267,6 +268,18 @@ class TokenInfo(BaseModel):
     )
 
 
+type ReasoningEffort = Literal["auto", "none"] | ThinkingEffort
+"""Reasoning effort accepted from the API.
+
+Combines pydantic-ai's native effort levels (``minimal``/``low``/``medium``/
+``high``/``xhigh``) with the ``auto`` (use the provider default) and ``none``
+(disable thinking) sentinels.
+"""
+
+REASONING_EFFORT_VALUES: frozenset[str] = frozenset({"auto", "none", *get_args(ThinkingEffort)})
+"""Valid reasoning effort strings, used to validate untrusted request input."""
+
+
 class ChatRequestConfig(BaseModel):
     """Configuration for chat requests, passed via request body."""
 
@@ -276,9 +289,9 @@ class ChatRequestConfig(BaseModel):
         default="",
         description="Custom system message (used when personality is 'custom')",
     )
-    reasoning_effort: Literal["auto", "none", "low", "medium", "high"] = Field(
+    reasoning_effort: ReasoningEffort = Field(
         default="auto",
-        description="Reasoning effort level ('auto' means unset/provider default)",
+        description="Reasoning effort level ('auto' uses the provider default, 'none' disables thinking)",
     )
     mode: Literal["plan", "execute"] = Field(
         default="execute",

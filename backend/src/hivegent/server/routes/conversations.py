@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
@@ -55,6 +55,7 @@ from ...types import (
     ChatRequestConfig,
     CompactConversationRequest,
     CompactConversationResponse,
+    REASONING_EFFORT_VALUES,
     ConversationListResponse,
     DeleteConversationResponse,
     GenerateTitleRequest,
@@ -273,11 +274,7 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
 
     system_message: str = body.get("system_message") or ""
     raw_effort = body.get("reasoning_effort", "auto")
-    reasoning_effort = (
-        raw_effort
-        if raw_effort in ("auto", "none", "low", "medium", "high")
-        else "auto"
-    )
+    reasoning_effort = raw_effort if raw_effort in REASONING_EFFORT_VALUES else "auto"
     included_documents: list[str] = body.get("included_documents") or []
     excluded_documents: list[str] = body.get("excluded_documents") or []
     tools = ToolsSpec(**(body.get("tools") or {}))
@@ -350,7 +347,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         """
         await append_messages(user.id, config.conversation_id, result.all_messages())
 
-    thinking: str | bool
+    thinking: ThinkingLevel
 
     match config.reasoning_effort:
         case "none":
