@@ -1,7 +1,12 @@
 import { Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type UploadDocumentOptions, buildAuxLlmConfig, uploadDocument } from "../../lib/api";
+import {
+  PERSONAL_SCOPE,
+  type UploadDocumentOptions,
+  buildAuxLlmConfig,
+  groupScope,
+} from "../../lib/api";
 import {
   buildCollectionZip,
   buildCollectionZipFromDirectoryInput,
@@ -10,7 +15,7 @@ import {
 import { featureFlags } from "../../lib/feature-flags";
 import type { PipelineSpec } from "../../lib/types";
 import { fileStem, isAbortError } from "../../lib/utils";
-import { EMPTY_SCOPE, useDocumentsStore } from "../../stores/documents-store";
+import { DEFAULT_SCOPE_STATE, useDocumentsStore } from "../../stores/documents-store";
 import { canWriteGroup, getAllGroups, useSettingsStore } from "../../stores/settings-store";
 import { CreateDirectoryDialog } from "../CreateDirectoryDialog";
 import { DocumentDialog } from "../DocumentDialog";
@@ -50,13 +55,12 @@ export function ManageDocuments({ onIncludeDocument, onExcludeDocument }: Manage
   const uploadMultiple = useDocumentsStore((s) => s.uploadMultiple);
   const uploadCol = useDocumentsStore((s) => s.uploadCol);
   const createDir = useDocumentsStore((s) => s.createDir);
-  const refresh = useDocumentsStore((s) => s.refresh);
 
   const groups = useMemo(() => getAllGroups(), []);
   const writableGroups = useMemo(() => groups.filter((g) => canWriteGroup(g)), [groups]);
 
-  const [uploadScope, setUploadScope] = useState("");
-  const target = useDocumentsStore((s) => s.byScope[uploadScope] ?? EMPTY_SCOPE);
+  const [uploadScope, setUploadScope] = useState(PERSONAL_SCOPE);
+  const target = useDocumentsStore((s) => s.byScope[uploadScope] ?? DEFAULT_SCOPE_STATE);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const directoryInputRef = useRef<HTMLInputElement>(null);
@@ -97,8 +101,8 @@ export function ManageDocuments({ onIncludeDocument, onExcludeDocument }: Manage
   );
 
   const uploadOptions = useMemo<UploadDocumentOptions>(
-    () => ({ spec: pipelineSpec, llm: buildAuxLlmConfig(overrides), scope: uploadScope }),
-    [pipelineSpec, overrides, uploadScope],
+    () => ({ spec: pipelineSpec, llm: buildAuxLlmConfig(overrides) }),
+    [pipelineSpec, overrides],
   );
 
   const uploadInFlight = isPreparing || target.isUploading;
@@ -244,11 +248,10 @@ export function ManageDocuments({ onIncludeDocument, onExcludeDocument }: Manage
   const handleSaveNew = useCallback(
     async (filename: string, content: string) => {
       const file = new File([content], filename, { type: "text/plain" });
-      await uploadDocument(filename, file, { spec: pipelineSpec, scope: uploadScope });
-      await refresh(uploadScope);
+      await upload(uploadScope, file, { spec: pipelineSpec });
       setNewDocOpen(false);
     },
-    [pipelineSpec, uploadScope, refresh],
+    [upload, uploadScope, pipelineSpec],
   );
 
   return (
@@ -304,7 +307,7 @@ export function ManageDocuments({ onIncludeDocument, onExcludeDocument }: Manage
 
       <div className="space-y-1 px-4 pb-4">
         <ScopeSection
-          scope=""
+          scope={PERSONAL_SCOPE}
           label="Your Documents"
           canWrite
           defaultOpen
@@ -316,7 +319,7 @@ export function ManageDocuments({ onIncludeDocument, onExcludeDocument }: Manage
         {groups.map((groupId) => (
           <ScopeSection
             key={groupId}
-            scope={groupId}
+            scope={groupScope(groupId)}
             label={groupId}
             canWrite={canWriteGroup(groupId)}
             defaultOpen={false}

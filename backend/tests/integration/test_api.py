@@ -16,8 +16,8 @@ def test_get_settings(app_client) -> None:
 
 
 def test_list_documents_empty(app_client) -> None:
-    """GET /api/documents returns empty list initially."""
-    response = app_client.get("/api/documents")
+    """GET /api/documents/~ returns empty list initially."""
+    response = app_client.get("/api/documents/~")
     assert response.status_code == 200
     data = response.json()
     assert data["documents"] == []
@@ -25,10 +25,10 @@ def test_list_documents_empty(app_client) -> None:
 
 
 def test_upload_and_list_document(app_client, data_dir: Path) -> None:
-    """PUT a document then GET /api/documents shows it."""
+    """PUT a document then GET /api/documents/~ shows it."""
     content = b"# Test Document\n\nHello world."
     response = app_client.put(
-        "/api/documents/test.md",
+        "/api/documents/~/test.md",
         files={"file": ("test.md", content, "text/markdown")},
     )
     assert response.status_code == 200
@@ -36,7 +36,7 @@ def test_upload_and_list_document(app_client, data_dir: Path) -> None:
     assert upload_data["filename"] == "test.md"
 
     # Verify it appears in the list
-    response = app_client.get("/api/documents")
+    response = app_client.get("/api/documents/~")
     assert response.status_code == 200
     data = response.json()
     filenames = [d["filename"] for d in data["documents"]]
@@ -52,7 +52,7 @@ def test_download_original(app_client, data_dir: Path) -> None:
     (workspace / "report.pdf").write_bytes(b"%PDF-fake")
     (workspace / "report.md").write_text("# Converted report")
 
-    response = app_client.get("/api/documents/original/report.md")
+    response = app_client.get("/api/documents/original/~/report.md")
     assert response.status_code == 200
     assert response.content == b"%PDF-fake"
 
@@ -63,7 +63,7 @@ def test_download_original_not_found(app_client, data_dir: Path) -> None:
     workspace = store.workspace_dir(data_dir)
     (workspace / "native.md").write_text("# Native markdown")
 
-    response = app_client.get("/api/documents/original/native.md")
+    response = app_client.get("/api/documents/original/~/native.md")
     assert response.status_code == 404
 
 
@@ -78,7 +78,7 @@ def test_download_original_uses_safe_content_disposition(
     original.write_bytes(b"%PDF-fake")
     (workspace / 'bad"name.md').write_text("# Converted report")
 
-    response = app_client.get('/api/documents/original/bad"name.md')
+    response = app_client.get('/api/documents/original/~/bad"name.md')
 
     assert response.status_code == 200
     assert (
@@ -97,7 +97,7 @@ def test_replace_original_route_is_not_captured_by_upload(
     (workspace / "report.md").write_text("# Converted report")
 
     response = app_client.put(
-        "/api/documents/original/report.md",
+        "/api/documents/original/~/report.md",
         files={"file": ("report.pdf", b"%PDF-updated", "application/pdf")},
     )
 
@@ -119,7 +119,7 @@ def test_upload_image_creates_original_and_description(
         b"\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82"
     )
     response = app_client.put(
-        "/api/documents/diagram.png",
+        "/api/documents/~/diagram.png",
         files={"file": ("diagram.png", png_bytes, "image/png")},
     )
 
@@ -135,7 +135,7 @@ def test_upload_image_creates_original_and_description(
     assert (workspace / "diagram.png").exists()
     assert (workspace / "diagram.md").exists()
 
-    chunks = app_client.get("/api/documents/chunks/diagram.md").json()
+    chunks = app_client.get("/api/documents/chunks/~/diagram.md").json()
     assert chunks["original_path"] == "diagram.png"
     assert chunks["entry_kind"] == "image"
 
@@ -153,7 +153,7 @@ def test_patch_asset_description_rejects_path_traversal(
     (workspace / "outside.png").write_bytes(b"outside")
 
     response = app_client.patch(
-        "/api/documents/assets/diagram.md",
+        "/api/documents/assets/~/diagram.md",
         json={"asset_name": "../outside.png", "content": "owned"},
     )
 

@@ -1,10 +1,10 @@
 import { ChevronDown, ChevronRight, Eye, EyeOff, FolderOpen, Loader2, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { buildAuxLlmConfig, scopePrefix, uploadDocument } from "../../lib/api";
+import { PERSONAL_SCOPE, buildAuxLlmConfig, canonicalPath, uploadDocument } from "../../lib/api";
 import type { PipelineSpec } from "../../lib/types";
 import { collectFilePaths } from "../../lib/utils";
-import { EMPTY_SCOPE, useDocumentsStore } from "../../stores/documents-store";
+import { DEFAULT_SCOPE_STATE, useDocumentsStore } from "../../stores/documents-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import { DirectoryTreeView } from "../DirectoryTreeView";
 import { DocumentDialog } from "../DocumentDialog";
@@ -24,7 +24,7 @@ interface ScopeDialogState {
 }
 
 interface ScopeSectionProps {
-  /** Workspace scope: "" for personal, else a group id. */
+  /** Workspace scope: `~` for personal, `@<group>` for a group. */
   scope: string;
   label: string;
   canWrite: boolean;
@@ -53,7 +53,7 @@ export function ScopeSection({
   onIncludeDocument,
   onExcludeDocument,
 }: ScopeSectionProps) {
-  const state = useDocumentsStore((s) => s.byScope[scope] ?? EMPTY_SCOPE);
+  const state = useDocumentsStore((s) => s.byScope[scope] ?? DEFAULT_SCOPE_STATE);
   const refresh = useDocumentsStore((s) => s.refresh);
   const storeRechunk = useDocumentsStore((s) => s.rechunk);
   const storeReconvert = useDocumentsStore((s) => s.reconvert);
@@ -76,8 +76,8 @@ export function ScopeSection({
     void refresh(scope);
   }, [refresh, scope]);
 
-  const prefix = scopePrefix(scope);
-  const toCanonical = useCallback((path: string) => `${prefix}${path}`, [prefix]);
+  const toCanonical = useCallback((path: string) => canonicalPath(scope, path), [scope]);
+  const isGroup = scope !== PERSONAL_SCOPE;
 
   const isSearching = searchQuery.trim().length > 0;
   const expanded = isOpen || isSearching;
@@ -295,7 +295,7 @@ export function ScopeSection({
             {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </Button>
         </CollapsibleTrigger>
-        {scope ? (
+        {isGroup ? (
           <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
         ) : (
           <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -305,14 +305,14 @@ export function ScopeSection({
             {label}
           </button>
         </CollapsibleTrigger>
-        {scope && (
+        {isGroup && (
           <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
             <Button
               variant="ghost"
               size="icon"
               className="h-6 w-6"
               title="Include workspace in chat"
-              onClick={() => onIncludeDocument?.(`${prefix}`)}
+              onClick={() => onIncludeDocument?.(scope)}
             >
               <Eye className="h-3 w-3" />
             </Button>
@@ -321,7 +321,7 @@ export function ScopeSection({
               size="icon"
               className="h-6 w-6"
               title="Exclude workspace from chat"
-              onClick={() => onExcludeDocument?.(`${prefix}`)}
+              onClick={() => onExcludeDocument?.(scope)}
             >
               <EyeOff className="h-3 w-3" />
             </Button>

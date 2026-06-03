@@ -31,7 +31,7 @@ export interface ScopeDialogsHandle {
 }
 
 interface ScopeDialogsProps {
-  /** Workspace scope: "" for personal, else a group id. */
+  /** Workspace scope: `~` for personal, `@<group>` for a group. */
   scope: string;
   /** Run after a bulk move/delete starts (e.g. to clear the selection). */
   onBulkDone: () => void;

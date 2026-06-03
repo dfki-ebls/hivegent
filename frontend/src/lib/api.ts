@@ -34,7 +34,6 @@ import {
   type ChunkingPipelineInfo,
   ChunkingPipelineInfoSchema,
   type CollectionUploadResponse,
-  CollectionUploadResponseSchema,
   CollectionStreamEventSchema,
   type CompactConversationResponse,
   CompactConversationResponseSchema,
@@ -112,14 +111,26 @@ function encodeFilePath(filepath: string): string {
 }
 
 /**
- * Canonical path prefix for a workspace scope.
+ * Canonical scope of the caller's personal workspace.
  *
- * A scope is the empty string for the caller's personal workspace, or a
- * group id for a group. Prepending this prefix to a local path yields the
- * canonical path the backend resolves (e.g. `@research/notes.md`).
+ * Scopes are the single source of truth for addressing a workspace: `~` for
+ * the personal one, `@<group>` for a group (see {@link groupScope}). The same
+ * string keys the document store, flows through the API, and is what the
+ * backend resolves — there is no separate "personal vs group" representation.
  */
-export function scopePrefix(scope: string): string {
-  return scope ? `@${scope}/` : "";
+export const PERSONAL_SCOPE = "~";
+
+/** Canonical scope of a group's workspace. */
+export function groupScope(groupId: string): string {
+  return `@${groupId}`;
+}
+
+/**
+ * Compose the canonical path of a document from its scope and local path
+ * (e.g. `~/notes.md`, `@research/notes.md`).
+ */
+export function canonicalPath(scope: string, local: string): string {
+  return `${scope}/${local}`;
 }
 
 /** Check if a file requires conversion (anything that is not already markdown). */
@@ -313,9 +324,9 @@ export async function getConversationMessages(conversationId: string): Promise<U
 // User document API functions (authenticated user's personal documents)
 // ============================================================
 
-export async function listDocuments(scope = ""): Promise<DocumentInfo[]> {
-  const query = scope ? `?scope=${encodeURIComponent(scopePrefix(scope))}` : "";
-  const res = await authFetch(`${API_BASE_URL}/api/documents${query}`);
+/** List documents in a workspace; `scope` is `~` (personal) or `@<group>`. */
+export async function listDocuments(scope: string): Promise<DocumentInfo[]> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(scope)}`);
   if (!res.ok) {
     throw new Error("Failed to list documents");
   }
@@ -327,28 +338,17 @@ export async function listDocuments(scope = ""): Promise<DocumentInfo[]> {
 export interface UploadDocumentOptions {
   spec?: PipelineSpec;
   llm?: LlmConfig;
-  targetDirectory?: string;
   overwrite?: boolean;
-  /** Workspace scope: empty for personal, or a group id. */
-  scope?: string;
 }
 
-/** Build the canonical upload path from a filename and upload options. */
-function uploadFilepath(filename: string, options?: UploadDocumentOptions): string {
-  const local = options?.targetDirectory ? `${options.targetDirectory}/${filename}` : filename;
-  return `${scopePrefix(options?.scope ?? "")}${local}`;
-}
-
-export async function uploadDocument(
+/** Build the multipart body shared by the PUT and streaming document uploads. */
+function documentUploadFormData(
   filename: string,
   file: File,
   options?: UploadDocumentOptions,
-): Promise<UploadDocumentResponse> {
+): FormData {
   const formData = new FormData();
   formData.append("file", file);
-
-  const url = `${API_BASE_URL}/api/documents/${encodeFilePath(uploadFilepath(filename, options))}`;
-
   if (options?.overwrite) {
     formData.append("overwrite", "true");
   }
@@ -358,10 +358,18 @@ export async function uploadDocument(
   if (requiresConversion(filename) && options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
   }
+  return formData;
+}
 
-  const res = await authFetch(url, {
+/** Upload or replace a document; `filename` is a canonical path (`~/…` or `@<group>/…`). */
+export async function uploadDocument(
+  filename: string,
+  file: File,
+  options?: UploadDocumentOptions,
+): Promise<UploadDocumentResponse> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`, {
     method: "PUT",
-    body: formData,
+    body: documentUploadFormData(filename, file, options),
   });
 
   if (!res.ok) {
@@ -377,43 +385,6 @@ export async function uploadDocument(
 export interface UploadCollectionOptions {
   spec?: PipelineSpec;
   llm?: LlmConfig;
-  /** Workspace scope: empty for personal, or a group id. */
-  scope?: string;
-}
-
-/** Build FormData for a collection upload (shared by streaming and non-streaming paths). */
-function buildCollectionFormData(file: File, options?: UploadCollectionOptions): FormData {
-  const formData = new FormData();
-  formData.append("file", file);
-  if (options?.spec) {
-    formData.append("pipeline_spec", JSON.stringify(options.spec));
-  }
-  if (options?.llm) {
-    formData.append("llm_config", JSON.stringify(options.llm));
-  }
-  if (options?.scope) {
-    formData.append("scope", scopePrefix(options.scope));
-  }
-  return formData;
-}
-
-/** Upload a markdown collection as a ZIP archive. */
-export async function uploadCollection(
-  file: File,
-  options?: UploadCollectionOptions,
-): Promise<CollectionUploadResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/collections`, {
-    method: "POST",
-    body: buildCollectionFormData(file, options),
-  });
-
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Collection upload failed" }));
-    throw new Error(error.detail || "Collection upload failed");
-  }
-
-  const data: unknown = await res.json();
-  return CollectionUploadResponseSchema.parse(data);
 }
 
 /** Options for streaming collection upload (extends base with progress + abort). */
@@ -422,19 +393,28 @@ export type StreamingCollectionOptions = UploadCollectionOptions & {
   signal?: AbortSignal;
 };
 
-/** Post a collection ZIP to a streaming endpoint and parse SSE progress events. */
-async function postCollectionStream(
-  url: string,
+/**
+ * Upload a markdown collection ZIP with streaming progress events via SSE.
+ * `scope` is `~` (personal) or `@<group>`.
+ */
+export async function uploadCollectionStream(
+  scope: string,
   file: File,
   options?: StreamingCollectionOptions,
 ): Promise<CollectionUploadResponse> {
-  const formData = buildCollectionFormData(file, options);
+  const formData = new FormData();
+  formData.append("file", file);
+  if (options?.spec) {
+    formData.append("pipeline_spec", JSON.stringify(options.spec));
+  }
+  if (options?.llm) {
+    formData.append("llm_config", JSON.stringify(options.llm));
+  }
 
-  const res = await authFetch(url, {
-    method: "POST",
-    body: formData,
-    signal: options?.signal,
-  });
+  const res = await authFetch(
+    `${API_BASE_URL}/api/documents/collections/stream/${encodeFilePath(scope)}`,
+    { method: "POST", body: formData, signal: options?.signal },
+  );
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Collection upload failed" }));
@@ -446,14 +426,6 @@ async function postCollectionStream(
     CollectionStreamEventSchema,
     options?.onProgress,
   );
-}
-
-/** Upload a collection with streaming progress events via SSE. */
-export function uploadCollectionStream(
-  file: File,
-  options?: StreamingCollectionOptions,
-): Promise<CollectionUploadResponse> {
-  return postCollectionStream(`${API_BASE_URL}/api/documents/collections/stream`, file, options);
 }
 
 /**
@@ -874,24 +846,9 @@ export async function uploadDocumentStream(
   file: File,
   options?: UploadDocumentOptions & StreamingOperationOptions,
 ): Promise<UploadDocumentResponse> {
-  const formData = new FormData();
-  formData.append("file", file);
-
-  const url = `${API_BASE_URL}/api/documents/stream/${encodeFilePath(uploadFilepath(filename, options))}`;
-
-  if (options?.overwrite) {
-    formData.append("overwrite", "true");
-  }
-  if (options?.spec) {
-    formData.append("pipeline_spec", JSON.stringify(options.spec));
-  }
-  if (requiresConversion(filename) && options?.llm) {
-    formData.append("llm_config", JSON.stringify(options.llm));
-  }
-
-  const res = await authFetch(url, {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/stream/${encodeFilePath(filename)}`, {
     method: "PUT",
-    body: formData,
+    body: documentUploadFormData(filename, file, options),
     signal: options?.signal,
   });
 
@@ -1044,13 +1001,9 @@ export async function bulkDeleteStream(
 
 // User directory management
 
-/**
- * Fetch a workspace directory tree. Pass a group id as `scope` for a
- * group's tree, or omit it for the caller's personal workspace.
- */
-export async function getDirectories(scope = ""): Promise<DirectoryTreeResponse> {
-  const query = scope ? `?scope=${encodeURIComponent(scopePrefix(scope))}` : "";
-  const res = await authFetch(`${API_BASE_URL}/api/directories${query}`);
+/** Fetch a workspace directory tree; `scope` is `~` (personal) or `@<group>`. */
+export async function getDirectories(scope: string): Promise<DirectoryTreeResponse> {
+  const res = await authFetch(`${API_BASE_URL}/api/directories/${encodeFilePath(scope)}`);
   if (!res.ok) {
     throw new Error("Failed to fetch directory tree");
   }
@@ -1143,9 +1096,12 @@ export async function deleteAllConversations(): Promise<void> {
   }
 }
 
-/** Delete all documents, chunks, originals, and the search index. */
-export async function deleteAllDocuments(): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents`, {
+/**
+ * Delete all documents, chunks, originals, and the search index in a workspace;
+ * `scope` is `~` (personal) or `@<group>`.
+ */
+export async function deleteAllDocuments(scope: string): Promise<void> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(scope)}`, {
     method: "DELETE",
   });
   if (!res.ok) {

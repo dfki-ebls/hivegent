@@ -33,6 +33,7 @@ import {
   adminFactoryReset,
   adminListGroups,
   adminListUsers,
+  PERSONAL_SCOPE,
   adminReindex,
   adminResetDatabase,
   adminResetWorkspace,
@@ -172,8 +173,8 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
                 "Permanently delete every document, chunk, original, and search-index entry you own. This action cannot be undone.",
               confirm: "Delete All Documents",
               run: async () => {
-                await deleteAllDocuments();
-                await refreshDocuments("");
+                await deleteAllDocuments(PERSONAL_SCOPE);
+                await refreshDocuments(PERSONAL_SCOPE);
               },
             })
           }

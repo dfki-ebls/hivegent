@@ -8,6 +8,7 @@ import {
   bulkDeleteStream,
   bulkRechunkStream,
   bulkReconvertStream,
+  canonicalPath,
   createDirectory,
   deleteDirectory,
   deleteDocument,
@@ -17,7 +18,6 @@ import {
   moveDocument,
   rechunkDocumentStream,
   reconvertDocumentStream,
-  scopePrefix,
   uploadCollectionStream,
   uploadDocumentStream,
 } from "../lib/api";
@@ -34,7 +34,7 @@ import { isAbortError } from "../lib/utils";
 
 type Signalled<T> = T & { signal?: AbortSignal };
 
-/** Per-scope document-management state. A scope is "" (personal) or a group id. */
+/** Per-scope document-management state. A scope is `~` (personal) or `@<group>`. */
 export interface ScopeState {
   documents: DocumentInfo[];
   directoryTree: DirectoryTreeResponse | null;
@@ -47,7 +47,7 @@ export interface ScopeState {
   error: string | null;
 }
 
-export const EMPTY_SCOPE: ScopeState = {
+export const DEFAULT_SCOPE_STATE: ScopeState = {
   documents: [],
   directoryTree: null,
   mutatingPaths: new Set(),
@@ -92,14 +92,14 @@ interface DocumentsStore {
 }
 
 export const useDocumentsStore = create<DocumentsStore>((set, get) => {
-  const scopeState = (scope: string): ScopeState => get().byScope[scope] ?? EMPTY_SCOPE;
+  const scopeState = (scope: string): ScopeState => get().byScope[scope] ?? DEFAULT_SCOPE_STATE;
 
   const patch = (
     scope: string,
     update: Partial<ScopeState> | ((s: ScopeState) => Partial<ScopeState>),
   ) =>
     set((store) => {
-      const current = store.byScope[scope] ?? EMPTY_SCOPE;
+      const current = store.byScope[scope] ?? DEFAULT_SCOPE_STATE;
       const delta = typeof update === "function" ? update(current) : update;
       return { byScope: { ...store.byScope, [scope]: { ...current, ...delta } } };
     });
@@ -174,7 +174,10 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
     upload: async (scope, file, options) => {
       patch(scope, { isUploading: true, operationStage: null, error: null });
       try {
-        await uploadDocumentStream(file.name, file, { ...options, scope, onStage: onStage(scope) });
+        await uploadDocumentStream(canonicalPath(scope, file.name), file, {
+          ...options,
+          onStage: onStage(scope),
+        });
         await silentRefresh(scope);
       } catch (err) {
         if (!isAbortError(err)) {
@@ -202,9 +205,8 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
             },
           });
           try {
-            await uploadDocumentStream(file.name, file, {
+            await uploadDocumentStream(canonicalPath(scope, file.name), file, {
               ...options,
-              scope,
               onStage: onStage(scope),
             });
           } catch (err) {
@@ -221,9 +223,8 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
     uploadCol: async (scope, file, options) => {
       patch(scope, { isUploading: true, error: null, uploadProgress: null });
       try {
-        const result = await uploadCollectionStream(file, {
+        const result = await uploadCollectionStream(scope, file, {
           ...options,
-          scope,
           onProgress: (uploadProgress) => patch(scope, { uploadProgress }),
         });
         await silentRefresh(scope);
@@ -240,17 +241,17 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
 
     remove: (scope, filename) =>
       withMutating(scope, filename, "Delete failed", () =>
-        deleteDocument(`${scopePrefix(scope)}${filename}`),
+        deleteDocument(canonicalPath(scope, filename)),
       ),
 
     rechunk: (scope, filename, spec) =>
       withMutating(scope, filename, "Rechunk failed", () =>
-        rechunkDocumentStream(`${scopePrefix(scope)}${filename}`, spec, { onStage: onStage(scope) }),
+        rechunkDocumentStream(canonicalPath(scope, filename), spec, { onStage: onStage(scope) }),
       ),
 
     reconvert: (scope, filename, options) =>
       withMutating(scope, filename, "Reconvert failed", () =>
-        reconvertDocumentStream(`${scopePrefix(scope)}${filename}`, {
+        reconvertDocumentStream(canonicalPath(scope, filename), {
           ...options,
           onStage: onStage(scope),
         }),
@@ -259,7 +260,7 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
     bulkRechunk: (scope, files, spec) =>
       runBulk(scope, "Bulk rechunk failed", (onProgress) =>
         bulkRechunkStream(
-          files.map((f) => `${scopePrefix(scope)}${f}`),
+          files.map((f) => canonicalPath(scope, f)),
           spec,
           { onProgress },
         ),
@@ -268,7 +269,7 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
     bulkReconvert: (scope, files, spec, llm) =>
       runBulk(scope, "Bulk reconvert failed", (onProgress) =>
         bulkReconvertStream(
-          files.map((f) => `${scopePrefix(scope)}${f}`),
+          files.map((f) => canonicalPath(scope, f)),
           spec,
           llm,
           { onProgress },
@@ -278,29 +279,29 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
     bulkDelete: (scope, files) =>
       runBulk(scope, "Bulk delete failed", (onProgress) =>
         bulkDeleteStream(
-          files.map((f) => `${scopePrefix(scope)}${f}`),
+          files.map((f) => canonicalPath(scope, f)),
           { onProgress },
         ),
       ),
 
     move: (scope, filepath, destination) =>
       withMutating(scope, filepath, "Move failed", () =>
-        moveDocument(`${scopePrefix(scope)}${filepath}`, `${scopePrefix(scope)}${destination}`),
+        moveDocument(canonicalPath(scope, filepath), canonicalPath(scope, destination)),
       ),
 
     createDir: (scope, path) =>
       withMutating(scope, path, "Failed to create directory", () =>
-        createDirectory(`${scopePrefix(scope)}${path}`),
+        createDirectory(canonicalPath(scope, path)),
       ),
 
     deleteDir: (scope, path) =>
       withMutating(scope, path, "Failed to delete directory", () =>
-        deleteDirectory(`${scopePrefix(scope)}${path}`),
+        deleteDirectory(canonicalPath(scope, path)),
       ),
 
     moveDir: (scope, source, destination) =>
       withMutating(scope, source, "Failed to move directory", () =>
-        moveDirectory(`${scopePrefix(scope)}${source}`, `${scopePrefix(scope)}${destination}`),
+        moveDirectory(canonicalPath(scope, source), canonicalPath(scope, destination)),
       ),
 
     clearError: (scope) => patch(scope, { error: null }),

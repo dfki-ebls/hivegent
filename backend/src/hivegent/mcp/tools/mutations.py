@@ -9,7 +9,7 @@ from ... import workspace
 from ...config import settings
 from ...store import Casebase
 from ...tools import EditDocumentTool, WriteDocumentTool
-from ...tools.base import tool_description
+from ...tools.base import SearchPath, tool_description
 from ...tools.documents import DocumentFilePathArg
 from ...tools.mutations import (
     DocumentContentArg,
@@ -44,7 +44,7 @@ async def edit_document(
         return "Edit denied by user."
 
     tool = EditDocumentTool(
-        paths=store.workspace_dir(settings.data_dir),
+        paths=SearchPath(path=store.workspace_dir(settings.data_dir), prefix=store.prefix),
         mutator=partial(workspace.edit_document_text, store),
     )
     result = await tool(file_path, old_string, new_string, replace_all)
@@ -68,7 +68,7 @@ async def write_document(
         return "Write denied by user."
 
     tool = WriteDocumentTool(
-        paths=store.workspace_dir(settings.data_dir),
+        paths=SearchPath(path=store.workspace_dir(settings.data_dir), prefix=store.prefix),
         mutator=partial(workspace.write_document_text, store),
     )
     result = await tool(file_path, content, mode)

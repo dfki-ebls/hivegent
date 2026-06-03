@@ -1,8 +1,9 @@
 """Routes for directory management.
 
-Like the document routes, these take a canonical workspace path: bare for
-the caller's personal store, or ``@<group>/<local>`` for a group. The tree
-endpoint takes a ``scope`` (``""`` or ``"@<group>/"``).
+Like the document routes, these take a canonical workspace path:
+``~/<local>`` for the caller's personal store, or ``@<group>/<local>``
+for a group. The tree endpoint takes the bare scope segment (``~`` or
+``@<group>``) in the URL path.
 """
 
 from typing import Annotated
@@ -28,12 +29,12 @@ __all__ = ["router"]
 router = APIRouter()
 
 
-@router.get("/directories")
+@router.get("/directories/{scope}")
 async def get_directories(
+    scope: str,
     user: Annotated[User, Depends(get_current_user)],
-    scope: str = "",
 ) -> DirectoryTreeResponse:
-    """Build a recursive directory tree for a workspace (personal or group)."""
+    """Build a recursive directory tree for a workspace (``~`` or ``@<group>``)."""
     store, _ = resolve_workspace_path(user, scope)
     return await build_tree_response(store)
 

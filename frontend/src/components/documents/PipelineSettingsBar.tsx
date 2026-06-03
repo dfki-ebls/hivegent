@@ -1,5 +1,6 @@
 import { Images, Upload } from "lucide-react";
 
+import { PERSONAL_SCOPE, groupScope } from "../../lib/api";
 import { featureFlags } from "../../lib/feature-flags";
 import {
   AssetProcessingMode,
@@ -15,7 +16,7 @@ interface PipelineSettingsBarProps {
   conversionPipeline: ConversionPipeline;
   chunkingPipeline: ChunkingPipeline;
   assetMode: AssetProcessingMode;
-  /** Active upload target: "" for personal, else a group id. */
+  /** Active upload target: `~` for personal, `@<group>` for a group. */
   uploadScope: string;
   /** Groups the user can upload to. */
   writableGroups: string[];
@@ -24,9 +25,6 @@ interface PipelineSettingsBarProps {
   onChunkingPipelineChange: (pipeline: ChunkingPipeline) => void;
   onAssetModeChange: (mode: AssetProcessingMode) => void;
 }
-
-/** Select sentinel for the personal workspace ("*" can never be a group id). */
-const PERSONAL_SCOPE = "*";
 
 export function PipelineSettingsBar({
   conversionPipeline,
@@ -50,17 +48,14 @@ export function PipelineSettingsBar({
             <Upload className="h-4 w-4" />
             Upload to
           </Label>
-          <Select
-            value={uploadScope || PERSONAL_SCOPE}
-            onValueChange={(v) => onUploadScopeChange(v === PERSONAL_SCOPE ? "" : v)}
-          >
+          <Select value={uploadScope} onValueChange={onUploadScopeChange}>
             <SelectTrigger id="upload-scope-select" className="w-[140px]" size="sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={PERSONAL_SCOPE}>Personal</SelectItem>
               {writableGroups.map((g) => (
-                <SelectItem key={g} value={g}>
+                <SelectItem key={g} value={groupScope(g)}>
                   {g}
                 </SelectItem>
               ))}

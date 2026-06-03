@@ -8,7 +8,7 @@ interface WorkspaceImageProps {
   src?: string;
   /** Alt text for the image. */
   alt?: string;
-  /** Canonical path of the containing document (may be `@group/`-prefixed). */
+  /** Canonical path of the containing document (`~/…` or `@<group>/…`). */
   documentPath: string;
 }
 
@@ -16,9 +16,9 @@ interface WorkspaceImageProps {
  * Renders workspace images with authenticated fetch.
  *
  * Relative paths are resolved against the document's directory, keeping its
- * `@group/` prefix (if any) so the backend routes the fetch to the right
- * scope. External (`data:`/`http:`) sources are unsupported and render as a
- * fallback.
+ * workspace prefix (`~` or `@<group>`) so the backend routes the fetch to the
+ * right scope. External (`data:`/`http:`) sources are unsupported and render
+ * as a fallback.
  */
 export function WorkspaceImage({ src, alt, documentPath }: WorkspaceImageProps) {
   const fetch = useCallback(() => {

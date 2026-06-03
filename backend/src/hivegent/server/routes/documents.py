@@ -1,9 +1,12 @@
 """Routes for document and collection management.
 
-Document operations take a canonical workspace path: a bare local path
-for the caller's personal store, or an ``@<group>/<local>`` path for a
-group the caller can access. :func:`resolve_workspace_path` maps the path
-to its store and enforces group membership (reads) or write access.
+Every workspace reference lives in the URL path as a canonical
+workspace path: ``~/<local>`` for the caller's personal store, or
+``@<group>/<local>`` for a group the caller can access. Scope-level
+endpoints (list, collection upload, delete-all) take the bare scope
+segment (``~`` or ``@<group>``); item endpoints take the full path.
+:func:`resolve_workspace_path` maps either to its store and enforces
+group membership (reads) or write access.
 """
 
 import logging
@@ -75,12 +78,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/documents")
+@router.get("/documents/{scope}")
 async def list_documents(
+    scope: str,
     user: Annotated[User, Depends(get_current_user)],
-    scope: str = "",
 ) -> DocumentListResponse:
-    """List documents in a workspace (personal, or a group via ``scope``)."""
+    """List documents in a workspace (``~`` for personal, ``@<group>``)."""
     store, _ = resolve_workspace_path(user, scope)
     return await list_documents_for_store(store)
 
@@ -214,13 +217,13 @@ async def rechunk_document_stream(
         yield OperationErrorEvent(detail="Chunking failed")
 
 
-@router.post("/documents/collections")
+@router.post("/documents/collections/{scope}")
 async def upload_collection(
+    scope: str,
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
     pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
-    scope: str = Form(default=""),
 ) -> CollectionUploadResponse:
     """Upload a markdown collection as a ZIP archive."""
     spec, resolved = await validate_collection_upload(pipeline_spec, llm_config)
@@ -236,11 +239,13 @@ async def upload_collection(
     return result
 
 
-@router.post("/documents/collections/stream", response_class=EventSourceResponse)
+@router.post(
+    "/documents/collections/stream/{scope}", response_class=EventSourceResponse
+)
 async def upload_collection_stream(
+    scope: str,
     user: Annotated[User, Depends(get_current_user)],
     prepared: Annotated[PreparedCollection, Depends(prepare_collection_upload)],
-    scope: str = Form(default=""),
 ) -> AsyncIterable[CollectionProgressEvent | CollectionCompleteEvent]:
     """Upload a collection with streaming progress events."""
     store, _ = resolve_workspace_path(user, scope, write=True)
@@ -250,12 +255,13 @@ async def upload_collection_stream(
         yield event
 
 
-@router.delete("/documents")
+@router.delete("/documents/{scope}")
 async def delete_all_documents(
+    scope: str,
     user: Annotated[User, Depends(get_current_user)],
 ) -> BulkDeleteDocumentsResponse:
-    """Delete all of the caller's personal documents, chunks, and originals."""
-    store, _ = resolve_workspace_path(user, "", write=True)
+    """Delete all documents, chunks, and originals in a workspace."""
+    store, _ = resolve_workspace_path(user, scope, write=True)
     await workspace.delete_all(store)
     return BulkDeleteDocumentsResponse(
         message="All documents and search index deleted successfully",

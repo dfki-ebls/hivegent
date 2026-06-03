@@ -15,16 +15,22 @@ _USER = User(
 
 
 def test_personal_path_resolves_to_user_store() -> None:
-    store, local = resolve_workspace_path(_USER, "docs/report.md")
+    store, local = resolve_workspace_path(_USER, "~/docs/report.md")
     assert store == Casebase.for_user("alice")
     assert local == "docs/report.md"
 
 
-def test_at_prefix_without_slash_stays_personal() -> None:
-    # The group rule requires a "/"; a bare "@name" is an ordinary filename.
-    store, local = resolve_workspace_path(_USER, "@weird.md")
+def test_personal_scope_root_has_empty_local() -> None:
+    store, local = resolve_workspace_path(_USER, "~")
     assert store == Casebase.for_user("alice")
-    assert local == "@weird.md"
+    assert local == ""
+
+
+def test_bare_path_is_rejected() -> None:
+    # Personal documents must carry the explicit "~" prefix.
+    with pytest.raises(HTTPException) as exc:
+        resolve_workspace_path(_USER, "report.md")
+    assert exc.value.status_code == 400
 
 
 def test_group_path_resolves_to_group_store() -> None:
@@ -33,8 +39,8 @@ def test_group_path_resolves_to_group_store() -> None:
     assert local == "docs/report.md"
 
 
-def test_group_scope_root_has_empty_local() -> None:
-    store, local = resolve_workspace_path(_USER, "@team/")
+def test_group_scope_root_without_slash_has_empty_local() -> None:
+    store, local = resolve_workspace_path(_USER, "@team")
     assert store == Casebase.for_group("team")
     assert local == ""
 
