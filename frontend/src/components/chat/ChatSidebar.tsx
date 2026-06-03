@@ -42,6 +42,7 @@ export function ChatSidebar({
   const navigate = useNavigate();
   const addChunk = useFetchedDocumentsStore((state) => state.addChunk);
   const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
+  const addImage = useFetchedDocumentsStore((state) => state.addImage);
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const fetchConversations = useConversationsStore((state) => state.fetchConversations);
   const stashHandoff = useDraftHandoffStore((state) => state.stash);
@@ -122,7 +123,7 @@ export function ChatSidebar({
     onRetry: handleSendMessage,
   });
 
-  useToolOutputSync(messages, addChunk, markFullDocument);
+  useToolOutputSync(messages, addChunk, markFullDocument, addImage);
   useChatErrorLogger(error, id, messages, buildRequestBody);
 
   const handleEditMessage = useCallback(

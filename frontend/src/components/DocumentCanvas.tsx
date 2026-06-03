@@ -27,6 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type UploadDocumentOptions,
   buildAuxLlmConfig,
+  fetchWorkspaceAsset,
   getGroupDirectories,
   getGroupDocumentContent,
   uploadDocument,
@@ -41,6 +42,7 @@ import {
   type DocumentInfo,
   type FetchedChunk,
   type FetchedDocument,
+  type FetchedImage,
   type OperationStage,
   type PipelineSpec,
   type UploadProgress,
@@ -59,6 +61,7 @@ import {
   isAbortError,
   isWebUrl,
 } from "../lib/utils";
+import { useObjectUrl } from "@/hooks/use-object-url";
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
 import { useUserDocumentsStore } from "../stores/user-documents-store";
 import { canWriteGroup, getAllGroups, useSettingsStore } from "../stores/settings-store";
@@ -159,6 +162,26 @@ function ChunkCard({ chunk, onClick }: ChunkCardProps) {
   );
 }
 
+function ImageThumb({ image }: { image: FetchedImage }) {
+  const fetch = useCallback(() => fetchWorkspaceAsset(image.filePath), [image.filePath]);
+  const { url, error } = useObjectUrl(fetch);
+
+  if (error) return null;
+  return (
+    <div className="ml-4 w-[calc(100%-1rem)]">
+      {url ? (
+        <img
+          src={url}
+          alt={image.filePath}
+          className="max-h-64 w-auto max-w-full rounded-md border"
+        />
+      ) : (
+        <div className="h-32 animate-pulse rounded-md border bg-muted/40" />
+      )}
+    </div>
+  );
+}
+
 interface DocumentGroupProps {
   doc: FetchedDocument;
   chunks: FetchedChunk[];
@@ -169,6 +192,13 @@ interface DocumentGroupProps {
 function DocumentGroup({ doc, chunks, onChunkClick, onFilenameClick }: DocumentGroupProps) {
   const [open, setOpen] = useState(true);
   const isWeb = isWebUrl(doc.filename);
+  // Image docs are keyed by their description path; show the image's own name.
+  const displayName = doc.image
+    ? (doc.image.filePath.split("/").pop() ?? doc.filename)
+    : isWeb
+      ? formatWebUrl(doc.filename)
+      : doc.filename;
+  const titlePath = doc.image?.filePath ?? doc.filename;
 
   // Include all chunks except user-initiated "preview" full-document fetches.
   // Model-fetched full documents appear as regular chunk cards (sorted first).
@@ -200,9 +230,9 @@ function DocumentGroup({ doc, chunks, onChunkClick, onFilenameClick }: DocumentG
               onFilenameClick(doc.filename);
             }
           }}
-          title={doc.filename}
+          title={titlePath}
         >
-          {isWeb ? formatWebUrl(doc.filename) : doc.filename}
+          {displayName}
         </button>
         {contentChunks.length > 0 && (
           <Badge variant="outline" className="shrink-0 text-xs">
@@ -218,6 +248,7 @@ function DocumentGroup({ doc, chunks, onChunkClick, onFilenameClick }: DocumentG
       </div>
       <CollapsibleContent>
         <div className="space-y-2 pb-2">
+          {doc.image && <ImageThumb image={doc.image} />}
           {contentChunks.map((chunk) => (
             <ChunkCard key={chunk.id} chunk={chunk} onClick={() => onChunkClick(chunk)} />
           ))}

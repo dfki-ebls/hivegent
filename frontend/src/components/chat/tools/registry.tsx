@@ -2,7 +2,10 @@ import type { ReactNode } from "react";
 import type { SyncOutput, ToolPart } from "@/lib/chat/tool-part";
 import { CreatePlanTool } from "@/components/chat/tools/create-plan";
 import { syncGrepOutput } from "@/components/chat/tools/grep";
-import { ReadBinaryDocumentTool } from "@/components/chat/tools/read-binary-document";
+import {
+  ReadBinaryDocumentTool,
+  syncReadBinaryDocumentOutput,
+} from "@/components/chat/tools/read-binary-document";
 import { syncReadDocumentOutput } from "@/components/chat/tools/read-document";
 import { syncSearchOutput } from "@/components/chat/tools/search";
 import { syncWebFetchOutput } from "@/components/chat/tools/web-fetch";
@@ -24,6 +27,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   read_document: { syncOutput: syncReadDocumentOutput },
   read_binary_document: {
     render: ({ part, metadata }) => <ReadBinaryDocumentTool part={part} metadata={metadata} />,
+    syncOutput: syncReadBinaryDocumentOutput,
   },
   grep: { syncOutput: syncGrepOutput },
   web_search: { syncOutput: syncWebSearchOutput },

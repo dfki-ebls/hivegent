@@ -1,6 +1,6 @@
 import type { UIMessage } from "@ai-sdk/react";
 import type { ToolPart } from "@/components/ai-elements/tool";
-import type { FetchedChunk } from "@/lib/types";
+import type { FetchedChunk, FetchedImage } from "@/lib/types";
 
 export type { ToolPart };
 
@@ -10,6 +10,7 @@ export type SyncOutput = (
   metadata: unknown,
   addChunk: (chunk: Omit<FetchedChunk, "id">) => void,
   markFullDocument: (filename: string, content: string, source: string) => void,
+  addImage: (filename: string, image: FetchedImage) => void,
 ) => void;
 
 export interface ToolPartInfo {

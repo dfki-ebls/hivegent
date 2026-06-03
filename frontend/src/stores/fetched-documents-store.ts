@@ -3,6 +3,7 @@ import {
   type ChunkPosition,
   type FetchedChunk,
   type FetchedDocument,
+  type FetchedImage,
   makeChunkId,
 } from "../lib/types";
 
@@ -15,6 +16,9 @@ interface FetchedDocumentsStore {
 
   /** Mark a document as fully fetched, storing its full content. */
   markFullDocument: (filename: string, content: string, source: string) => void;
+
+  /** Attach an image to the document at *filename* (its description path). */
+  addImage: (filename: string, image: FetchedImage) => void;
 
   /** Reset both maps. */
   clearAll: () => void;
@@ -100,6 +104,21 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       }
 
       return { chunks: newChunks, documents: newDocs };
+    }),
+
+  addImage: (filename, image) =>
+    set((state) => {
+      const existing = state.documents.get(filename);
+      if (existing?.image?.filePath === image.filePath) return state;
+
+      const newDocs = new Map(state.documents);
+      newDocs.set(
+        filename,
+        existing
+          ? { ...existing, image }
+          : { filename, fullContentFetched: false, chunkIds: [], image },
+      );
+      return { documents: newDocs };
     }),
 
   clearAll: () => set({ chunks: new Map(), documents: new Map() }),

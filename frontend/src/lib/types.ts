@@ -625,6 +625,13 @@ export interface FetchedChunk {
   endIndex?: number;
 }
 
+/** An image binary attached to the model via the read_binary_document tool. */
+export interface FetchedImage {
+  /** Canonical workspace path of the image, used to fetch the blob. */
+  filePath: string;
+  mediaType: string;
+}
+
 /** A document that groups one or more fetched chunks. */
 export interface FetchedDocument {
   filename: string;
@@ -632,6 +639,11 @@ export interface FetchedDocument {
   fullContent?: string;
   chunkIds: string[];
   bestScore?: number;
+  /**
+   * Set when the model read an image whose description lives at this
+   * document's path (`<stem>.md`); merges the image with its caption.
+   */
+  image?: FetchedImage;
 }
 
 /** Build a deterministic chunk ID from its attributes. */

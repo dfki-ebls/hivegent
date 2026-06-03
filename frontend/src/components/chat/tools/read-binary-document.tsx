@@ -4,7 +4,7 @@ import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
 import { ToolParameters } from "@/components/ToolDisplay";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { fetchWorkspaceAsset } from "@/lib/api";
-import { parseJson, type ToolPart } from "@/lib/chat/tool-part";
+import { parseJson, type SyncOutput, type ToolPart } from "@/lib/chat/tool-part";
 import { formatFileSize } from "@/lib/utils";
 
 interface BinaryReadResult {
@@ -64,6 +64,37 @@ function ImagePreview({ result }: { result: BinaryReadResult }) {
     </figure>
   );
 }
+
+/** Description markdown path for an image, mirroring the backend `<stem>.md` convention. */
+function descriptionPath(filePath: string): string {
+  return `${filePath.replace(/\.[^/.]+$/, "")}.md`;
+}
+
+/**
+ * Surface image binaries in the fetched panel, keyed by their description
+ * path so they merge with the caption document (same stem) when both are read.
+ * Non-image binaries (PDFs) are skipped — they have no inline preview yet.
+ *
+ * Deliberately, a thumbnail appears only when the image was read *as a binary*
+ * (its pixels entered the model's context). A caption retrieved by search that
+ * merely references an image (via its `image_path`) does not surface one: the
+ * fetched view mirrors what the model actually saw, not what it could have.
+ */
+export const syncReadBinaryDocumentOutput: SyncOutput = (
+  _input,
+  _text,
+  metadata,
+  _addChunk,
+  _markFullDocument,
+  addImage,
+) => {
+  const result = isBinaryReadResult(metadata) ? metadata : null;
+  if (!result || !result.media_type.startsWith("image/")) return;
+  addImage(descriptionPath(result.file_path), {
+    filePath: result.file_path,
+    mediaType: result.media_type,
+  });
+};
 
 interface ReadBinaryDocumentToolProps {
   part: ToolPart;
