@@ -5,7 +5,7 @@ import { ToolParameters } from "@/components/ToolDisplay";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { fetchDocumentAsset } from "@/lib/api";
 import { parseJson, type SyncOutput, type ToolPart } from "@/lib/chat/tool-part";
-import { formatFileSize } from "@/lib/utils";
+import { fileStem, formatFileSize } from "@/lib/utils";
 
 interface BinaryReadResult {
   file_path: string;
@@ -67,7 +67,7 @@ function ImagePreview({ result }: { result: BinaryReadResult }) {
 
 /** Description markdown path for an image, mirroring the backend `<stem>.md` convention. */
 function descriptionPath(filePath: string): string {
-  return `${filePath.replace(/\.[^/.]+$/, "")}.md`;
+  return `${fileStem(filePath)}.md`;
 }
 
 /**

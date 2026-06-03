@@ -194,6 +194,9 @@ export function DocumentDialog({
 
   const activeChunk = activeChunkId ? (chunks.get(activeChunkId) ?? chunk) : chunk;
 
+  // Stable across renders so the image overrides don't remount (and refetch) every WorkspaceImage.
+  const markdownOptions = useMemo(() => workspaceMarkdownOptions(filename), [filename]);
+
   // --- Reset state on open ---
   useEffect(() => {
     if (!open) return;
@@ -473,7 +476,7 @@ export function DocumentDialog({
       return (
         <ScrollArea className="flex-1 min-h-0">
           <div className="prose prose-sm dark:prose-invert max-w-none p-4">
-            <Markdown options={workspaceMarkdownOptions(filename)}>
+            <Markdown options={markdownOptions}>
               {fullContent}
             </Markdown>
           </div>

@@ -14,6 +14,12 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Filename without its extension (the logical document stem). */
+export function fileStem(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(0, dot) : name;
+}
+
 /** Collect all file paths under a directory entry (recursive). */
 export function collectFilePaths(entry: DirectoryEntry, out: string[] = []): string[] {
   if (entry.type === "file") {

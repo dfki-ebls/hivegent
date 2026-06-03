@@ -15,7 +15,6 @@ interface PipelineSettingsBarProps {
   conversionPipeline: ConversionPipeline;
   chunkingPipeline: ChunkingPipeline;
   assetMode: AssetProcessingMode;
-  isBulkOperating: boolean;
   /** Active upload target: "" for personal, else a group id. */
   uploadScope: string;
   /** Groups the user can upload to. */
@@ -33,7 +32,6 @@ export function PipelineSettingsBar({
   conversionPipeline,
   chunkingPipeline,
   assetMode,
-  isBulkOperating,
   uploadScope,
   writableGroups,
   onUploadScopeChange,
@@ -75,12 +73,10 @@ export function PipelineSettingsBar({
           <ConversionPipelineSelector
             value={conversionPipeline}
             onChange={onConversionPipelineChange}
-            disabled={isBulkOperating}
           />
           <ChunkingPipelineSelector
             value={chunkingPipeline}
             onChange={onChunkingPipelineChange}
-            disabled={isBulkOperating}
           />
         </>
       )}
@@ -95,7 +91,6 @@ export function PipelineSettingsBar({
         <Select
           value={assetMode}
           onValueChange={(v) => onAssetModeChange(v as AssetProcessingMode)}
-          disabled={isBulkOperating}
         >
           <SelectTrigger id="asset-mode-select" className="w-[120px]" size="sm">
             <SelectValue placeholder="Select mode" />

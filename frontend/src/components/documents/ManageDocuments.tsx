@@ -9,7 +9,7 @@ import {
 } from "../../lib/collection-upload";
 import { featureFlags } from "../../lib/feature-flags";
 import type { PipelineSpec } from "../../lib/types";
-import { isAbortError } from "../../lib/utils";
+import { fileStem, isAbortError } from "../../lib/utils";
 import { EMPTY_SCOPE, useDocumentsStore } from "../../stores/documents-store";
 import { canWriteGroup, getAllGroups, useSettingsStore } from "../../stores/settings-store";
 import { CreateDirectoryDialog } from "../CreateDirectoryDialog";
@@ -29,7 +29,6 @@ import { ErrorBanner } from "./ErrorBanner";
 import { PipelineSettingsBar } from "./PipelineSettingsBar";
 import { ScopeSection } from "./ScopeSection";
 import { UploadArea } from "./UploadArea";
-import { fileStem } from "./utils";
 
 interface ManageDocumentsProps {
   onIncludeDocument?: (filename: string) => void;
@@ -283,7 +282,6 @@ export function ManageDocuments({ onIncludeDocument, onExcludeDocument }: Manage
         conversionPipeline={conversionPipeline}
         chunkingPipeline={chunkingPipeline}
         assetMode={assetMode}
-        isBulkOperating={false}
         uploadScope={uploadScope}
         writableGroups={writableGroups}
         onUploadScopeChange={setUploadScope}

@@ -1,9 +1,3 @@
-/** Filename without its extension (the logical document stem). */
-export function fileStem(name: string): string {
-  const dot = name.lastIndexOf(".");
-  return dot > 0 ? name.slice(0, dot) : name;
-}
-
 /** Human-friendly relative date label (Today, Yesterday, N days ago, ...). */
 export function formatRelativeDate(dateString: string): string {
   const date = new Date(dateString);

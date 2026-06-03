@@ -82,11 +82,10 @@ export function ScopeSection({
   const isSearching = searchQuery.trim().length > 0;
   const expanded = isOpen || isSearching;
 
+  // `filtered` is only read while searching (flatList + visibleFilePaths), so
+  // there's no need to mirror `documents` into it on the non-searching path.
   useEffect(() => {
-    if (!isSearching) {
-      setFiltered(documents);
-      return;
-    }
+    if (!isSearching) return;
     let cancelled = false;
     void import("fuse.js").then(({ default: Fuse }) => {
       if (cancelled) return;
