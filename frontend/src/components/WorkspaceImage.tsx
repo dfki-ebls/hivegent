@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback } from "react";
 
+import { useObjectUrl } from "@/hooks/use-object-url";
 import { fetchDocumentAsset, fetchGroupDocumentAsset } from "@/lib/api";
 
 interface WorkspaceImageProps {
@@ -18,69 +19,33 @@ interface WorkspaceImageProps {
  *
  * Relative paths are resolved against the document's directory, fetched via
  * the authenticated documents API, and displayed using a temporary blob URL.
+ * External (`data:`/`http:`) sources are unsupported and render as a fallback.
  */
 export function WorkspaceImage({ src, alt, documentPath, groupId }: WorkspaceImageProps) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    if (!src) return;
-    setError(false);
-    setBlobUrl(null);
-
-    if (src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://")) {
-      setError(true);
-      return;
+  const fetch = useCallback(() => {
+    if (!src || src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://")) {
+      return Promise.reject(new Error("unsupported image source"));
     }
-
     // Resolve relative path against document directory.
     const lastSlash = documentPath.lastIndexOf("/");
     const docDir = lastSlash >= 0 ? documentPath.substring(0, lastSlash) : "";
     const resolved = docDir ? `${docDir}/${src}` : src;
-
-    let cancelled = false;
-
-    const fetchImage = groupId
-      ? () => fetchGroupDocumentAsset(groupId, resolved)
-      : () => fetchDocumentAsset(resolved);
-
-    fetchImage()
-      .then((url) => {
-        if (!cancelled) {
-          setBlobUrl(url);
-        } else {
-          URL.revokeObjectURL(url);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setError(true);
-      });
-
-    return () => {
-      cancelled = true;
-    };
+    return groupId ? fetchGroupDocumentAsset(groupId, resolved) : fetchDocumentAsset(resolved);
   }, [src, documentPath, groupId]);
 
-  // Revoke blob URL on unmount.
-  useEffect(() => {
-    return () => {
-      if (blobUrl && blobUrl.startsWith("blob:")) {
-        URL.revokeObjectURL(blobUrl);
-      }
-    };
-  }, [blobUrl]);
+  const { url, error } = useObjectUrl(src ? fetch : null);
 
   if (error || !src) {
     return <span className="text-muted-foreground text-xs">[{alt || "image"}]</span>;
   }
 
-  if (!blobUrl) {
+  if (!url) {
     return <span className="text-muted-foreground text-xs animate-pulse">Loading image...</span>;
   }
 
   return (
     <img
-      src={blobUrl}
+      src={url}
       alt={alt ?? ""}
       loading="lazy"
       className="h-auto max-w-full overflow-hidden rounded-md"

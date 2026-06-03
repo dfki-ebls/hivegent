@@ -1,6 +1,9 @@
 import { FileImage, FileText, Paperclip } from "lucide-react";
+import { useCallback } from "react";
 import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
 import { ToolParameters } from "@/components/ToolDisplay";
+import { useObjectUrl } from "@/hooks/use-object-url";
+import { fetchWorkspaceAsset } from "@/lib/api";
 import { parseJson, type ToolPart } from "@/lib/chat/tool-part";
 import { formatFileSize } from "@/lib/utils";
 
@@ -22,6 +25,46 @@ function isBinaryReadResult(value: unknown): value is BinaryReadResult {
   );
 }
 
+function BinaryMeta({ result }: { result: BinaryReadResult }) {
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+      <span>{result.media_type}</span>
+      <span>{formatFileSize(result.size)}</span>
+      {result.pages.length > 0 && <span>pages {result.pages.join(", ")}</span>}
+      <span className="flex items-center gap-1">
+        <Paperclip className="size-3" />
+        attached to model
+      </span>
+    </div>
+  );
+}
+
+/** Inline preview for image binaries, fetched lazily when the tool is expanded. */
+function ImagePreview({ result }: { result: BinaryReadResult }) {
+  const fetch = useCallback(() => fetchWorkspaceAsset(result.file_path), [result.file_path]);
+  const { url, error } = useObjectUrl(fetch);
+
+  return (
+    <figure className="space-y-2 rounded-md border bg-muted/40 p-3">
+      {url && !error ? (
+        <img src={url} alt={result.file_path} className="max-h-96 w-auto max-w-full rounded" />
+      ) : (
+        <div
+          className={`flex h-40 items-center justify-center rounded text-xs text-muted-foreground ${error ? "" : "animate-pulse"}`}
+        >
+          {error ? "Preview unavailable" : "Loading image…"}
+        </div>
+      )}
+      <figcaption className="space-y-1">
+        <div className="truncate text-sm font-medium" title={result.file_path}>
+          {result.file_path}
+        </div>
+        <BinaryMeta result={result} />
+      </figcaption>
+    </figure>
+  );
+}
+
 interface ReadBinaryDocumentToolProps {
   part: ToolPart;
   metadata: unknown;
@@ -38,25 +81,20 @@ export function ReadBinaryDocumentTool({ part, metadata }: ReadBinaryDocumentToo
       <ToolHeader title="Read Binary Document" type="tool-read_binary_document" state={state} />
       <ToolContent>
         {input && <ToolParameters params={input} />}
-        {result && (
-          <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3 text-sm">
-            <Icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1 space-y-1">
-              <div className="truncate font-medium" title={result.file_path}>
-                {result.file_path}
-              </div>
-              <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                <span>{result.media_type}</span>
-                <span>{formatFileSize(result.size)}</span>
-                {result.pages.length > 0 && <span>pages {result.pages.join(", ")}</span>}
-                <span className="flex items-center gap-1">
-                  <Paperclip className="size-3" />
-                  attached to model
-                </span>
+        {result &&
+          (result.media_type.startsWith("image/") ? (
+            <ImagePreview result={result} />
+          ) : (
+            <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3 text-sm">
+              <Icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="truncate font-medium" title={result.file_path}>
+                  {result.file_path}
+                </div>
+                <BinaryMeta result={result} />
               </div>
             </div>
-          </div>
-        )}
+          ))}
       </ToolContent>
     </Tool>
   );

@@ -1,8 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
-import { fetchDocumentAsset } from "@/lib/api";
+import { useCallback } from "react";
+import { useObjectUrl } from "@/hooks/use-object-url";
+import { fetchWorkspaceAsset } from "@/lib/api";
 
 /**
  * Inline image rendered by Streamdown for `<imgref>` tags.
@@ -22,37 +23,8 @@ interface ImageRefProps {
 }
 
 export function ImageRef({ src, children }: ImageRefProps) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    if (!src) return;
-    let cancelled = false;
-
-    fetchDocumentAsset(src)
-      .then((url) => {
-        if (!cancelled) {
-          setBlobUrl(url);
-        } else {
-          URL.revokeObjectURL(url);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setError(true);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [src]);
-
-  useEffect(() => {
-    return () => {
-      if (blobUrl?.startsWith("blob:")) {
-        URL.revokeObjectURL(blobUrl);
-      }
-    };
-  }, [blobUrl]);
+  const fetch = useCallback(() => fetchWorkspaceAsset(src ?? ""), [src]);
+  const { url, error } = useObjectUrl(src ? fetch : null);
 
   if (!src) return <span>{children}</span>;
 
@@ -62,14 +34,14 @@ export function ImageRef({ src, children }: ImageRefProps) {
     );
   }
 
-  if (!blobUrl) {
+  if (!url) {
     return <span className="text-sm text-muted-foreground italic">Loading image…</span>;
   }
 
   return (
     <figure className="my-4">
       <img
-        src={blobUrl}
+        src={url}
         alt={typeof children === "string" ? children : src}
         className="max-w-full rounded-md border"
       />

@@ -564,6 +564,23 @@ export async function fetchDocumentAsset(filepath: string): Promise<string> {
   return URL.createObjectURL(blob);
 }
 
+/**
+ * Fetch a workspace asset by its canonical (possibly prefixed) path.
+ *
+ * Group documents carry an `@<group>/…` prefix (see the backend
+ * `SearchPath.prefix`); route those to the group endpoint and everything
+ * else to the personal documents endpoint. Returns a blob URL for display.
+ */
+export function fetchWorkspaceAsset(path: string): Promise<string> {
+  if (path.startsWith("@")) {
+    const slash = path.indexOf("/");
+    if (slash > 1) {
+      return fetchGroupDocumentAsset(path.slice(1, slash), path.slice(slash + 1));
+    }
+  }
+  return fetchDocumentAsset(path);
+}
+
 /** Download the original binary file for a document. */
 export async function downloadOriginal(filepath: string): Promise<Blob> {
   const res = await authFetch(`${API_BASE_URL}/api/documents/original/${encodeFilePath(filepath)}`);
