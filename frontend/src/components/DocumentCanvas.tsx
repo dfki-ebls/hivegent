@@ -28,7 +28,7 @@ import {
   type UploadDocumentOptions,
   buildAuxLlmConfig,
   fetchDocumentAsset,
-  getDirectories,
+  scopePrefix,
   uploadDocument,
 } from "../lib/api";
 import { DOCUMENT_ACTIONS } from "../lib/document-actions";
@@ -37,7 +37,6 @@ import {
   AssetProcessingMode,
   type ChunkingPipeline,
   type ConversionPipeline,
-  type DirectoryTreeResponse,
   type DocumentInfo,
   type FetchedChunk,
   type FetchedDocument,
@@ -62,7 +61,7 @@ import {
 } from "../lib/utils";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { useFetchedDocumentsStore } from "../stores/fetched-documents-store";
-import { useUserDocumentsStore } from "../stores/user-documents-store";
+import { EMPTY_SCOPE, useDocumentsStore } from "../stores/documents-store";
 import { canWriteGroup, getAllGroups, useSettingsStore } from "../stores/settings-store";
 import { Checkbox } from "./ui/checkbox";
 import { ChunkingPipelineSelector } from "./ChunkingPipelineSelector";
@@ -539,22 +538,60 @@ interface PipelineSettingsBarProps {
   chunkingPipeline: ChunkingPipeline;
   assetMode: AssetProcessingMode;
   isBulkOperating: boolean;
+  /** Active upload target: "" for personal, else a group id. */
+  uploadScope: string;
+  /** Groups the user can upload to. */
+  writableGroups: string[];
+  onUploadScopeChange: (scope: string) => void;
   onConversionPipelineChange: (pipeline: ConversionPipeline) => void;
   onChunkingPipelineChange: (pipeline: ChunkingPipeline) => void;
   onAssetModeChange: (mode: AssetProcessingMode) => void;
 }
+
+/** Select sentinel for the personal workspace ("*" can never be a group id). */
+const PERSONAL_SCOPE = "*";
 
 function PipelineSettingsBar({
   conversionPipeline,
   chunkingPipeline,
   assetMode,
   isBulkOperating,
+  uploadScope,
+  writableGroups,
+  onUploadScopeChange,
   onConversionPipelineChange,
   onChunkingPipelineChange,
   onAssetModeChange,
 }: PipelineSettingsBarProps) {
   return (
-    <div className="flex items-center justify-center gap-8 border-b px-4 py-3">
+    <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 border-b px-4 py-3">
+      {writableGroups.length > 0 && (
+        <div className="flex items-center gap-2">
+          <Label
+            htmlFor="upload-scope-select"
+            className="text-sm text-muted-foreground flex items-center gap-1.5"
+          >
+            <Upload className="h-4 w-4" />
+            Upload to
+          </Label>
+          <Select
+            value={uploadScope || PERSONAL_SCOPE}
+            onValueChange={(v) => onUploadScopeChange(v === PERSONAL_SCOPE ? "" : v)}
+          >
+            <SelectTrigger id="upload-scope-select" className="w-[140px]" size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={PERSONAL_SCOPE}>Personal</SelectItem>
+              {writableGroups.map((g) => (
+                <SelectItem key={g} value={g}>
+                  {g}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
       {featureFlags.pipelineSpec && (
         <>
           <ConversionPipelineSelector
@@ -710,150 +747,510 @@ function DocumentListItem({
   );
 }
 
-// --- Group documents components ---
+// --- Per-scope document section ---
 
-interface GroupDocumentsSectionProps {
-  groupId: string;
-  canWrite: boolean;
-  onInclude: (path: string) => void;
-  onExclude: (path: string) => void;
-  onViewFile: (groupId: string, filepath: string) => void;
-  onRemoveFile?: (groupId: string, filepath: string) => void;
-  onCreateSubdir?: (groupId: string, parentPath: string) => void;
-  onDeleteDir?: (groupId: string, dirPath: string) => void;
+/** Edit/view dialog target within a scope (local path). */
+interface ScopeDialogState {
+  path: string;
+  editable: boolean;
 }
 
-function GroupDocumentsSection({
-  groupId,
+interface ScopeSectionProps {
+  /** Workspace scope: "" for personal, else a group id. */
+  scope: string;
+  label: string;
+  canWrite: boolean;
+  /** Whether the section starts expanded (personal) and shows the upload-target hint. */
+  defaultOpen: boolean;
+  searchQuery: string;
+  pipelineSpec: PipelineSpec;
+  /** Receives a canonical path (scope-prefixed) for the chat document filter. */
+  onIncludeDocument?: (path: string) => void;
+  onExcludeDocument?: (path: string) => void;
+}
+
+/**
+ * Self-contained document manager for one workspace scope. Used identically
+ * for the personal store and each group, so the two share one code path. The
+ * shared upload area (in ManageDocuments) deposits into the selected scope and
+ * the store refresh flows back here through `byScope[scope]`.
+ */
+function ScopeSection({
+  scope,
+  label,
   canWrite,
-  onInclude,
-  onExclude,
-  onViewFile,
-  onRemoveFile,
-  onCreateSubdir,
-  onDeleteDir,
-}: GroupDocumentsSectionProps) {
-  const [tree, setTree] = useState<DirectoryTreeResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isOpen, setIsOpen] = useState(false);
-  const [hasLoaded, setHasLoaded] = useState(false);
+  defaultOpen,
+  searchQuery,
+  pipelineSpec,
+  onIncludeDocument,
+  onExcludeDocument,
+}: ScopeSectionProps) {
+  const state = useDocumentsStore((s) => s.byScope[scope] ?? EMPTY_SCOPE);
+  const refresh = useDocumentsStore((s) => s.refresh);
+  const removeDoc = useDocumentsStore((s) => s.remove);
+  const storeRechunk = useDocumentsStore((s) => s.rechunk);
+  const storeReconvert = useDocumentsStore((s) => s.reconvert);
+  const storeBulkRechunk = useDocumentsStore((s) => s.bulkRechunk);
+  const storeBulkReconvert = useDocumentsStore((s) => s.bulkReconvert);
+  const storeBulkDelete = useDocumentsStore((s) => s.bulkDelete);
+  const storeMove = useDocumentsStore((s) => s.move);
+  const createDir = useDocumentsStore((s) => s.createDir);
+  const deleteDir = useDocumentsStore((s) => s.deleteDir);
+  const storeMoveDir = useDocumentsStore((s) => s.moveDir);
+  const clearError = useDocumentsStore((s) => s.clearError);
+  const overrides = useSettingsStore((s) => s.overrides);
+
+  const { documents, directoryTree, mutatingPaths, bulkProgress, operationStage, error, hasFetched } =
+    state;
+
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const [dialog, setDialog] = useState<ScopeDialogState | null>(null);
+  const [moveFilePath, setMoveFilePath] = useState<string | null>(null);
+  const [moveDirPath, setMoveDirPath] = useState<string | null>(null);
+  const [bulkMoveFiles, setBulkMoveFiles] = useState<string[] | null>(null);
+  const [createDirParent, setCreateDirParent] = useState<string | undefined>(undefined);
+  const [showCreateDir, setShowCreateDir] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [filtered, setFiltered] = useState(documents);
+  const [pendingDelete, setPendingDelete] = useState<
+    | { kind: "file"; path: string }
+    | { kind: "directory"; path: string }
+    | { kind: "bulk"; files: string[] }
+    | null
+  >(null);
+
+  // Refresh this scope's documents and tree once on mount.
+  useEffect(() => {
+    void refresh(scope);
+  }, [refresh, scope]);
+
+  const prefix = scopePrefix(scope);
+  const toCanonical = useCallback((path: string) => `${prefix}${path}`, [prefix]);
+
+  const isSearching = searchQuery.trim().length > 0;
+  const expanded = isOpen || isSearching;
 
   useEffect(() => {
-    if (!isOpen || hasLoaded) return;
-    setIsLoading(true);
-    getDirectories(`@${groupId}/`)
-      .then(setTree)
-      .catch(() => setTree(null))
-      .finally(() => {
-        setIsLoading(false);
-        setHasLoaded(true);
-      });
-  }, [groupId, isOpen, hasLoaded]);
+    if (!isSearching) {
+      setFiltered(documents);
+      return;
+    }
+    let cancelled = false;
+    void import("fuse.js").then(({ default: Fuse }) => {
+      if (cancelled) return;
+      const fuse = new Fuse(documents, { keys: ["display_name", "filename"], threshold: 0.4 });
+      setFiltered(fuse.search(searchQuery).map((r) => r.item));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [documents, searchQuery, isSearching]);
 
-  const handleInclude = useCallback(
-    (path: string) => onInclude(`@${groupId}/${path}`),
-    [groupId, onInclude],
+  const docsByFilename = useMemo(() => new Map(documents.map((d) => [d.filename, d])), [documents]);
+
+  const clearSelection = useCallback(() => setSelectedFiles(new Set()), []);
+  const toggleFile = useCallback((path: string) => {
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+  const toggleDirFiles = useCallback((paths: string[]) => {
+    setSelectedFiles((prev) => {
+      const all = paths.every((p) => prev.has(p));
+      const next = new Set(prev);
+      for (const p of paths) {
+        if (all) next.delete(p);
+        else next.add(p);
+      }
+      return next;
+    });
+  }, []);
+
+  const visibleFilePaths = useMemo(() => {
+    if (isSearching) return filtered.map((d) => d.filename);
+    if (directoryTree) return collectFilePaths(directoryTree.root);
+    return documents.map((d) => d.filename);
+  }, [isSearching, filtered, directoryTree, documents]);
+
+  const { allSelected, someSelected } = useMemo(() => {
+    let count = 0;
+    for (const p of visibleFilePaths) if (selectedFiles.has(p)) count++;
+    return {
+      allSelected: visibleFilePaths.length > 0 && count === visibleFilePaths.length,
+      someSelected: count > 0,
+    };
+  }, [visibleFilePaths, selectedFiles]);
+
+  const toggleSelectAll = useCallback(() => {
+    if (allSelected) clearSelection();
+    else setSelectedFiles(new Set(visibleFilePaths));
+  }, [allSelected, visibleFilePaths, clearSelection]);
+
+  const selectedReconvertable = useMemo(
+    () => [...selectedFiles].filter((f) => docsByFilename.get(f)?.has_original === true),
+    [selectedFiles, docsByFilename],
   );
 
-  const handleExclude = useCallback(
-    (path: string) => onExclude(`@${groupId}/${path}`),
-    [groupId, onExclude],
+  const handleReconvert = useCallback(
+    (path: string) =>
+      void storeReconvert(scope, path, { spec: pipelineSpec, llm: buildAuxLlmConfig(overrides) }),
+    [storeReconvert, scope, pipelineSpec, overrides],
   );
 
-  const handleIncludeGroup = useCallback(() => onInclude(`@${groupId}/`), [groupId, onInclude]);
+  const handleDownloadOriginal = useCallback(
+    async (path: string) => {
+      try {
+        const { downloadOriginal } = await import("../lib/api");
+        const blob = await downloadOriginal(toCanonical(path));
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = docsByFilename.get(path)?.original_path?.split("/").pop() ?? "original";
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch {
+        // silently ignore download errors
+      }
+    },
+    [docsByFilename, toCanonical],
+  );
 
-  const handleExcludeGroup = useCallback(() => onExclude(`@${groupId}/`), [groupId, onExclude]);
+  const handleSave = useCallback(
+    async (filename: string, content: string) => {
+      const file = new File([content], filename, { type: "text/plain" });
+      await uploadDocument(filename, file, { spec: pipelineSpec });
+      await refresh(scope);
+    },
+    [pipelineSpec, scope, refresh],
+  );
+
+  const handleBulkMoveConfirm = useCallback(
+    async (destinationDir: string) => {
+      const files = bulkMoveFiles ?? [];
+      setBulkMoveFiles(null);
+      clearSelection();
+      for (const path of files) {
+        const name = path.split("/").pop() ?? path;
+        await storeMove(scope, path, destinationDir ? `${destinationDir}/${name}` : name);
+      }
+    },
+    [bulkMoveFiles, clearSelection, storeMove, scope],
+  );
+
+  const confirmDelete = useCallback(async () => {
+    if (!pendingDelete) return;
+    setPendingDelete(null);
+    switch (pendingDelete.kind) {
+      case "file":
+        await removeDoc(scope, pendingDelete.path);
+        break;
+      case "directory":
+        await deleteDir(scope, pendingDelete.path);
+        break;
+      case "bulk":
+        clearSelection();
+        await storeBulkDelete(scope, pendingDelete.files);
+        break;
+    }
+  }, [pendingDelete, removeDoc, deleteDir, clearSelection, storeBulkDelete, scope]);
+
+  const bulkHandlers = useMemo<Record<string, () => void>>(
+    () => ({
+      rechunk: () => {
+        const files = [...selectedFiles];
+        clearSelection();
+        void storeBulkRechunk(scope, files, pipelineSpec);
+      },
+      reconvert: () => {
+        const files = [...selectedReconvertable];
+        clearSelection();
+        void storeBulkReconvert(scope, files, pipelineSpec, buildAuxLlmConfig(overrides));
+      },
+      download: () => void selectedReconvertable.reduce(
+        (chain, p) => chain.then(() => handleDownloadOriginal(p)),
+        Promise.resolve(),
+      ),
+      move: () => setBulkMoveFiles([...selectedFiles]),
+      delete: () => setPendingDelete({ kind: "bulk", files: [...selectedFiles] }),
+    }),
+    [
+      selectedFiles,
+      selectedReconvertable,
+      clearSelection,
+      storeBulkRechunk,
+      storeBulkReconvert,
+      pipelineSpec,
+      overrides,
+      handleDownloadOriginal,
+      scope,
+    ],
+  );
+
+  const treeView = () => {
+    if (!directoryTree || (directoryTree.total_files === 0 && directoryTree.total_directories === 0)) {
+      return <p className="py-2 text-xs text-muted-foreground">No documents in this workspace</p>;
+    }
+    return (
+      <DirectoryTreeView
+        entry={directoryTree.root}
+        mutatingPaths={mutatingPaths}
+        operationStage={operationStage}
+        onEditFile={(path) => setDialog({ path, editable: canWrite })}
+        onInclude={(path) => onIncludeDocument?.(toCanonical(path))}
+        onExclude={(path) => onExcludeDocument?.(toCanonical(path))}
+        onFileAction={
+          canWrite
+            ? (path, actionId) => {
+                switch (actionId) {
+                  case "rechunk":
+                    void storeRechunk(scope, path, pipelineSpec);
+                    break;
+                  case "reconvert":
+                    handleReconvert(path);
+                    break;
+                  case "download":
+                    void handleDownloadOriginal(path);
+                    break;
+                  case "move":
+                    setMoveFilePath(path);
+                    break;
+                  case "delete":
+                    setPendingDelete({ kind: "file", path });
+                    break;
+                }
+              }
+            : undefined
+        }
+        onCreateSubdir={canWrite ? (path) => {
+          setCreateDirParent(path || undefined);
+          setShowCreateDir(true);
+        } : undefined}
+        onDeleteDir={canWrite ? (path) => setPendingDelete({ kind: "directory", path }) : undefined}
+        onMoveDir={canWrite ? (path) => setMoveDirPath(path) : undefined}
+        selectedFiles={canWrite ? selectedFiles : undefined}
+        onToggleSelectFile={canWrite ? toggleFile : undefined}
+        onToggleSelectDir={canWrite ? toggleDirFiles : undefined}
+      />
+    );
+  };
+
+  const flatList = () => {
+    if (filtered.length === 0) {
+      return <p className="py-2 text-xs text-muted-foreground">No matching documents</p>;
+    }
+    return (
+      <div className="space-y-2">
+        {filtered.map((doc) => {
+          const docMutating = mutatingPaths.has(doc.filename);
+          return (
+            <DocumentListItem
+              key={doc.filename}
+              doc={doc}
+              isMutating={docMutating}
+              operationStage={docMutating ? operationStage : null}
+              onEdit={() => setDialog({ path: doc.filename, editable: canWrite })}
+              onIncludeDocument={() => onIncludeDocument?.(toCanonical(doc.filename))}
+              onExcludeDocument={() => onExcludeDocument?.(toCanonical(doc.filename))}
+              onReconvert={() => handleReconvert(doc.filename)}
+              onRemove={() => setPendingDelete({ kind: "file", path: doc.filename })}
+              selected={canWrite ? selectedFiles.has(doc.filename) : undefined}
+              onToggleSelect={canWrite ? () => toggleFile(doc.filename) : undefined}
+            />
+          );
+        })}
+      </div>
+    );
+  };
+
+  const fileCount = directoryTree?.total_files ?? documents.length;
+  const showBulkBar = canWrite && (selectedFiles.size > 0 || bulkProgress !== null);
 
   return (
-    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-3 rounded-md px-2 py-1.5 hover:bg-muted/50 group">
-        <div className="flex items-center gap-2 min-w-0">
-          <CollapsibleTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
-              {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-            </Button>
-          </CollapsibleTrigger>
+    <Collapsible open={expanded} onOpenChange={setIsOpen} className="mb-1">
+      <div className="flex items-center gap-2 rounded-md px-1 py-1.5 hover:bg-muted/50 group">
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
+            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </Button>
+        </CollapsibleTrigger>
+        {scope ? (
           <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <CollapsibleTrigger asChild>
-            <button type="button" className="min-w-0 truncate text-sm font-medium text-left">
-              {groupId}
-            </button>
-          </CollapsibleTrigger>
-        </div>
-        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            title="Include group in chat"
-            onClick={handleIncludeGroup}
-          >
-            <Eye className="h-3 w-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            title="Exclude group from chat"
-            onClick={handleExcludeGroup}
-          >
-            <EyeOff className="h-3 w-3" />
-          </Button>
-        </div>
-        <span />
-        <div className="flex justify-end">
-          {tree && (
-            <Badge variant="secondary" className="text-xs">
-              {tree.total_files}
-            </Badge>
-          )}
-        </div>
+        ) : (
+          <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+        )}
+        <CollapsibleTrigger asChild>
+          <button type="button" className="min-w-0 flex-1 truncate text-left text-sm font-medium">
+            {label}
+          </button>
+        </CollapsibleTrigger>
+        {scope && (
+          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              title="Include workspace in chat"
+              onClick={() => onIncludeDocument?.(`${prefix}`)}
+            >
+              <Eye className="h-3 w-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              title="Exclude workspace from chat"
+              onClick={() => onExcludeDocument?.(`${prefix}`)}
+            >
+              <EyeOff className="h-3 w-3" />
+            </Button>
+          </div>
+        )}
+        <Badge variant="secondary" className="shrink-0 text-xs">
+          {fileCount}
+        </Badge>
       </div>
-      <CollapsibleContent>
-        {isLoading && (
-          <div className="flex items-center justify-center py-4">
+
+      <CollapsibleContent className="pl-2">
+        {error && (
+          <div className="my-2">
+            <ErrorBanner message={error} onDismiss={() => clearError(scope)} />
+          </div>
+        )}
+        {!hasFetched ? (
+          <div className="flex items-center justify-center py-6">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
-        )}
-        {!isLoading && tree && tree.total_files > 0 && (
-          <div className="ml-4">
-            <DirectoryTreeView
-              entry={tree.root}
-              onEditFile={(path) => onViewFile(groupId, path)}
-              onInclude={handleInclude}
-              onExclude={handleExclude}
-              onFileAction={
-                canWrite && onRemoveFile
-                  ? (path, actionId) => {
-                      if (actionId === "delete") onRemoveFile(groupId, path);
-                    }
-                  : undefined
-              }
-              onCreateSubdir={
-                canWrite && onCreateSubdir ? (path) => onCreateSubdir(groupId, path) : undefined
-              }
-              onDeleteDir={
-                canWrite && onDeleteDir ? (path) => onDeleteDir(groupId, path) : undefined
-              }
-            />
-          </div>
-        )}
-        {!isLoading && (!tree || tree.total_files === 0) && (
-          <p className="ml-8 py-2 text-xs text-muted-foreground">No documents in this group</p>
+        ) : (
+          <>
+            {showBulkBar ? (
+              <div className="flex h-9 items-center gap-2 py-1">
+                {bulkProgress ? (
+                  <>
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                    <span className="truncate text-sm">{bulkProgress.currentFile}</span>
+                    <Progress
+                      value={bulkProgress.total > 0 ? (bulkProgress.current / bulkProgress.total) * 100 : 0}
+                      className="w-24 shrink-0"
+                    />
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {bulkProgress.current}/{bulkProgress.total}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm font-medium">{selectedFiles.size} selected</span>
+                    {DOCUMENT_ACTIONS.map((action) => {
+                      if (action.requiresOriginal && selectedReconvertable.length === 0) return null;
+                      const Icon = action.icon;
+                      return (
+                        <Button
+                          key={action.id}
+                          variant={action.variant}
+                          size="sm"
+                          onClick={bulkHandlers[action.id]}
+                          disabled={bulkProgress !== null}
+                        >
+                          <Icon className="h-4 w-4 mr-1" />
+                          {action.label}
+                        </Button>
+                      );
+                    })}
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={clearSelection}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </>
+                )}
+              </div>
+            ) : (
+              canWrite &&
+              !isSearching &&
+              fileCount > 0 && (
+                <div className="flex items-center gap-2 py-1">
+                  <Checkbox
+                    checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                    onCheckedChange={toggleSelectAll}
+                  />
+                  <span className="text-xs text-muted-foreground">Select all</span>
+                </div>
+              )
+            )}
+            {isSearching ? flatList() : treeView()}
+          </>
         )}
       </CollapsibleContent>
+
+      <DocumentDialog
+        open={dialog !== null}
+        onOpenChange={(open) => !open && setDialog(null)}
+        filename={dialog ? toCanonical(dialog.path) : ""}
+        showMetadata={dialog?.editable ?? false}
+        editable={dialog?.editable ?? false}
+        onSave={handleSave}
+        onRechunk={
+          dialog && dialog.editable
+            ? async () => {
+                if (dialog) await storeRechunk(scope, dialog.path, pipelineSpec);
+              }
+            : undefined
+        }
+      />
+      <MoveDocumentDialog
+        open={moveFilePath !== null}
+        onOpenChange={(open) => !open && setMoveFilePath(null)}
+        currentPath={moveFilePath ?? ""}
+        onMove={(destination) => {
+          if (moveFilePath) void storeMove(scope, moveFilePath, destination);
+        }}
+      />
+      <MoveDocumentDialog
+        open={moveDirPath !== null}
+        onOpenChange={(open) => !open && setMoveDirPath(null)}
+        currentPath={moveDirPath ?? ""}
+        isDirectory
+        onMove={(destination) => {
+          if (moveDirPath) void storeMoveDir(scope, moveDirPath, destination);
+        }}
+      />
+      <MoveDocumentDialog
+        open={bulkMoveFiles !== null}
+        onOpenChange={(open) => !open && setBulkMoveFiles(null)}
+        bulkFileCount={bulkMoveFiles?.length ?? 0}
+        onMove={(dir) => void handleBulkMoveConfirm(dir)}
+      />
+      <CreateDirectoryDialog
+        open={showCreateDir}
+        onOpenChange={setShowCreateDir}
+        parentPath={createDirParent}
+        onCreate={(path) => createDir(scope, path)}
+      />
+      <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingDelete?.kind === "bulk"
+                ? `Delete ${pendingDelete.files.length} documents?`
+                : pendingDelete?.kind === "directory"
+                  ? "Delete directory?"
+                  : "Delete document?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This action permanently deletes the selected content and its chunks. It cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => void confirmDelete()}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Collapsible>
   );
-}
-
-interface DialogState {
-  filename: string;
-  /** Show metadata badges and chunk sidebar from API. */
-  showMetadata: boolean;
-  /** Enable editing. */
-  editable: boolean;
-  /** New document mode. */
-  isNew: boolean;
 }
 
 interface ManageDocumentsProps {
@@ -861,49 +1258,43 @@ interface ManageDocumentsProps {
   onExcludeDocument?: (filename: string) => void;
 }
 
-/** Recursively collect all file paths from a directory entry. */
 function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumentsProps) {
-  const {
-    documents,
-    directoryTree,
-    mutatingPaths,
-    isUploading,
-    hasFetched,
-    uploadProgress,
-    bulkProgress,
-    operationStage,
-    error,
-    refresh,
-    upload,
-    uploadMultiple,
-    uploadCol,
-    remove,
-    rechunk: storeRechunk,
-    reconvert: storeReconvert,
-    bulkRechunk: storeBulkRechunk,
-    bulkReconvert: storeBulkReconvert,
-    bulkDelete: storeBulkDelete,
-    move: storeMove,
-    createDir,
-    deleteDir,
-    moveDir: storeMoveDir,
-    clearError,
-  } = useUserDocumentsStore();
-  const overrides = useSettingsStore((state) => state.overrides);
-  const conversionPipeline = useSettingsStore((state) => state.conversionPipeline);
-  const chunkingPipeline = useSettingsStore((state) => state.chunkingPipeline);
-  const conversionConfigs = useSettingsStore((state) => state.conversionConfigs);
-  const chunkingConfigs = useSettingsStore((state) => state.chunkingConfigs);
-  const setConversionPipeline = useSettingsStore((state) => state.setConversionPipeline);
-  const setChunkingPipeline = useSettingsStore((state) => state.setChunkingPipeline);
-  const assetMode = useSettingsStore((state) => state.assetMode);
-  const setAssetMode = useSettingsStore((state) => state.setAssetMode);
+  const overrides = useSettingsStore((s) => s.overrides);
+  const conversionPipeline = useSettingsStore((s) => s.conversionPipeline);
+  const chunkingPipeline = useSettingsStore((s) => s.chunkingPipeline);
+  const conversionConfigs = useSettingsStore((s) => s.conversionConfigs);
+  const chunkingConfigs = useSettingsStore((s) => s.chunkingConfigs);
+  const setConversionPipeline = useSettingsStore((s) => s.setConversionPipeline);
+  const setChunkingPipeline = useSettingsStore((s) => s.setChunkingPipeline);
+  const assetMode = useSettingsStore((s) => s.assetMode);
+  const setAssetMode = useSettingsStore((s) => s.setAssetMode);
+
+  const upload = useDocumentsStore((s) => s.upload);
+  const uploadMultiple = useDocumentsStore((s) => s.uploadMultiple);
+  const uploadCol = useDocumentsStore((s) => s.uploadCol);
+  const createDir = useDocumentsStore((s) => s.createDir);
+  const refresh = useDocumentsStore((s) => s.refresh);
+
+  const groups = useMemo(() => getAllGroups(), []);
+  const writableGroups = useMemo(() => groups.filter((g) => canWriteGroup(g)), [groups]);
+
+  const [uploadScope, setUploadScope] = useState("");
+  const target = useDocumentsStore((s) => s.byScope[uploadScope] ?? EMPTY_SCOPE);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const directoryInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [newDocOpen, setNewDocOpen] = useState(false);
+  const [showCreateDir, setShowCreateDir] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [pendingOverwrite, setPendingOverwrite] = useState<{
+    files: File[];
+    conflicting: string[];
+  } | null>(null);
 
   const beginOp = useCallback((): AbortSignal => {
     abortRef.current?.abort();
@@ -911,62 +1302,29 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     abortRef.current = ctrl;
     return ctrl.signal;
   }, []);
+  const handleCancel = useCallback(() => abortRef.current?.abort(), []);
 
-  const handleCancel = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
+  const pipelineSpec: PipelineSpec = useMemo(
+    () =>
+      featureFlags.pipelineSpec
+        ? {
+            conversion: {
+              pipeline: conversionPipeline,
+              config: conversionConfigs[conversionPipeline],
+            },
+            chunking: { pipeline: chunkingPipeline, config: chunkingConfigs[chunkingPipeline] },
+            process_assets: assetMode,
+          }
+        : { process_assets: assetMode },
+    [conversionPipeline, chunkingPipeline, conversionConfigs, chunkingConfigs, assetMode],
+  );
 
-  const [dialogState, setDialogState] = useState<DialogState | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filteredDocuments, setFilteredDocuments] = useState(documents);
-  const [moveFilePath, setMoveFilePath] = useState<string | null>(null);
-  const [moveDirPath, setMoveDirPath] = useState<string | null>(null);
-  const [bulkMoveFiles, setBulkMoveFiles] = useState<string[] | null>(null);
-  const [createDirParent, setCreateDirParent] = useState<string | undefined>(undefined);
-  const [showCreateDir, setShowCreateDir] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
-  const [pendingDelete, setPendingDelete] = useState<
-    | { kind: "file"; path: string }
-    | { kind: "directory"; path: string }
-    | { kind: "bulk"; files: string[] }
-    | null
-  >(null);
-  const [pendingOverwrite, setPendingOverwrite] = useState<{
-    files: File[];
-    options: UploadDocumentOptions;
-    conflicting: string[];
-  } | null>(null);
+  const uploadOptions = useMemo<UploadDocumentOptions>(
+    () => ({ spec: pipelineSpec, llm: buildAuxLlmConfig(overrides), scope: uploadScope }),
+    [pipelineSpec, overrides, uploadScope],
+  );
 
-  const toggleFile = useCallback((path: string) => {
-    setSelectedFiles((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
-  }, []);
-
-  const clearSelection = useCallback(() => setSelectedFiles(new Set()), []);
-
-  const toggleDirFiles = useCallback((paths: string[]) => {
-    setSelectedFiles((prev) => {
-      const allSelected = paths.every((p) => prev.has(p));
-      const next = new Set(prev);
-      for (const p of paths) {
-        if (allSelected) {
-          next.delete(p);
-        } else {
-          next.add(p);
-        }
-      }
-      return next;
-    });
-  }, []);
-
-  const uploadInFlight = isPreparing || isUploading || bulkProgress !== null;
+  const uploadInFlight = isPreparing || target.isUploading;
   useEffect(() => {
     if (!uploadInFlight) return;
     const handler = (event: BeforeUnloadEvent) => {
@@ -977,307 +1335,43 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     return () => window.removeEventListener("beforeunload", handler);
   }, [uploadInFlight]);
 
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setFilteredDocuments(documents);
-      return;
-    }
-
-    let cancelled = false;
-
-    void import("fuse.js").then(({ default: Fuse }) => {
-      if (cancelled) return;
-
-      const fuse = new Fuse(documents, {
-        keys: ["display_name", "filename"],
-        threshold: 0.4,
-      });
-      setFilteredDocuments(fuse.search(searchQuery).map((result) => result.item));
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [documents, searchQuery]);
-
-  const isSearching = searchQuery.trim().length > 0;
-
-  const visibleFilePaths = useMemo(() => {
-    if (isSearching) {
-      return filteredDocuments.map((d) => d.filename);
-    }
-    if (directoryTree) {
-      return collectFilePaths(directoryTree.root);
-    }
-    return documents.map((d) => d.filename);
-  }, [isSearching, filteredDocuments, directoryTree, documents]);
-
-  const { allSelected, someSelected } = useMemo(() => {
-    let count = 0;
-    for (const p of visibleFilePaths) {
-      if (selectedFiles.has(p)) count++;
-    }
-    return {
-      allSelected: visibleFilePaths.length > 0 && count === visibleFilePaths.length,
-      someSelected: count > 0,
-    };
-  }, [visibleFilePaths, selectedFiles]);
-
-  const toggleSelectAll = useCallback(() => {
-    if (allSelected) {
-      clearSelection();
-    } else {
-      setSelectedFiles(new Set(visibleFilePaths));
-    }
-  }, [allSelected, visibleFilePaths, clearSelection]);
-
-  const docsByFilename = useMemo(() => new Map(documents.map((d) => [d.filename, d])), [documents]);
-
-  const selectedReconvertable = useMemo(
-    () => [...selectedFiles].filter((f) => docsByFilename.get(f)?.has_original === true),
-    [selectedFiles, docsByFilename],
-  );
-
-  const pipelineSpec: PipelineSpec = useMemo(
-    () =>
-      featureFlags.pipelineSpec
-        ? {
-            conversion: {
-              pipeline: conversionPipeline,
-              config: conversionConfigs[conversionPipeline],
-            },
-            chunking: {
-              pipeline: chunkingPipeline,
-              config: chunkingConfigs[chunkingPipeline],
-            },
-            process_assets: assetMode,
-          }
-        : { process_assets: assetMode },
-    [conversionPipeline, chunkingPipeline, conversionConfigs, chunkingConfigs, assetMode],
-  );
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  // --- Dialog handlers ---
-
-  const handleEdit = useCallback((filepath: string) => {
-    setDialogState({
-      filename: filepath,
-      showMetadata: true,
-      editable: true,
-      isNew: false,
-    });
-  }, []);
-
-  const handleNew = useCallback(() => {
-    setDialogState({
-      filename: "new-document.md",
-      showMetadata: false,
-      editable: true,
-      isNew: true,
-    });
-  }, []);
-
-  const handleViewGroupFile = useCallback((groupId: string, filepath: string) => {
-    setDialogState({
-      filename: `@${groupId}/${filepath}`,
-      showMetadata: false,
-      editable: false,
-      isNew: false,
-    });
-  }, []);
-
-  const handleSave = useCallback(
-    async (filename: string, content: string) => {
-      const file = new File([content], filename, { type: "text/plain" });
-      await uploadDocument(filename, file, { spec: pipelineSpec });
-      await refresh();
-    },
-    [refresh, pipelineSpec],
-  );
-
-  // --- Include / exclude handlers ---
-
-  const handleInclude = useCallback(
-    (path: string) => {
-      onIncludeDocument?.(path);
-    },
-    [onIncludeDocument],
-  );
-
-  const handleExclude = useCallback(
-    (path: string) => {
-      onExcludeDocument?.(path);
-    },
-    [onExcludeDocument],
-  );
-
-  // --- Rechunk / reconvert handlers ---
-
-  const handleReconvert = useCallback(
-    async (filepath: string) => {
-      await storeReconvert(filepath, {
-        spec: pipelineSpec,
-        llm: buildAuxLlmConfig(overrides),
-      });
-    },
-    [storeReconvert, pipelineSpec, overrides],
-  );
-
-  const handleDownloadOriginal = useCallback(
-    async (filepath: string) => {
-      try {
-        const { downloadOriginal } = await import("../lib/api");
-        const blob = await downloadOriginal(filepath);
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = docsByFilename.get(filepath)?.original_path?.split("/").pop() ?? "original";
-        a.click();
-        URL.revokeObjectURL(url);
-      } catch {
-        // silently ignore download errors
-      }
-    },
-    [docsByFilename],
-  );
-
-  // --- Bulk operation handlers ---
-
-  const handleBulkRechunk = useCallback(async () => {
-    const files = [...selectedFiles];
-    clearSelection();
-    await storeBulkRechunk(files, pipelineSpec);
-  }, [selectedFiles, clearSelection, storeBulkRechunk, pipelineSpec]);
-
-  const handleBulkReconvert = useCallback(async () => {
-    const files = [...selectedReconvertable];
-    clearSelection();
-    await storeBulkReconvert(files, pipelineSpec, buildAuxLlmConfig(overrides));
-  }, [selectedReconvertable, clearSelection, storeBulkReconvert, pipelineSpec, overrides]);
-
-  const handleBulkDelete = useCallback(() => {
-    setPendingDelete({ kind: "bulk", files: [...selectedFiles] });
-  }, [selectedFiles]);
-
-  const handleBulkDownload = useCallback(async () => {
-    for (const filepath of selectedReconvertable) {
-      await handleDownloadOriginal(filepath);
-    }
-  }, [selectedReconvertable, handleDownloadOriginal]);
-
-  const handleBulkMove = useCallback(() => {
-    setBulkMoveFiles([...selectedFiles]);
-  }, [selectedFiles]);
-
-  const handleBulkMoveConfirm = useCallback(
-    async (destinationDir: string) => {
-      const files = bulkMoveFiles ?? [];
-      setBulkMoveFiles(null);
-      clearSelection();
-      for (const filepath of files) {
-        const filename = filepath.split("/").pop() ?? filepath;
-        const destination = destinationDir ? `${destinationDir}/${filename}` : filename;
-        await storeMove(filepath, destination);
-      }
-    },
-    [bulkMoveFiles, clearSelection, storeMove],
-  );
-
-  const bulkHandlers = useMemo<Record<string, () => void>>(
-    () => ({
-      rechunk: () => void handleBulkRechunk(),
-      reconvert: () => void handleBulkReconvert(),
-      download: () => void handleBulkDownload(),
-      move: handleBulkMove,
-      delete: handleBulkDelete,
-    }),
-    [handleBulkRechunk, handleBulkReconvert, handleBulkDownload, handleBulkMove, handleBulkDelete],
-  );
-
-  const confirmDelete = useCallback(async () => {
-    if (!pendingDelete) return;
-    setPendingDelete(null);
-    switch (pendingDelete.kind) {
-      case "file":
-        await remove(pendingDelete.path);
-        break;
-      case "directory":
-        await deleteDir(pendingDelete.path);
-        break;
-      case "bulk":
-        clearSelection();
-        await storeBulkDelete(pendingDelete.files);
-        break;
-    }
-  }, [pendingDelete, remove, deleteDir, clearSelection, storeBulkDelete]);
-
-  const confirmOverwrite = useCallback(async () => {
-    if (!pendingOverwrite) return;
-    const { files, options } = pendingOverwrite;
-    setPendingOverwrite(null);
-    const signal = beginOp();
-    const overwriteOptions = { ...options, overwrite: true, signal };
-    if (files.length === 1) {
-      await upload(files[0], overwriteOptions);
-    } else {
-      await uploadMultiple(files, overwriteOptions);
-    }
-  }, [beginOp, pendingOverwrite, upload, uploadMultiple]);
-
-  // --- File upload handlers ---
-
-  const uploadOptions = useMemo<UploadDocumentOptions>(
-    () => ({
-      spec: pipelineSpec,
-      llm: buildAuxLlmConfig(overrides),
-    }),
-    [pipelineSpec, overrides],
-  );
-
   const handleFiles = useCallback(
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
       const fileArray = Array.from(files);
+      setUploadError(null);
 
-      // Check for duplicate stems within the batch
       const stems = fileArray.map((f) => fileStem(f.name));
       const seen = new Set<string>();
       for (const stem of stems) {
         if (seen.has(stem)) {
-          useUserDocumentsStore.setState({
-            error: `Batch contains files with the same stem "${stem}"`,
-          });
+          setUploadError(`Batch contains files with the same stem "${stem}"`);
           return;
         }
         seen.add(stem);
       }
 
-      // Check stems against existing documents
-      const existingStems = new Set(documents.map((d) => fileStem(d.filename)));
+      const existingStems = new Set(target.documents.map((d) => fileStem(d.filename)));
       const conflicting = stems.filter((s) => existingStems.has(s));
       if (conflicting.length > 0) {
-        setPendingOverwrite({ files: fileArray, options: uploadOptions, conflicting });
+        setPendingOverwrite({ files: fileArray, conflicting });
         return;
       }
 
       const signal = beginOp();
       if (fileArray.length === 1) {
-        await upload(fileArray[0], { ...uploadOptions, signal });
+        await upload(uploadScope, fileArray[0], { ...uploadOptions, signal });
       } else {
-        await uploadMultiple(fileArray, { ...uploadOptions, signal });
+        await uploadMultiple(uploadScope, fileArray, { ...uploadOptions, signal });
       }
     },
-    [beginOp, upload, uploadMultiple, uploadOptions, documents],
+    [beginOp, upload, uploadMultiple, uploadOptions, uploadScope, target.documents],
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
   }, []);
-
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
@@ -1287,40 +1381,34 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     async (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
-
       const { items, files } = e.dataTransfer;
       if (files.length === 0 && items.length === 0) return;
-
       const signal = beginOp();
       setIsPreparing(true);
       try {
         const classification = await classifyDropItems(items, files, signal);
         const hasCollection =
           classification.directories.length > 0 || classification.zipFiles.length > 0;
-
         if (!hasCollection) {
           void handleFiles(files);
           return;
         }
-
         const collection = await buildCollectionZip(classification, signal);
         setIsPreparing(false);
-        await uploadCol(collection, { ...uploadOptions, signal });
+        await uploadCol(uploadScope, collection, { ...uploadOptions, signal });
       } catch (err) {
         if (!isAbortError(err)) throw err;
       } finally {
         setIsPreparing(false);
       }
     },
-    [beginOp, handleFiles, uploadCol, uploadOptions],
+    [beginOp, handleFiles, uploadCol, uploadOptions, uploadScope],
   );
 
   const handleFileInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       void handleFiles(e.target.files);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+      if (fileInputRef.current) fileInputRef.current.value = "";
     },
     [handleFiles],
   );
@@ -1329,166 +1417,73 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
       if (!files || files.length === 0) return;
-
       const signal = beginOp();
       setIsPreparing(true);
       try {
         const collection = await buildCollectionZipFromDirectoryInput(files);
         setIsPreparing(false);
-        await uploadCol(collection, { ...uploadOptions, signal });
+        await uploadCol(uploadScope, collection, { ...uploadOptions, signal });
       } catch (err) {
         if (!isAbortError(err)) throw err;
       } finally {
         setIsPreparing(false);
-        if (directoryInputRef.current) {
-          directoryInputRef.current.value = "";
-        }
+        if (directoryInputRef.current) directoryInputRef.current.value = "";
       }
     },
-    [beginOp, uploadCol, uploadOptions],
+    [beginOp, uploadCol, uploadOptions, uploadScope],
   );
 
   const handleZipInputChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
       if (!files || files.length === 0) return;
-
       const file = files[0];
       if (!file.name.toLowerCase().endsWith(".zip")) return;
-
       const signal = beginOp();
       try {
-        await uploadCol(file, { ...uploadOptions, signal });
+        await uploadCol(uploadScope, file, { ...uploadOptions, signal });
       } catch (err) {
         if (!isAbortError(err)) throw err;
       } finally {
-        if (zipInputRef.current) {
-          zipInputRef.current.value = "";
-        }
+        if (zipInputRef.current) zipInputRef.current.value = "";
       }
     },
-    [beginOp, uploadCol, uploadOptions],
+    [beginOp, uploadCol, uploadOptions, uploadScope],
   );
 
-  // --- Directory handlers ---
-
-  const handleCreateSubdir = useCallback((parentPath: string) => {
-    setCreateDirParent(parentPath || undefined);
-    setShowCreateDir(true);
-  }, []);
-
-  const handleNewFolder = useCallback(() => {
-    setCreateDirParent(undefined);
-    setShowCreateDir(true);
-  }, []);
-
-  // --- Render helpers ---
-
-  const renderFlatList = () => {
-    if (filteredDocuments.length === 0) {
-      return (
-        <EmptyState
-          icon={<Search className="h-12 w-12 opacity-50" />}
-          title="No matching documents"
-        />
-      );
+  const confirmOverwrite = useCallback(async () => {
+    if (!pendingOverwrite) return;
+    const { files } = pendingOverwrite;
+    setPendingOverwrite(null);
+    const signal = beginOp();
+    const opts = { ...uploadOptions, overwrite: true, signal };
+    if (files.length === 1) {
+      await upload(uploadScope, files[0], opts);
+    } else {
+      await uploadMultiple(uploadScope, files, opts);
     }
+  }, [beginOp, pendingOverwrite, upload, uploadMultiple, uploadOptions, uploadScope]);
 
-    return (
-      <div className="space-y-2">
-        {filteredDocuments.map((doc) => {
-          const docMutating = mutatingPaths.has(doc.filename);
-          return (
-            <DocumentListItem
-              key={doc.filename}
-              doc={doc}
-              isMutating={docMutating}
-              operationStage={docMutating ? operationStage : null}
-              onEdit={() => handleEdit(doc.filename)}
-              onIncludeDocument={() => handleInclude(doc.filename)}
-              onExcludeDocument={() => handleExclude(doc.filename)}
-              onReconvert={() => handleReconvert(doc.filename)}
-              onRemove={() => setPendingDelete({ kind: "file", path: doc.filename })}
-              selected={selectedFiles.has(doc.filename)}
-              onToggleSelect={() => toggleFile(doc.filename)}
-            />
-          );
-        })}
-      </div>
-    );
-  };
-
-  const renderTreeView = () => {
-    if (!directoryTree) {
-      if (documents.length === 0) {
-        return (
-          <EmptyState
-            icon={<FileText className="h-12 w-12 opacity-50" />}
-            title="No documents yet"
-            description="Upload documents to get started"
-          />
-        );
-      }
-      return null;
-    }
-
-    if (directoryTree.total_files === 0 && directoryTree.total_directories === 0) {
-      return (
-        <EmptyState
-          icon={<FileText className="h-12 w-12 opacity-50" />}
-          title="No documents yet"
-          description="Upload documents to get started"
-        />
-      );
-    }
-
-    return (
-      <DirectoryTreeView
-        entry={directoryTree.root}
-        mutatingPaths={mutatingPaths}
-        operationStage={operationStage}
-        onEditFile={handleEdit}
-        onInclude={handleInclude}
-        onExclude={handleExclude}
-        onFileAction={(path, actionId) => {
-          switch (actionId) {
-            case "rechunk":
-              void storeRechunk(path, pipelineSpec);
-              break;
-            case "reconvert":
-              void handleReconvert(path);
-              break;
-            case "download":
-              void handleDownloadOriginal(path);
-              break;
-            case "move":
-              setMoveFilePath(path);
-              break;
-            case "delete":
-              setPendingDelete({ kind: "file", path });
-              break;
-          }
-        }}
-        onCreateSubdir={handleCreateSubdir}
-        onDeleteDir={(path) => setPendingDelete({ kind: "directory", path })}
-        onMoveDir={(path) => setMoveDirPath(path)}
-        selectedFiles={selectedFiles}
-        onToggleSelectFile={toggleFile}
-        onToggleSelectDir={toggleDirFiles}
-      />
-    );
-  };
+  const handleSaveNew = useCallback(
+    async (filename: string, content: string) => {
+      const file = new File([content], filename, { type: "text/plain" });
+      await uploadDocument(filename, file, { spec: pipelineSpec, scope: uploadScope });
+      await refresh(uploadScope);
+      setNewDocOpen(false);
+    },
+    [pipelineSpec, uploadScope, refresh],
+  );
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
-      {error && <ErrorBanner message={error} onDismiss={clearError} />}
+      {uploadError && <ErrorBanner message={uploadError} onDismiss={() => setUploadError(null)} />}
 
       <UploadArea
         isDragging={isDragging}
-        isUploading={isUploading}
+        isUploading={target.isUploading}
         isPreparing={isPreparing}
-        uploadProgress={uploadProgress}
-        operationStage={operationStage}
+        uploadProgress={target.uploadProgress}
+        operationStage={target.operationStage}
         fileInputRef={fileInputRef}
         directoryInputRef={directoryInputRef}
         zipInputRef={zipInputRef}
@@ -1501,8 +1496,8 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         onSelectFiles={() => fileInputRef.current?.click()}
         onSelectDirectory={() => directoryInputRef.current?.click()}
         onSelectZip={() => zipInputRef.current?.click()}
-        onNewDocument={handleNew}
-        onNewFolder={handleNewFolder}
+        onNewDocument={() => setNewDocOpen(true)}
+        onNewFolder={() => setShowCreateDir(true)}
         onCancel={handleCancel}
       />
 
@@ -1510,198 +1505,67 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
         conversionPipeline={conversionPipeline}
         chunkingPipeline={chunkingPipeline}
         assetMode={assetMode}
-        isBulkOperating={bulkProgress !== null}
+        isBulkOperating={false}
+        uploadScope={uploadScope}
+        writableGroups={writableGroups}
+        onUploadScopeChange={setUploadScope}
         onConversionPipelineChange={setConversionPipeline}
         onChunkingPipelineChange={setChunkingPipeline}
         onAssetModeChange={setAssetMode}
       />
 
       <div className="p-4 pb-2">
-        {selectedFiles.size > 0 || bulkProgress ? (
-          <div className="flex h-9 items-center justify-center gap-2">
-            {bulkProgress ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                <span className="truncate text-sm">{bulkProgress.currentFile}</span>
-                <Progress
-                  value={
-                    bulkProgress.total > 0 ? (bulkProgress.current / bulkProgress.total) * 100 : 0
-                  }
-                  className="w-24 shrink-0"
-                />
-                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {bulkProgress.current}/{bulkProgress.total}
-                </span>
-                {bulkProgress.failedFiles.length > 0 && (
-                  <span className="shrink-0 text-xs text-destructive">
-                    {bulkProgress.failedFiles.length} failed
-                  </span>
-                )}
-              </>
-            ) : (
-              <>
-                <span className="text-sm font-medium">{selectedFiles.size} selected</span>
-                {DOCUMENT_ACTIONS.map((action) => {
-                  if (action.requiresOriginal && selectedReconvertable.length === 0) return null;
-                  const Icon = action.icon;
-                  return (
-                    <Button
-                      key={action.id}
-                      variant={action.variant}
-                      size="sm"
-                      onClick={bulkHandlers[action.id]}
-                      disabled={bulkProgress !== null || isUploading}
-                    >
-                      <Icon className="h-4 w-4 mr-1" />
-                      {action.label}
-                    </Button>
-                  );
-                })}
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={clearSelection}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search documents..."
-              className="pl-9"
-            />
-          </div>
-        )}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search documents..."
+            className="pl-9"
+          />
+        </div>
       </div>
 
-      <div className="px-4 pb-4">
-        {!hasFetched ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <>
-            <div className="mb-3 flex items-center gap-2">
-              <Checkbox
-                checked={allSelected ? true : someSelected ? "indeterminate" : false}
-                onCheckedChange={toggleSelectAll}
-              />
-              <h3 className="text-sm font-medium text-muted-foreground">
-                {isSearching
-                  ? `Found ${filteredDocuments.length} of ${documents.length}`
-                  : `Your Documents (${documents.length})`}
-              </h3>
-            </div>
-            {isSearching ? renderFlatList() : renderTreeView()}
-
-            {!isSearching && getAllGroups().length > 0 && (
-              <>
-                <h3 className="mt-6 mb-3 text-sm font-medium text-muted-foreground">
-                  Group Knowledge
-                </h3>
-                <div className="space-y-0.5">
-                  {getAllGroups().map((groupId) => (
-                    <GroupDocumentsSection
-                      key={groupId}
-                      groupId={groupId}
-                      canWrite={canWriteGroup(groupId)}
-                      onInclude={handleInclude}
-                      onExclude={handleExclude}
-                      onViewFile={handleViewGroupFile}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
-          </>
-        )}
+      <div className="space-y-1 px-4 pb-4">
+        <ScopeSection
+          scope=""
+          label="Your Documents"
+          canWrite
+          defaultOpen
+          searchQuery={searchQuery}
+          pipelineSpec={pipelineSpec}
+          onIncludeDocument={onIncludeDocument}
+          onExcludeDocument={onExcludeDocument}
+        />
+        {groups.map((groupId) => (
+          <ScopeSection
+            key={groupId}
+            scope={groupId}
+            label={groupId}
+            canWrite={canWriteGroup(groupId)}
+            defaultOpen={false}
+            searchQuery={searchQuery}
+            pipelineSpec={pipelineSpec}
+            onIncludeDocument={onIncludeDocument}
+            onExcludeDocument={onExcludeDocument}
+          />
+        ))}
       </div>
 
       <DocumentDialog
-        open={dialogState !== null}
-        onOpenChange={(open) => !open && setDialogState(null)}
-        filename={dialogState?.filename ?? ""}
-        showMetadata={dialogState?.showMetadata}
-        editable={dialogState?.editable}
-        isNew={dialogState?.isNew}
-        onSave={handleSave}
-        onRechunk={
-          dialogState && !dialogState.isNew && dialogState.editable
-            ? async () => {
-                await storeRechunk(dialogState.filename, pipelineSpec);
-              }
-            : undefined
-        }
-      />
-
-      <MoveDocumentDialog
-        open={moveFilePath !== null}
-        onOpenChange={(open) => !open && setMoveFilePath(null)}
-        currentPath={moveFilePath ?? ""}
-        onMove={(destination) => {
-          if (moveFilePath) {
-            void storeMove(moveFilePath, destination);
-          }
-        }}
-      />
-
-      <MoveDocumentDialog
-        open={moveDirPath !== null}
-        onOpenChange={(open) => !open && setMoveDirPath(null)}
-        currentPath={moveDirPath ?? ""}
-        isDirectory
-        onMove={(destination) => {
-          if (moveDirPath) {
-            void storeMoveDir(moveDirPath, destination);
-          }
-        }}
-      />
-
-      <MoveDocumentDialog
-        open={bulkMoveFiles !== null}
-        onOpenChange={(open) => !open && setBulkMoveFiles(null)}
-        bulkFileCount={bulkMoveFiles?.length ?? 0}
-        onMove={(dir) => void handleBulkMoveConfirm(dir)}
+        open={newDocOpen}
+        onOpenChange={(open) => !open && setNewDocOpen(false)}
+        filename="new-document.md"
+        editable
+        isNew
+        onSave={handleSaveNew}
       />
 
       <CreateDirectoryDialog
         open={showCreateDir}
         onOpenChange={setShowCreateDir}
-        parentPath={createDirParent}
-        onCreate={createDir}
+        onCreate={(path) => createDir(uploadScope, path)}
       />
-
-      <AlertDialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => !open && setPendingDelete(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {pendingDelete?.kind === "bulk"
-                ? `Delete ${pendingDelete.files.length} documents?`
-                : pendingDelete?.kind === "directory"
-                  ? "Delete directory?"
-                  : "Delete document?"}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingDelete?.kind === "bulk"
-                ? "This will permanently delete the selected documents, their chunks, and any original files. This action cannot be undone."
-                : pendingDelete?.kind === "directory"
-                  ? `This will permanently delete the directory "${pendingDelete.path}" and all its contents. This action cannot be undone.`
-                  : `This will permanently delete "${pendingDelete?.path}" and its chunks. This action cannot be undone.`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void confirmDelete()}>
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <AlertDialog
         open={pendingOverwrite !== null}

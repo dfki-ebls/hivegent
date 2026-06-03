@@ -46,7 +46,7 @@ import { enforceLogin } from "../oidc";
 import { useConversationsStore } from "../stores/conversations-store";
 import { selectIsAdmin, useSettingsStore } from "../stores/settings-store";
 import { clearAllStorage } from "../stores/storage";
-import { useUserDocumentsStore } from "../stores/user-documents-store";
+import { useDocumentsStore } from "../stores/documents-store";
 
 export const Route = createFileRoute("/settings/account")({
   beforeLoad: enforceLogin,
@@ -106,7 +106,7 @@ function ConfirmDialog({ action, busy, onConfirm, onCancel }: ConfirmDialogProps
 function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => void }) {
   const resetLocalSettings = useSettingsStore((s) => s.reset);
   const fetchConversations = useConversationsStore((s) => s.fetchConversations);
-  const refreshDocuments = useUserDocumentsStore((s) => s.refresh);
+  const refreshDocuments = useDocumentsStore((s) => s.refresh);
 
   return (
     <div className="grid gap-3">
@@ -173,7 +173,7 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
               confirm: "Delete All Documents",
               run: async () => {
                 await deleteAllDocuments();
-                await refreshDocuments();
+                await refreshDocuments("");
               },
             })
           }

@@ -111,6 +111,17 @@ function encodeFilePath(filepath: string): string {
   return filepath.split("/").map(encodeURIComponent).join("/");
 }
 
+/**
+ * Canonical path prefix for a workspace scope.
+ *
+ * A scope is the empty string for the caller's personal workspace, or a
+ * group id for a group. Prepending this prefix to a local path yields the
+ * canonical path the backend resolves (e.g. `@research/notes.md`).
+ */
+export function scopePrefix(scope: string): string {
+  return scope ? `@${scope}/` : "";
+}
+
 /** Check if a file requires conversion (anything that is not already markdown). */
 export function requiresConversion(filename: string): boolean {
   const ext = `.${filename.split(".").pop()?.toLowerCase() ?? ""}`;
@@ -302,8 +313,9 @@ export async function getConversationMessages(conversationId: string): Promise<U
 // User document API functions (authenticated user's personal documents)
 // ============================================================
 
-export async function listDocuments(): Promise<DocumentInfo[]> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents`);
+export async function listDocuments(scope = ""): Promise<DocumentInfo[]> {
+  const query = scope ? `?scope=${encodeURIComponent(scopePrefix(scope))}` : "";
+  const res = await authFetch(`${API_BASE_URL}/api/documents${query}`);
   if (!res.ok) {
     throw new Error("Failed to list documents");
   }
@@ -317,6 +329,14 @@ export interface UploadDocumentOptions {
   llm?: LlmConfig;
   targetDirectory?: string;
   overwrite?: boolean;
+  /** Workspace scope: empty for personal, or a group id. */
+  scope?: string;
+}
+
+/** Build the canonical upload path from a filename and upload options. */
+function uploadFilepath(filename: string, options?: UploadDocumentOptions): string {
+  const local = options?.targetDirectory ? `${options.targetDirectory}/${filename}` : filename;
+  return `${scopePrefix(options?.scope ?? "")}${local}`;
 }
 
 export async function uploadDocument(
@@ -327,10 +347,7 @@ export async function uploadDocument(
   const formData = new FormData();
   formData.append("file", file);
 
-  // Build the filepath, optionally prepending the target directory
-  const filepath = options?.targetDirectory ? `${options.targetDirectory}/${filename}` : filename;
-
-  const url = `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`;
+  const url = `${API_BASE_URL}/api/documents/${encodeFilePath(uploadFilepath(filename, options))}`;
 
   if (options?.overwrite) {
     formData.append("overwrite", "true");
@@ -360,6 +377,8 @@ export async function uploadDocument(
 export interface UploadCollectionOptions {
   spec?: PipelineSpec;
   llm?: LlmConfig;
+  /** Workspace scope: empty for personal, or a group id. */
+  scope?: string;
 }
 
 /** Build FormData for a collection upload (shared by streaming and non-streaming paths). */
@@ -371,6 +390,9 @@ function buildCollectionFormData(file: File, options?: UploadCollectionOptions):
   }
   if (options?.llm) {
     formData.append("llm_config", JSON.stringify(options.llm));
+  }
+  if (options?.scope) {
+    formData.append("scope", scopePrefix(options.scope));
   }
   return formData;
 }
@@ -855,8 +877,7 @@ export async function uploadDocumentStream(
   const formData = new FormData();
   formData.append("file", file);
 
-  const filepath = options?.targetDirectory ? `${options.targetDirectory}/${filename}` : filename;
-  const url = `${API_BASE_URL}/api/documents/stream/${encodeFilePath(filepath)}`;
+  const url = `${API_BASE_URL}/api/documents/stream/${encodeFilePath(uploadFilepath(filename, options))}`;
 
   if (options?.overwrite) {
     formData.append("overwrite", "true");
@@ -1024,11 +1045,11 @@ export async function bulkDeleteStream(
 // User directory management
 
 /**
- * Fetch a workspace directory tree. Pass a `scope` of `@<group>/` for a
+ * Fetch a workspace directory tree. Pass a group id as `scope` for a
  * group's tree, or omit it for the caller's personal workspace.
  */
 export async function getDirectories(scope = ""): Promise<DirectoryTreeResponse> {
-  const query = scope ? `?scope=${encodeURIComponent(scope)}` : "";
+  const query = scope ? `?scope=${encodeURIComponent(scopePrefix(scope))}` : "";
   const res = await authFetch(`${API_BASE_URL}/api/directories${query}`);
   if (!res.ok) {
     throw new Error("Failed to fetch directory tree");
