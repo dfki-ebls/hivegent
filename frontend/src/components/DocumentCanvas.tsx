@@ -29,7 +29,6 @@ import {
   buildAuxLlmConfig,
   fetchWorkspaceAsset,
   getGroupDirectories,
-  getGroupDocumentContent,
   uploadDocument,
 } from "../lib/api";
 import { DOCUMENT_ACTIONS } from "../lib/document-actions";
@@ -855,10 +854,6 @@ interface DialogState {
   editable: boolean;
   /** New document mode. */
   isNew: boolean;
-  /** Custom content fetcher (for group documents). */
-  getContent?: (filename: string) => Promise<string>;
-  /** Group ID for group documents (used by WorkspaceImage). */
-  groupId?: string;
 }
 
 interface ManageDocumentsProps {
@@ -1087,12 +1082,10 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
 
   const handleViewGroupFile = useCallback((groupId: string, filepath: string) => {
     setDialogState({
-      filename: filepath,
+      filename: `@${groupId}/${filepath}`,
       showMetadata: false,
       editable: false,
       isNew: false,
-      getContent: (f) => getGroupDocumentContent(groupId, f),
-      groupId,
     });
   }, []);
 
@@ -1641,8 +1634,6 @@ function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumen
               }
             : undefined
         }
-        getContent={dialogState?.getContent}
-        groupId={dialogState?.groupId}
       />
 
       <MoveDocumentDialog

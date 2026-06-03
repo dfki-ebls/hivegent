@@ -565,20 +565,36 @@ export async function fetchDocumentAsset(filepath: string): Promise<string> {
 }
 
 /**
- * Fetch a workspace asset by its canonical (possibly prefixed) path.
+ * Split a canonical workspace path into its group scope and local path.
  *
- * Group documents carry an `@<group>/…` prefix (see the backend
- * `SearchPath.prefix`); route those to the group endpoint and everything
- * else to the personal documents endpoint. Returns a blob URL for display.
+ * Group documents carry an `@<group>/…` prefix (the backend
+ * `SearchPath.prefix`); personal documents have none. This is the single
+ * place that decodes that convention, so every scope-sensitive read routes
+ * through it instead of taking a separate `groupId`.
  */
-export function fetchWorkspaceAsset(path: string): Promise<string> {
+export function splitWorkspacePath(path: string): {
+  groupId: string | null;
+  localPath: string;
+} {
   if (path.startsWith("@")) {
     const slash = path.indexOf("/");
     if (slash > 1) {
-      return fetchGroupDocumentAsset(path.slice(1, slash), path.slice(slash + 1));
+      return { groupId: path.slice(1, slash), localPath: path.slice(slash + 1) };
     }
   }
-  return fetchDocumentAsset(path);
+  return { groupId: null, localPath: path };
+}
+
+/** Fetch a workspace asset (e.g. image) as a blob URL, routing by group prefix. */
+export function fetchWorkspaceAsset(path: string): Promise<string> {
+  const { groupId, localPath } = splitWorkspacePath(path);
+  return groupId ? fetchGroupDocumentAsset(groupId, localPath) : fetchDocumentAsset(localPath);
+}
+
+/** Fetch a workspace document's text content, routing by group prefix. */
+export function fetchWorkspaceContent(path: string): Promise<string> {
+  const { groupId, localPath } = splitWorkspacePath(path);
+  return groupId ? getGroupDocumentContent(groupId, localPath) : getDocumentContent(localPath);
 }
 
 /** Download the original binary file for a document. */
@@ -855,6 +871,36 @@ export async function generateGroupAssetDescription(
   }
   const data: unknown = await res.json();
   return AssetEntrySchema.parse(data);
+}
+
+/** List a workspace document's assets, routing by group prefix. */
+export function listWorkspaceAssets(path: string): Promise<AssetListResponse> {
+  const { groupId, localPath } = splitWorkspacePath(path);
+  return groupId ? listGroupDocumentAssets(groupId, localPath) : listDocumentAssets(localPath);
+}
+
+/** Update an asset's companion description, routing by group prefix. */
+export function updateWorkspaceAssetDescription(
+  path: string,
+  assetName: string,
+  content: string,
+): Promise<AssetEntry> {
+  const { groupId, localPath } = splitWorkspacePath(path);
+  return groupId
+    ? updateGroupAssetDescription(groupId, localPath, assetName, content)
+    : updateAssetDescription(localPath, assetName, content);
+}
+
+/** Generate an asset's companion description, routing by group prefix. */
+export function generateWorkspaceAssetDescription(
+  path: string,
+  assetName: string,
+  llm?: LlmConfig,
+): Promise<AssetEntry> {
+  const { groupId, localPath } = splitWorkspacePath(path);
+  return groupId
+    ? generateGroupAssetDescription(groupId, localPath, assetName, llm)
+    : generateAssetDescription(localPath, assetName, llm);
 }
 
 /** Options for document reconversion. */

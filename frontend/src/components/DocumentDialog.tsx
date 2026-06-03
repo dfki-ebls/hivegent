@@ -5,14 +5,11 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 
 import {
   buildAuxLlmConfig,
-  generateAssetDescription,
-  generateGroupAssetDescription,
+  fetchWorkspaceContent,
+  generateWorkspaceAssetDescription,
   getDocumentChunks,
-  getDocumentContent,
-  listDocumentAssets,
-  listGroupDocumentAssets,
-  updateAssetDescription,
-  updateGroupAssetDescription,
+  listWorkspaceAssets,
+  updateWorkspaceAssetDescription,
 } from "@/lib/api";
 import {
   MARKDOWN_BASE_OPTIONS,
@@ -68,10 +65,6 @@ interface DocumentDialogProps {
   isNew?: boolean;
   /** Save handler for edit mode. */
   onSave?: (filename: string, content: string) => Promise<void>;
-  /** Custom content fetcher (defaults to getDocumentContent). */
-  getContent?: (filename: string) => Promise<string>;
-  /** Group ID when viewing a group document (for authenticated image fetching). */
-  groupId?: string;
 }
 
 type ViewMode = "full-doc" | "chunk" | "edit" | "asset";
@@ -137,8 +130,6 @@ export function DocumentDialog({
   editable = false,
   isNew = false,
   onSave,
-  getContent,
-  groupId,
 }: DocumentDialogProps) {
   // --- State ---
   // Local content is only used in managed mode (custom getContent fetcher).
@@ -269,8 +260,7 @@ export function DocumentDialog({
 
     let cancelled = false;
     setIsLoading(true);
-    const fetcher = getContent ?? getDocumentContent;
-    fetcher(filename)
+    fetchWorkspaceContent(filename)
       .then((content) => {
         if (cancelled) return;
         if (isManagedMode) {
@@ -289,7 +279,7 @@ export function DocumentDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, filename, isNew, isManagedMode, markFullDocument, getContent, storedFullContent]);
+  }, [open, filename, isNew, isManagedMode, markFullDocument, storedFullContent]);
 
   // Scroll the highlight into view when its DOM element mounts. The span
   // is keyed by the active chunk identifier (see renderChunkHighlight), so
@@ -320,14 +310,11 @@ export function DocumentDialog({
   useEffect(() => {
     if (!open || !isManagedMode || !managedData?.assets_dir || !filename) return;
     setAssetsLoading(true);
-    const fetcher = groupId
-      ? () => listGroupDocumentAssets(groupId, filename)
-      : () => listDocumentAssets(filename);
-    fetcher()
+    listWorkspaceAssets(filename)
       .then(setAssetsData)
       .catch(() => setAssetsData(null))
       .finally(() => setAssetsLoading(false));
-  }, [open, isManagedMode, managedData?.assets_dir, filename, groupId]);
+  }, [open, isManagedMode, managedData?.assets_dir, filename]);
 
   const replaceActiveAsset = useCallback(
     (updated: AssetEntry) => {
@@ -348,15 +335,17 @@ export function DocumentDialog({
     const asset = assetsData.assets[activeAssetIndex];
     setIsSavingAssetDescription(true);
     try {
-      const updater = groupId
-        ? () => updateGroupAssetDescription(groupId, filename, asset.name, assetDescriptionDraft)
-        : () => updateAssetDescription(filename, asset.name, assetDescriptionDraft);
-      replaceActiveAsset(await updater());
+      const updated = await updateWorkspaceAssetDescription(
+        filename,
+        asset.name,
+        assetDescriptionDraft,
+      );
+      replaceActiveAsset(updated);
       setIsEditingAssetDescription(false);
     } finally {
       setIsSavingAssetDescription(false);
     }
-  }, [activeAssetIndex, assetsData, assetDescriptionDraft, filename, groupId, replaceActiveAsset]);
+  }, [activeAssetIndex, assetsData, assetDescriptionDraft, filename, replaceActiveAsset]);
 
   const handleGenerateAssetDescription = useCallback(async () => {
     if (activeAssetIndex == null || !assetsData?.assets[activeAssetIndex]) return;
@@ -365,17 +354,14 @@ export function DocumentDialog({
     const llm = buildAuxLlmConfig(overrides);
     setIsGeneratingAssetDescription(true);
     try {
-      const generator = groupId
-        ? () => generateGroupAssetDescription(groupId, filename, asset.name, llm)
-        : () => generateAssetDescription(filename, asset.name, llm);
-      const updated = await generator();
+      const updated = await generateWorkspaceAssetDescription(filename, asset.name, llm);
       replaceActiveAsset(updated);
       setAssetDescriptionDraft(updated.description);
       setIsEditingAssetDescription(false);
     } finally {
       setIsGeneratingAssetDescription(false);
     }
-  }, [activeAssetIndex, assetsData, filename, groupId, overrides, replaceActiveAsset]);
+  }, [activeAssetIndex, assetsData, filename, overrides, replaceActiveAsset]);
 
   // --- Save handler ---
   const handleSave = async () => {
@@ -487,7 +473,7 @@ export function DocumentDialog({
       return (
         <ScrollArea className="flex-1 min-h-0">
           <div className="prose prose-sm dark:prose-invert max-w-none p-4">
-            <Markdown options={workspaceMarkdownOptions(filename, groupId)}>
+            <Markdown options={workspaceMarkdownOptions(filename)}>
               {fullContent}
             </Markdown>
           </div>
@@ -506,12 +492,7 @@ export function DocumentDialog({
         <ScrollArea className="flex-1 min-h-0">
           <div className="p-4 space-y-4">
             <div className="flex justify-center">
-              <WorkspaceImage
-                src={relativeSrc}
-                alt={asset.description}
-                documentPath={filename}
-                groupId={groupId}
-              />
+              <WorkspaceImage src={relativeSrc} alt={asset.description} documentPath={filename} />
             </div>
 
             <div className="space-y-2">

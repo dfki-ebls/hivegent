@@ -15,10 +15,7 @@ export const MARKDOWN_BASE_OPTIONS = {
   disableParsingRawHTML: true,
 } satisfies MarkdownToJSX.Options;
 
-export function workspaceMarkdownOptions(
-  documentPath: string,
-  groupId?: string,
-): MarkdownToJSX.Options {
+export function workspaceMarkdownOptions(documentPath: string): MarkdownToJSX.Options {
   return {
     ...MARKDOWN_BASE_OPTIONS,
     overrides: {
@@ -28,7 +25,6 @@ export function workspaceMarkdownOptions(
             src={src}
             alt={alt ?? undefined}
             documentPath={documentPath}
-            groupId={groupId}
             {...props}
           />
         ),
