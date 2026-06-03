@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 
 import { useObjectUrl } from "@/hooks/use-object-url";
-import { fetchWorkspaceAsset } from "@/lib/api";
+import { fetchDocumentAsset } from "@/lib/api";
 
 interface WorkspaceImageProps {
   /** Image src from markdown (relative path or external URL). */
@@ -16,7 +16,7 @@ interface WorkspaceImageProps {
  * Renders workspace images with authenticated fetch.
  *
  * Relative paths are resolved against the document's directory, keeping its
- * `@group/` prefix (if any) so {@link fetchWorkspaceAsset} routes to the right
+ * `@group/` prefix (if any) so the backend routes the fetch to the right
  * scope. External (`data:`/`http:`) sources are unsupported and render as a
  * fallback.
  */
@@ -28,7 +28,7 @@ export function WorkspaceImage({ src, alt, documentPath }: WorkspaceImageProps) 
     // Resolve relative path against the document directory (prefix preserved).
     const lastSlash = documentPath.lastIndexOf("/");
     const docDir = lastSlash >= 0 ? documentPath.substring(0, lastSlash) : "";
-    return fetchWorkspaceAsset(docDir ? `${docDir}/${src}` : src);
+    return fetchDocumentAsset(docDir ? `${docDir}/${src}` : src);
   }, [src, documentPath]);
 
   const { url, error } = useObjectUrl(src ? fetch : null);

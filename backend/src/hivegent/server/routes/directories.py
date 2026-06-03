@@ -1,8 +1,13 @@
-"""Routes for user directory management."""
+"""Routes for directory management.
+
+Like the document routes, these take a canonical workspace path: bare for
+the caller's personal store, or ``@<group>/<local>`` for a group. The tree
+endpoint takes a ``scope`` (``""`` or ``"@<group>/"``).
+"""
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from ... import workspace
 from ...auth import User, get_current_user
@@ -15,7 +20,7 @@ from ...types import (
     MoveDirectoryRequest,
     MoveDirectoryResponse,
 )
-from ..common import safe_path, user_store
+from ..common import resolve_workspace_path
 from ..operations import build_tree_response
 
 __all__ = ["router"]
@@ -26,9 +31,11 @@ router = APIRouter()
 @router.get("/directories")
 async def get_directories(
     user: Annotated[User, Depends(get_current_user)],
+    scope: str = "",
 ) -> DirectoryTreeResponse:
-    """Build a recursive directory tree from the user's documents directory."""
-    return await build_tree_response(user_store(user))
+    """Build a recursive directory tree for a workspace (personal or group)."""
+    store, _ = resolve_workspace_path(user, scope)
+    return await build_tree_response(store)
 
 
 @router.post("/directories")
@@ -36,9 +43,9 @@ async def create_directory(
     request: CreateDirectoryRequest,
     user: Annotated[User, Depends(get_current_user)],
 ) -> CreateDirectoryResponse:
-    """Create a new directory within the user's documents directory."""
-    safe = safe_path(request.path)
-    await workspace.create_directory(user_store(user), safe)
+    """Create a new directory within a workspace."""
+    store, safe = resolve_workspace_path(user, request.path, write=True)
+    await workspace.create_directory(store, safe)
     return CreateDirectoryResponse(
         path=safe,
         message="Directory created successfully",
@@ -50,10 +57,14 @@ async def move_directory(
     request: MoveDirectoryRequest,
     user: Annotated[User, Depends(get_current_user)],
 ) -> MoveDirectoryResponse:
-    """Move/rename a directory within the user's documents directory."""
-    safe_src = safe_path(request.source)
-    safe_dst = safe_path(request.destination)
-    return await workspace.move_directory(user_store(user), safe_src, safe_dst)
+    """Move/rename a directory within the same workspace."""
+    src_store, safe_src = resolve_workspace_path(user, request.source, write=True)
+    dst_store, safe_dst = resolve_workspace_path(user, request.destination, write=True)
+    if src_store.store_key != dst_store.store_key:
+        raise HTTPException(
+            status_code=400, detail="Cannot move a directory across workspaces"
+        )
+    return await workspace.move_directory(src_store, safe_src, safe_dst)
 
 
 @router.delete("/directories")
@@ -62,8 +73,8 @@ async def delete_directory(
     user: Annotated[User, Depends(get_current_user)],
 ) -> DeleteDirectoryResponse:
     """Delete a directory and all of its contents."""
-    safe = safe_path(request.path)
-    files_deleted = await workspace.delete_directory(user_store(user), safe)
+    store, safe = resolve_workspace_path(user, request.path, write=True)
+    files_deleted = await workspace.delete_directory(store, safe)
     return DeleteDirectoryResponse(
         path=safe,
         files_deleted=files_deleted,

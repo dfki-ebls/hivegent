@@ -5,11 +5,11 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 
 import {
   buildAuxLlmConfig,
-  fetchWorkspaceContent,
-  generateWorkspaceAssetDescription,
+  generateAssetDescription,
   getDocumentChunks,
-  listWorkspaceAssets,
-  updateWorkspaceAssetDescription,
+  getDocumentContent,
+  listDocumentAssets,
+  updateAssetDescription,
 } from "@/lib/api";
 import {
   MARKDOWN_BASE_OPTIONS,
@@ -260,7 +260,7 @@ export function DocumentDialog({
 
     let cancelled = false;
     setIsLoading(true);
-    fetchWorkspaceContent(filename)
+    getDocumentContent(filename)
       .then((content) => {
         if (cancelled) return;
         if (isManagedMode) {
@@ -310,7 +310,7 @@ export function DocumentDialog({
   useEffect(() => {
     if (!open || !isManagedMode || !managedData?.assets_dir || !filename) return;
     setAssetsLoading(true);
-    listWorkspaceAssets(filename)
+    listDocumentAssets(filename)
       .then(setAssetsData)
       .catch(() => setAssetsData(null))
       .finally(() => setAssetsLoading(false));
@@ -335,7 +335,7 @@ export function DocumentDialog({
     const asset = assetsData.assets[activeAssetIndex];
     setIsSavingAssetDescription(true);
     try {
-      const updated = await updateWorkspaceAssetDescription(
+      const updated = await updateAssetDescription(
         filename,
         asset.name,
         assetDescriptionDraft,
@@ -354,7 +354,7 @@ export function DocumentDialog({
     const llm = buildAuxLlmConfig(overrides);
     setIsGeneratingAssetDescription(true);
     try {
-      const updated = await generateWorkspaceAssetDescription(filename, asset.name, llm);
+      const updated = await generateAssetDescription(filename, asset.name, llm);
       replaceActiveAsset(updated);
       setAssetDescriptionDraft(updated.description);
       setIsEditingAssetDescription(false);

@@ -3,7 +3,7 @@ import { useCallback } from "react";
 import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
 import { ToolParameters } from "@/components/ToolDisplay";
 import { useObjectUrl } from "@/hooks/use-object-url";
-import { fetchWorkspaceAsset } from "@/lib/api";
+import { fetchDocumentAsset } from "@/lib/api";
 import { parseJson, type SyncOutput, type ToolPart } from "@/lib/chat/tool-part";
 import { formatFileSize } from "@/lib/utils";
 
@@ -41,7 +41,7 @@ function BinaryMeta({ result }: { result: BinaryReadResult }) {
 
 /** Inline preview for image binaries, fetched lazily when the tool is expanded. */
 function ImagePreview({ result }: { result: BinaryReadResult }) {
-  const fetch = useCallback(() => fetchWorkspaceAsset(result.file_path), [result.file_path]);
+  const fetch = useCallback(() => fetchDocumentAsset(result.file_path), [result.file_path]);
   const { url, error } = useObjectUrl(fetch);
 
   return (

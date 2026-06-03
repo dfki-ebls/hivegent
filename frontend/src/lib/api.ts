@@ -434,19 +434,6 @@ export function uploadCollectionStream(
   return postCollectionStream(`${API_BASE_URL}/api/documents/collections/stream`, file, options);
 }
 
-/** Upload a collection to a group with streaming progress events via SSE. */
-export function uploadGroupCollectionStream(
-  groupId: string,
-  file: File,
-  options?: StreamingCollectionOptions,
-): Promise<CollectionUploadResponse> {
-  return postCollectionStream(
-    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/collections/stream`,
-    file,
-    options,
-  );
-}
-
 /**
  * Shared SSE stream reader.  Reads `data:` lines from a streaming response,
  * validates each against `schema`, and calls `onEvent` for every parsed event.
@@ -562,39 +549,6 @@ export async function fetchDocumentAsset(filepath: string): Promise<string> {
 
   const blob = await res.blob();
   return URL.createObjectURL(blob);
-}
-
-/**
- * Split a canonical workspace path into its group scope and local path.
- *
- * Group documents carry an `@<group>/…` prefix (the backend
- * `SearchPath.prefix`); personal documents have none. This is the single
- * place that decodes that convention, so every scope-sensitive read routes
- * through it instead of taking a separate `groupId`.
- */
-export function splitWorkspacePath(path: string): {
-  groupId: string | null;
-  localPath: string;
-} {
-  if (path.startsWith("@")) {
-    const slash = path.indexOf("/");
-    if (slash > 1) {
-      return { groupId: path.slice(1, slash), localPath: path.slice(slash + 1) };
-    }
-  }
-  return { groupId: null, localPath: path };
-}
-
-/** Fetch a workspace asset (e.g. image) as a blob URL, routing by group prefix. */
-export function fetchWorkspaceAsset(path: string): Promise<string> {
-  const { groupId, localPath } = splitWorkspacePath(path);
-  return groupId ? fetchGroupDocumentAsset(groupId, localPath) : fetchDocumentAsset(localPath);
-}
-
-/** Fetch a workspace document's text content, routing by group prefix. */
-export function fetchWorkspaceContent(path: string): Promise<string> {
-  const { groupId, localPath } = splitWorkspacePath(path);
-  return groupId ? getGroupDocumentContent(groupId, localPath) : getDocumentContent(localPath);
 }
 
 /** Download the original binary file for a document. */
@@ -809,98 +763,6 @@ export async function generateAssetDescription(
   }
   const data: unknown = await res.json();
   return AssetEntrySchema.parse(data);
-}
-
-/** List assets for a group document. */
-export async function listGroupDocumentAssets(
-  groupId: string,
-  filename: string,
-): Promise<AssetListResponse> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/assets/${encodeFilePath(filename)}`,
-  );
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to list assets" }));
-    throw new Error(error.detail || "Failed to list assets");
-  }
-  const data: unknown = await res.json();
-  return AssetListResponseSchema.parse(data);
-}
-
-/** Update an asset's companion .md description in a group. */
-export async function updateGroupAssetDescription(
-  groupId: string,
-  filename: string,
-  assetName: string,
-  content: string,
-): Promise<AssetEntry> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/assets/${encodeFilePath(filename)}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ asset_name: assetName, content }),
-    },
-  );
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to update description" }));
-    throw new Error(error.detail || "Failed to update description");
-  }
-  const data: unknown = await res.json();
-  return AssetEntrySchema.parse(data);
-}
-
-/** Generate an asset's companion .md description in a group. */
-export async function generateGroupAssetDescription(
-  groupId: string,
-  filename: string,
-  assetName: string,
-  llm?: LlmConfig,
-): Promise<AssetEntry> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/assets/${encodeFilePath(filename)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ asset_name: assetName, llm: llm ?? {} }),
-    },
-  );
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to generate description" }));
-    throw new Error(error.detail || "Failed to generate description");
-  }
-  const data: unknown = await res.json();
-  return AssetEntrySchema.parse(data);
-}
-
-/** List a workspace document's assets, routing by group prefix. */
-export function listWorkspaceAssets(path: string): Promise<AssetListResponse> {
-  const { groupId, localPath } = splitWorkspacePath(path);
-  return groupId ? listGroupDocumentAssets(groupId, localPath) : listDocumentAssets(localPath);
-}
-
-/** Update an asset's companion description, routing by group prefix. */
-export function updateWorkspaceAssetDescription(
-  path: string,
-  assetName: string,
-  content: string,
-): Promise<AssetEntry> {
-  const { groupId, localPath } = splitWorkspacePath(path);
-  return groupId
-    ? updateGroupAssetDescription(groupId, localPath, assetName, content)
-    : updateAssetDescription(localPath, assetName, content);
-}
-
-/** Generate an asset's companion description, routing by group prefix. */
-export function generateWorkspaceAssetDescription(
-  path: string,
-  assetName: string,
-  llm?: LlmConfig,
-): Promise<AssetEntry> {
-  const { groupId, localPath } = splitWorkspacePath(path);
-  return groupId
-    ? generateGroupAssetDescription(groupId, localPath, assetName, llm)
-    : generateAssetDescription(localPath, assetName, llm);
 }
 
 /** Options for document reconversion. */
@@ -1161,8 +1023,13 @@ export async function bulkDeleteStream(
 
 // User directory management
 
-export async function getDirectories(): Promise<DirectoryTreeResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/directories`);
+/**
+ * Fetch a workspace directory tree. Pass a `scope` of `@<group>/` for a
+ * group's tree, or omit it for the caller's personal workspace.
+ */
+export async function getDirectories(scope = ""): Promise<DirectoryTreeResponse> {
+  const query = scope ? `?scope=${encodeURIComponent(scope)}` : "";
+  const res = await authFetch(`${API_BASE_URL}/api/directories${query}`);
   if (!res.ok) {
     throw new Error("Failed to fetch directory tree");
   }
@@ -1286,153 +1153,6 @@ export async function deleteAllUserData(): Promise<void> {
     const error = await res.json().catch(() => ({ detail: "Failed to delete user data" }));
     throw new Error(error.detail || "Failed to delete user data");
   }
-}
-
-// ============================================================
-// Group API functions (membership required, write requires write permission)
-// ============================================================
-
-/** Get directory tree for a group the user belongs to. */
-export async function getGroupDirectories(groupId: string): Promise<DirectoryTreeResponse> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/directories`,
-  );
-  if (!res.ok) {
-    throw new Error("Failed to fetch group directory tree");
-  }
-  const data: unknown = await res.json();
-  return DirectoryTreeResponseSchema.parse(data);
-}
-
-/** Get document content from a group the user belongs to. */
-export async function getGroupDocumentContent(groupId: string, filename: string): Promise<string> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/${encodeFilePath(filename)}`,
-  );
-  if (!res.ok) {
-    throw new Error("Failed to fetch group document content");
-  }
-  return res.text();
-}
-
-/** Fetch a group workspace asset (e.g. image) as a blob URL for display. */
-export async function fetchGroupDocumentAsset(groupId: string, filepath: string): Promise<string> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/${encodeFilePath(filepath)}`,
-  );
-
-  if (!res.ok) {
-    throw new Error("Failed to fetch group document asset");
-  }
-
-  const blob = await res.blob();
-  return URL.createObjectURL(blob);
-}
-
-/** Upload a document to a group (write access required). */
-export async function uploadGroupDocument(
-  groupId: string,
-  filename: string,
-  file: File,
-  options?: UploadDocumentOptions,
-): Promise<UploadDocumentResponse> {
-  const formData = new FormData();
-  formData.append("file", file);
-
-  const filepath = options?.targetDirectory ? `${options.targetDirectory}/${filename}` : filename;
-
-  const url = `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/${encodeFilePath(filepath)}`;
-
-  if (options?.overwrite) {
-    formData.append("overwrite", "true");
-  }
-  if (options?.spec) {
-    formData.append("pipeline_spec", JSON.stringify(options.spec));
-  }
-  if (requiresConversion(filename) && options?.llm) {
-    formData.append("llm_config", JSON.stringify(options.llm));
-  }
-
-  const res = await authFetch(url, { method: "PUT", body: formData });
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Upload failed" }));
-    throw new Error(error.detail || "Upload failed");
-  }
-  const data: unknown = await res.json();
-  return UploadDocumentResponseSchema.parse(data);
-}
-
-/** Upload a collection to a group (write access required). */
-export async function uploadGroupCollection(
-  groupId: string,
-  file: File,
-  options?: UploadCollectionOptions,
-): Promise<CollectionUploadResponse> {
-  const url = `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/collections`;
-  const res = await authFetch(url, {
-    method: "POST",
-    body: buildCollectionFormData(file, options),
-  });
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Collection upload failed" }));
-    throw new Error(error.detail || "Collection upload failed");
-  }
-  const data: unknown = await res.json();
-  return CollectionUploadResponseSchema.parse(data);
-}
-
-/** Delete a document from a group (write access required). */
-export async function deleteGroupDocument(groupId: string, filename: string): Promise<void> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/documents/${encodeFilePath(filename)}`,
-    { method: "DELETE" },
-  );
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Delete failed" }));
-    throw new Error(error.detail || "Delete failed");
-  }
-}
-
-/** Create a directory in a group (write access required). */
-export async function createGroupDirectory(
-  groupId: string,
-  path: string,
-): Promise<CreateDirectoryResponse> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/directories`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
-    },
-  );
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to create directory" }));
-    throw new Error(error.detail || "Failed to create directory");
-  }
-  const data: unknown = await res.json();
-  return CreateDirectoryResponseSchema.parse(data);
-}
-
-/** Delete a directory from a group (write access required). */
-export async function deleteGroupDirectory(
-  groupId: string,
-  dirpath: string,
-): Promise<DeleteDirectoryResponse> {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/directories`,
-    {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: dirpath }),
-    },
-  );
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to delete directory" }));
-    throw new Error(error.detail || "Failed to delete directory");
-  }
-  const data: unknown = await res.json();
-  return DeleteDirectoryResponseSchema.parse(data);
 }
 
 // ============================================================

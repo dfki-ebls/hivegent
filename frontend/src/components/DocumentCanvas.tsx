@@ -27,8 +27,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type UploadDocumentOptions,
   buildAuxLlmConfig,
-  fetchWorkspaceAsset,
-  getGroupDirectories,
+  fetchDocumentAsset,
+  getDirectories,
   uploadDocument,
 } from "../lib/api";
 import { DOCUMENT_ACTIONS } from "../lib/document-actions";
@@ -162,7 +162,7 @@ function ChunkCard({ chunk, onClick }: ChunkCardProps) {
 }
 
 function ImageThumb({ image }: { image: FetchedImage }) {
-  const fetch = useCallback(() => fetchWorkspaceAsset(image.filePath), [image.filePath]);
+  const fetch = useCallback(() => fetchDocumentAsset(image.filePath), [image.filePath]);
   const { url, error } = useObjectUrl(fetch);
 
   if (error) return null;
@@ -741,7 +741,7 @@ function GroupDocumentsSection({
   useEffect(() => {
     if (!isOpen || hasLoaded) return;
     setIsLoading(true);
-    getGroupDirectories(groupId)
+    getDirectories(`@${groupId}/`)
       .then(setTree)
       .catch(() => setTree(null))
       .finally(() => {

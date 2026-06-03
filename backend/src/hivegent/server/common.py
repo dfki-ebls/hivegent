@@ -18,6 +18,7 @@ __all__ = [
     "prepare_llm_config",
     "require_group_member",
     "require_group_write",
+    "resolve_workspace_path",
     "safe_group_id",
     "safe_path",
     "user_store",
@@ -154,3 +155,29 @@ def require_group_write(user: User, group_id: str) -> str:
             detail="Write access required for this group",
         )
     return safe_id
+
+
+def resolve_workspace_path(
+    user: User, path: str, *, write: bool = False
+) -> tuple[Casebase, str]:
+    """Resolve a canonical workspace path to its store and local path.
+
+    Group documents carry an ``@<group>/<local>`` prefix; personal
+    documents have none — the same convention used by
+    :func:`parse_document_filters` and the tools-layer ``SearchPath.prefix``.
+    For group paths this enforces membership, or write access when *write*
+    is true, so a caller cannot reach a group they do not belong to by
+    crafting a prefix.
+
+    A bare scope (``""`` for personal, ``"@<group>/"`` for a group root)
+    resolves to the store with an empty local path.
+    """
+    if path.startswith("@") and "/" in path:
+        group_id, _, local = path[1:].partition("/")
+        safe_id = (
+            require_group_write(user, group_id)
+            if write
+            else require_group_member(user, group_id)
+        )
+        return group_store(safe_id), safe_path(local) if local else ""
+    return user_store(user), safe_path(path) if path else ""

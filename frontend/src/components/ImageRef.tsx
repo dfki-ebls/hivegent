@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { useCallback } from "react";
 import { useObjectUrl } from "@/hooks/use-object-url";
-import { fetchWorkspaceAsset } from "@/lib/api";
+import { fetchDocumentAsset } from "@/lib/api";
 
 /**
  * Inline image rendered by Streamdown for `<imgref>` tags.
@@ -23,7 +23,7 @@ interface ImageRefProps {
 }
 
 export function ImageRef({ src, children }: ImageRefProps) {
-  const fetch = useCallback(() => fetchWorkspaceAsset(src ?? ""), [src]);
+  const fetch = useCallback(() => fetchDocumentAsset(src ?? ""), [src]);
   const { url, error } = useObjectUrl(src ? fetch : null);
 
   if (!src) return <span>{children}</span>;
