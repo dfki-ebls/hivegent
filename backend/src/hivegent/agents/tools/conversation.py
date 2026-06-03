@@ -36,7 +36,10 @@ async def list_conversations(
             f"{c.id[:8]}  {c.updated_at:%Y-%m-%d}  {c.message_count:>3} msgs  {c.title}"
             for c in conversations
         )
-    return wrap_tool_output(ToolOutput(data=conversations, formatted=formatted))
+    return wrap_tool_output(
+        ToolOutput(data=conversations, formatted=formatted),
+        tool_call_id=ctx.tool_call_id,
+    )
 
 
 @conversation_toolset.tool
@@ -52,6 +55,10 @@ async def get_conversation(
     conv = await _load_conversation(ctx.deps.store.id, conversation_id)
     if conv is None:
         return wrap_tool_output(
-            ToolOutput(data=None, formatted="(conversation not found)")
+            ToolOutput(data=None, formatted="(conversation not found)"),
+            tool_call_id=ctx.tool_call_id,
         )
-    return wrap_tool_output(ToolOutput(data=conv, formatted=conv.title or "(untitled)"))
+    return wrap_tool_output(
+        ToolOutput(data=conv, formatted=conv.title or "(untitled)"),
+        tool_call_id=ctx.tool_call_id,
+    )

@@ -23,10 +23,10 @@ export interface ToolPartInfo {
    */
   text: string | null;
   /**
-   * Structured tool output, streamed as an adjacent ``data-tool-output``
-   * DataUIPart.  Set only for tools that emit one; ``null`` otherwise
-   * (either the tool is plain-string or the data part hasn't streamed
-   * yet).
+   * Structured tool output, streamed as a ``data-tool-output``
+   * DataUIPart whose ``id`` matches this tool call.  Set only for tools
+   * that emit one; ``null`` otherwise (either the tool is plain-string
+   * or the data part hasn't streamed yet).
    */
   metadata: unknown;
   /** LLM-facing text form (for display in the chat sidebar only). */
@@ -52,7 +52,9 @@ export function parseJson<T>(value: unknown): T | undefined {
 }
 
 /** Check whether a message part is a ``data-tool-output`` DataUIPart. */
-export function isToolDataPart(part: unknown): part is { type: "data-tool-output"; data: unknown } {
+export function isToolDataPart(
+  part: unknown,
+): part is { type: "data-tool-output"; id?: string; data: unknown } {
   return (
     part != null &&
     typeof part === "object" &&
@@ -60,6 +62,23 @@ export function isToolDataPart(part: unknown): part is { type: "data-tool-output
     (part as { type: string }).type === "data-tool-output" &&
     "data" in part
   );
+}
+
+/**
+ * Index a message's structured tool payloads by tool-call id.
+ *
+ * The backend stamps each ``data-tool-output`` DataUIPart with the
+ * originating tool-call id.  The AI SDK appends these to the end of
+ * ``message.parts`` in arrival order, so a tool's payload is not
+ * adjacent to its tool part — resolve the correlation once per message
+ * instead of rescanning the parts for every tool call.
+ */
+export function indexToolData(parts: UIMessage["parts"]): Map<string, unknown> {
+  const byCallId = new Map<string, unknown>();
+  for (const part of parts) {
+    if (isToolDataPart(part) && part.id) byCallId.set(part.id, part.data);
+  }
+  return byCallId;
 }
 
 export function prettyPrint(value: unknown): string {
@@ -77,11 +96,14 @@ export function prettyPrint(value: unknown): string {
   return String(value as number | boolean);
 }
 
-export function getToolPartInfo(parts: UIMessage["parts"], index: number): ToolPartInfo | null {
-  const part = parts[index];
+export function getToolPartInfo(
+  part: UIMessage["parts"][number],
+  toolData: ReadonlyMap<string, unknown>,
+): ToolPartInfo | null {
   const typed = part as {
     type: string;
     toolName?: string;
+    toolCallId?: string;
     state?: ToolPart["state"];
     input?: unknown;
     output?: unknown;
@@ -93,11 +115,10 @@ export function getToolPartInfo(parts: UIMessage["parts"], index: number): ToolP
   const text = typeof raw === "string" ? raw : null;
 
   // A tool is either ``plain-string`` (no ``data-tool-output`` ever
-  // arrives) or ``structured`` (the adjacent DataUIPart carries the
-  // canonical payload).  We never parse ``text`` as a stand-in for
-  // structured data.
-  const next = parts[index + 1];
-  const metadata = isToolDataPart(next) ? next.data : null;
+  // arrives) or ``structured`` (a DataUIPart carries the canonical
+  // payload, correlated by tool-call id).  We never parse ``text`` as a
+  // stand-in for structured data.
+  const metadata = typed.toolCallId != null ? (toolData.get(typed.toolCallId) ?? null) : null;
 
   return {
     toolName,

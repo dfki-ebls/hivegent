@@ -1,7 +1,7 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { useEffect } from "react";
 import { getToolHandler } from "@/components/chat/tools/registry";
-import { getToolPartInfo } from "@/lib/chat/tool-part";
+import { getToolPartInfo, indexToolData } from "@/lib/chat/tool-part";
 import type { FetchedChunk } from "@/lib/types";
 
 export function useToolOutputSync(
@@ -13,8 +13,9 @@ export function useToolOutputSync(
     for (const message of messages) {
       const parts = message.parts;
       if (!parts) continue;
-      for (let i = 0; i < parts.length; i++) {
-        const info = getToolPartInfo(parts, i);
+      const toolData = indexToolData(parts);
+      for (const part of parts) {
+        const info = getToolPartInfo(part, toolData);
         if (!info || info.state !== "output-available") continue;
         const handler = getToolHandler(info.toolName);
         handler?.syncOutput?.(info.input, info.text, info.metadata, addChunk, markFullDocument);

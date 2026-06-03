@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// buildLlmConfig zeroes out its payload when the llmSpec flag is off, so
+// enable it to exercise the field-mapping logic.
+vi.mock("@/lib/feature-flags", () => ({
+  featureFlags: { llmSpec: true, pipelineSpec: false, toolsSpec: false, planning: false },
+}));
+
 import { buildLlmConfig, getSettings, requiresConversion } from "@/lib/api";
 
 describe("requiresConversion", () => {

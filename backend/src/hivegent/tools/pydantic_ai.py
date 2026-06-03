@@ -55,7 +55,9 @@ def _binary_attachment_to_content(att: BinaryAttachment) -> BinaryContent:
     )
 
 
-def wrap_tool_output(result: ToolOutput[Any]) -> ToolReturn:
+def wrap_tool_output(
+    result: ToolOutput[Any], *, tool_call_id: str | None = None
+) -> ToolReturn:
     """Wrap a :class:`ToolOutput` in a :class:`ToolReturn`.
 
     ``return_value`` carries the compact text the LLM sees directly.
@@ -71,10 +73,16 @@ def wrap_tool_output(result: ToolOutput[Any]) -> ToolReturn:
     without parsing the LLM-facing text.  String-valued ``data`` is
     considered the canonical payload on its own and is left in
     ``return_value`` without duplication.
+
+    The chunk's ``id`` is stamped with ``tool_call_id`` so the frontend
+    can correlate it with the originating tool part.  The Vercel AI SDK
+    appends ``data-*`` parts to the end of ``message.parts`` rather than
+    next to their tool part, so for parallel tool calls positional
+    adjacency is lost — the id is the only reliable link.
     """
     metadata: DataChunk | None = None
     if result.data is not None and not isinstance(result.data, str):
-        metadata = DataChunk(type=DATA_CHUNK_TYPE, data=result.data)
+        metadata = DataChunk(type=DATA_CHUNK_TYPE, id=tool_call_id, data=result.data)
 
     return_value: Any = result.text
     if result.attachments:
@@ -151,12 +159,12 @@ def for_pydantic_ai[D](
 
         async def wrapper(ctx: Any, **kwargs: Any) -> Any:
             result = cast(Awaitable[ToolOutput[Any]], factory(ctx.deps)(**kwargs))
-            return wrap_tool_output(await result)
+            return wrap_tool_output(await result, tool_call_id=ctx.tool_call_id)
     else:
 
         def wrapper(ctx: Any, **kwargs: Any) -> Any:
             result = cast(ToolOutput[Any], factory(ctx.deps)(**kwargs))
-            return wrap_tool_output(result)
+            return wrap_tool_output(result, tool_call_id=ctx.tool_call_id)
 
     info.apply_to(wrapper, new_sig, new_annotations)
     return wrapper

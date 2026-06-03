@@ -8,12 +8,14 @@ from typing import Annotated, Any, cast, override
 from pydantic import Field
 from pydantic_ai import FunctionToolset
 from pydantic_ai.messages import ToolReturn
+from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 from hivegent.tools.base import AsyncTool, SyncTool, ToolOutput, tool_description
 from hivegent.tools.fastmcp import for_fastmcp
 from hivegent.tools.pydantic_ai import (
     for_pydantic_ai,
     register_agent_tools,
+    wrap_tool_output,
 )
 
 # -- Fixtures ----------------------------------------------------------------
@@ -161,6 +163,30 @@ class TestRegisterAgentTools:
         )
         tool = toolset.tools["sync_default"]
         assert tool.requires_approval is True
+
+
+# -- wrap_tool_output ---------------------------------------------------------
+
+
+class TestWrapToolOutput:
+    """Tests for wrap_tool_output structured-data correlation."""
+
+    def test_structured_data_chunk_carries_tool_call_id(self) -> None:
+        # The frontend correlates the data part with its tool part by id,
+        # since the AI SDK appends data parts out of positional order.
+        out = wrap_tool_output(
+            ToolOutput(data=[1, 2, 3], formatted="three"),
+            tool_call_id="call-xyz",
+        )
+        assert isinstance(out.metadata, DataChunk)
+        assert out.metadata.id == "call-xyz"
+        assert out.metadata.data == [1, 2, 3]
+        assert out.return_value == "three"
+
+    def test_string_data_emits_no_metadata_chunk(self) -> None:
+        out = wrap_tool_output(ToolOutput(data="plain"), tool_call_id="call-1")
+        assert out.metadata is None
+        assert out.return_value == "plain"
 
 
 # -- for_fastmcp --------------------------------------------------------------

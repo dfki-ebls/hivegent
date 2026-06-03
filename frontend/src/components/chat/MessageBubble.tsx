@@ -9,6 +9,7 @@ import {
 } from "@/components/ai-elements/message";
 import { MessagePart } from "@/components/chat/MessagePart";
 import { joinTextParts } from "@/lib/chat/chat-utils";
+import { indexToolData } from "@/lib/chat/tool-part";
 
 interface MessageBubbleProps {
   message: UIMessage;
@@ -42,6 +43,7 @@ export function MessageBubble({
   const showActions = isAssistant && isLastMessage && status === "ready";
   const canEdit = isUser && (status === "ready" || status === "error") && editingId !== message.id;
   const parts = message.parts ?? [];
+  const toolData = indexToolData(parts);
 
   return (
     <Message from={message.role}>
@@ -56,9 +58,8 @@ export function MessageBubble({
           return (
             <MessagePart
               key={partIndex}
-              parts={parts}
+              toolData={toolData}
               part={part}
-              partIndex={partIndex}
               isLastTextPart={isLastTextPart}
               showActions={showActions}
               isUserMessage={isUser}

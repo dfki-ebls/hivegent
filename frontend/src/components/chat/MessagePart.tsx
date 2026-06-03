@@ -7,9 +7,8 @@ import { ToolFallback } from "@/components/chat/tools/ToolFallback";
 import { getToolPartInfo, type ToolPart } from "@/lib/chat/tool-part";
 
 interface MessagePartProps {
-  parts: UIMessage["parts"];
+  toolData: ReadonlyMap<string, unknown>;
   part: UIMessage["parts"][number];
-  partIndex: number;
   isLastTextPart: boolean;
   showActions: boolean;
   isUserMessage: boolean;
@@ -24,9 +23,8 @@ interface MessagePartProps {
 }
 
 export function MessagePart({
-  parts,
+  toolData,
   part,
-  partIndex,
   isLastTextPart,
   showActions,
   isUserMessage,
@@ -69,7 +67,7 @@ export function MessagePart({
     return null;
   }
 
-  const info = getToolPartInfo(parts, partIndex);
+  const info = getToolPartInfo(part, toolData);
   if (!info) return null;
 
   const handler = getToolHandler(info.toolName);
