@@ -11,10 +11,7 @@ import {
   listDocumentAssets,
   updateAssetDescription,
 } from "@/lib/api";
-import {
-  MARKDOWN_BASE_OPTIONS,
-  workspaceMarkdownOptions,
-} from "@/components/chat/markdown/config";
+import { MARKDOWN_BASE_OPTIONS, workspaceMarkdownOptions } from "@/components/chat/markdown/config";
 import { useSettingsStore } from "@/stores/settings-store";
 import { WorkspaceImage } from "./WorkspaceImage";
 import {
@@ -338,11 +335,7 @@ export function DocumentDialog({
     const asset = assetsData.assets[activeAssetIndex];
     setIsSavingAssetDescription(true);
     try {
-      const updated = await updateAssetDescription(
-        filename,
-        asset.name,
-        assetDescriptionDraft,
-      );
+      const updated = await updateAssetDescription(filename, asset.name, assetDescriptionDraft);
       replaceActiveAsset(updated);
       setIsEditingAssetDescription(false);
     } finally {
@@ -476,9 +469,7 @@ export function DocumentDialog({
       return (
         <ScrollArea className="flex-1 min-h-0">
           <div className="prose prose-sm dark:prose-invert max-w-none p-4">
-            <Markdown options={markdownOptions}>
-              {fullContent}
-            </Markdown>
+            <Markdown options={markdownOptions}>{fullContent}</Markdown>
           </div>
         </ScrollArea>
       );
@@ -560,9 +551,7 @@ export function DocumentDialog({
               ) : (
                 <div className="prose prose-sm dark:prose-invert max-w-none">
                   {asset.description ? (
-                    <Markdown options={MARKDOWN_BASE_OPTIONS}>
-                      {asset.description}
-                    </Markdown>
+                    <Markdown options={MARKDOWN_BASE_OPTIONS}>{asset.description}</Markdown>
                   ) : (
                     <p className="text-muted-foreground italic">No description</p>
                   )}

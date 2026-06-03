@@ -120,9 +120,7 @@ class _RetrievalState:
 _state = _RetrievalState()
 
 
-async def index_document(
-    document_id: str, chunks: Sequence[ChunkData]
-) -> None:
+async def index_document(document_id: str, chunks: Sequence[ChunkData]) -> None:
     """Atomically replace *document_id*'s chunk rows with *chunks*.
 
     Each chunk is passed to cbrkit as a :class:`Chunk` instance keyed by

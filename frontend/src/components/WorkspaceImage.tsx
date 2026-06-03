@@ -22,7 +22,12 @@ interface WorkspaceImageProps {
  */
 export function WorkspaceImage({ src, alt, documentPath }: WorkspaceImageProps) {
   const fetch = useCallback(() => {
-    if (!src || src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://")) {
+    if (
+      !src ||
+      src.startsWith("data:") ||
+      src.startsWith("http://") ||
+      src.startsWith("https://")
+    ) {
       return Promise.reject(new Error("unsupported image source"));
     }
     // Resolve relative path against the document directory (prefix preserved).

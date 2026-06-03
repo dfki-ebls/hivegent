@@ -40,9 +40,7 @@ class TestEditDocumentText:
         assert "Replaced 1 occurrence" in result
         assert (workspace_dir / "doc.md").read_text() == "hi world"
 
-    async def test_replace_all(
-        self, user_store: Casebase, workspace_dir: Path
-    ) -> None:
+    async def test_replace_all(self, user_store: Casebase, workspace_dir: Path) -> None:
         (workspace_dir / "doc.md").write_text("foo foo foo")
         result = await workspace.edit_document_text(
             user_store, "doc.md", "foo", "bar", replace_all=True

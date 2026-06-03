@@ -29,8 +29,12 @@ _VECTOR_DIM = 384
 # idempotently, by the explicit loop in ``upgrade`` below.
 _PERMISSION = ENUM("read", "write", name="permission", create_type=False)
 _ENTRY_KIND = ENUM(
-    "user_markdown", "image", "convertible", "binary_stub",
-    name="entrykind", create_type=False,
+    "user_markdown",
+    "image",
+    "convertible",
+    "binary_stub",
+    name="entrykind",
+    create_type=False,
 )
 _ORIGIN = ENUM("upload", "collection", "extracted", name="origin", create_type=False)
 _GENERATED_BY = ENUM(

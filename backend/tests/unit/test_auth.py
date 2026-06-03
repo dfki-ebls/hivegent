@@ -197,7 +197,9 @@ async def test_validate_jwt_token_accepts_audience_by_prefix(
     monkeypatch.setattr(settings.auth, "issuer", "")
     monkeypatch.setattr(settings.auth, "audience", ["hivegent-*"])
 
-    _install_fake_jwt_pipeline(monkeypatch, {"sub": "svc", "aud": "hivegent-integration"})
+    _install_fake_jwt_pipeline(
+        monkeypatch, {"sub": "svc", "aud": "hivegent-integration"}
+    )
 
     user = await auth.validate_jwt_token("dummy.jwt.token")
     assert user.id == "svc"

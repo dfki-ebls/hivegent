@@ -162,5 +162,7 @@ async def invoke_agent_tool[D](
 
     schema = tool.function_schema
     validated = schema.validator.validate_python(args)
-    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage(), tool_name=tool_name)
+    ctx = RunContext(
+        deps=deps, model=TestModel(), usage=RunUsage(), tool_name=tool_name
+    )
     return unwrap_tool_output(await schema.call(validated, ctx))

@@ -83,12 +83,8 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
     """
 
     storage_factory: Callable[[], Awaitable[VectorStorage]] | None = None
-    filter_factory: (
-        Callable[[], Awaitable[cbrkit_filter.Filter | None]] | None
-    ) = None
-    result_mapper: (
-        Callable[[Sequence[SearchResult]], Awaitable[list[R]]] | None
-    ) = None
+    filter_factory: Callable[[], Awaitable[cbrkit_filter.Filter | None]] | None = None
+    result_mapper: Callable[[Sequence[SearchResult]], Awaitable[list[R]]] | None = None
 
     @override
     async def __call__(
@@ -121,9 +117,7 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
         storage = await self.storage_factory()
         if not await storage.has_index():
             return []
-        where = (
-            await self.filter_factory() if self.filter_factory is not None else None
-        )
+        where = await self.filter_factory() if self.filter_factory is not None else None
         with logfire.span(
             "vector.search",
             search_type=search_type,

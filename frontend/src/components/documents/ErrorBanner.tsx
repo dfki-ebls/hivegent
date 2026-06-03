@@ -21,4 +21,3 @@ export function ErrorBanner({ message, onDismiss }: ErrorBannerProps) {
     </Alert>
   );
 }
-

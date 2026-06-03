@@ -31,8 +31,13 @@ def _mps_safe_position_embedding(
     """Build the embedding off-device on MPS, where float64 is unavailable."""
     if device is not None and torch.device(device).type == "mps":
         embedding = _original(
-            height, width, embed_dim, temperature, cls_token,
-            device=torch.device("cpu"), dtype=dtype,
+            height,
+            width,
+            embed_dim,
+            temperature,
+            cls_token,
+            device=torch.device("cpu"),
+            dtype=dtype,
         )
         return embedding.to(device=device)
     return _original(
@@ -46,4 +51,6 @@ def apply_rt_detr_mps_patch() -> None:
         return
     # ty models the attribute as the exact original function, so replacing it
     # with our identically-typed wrapper reads as an invalid assignment.
-    modeling_rt_detr_v2.build_2d_sinusoidal_position_embedding = _mps_safe_position_embedding  # ty: ignore[invalid-assignment]
+    modeling_rt_detr_v2.build_2d_sinusoidal_position_embedding = (
+        _mps_safe_position_embedding  # ty: ignore[invalid-assignment]
+    )

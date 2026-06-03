@@ -1,13 +1,4 @@
-import {
-  Archive,
-  FolderOpen,
-  FolderPlus,
-  Loader2,
-  Paperclip,
-  Plus,
-  Upload,
-  X,
-} from "lucide-react";
+import { Archive, FolderOpen, FolderPlus, Loader2, Paperclip, Plus, Upload, X } from "lucide-react";
 
 import type { OperationStage, UploadProgress } from "../../lib/types";
 import { Button } from "../ui/button";
@@ -178,4 +169,3 @@ export function UploadArea({
     </div>
   );
 }
-

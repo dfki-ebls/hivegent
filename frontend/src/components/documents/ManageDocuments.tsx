@@ -369,4 +369,3 @@ export function ManageDocuments({ onIncludeDocument, onExcludeDocument }: Manage
     </div>
   );
 }
-

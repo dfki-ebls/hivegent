@@ -179,9 +179,7 @@ async def _ensure_owner(s: AsyncSession, store: Casebase) -> None:
         await ensure_group(s, store.id)
 
 
-async def _find(
-    s: AsyncSession, store: Casebase, stem_path: str
-) -> Document | None:
+async def _find(s: AsyncSession, store: Casebase, stem_path: str) -> Document | None:
     stmt = select(Document).where(_owner_filter(store), Document.stem_path == stem_path)
     return (await s.execute(stmt)).scalar_one_or_none()
 
@@ -336,9 +334,7 @@ async def delete_documents(store: Casebase, references: Sequence[str]) -> int:
         return 0
     async with session() as s:
         result = await s.execute(
-            delete(Document).where(
-                _owner_filter(store), Document.stem_path.in_(stems)
-            )
+            delete(Document).where(_owner_filter(store), Document.stem_path.in_(stems))
         )
     return affected_rows(result)
 

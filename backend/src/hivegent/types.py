@@ -277,7 +277,9 @@ Combines pydantic-ai's native effort levels (``minimal``/``low``/``medium``/
 (disable thinking) sentinels.
 """
 
-REASONING_EFFORT_VALUES: frozenset[str] = frozenset({"auto", "none", *get_args(ThinkingEffort)})
+REASONING_EFFORT_VALUES: frozenset[str] = frozenset(
+    {"auto", "none", *get_args(ThinkingEffort)}
+)
 """Valid reasoning effort strings, used to validate untrusted request input."""
 
 

@@ -325,9 +325,7 @@ export function ConversationsList({
           messageCount={conversation.message_count}
           isActive={conversation.id === currentConversationId}
           onSelect={() => onConversationSelect(conversation.id)}
-          onDelete={() =>
-            setPendingDelete({ id: conversation.id, title: conversation.title })
-          }
+          onDelete={() => setPendingDelete({ id: conversation.id, title: conversation.title })}
           onUpdateTitle={(title) => updateTitle(conversation.id, title)}
           onGenerateTitle={() => handleGenerateTitle(conversation.id)}
         />

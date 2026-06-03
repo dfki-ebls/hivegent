@@ -509,7 +509,9 @@ class TestWriteDocumentTool:
         assert calls == [("doc.md", "content", "append")]
 
     async def test_rejects_non_matching_glob(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(paths=tmp_path, glob="*.md", mutator=_unreachable_write)
+        tool = WriteDocumentTool(
+            paths=tmp_path, glob="*.md", mutator=_unreachable_write
+        )
         result = (await tool("doc.txt", "content")).data
         assert "Error" in result
 

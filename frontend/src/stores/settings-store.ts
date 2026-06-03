@@ -292,9 +292,7 @@ export const useSettingsStore = create<SettingsState>()(
         // Each block below is gated by its feature flag.  When off, the
         // slice is omitted from persisted state so secrets and stale user
         // input never touch localStorage and don't survive a flag flip.
-        ...(featureFlags.llmSpec
-          ? { overrides: persistedOverrides(state.overrides) }
-          : {}),
+        ...(featureFlags.llmSpec ? { overrides: persistedOverrides(state.overrides) } : {}),
         ...(featureFlags.pipelineSpec
           ? {
               conversionPipeline: state.conversionPipeline,
@@ -303,9 +301,7 @@ export const useSettingsStore = create<SettingsState>()(
               chunkingConfigs: state.chunkingConfigs,
             }
           : {}),
-        ...(featureFlags.toolsSpec
-          ? { toolsSpec: persistedToolsSpec(state.toolsSpec) }
-          : {}),
+        ...(featureFlags.toolsSpec ? { toolsSpec: persistedToolsSpec(state.toolsSpec) } : {}),
       }),
       merge: (persisted, current) => {
         const data = persisted as Record<string, unknown> | undefined;

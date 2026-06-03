@@ -20,7 +20,10 @@ export interface UseHivegentChatOptions {
   onConversationCreated?: (id: string) => void;
 }
 
-export function useHivegentChat(id: string, { draft, onConversationCreated }: UseHivegentChatOptions = {}) {
+export function useHivegentChat(
+  id: string,
+  { draft, onConversationCreated }: UseHivegentChatOptions = {},
+) {
   const onCreatedRef = useRef(onConversationCreated);
   onCreatedRef.current = onConversationCreated;
 

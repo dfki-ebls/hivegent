@@ -805,14 +805,7 @@ export const AGENT_MODE_OPTIONS: AgentModeOption[] = [
  * Mirrors pydantic-ai's native effort levels plus the `auto` (provider
  * default) and `none` (disabled) sentinels.
  */
-export type ReasoningEffort =
-  | "auto"
-  | "none"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh";
+export type ReasoningEffort = "auto" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 /** Reasoning effort option for display in UI. */
 export interface ReasoningEffortOption {

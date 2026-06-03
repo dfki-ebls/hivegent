@@ -15,8 +15,7 @@ interface DraftHandoffState {
 
 export const useDraftHandoffStore = create<DraftHandoffState>((set, get) => ({
   messages: {},
-  stash: (id, messages) =>
-    set((state) => ({ messages: { ...state.messages, [id]: messages } })),
+  stash: (id, messages) => set((state) => ({ messages: { ...state.messages, [id]: messages } })),
   take: (id) => {
     const taken = get().messages[id];
     if (taken) {

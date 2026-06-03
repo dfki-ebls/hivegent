@@ -184,10 +184,7 @@ async def _read_bounded_upload(file: UploadFile, *, limit: int, label: str) -> b
         if len(buf) > limit:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    f"{label} too large. "
-                    f"Maximum size: {limit} bytes"
-                ),
+                detail=(f"{label} too large. Maximum size: {limit} bytes"),
             )
     return bytes(buf)
 

@@ -268,7 +268,9 @@ async def append_messages(
         # and rolling back the turn.  The transaction-scoped advisory
         # lock auto-releases on commit/rollback.
         await s.execute(
-            select(func.pg_advisory_xact_lock(func.hashtextextended(conversation_id, 0)))
+            select(
+                func.pg_advisory_xact_lock(func.hashtextextended(conversation_id, 0))
+            )
         )
         await ensure_user(s, user_id)
 

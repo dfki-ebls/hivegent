@@ -40,15 +40,7 @@ function defaultValues(schema: JsonSchema): Record<string, unknown> {
   return out;
 }
 
-function Section({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint?: string;
-  children: ReactNode;
-}) {
+function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
     <div className="grid gap-1.5">
       <div className="grid gap-0.5">
@@ -122,10 +114,7 @@ export function ToolDebugConsole() {
     };
   }, [isAdmin]);
 
-  const selectedTool = useMemo(
-    () => tools.find((t) => t.name === selected),
-    [tools, selected],
-  );
+  const selectedTool = useMemo(() => tools.find((t) => t.name === selected), [tools, selected]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, ToolSchema[]>();
@@ -178,8 +167,8 @@ export function ToolDebugConsole() {
       <div className="shrink-0 space-y-1 border-b px-6 py-4">
         <h1 className="text-2xl font-semibold">Tool Debugger</h1>
         <p className="text-sm text-muted-foreground">
-          Invoke any agent tool directly to exercise stateful behaviour such as pgvector
-          retrieval. Arguments and their types are inferred from each tool's schema.
+          Invoke any agent tool directly to exercise stateful behaviour such as pgvector retrieval.
+          Arguments and their types are inferred from each tool's schema.
         </p>
       </div>
 

@@ -892,7 +892,9 @@ async def write_document_text(
             new_content = content + file_path.read_text(encoding="utf-8")
             message = f"Prepended {len(content)} characters to '{safe}'."
         else:
-            raise HTTPException(status_code=400, detail=f"Unsupported write mode: {mode}")
+            raise HTTPException(
+                status_code=400, detail=f"Unsupported write mode: {mode}"
+            )
         await _replace_text_locked(store, safe, file_path, new_content)
     return message
 

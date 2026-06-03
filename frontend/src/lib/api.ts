@@ -186,10 +186,7 @@ export async function listToolSchemas(): Promise<ToolSchema[]> {
 }
 
 /** Invoke an agent tool with arbitrary arguments (admin only). */
-export async function runTool(
-  name: string,
-  args: Record<string, unknown>,
-): Promise<ToolRunResult> {
+export async function runTool(name: string, args: Record<string, unknown>): Promise<ToolRunResult> {
   const res = await authFetch(`${API_BASE_URL}/api/debug/tools/${encodeURIComponent(name)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

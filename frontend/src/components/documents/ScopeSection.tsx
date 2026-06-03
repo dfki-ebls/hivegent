@@ -62,8 +62,15 @@ export function ScopeSection({
   const clearError = useDocumentsStore((s) => s.clearError);
   const overrides = useSettingsStore((s) => s.overrides);
 
-  const { documents, directoryTree, mutatingPaths, bulkProgress, operationStage, error, hasFetched } =
-    state;
+  const {
+    documents,
+    directoryTree,
+    mutatingPaths,
+    bulkProgress,
+    operationStage,
+    error,
+    hasFetched,
+  } = state;
 
   const dialogs = useRef<ScopeDialogsHandle>(null);
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -212,7 +219,10 @@ export function ScopeSection({
   );
 
   const treeView = () => {
-    if (!directoryTree || (directoryTree.total_files === 0 && directoryTree.total_directories === 0)) {
+    if (
+      !directoryTree ||
+      (directoryTree.total_files === 0 && directoryTree.total_directories === 0)
+    ) {
       return <p className="py-2 text-xs text-muted-foreground">No documents in this workspace</p>;
     }
     return (

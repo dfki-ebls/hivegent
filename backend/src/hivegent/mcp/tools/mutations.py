@@ -44,7 +44,9 @@ async def edit_document(
         return "Edit denied by user."
 
     tool = EditDocumentTool(
-        paths=SearchPath(path=store.workspace_dir(settings.data_dir), prefix=store.prefix),
+        paths=SearchPath(
+            path=store.workspace_dir(settings.data_dir), prefix=store.prefix
+        ),
         mutator=partial(workspace.edit_document_text, store),
     )
     result = await tool(file_path, old_string, new_string, replace_all)
@@ -68,7 +70,9 @@ async def write_document(
         return "Write denied by user."
 
     tool = WriteDocumentTool(
-        paths=SearchPath(path=store.workspace_dir(settings.data_dir), prefix=store.prefix),
+        paths=SearchPath(
+            path=store.workspace_dir(settings.data_dir), prefix=store.prefix
+        ),
         mutator=partial(workspace.write_document_text, store),
     )
     result = await tool(file_path, content, mode)

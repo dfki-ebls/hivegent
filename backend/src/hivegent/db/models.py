@@ -355,9 +355,7 @@ class Chunk(MappedAsDataclass, Base, kw_only=True):  # pyright: ignore[reportUns
         Index("ix_chunks_tsv", "tsv", postgresql_using="gin"),
     )
 
-    id: Mapped[str] = mapped_column(
-        primary_key=True, init=False, default_factory=_nid
-    )
+    id: Mapped[str] = mapped_column(primary_key=True, init=False, default_factory=_nid)
     text: Mapped[str]
     document_id: Mapped[str] = mapped_column(
         ForeignKey("documents.id", ondelete="CASCADE"), index=True

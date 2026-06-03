@@ -21,12 +21,7 @@ export function workspaceMarkdownOptions(documentPath: string): MarkdownToJSX.Op
     overrides: {
       img: {
         component: ({ src, alt, ...props }: ComponentProps<"img">) => (
-          <WorkspaceImage
-            src={src}
-            alt={alt ?? undefined}
-            documentPath={documentPath}
-            {...props}
-          />
+          <WorkspaceImage src={src} alt={alt ?? undefined} documentPath={documentPath} {...props} />
         ),
       },
     },

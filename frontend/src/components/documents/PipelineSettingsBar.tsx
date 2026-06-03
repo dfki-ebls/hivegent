@@ -69,10 +69,7 @@ export function PipelineSettingsBar({
             value={conversionPipeline}
             onChange={onConversionPipelineChange}
           />
-          <ChunkingPipelineSelector
-            value={chunkingPipeline}
-            onChange={onChunkingPipelineChange}
-          />
+          <ChunkingPipelineSelector value={chunkingPipeline} onChange={onChunkingPipelineChange} />
         </>
       )}
       <div className="flex items-center gap-2">
@@ -102,4 +99,3 @@ export function PipelineSettingsBar({
     </div>
   );
 }
-
