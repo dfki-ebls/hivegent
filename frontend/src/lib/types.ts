@@ -530,6 +530,22 @@ export const ToolInfoSchema = z.object({
 });
 export type ToolInfo = z.infer<typeof ToolInfoSchema>;
 
+/** Agent tool metadata plus the JSON Schema of its call parameters. */
+export const ToolSchemaSchema = ToolInfoSchema.extend({
+  parameters: z.record(z.string(), z.unknown()),
+});
+export type ToolSchema = z.infer<typeof ToolSchemaSchema>;
+
+/** Outcome of invoking an agent tool through the debug console. */
+export const ToolRunResultSchema = z.object({
+  ok: z.boolean(),
+  text: z.string().nullable(),
+  data: z.unknown().nullable(),
+  error: z.string().nullable(),
+  elapsed_ms: z.number(),
+});
+export type ToolRunResult = z.infer<typeof ToolRunResultSchema>;
+
 /** Summary information about a knowledge group. */
 export const GroupInfoSchema = z.object({
   slug: z.string(),

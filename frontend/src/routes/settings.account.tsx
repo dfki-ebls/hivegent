@@ -41,6 +41,7 @@ import {
   deleteAllUserData,
 } from "../lib/api";
 import type { AdminGroupInfo, AdminUserInfo } from "../lib/types";
+import { errorMessage } from "../lib/utils";
 import { enforceLogin } from "../oidc";
 import { useConversationsStore } from "../stores/conversations-store";
 import { selectIsAdmin, useSettingsStore } from "../stores/settings-store";
@@ -437,7 +438,7 @@ function AccountPage() {
     } catch (e) {
       console.error(`${action.key} failed:`, e);
       toast.error(`${action.title} failed`, {
-        description: e instanceof Error ? e.message : String(e),
+        description: errorMessage(e),
       });
     } finally {
       setBusy(false);

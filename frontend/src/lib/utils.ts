@@ -51,3 +51,8 @@ export function formatWebUrl(url: string): string {
 
 export const isAbortError = (err: unknown): boolean =>
   err instanceof DOMException && err.name === "AbortError";
+
+/** Coerce an unknown thrown value into a human-readable message. */
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

@@ -59,6 +59,10 @@ import {
   type MoveDocumentResponse,
   type ToolInfo,
   ToolInfoSchema,
+  type ToolRunResult,
+  ToolRunResultSchema,
+  type ToolSchema,
+  ToolSchemaSchema,
   MoveDocumentResponseSchema,
   type PipelineSpec,
   type RechunkCompleteEvent,
@@ -148,6 +152,31 @@ export async function listTools(): Promise<ToolInfo[]> {
   }
   const data: unknown = await res.json();
   return z.array(ToolInfoSchema).parse(data);
+}
+
+/** Fetch every agent tool with its parameter JSON Schema (admin only). */
+export async function listToolSchemas(): Promise<ToolSchema[]> {
+  const res = await authFetch(`${API_BASE_URL}/api/debug/tools`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch tool schemas");
+  }
+  return z.array(ToolSchemaSchema).parse(await res.json());
+}
+
+/** Invoke an agent tool with arbitrary arguments (admin only). */
+export async function runTool(
+  name: string,
+  args: Record<string, unknown>,
+): Promise<ToolRunResult> {
+  const res = await authFetch(`${API_BASE_URL}/api/debug/tools/${encodeURIComponent(name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to run tool (${res.status})`);
+  }
+  return ToolRunResultSchema.parse(await res.json());
 }
 
 /** Response from testing an MCP server connection. */

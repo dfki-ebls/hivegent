@@ -6,6 +6,7 @@ from ...auth import get_current_user
 from .account import router as account_router
 from .admin import router as admin_router
 from .conversations import router as conversations_router
+from .debug import router as debug_router
 from .directories import router as directories_router
 from .documents import router as documents_router
 from .groups import router as groups_router
@@ -21,3 +22,4 @@ api_router.include_router(directories_router)
 api_router.include_router(account_router)
 api_router.include_router(groups_router)
 api_router.include_router(admin_router)
+api_router.include_router(debug_router)

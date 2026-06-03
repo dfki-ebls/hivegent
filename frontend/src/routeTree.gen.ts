@@ -9,10 +9,16 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as DebugRouteImport } from './routes/debug'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsAccountRouteImport } from './routes/settings.account'
 import { Route as ConversationsIdRouteImport } from './routes/conversations.$id'
 
+const DebugRoute = DebugRouteImport.update({
+  id: '/debug',
+  path: '/debug',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -31,36 +37,47 @@ const ConversationsIdRoute = ConversationsIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/debug': typeof DebugRoute
   '/conversations/$id': typeof ConversationsIdRoute
   '/settings/account': typeof SettingsAccountRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/debug': typeof DebugRoute
   '/conversations/$id': typeof ConversationsIdRoute
   '/settings/account': typeof SettingsAccountRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/debug': typeof DebugRoute
   '/conversations/$id': typeof ConversationsIdRoute
   '/settings/account': typeof SettingsAccountRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/conversations/$id' | '/settings/account'
+  fullPaths: '/' | '/debug' | '/conversations/$id' | '/settings/account'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/conversations/$id' | '/settings/account'
-  id: '__root__' | '/' | '/conversations/$id' | '/settings/account'
+  to: '/' | '/debug' | '/conversations/$id' | '/settings/account'
+  id: '__root__' | '/' | '/debug' | '/conversations/$id' | '/settings/account'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  DebugRoute: typeof DebugRoute
   ConversationsIdRoute: typeof ConversationsIdRoute
   SettingsAccountRoute: typeof SettingsAccountRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/debug': {
+      id: '/debug'
+      path: '/debug'
+      fullPath: '/debug'
+      preLoaderRoute: typeof DebugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -87,6 +104,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  DebugRoute: DebugRoute,
   ConversationsIdRoute: ConversationsIdRoute,
   SettingsAccountRoute: SettingsAccountRoute,
 }

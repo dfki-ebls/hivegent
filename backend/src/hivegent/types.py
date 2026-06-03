@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Literal, Self, get_args
+from typing import Any, Literal, Self, get_args
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai.settings import ThinkingEffort
@@ -68,6 +68,8 @@ __all__ = [
     "RechunkCompleteEvent",
     "SettingsResponse",
     "ToolInfo",
+    "ToolRunResult",
+    "ToolSchema",
     "ToolsSpec",
     "UpdateTitleRequest",
     "UploadCompleteEvent",
@@ -231,6 +233,40 @@ class ToolInfo(BaseModel):
     name: str
     description: str
     group: str
+
+
+class ToolSchema(ToolInfo):
+    """Tool metadata plus the JSON Schema of its call parameters.
+
+    Extends :class:`ToolInfo` with the full parameter schema so a client
+    can render a form to invoke the tool generically.
+    """
+
+    parameters: dict[str, Any] = Field(
+        description="JSON Schema of the tool's call parameters."
+    )
+
+
+class ToolRunResult(BaseModel):
+    """Outcome of invoking an agent tool through the debug console.
+
+    ``text`` and ``data`` are the two channels a tool result splits into,
+    mirroring :class:`~hivegent.tools.base.ToolOutput`: ``text`` is the
+    compact string handed to the LLM (and MCP clients), while ``data`` is
+    the structured payload the UI consumes from the data stream.
+    """
+
+    ok: bool
+    text: str | None = Field(
+        default=None,
+        description="Compact text passed to the LLM (the tool's return value).",
+    )
+    data: Any = Field(
+        default=None,
+        description="Structured result consumed by the UI; null for text-only tools.",
+    )
+    error: str | None = None
+    elapsed_ms: float
 
 
 type ReasoningEffort = Literal["auto", "none"] | ThinkingEffort

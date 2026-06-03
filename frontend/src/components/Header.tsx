@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
-import { FileSearch, LogOut, User, UserCog } from "lucide-react";
+import { Bug, FileSearch, LogOut, User, UserCog } from "lucide-react";
 import { useOidc } from "../oidc";
+import { selectIsAdmin, useSettingsStore } from "../stores/settings-store";
 import { Button } from "./ui/button";
 import {
   DropdownMenu,
@@ -12,6 +13,7 @@ import {
 
 function UserMenu() {
   const oidc = useOidc();
+  const isAdmin = useSettingsStore(selectIsAdmin);
 
   if (!oidc.isUserLoggedIn) {
     return null;
@@ -36,6 +38,14 @@ function UserMenu() {
             Account
           </Link>
         </DropdownMenuItem>
+        {isAdmin && (
+          <DropdownMenuItem asChild>
+            <Link to="/debug" className="flex items-center gap-2">
+              <Bug className="h-4 w-4" />
+              Tool Debugger
+            </Link>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onClick={() => logout({ redirectTo: "home" })}

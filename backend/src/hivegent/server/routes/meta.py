@@ -1,11 +1,12 @@
 """Routes for settings, tool metadata, and pipeline metadata."""
 
 import asyncio
+from collections.abc import Sequence
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ...agents import TOOLSET_GROUPS, collect_tool_info
+from ...agents import TOOLSET_GROUPS, collect_tool_schemas
 from ...auth import User, get_current_user
 from ...chunkers import ChunkingPipelineInfo, get_chunking_pipelines_info
 from ...config import settings
@@ -41,9 +42,14 @@ async def get_settings(
 @router.get("/tools")
 async def list_tools(
     _user: Annotated[User, Depends(get_current_user)],
-) -> list[ToolInfo]:
-    """Return metadata for all available agent tools."""
-    return collect_tool_info(TOOLSET_GROUPS)
+) -> Sequence[ToolInfo]:
+    """Return metadata for all available agent tools.
+
+    The ``ToolInfo`` response model drops the parameter schemas that
+    :func:`collect_tool_schemas` also gathers; the debug console fetches
+    those separately.
+    """
+    return collect_tool_schemas(TOOLSET_GROUPS)
 
 
 @router.post("/mcp/test")

@@ -11,7 +11,12 @@ from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 from .base import BinaryAttachment, CallInfo, Tool, ToolOutput, factory_tool_name
 
-__all__ = ["for_pydantic_ai", "register_agent_tools", "wrap_tool_output"]
+__all__ = [
+    "for_pydantic_ai",
+    "register_agent_tools",
+    "unwrap_tool_output",
+    "wrap_tool_output",
+]
 
 DATA_CHUNK_TYPE = "data-tool-output"
 """DataChunk type used to stream structured tool data to the frontend."""
@@ -78,6 +83,30 @@ def wrap_tool_output(result: ToolOutput[Any]) -> ToolReturn:
             *(_binary_attachment_to_content(a) for a in result.attachments),
         ]
     return ToolReturn(return_value=return_value, metadata=metadata)
+
+
+def unwrap_tool_output(result: Any) -> tuple[str | None, Any]:
+    """Recover ``(text, structured_data)`` from a tool call return.
+
+    The inverse of :func:`wrap_tool_output`: it reads back the LLM-facing
+    text from ``return_value`` (a plain string, or the first element when
+    binary attachments follow it) and the structured payload from the
+    :class:`DataChunk` in ``metadata``.  Tools that bypass the wrapper and
+    return a plain string or value are passed through unchanged.
+    """
+    if isinstance(result, ToolReturn):
+        rv = result.return_value
+        if isinstance(rv, str):
+            text = rv
+        elif isinstance(rv, list) and rv and isinstance(rv[0], str):
+            text = rv[0]
+        else:
+            text = None
+        data = result.metadata.data if isinstance(result.metadata, DataChunk) else None
+        return text, data
+    if isinstance(result, str):
+        return result, None
+    return None, result
 
 
 def for_pydantic_ai[D](

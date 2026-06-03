@@ -2,7 +2,12 @@
 
 from .app import base_agent, user_agent
 from .common import ExploreTaskArg, MemoryContentArg, UserDeps
-from .registry import TOOLSET_GROUPS, build_toolsets, collect_tool_info
+from .registry import (
+    TOOLSET_GROUPS,
+    build_toolsets,
+    collect_tool_schemas,
+    invoke_agent_tool,
+)
 from .tools import (
     conversation_toolset,
     explore_toolset,
@@ -20,9 +25,10 @@ __all__ = [
     "UserDeps",
     "base_agent",
     "build_toolsets",
-    "collect_tool_info",
+    "collect_tool_schemas",
     "conversation_toolset",
     "explore_toolset",
+    "invoke_agent_tool",
     "memory_toolset",
     "plan_toolset",
     "subagent_toolset",
