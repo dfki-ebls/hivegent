@@ -245,6 +245,7 @@ export function ChatSidebar({
         <ConversationsList
           currentConversationId={id}
           onConversationSelect={handleConversationSelect}
+          onActiveConversationDeleted={handleNewChat}
         />
       </TabsContent>
     </Tabs>

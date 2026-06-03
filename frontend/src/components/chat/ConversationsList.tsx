@@ -270,11 +270,13 @@ function ConversationItem({
 interface ConversationsListProps {
   currentConversationId?: string;
   onConversationSelect: (id: string) => void;
+  onActiveConversationDeleted: () => void;
 }
 
 export function ConversationsList({
   currentConversationId,
   onConversationSelect,
+  onActiveConversationDeleted,
 }: ConversationsListProps) {
   const {
     conversations,
@@ -296,8 +298,13 @@ export function ConversationsList({
 
   const confirmDelete = async () => {
     if (!pendingDelete) return;
+    // Deleting the open conversation leaves the chat view bound to an id the
+    // server no longer knows; start a fresh draft so its stale content and
+    // dangling route don't linger.
+    const wasActive = pendingDelete.id === currentConversationId;
     await deleteConversation(pendingDelete.id);
     setPendingDelete(null);
+    if (wasActive) onActiveConversationDeleted();
   };
 
   const handleGenerateTitle = async (id: string) => {
