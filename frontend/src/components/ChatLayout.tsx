@@ -2,7 +2,7 @@ import { PanelLeftOpen } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { ChatSidebar } from "./chat/ChatSidebar";
-import { DocumentCanvas } from "./DocumentCanvas";
+import { DocumentCanvas } from "./documents/DocumentCanvas";
 import { Button } from "./ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./ui/sheet";
 
