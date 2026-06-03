@@ -3,6 +3,16 @@ import { useEffect, useState } from "react";
 import { buildAuxLlmConfig } from "@/lib/api";
 import { useConversationsStore } from "@/stores/conversations-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -278,14 +288,16 @@ export function ConversationsList({
 
   const { overrides } = useSettingsStore();
 
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null);
+
   useEffect(() => {
     void fetchConversations();
   }, [fetchConversations]);
 
-  const handleDelete = async (id: string) => {
-    if (confirm("Are you sure you want to delete this conversation?")) {
-      await deleteConversation(id);
-    }
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    await deleteConversation(pendingDelete.id);
+    setPendingDelete(null);
   };
 
   const handleGenerateTitle = async (id: string) => {
@@ -306,11 +318,35 @@ export function ConversationsList({
           messageCount={conversation.message_count}
           isActive={conversation.id === currentConversationId}
           onSelect={() => onConversationSelect(conversation.id)}
-          onDelete={() => handleDelete(conversation.id)}
+          onDelete={() =>
+            setPendingDelete({ id: conversation.id, title: conversation.title })
+          }
           onUpdateTitle={(title) => updateTitle(conversation.id, title)}
           onGenerateTitle={() => handleGenerateTitle(conversation.id)}
         />
       ))}
+
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete
+              {pendingDelete?.title ? ` "${pendingDelete.title}"` : " this conversation"} and all
+              its messages. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => void confirmDelete()}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
