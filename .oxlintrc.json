@@ -14,9 +14,9 @@
     "vitest"
   ],
   "ignorePatterns": [
-    "frontend/src/components/ai-elements/**/*.tsx",
-    "frontend/src/components/ui/**/*.tsx",
-    "frontend/src/hooks/*.ts",
-    "frontend/src/**/*.gen.ts"
+    "**/src/components/ai-elements/**",
+    "**/src/components/ui/**",
+    "**/src/hooks/*.ts",
+    "**/src/**/*.gen.ts"
   ]
 }
