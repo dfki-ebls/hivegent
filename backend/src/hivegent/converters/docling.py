@@ -18,6 +18,7 @@ from docling_core.types.doc.labels import PictureClassificationLabel
 from pydantic import BaseModel, Field
 
 from ..config import settings
+from ._rt_detr_mps import apply_rt_detr_mps_patch
 from .base import (
     AssetBBox,
     AssetRole,
@@ -26,6 +27,9 @@ from .base import (
     ExtractedImage,
     pil_to_png_bytes,
 )
+
+# Work around a transformers/MPS incompatibility in docling's layout model.
+apply_rt_detr_mps_patch()
 
 
 def _default_pdf_options() -> ThreadedPdfPipelineOptions:
