@@ -7,6 +7,7 @@ from .converters.base import DOCUMENT_EXTENSION
 
 __all__ = [
     "EntryPaths",
+    "asset_ref_for",
     "assets_dir_for_stem",
     "cleanup_empty_parents",
     "description_path_for_stem",
@@ -51,6 +52,19 @@ def description_path_for_stem(stem_path: str) -> str:
 def assets_dir_for_stem(stem_path: str) -> str:
     """Return the child-assets directory path for a logical stem."""
     return f"{stem_path}.assets"
+
+
+def asset_ref_for(assets_dir: str, relpath: str) -> str:
+    """Return the in-markdown reference for an extracted asset.
+
+    Assets are referenced relative to the description's sibling ``.assets``
+    directory as ``<assets-dir-basename>/<relpath>``, the form that round-trips
+    with the reference rewriting in :func:`workspace._replace_image_references`.
+
+    >>> asset_ref_for("docs/report.assets", "img/fig1.png")
+    'report.assets/img/fig1.png'
+    """
+    return str(PurePosixPath(PurePosixPath(assets_dir).name) / relpath)
 
 
 def original_path_for_stem(stem_path: str, original_ext: str | None) -> str | None:

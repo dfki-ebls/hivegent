@@ -1,4 +1,4 @@
-"""Asset processing pipeline: triage and deduped vision-model description.
+"""Asset processing pipeline: triage, identity, and context-aware captioning.
 
 Three converter-agnostic optimizations decide whether and how to spend
 vision-model time on an extracted image:
@@ -10,14 +10,19 @@ vision-model time on an extracted image:
 2. Size/shape heuristics on the raw bytes for assets the converter
    leaves at :attr:`AssetRole.UNKNOWN`.  Tiny images and extreme
    aspect ratios are almost always UI chrome.
-3. Perceptual-hash deduplication so a repeated logo, header, or
-   footer is described at most once per process.
+3. Perceptual-hash identity (:func:`perceptual_key`) so the multiple
+   occurrences of one image within a single conversion collapse to a
+   single joint caption and a single stored entry.
+
+Captioning itself is context-aware: :func:`caption_image` is given the
+surrounding text of every occurrence and asked to *describe* illustrative
+images but *transcribe* load-bearing figures (tables, diagrams, charts).
 """
 
 import asyncio
 import logging
 import re
-from collections import OrderedDict
+from collections.abc import Sequence
 from enum import Enum
 from io import BytesIO
 
@@ -33,7 +38,9 @@ from .images import sanitize_image_bytes
 __all__ = [
     "MD_IMAGE_RE",
     "TriageDecision",
-    "describe_image",
+    "caption_image",
+    "image_context_windows",
+    "perceptual_key",
     "triage_image",
 ]
 
@@ -115,27 +122,19 @@ def triage_image(image: ExtractedImage) -> TriageDecision:
     return TriageDecision.DESCRIBE
 
 
-# --- Perceptual-hash deduplication --------------------------------------------
-
-# Process-wide LRU dedup of in-flight and completed descriptions, keyed by
-# ``(perceptual_hash, model, base_url, api_key, media_type)`` so results never
-# leak across tenants, providers, or formats.  Holding the Future strong-refs
-# the underlying Task; asyncio's single-threaded scheduler makes get/set/move
-# atomic so no extra lock is required.  Pending entries are kept past the cap
-# until they complete — evicting an in-flight future would defeat dedup.
-type _CacheKey = tuple[int, str, str | None, str, str]
-_DESCRIPTION_CACHE_MAX = 1024
-_VISION_TIMEOUT_S = 120.0
-_description_cache: OrderedDict[_CacheKey, asyncio.Future[str]] = OrderedDict()
+# --- Perceptual-hash identity -------------------------------------------------
 
 
-def _image_hash(data: bytes, size: int = 8) -> int | None:
-    """Compute a 64-bit dHash for *data*.
+def perceptual_key(data: bytes, size: int = 8) -> int | None:
+    """Compute a 64-bit dHash identifying *data* up to near-duplication.
 
-    Returns ``None`` if the image doesn't decode or is uniform enough that
-    every dHash bit collapses to the same value — solid-color icons, blank
-    spacers, and fully transparent placeholders otherwise all hash to the
-    same key and would share a single description.
+    Used to unify an image's multiple occurrences within one conversion so
+    they share a single joint caption and a single stored entry.  Returns
+    ``None`` if the image doesn't decode or is uniform enough that every dHash
+    bit collapses to the same value — solid-color icons, blank spacers, and
+    fully transparent placeholders otherwise all hash to the same key and would
+    be merged into one entry.  ``None`` callers treat each occurrence as its
+    own singleton.
     """
     try:
         with PIL.Image.open(BytesIO(data)) as img:
@@ -143,7 +142,7 @@ def _image_hash(data: bytes, size: int = 8) -> int | None:
                 (size + 1, size), PIL.Image.Resampling.BILINEAR
             )
     except _IMAGE_DECODE_ERRORS:
-        logger.debug("Failed to compute image hash", exc_info=True)
+        logger.debug("Failed to compute perceptual key", exc_info=True)
         return None
     pixels = gray.tobytes()
     bits = 0
@@ -157,80 +156,104 @@ def _image_hash(data: bytes, size: int = 8) -> int | None:
     return bits
 
 
-def _evict_old_completed() -> None:
-    """Drop the oldest *completed* entry when the cache exceeds its cap.
+# --- Occurrence context -------------------------------------------------------
 
-    Each insert grows the cache by at most one, so a single pass suffices.
-    Pending entries are skipped so an in-flight description never loses its
-    cache slot; the cache can temporarily exceed the cap until those futures
-    resolve.
+# Characters of surrounding prose captured on each side of an image reference.
+_CONTEXT_WINDOW = 400
+
+
+def _strip_image_syntax(text: str) -> str:
+    """Drop markdown image nodes and collapse whitespace in a context window."""
+    return re.sub(r"\s+", " ", MD_IMAGE_RE.sub(" ", text)).strip()
+
+
+def image_context_windows(markdown: str) -> dict[str, list[str]]:
+    """Map each referenced image path to the context of its occurrences.
+
+    For every ``![alt](path)`` node, captures the alt text plus a bounded
+    window of the surrounding prose (with neighbouring image nodes stripped).
+    An image referenced more than once yields one context entry per reference,
+    so :func:`caption_image` can be given every place the image appears.
+
+    >>> ctx = image_context_windows("Click ![the gear](ui.png) to open settings.")
+    >>> ctx["ui.png"]
+    ['Alt text: the gear\\nSurrounding text: Click to open settings.']
     """
-    if len(_description_cache) <= _DESCRIPTION_CACHE_MAX:
-        return
-    for k, f in _description_cache.items():
-        if f.done():
-            del _description_cache[k]
-            return
+    result: dict[str, list[str]] = {}
+    for match in MD_IMAGE_RE.finditer(markdown):
+        alt = match.group(1).strip()
+        ref = match.group(2).strip()
+        before = markdown[max(0, match.start() - _CONTEXT_WINDOW) : match.start()]
+        after = markdown[match.end() : match.end() + _CONTEXT_WINDOW]
+        window = _strip_image_syntax(f"{before} {after}")
+        parts = []
+        if alt:
+            parts.append(f"Alt text: {alt}")
+        if window:
+            parts.append(f"Surrounding text: {window}")
+        result.setdefault(ref, []).append("\n".join(parts))
+    return result
 
 
-# --- Vision-model description -------------------------------------------------
+# --- Context-aware captioning -------------------------------------------------
 
-_DESCRIBE_PROMPT = (
-    "Describe this image in one concise sentence for use as alt text. "
-    "Be factual and specific. Do not start with 'This image shows' or similar."
+_VISION_TIMEOUT_S = 120.0
+
+_CAPTION_INSTRUCTIONS = (
+    "You are writing the canonical, reusable description of an image from "
+    "technical documentation. It is stored once and used both as alt text and "
+    "as a standalone search result, so it must stand on its own.\n\n"
+    "Write a faithful description:\n"
+    "- If the image is a screenshot, photo, or illustration, describe what it "
+    "shows in one or two sentences, grounded in the context below (name the "
+    "specific product, screen, workflow, or step it depicts).\n"
+    "- If the image is a table, chart, diagram, schematic, or other data "
+    "figure, transcribe the information it carries: the values, labels, axes, "
+    "units, and structure, so nothing that lives only in the figure is lost.\n\n"
+    "Be factual and specific. Do not invent details that are not visible. Do "
+    "not start with 'This image shows' or similar."
 )
 
 
-async def _invoke_vision_model(
-    sanitized_bytes: bytes,
-    media_type: str,
-    llm_options: LlmConfig,
-) -> str:
-    """Run the vision model on a single already-sanitized image.
-
-    Reasoning-capable models are expected to emit the final description
-    after any ``<think>`` block — pydantic_ai aggregates the ``TextPart``
-    content and discards thinking.  Disable thinking at the server (e.g.
-    vLLM ``chat_template_kwargs``) if the chosen model otherwise produces
-    thinking-only responses.
-    """
-    content = BinaryContent(data=sanitized_bytes, media_type=media_type)
-    result = await base_agent.run(
-        [_DESCRIBE_PROMPT, content],
-        model=model_from_config(llm_options),
+def _build_caption_prompt(contexts: Sequence[str]) -> str:
+    """Assemble the caption prompt, appending de-duplicated occurrence contexts."""
+    cleaned = [c.strip() for c in contexts if c.strip()]
+    if not cleaned:
+        return _CAPTION_INSTRUCTIONS
+    joined = "\n\n---\n\n".join(dict.fromkeys(cleaned))
+    return (
+        f"{_CAPTION_INSTRUCTIONS}\n\n"
+        f"Context where this image appears in the documentation:\n{joined}"
     )
-    return str(result.output).strip()
 
 
-def _is_poisoned(fut: asyncio.Future[str]) -> bool:
-    """Return ``True`` if *fut* is done with a failure or cancellation."""
-    return fut.done() and (fut.cancelled() or fut.exception() is not None)
-
-
-async def describe_image(
+async def caption_image(
     image_bytes: bytes,
     media_type: str,
+    contexts: Sequence[str],
     llm_options: LlmConfig,
 ) -> str:
-    """Describe a single image, deduplicated by perceptual hash.
+    """Caption a single image once, jointly grounded in all its *contexts*.
 
-    Repeated logos, headers, or footers within a process lifetime share a
-    single vision-model call.  ``asyncio.shield`` keeps awaiter cancellation
-    from poisoning the cached future; an :data:`_VISION_TIMEOUT_S`-second
-    wall-clock cap prevents a hung backend from wedging every later caller
-    of the same dHash.  Failed, cancelled, or timed-out entries are evicted
-    so a later request can retry.
+    The caller is responsible for image identity: every occurrence of the same
+    image (see :func:`perceptual_key`) is collected and its surrounding text
+    passed in *contexts*, so one image yields exactly one caption — the single
+    source of truth shared by all its occurrences.
+
+    Reasoning-capable models are expected to emit the final description after
+    any ``<think>`` block — pydantic_ai aggregates the ``TextPart`` content and
+    discards thinking.  Disable thinking at the server (e.g. vLLM
+    ``chat_template_kwargs``) if the chosen model otherwise produces
+    thinking-only responses.
 
     Args:
         image_bytes: The raw image bytes.
         media_type: The MIME type of the image.
-        llm_options: LLM configuration with a vision model; the cache is
-            scoped by ``model``, ``base_url``, ``api_key``, and
-            ``media_type`` so results never leak across tenants, providers,
-            or formats.
+        contexts: Surrounding-text snippets, one per occurrence (may be empty).
+        llm_options: LLM configuration with a vision-capable model.
 
     Returns:
-        A concise description string.
+        A concise description, or a faithful transcription for data figures.
 
     Raises:
         ValueError: If the PNG payload is structurally invalid.
@@ -238,37 +261,12 @@ async def describe_image(
             :data:`_VISION_TIMEOUT_S` seconds.
     """
     sanitized = sanitize_image_bytes(image_bytes, media_type)
-    image_hash = _image_hash(sanitized)
-    if image_hash is None:
-        return await asyncio.wait_for(
-            _invoke_vision_model(sanitized, media_type, llm_options),
-            timeout=_VISION_TIMEOUT_S,
-        )
-    key: _CacheKey = (
-        image_hash,
-        llm_options.model,
-        llm_options.base_url,
-        llm_options.api_key,
-        media_type,
+    content = BinaryContent(data=sanitized, media_type=media_type)
+    result = await asyncio.wait_for(
+        base_agent.run(
+            [_build_caption_prompt(contexts), content],
+            model=model_from_config(llm_options),
+        ),
+        timeout=_VISION_TIMEOUT_S,
     )
-    fut = _description_cache.get(key)
-    if fut is not None and not _is_poisoned(fut):
-        _description_cache.move_to_end(key)
-    else:
-        if fut is not None:
-            _description_cache.pop(key, None)
-        fut = asyncio.ensure_future(
-            asyncio.wait_for(
-                _invoke_vision_model(sanitized, media_type, llm_options),
-                timeout=_VISION_TIMEOUT_S,
-            )
-        )
-        _description_cache[key] = fut
-        _evict_old_completed()
-
-        def _evict_on_failure(f: asyncio.Future[str], k: _CacheKey = key) -> None:
-            if _is_poisoned(f):
-                _description_cache.pop(k, None)
-
-        fut.add_done_callback(_evict_on_failure)
-    return await asyncio.shield(fut)
+    return str(result.output).strip()

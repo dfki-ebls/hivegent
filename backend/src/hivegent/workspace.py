@@ -58,7 +58,9 @@ from .converters import (
 from .converters.asset_processing import (
     MD_IMAGE_RE,
     TriageDecision,
-    describe_image,
+    caption_image,
+    image_context_windows,
+    perceptual_key,
     triage_image,
 )
 from .converters.base import (
@@ -72,6 +74,7 @@ from .converters.images import guess_image_media_type, sanitize_image_bytes
 from .converters.wikilinks import preprocess_markdown
 from .db import documents as db_documents
 from .entries import (
+    asset_ref_for,
     assets_dir_for_stem,
     cleanup_empty_parents,
     description_path_for_stem,
@@ -205,21 +208,67 @@ async def _build_image_description(
     filepath: str,
     content: bytes,
     media_type: str,
+    contexts: Sequence[str],
     llm: LlmConfig,
 ) -> str:
-    """Generate markdown text describing an image, with fallback."""
+    """Generate markdown describing an image, grounded in *contexts*, with fallback."""
     aux = resolve_llm_config(llm, default_model=settings.llm.aux_model)
     fallback = PurePosixPath(filepath).stem
     if not aux.model or not media_type:
         return f"{fallback}\n"
     try:
-        description = await describe_image(content, media_type, aux)
+        description = await caption_image(content, media_type, contexts, aux)
     except Exception:
         logger.warning(
             "Image description generation failed for %s", filepath, exc_info=True
         )
         description = fallback
     return f"{description.strip() or fallback}\n"
+
+
+async def _persist_image_entry(
+    store: Casebase,
+    workspace_dir: Path,
+    filepath: str,
+    content: bytes,
+    media_type: str,
+    contexts: Sequence[str],
+    spec: PipelineSpec,
+    llm: LlmConfig,
+    *,
+    origin: EntryOrigin,
+) -> tuple[int, str, str]:
+    """Write an image plus its context-grounded caption as one vision entry.
+
+    Shared by standalone image uploads and the described assets extracted from
+    a converted document; *contexts* carries every occurrence's surrounding
+    text so the caption is the single source of truth for that image. Returns
+    ``(chunk_count, chunking_pipeline_used, description_path)``.
+    """
+    _write_original_file(
+        workspace_dir, filepath, sanitize_image_bytes(content, media_type)
+    )
+    stem_path = stem_path_from_reference(filepath)
+    description_path = description_path_for_stem(stem_path)
+    markdown = await _build_image_description(
+        filepath, content, media_type, contexts, llm
+    )
+    chunk_count, chunking_used = await _write_markdown_projection(
+        store,
+        description_path,
+        markdown,
+        spec,
+        entry_metadata=_build_entry_metadata(
+            stem_path=stem_path,
+            description_path=description_path,
+            original_path=filepath,
+            assets_dir=None,
+            entry_kind="image",
+            origin=origin,
+            generated_by="vision",
+        ),
+    )
+    return chunk_count, chunking_used, description_path
 
 
 def _build_binary_stub(filepath: str, size_bytes: int) -> str:
@@ -321,26 +370,16 @@ async def _upload_image_locked(
     """Persist an image and its generated description. Caller holds the lock."""
     workspace_dir = store.workspace_dir(settings.data_dir)
     media_type = guess_image_media_type(filepath) or ""
-    _write_original_file(
-        workspace_dir, filepath, sanitize_image_bytes(content, media_type)
-    )
-    stem_path = stem_path_from_reference(filepath)
-    description_path = description_path_for_stem(stem_path)
-    markdown = await _build_image_description(filepath, content, media_type, llm)
-    chunk_count, chunking_used = await _write_markdown_projection(
+    chunk_count, chunking_used, description_path = await _persist_image_entry(
         store,
-        description_path,
-        markdown,
+        workspace_dir,
+        filepath,
+        content,
+        media_type,
+        [f"File name: {PurePosixPath(filepath).name}"],
         spec,
-        entry_metadata=_build_entry_metadata(
-            stem_path=stem_path,
-            description_path=description_path,
-            original_path=filepath,
-            assets_dir=None,
-            entry_kind="image",
-            origin=origin,
-            generated_by="vision",
-        ),
+        llm,
+        origin=origin,
     )
     return UploadCompleteEvent(
         filename=filepath,
@@ -391,6 +430,78 @@ async def _upload_binary_stub_locked(
         chunking_pipeline_used=chunking_used,
         message="Binary file uploaded with searchable stub",
     )
+
+
+async def _process_conversion_assets(
+    store: Casebase,
+    workspace_dir: Path,
+    assets_dir: str,
+    images: dict[str, ExtractedImage],
+    contexts_by_ref: dict[str, list[str]],
+    mode: AssetProcessingMode,
+    spec: PipelineSpec,
+    llm: LlmConfig,
+) -> dict[str, str | None]:
+    """Persist a conversion's extracted images and return their ref remapping.
+
+    Store-only assets (decorative, or ``STORE`` mode) are written verbatim and
+    keep their own reference. Described assets are grouped by
+    :func:`perceptual_key`: each group is captioned once from the joint context
+    of all its occurrences, persisted as a single representative entry, and
+    every occurrence's reference is rewritten to that representative — so an
+    image is captioned once and shared, never once per occurrence.
+    """
+    def child_path(relpath: str) -> str:
+        return str((PurePosixPath(assets_dir) / relpath).as_posix())
+
+    ref_mapping: dict[str, str | None] = {}
+    # Group described occurrences by perceptual identity so duplicates collapse
+    # to one captioned entry. Images with no stable key (uniform or undecodable)
+    # get a unique sentinel so each stays its own singleton group.
+    groups: dict[object, list[str]] = {}
+
+    for relpath, extracted in sorted(images.items()):
+        describe = (
+            mode is AssetProcessingMode.DESCRIBE
+            and triage_image(extracted) is TriageDecision.DESCRIBE
+        )
+        if not describe:
+            ref_mapping[relpath] = asset_ref_for(assets_dir, relpath)
+            _write_original_file(
+                workspace_dir,
+                child_path(relpath),
+                sanitize_image_bytes(extracted.data, guess_image_media_type(relpath) or ""),
+            )
+            continue
+        key = perceptual_key(extracted.data)
+        groups.setdefault(key if key is not None else object(), []).append(relpath)
+
+    for members in groups.values():
+        rep_ref = asset_ref_for(assets_dir, members[0])
+        for member in members:
+            ref_mapping[member] = rep_ref
+
+    async def _caption_group(members: list[str]) -> None:
+        representative = members[0]
+        contexts: list[str] = []
+        for member in members:
+            contexts.extend(contexts_by_ref.get(member, []))
+            if caption := images[member].caption:
+                contexts.append(f"Figure caption: {caption}")
+        await _persist_image_entry(
+            store,
+            workspace_dir,
+            child_path(representative),
+            images[representative].data,
+            guess_image_media_type(representative) or "",
+            contexts,
+            spec,
+            llm,
+            origin="extracted",
+        )
+
+    await asyncio.gather(*(_caption_group(members) for members in groups.values()))
+    return ref_mapping
 
 
 async def _upload_convertible_locked(
@@ -465,54 +576,24 @@ async def _upload_convertible_locked(
     markdown = result.markdown
 
     mode = spec.process_assets
-    children: list[tuple[str, str, ExtractedImage]] = []
-    ref_mapping: dict[str, str | None] = {}
-    for image_relpath, extracted in sorted(result.images.items()):
-        if mode is AssetProcessingMode.IGNORE:
-            ref_mapping[image_relpath] = None
-            continue
-        image_media_type = guess_image_media_type(image_relpath) or ""
-        child_path = str((PurePosixPath(assets_dir) / image_relpath).as_posix())
-        ref_mapping[image_relpath] = str(
-            PurePosixPath(PurePosixPath(assets_dir).name) / PurePosixPath(image_relpath)
+    if mode is AssetProcessingMode.IGNORE:
+        markdown = _replace_image_references(
+            markdown, {ref: None for ref in result.images}
         )
-        children.append((child_path, image_media_type, extracted))
-    markdown = _replace_image_references(markdown, ref_mapping)
-
-    if mode is AssetProcessingMode.STORE:
-        for child_path, image_media_type, extracted in children:
-            _write_original_file(
-                workspace_dir,
-                child_path,
-                sanitize_image_bytes(extracted.data, image_media_type),
-            )
-    elif mode is AssetProcessingMode.DESCRIBE:
-        describe_tasks: list[tuple[str, ExtractedImage]] = []
-        for child_path, image_media_type, extracted in children:
-            if triage_image(extracted) is TriageDecision.DESCRIBE:
-                describe_tasks.append((child_path, extracted))
-            else:
-                _write_original_file(
-                    workspace_dir,
-                    child_path,
-                    sanitize_image_bytes(extracted.data, image_media_type),
-                )
-        if describe_tasks:
-            await asyncio.gather(
-                *(
-                    _upload_locked(
-                        store,
-                        child_path,
-                        extracted.data,
-                        spec,
-                        llm,
-                        origin="extracted",
-                    )
-                    for child_path, extracted in describe_tasks
-                )
-            )
-
-    has_assets = bool(children)
+        has_assets = False
+    else:
+        ref_mapping = await _process_conversion_assets(
+            store,
+            workspace_dir,
+            assets_dir,
+            result.images,
+            image_context_windows(markdown),
+            mode,
+            spec,
+            llm,
+        )
+        markdown = _replace_image_references(markdown, ref_mapping)
+        has_assets = bool(result.images)
 
     chunk_count, chunking_used = await _write_markdown_projection(
         store,
@@ -1076,8 +1157,13 @@ async def generate_asset_description(
             raise HTTPException(status_code=404, detail="Asset file not found") from exc
 
         media_type = guess_image_media_type(safe_name) or ""
+        contexts = [f"File name: {safe_name}"]
+        parent_md = workspace / description_path_for_stem(stem_path_from_reference(safe))
+        if parent_md.exists():
+            windows = image_context_windows(parent_md.read_text(encoding="utf-8"))
+            contexts.extend(windows.get(asset_ref_for(assets_dir, safe_name), []))
         description = await _build_image_description(
-            safe_name, content_bytes, media_type, llm
+            safe_name, content_bytes, media_type, contexts, llm
         )
         return await _persist_asset_description(
             store, workspace, asset_path, safe_name, description, len(content_bytes)
