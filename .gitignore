@@ -1,4 +1,7 @@
 /backend/data/
 /.direnv/
-/docs/src/assets/
 /data/
+
+# Brand assets: track only the canonical logo, never the large design sources.
+/assets/*
+!/assets/logo.svg

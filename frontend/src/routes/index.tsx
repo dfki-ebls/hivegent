@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { FileSearch, LogIn } from "lucide-react";
+import { LogIn } from "lucide-react";
 import { useState } from "react";
 
 import { BackendReadyGate } from "../components/BackendReadyGate";
+import { Logo } from "../components/Logo";
 import { ChatLayout } from "../components/ChatLayout";
 import { Button } from "../components/ui/button";
 import { Spinner } from "../components/ui/spinner";
@@ -28,7 +29,7 @@ function IndexPage() {
     <div className="flex h-full items-center justify-center">
       <div className="flex flex-col items-center gap-6 text-center">
         <div className="flex items-center gap-3">
-          <FileSearch className="h-12 w-12 text-primary" />
+          <Logo className="h-12 w-12" />
           <h1 className="text-4xl font-bold">Hivegent</h1>
         </div>
         <p className="text-lg text-muted-foreground max-w-md">

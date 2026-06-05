@@ -3,14 +3,23 @@
   importNpmLock,
   lib,
 }:
-let
-in
 buildNpmPackage (finalAttrs: {
   inherit (finalAttrs.npmDeps) pname version;
   inherit (importNpmLock) npmConfigHook;
-  npmDeps = importNpmLock { npmRoot = finalAttrs.src; };
+  npmDeps = importNpmLock { npmRoot = ./.; };
 
-  src = ./.;
+  # The canonical logo lives at the repo-level `assets/` and is symlinked into
+  # `public/`, so the build source must span both directories for the symlink
+  # to resolve in the sandbox.
+  src = lib.fileset.toSource {
+    root = ../.;
+    fileset = lib.fileset.unions [
+      ./.
+      ../assets/logo.svg
+    ];
+  };
+  sourceRoot = "${finalAttrs.src.name}/frontend";
+
   installPhase = ''
     runHook preInstall
 
