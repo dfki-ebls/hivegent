@@ -14,7 +14,7 @@ from ..security import (
     create_safe_async_client,
     validate_external_url_async,
 )
-from .base import AsyncTool, SyncTool, ToolOutput
+from .base import BLOCK_SEP, AsyncTool, SyncTool, ToolOutput
 
 __all__ = [
     "WebFetch",
@@ -71,13 +71,14 @@ class WebSearch(SyncTool[list[dict[str, str]]]):
             results = []
         if not results:
             return ToolOutput(data=results, formatted="(no results)")
-        lines: list[str] = []
+        blocks: list[str] = []
         for i, r in enumerate(results, 1):
-            lines.append(f"[{i}] {r.get('title', '')} ({r.get('href', '')})")
+            block = f"[{i}] {r.get('title', '')} ({r.get('href', '')})"
             body = r.get("body", "")
             if body:
-                lines.append(f"    {body}")
-        return ToolOutput(data=results, formatted="\n".join(lines))
+                block += f"\n    {body}"
+            blocks.append(block)
+        return ToolOutput(data=results, formatted=BLOCK_SEP.join(blocks))
 
 
 @dataclass(slots=True, frozen=True)

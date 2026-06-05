@@ -10,6 +10,7 @@ from pydantic import Field
 
 from ..subprocesses import rg_search
 from .base import (
+    BLOCK_SEP,
     AsyncPathTool,
     IncludeIgnoredArg,
     SearchPath,
@@ -33,8 +34,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-_BLOCK_SEP = "\n--\n"
 
 type GrepOutputMode = Literal["content", "files_with_matches", "count"]
 

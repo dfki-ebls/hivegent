@@ -16,7 +16,7 @@ import logfire
 from cbrkit import filter as cbrkit_filter
 from pydantic import Field
 
-from .base import AsyncTool, ToolOutput
+from .base import BLOCK_SEP, AsyncTool, ToolOutput
 
 __all__ = [
     "SearchMaxResultsArg",
@@ -163,7 +163,7 @@ def _format_results(results: Sequence[Any]) -> str:
             label += f" L{start_line}-{end_line}"
             text = _annotate_lines(text, start_line)
         lines.append(f"[{i}] {label} ({score:.0%})\n{text}")
-    return "\n\n".join(lines)
+    return BLOCK_SEP.join(lines)
 
 
 def _annotate_lines(text: str, start_line: int) -> str:
