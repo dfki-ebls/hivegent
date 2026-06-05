@@ -51,6 +51,6 @@ def apply_rt_detr_mps_patch() -> None:
         return
     # ty models the attribute as the exact original function, so replacing it
     # with our identically-typed wrapper reads as an invalid assignment.
-    modeling_rt_detr_v2.build_2d_sinusoidal_position_embedding = (
-        _mps_safe_position_embedding  # ty: ignore[invalid-assignment]
+    modeling_rt_detr_v2.build_2d_sinusoidal_position_embedding = (  # ty: ignore[invalid-assignment]
+        _mps_safe_position_embedding
     )
