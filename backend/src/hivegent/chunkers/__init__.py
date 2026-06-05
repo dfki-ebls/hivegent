@@ -89,10 +89,6 @@ with optional_dependencies():
     _CHUNKERS[ChunkingPipeline.CODE] = CodeDocumentChunker
 
 
-_AUTO_FAST_THRESHOLD = 500_000
-"""Content length (in characters) above which AUTO uses Fast instead of Recursive."""
-
-
 def _config_model(cls: type[DocumentChunker]) -> type[BaseModel] | None:
     """Derive a chunker's Pydantic config model from its ``config`` field."""
     annotation = get_type_hints(cls).get("config")
@@ -103,15 +99,17 @@ def _config_model(cls: type[DocumentChunker]) -> type[BaseModel] | None:
 
 def get_chunker(
     pipeline: ChunkingPipeline,
-    content_length: int = 0,
     config: dict[str, Any] | None = None,
 ) -> DocumentChunker:
     """Get a chunker instance for the specified pipeline.
 
+    ``AUTO`` resolves to :attr:`ChunkingPipeline.RECURSIVE`: it is
+    dependency-free, markdown/prose-aware, size-bounded, and fast enough
+    to chunk multi-megabyte documents in well under a second, so there is
+    no document size at which a lower-quality fallback pays off.
+
     Args:
         pipeline: The chunking pipeline to use.
-        content_length: Length of the document content in characters.
-            Only used when *pipeline* is ``AUTO``.
         config: Optional raw config dict to parse into the pipeline's config model.
 
     Returns:
@@ -123,11 +121,7 @@ def get_chunker(
         ValueError: If the pipeline is not recognized.
     """
     if pipeline == ChunkingPipeline.AUTO:
-        pipeline = (
-            ChunkingPipeline.FAST
-            if content_length > _AUTO_FAST_THRESHOLD
-            else ChunkingPipeline.RECURSIVE
-        )
+        pipeline = ChunkingPipeline.RECURSIVE
 
     cls = _CHUNKERS.get(pipeline)
     if cls is None:
@@ -150,7 +144,7 @@ def get_chunking_pipelines_info() -> list[ChunkingPipelineInfo]:
         ChunkingPipelineInfo(
             value=ChunkingPipeline.AUTO.value,
             label="Auto",
-            description="Automatically selects the best chunker based on file type",
+            description="Recommended default: structure-aware recursive splitting",
         ),
     ]
     for pipeline, cls in _CHUNKERS.items():

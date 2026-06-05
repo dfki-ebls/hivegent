@@ -103,11 +103,7 @@ async def chunk_and_index_document(
         pipeline=spec.pipeline.value,
         entry_kind=entry_metadata.entry_kind,
     ) as span:
-        chunker = get_chunker(
-            spec.pipeline,
-            content_length=len(content),
-            config=spec.config,
-        )
+        chunker = get_chunker(spec.pipeline, config=spec.config)
         raw_chunks = await chunker(content, mime=entry_metadata.mime)
         span.set_attribute("chunker", chunker.name)
         span.set_attribute("chunk_count", len(raw_chunks))
