@@ -7,6 +7,7 @@ from enum import Enum
 from io import BytesIO
 from pathlib import Path
 from typing import ClassVar, Protocol
+from urllib.parse import urlsplit
 
 __all__ = [
     "DOCUMENT_EXTENSION",
@@ -17,10 +18,16 @@ __all__ = [
     "DocumentConverter",
     "ExtractedImage",
     "collect_dir_images",
+    "is_external_ref",
     "is_image_suffix",
     "is_markdown_suffix",
     "pil_to_png_bytes",
 ]
+
+# URL schemes whose references resolve to a valid, fetchable resource; any
+# other scheme (``file:``, a Windows drive letter like ``T:``, ...) points off
+# the workspace.
+_SERVABLE_SCHEMES = frozenset({"http", "https", "data"})
 
 
 # All converted documents are stored as markdown.
@@ -50,6 +57,35 @@ def is_markdown_suffix(suffix: str) -> bool:
 def is_image_suffix(suffix: str) -> bool:
     """Return whether *suffix* matches a known image extension."""
     return suffix.lower() in IMAGE_EXTENSIONS
+
+
+def is_external_ref(ref: str) -> bool:
+    """Return whether *ref* points outside the workspace and cannot be served.
+
+    Converters sometimes leak the author's original, unreachable image
+    location into the markdown: an absolute filesystem path, a Windows drive
+    path (``T:\\...``), a ``file:`` URI, or a backslash path. Such references
+    can never resolve against the workspace, so callers strip them. Web
+    (``http(s)://``) and inline (``data:``) sources are external but valid and
+    are therefore not flagged.
+
+    >>> is_external_ref("media/image1.png")
+    False
+    >>> is_external_ref(r"T:\\grafik\\logoad.jpg")
+    True
+    >>> is_external_ref("/var/folders/tmp/media/image65.jpg")
+    True
+    >>> is_external_ref("https://example.com/a.png")
+    False
+    """
+    ref = ref.strip()
+    if not ref:
+        return False
+    if scheme := urlsplit(ref).scheme:
+        return scheme not in _SERVABLE_SCHEMES
+    # Schemeless references are servable only as relative POSIX paths; an
+    # absolute root or a Windows separator cannot resolve inside the workspace.
+    return ref.startswith("/") or "\\" in ref
 
 
 class _PngSerializable(Protocol):

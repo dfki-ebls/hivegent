@@ -64,6 +64,7 @@ from .converters.asset_processing import (
 from .converters.base import (
     DOCUMENT_EXTENSION,
     ExtractedImage,
+    is_external_ref,
     is_image_suffix,
     is_markdown_suffix,
 )
@@ -234,17 +235,17 @@ def _replace_image_references(markdown: str, mapping: dict[str, str | None]) -> 
     Bounded to real markdown image syntax so prose that mentions an
     asset's filename (code blocks, file listings) is left untouched.
     Mapping values: a string replaces the URL; ``None`` deletes the
-    image node entirely.
+    image node entirely. References left unmapped are dropped when they
+    point outside the workspace (absolute, ``file:``, or Windows paths a
+    converter could not localize) and kept otherwise.
     """
-    if not mapping:
-        return markdown
 
     def _replace(match: re.Match[str]) -> str:
         path = match.group(2)
-        if path not in mapping:
-            return match.group(0)
-        target = mapping[path]
-        return "" if target is None else f"![{match.group(1)}]({target})"
+        if path in mapping:
+            target = mapping[path]
+            return "" if target is None else f"![{match.group(1)}]({target})"
+        return "" if is_external_ref(path) else match.group(0)
 
     return MD_IMAGE_RE.sub(_replace, markdown)
 

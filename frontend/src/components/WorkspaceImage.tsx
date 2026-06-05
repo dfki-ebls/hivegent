@@ -13,21 +13,31 @@ interface WorkspaceImageProps {
 }
 
 /**
+ * A markdown image src is fetchable only as a workspace-relative path.
+ * `URL.canParse` succeeds for anything carrying a scheme (`data:`, `http:`,
+ * `file:`, a Windows drive like `T:`), and an absolute root or backslashes also
+ * resolve outside the workspace, so all of those are rejected before fetching.
+ *
+ * This is a client-side fast-fail for UX only, NOT the validation boundary: the
+ * backend is authoritative — it strips off-workspace image refs at ingestion
+ * (`is_external_ref`) and sanitizes every `/api/documents/...` request
+ * (`sanitize_document_path`). Keep that backend validation even if this guard
+ * changes; it must never be relied upon as the security check.
+ */
+function isWorkspaceRelative(src: string): boolean {
+  return !URL.canParse(src) && !src.startsWith("/") && !src.includes("\\");
+}
+
+/**
  * Renders workspace images with authenticated fetch.
  *
  * Relative paths are resolved against the document's directory, keeping its
  * workspace prefix (`~` or `@<group>`) so the backend routes the fetch to the
- * right scope. External (`data:`/`http:`) sources are unsupported and render
- * as a fallback.
+ * right scope. Non-relative sources are unsupported and render as a fallback.
  */
 export function WorkspaceImage({ src, alt, documentPath }: WorkspaceImageProps) {
   const fetch = useCallback(() => {
-    if (
-      !src ||
-      src.startsWith("data:") ||
-      src.startsWith("http://") ||
-      src.startsWith("https://")
-    ) {
+    if (!src || !isWorkspaceRelative(src)) {
       return Promise.reject(new Error("unsupported image source"));
     }
     // Resolve relative path against the document directory (prefix preserved).
