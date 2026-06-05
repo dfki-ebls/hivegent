@@ -14,6 +14,7 @@ from typing import Annotated, Any, Literal, cast, override
 import cbrkit
 import logfire
 from cbrkit import filter as cbrkit_filter
+from cbrkit.typing import AsyncRetrieverFunc
 from pydantic import Field
 
 from .base import BLOCK_SEP, AsyncTool, ToolOutput
@@ -80,11 +81,21 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
         result_mapper: Async callable that maps the raw ranked results
             to the final type — typically enriches with metadata from
             SQL.
+        reranker_factory: Async callable returning a cbrkit reranker (or
+            ``None`` when reranking is disabled).  When present, the base
+            retriever over-fetches and the reranker rescores the candidate
+            pool as a second pipeline stage.
+        candidate_multiplier: How many times ``max_results`` to fetch as the
+            rerank candidate pool.  Only applied when a reranker is active.
     """
 
     storage_factory: Callable[[], Awaitable[VectorStorage]] | None = None
     filter_factory: Callable[[], Awaitable[cbrkit_filter.Filter | None]] | None = None
     result_mapper: Callable[[Sequence[SearchResult]], Awaitable[list[R]]] | None = None
+    reranker_factory: (
+        Callable[[], Awaitable[AsyncRetrieverFunc[str, str, float] | None]] | None
+    ) = None
+    candidate_multiplier: int = 1
 
     @override
     async def __call__(
@@ -118,19 +129,32 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
         if not await storage.has_index():
             return []
         where = await self.filter_factory() if self.filter_factory is not None else None
+        reranker = (
+            await self.reranker_factory() if self.reranker_factory is not None else None
+        )
+        candidate_pool = (
+            max_results * self.candidate_multiplier
+            if reranker is not None
+            else max_results
+        )
         with logfire.span(
             "vector.search",
             search_type=search_type,
             max_results=max_results,
             query_length=len(query),
+            reranked=reranker is not None,
+            candidate_pool=candidate_pool,
         ) as span:
-            retriever = cbrkit.retrieval.pgvector_async(
+            retriever = cbrkit.retrieval.indexable.pgvector_async(
                 storage=cast(Any, storage),
                 search_type=search_type,
                 where=where,
-                limit=max_results,
+                limit=candidate_pool,
             )
-            result = await cbrkit.retrieval.apply_query_indexed_async(query, retriever)
+            retrievers: list[Any] = (
+                [retriever, reranker] if reranker is not None else [retriever]
+            )
+            result = await cbrkit.retrieval.apply_query_indexed_async(query, retrievers)
             step = result.final_step.queries["default"]
             results = [
                 SearchResult(

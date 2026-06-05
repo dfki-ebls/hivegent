@@ -25,12 +25,14 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import cast
 
 import cbrkit
 import logfire
 import sqlalchemy as sa
 from cbrkit import filter as cbrkit_filter
 from cbrkit.indexable import pgvector_async as PgvectorAsync
+from cbrkit.typing import AsyncRetrieverFunc
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .chunkers.base import ChunkData, RetrievedChunk
@@ -39,11 +41,11 @@ from .db import documents as db_documents
 from .db.engine import session
 from .db.models import Chunk, Document, IndexState
 from .entries import description_path_for_stem, original_path_for_stem
+from .http_client import get_shared_http_client
 from .llm import create_openai_client
 from .store import Casebase
 from .tools.base import SearchPathFilterFunc, apply_prefix
 from .tools.retrieval import SearchResult, VectorSearchTool
-
 
 __all__ = [
     "build_search_tool",
@@ -58,41 +60,103 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
-class _RetrievalState:
-    """Caches the global embedding function and pgvector storage handle."""
+class _AsyncLazy[T]:
+    """A value built once on first use, off the event loop.
 
-    _storage: PgvectorAsync[str, Chunk] | None = None
-    _embedding_func: (
-        cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray] | None
-    ) = field(default=None)
+    The builder runs in a worker thread (:func:`asyncio.to_thread`) so pulling
+    model weights never blocks the loop, and a lock makes concurrent first
+    callers share a single build. ``None`` is cached as a valid result (e.g. a
+    disabled reranker); a build that raises is not cached, so the next call
+    retries.
+    """
+
+    _build: Callable[[], T]
+    _value: T | None = None
+    _built: bool = False
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    def get_embedding_func(
+    async def get(self) -> T:
+        """Return the cached value, building it once off the event loop."""
+        if not self._built:
+            async with self._lock:
+                if not self._built:
+                    self._value = await asyncio.to_thread(self._build)
+                    self._built = True
+        return cast(T, self._value)
+
+
+def _build_reranker() -> AsyncRetrieverFunc[str, str, float] | None:
+    """Construct the configured cbrkit reranker, or ``None`` when disabled.
+
+    Loading a local cross-encoder pulls model weights, so callers build this
+    off the event loop (see :class:`_AsyncLazy`).
+    """
+    cfg = settings.rerank
+    if not cfg.enabled:
+        return None
+    if cfg.provider == "sentence-transformers":
+        return cbrkit.retrieval.rerank.cross_encoder(model=cfg.model)
+    if not cfg.base_url:
+        msg = "HTTP reranking requires HIVEGENT_RERANK__BASE_URL."
+        raise ValueError(msg)
+    return cbrkit.retrieval.rerank.http(
+        model=cfg.model,
+        url=f"{cfg.base_url.rstrip('/')}/rerank",
+        client=get_shared_http_client(),
+        api_key=cfg.api_key or None,
+        top_n=cfg.top_n,
+    )
+
+
+def _build_embedding_func() -> cbrkit.typing.BatchConversionFunc[
+    str, cbrkit.typing.NumpyArray
+]:
+    """Construct the configured embedding function.
+
+    Loading a local sentence-transformers model pulls weights, so callers build
+    this off the event loop (see :class:`_AsyncLazy`).
+    """
+    cfg = settings.embedding
+    if cfg.provider == "openai":
+        raw_func = cbrkit.sim.embed.openai(
+            model=cfg.model,
+            client=create_openai_client(
+                api_key=cfg.api_key or None,
+                base_url=cfg.base_url or None,
+            ),
+        )
+    else:
+        raw_func = cbrkit.sim.embed.sentence_transformers(model=cfg.model)
+
+    def instrumented(batches: Sequence[str]) -> Sequence[cbrkit.typing.NumpyArray]:
+        with logfire.span("embed", batch_size=len(batches)):
+            return raw_func(batches)
+
+    return instrumented
+
+
+@dataclass(slots=True)
+class _RetrievalState:
+    """Caches the global embedding function, storage handle, and reranker."""
+
+    _storage: PgvectorAsync[str, Chunk] | None = None
+    _embedding: _AsyncLazy[
+        cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray]
+    ] = field(default_factory=lambda: _AsyncLazy(_build_embedding_func))
+    _reranker: _AsyncLazy[AsyncRetrieverFunc[str, str, float] | None] = field(
+        default_factory=lambda: _AsyncLazy(_build_reranker)
+    )
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    async def get_reranker(self) -> AsyncRetrieverFunc[str, str, float] | None:
+        """Return the cached reranker, building it once off the event loop."""
+        return await self._reranker.get()
+
+    async def get_embedding_func(
         self,
     ) -> cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray]:
-        """Build or return the shared embedding function based on settings."""
-        if self._embedding_func is not None:
-            return self._embedding_func
-        cfg = settings.embedding
-        if cfg.provider == "openai":
-            raw_func = cbrkit.sim.embed.openai(
-                model=cfg.model,
-                client=create_openai_client(
-                    api_key=cfg.api_key or None,
-                    base_url=cfg.base_url or None,
-                ),
-            )
-        else:
-            raw_func = cbrkit.sim.embed.sentence_transformers(model=cfg.model)
-
-        def instrumented(
-            batches: Sequence[str],
-        ) -> Sequence[cbrkit.typing.NumpyArray]:
-            with logfire.span("embed", batch_size=len(batches)):
-                return raw_func(batches)
-
-        self._embedding_func = instrumented
-        return self._embedding_func
+        """Return the cached embedding function, building it once off the event loop."""
+        return await self._embedding.get()
 
     async def get_storage(self) -> PgvectorAsync[str, Chunk]:
         """Return the cbrkit storage handle, lazily wiring it up."""
@@ -106,7 +170,7 @@ class _RetrievalState:
             self._storage = PgvectorAsync[str, Chunk](
                 engine=get_engine(),
                 model=Chunk,
-                conversion_func=self.get_embedding_func(),
+                conversion_func=await self.get_embedding_func(),
                 index_type="hybrid",
                 key_type="str",
                 key_column="id",
@@ -354,4 +418,6 @@ def build_search_tool(
         storage_factory=_state.get_storage,
         filter_factory=resolve_filter,
         result_mapper=enrich,
+        reranker_factory=_state.get_reranker,
+        candidate_multiplier=settings.rerank.candidate_multiplier,
     )

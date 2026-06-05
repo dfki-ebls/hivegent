@@ -35,6 +35,7 @@ __all__ = [
     "LogfireSettings",
     "McpSettings",
     "NetworkSettings",
+    "RerankSettings",
     "SecuritySettings",
     "Settings",
     "sanitize_document_path",
@@ -214,6 +215,42 @@ class EmbeddingSettings(BaseModel):
         return {"provider": self.provider, "model": self.model}
 
 
+class RerankSettings(BaseModel):
+    """Cross-encoder re-ranking applied after hybrid retrieval.
+
+    Disabled unless both ``provider`` and ``model`` are set (mirrors how
+    ``aux_model`` gates image captioning).  When enabled, the base retriever
+    over-fetches ``candidate_multiplier`` times the requested results and the
+    reranker rescores that candidate pool, letting separately-stored caption
+    chunks compete on relevance rather than raw fusion score.
+
+    ``provider`` selects the cbrkit reranker backend:
+
+    - ``sentence-transformers``: a local cross-encoder, no external calls
+      (e.g. ``BAAI/bge-reranker-v2-m3`` for the bilingual German/English corpus).
+    - ``http``: an HTTP ``/rerank`` endpoint, e.g. vLLM, resolved from
+      ``base_url``.  Set ``api_key`` to authenticate it with a bearer token.
+
+    Disabled by default to keep retrieval latency low; enabling trades
+    runtime for ranking quality.
+
+    Configurable via ``HIVEGENT_RERANK__PROVIDER``, ``HIVEGENT_RERANK__MODEL``,
+    etc.
+    """
+
+    provider: Literal["sentence-transformers", "http"] | None = None
+    model: str = ""
+    api_key: str = ""
+    base_url: str = ""
+    candidate_multiplier: int = 5
+    top_n: int | None = None
+
+    @property
+    def enabled(self) -> bool:
+        """Whether a reranker is configured (provider and model both set)."""
+        return self.provider is not None and bool(self.model)
+
+
 class McpSettings(BaseModel):
     """MCP server settings for OIDC authentication.
 
@@ -382,6 +419,7 @@ class Settings(BaseSettings):
 
     llm: LlmSettings = LlmSettings()
     embedding: EmbeddingSettings = EmbeddingSettings()
+    rerank: RerankSettings = RerankSettings()
     logfire: LogfireSettings = LogfireSettings()
     mcp: McpSettings = McpSettings()
     claims: ClaimSettings = ClaimSettings()
