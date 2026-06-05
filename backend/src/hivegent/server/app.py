@@ -1,6 +1,7 @@
 """FastAPI application assembly for Hivegent."""
 
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -55,12 +56,50 @@ async def _verify_vector_dim() -> None:
         )
 
 
+async def _verify_fts_config() -> None:
+    """Fail loudly when the live ``chunks.tsv`` configs differ from settings.
+
+    ``alembic check`` does not compare generated-column expressions, so a
+    changed ``settings.embedding.text_search_config`` without a follow-up
+    migration would silently desync the stored ``tsvector`` from the
+    query-side ``tsquery``.  We read the live generated expression and
+    compare the ordered ``to_tsvector`` configurations to the configured
+    ones at boot, mirroring :func:`_verify_vector_dim`.
+    """
+    from ..db.engine import get_engine
+
+    cfg = settings.embedding.text_search_config
+    expected = (cfg,) if isinstance(cfg, str) else tuple(cfg)
+    async with get_engine().connect() as conn:
+        result = await conn.execute(
+            sa.text(
+                "SELECT pg_get_expr(d.adbin, d.adrelid) "
+                "FROM pg_attrdef d JOIN pg_attribute a "
+                "ON a.attrelid = d.adrelid AND a.attnum = d.adnum "
+                "WHERE d.adrelid = 'chunks'::regclass AND a.attname = 'tsv'"
+            )
+        )
+        live_expr = result.scalar_one_or_none()
+    if live_expr is None:
+        raise RuntimeError(
+            "chunks.tsv generated column not found — did migrations run?"
+        )
+    actual = tuple(re.findall(r"to_tsvector\(\s*'([^']+)'", live_expr))
+    if actual != expected:
+        raise RuntimeError(
+            f"FTS config mismatch: chunks.tsv stems with {actual}, "
+            f"settings.embedding.text_search_config resolves to {expected}.  "
+            "Generate an Alembic revision against the new model before booting."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open shared resources and delegate to MCP."""
     async with shared_http_client_lifespan():
         await apply_migrations()
         await _verify_vector_dim()
+        await _verify_fts_config()
         await reconcile_index_state()
         try:
             reports = await reconcile_all()

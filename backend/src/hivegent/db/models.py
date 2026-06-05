@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import sqlalchemy as sa
-from cbrkit.indexable import PGVECTOR, TSVECTOR
+from cbrkit.indexable import PGVECTOR, TSVECTOR, tsvector_computed
 from nanoid import generate as _nanoid
 from sqlalchemy import (
     CheckConstraint,
@@ -93,14 +93,21 @@ def _nid() -> str:
 class Timestamped:
     """Mixin adding ``created_at`` / ``updated_at`` columns.
 
-    ``updated_at`` is bumped automatically on every UPDATE via ``onupdate``;
+    Both carry a ``server_default`` of ``now()`` so a row inserted outside
+    the ORM (raw SQL, an operator ``psql`` session, a data-backfill
+    migration) is still stamped instead of failing the ``NOT NULL``.
+    ``updated_at`` is bumped on every UPDATE via the app-side ``onupdate``;
     callers only need to assign it explicitly when they want to mark a row
     as modified without changing any of its other columns (e.g. a parent
     whose only "change" is an inserted child).
     """
 
-    created_at: Mapped[datetime] = mapped_column(default=_now)
-    updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
+    created_at: Mapped[datetime] = mapped_column(
+        default=_now, server_default=sa.func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        default=_now, onupdate=_now, server_default=sa.func.now()
+    )
 
 
 def _enum(t: type[enum.StrEnum]) -> Enum:
@@ -237,7 +244,7 @@ class Conversation(Timestamped, Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     title: Mapped[str | None]
     compacted_from_id: Mapped[str | None] = mapped_column(
-        ForeignKey("conversations.id", ondelete="SET NULL")
+        ForeignKey("conversations.id", ondelete="SET NULL"), index=True
     )
 
     user: Mapped[User] = relationship(back_populates="conversations")
@@ -248,7 +255,14 @@ class Conversation(Timestamped, Base):
     )
 
 
-class Message(Timestamped, Base):
+class Message(Base):
+    """An immutable, append-only turn in a conversation.
+
+    Messages are never updated in place (new turns are inserted at the
+    next ``idx``), so the row carries only ``created_at`` — no
+    ``updated_at`` — and that timestamp also has a ``server_default``.
+    """
+
     __tablename__ = "messages"
 
     conversation_id: Mapped[str] = mapped_column(
@@ -257,6 +271,9 @@ class Message(Timestamped, Base):
     idx: Mapped[int] = mapped_column(primary_key=True)
     kind: Mapped[MessageKind] = mapped_column(_enum(MessageKind))
     payload: Mapped[dict[str, Any]]
+    created_at: Mapped[datetime] = mapped_column(
+        default=_now, server_default=sa.func.now()
+    )
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
 
@@ -371,10 +388,7 @@ class Chunk(MappedAsDataclass, Base, kw_only=True):  # pyright: ignore[reportUns
     )
     tsv: Mapped[Any] = mapped_column(
         TSVECTOR(),
-        sa.Computed(
-            sa.func.to_tsvector(sa.literal("english"), sa.column("text")),
-            persisted=True,
-        ),
+        tsvector_computed("text", settings.embedding.text_search_config),
         nullable=False,
         init=False,
         default=None,
@@ -396,4 +410,6 @@ class IndexState(Base):
     id: Mapped[int] = mapped_column(primary_key=True, default=1)
     embedding_provider: Mapped[str]
     embedding_model: Mapped[str]
-    fingerprint_set_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
+    fingerprint_set_at: Mapped[datetime] = mapped_column(
+        default=_now, onupdate=_now, server_default=sa.func.now()
+    )

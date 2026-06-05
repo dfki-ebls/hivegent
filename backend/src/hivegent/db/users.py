@@ -78,14 +78,14 @@ async def list_users_with_counts() -> list[
 
 
 async def delete_all_users() -> int:
-    """Delete every user row.  Cascades to tokens, memory, conversations, documents."""
+    """Delete every user row.  Cascades to memory, conversations, documents."""
     async with session() as s:
         result = await s.execute(delete(User))
     return affected_rows(result)
 
 
 async def delete_user(user_id: str) -> bool:
-    """Delete one user row.  Cascades to tokens, memory, conversations, documents.
+    """Delete one user row.  Cascades to memory, conversations, documents.
 
     Returns ``True`` if a row was deleted.  The user can re-materialise
     via :func:`ensure_user` on the next request, so this is the right

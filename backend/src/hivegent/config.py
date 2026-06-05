@@ -186,6 +186,21 @@ class EmbeddingSettings(BaseModel):
     dimension: int = 384
     api_key: str = ""
     base_url: str = ""
+    text_search_config: str | list[str] = ["german", "english"]
+    """PostgreSQL FTS configuration(s) for the sparse (keyword) channel.
+
+    Drives both the ``chunks.tsv`` generated column and the query-side
+    ``plainto_tsquery`` (passed to cbrkit as ``tsvector_config``), kept
+    in lockstep through this single value.  A list stems the corpus with
+    every listed dictionary at once — ``["german", "english"]`` indexes
+    the union ``to_tsvector('german', text) || to_tsvector('english',
+    text)`` and queries it the same way, so German morphology (compounds,
+    inflection) and English are both handled properly for the
+    Germany-based, bilingual audience.  Use the single language-agnostic
+    ``"simple"`` (no stemming) instead when the language set is unknown.
+    Changing it requires a follow-up Alembic revision rewriting the
+    generated column.
+    """
 
     def fingerprint(self) -> dict[str, str]:
         """Return fields that define the vector space.

@@ -24,6 +24,17 @@ depends_on: str | Sequence[str] | None = None
 # follow-up revision ALTERing ``chunks.embedding`` to the matching dim.
 _VECTOR_DIM = 384
 
+# FTS configs (default ``HIVEGENT_EMBEDDING__TEXT_SEARCH_CONFIG``): the
+# generated ``chunks.tsv`` is the union of one ``to_tsvector`` per config,
+# so German and English are each stemmed properly.  Changing the
+# configured value needs a follow-up revision rewriting this column.
+_TS_CONFIGS = ("german", "english")
+_TS_VECTOR = " || ".join(f"to_tsvector('{c}', text)" for c in _TS_CONFIGS)
+
+# Server-side default for every timestamp column, so rows inserted
+# outside the ORM are still stamped instead of failing the ``NOT NULL``.
+_NOW = sa.text("now()")
+
 # ``create_type=False`` keeps SQLAlchemy from auto-emitting ``CREATE TYPE``
 # while building the referencing tables; the enums are created once,
 # idempotently, by the explicit loop in ``upgrade`` below.
@@ -60,8 +71,12 @@ def upgrade() -> None:
         "groups",
         sa.Column("id", sa.String(), nullable=False),
         sa.Column("display_name", sa.String(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_groups")),
     )
     op.create_table(
@@ -69,7 +84,12 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("embedding_provider", sa.String(), nullable=False),
         sa.Column("embedding_model", sa.String(), nullable=False),
-        sa.Column("fingerprint_set_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "fingerprint_set_at",
+            sa.DateTime(timezone=True),
+            server_default=_NOW,
+            nullable=False,
+        ),
         sa.CheckConstraint("id = 1", name=op.f("ck_index_state_singleton")),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_index_state")),
     )
@@ -78,8 +98,12 @@ def upgrade() -> None:
         sa.Column("id", sa.String(), nullable=False),
         sa.Column("email", sa.String(), nullable=True),
         sa.Column("display_name", sa.String(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_users")),
         sa.UniqueConstraint("email", name=op.f("uq_users_email")),
     )
@@ -89,8 +113,12 @@ def upgrade() -> None:
         sa.Column("user_id", sa.String(), nullable=False),
         sa.Column("title", sa.String(), nullable=True),
         sa.Column("compacted_from_id", sa.String(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+        ),
         sa.ForeignKeyConstraint(
             ["compacted_from_id"],
             ["conversations.id"],
@@ -104,6 +132,12 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_conversations")),
+    )
+    op.create_index(
+        op.f("ix_conversations_compacted_from_id"),
+        "conversations",
+        ["compacted_from_id"],
+        unique=False,
     )
     op.create_index(
         op.f("ix_conversations_user_id_updated_at"),
@@ -126,8 +160,12 @@ def upgrade() -> None:
         sa.Column("mime", sa.String(), nullable=True),
         sa.Column("pipeline", sa.String(), nullable=False),
         sa.Column("content_sha256", sa.String(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+        ),
         sa.CheckConstraint(
             "(owner_user_id IS NOT NULL) <> (owner_group_id IS NOT NULL)",
             name=op.f("ck_documents_single_owner"),
@@ -183,8 +221,12 @@ def upgrade() -> None:
         "memory",
         sa.Column("user_id", sa.String(), nullable=False),
         sa.Column("content", sa.String(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+        ),
         sa.ForeignKeyConstraint(
             ["user_id"],
             ["users.id"],
@@ -199,8 +241,9 @@ def upgrade() -> None:
         sa.Column("idx", sa.Integer(), nullable=False),
         sa.Column("kind", _MESSAGE_KIND, nullable=False),
         sa.Column("payload", JSONB(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+        ),
         sa.ForeignKeyConstraint(
             ["conversation_id"],
             ["conversations.id"],
@@ -212,16 +255,16 @@ def upgrade() -> None:
 
     op.create_table(
         "chunks",
-        sa.Column("id", sa.Text(), nullable=False),
-        sa.Column("text", sa.Text(), nullable=False),
+        sa.Column("id", sa.String(), nullable=False),
+        sa.Column("text", sa.String(), nullable=False),
         sa.Column("embedding", Vector(_VECTOR_DIM), nullable=False),
         sa.Column(
             "tsv",
             TSVECTOR(),
-            sa.Computed("to_tsvector('english', text)", persisted=True),
+            sa.Computed(_TS_VECTOR, persisted=True),
             nullable=False,
         ),
-        sa.Column("document_id", sa.Text(), nullable=False),
+        sa.Column("document_id", sa.String(), nullable=False),
         sa.Column("idx", sa.Integer(), nullable=False),
         sa.Column("token_count", sa.Integer(), nullable=False),
         sa.Column("start_index", sa.Integer(), nullable=False),
@@ -269,6 +312,9 @@ def downgrade() -> None:
     op.drop_table("documents")
     op.drop_index(
         op.f("ix_conversations_user_id_updated_at"), table_name="conversations"
+    )
+    op.drop_index(
+        op.f("ix_conversations_compacted_from_id"), table_name="conversations"
     )
     op.drop_table("conversations")
     op.drop_table("users")

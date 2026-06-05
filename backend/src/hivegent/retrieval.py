@@ -113,6 +113,7 @@ class _RetrievalState:
                 value_column="text",
                 pgvector_column="embedding",
                 tsvector_column="tsv",
+                tsvector_config=settings.embedding.text_search_config,
             )
             return self._storage
 
