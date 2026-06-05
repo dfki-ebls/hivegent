@@ -14,6 +14,7 @@ from hivegent.tools.documents import (
     ListDocumentsTool,
     ReadDocumentTool,
 )
+from hivegent.tools.grep import GrepLine, GrepMatch, GrepTool
 from hivegent.tools.jq import JqTool
 from hivegent.tools.mutations import EditDocumentTool, WriteDocumentTool
 
@@ -573,3 +574,37 @@ class TestJqTool:
         result = (await tool(".", "big.json")).data
         assert "[truncated]" in result
         assert len(result.split("\n\n[truncated]")[0]) == 100
+
+
+class TestGrepFormatting:
+    """Tests for GrepTool match formatting and the line-level char budget."""
+
+    @staticmethod
+    def _block(n: int) -> GrepMatch:
+        return GrepMatch(
+            filename="f.md",
+            lines=tuple(GrepLine(line_number=i, text="x", is_match=True) for i in range(1, n + 1)),
+        )
+
+    def test_oversized_block_truncates_instead_of_dropping(self, tmp_path: Path) -> None:
+        # A single merged block larger than the budget must still show its
+        # leading lines (truncated), never just a notice with a stray "--".
+        tool = GrepTool(paths=tmp_path, max_formatted_chars=40)
+        formatted = tool._format_matches([self._block(50)])
+        shown = formatted.count("f.md:")
+        assert 0 < shown < 50
+        assert formatted.startswith("f.md:1:")
+        assert not formatted.startswith("\n---\n")
+        assert f"({50 - shown} of 50 lines omitted" in formatted
+
+    def test_fully_shown_has_no_omitted_notice(self, tmp_path: Path) -> None:
+        tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
+        formatted = tool._format_matches([self._block(3)])
+        assert formatted.count("f.md:") == 3
+        assert "omitted" not in formatted
+
+    def test_separate_blocks_joined_by_separator(self, tmp_path: Path) -> None:
+        tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
+        formatted = tool._format_matches([self._block(1), self._block(1)])
+        assert "\n---\n" in formatted
+        assert "omitted" not in formatted

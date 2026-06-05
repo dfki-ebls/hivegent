@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, override
@@ -225,33 +226,39 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
         return ToolOutput(data=capped, formatted=self._format_matches(capped))
 
     def _format_matches(self, matches: list[GrepMatch]) -> str:
-        parts: list[str] = []
+        # Budget at the line level rather than the block level: ripgrep can
+        # merge many nearby hits into one block whose formatted form dwarfs
+        # the budget, and dropping it whole would print nothing but a notice.
+        total_lines = sum(len(m.lines) for m in matches)
+        out: list[str] = []
         total = 0
         shown = 0
-        for m in matches:
-            block = self._format_match(m)
-            added = len(block) + (len(_BLOCK_SEP) if parts else 0)
-            if total + added > self.max_formatted_chars:
+        for starts_block, line in self._iter_lines(matches):
+            sep = (BLOCK_SEP if starts_block else "\n") if out else ""
+            if total + len(sep) + len(line) > self.max_formatted_chars:
                 break
-            if parts:
-                parts.append(_BLOCK_SEP)
-            parts.append(block)
-            total += added
+            out.append(sep)
+            out.append(line)
+            total += len(sep) + len(line)
             shown += 1
-        omitted = len(matches) - shown
+        omitted = total_lines - shown
         if omitted:
-            parts.append(
-                f"{_BLOCK_SEP}({omitted} more matches omitted — "
-                f"refine your pattern, narrow the glob, or lower context)"
+            notice = (
+                f"({omitted} of {total_lines} lines omitted, "
+                f"reduce context or narrow the pattern/glob)"
             )
-        return "".join(parts)
+            out.append(f"{BLOCK_SEP}{notice}" if out else notice)
+        return "".join(out)
 
-    def _format_match(self, m: GrepMatch) -> str:
-        return "\n".join(
-            f"{m.filename}:{line.line_number}"
-            f"{':' if line.is_match else '-'}{self._truncate_line(line.text)}"
-            for line in m.lines
-        )
+    def _iter_lines(self, matches: list[GrepMatch]) -> Iterator[tuple[bool, str]]:
+        """Yield ``(starts_block, formatted_line)`` for every match line."""
+        for m in matches:
+            for i, line in enumerate(m.lines):
+                text = (
+                    f"{m.filename}:{line.line_number}"
+                    f"{':' if line.is_match else '-'}{self._truncate_line(line.text)}"
+                )
+                yield i == 0, text
 
     def _truncate_line(self, text: str) -> str:
         if len(text) <= self.max_line_chars:
