@@ -82,51 +82,14 @@ _CONVERTERS: dict[ConversionPipeline, str] = {
 }
 
 
-_AUTO_MAPPING: dict[str, ConversionPipeline] = {
-    # Text formats (converted to clean markdown via pandoc)
-    ".txt": ConversionPipeline.PANDOC,
-    ".html": ConversionPipeline.PANDOC,
-    ".xml": ConversionPipeline.PANDOC,
-    ".csv": ConversionPipeline.PANDOC,
-    ".adoc": ConversionPipeline.PANDOC,
-    # Pandoc-handled formats
-    ".odt": ConversionPipeline.PANDOC,
-    ".rst": ConversionPipeline.PANDOC,
-    ".rtf": ConversionPipeline.PANDOC,
-    ".epub": ConversionPipeline.PANDOC,
-    ".tex": ConversionPipeline.PANDOC,
-    ".org": ConversionPipeline.PANDOC,
-    ".docbook": ConversionPipeline.PANDOC,
-    ".typst": ConversionPipeline.PANDOC,
-    ".docx": ConversionPipeline.PANDOC,
-    ".pptx": ConversionPipeline.PANDOC,
-    ".xlsx": ConversionPipeline.PANDOC,
-    ".fb2": ConversionPipeline.PANDOC,
-    ".opml": ConversionPipeline.PANDOC,
-    ".bib": ConversionPipeline.PANDOC,
-    ".ris": ConversionPipeline.PANDOC,
-    ".tsv": ConversionPipeline.PANDOC,
-    ".ipynb": ConversionPipeline.PANDOC,
-    ".textile": ConversionPipeline.PANDOC,
-    ".creole": ConversionPipeline.PANDOC,
-    ".djot": ConversionPipeline.PANDOC,
-    ".dokuwiki": ConversionPipeline.PANDOC,
-    ".mediawiki": ConversionPipeline.PANDOC,
-    ".tikiwiki": ConversionPipeline.PANDOC,
-    ".twiki": ConversionPipeline.PANDOC,
-    ".vimwiki": ConversionPipeline.PANDOC,
-    ".jira": ConversionPipeline.PANDOC,
-    ".muse": ConversionPipeline.PANDOC,
-    ".t2t": ConversionPipeline.PANDOC,
-    ".jats": ConversionPipeline.PANDOC,
-    ".man": ConversionPipeline.PANDOC,
-    ".pod": ConversionPipeline.PANDOC,
-    # Docling-handled formats
-    ".pdf": ConversionPipeline.DOCLING,
-    ".png": ConversionPipeline.DOCLING,
-    ".jpg": ConversionPipeline.DOCLING,
-    ".jpeg": ConversionPipeline.DOCLING,
-}
+# AUTO routing preference: docling claims every format it can handle, pandoc
+# covers the rest, and anything neither supports falls back to the LLM pipeline.
+# Routing is derived from each converter's own ``extensions`` (see
+# ``_auto_mapping``) so it can never drift from what the converters declare.
+_AUTO_PRIORITY: tuple[ConversionPipeline, ...] = (
+    ConversionPipeline.DOCLING,
+    ConversionPipeline.PANDOC,
+)
 
 
 @cache
@@ -155,11 +118,32 @@ def _available_converters() -> dict[ConversionPipeline, type[DocumentConverter]]
     return result
 
 
+@cache
+def _auto_mapping() -> dict[str, ConversionPipeline]:
+    """Map file extensions to pipelines, preferring docling over pandoc.
+
+    Built from each available converter's declared ``extensions`` in
+    :data:`_AUTO_PRIORITY` order: docling claims every format it handles,
+    pandoc fills the gaps, and unavailable converters are skipped (so if
+    docling is not installed, pandoc transparently takes over its formats).
+    """
+    mapping: dict[str, ConversionPipeline] = {}
+    for pipeline in _AUTO_PRIORITY:
+        try:
+            cls = _load_converter(_CONVERTERS[pipeline])
+        except ImportError:
+            continue
+        for ext in cls.extensions:
+            mapping.setdefault(ext, pipeline)
+    return mapping
+
+
 def resolve_auto_pipeline(filename: str) -> ConversionPipeline:
     """Resolve the AUTO pipeline to a concrete pipeline based on file extension.
 
-    Falls back to :attr:`ConversionPipeline.LLM` for extensions without an
-    explicit mapping (e.g. unknown binary formats sent to a vision model).
+    Falls back to :attr:`ConversionPipeline.LLM` for extensions supported by
+    neither docling nor pandoc (e.g. unknown binary formats sent to a vision
+    model).
 
     Args:
         filename: The document filename.
@@ -167,7 +151,7 @@ def resolve_auto_pipeline(filename: str) -> ConversionPipeline:
     Returns:
         The resolved conversion pipeline.
     """
-    return _AUTO_MAPPING.get(Path(filename).suffix.lower(), ConversionPipeline.LLM)
+    return _auto_mapping().get(Path(filename).suffix.lower(), ConversionPipeline.LLM)
 
 
 def get_converter(
