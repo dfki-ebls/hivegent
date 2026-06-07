@@ -42,7 +42,7 @@ uv run alembic revision --autogenerate -m "describe the change"
 ```
 
 The autogenerate runs against the configured `HIVEGENT_DB__URL`, which must point at a PostgreSQL database with the `pgvector` extension available.
-The dev shell sets this automatically to the `services-flake` instance under `data/db/`; start the Postgres service first via `nix run .#watch-dev` or by booting the dev shell, then run autogenerate.
+The dev shell sets this automatically to the `services-flake` instance under `data/db/`; start the Postgres service first via `nix run .#hivegent-dev` or by booting the dev shell, then run autogenerate.
 
 Review the generated file in `src/hivegent/migrations/versions/`.
 Autogenerate is reliable for table/column/index changes but misses dialect-specific bits (pgvector index ops, partial indexes, raw `op.execute(...)` data backfills) — edit the file by hand when needed.

@@ -1,6 +1,6 @@
 {
   treefmt,
-  watch-dev,
+  hivegent,
   backend,
   mkShell,
   nodejs,
@@ -37,7 +37,7 @@ mkShell {
     python3
     treefmt
     uv
-    watch-dev
+    hivegent
     postgresql_18
   ]
   # CLI tools used by backend subprocess wrappers + docling deps; sourced
