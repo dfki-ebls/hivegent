@@ -37,9 +37,17 @@ export function PipelineSettingsBar({
   onChunkingPipelineChange,
   onAssetModeChange,
 }: PipelineSettingsBarProps) {
+  const showUploadScope = writableGroups.length > 0;
+
+  // Hide the bar entirely when nothing would land in it, rather than
+  // rendering an empty border.
+  if (!showUploadScope && !featureFlags.pipelineSpec && !featureFlags.assetSpec) {
+    return null;
+  }
+
   return (
     <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 border-b px-4 py-3">
-      {writableGroups.length > 0 && (
+      {showUploadScope && (
         <div className="flex items-center gap-2">
           <Label
             htmlFor="upload-scope-select"
@@ -72,30 +80,32 @@ export function PipelineSettingsBar({
           <ChunkingPipelineSelector value={chunkingPipeline} onChange={onChunkingPipelineChange} />
         </>
       )}
-      <div className="flex items-center gap-2">
-        <Label
-          htmlFor="asset-mode-select"
-          className="text-sm text-muted-foreground flex items-center gap-1.5"
-        >
-          <Images className="h-4 w-4" />
-          Assets
-        </Label>
-        <Select
-          value={assetMode}
-          onValueChange={(v) => onAssetModeChange(v as AssetProcessingMode)}
-        >
-          <SelectTrigger id="asset-mode-select" className="w-[120px]" size="sm">
-            <SelectValue placeholder="Select mode" />
-          </SelectTrigger>
-          <SelectContent>
-            {Object.values(AssetProcessingMode).map((mode) => (
-              <SelectItem key={mode} value={mode}>
-                {mode[0].toUpperCase() + mode.slice(1)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {featureFlags.assetSpec && (
+        <div className="flex items-center gap-2">
+          <Label
+            htmlFor="asset-mode-select"
+            className="text-sm text-muted-foreground flex items-center gap-1.5"
+          >
+            <Images className="h-4 w-4" />
+            Assets
+          </Label>
+          <Select
+            value={assetMode}
+            onValueChange={(v) => onAssetModeChange(v as AssetProcessingMode)}
+          >
+            <SelectTrigger id="asset-mode-select" className="w-[120px]" size="sm">
+              <SelectValue placeholder="Select mode" />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.values(AssetProcessingMode).map((mode) => (
+                <SelectItem key={mode} value={mode}>
+                  {mode[0].toUpperCase() + mode.slice(1)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
     </div>
   );
 }

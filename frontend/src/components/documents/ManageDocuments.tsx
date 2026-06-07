@@ -85,20 +85,20 @@ export function ManageDocuments({ onIncludeDocument, onExcludeDocument }: Manage
   }, []);
   const handleCancel = useCallback(() => abortRef.current?.abort(), []);
 
-  const pipelineSpec: PipelineSpec = useMemo(
-    () =>
-      featureFlags.pipelineSpec
-        ? {
-            conversion: {
-              pipeline: conversionPipeline,
-              config: conversionConfigs[conversionPipeline],
-            },
-            chunking: { pipeline: chunkingPipeline, config: chunkingConfigs[chunkingPipeline] },
-            process_assets: assetMode,
-          }
-        : { process_assets: assetMode },
-    [conversionPipeline, chunkingPipeline, conversionConfigs, chunkingConfigs, assetMode],
-  );
+  const pipelineSpec: PipelineSpec = useMemo(() => {
+    const spec: PipelineSpec = {};
+    if (featureFlags.pipelineSpec) {
+      spec.conversion = {
+        pipeline: conversionPipeline,
+        config: conversionConfigs[conversionPipeline],
+      };
+      spec.chunking = { pipeline: chunkingPipeline, config: chunkingConfigs[chunkingPipeline] };
+    }
+    if (featureFlags.assetSpec) {
+      spec.process_assets = assetMode;
+    }
+    return spec;
+  }, [conversionPipeline, chunkingPipeline, conversionConfigs, chunkingConfigs, assetMode]);
 
   const uploadOptions = useMemo<UploadDocumentOptions>(
     () => ({ spec: pipelineSpec, llm: buildAuxLlmConfig(overrides) }),

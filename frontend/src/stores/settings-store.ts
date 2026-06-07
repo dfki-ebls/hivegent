@@ -55,7 +55,6 @@ export type PipelineConfigs = Record<string, Record<string, unknown>>;
  */
 interface PersistedSettings {
   documentTab: DocumentTab;
-  assetMode: AssetProcessingMode;
   expandedDirs: string[];
   personality: Personality;
   customSystemMessage: string;
@@ -64,6 +63,7 @@ interface PersistedSettings {
   chunkingPipeline?: ChunkingPipeline;
   conversionConfigs?: PipelineConfigs;
   chunkingConfigs?: PipelineConfigs;
+  assetMode?: AssetProcessingMode;
   toolsSpec?: PersistedToolsSpec;
 }
 
@@ -285,7 +285,6 @@ export const useSettingsStore = create<SettingsState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state): PersistedSettings => ({
         documentTab: state.documentTab,
-        assetMode: state.assetMode,
         expandedDirs: state.expandedDirs,
         personality: state.personality,
         customSystemMessage: state.customSystemMessage,
@@ -301,6 +300,7 @@ export const useSettingsStore = create<SettingsState>()(
               chunkingConfigs: state.chunkingConfigs,
             }
           : {}),
+        ...(featureFlags.assetSpec ? { assetMode: state.assetMode } : {}),
         ...(featureFlags.toolsSpec ? { toolsSpec: persistedToolsSpec(state.toolsSpec) } : {}),
       }),
       merge: (persisted, current) => {
@@ -315,7 +315,6 @@ export const useSettingsStore = create<SettingsState>()(
         return {
           ...current,
           documentTab: pick(DocumentTabSchema, data.documentTab, UI_DEFAULTS.documentTab),
-          assetMode: pick(AssetProcessingModeSchema, data.assetMode, UI_DEFAULTS.assetMode),
           expandedDirs: pick(ExpandedDirsSchema, data.expandedDirs, UI_DEFAULTS.expandedDirs),
           personality: pick(PersonalitySchema, data.personality, UI_DEFAULTS.personality),
           customSystemMessage: pick(
@@ -358,6 +357,9 @@ export const useSettingsStore = create<SettingsState>()(
                   UI_DEFAULTS.chunkingConfigs,
                 ),
               }
+            : {}),
+          ...(featureFlags.assetSpec
+            ? { assetMode: pick(AssetProcessingModeSchema, data.assetMode, UI_DEFAULTS.assetMode) }
             : {}),
           ...(featureFlags.toolsSpec
             ? {

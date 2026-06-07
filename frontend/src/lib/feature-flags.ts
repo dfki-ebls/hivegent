@@ -50,6 +50,14 @@ export interface FeatureFlags {
   pipelineSpec: boolean;
 
   /**
+   * Allow users to pick how extracted assets (images, etc.) are handled
+   * during ingestion — ignore, store, or describe.  When disabled, the
+   * Assets selector is hidden and `process_assets` is omitted from every
+   * request, so the backend applies its STORE default.
+   */
+  assetSpec: boolean;
+
+  /**
    * Allow users to toggle built-in tools and configure custom MCP servers
    * from the settings dialog.  When disabled, the Tools + MCP Servers
    * section is hidden and no per-user tool configuration is sent to the
@@ -70,6 +78,7 @@ export interface FeatureFlags {
 const FEATURE_DEFAULTS: FeatureFlags = {
   llmSpec: false,
   pipelineSpec: false,
+  assetSpec: false,
   toolsSpec: false,
   planning: false,
 };
@@ -83,6 +92,7 @@ const FEATURE_DEFAULTS: FeatureFlags = {
 const FEATURE_ENV: Record<keyof FeatureFlags, string | undefined> = {
   llmSpec: import.meta.env.VITE_FEATURE_LLM_SPEC,
   pipelineSpec: import.meta.env.VITE_FEATURE_PIPELINE_SPEC,
+  assetSpec: import.meta.env.VITE_FEATURE_ASSET_SPEC,
   toolsSpec: import.meta.env.VITE_FEATURE_TOOLS_SPEC,
   planning: import.meta.env.VITE_FEATURE_PLANNING,
 };
