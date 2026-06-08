@@ -748,10 +748,16 @@ export interface LlmConfig {
 // ============================================================
 
 /** Available assistant personalities. */
-export type Personality = "default" | "concise" | "detailed" | "custom";
+export type Personality = "default" | "concise" | "detailed" | "structured" | "custom";
 
 /** Zod schema for personality (used in store rehydration). */
-export const PersonalitySchema = z.enum(["default", "concise", "detailed", "custom"]);
+export const PersonalitySchema = z.enum([
+  "default",
+  "concise",
+  "detailed",
+  "structured",
+  "custom",
+]);
 
 /** Personality option for display in UI. */
 export interface PersonalityOption {
@@ -776,6 +782,11 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
     value: "detailed",
     label: "Detailed",
     description: "Thorough explanations with comprehensive context",
+  },
+  {
+    value: "structured",
+    label: "Structured",
+    description: "Tables and bullet points instead of prose",
   },
   {
     value: "custom",
