@@ -8,6 +8,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
@@ -21,8 +22,13 @@ function UserMenu() {
   }
 
   const { decodedIdToken, logout } = oidc;
+  const fullName = [decodedIdToken.given_name, decodedIdToken.family_name].filter(Boolean).join(" ");
   const userName =
-    decodedIdToken.name ?? decodedIdToken.preferred_username ?? decodedIdToken.email ?? "User";
+    fullName ||
+    decodedIdToken.name ||
+    decodedIdToken.preferred_username ||
+    decodedIdToken.email ||
+    "User";
 
   return (
     <DropdownMenu>
@@ -33,6 +39,14 @@ function UserMenu() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        {decodedIdToken.email && (
+          <>
+            <DropdownMenuLabel className="font-normal text-muted-foreground">
+              {decodedIdToken.email}
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+          </>
+        )}
         <DropdownMenuItem asChild>
           <Link to="/settings/account" className="flex items-center gap-2">
             <UserCog className="h-4 w-4" />

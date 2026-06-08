@@ -19,12 +19,15 @@ export const { bootstrapOidc, useOidc, getOidc, enforceLogin, OidcInitialization
     decodedIdTokenSchema: z.object({
       sub: z.string(),
       name: z.string().optional(),
+      given_name: z.string().optional(),
+      family_name: z.string().optional(),
       preferred_username: z.string().optional(),
       email: z.string().optional(),
     }),
     decodedIdToken_mock: {
       sub: "localhost",
-      name: "Localhost User",
+      given_name: "Localhost",
+      family_name: "User",
       email: "dev@localhost",
     },
   })
