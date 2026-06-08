@@ -45,7 +45,7 @@ async def edit_document(
 
     tool = EditDocumentTool(
         paths=SearchPath(
-            path=store.workspace_dir(settings.data_dir), prefix=store.prefix
+            path=store.workspace_dir(settings.data_dir), scope=store.scope
         ),
         mutator=partial(workspace.edit_document_text, store),
     )
@@ -71,7 +71,7 @@ async def write_document(
 
     tool = WriteDocumentTool(
         paths=SearchPath(
-            path=store.workspace_dir(settings.data_dir), prefix=store.prefix
+            path=store.workspace_dir(settings.data_dir), scope=store.scope
         ),
         mutator=partial(workspace.write_document_text, store),
     )

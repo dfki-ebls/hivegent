@@ -11,6 +11,8 @@ from typing import Annotated, override
 from pydantic import Field
 
 from .base import (
+    WORKSPACE_PATH_HINT,
+    WORKSPACE_SCOPE_HINT,
     IncludeIgnoredArg,
     SearchPath,
     SyncPathTool,
@@ -79,12 +81,15 @@ class DocumentRange:
 
 DocumentFilePathArg = Annotated[
     str,
-    Field(description="Relative file path within the tool workspace."),
+    Field(description=f"Path of the document to operate on. {WORKSPACE_PATH_HINT}"),
 ]
 DocumentPathArg = Annotated[
     str | None,
     Field(
-        description="Optional subdirectory to scope the operation within.",
+        description=(
+            f"Optional subdirectory to scope the operation within. "
+            f"{WORKSPACE_SCOPE_HINT} Omit to cover them all."
+        ),
     ),
 ]
 DocumentFlattenArg = Annotated[
@@ -129,7 +134,9 @@ GlobPatternArg = Annotated[
     str,
     Field(
         description=(
-            "Glob pattern matched against relative filenames (e.g. `*.md`, `**/*.txt`)."
+            "Glob pattern matched against workspace-relative filenames (e.g. "
+            "`*.md`, `**/*.txt`). To restrict to one workspace, prefix the "
+            "`path` argument rather than the pattern."
         ),
     ),
 ]
@@ -348,11 +355,11 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
         ``include_ignored=True`` to include them.
         """
         exclude = excluded_dirs(include_ignored)
-        subdir = path
+        paths, subdir = self.scoped(path)
 
         if flatten:
             results = _scan_entries(
-                self.resolved_paths,
+                paths,
                 self.glob,
                 subdir,
                 max_depth,
@@ -373,7 +380,7 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
             return ToolOutput(data=results, formatted="\n".join(lines))
 
         entries = _scan_entries(
-            self.resolved_paths,
+            paths,
             self.glob,
             subdir,
             max_depth,
@@ -415,11 +422,12 @@ class GlobDocumentsTool(SyncPathTool[list[str]]):
         for directory listings with sizes, dates, or tree output.  Common
         build and vendor directories are skipped by default.
         """
+        paths, subdir = self.scoped(path)
         results = _glob_entries(
-            self.resolved_paths,
+            paths,
             self.glob,
             pattern,
-            path,
+            subdir,
             max_results,
             excluded_dirs(include_ignored),
         )

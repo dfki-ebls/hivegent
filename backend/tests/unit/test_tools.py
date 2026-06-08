@@ -5,7 +5,8 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from hivegent.tools.base import SearchPath
+from hivegent.store import WorkspaceScope
+from hivegent.tools.base import SearchPath, scope_paths
 from hivegent.tools.documents import (
     DocumentRange,
     DocumentSummary,
@@ -25,6 +26,30 @@ def _as_summaries(
     """Narrow a ListDocumentsTool result to a list of summaries."""
     assert isinstance(data, list) and all(isinstance(d, DocumentSummary) for d in data)
     return data
+
+
+class TestScopePaths:
+    """Tests for the scope_paths helper that narrows by workspace prefix."""
+
+    PATHS = (
+        SearchPath(path=Path("/u"), scope=WorkspaceScope()),
+        SearchPath(path=Path("/g"), scope=WorkspaceScope("team")),
+    )
+
+    def test_prefix_scopes_to_one_workspace(self) -> None:
+        assert scope_paths(self.PATHS, "~/reports") == ((self.PATHS[0],), "reports")
+        assert scope_paths(self.PATHS, "@team/reports") == ((self.PATHS[1],), "reports")
+
+    def test_bare_prefix_selects_workspace_root(self) -> None:
+        assert scope_paths(self.PATHS, "~") == ((self.PATHS[0],), None)
+        assert scope_paths(self.PATHS, "@team") == ((self.PATHS[1],), None)
+
+    def test_unprefixed_value_spans_every_workspace(self) -> None:
+        assert scope_paths(self.PATHS, "reports") == (self.PATHS, "reports")
+        assert scope_paths(self.PATHS, None) == (self.PATHS, None)
+
+    def test_unknown_prefix_falls_through(self) -> None:
+        assert scope_paths(self.PATHS, "@ghost/x") == (self.PATHS, "@ghost/x")
 
 
 class TestListDocumentsTool:
@@ -88,12 +113,28 @@ class TestListDocumentsTool:
         tool = ListDocumentsTool(
             paths=(
                 SearchPath(path=user_dir),
-                SearchPath(path=group_dir, prefix="@team"),
+                SearchPath(path=group_dir, scope=WorkspaceScope("team")),
             )
         )
         data = _as_summaries(tool().data)
         filenames = {r.filename for r in data}
         assert filenames == {"a.md", "@team/b.md"}
+
+    def test_prefix_scopes_to_one_store(self, tmp_path: Path) -> None:
+        user_dir = tmp_path / "user"
+        user_dir.mkdir()
+        (user_dir / "a.md").write_text("user")
+        group_dir = tmp_path / "group"
+        group_dir.mkdir()
+        (group_dir / "b.md").write_text("group")
+        tool = ListDocumentsTool(
+            paths=(
+                SearchPath(path=user_dir, scope=WorkspaceScope()),
+                SearchPath(path=group_dir, scope=WorkspaceScope("team")),
+            )
+        )
+        filenames = {r.filename for r in _as_summaries(tool(path="@team").data)}
+        assert filenames == {"@team/b.md"}
 
     def test_includes_directories(self, tmp_path: Path) -> None:
         sub = tmp_path / "notes"
@@ -220,7 +261,7 @@ class TestListDocumentsTool:
         tool = ListDocumentsTool(
             paths=(
                 SearchPath(path=user_dir),
-                SearchPath(path=group_dir, prefix="@team"),
+                SearchPath(path=group_dir, scope=WorkspaceScope("team")),
             )
         )
         data = tool(flatten=False).data
@@ -283,12 +324,27 @@ class TestGlobDocumentsTool:
         tool = GlobDocumentsTool(
             paths=(
                 SearchPath(path=user_dir),
-                SearchPath(path=group_dir, prefix="@team"),
+                SearchPath(path=group_dir, scope=WorkspaceScope("team")),
             )
         )
         data = tool("*.md").data
         assert isinstance(data, list)
         assert set(data) == {"a.md", "@team/b.md"}
+
+    def test_prefix_scopes_to_one_store(self, tmp_path: Path) -> None:
+        user_dir = tmp_path / "user"
+        user_dir.mkdir()
+        (user_dir / "a.md").write_text("user")
+        group_dir = tmp_path / "group"
+        group_dir.mkdir()
+        (group_dir / "b.md").write_text("group")
+        tool = GlobDocumentsTool(
+            paths=(
+                SearchPath(path=user_dir, scope=WorkspaceScope()),
+                SearchPath(path=group_dir, scope=WorkspaceScope("team")),
+            )
+        )
+        assert tool("*.md", path="~").data == ["~/a.md"]
 
     def test_max_results(self, tmp_path: Path) -> None:
         for i in range(10):
@@ -336,7 +392,7 @@ class TestReadDocumentTool:
         tool = ReadDocumentTool(
             paths=(
                 SearchPath(path=tmp_path),
-                SearchPath(path=group_dir, prefix="@team"),
+                SearchPath(path=group_dir, scope=WorkspaceScope("team")),
             )
         )
         result = tool("@team/doc.md").data

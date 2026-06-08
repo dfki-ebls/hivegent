@@ -44,7 +44,7 @@ from .entries import description_path_for_stem, original_path_for_stem
 from .http_client import get_http_client
 from .llm import create_openai_client
 from .store import Casebase
-from .tools.base import SearchPathFilterFunc, apply_prefix
+from .tools.base import SearchPathFilterFunc
 from .tools.retrieval import SearchResult, VectorSearchTool
 
 __all__ = [
@@ -402,7 +402,7 @@ def build_search_tool(
             )
             by_key[row.key] = RetrievedChunk(
                 store_key=row.store_key,
-                filename=apply_prefix(store.prefix, filename),
+                filename=store.scope.render(filename),
                 chunk_index=row.idx,
                 text=row.text,
                 token_count=row.token_count,

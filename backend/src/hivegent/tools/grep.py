@@ -12,6 +12,7 @@ from pydantic import Field
 from ..subprocesses import rg_search
 from .base import (
     BLOCK_SEP,
+    WORKSPACE_SCOPE_HINT,
     AsyncPathTool,
     IncludeIgnoredArg,
     SearchPath,
@@ -64,8 +65,9 @@ GrepGlobArg = Annotated[
     str | None,
     Field(
         description=(
-            "Optional glob pattern restricting which files are searched "
-            "(e.g. `*.md` or `reports/*.txt`)."
+            f"Optional glob restricting which files are searched, matched "
+            f"against workspace-relative paths (e.g. `*.md` or `reports/*.txt`). "
+            f"{WORKSPACE_SCOPE_HINT}"
         ),
     ),
 ]
@@ -194,6 +196,8 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
         # Context is wasted work when the formatted output discards it.
         effective_context = context if output_mode == "content" else 0
         exclude = excluded_dirs(include_ignored)
+        # A scope prefix on the glob narrows the search to one workspace.
+        paths, glob = self.scoped(glob)
         results = await asyncio.gather(
             *(
                 _search_path(
@@ -205,7 +209,7 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
                     literal,
                     exclude,
                 )
-                for sp in self.resolved_paths
+                for sp in paths
             )
         )
         all_matches = [m for batch in results for m in batch]

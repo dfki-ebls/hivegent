@@ -26,6 +26,7 @@ from .jq import JqTool
 from .mutations import EditDocumentTool, WriteDocumentTool
 from .plan import CreatePlanTool
 from .retrieval import SearchResult, SearchType, VectorSearchTool
+from .scope import Scope
 from .web import WebFetch, WebSearch
 
 __all__ = [
@@ -45,6 +46,7 @@ __all__ = [
     "ListDocumentsTool",
     "ReadBinaryDocumentTool",
     "ReadDocumentTool",
+    "Scope",
     "SearchPath",
     "SearchPathFilterFunc",
     "SearchResult",

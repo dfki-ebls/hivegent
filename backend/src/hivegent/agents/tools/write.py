@@ -18,7 +18,7 @@ def _edit_document(deps: UserDeps) -> EditDocumentTool:
     return EditDocumentTool(
         paths=SearchPath(
             path=deps.store.workspace_dir(settings.data_dir),
-            prefix=deps.store.prefix,
+            scope=deps.store.scope,
             filter_func=deps.document_filter,
         ),
         mutator=partial(workspace.edit_document_text, deps.store),
@@ -29,7 +29,7 @@ def _write_document(deps: UserDeps) -> WriteDocumentTool:
     return WriteDocumentTool(
         paths=SearchPath(
             path=deps.store.workspace_dir(settings.data_dir),
-            prefix=deps.store.prefix,
+            scope=deps.store.scope,
             filter_func=deps.document_filter,
         ),
         mutator=partial(workspace.write_document_text, deps.store),

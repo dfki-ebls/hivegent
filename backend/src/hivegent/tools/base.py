@@ -12,6 +12,8 @@ from typing import Annotated, Any, Self, get_type_hints, override
 
 from pydantic import BaseModel, Field
 
+from .scope import Scope
+
 __all__ = [
     "BLOCK_SEP",
     "DEFAULT_EXCLUDE_DIRS",
@@ -27,7 +29,8 @@ __all__ = [
     "SyncTool",
     "Tool",
     "ToolOutput",
-    "apply_prefix",
+    "WORKSPACE_PATH_HINT",
+    "WORKSPACE_SCOPE_HINT",
     "coerce_paths",
     "excluded_dirs",
     "factory_tool_name",
@@ -36,6 +39,7 @@ __all__ = [
     "resolve_accessible_file",
     "resolve_search_path",
     "resolve_tool_cls",
+    "scope_paths",
     "tool_description",
     "tool_name",
 ]
@@ -68,38 +72,51 @@ IncludeIgnoredArg = Annotated[
 SearchPathFilterFunc = Callable[[str], bool] | None
 """Optional predicate that decides whether a filename is accessible."""
 
+WORKSPACE_PATH_HINT = (
+    "Give the document's full path exactly as the listing, search, grep, and "
+    "read tools return it, including any leading scope prefix. A bare name with "
+    "its scope prefix stripped may not identify the document."
+)
+"""Shared guidance for arguments that name a single document.
 
-def apply_prefix(prefix: str | None, name: str) -> str:
-    """Prepend *prefix* to *name* with a ``/`` separator.
+Reused across the file-path tool arguments so the model is told, in one
+consistent voice, to copy paths verbatim. The concrete scope-prefix grammar is
+the application's concern and lives in the system prompt, not here.
+"""
 
-    Returns *name* unchanged when *prefix* is ``None``.
-    """
-    return f"{prefix}/{name}" if prefix is not None else name
+WORKSPACE_SCOPE_HINT = (
+    "Lead with a scope prefix (exactly as shown in tool results) to restrict "
+    "the operation to that one scope; without a prefix it spans every scope you "
+    "can access."
+)
+"""Shared guidance for filter arguments (a subdirectory or glob) that may lead
+with a scope prefix to target a single search root."""
 
 
 @dataclass(slots=True, frozen=True)
 class SearchPath:
     """A labeled directory path with optional filter.
 
-    Groups multiple search roots under a common interface.
-    Each path may carry a display *prefix* so that results from
-    different roots remain distinguishable, and an optional
-    *filter_func* that controls which files are visible.
+    Groups multiple search roots under a common interface. Each path may carry
+    a :class:`~hivegent.tools.scope.Scope` so that results from different roots
+    stay distinguishable and incoming paths can be matched back to their
+    workspace, plus an optional *filter_func* that controls which files are
+    visible.
 
     Attributes:
         path: Filesystem path to the directory to search.
-        prefix: Display prefix prepended to filenames from this path.
-            ``None`` means no prefix.
+        scope: Addressing scope whose prefix tags filenames from this path.
+            ``None`` means the path carries no prefix (a single bare root).
         filter_func: Optional predicate controlling file visibility.
     """
 
     path: Path
-    prefix: str | None = None
+    scope: Scope | None = None
     filter_func: SearchPathFilterFunc = None
 
     def prefixed(self, filename: str) -> str:
-        """Return *filename* with this path's prefix prepended."""
-        return apply_prefix(self.prefix, filename)
+        """Return *filename* rendered under this path's scope."""
+        return self.scope.render(filename) if self.scope is not None else filename
 
 
 def coerce_paths(
@@ -117,35 +134,77 @@ def coerce_paths(
     return raw
 
 
+def _match_scope(
+    paths: tuple[SearchPath, ...],
+    raw: str,
+) -> tuple[SearchPath, str] | None:
+    """Return the first scoped path that claims *raw*, plus its local remainder.
+
+    The shared scope-prefix scan behind :func:`resolve_search_path` and
+    :func:`scope_paths`. A non-``None`` local is the prefix-stripped remainder
+    (empty for a bare scope root); ``None`` means no scoped path matched.
+    """
+    for sp in paths:
+        if sp.scope is not None:
+            local = sp.scope.strip(raw)
+            if local is not None:
+                return sp, local
+    return None
+
+
 def resolve_search_path(
     paths: tuple[SearchPath, ...],
     filename: str,
 ) -> tuple[SearchPath, str] | None:
     """Find the :class:`SearchPath` matching a possibly-prefixed filename.
 
-    Prefixed paths are checked first.  If the filename does not match
-    any prefix, the first path with an empty prefix is used as the
-    default.
+    A scope prefix is matched against each path's :attr:`SearchPath.scope`.
+    An unprefixed filename falls back to the first scopeless path.
 
     Args:
         paths: Ordered search paths to check.
-        filename: A filename that may carry a prefix.
+        filename: A filename that may carry a scope prefix.
 
     Returns:
         ``(search_path, local_filename)`` with the prefix stripped,
         or ``None`` if no path matches.
     """
-    default: SearchPath | None = None
-    for sp in paths:
-        if sp.prefix is not None:
-            tag = f"{sp.prefix}/"
-            if filename.startswith(tag):
-                return sp, filename[len(tag) :]
-        elif default is None:
-            default = sp
-    if default is not None:
-        return default, filename
-    return None
+    match = _match_scope(paths, filename)
+    if match is not None and match[1]:
+        return match
+    return next(((sp, filename) for sp in paths if sp.scope is None), None)
+
+
+def scope_paths(
+    paths: tuple[SearchPath, ...],
+    raw: str | None,
+) -> tuple[tuple[SearchPath, ...], str | None]:
+    """Narrow *paths* to the workspace named by *raw*'s scope prefix.
+
+    Filter arguments — a listing subdirectory or a grep glob — may lead
+    with a workspace scope prefix to target a single workspace, mirroring
+    the file-path tools.  When *raw* starts with a known prefix, only the
+    matching :class:`SearchPath` is returned, together with the
+    prefix-stripped remainder.  Otherwise *paths* and *raw* pass through
+    unchanged, so an unprefixed value still spans every workspace and a
+    missing value covers them all.
+
+    Args:
+        paths: The search paths in scope for the call.
+        raw: A possibly prefixed subdirectory or glob, or ``None``.
+
+    Returns:
+        ``(scoped_paths, local)`` where *local* has the matched prefix
+        stripped, and is ``None`` when the prefix named a bare workspace
+        root (e.g. ``~`` or ``@team``).
+    """
+    if not raw:
+        return paths, raw
+    match = _match_scope(paths, raw)
+    if match is not None:
+        sp, local = match
+        return (sp,), local or None
+    return paths, raw
 
 
 def file_allowed(filter_func: SearchPathFilterFunc, filename: str) -> bool:
@@ -294,6 +353,13 @@ class PathTool[T](Tool[T], ABC):
     def resolved_paths(self) -> tuple[SearchPath, ...]:
         """Return *paths* normalised to a ``SearchPath`` tuple."""
         return coerce_paths(self.paths)
+
+    def scoped(self, raw: str | None) -> tuple[tuple[SearchPath, ...], str | None]:
+        """Narrow :attr:`resolved_paths` to the workspace named by *raw*'s prefix.
+
+        Thin wrapper over :func:`scope_paths` for the filter tools.
+        """
+        return scope_paths(self.resolved_paths, raw)
 
 
 @dataclass(slots=True, frozen=True)

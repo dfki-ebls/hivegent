@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from ..auth import User
 from ..config import sanitize_document_path, sanitize_group_id, settings
 from ..security import validate_optional_external_url
-from ..store import Casebase
+from ..store import Casebase, WorkspaceScope
 from ..types import DocumentFilter, LlmConfig, resolve_llm_config
 from .models import PipelineSpec
 
@@ -66,9 +66,10 @@ def parse_document_filters(
         by_group: dict[str, list[str]] = {}
         for entry in entries:
             try:
-                group_id, local = Casebase.split_path(entry)
+                scope, local = WorkspaceScope.parse(entry)
             except ValueError:
                 continue
+            group_id = scope.group_id
             target = local or "/"
             if group_id is None:
                 personal.append(target)
@@ -164,18 +165,18 @@ def resolve_workspace_path(
     """Resolve a canonical workspace path to its store and local path.
 
     Personal documents carry a ``~`` prefix, group documents an
-    ``@<group>`` prefix — the convention owned by :meth:`Casebase.split_path`
-    and :attr:`Casebase.prefix`. For group paths this enforces membership,
-    or write access when *write* is true, so a caller cannot reach a group
-    they do not belong to by crafting a prefix.
+    ``@<group>`` prefix — the convention owned by :class:`WorkspaceScope`. For
+    group paths this enforces membership, or write access when *write* is true,
+    so a caller cannot reach a group they do not belong to by crafting a prefix.
 
     A bare scope root (``~`` or ``@<group>``) resolves to the store with an
     empty local path. A bare, unprefixed path raises ``400``.
     """
     try:
-        group_id, local = Casebase.split_path(path)
+        scope, local = WorkspaceScope.parse(path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    group_id = scope.group_id
     if group_id is not None:
         safe_id = (
             require_group_write(user, group_id)

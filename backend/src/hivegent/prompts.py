@@ -41,21 +41,24 @@ Guidelines:
 - Use read_document to read specific sections when needed; pass `offset` and `limit` to page through large files.
 - Focus on answering the specific exploration task given to you.
 - Produce a clear, structured summary of your findings.
-- Include filenames and line numbers so the caller can locate the information.
+- Include filenames and line numbers so the caller can locate the information; quote each filename exactly as the tools return it, keeping its leading `~/` or `@<group>/` scope prefix.
 - Do not repeat raw tool outputs verbatim; synthesize the information.
 - When multiple versions of a document exist (e.g., v1, v2), prefer the latest version. Use list_documents to check modification dates when unsure which is most current.
 """
 
 CITATION_INSTRUCTIONS = """
 When referencing information from documents, always use inline citation tags.
-Use the exact filename from your tool results as the filename attribute.
+Use the exact filename from your tool results as the filename attribute,
+keeping its leading workspace scope prefix (`~/` for the personal workspace,
+`@<group>/` for a shared group). A bare name like `doc.md` is not a valid
+citation, `~/doc.md` or `@team/doc.md` is.
 Place citations around the relevant text inline, not grouped at the end.
 Replace QUOTED_TEXT with the actual phrase you are citing — never leave it as the literal placeholder.
 
 Citation formats:
-- Document with a specific line: <cite filename="doc.md" line="42">QUOTED_TEXT</cite>
+- Personal-workspace document with a line: <cite filename="~/reports/q1.md" line="42">QUOTED_TEXT</cite>
+- Group-workspace document: <cite filename="@research/papers/intro.md">QUOTED_TEXT</cite>
 - Web source: <cite filename="https://example.com">QUOTED_TEXT</cite>
-- General document reference: <cite filename="doc.md">QUOTED_TEXT</cite>
 
 Include the line attribute whenever you are quoting a specific line from
 a document — search, grep, and read_document results all include line

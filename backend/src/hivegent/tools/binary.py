@@ -15,6 +15,7 @@ from pydantic import Field
 
 from ..converters.images import sanitize_image_bytes
 from .base import (
+    WORKSPACE_PATH_HINT,
     BinaryAttachment,
     SyncPathTool,
     ToolOutput,
@@ -49,7 +50,7 @@ def binary_media_type(file_path: str) -> str | None:
 
 BinaryFilePathArg = Annotated[
     str,
-    Field(description="Relative file path of the image or PDF within the workspace."),
+    Field(description=f"Path of the image or PDF to read. {WORKSPACE_PATH_HINT}"),
 ]
 PagesArg = Annotated[
     str | None,

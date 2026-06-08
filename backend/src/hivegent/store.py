@@ -18,15 +18,67 @@ from .config import sanitize_group_id, sanitize_user_id
 from .tools.base import SearchPath, SearchPathFilterFunc
 
 __all__ = [
+    "GROUP_PREFIX",
+    "USER_PREFIX",
     "Casebase",
     "CasebaseKind",
+    "WorkspaceScope",
     "build_search_paths",
 ]
 
 CasebaseKind = Literal["user", "group"]
 
-_USER_PREFIX = "~"
-_GROUP_PREFIX = "@"
+USER_PREFIX = "~"
+GROUP_PREFIX = "@"
+
+
+@dataclass(slots=True, frozen=True)
+class WorkspaceScope:
+    """Concrete ``~`` / ``@<group>`` workspace addressing scope.
+
+    The personal workspace is ambient and idless (``~``); a group is named
+    (``@<group_id>``). This is the single home of the prefix convention shared
+    end-to-end (tool outputs, citations, chat filters, the HTTP API); the
+    generic tools layer sees only the :class:`~hivegent.tools.scope.Scope`
+    protocol this satisfies.
+    """
+
+    group_id: str | None = None
+
+    @property
+    def prefix(self) -> str:
+        """Leading token rendered into a path: ``~`` or ``@<group_id>``."""
+        return USER_PREFIX if self.group_id is None else f"{GROUP_PREFIX}{self.group_id}"
+
+    def render(self, local: str) -> str:
+        """Render *local* as a canonical path under this scope (empty = root)."""
+        return f"{self.prefix}/{local}" if local else self.prefix
+
+    def strip(self, raw: str) -> str | None:
+        """Return *raw*'s local part if it addresses this scope, else ``None``."""
+        if raw == self.prefix:
+            return ""
+        tag = f"{self.prefix}/"
+        return raw[len(tag) :] if raw.startswith(tag) else None
+
+    @classmethod
+    def parse(cls, raw: str) -> tuple[Self, str]:
+        """Parse a canonical path into ``(scope, local)`` at a trust boundary.
+
+        The boundary parser for the HTTP API and chat filters: it recovers the
+        scope from a path with no scope object in hand. A bare scope root yields
+        an empty local.
+
+        Raises:
+            ValueError: When *raw* carries no recognized scope prefix.
+        """
+        if raw == USER_PREFIX or raw.startswith(f"{USER_PREFIX}/"):
+            return cls(), raw[len(USER_PREFIX) + 1 :]
+        if raw.startswith(GROUP_PREFIX):
+            group_id, _, local = raw[len(GROUP_PREFIX) :].partition("/")
+            if group_id:
+                return cls(group_id), local
+        raise ValueError(f"Invalid workspace path: {raw!r}")
 
 
 @dataclass(slots=True, frozen=True)
@@ -76,35 +128,13 @@ class Casebase:
         return f"{self.kind}:{self.id}"
 
     @property
-    def prefix(self) -> str:
-        """Canonical workspace prefix for document filenames from this store.
+    def scope(self) -> WorkspaceScope:
+        """Addressing scope (``~`` personal / ``@<group>``) for this store.
 
-        ``@<group>`` for a group, ``~`` for a user's personal workspace.
-        Joined to a local path via :func:`apply_prefix` to form the
-        canonical ``@<group>/<local>`` / ``~/<local>`` identifier used
-        end-to-end: tool outputs, citations, chat filters, and the HTTP API.
+        Bridges the storage identity to the :class:`WorkspaceScope` that renders
+        canonical paths and routes incoming ones back to this workspace.
         """
-        return f"{_GROUP_PREFIX}{self.id}" if self.kind == "group" else _USER_PREFIX
-
-    @staticmethod
-    def split_path(path: str) -> tuple[str | None, str]:
-        """Split a canonical workspace path into ``(group_id, local)``.
-
-        Inverse of :attr:`prefix` joined to a local path, and the single
-        parser for the convention every layer shares (HTTP API, chat
-        filters, tool outputs). ``~`` / ``~/<local>`` resolves to the
-        personal workspace (``group_id`` is ``None``); ``@<group>`` /
-        ``@<group>/<local>`` to a group. The prefix is mandatory — a bare
-        path raises :class:`ValueError`, so every document has one canonical
-        name; a bare scope root yields an empty local.
-        """
-        if path == _USER_PREFIX or path.startswith(f"{_USER_PREFIX}/"):
-            return None, path[len(_USER_PREFIX) + 1 :]
-        if path.startswith(_GROUP_PREFIX):
-            group_id, _, local = path[len(_GROUP_PREFIX) :].partition("/")
-            if group_id:
-                return group_id, local
-        raise ValueError(f"Invalid workspace path: {path!r}")
+        return WorkspaceScope(self.id) if self.kind == "group" else WorkspaceScope()
 
     @staticmethod
     def workspace_root(data_dir: Path) -> Path:
@@ -149,7 +179,7 @@ def build_search_paths(
     return tuple(
         SearchPath(
             path=dir_fn(s, data_dir),
-            prefix=s.prefix,
+            scope=s.scope,
             filter_func=get_filter(s),
         )
         for s in (store, *group_stores)
