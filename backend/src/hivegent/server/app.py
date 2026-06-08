@@ -20,7 +20,7 @@ from ..retrieval import reconcile_index_state
 from .routes import api_router
 from .routes.public import router as public_router
 
-__all__ = ["app", "create_app", "mcp_http_app"]
+__all__ = ["create_app", "mcp_http_app"]
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +177,3 @@ def create_app() -> FastAPI:
     if mcp_http_app is not None:
         app.mount("/mcp", mcp_http_app)
     return app
-
-
-app = create_app()

@@ -385,7 +385,8 @@ def serve(
     import uvicorn
 
     uvicorn.run(
-        "hivegent.server:app",
+        "hivegent.server:create_app",
+        factory=True,
         host=host,
         port=port,
         reload=reload,
