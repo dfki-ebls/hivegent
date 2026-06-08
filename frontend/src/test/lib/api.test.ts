@@ -1,5 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { getOidc as getOidcFn } from "@/oidc";
+
+// authFetch resolves auth headers via getOidc; without a stub it hangs on
+// the missing oidc-spa bootstrap and the settings tests time out.
+vi.mock("@/oidc", () => ({
+  getOidc: vi
+    .fn<typeof getOidcFn>()
+    .mockResolvedValue({ isUserLoggedIn: false } as Awaited<ReturnType<typeof getOidcFn>>),
+}));
+
 // buildLlmConfig zeroes out its payload when the llmSpec flag is off, so
 // enable it to exercise the field-mapping logic.
 vi.mock("@/lib/feature-flags", () => ({
