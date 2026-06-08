@@ -7,6 +7,7 @@ __all__ = [
     "CITATION_INSTRUCTIONS",
     "EXPLORE_INSTRUCTIONS",
     "IMAGE_INSTRUCTIONS",
+    "LANGUAGE_INSTRUCTIONS",
     "MATH_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS_EMPTY",
@@ -72,6 +73,12 @@ When writing mathematical expressions, always use dollar-sign delimiters:
 - Inline math: $x^2 + y^2 = z^2$
 - Display math: $$\\int_0^\\infty e^{-x} \\, dx = 1$$
 Never use LaTeX delimiters like \\(...\\) or \\[...\\].
+"""
+
+LANGUAGE_INSTRUCTIONS = """
+Always write your final response in the same language as the user's most recent request.
+You may think, plan, and use tools in any language, but the answer the user reads must match the language they wrote in (for example, answer a German question in German and an English question in English).
+This holds regardless of the language of the retrieved documents or your internal reasoning.
 """
 
 IMAGE_INSTRUCTIONS = """

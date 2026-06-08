@@ -42,6 +42,7 @@ from ...db.memory import load_memory
 from ...prompts import (
     CITATION_INSTRUCTIONS,
     IMAGE_INSTRUCTIONS,
+    LANGUAGE_INSTRUCTIONS,
     MATH_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS_EMPTY,
@@ -321,7 +322,9 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
             )
         ]
 
-    parts.extend([CITATION_INSTRUCTIONS, IMAGE_INSTRUCTIONS, MATH_INSTRUCTIONS])
+    parts.extend(
+        [LANGUAGE_INSTRUCTIONS, CITATION_INSTRUCTIONS, IMAGE_INSTRUCTIONS, MATH_INSTRUCTIONS]
+    )
 
     if config.mode == "plan":
         parts.append(PLAN_INSTRUCTIONS)
