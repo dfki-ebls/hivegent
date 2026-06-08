@@ -290,7 +290,13 @@ export function DocumentDialog({
     isInitialScrollRef.current = false;
     // Single rAF to let the Radix ScrollArea viewport settle.
     requestAnimationFrame(() => {
-      node.scrollIntoView({ behavior, block: "center" });
+      // Center chunks that fit, but anchor the start of chunks taller than
+      // the viewport so their beginning stays visible instead of being
+      // centered (which would push the start off the top).
+      const viewport = node.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      const overflows =
+        viewport != null && node.getBoundingClientRect().height > viewport.clientHeight;
+      node.scrollIntoView({ behavior, block: overflows ? "start" : "center" });
     });
   }, []);
   const highlightKey = isManagedMode ? `m:${managedActiveIndex}` : `f:${activeChunkId}`;
