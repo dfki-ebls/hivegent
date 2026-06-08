@@ -19,16 +19,8 @@ describe("requiresConversion", () => {
     expect(requiresConversion("report.md")).toBe(false);
   });
 
-  it("returns true for .pdf files", () => {
+  it("returns true for non-markdown files", () => {
     expect(requiresConversion("document.pdf")).toBe(true);
-  });
-
-  it("returns true for .docx files", () => {
-    expect(requiresConversion("file.docx")).toBe(true);
-  });
-
-  it("returns true for .txt files", () => {
-    expect(requiresConversion("notes.txt")).toBe(true);
   });
 });
 

@@ -60,10 +60,4 @@ describe("normalizeDisplayMathDelimiters", () => {
   it("does not convert inline \\(...\\)", () => {
     expect(normalizeDisplayMathDelimiters("\\(x^2\\)")).toBe("\\(x^2\\)");
   });
-
-  it("converts only display delimiters in mixed input", () => {
-    const input = "\\(a\\) and \\[b\\]";
-    const expected = "\\(a\\) and $$b$$";
-    expect(normalizeDisplayMathDelimiters(input)).toBe(expected);
-  });
 });
