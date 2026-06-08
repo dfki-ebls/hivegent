@@ -8,6 +8,8 @@
   pyproject-nix,
   pyproject-build-systems,
   makeBinaryWrapper,
+  writeShellApplication,
+  coreutils,
   exiftool,
   ffmpeg-headless,
   jq,
@@ -94,11 +96,29 @@ let
     package = pythonSet.hivegent;
   };
 
+  # docling renders embedded VML/EMF/WMF images by shelling out to a bare
+  # `soffice` per image, all sharing one profile under $HOME.  Under the
+  # systemd unit $HOME is a persistent StateDirectory, so a `.~lock` left
+  # by a crashed/killed run survives restarts and makes every later
+  # conversion abort — docling then silently drops the image.  Give each
+  # invocation a private, throwaway profile (cleaned up on exit) so runs
+  # never collide or inherit a stale lock; $HOME is untouched, keeping the
+  # fontconfig cache persistent.
+  libreofficeHeadless = writeShellApplication {
+    name = "soffice";
+    runtimeInputs = [ coreutils ];
+    text = ''
+      profile="$(mktemp -d)"
+      trap 'rm -rf "$profile"' EXIT
+      ${lib.getExe' libreoffice "soffice"} -env:UserInstallation="file://$profile" "$@"
+    '';
+  };
+
   # - jq, pandoc, ripgrep: used by `hivegent/subprocesses/` wrappers.
   # - ffmpeg: pydub audio decoding (markitdown audio converter, non-wav).
   # - exiftool: optional audio metadata extraction in markitdown.
   # - tesseract: optional OCR backend for docling (`TesseractCliOcrOptions`).
-  # - libreoffice: docling docx→pdf conversion; Linux-only in nixpkgs.
+  # - libreofficeHeadless: docling docx→pdf conversion; Linux-only in nixpkgs.
   runtimeInputs = [
     exiftool
     ffmpeg-headless
@@ -107,13 +127,14 @@ let
     ripgrep
     tesseract
   ]
-  ++ lib.optionals stdenv.hostPlatform.isLinux [ libreoffice ];
+  ++ lib.optionals stdenv.hostPlatform.isLinux [ libreofficeHeadless ];
 in
 app.overrideAttrs (oldAttrs: {
   nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ makeBinaryWrapper ];
   postFixup = (oldAttrs.postFixup or "") + ''
     wrapProgram "$out/bin/hivegent" \
-      --prefix PATH : ${lib.makeBinPath runtimeInputs}
+      --prefix PATH : ${lib.makeBinPath runtimeInputs} \
+      --set-default LOGFIRE_IGNORE_NO_CONFIG 1
   '';
   passthru = (oldAttrs.passthru or { }) // {
     inherit runtimeInputs;
