@@ -20,6 +20,7 @@
       };
       checks = {
         inherit (config.packages) backend frontend;
+        inherit (config.packages.backend.passthru.tests) pytest;
       };
       packages = {
         backend = pkgs.callPackage ../backend {

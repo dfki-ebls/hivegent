@@ -2,6 +2,7 @@
   lib,
   stdenv,
   callPackage,
+  cacert,
   python3,
   uv2nix,
   pyproject-nix,
@@ -35,6 +36,39 @@ let
         autoPatchelfIgnoreMissingDeps = true;
       })
     );
+  packageOverlay = final: prev: {
+    hivegent = prev.hivegent.overrideAttrs (old: {
+      passthru = lib.recursiveUpdate (old.passthru or { }) {
+        tests.pytest = stdenv.mkDerivation {
+          name = "${final.hivegent.name}-pytest";
+          inherit (final.hivegent) src;
+          nativeBuildInputs = [
+            cacert
+            (mkVenv "hivegent-test-env" {
+              hivegent = [
+                "all"
+                "dev"
+              ];
+            })
+          ]
+          ++ runtimeInputs;
+          dontConfigure = true;
+          buildPhase = ''
+            runHook preBuild
+            export HOME=$(mktemp -d)
+            export NUMBA_CACHE_DIR=$HOME/.numba_cache
+            pytest
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            touch "$out"
+            runHook postInstall
+          '';
+        };
+      };
+    });
+  };
   baseSet = callPackage pyproject-nix.build.packages {
     python = python3;
   };
@@ -43,6 +77,7 @@ let
       pyproject-build-systems.overlays.wheel
       projectOverlay
       patchelfOverlay
+      packageOverlay
     ]
   );
   mkVenv =

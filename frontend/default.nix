@@ -20,6 +20,13 @@ buildNpmPackage (finalAttrs: {
   };
   sourceRoot = "${finalAttrs.src.name}/frontend";
 
+  doCheck = true;
+  checkPhase = ''
+    runHook preCheck
+    npm test
+    runHook postCheck
+  '';
+
   installPhase = ''
     runHook preInstall
 
