@@ -20,28 +20,21 @@ let
   projectOverlay = workspace.mkPyprojectOverlay {
     sourcePreference = "wheel";
   };
-  getCudaPkgs = attrs: lib.filter (name: lib.hasPrefix "nvidia-" name) (lib.attrNames attrs);
-  cudaOverlay =
+  patchelfOverlay =
     final: prev:
-    lib.genAttrs (getCudaPkgs prev) (
+    let
+      names = lib.filter (lib.hasPrefix "nvidia-") (lib.attrNames prev) ++ [
+        "torch"
+        "torchvision"
+        "kreuzberg"
+      ];
+    in
+    lib.genAttrs names (
       name:
-      prev.${name}.overrideAttrs (old: {
+      prev.${name}.overrideAttrs (_: {
         autoPatchelfIgnoreMissingDeps = true;
       })
     );
-  packageOverlay =
-    final: prev:
-    lib.mapAttrs (name: value: prev.${name}.overrideAttrs value) {
-      torch = old: {
-        autoPatchelfIgnoreMissingDeps = true;
-      };
-      torchvision = old: {
-        autoPatchelfIgnoreMissingDeps = true;
-      };
-      kreuzberg = old: {
-        autoPatchelfIgnoreMissingDeps = true;
-      };
-    };
   baseSet = callPackage pyproject-nix.build.packages {
     python = python3;
   };
@@ -49,8 +42,7 @@ let
     lib.composeManyExtensions [
       pyproject-build-systems.overlays.wheel
       projectOverlay
-      cudaOverlay
-      packageOverlay
+      patchelfOverlay
     ]
   );
   mkVenv =
@@ -67,11 +59,6 @@ let
     package = pythonSet.hivegent;
   };
 
-  # Every external CLI any code path in the backend or its dependencies can
-  # invoke. Declared explicitly (rather than relying on PATH) so the wrapped
-  # binary behaves identically across machines. Exposed via
-  # `passthru.runtimeInputs` so `shell.nix` reuses the same list.
-  #
   # - jq, pandoc, ripgrep: used by `hivegent/subprocesses/` wrappers.
   # - ffmpeg: pydub audio decoding (markitdown audio converter, non-wav).
   # - exiftool: optional audio metadata extraction in markitdown.
