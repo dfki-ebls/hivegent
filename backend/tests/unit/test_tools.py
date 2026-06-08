@@ -583,10 +583,15 @@ class TestGrepFormatting:
     def _block(n: int) -> GrepMatch:
         return GrepMatch(
             filename="f.md",
-            lines=tuple(GrepLine(line_number=i, text="x", is_match=True) for i in range(1, n + 1)),
+            lines=tuple(
+                GrepLine(line_number=i, text="x", is_match=True)
+                for i in range(1, n + 1)
+            ),
         )
 
-    def test_oversized_block_truncates_instead_of_dropping(self, tmp_path: Path) -> None:
+    def test_oversized_block_truncates_instead_of_dropping(
+        self, tmp_path: Path
+    ) -> None:
         # A single merged block larger than the budget must still show its
         # leading lines (truncated), never just a notice with a stray "--".
         tool = GrepTool(paths=tmp_path, max_formatted_chars=40)

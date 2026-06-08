@@ -72,10 +72,16 @@ def upgrade() -> None:
         sa.Column("id", sa.String(), nullable=False),
         sa.Column("display_name", sa.String(), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=_NOW,
+            nullable=False,
         ),
         sa.Column(
-            "updated_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=_NOW,
+            nullable=False,
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_groups")),
     )
@@ -99,10 +105,16 @@ def upgrade() -> None:
         sa.Column("email", sa.String(), nullable=True),
         sa.Column("display_name", sa.String(), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=_NOW,
+            nullable=False,
         ),
         sa.Column(
-            "updated_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=_NOW,
+            nullable=False,
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_users")),
         sa.UniqueConstraint("email", name=op.f("uq_users_email")),
@@ -114,10 +126,16 @@ def upgrade() -> None:
         sa.Column("title", sa.String(), nullable=True),
         sa.Column("compacted_from_id", sa.String(), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=_NOW,
+            nullable=False,
         ),
         sa.Column(
-            "updated_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=_NOW,
+            nullable=False,
         ),
         sa.ForeignKeyConstraint(
             ["compacted_from_id"],
@@ -161,10 +179,16 @@ def upgrade() -> None:
         sa.Column("pipeline", sa.String(), nullable=False),
         sa.Column("content_sha256", sa.String(), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=_NOW,
+            nullable=False,
         ),
         sa.Column(
-            "updated_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=_NOW,
+            nullable=False,
         ),
         sa.CheckConstraint(
             "(owner_user_id IS NOT NULL) <> (owner_group_id IS NOT NULL)",
@@ -222,10 +246,16 @@ def upgrade() -> None:
         sa.Column("user_id", sa.String(), nullable=False),
         sa.Column("content", sa.String(), nullable=False),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=_NOW,
+            nullable=False,
         ),
         sa.Column(
-            "updated_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=_NOW,
+            nullable=False,
         ),
         sa.ForeignKeyConstraint(
             ["user_id"],
@@ -242,7 +272,10 @@ def upgrade() -> None:
         sa.Column("kind", _MESSAGE_KIND, nullable=False),
         sa.Column("payload", JSONB(), nullable=False),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=_NOW,
+            nullable=False,
         ),
         sa.ForeignKeyConstraint(
             ["conversation_id"],

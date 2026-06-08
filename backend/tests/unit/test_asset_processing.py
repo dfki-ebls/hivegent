@@ -45,7 +45,16 @@ async def test_process_conversion_assets_captions_duplicates_once(
     written: list[str] = []
 
     async def fake_persist(
-        store, workspace_dir, filepath, content, media_type, contexts, spec, llm, *, origin
+        store,
+        workspace_dir,
+        filepath,
+        content,
+        media_type,
+        contexts,
+        spec,
+        llm,
+        *,
+        origin,
     ) -> tuple[int, str, str]:
         captioned.append((filepath, list(contexts)))
         return (1, "none", f"{filepath}.md")

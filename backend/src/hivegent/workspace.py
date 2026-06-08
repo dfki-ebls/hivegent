@@ -451,6 +451,7 @@ async def _process_conversion_assets(
     every occurrence's reference is rewritten to that representative — so an
     image is captioned once and shared, never once per occurrence.
     """
+
     def child_path(relpath: str) -> str:
         return str((PurePosixPath(assets_dir) / relpath).as_posix())
 
@@ -470,7 +471,9 @@ async def _process_conversion_assets(
             _write_original_file(
                 workspace_dir,
                 child_path(relpath),
-                sanitize_image_bytes(extracted.data, guess_image_media_type(relpath) or ""),
+                sanitize_image_bytes(
+                    extracted.data, guess_image_media_type(relpath) or ""
+                ),
             )
             continue
         key = perceptual_key(extracted.data)
@@ -1158,7 +1161,9 @@ async def generate_asset_description(
 
         media_type = guess_image_media_type(safe_name) or ""
         contexts = [f"File name: {safe_name}"]
-        parent_md = workspace / description_path_for_stem(stem_path_from_reference(safe))
+        parent_md = workspace / description_path_for_stem(
+            stem_path_from_reference(safe)
+        )
         if parent_md.exists():
             windows = image_context_windows(parent_md.read_text(encoding="utf-8"))
             contexts.extend(windows.get(asset_ref_for(assets_dir, safe_name), []))
