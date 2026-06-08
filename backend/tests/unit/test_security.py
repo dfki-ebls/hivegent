@@ -8,7 +8,9 @@ from fastapi import HTTPException, UploadFile
 
 from hivegent.config import settings
 from hivegent.security import create_safe_async_client
+from hivegent.server.common import prepare_llm_config
 from hivegent.server.operations import read_upload_file
+from hivegent.types import LlmConfig
 
 
 async def test_safe_async_client_blocks_private_ip_connections() -> None:
@@ -18,6 +20,31 @@ async def test_safe_async_client_blocks_private_ip_connections() -> None:
     async with create_safe_async_client(timeout=0.1, allow_private=False) as client:
         with pytest.raises(httpx.ConnectError, match="private or reserved"):
             await client.get("http://127.0.0.1:1")
+
+
+async def test_prepare_llm_config_trusts_configured_base_url_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Server-configured LLM URLs bypass only the user URL policy."""
+    monkeypatch.setattr(settings.security, "allow_private_urls", False)
+    monkeypatch.setattr(settings.llm, "model", "configured-model")
+    monkeypatch.setattr(settings.llm, "api_key", "")
+    monkeypatch.setattr(settings.llm, "base_url", "http://127.0.0.1:18000/v1")
+
+    resolved = await prepare_llm_config(LlmConfig())
+
+    assert resolved.base_url == "http://127.0.0.1:18000/v1"
+    assert resolved.base_url_is_trusted is True
+
+    monkeypatch.setattr(settings.llm, "base_url", "")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await prepare_llm_config(
+            LlmConfig(model="user-model", base_url="http://127.0.0.1:18000/v1")
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Unsafe LLM base_url" in str(exc_info.value.detail)
 
 
 async def test_read_upload_file_rejects_over_limit(

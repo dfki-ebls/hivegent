@@ -46,12 +46,19 @@ def _subagent_model(deps: UserDeps) -> OpenAIChatModel:
         model = llm.model
         api_key = llm.api_key
         base_url = llm.base_url
+        allow_private_base_url = llm.base_url_is_trusted
     else:
         model = settings.llm.model
         api_key = settings.llm.api_key
         base_url = settings.llm.base_url or None
+        allow_private_base_url = bool(base_url)
 
-    return create_openai_chat_model(model, api_key=api_key, base_url=base_url)
+    return create_openai_chat_model(
+        model,
+        api_key=api_key,
+        base_url=base_url,
+        allow_private_base_url=allow_private_base_url,
+    )
 
 
 @dataclass(frozen=True, slots=True)

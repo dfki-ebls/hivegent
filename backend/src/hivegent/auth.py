@@ -25,7 +25,7 @@ from pydantic import AnyHttpUrl, ValidationError
 
 from .config import ADMIN_ROLE, sanitize_user_id, settings
 from .db.groups import list_group_ids
-from .http_client import get_shared_http_client
+from .http_client import get_http_client
 from .types import User
 
 __all__ = [
@@ -172,7 +172,7 @@ class JWKSFetcher:
         jwks_uri = str(config.jwks_uri)
 
         try:
-            response = await get_shared_http_client().get(
+            response = await get_http_client(allow_private=True).get(
                 jwks_uri, timeout=settings.auth.jwks_timeout_seconds
             )
             response.raise_for_status()

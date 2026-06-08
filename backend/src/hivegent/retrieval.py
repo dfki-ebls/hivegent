@@ -41,7 +41,7 @@ from .db import documents as db_documents
 from .db.engine import session
 from .db.models import Chunk, Document, IndexState
 from .entries import description_path_for_stem, original_path_for_stem
-from .http_client import get_shared_http_client
+from .http_client import get_http_client
 from .llm import create_openai_client
 from .store import Casebase
 from .tools.base import SearchPathFilterFunc, apply_prefix
@@ -102,7 +102,7 @@ def _build_reranker() -> AsyncRetrieverFunc[str, str, float] | None:
     return cbrkit.retrieval.rerank.http(
         model=cfg.model,
         url=f"{cfg.base_url.rstrip('/')}/rerank",
-        client=get_shared_http_client(),
+        client=get_http_client(allow_private=True),
         api_key=cfg.api_key or None,
         top_n=cfg.top_n,
     )
@@ -123,6 +123,7 @@ def _build_embedding_func() -> cbrkit.typing.BatchConversionFunc[
             client=create_openai_client(
                 api_key=cfg.api_key or None,
                 base_url=cfg.base_url or None,
+                allow_private_base_url=bool(cfg.base_url),
             ),
         )
     else:

@@ -28,11 +28,12 @@ __all__ = [
 async def prepare_llm_config(
     llm: LlmConfig, *, default_model: str | None = None
 ) -> LlmConfig:
-    """Resolve defaults and run the SSRF check on ``base_url``.
+    """Resolve defaults and check user-provided ``base_url`` values.
 
     Centralizes the request-boundary check so each route can stay a
     one-liner. Pydantic only checks URL shape; this is the async hook
-    that actually resolves the host and rejects private targets.
+    that actually resolves the host and rejects private user targets.
+    Server-configured base URLs are trusted operator input.
 
     *default_model* defaults to :attr:`settings.llm.aux_model` so the many
     ancillary routes (titles, compaction, image alt-text during upload)
@@ -40,12 +41,11 @@ async def prepare_llm_config(
     """
     if default_model is None:
         default_model = settings.llm.aux_model
-    resolved = resolve_llm_config(llm, default_model=default_model)
     try:
-        await validate_optional_external_url(resolved.base_url, "LLM base_url")
+        await validate_optional_external_url(llm.base_url, "LLM base_url")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return resolved
+    return resolve_llm_config(llm, default_model=default_model)
 
 
 def parse_document_filters(

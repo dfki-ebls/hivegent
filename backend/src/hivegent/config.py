@@ -315,9 +315,9 @@ class SecuritySettings(BaseModel):
 
     ``allow_private_urls`` opens the SSRF filter so user-supplied URLs
     (LLM ``base_url``, MCP server URLs, ``WebFetch``) may dial private
-    or loopback addresses. Default off; turn on only for trusted
-    self-hosted deployments where every authenticated user is already
-    allowed to reach the same network.
+    or loopback addresses. Default off, turn on only when authenticated
+    users are allowed to reach the same network. Server-configured URLs
+    are trusted operator input and do not need this setting.
 
     CORS, security headers, rate limiting, and body-size caps are
     enforced by the Caddy reverse proxy, not here.

@@ -45,7 +45,7 @@ async def test_get_jwks_uses_jwks_uri_from_discovery_doc(
 
     fetcher = JWKSFetcher()
     mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    monkeypatch.setattr(auth, "get_shared_http_client", lambda: mock_client)
+    monkeypatch.setattr(auth, "get_http_client", lambda **_: mock_client)
 
     try:
         await fetcher.get_jwks()

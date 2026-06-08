@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal, Self, get_args
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from pydantic_ai.settings import ThinkingEffort
 
 from .chunkers import ChunkingSpec
@@ -139,15 +139,20 @@ class User:
 class LlmConfig(BaseModel):
     """Client-provided LLM configuration overrides.
 
-    ``base_url`` runs through the SSRF filter (see
-    :mod:`hivegent.security`). Operators that point at a self-hosted LLM
-    on a private network must set ``HIVEGENT_SECURITY__ALLOW_PRIVATE_URLS=1``;
-    this is independent of ``HIVEGENT_AUTH__ENABLE``.
+    User-provided ``base_url`` values run through the SSRF filter.
+    Server-configured ``base_url`` values are trusted operator input.
     """
 
     model: str = ""
     api_key: str = ""
     base_url: str | None = None
+
+    _base_url_is_trusted: bool = PrivateAttr(default=False)
+
+    @property
+    def base_url_is_trusted(self) -> bool:
+        """Whether ``base_url`` came from server configuration."""
+        return self._base_url_is_trusted
 
     @model_validator(mode="after")
     def _check_base_url(self) -> Self:
@@ -160,11 +165,14 @@ def resolve_llm_config(
     llm: LlmConfig, *, default_model: str | None = None
 ) -> LlmConfig:
     """Apply server defaults to a client-provided LLM configuration."""
-    return LlmConfig(
+    configured_base_url = settings.llm.base_url or None
+    resolved = LlmConfig(
         model=llm.model or default_model or settings.llm.model,
         api_key=llm.api_key or settings.llm.api_key,
-        base_url=llm.base_url or settings.llm.base_url or None,
+        base_url=llm.base_url or configured_base_url,
     )
+    resolved._base_url_is_trusted = not llm.base_url and configured_base_url is not None
+    return resolved
 
 
 class AssetProcessingMode(str, Enum):
