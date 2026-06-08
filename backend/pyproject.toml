@@ -77,7 +77,6 @@ reportUninitializedInstanceVariable = false
 ignore_no_config = true
 
 [tool.pytest]
-markers = ["slow: marks tests as slow (deselect with -m 'not slow')"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 

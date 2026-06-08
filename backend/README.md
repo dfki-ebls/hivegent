@@ -29,7 +29,7 @@ The migration tree lives inside the package at `src/hivegent/migrations/`, so re
 Every time the API server starts it brings the schema to head before accepting traffic; no separate deploy step is required.
 After migrations apply, the lifespan also verifies that the live `chunks.vector` dimension equals `settings.embedding.resolve_dimension()` and refuses to boot on mismatch — a model change without a matching follow-up revision fails loudly at startup, not mid-request.
 
-The unit test tree is hermetic: no test touches a live database.
+The entire test tree is stateless: no test touches a live database, only a temporary filesystem and `monkeypatch`ed module state.
 Live-DB workflows (Alembic, the running server, manual smoke tests) cover the SQL surface end-to-end.
 
 ### Generating a new revision

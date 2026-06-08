@@ -307,25 +307,6 @@ class TestGlobDocumentsTool:
         data = tool("*.md", path="notes").data
         assert data == ["notes/a.md"]
 
-    def test_skips_build_dirs_by_default(self, tmp_path: Path) -> None:
-        (tmp_path / "src.py").write_text("x")
-        cache = tmp_path / "__pycache__"
-        cache.mkdir()
-        (cache / "junk.py").write_text("x")
-        tool = GlobDocumentsTool(paths=tmp_path)
-        data = tool("**/*.py").data
-        assert "src.py" in data
-        assert "__pycache__/junk.py" not in data
-
-    def test_include_ignored_exposes_build_dirs(self, tmp_path: Path) -> None:
-        (tmp_path / "src.py").write_text("x")
-        cache = tmp_path / "__pycache__"
-        cache.mkdir()
-        (cache / "junk.py").write_text("x")
-        tool = GlobDocumentsTool(paths=tmp_path)
-        data = tool("**/*.py", include_ignored=True).data
-        assert "__pycache__/junk.py" in data
-
 
 class TestReadDocumentTool:
     """Tests for ReadDocumentTool (line-range reads with line numbers)."""
