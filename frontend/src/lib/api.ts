@@ -656,6 +656,16 @@ export async function getConversation(conversationId: string): Promise<Conversat
   return ConversationSummarySchema.parse(data);
 }
 
+/** Download a conversation's raw database payloads as a JSON blob (debugging aid). */
+export async function exportConversation(conversationId: string): Promise<Blob> {
+  const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}/export`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Export failed" }));
+    throw new Error(error.detail || "Export failed");
+  }
+  return res.blob();
+}
+
 export async function deleteConversation(conversationId: string): Promise<void> {
   const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}`, {
     method: "DELETE",

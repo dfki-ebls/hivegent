@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ._common import affected_rows, new_id
 from .engine import session
@@ -37,11 +38,13 @@ from .users import ensure_user
 
 __all__ = [
     "ConversationData",
+    "ConversationExport",
     "ConversationSummary",
     "append_messages",
     "conversation_exists",
     "create_compacted_conversation",
     "delete_all_conversations",
+    "export_conversation",
     "list_conversations",
     "load_conversation",
     "load_messages",
@@ -83,6 +86,31 @@ class ConversationSummary(BaseModel):
     updated_at: datetime
     message_count: int
     compacted_from: str | None = None
+
+
+class ExportMessage(BaseModel):
+    """One stored turn, dumped verbatim from the database for export."""
+
+    idx: int
+    kind: MessageKind
+    created_at: datetime
+    payload: dict[str, Any]
+
+
+class ConversationExport(BaseModel):
+    """A whole conversation with its raw message payloads for debugging.
+
+    Unlike :class:`ConversationData`, the payloads are passed through
+    untouched (no ``ModelMessage`` round-trip), so the export mirrors
+    exactly what is stored in the ``messages`` table.
+    """
+
+    id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    compacted_from: str | None = None
+    messages: list[ExportMessage] = Field(default_factory=list)
 
 
 # ─── Codecs ────────────────────────────────────────────────────────────
@@ -141,13 +169,23 @@ def _extract_title(messages: Sequence[ModelMessage]) -> str | None:
 # ─── Reads ─────────────────────────────────────────────────────────────
 
 
+async def _get_owned(
+    s: AsyncSession, user_id: str, conversation_id: str
+) -> Conversation | None:
+    """Return the conversation if it exists and is owned by ``user_id``."""
+    conv = await s.get(Conversation, conversation_id)
+    if conv is None or conv.user_id != user_id:
+        return None
+    return conv
+
+
 async def load_conversation(
     user_id: str, conversation_id: str
 ) -> ConversationData | None:
     """Return full conversation data, or ``None`` if missing or not owned."""
     async with session() as s:
-        conv = await s.get(Conversation, conversation_id)
-        if conv is None or conv.user_id != user_id:
+        conv = await _get_owned(s, user_id, conversation_id)
+        if conv is None:
             return None
         rows = (
             (
@@ -167,6 +205,43 @@ async def load_conversation(
         updated_at=conv.updated_at,
         messages=_load_messages(rows),
         compacted_from=conv.compacted_from_id,
+    )
+
+
+async def export_conversation(
+    user_id: str, conversation_id: str
+) -> ConversationExport | None:
+    """Return a conversation with its raw message payloads, or ``None``.
+
+    Intended for debugging exports: payloads are returned exactly as
+    stored, without the ``ModelMessage`` validation round-trip.
+    """
+    async with session() as s:
+        conv = await _get_owned(s, user_id, conversation_id)
+        if conv is None:
+            return None
+        rows = (
+            await s.execute(
+                select(
+                    Message.idx,
+                    Message.kind,
+                    Message.created_at,
+                    Message.payload,
+                )
+                .where(Message.conversation_id == conversation_id)
+                .order_by(Message.idx)
+            )
+        ).all()
+    return ConversationExport(
+        id=conv.id,
+        title=conv.title or "",
+        created_at=conv.created_at,
+        updated_at=conv.updated_at,
+        compacted_from=conv.compacted_from_id,
+        messages=[
+            ExportMessage(idx=idx, kind=kind, created_at=created_at, payload=payload)
+            for idx, kind, created_at, payload in rows
+        ],
     )
 
 

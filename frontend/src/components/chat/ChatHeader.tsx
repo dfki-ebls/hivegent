@@ -1,4 +1,4 @@
-import { HistoryIcon, MessageSquareIcon, Minimize2, SquarePen } from "lucide-react";
+import { DownloadIcon, HistoryIcon, MessageSquareIcon, Minimize2, SquarePen } from "lucide-react";
 import { TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 
@@ -8,6 +8,7 @@ interface ChatHeaderProps {
   onCompact: () => void;
   onNewChat: () => void;
   onHistoryClick: () => void;
+  onExport?: () => void;
 }
 
 export function ChatHeader({
@@ -16,6 +17,7 @@ export function ChatHeader({
   onCompact,
   onNewChat,
   onHistoryClick,
+  onExport,
 }: ChatHeaderProps) {
   return (
     <div className="shrink-0 border-b px-4 flex items-center justify-between h-15">
@@ -30,6 +32,16 @@ export function ChatHeader({
         </TabsTrigger>
       </TabsList>
       <div className="flex items-center gap-1">
+        {onExport && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onExport}
+            title="Export conversation as JSON"
+          >
+            <DownloadIcon className="h-4 w-4" />
+          </Button>
+        )}
         {hasMessages && (
           <Button
             variant="ghost"

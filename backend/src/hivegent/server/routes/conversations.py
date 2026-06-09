@@ -32,6 +32,7 @@ from ...db.conversations import (
     append_messages,
     conversation_exists,
     delete_all_conversations,
+    export_conversation,
     list_conversations,
     load_conversation,
     load_messages,
@@ -73,6 +74,7 @@ from ..common import (
     prepare_llm_config,
     user_store,
 )
+from ..operations import attachment_disposition
 
 __all__ = ["router"]
 
@@ -259,6 +261,29 @@ async def get_conversation_messages(
     if not messages:
         return []
     return VercelAIAdapter.dump_messages(messages)
+
+
+@router.get("/conversations/{conversation_id}/export")
+async def export_conversation_route(
+    conversation_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    """Export a conversation as a downloadable JSON dump of its raw payloads.
+
+    Read-only debugging aid: there is no import counterpart.
+    """
+    export = await export_conversation(user.id, conversation_id)
+    if export is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return Response(
+        content=export.model_dump_json(indent=2),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": attachment_disposition(
+                f"conversation-{conversation_id}.json"
+            )
+        },
+    )
 
 
 async def _parse_chat_config(request: Request) -> ChatRequestConfig:

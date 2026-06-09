@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { type FileUIPart } from "ai";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { AiDisclosure } from "@/components/chat/AiDisclosure";
 import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Composer } from "@/components/chat/composer/Composer";
@@ -17,6 +18,8 @@ import { useHivegentChat } from "@/hooks/chat/use-hivegent-chat";
 import { useMessageEditing } from "@/hooks/chat/use-message-editing";
 import { useSteeringQueue } from "@/hooks/chat/use-steering-queue";
 import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
+import { exportConversation } from "@/lib/api";
+import { downloadBlob } from "@/lib/download";
 import { getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
 import { type AgentMode, type ReasoningEffort } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
@@ -161,6 +164,15 @@ export function ChatSidebar({
     await navigate({ to: "/" });
   }, [clearAll, navigate]);
 
+  const handleExport = useCallback(async () => {
+    try {
+      const blob = await exportConversation(id);
+      downloadBlob(blob, `conversation-${id}.json`);
+    } catch {
+      toast.error("Failed to export conversation");
+    }
+  }, [id]);
+
   const handleConversationSelect = useCallback(
     async (conversationId: string) => {
       clearAll();
@@ -190,6 +202,7 @@ export function ChatSidebar({
         onCompact={() => compact()}
         onNewChat={handleNewChat}
         onHistoryClick={() => fetchConversations()}
+        onExport={draft ? undefined : handleExport}
       />
 
       <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">

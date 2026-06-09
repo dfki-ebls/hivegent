@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PERSONAL_SCOPE, buildAuxLlmConfig, canonicalPath, uploadDocument } from "../../lib/api";
 import type { PipelineSpec } from "../../lib/types";
+import { downloadBlob } from "../../lib/download";
 import { collectFilePaths } from "../../lib/utils";
 import { DEFAULT_SCOPE_STATE, useDocumentsStore } from "../../stores/documents-store";
 import { useSettingsStore } from "../../stores/settings-store";
@@ -163,12 +164,8 @@ export function ScopeSection({
       try {
         const { downloadOriginal } = await import("../../lib/api");
         const blob = await downloadOriginal(toCanonical(path));
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = docsByFilename.get(path)?.original_path?.split("/").pop() ?? "original";
-        a.click();
-        URL.revokeObjectURL(url);
+        const filename = docsByFilename.get(path)?.original_path?.split("/").pop() ?? "original";
+        downloadBlob(blob, filename);
       } catch {
         // silently ignore download errors
       }
