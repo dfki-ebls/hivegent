@@ -49,6 +49,7 @@ from .chunks import (
     chunk_and_index_document,
     delete_document as _delete_chunked_document,
 )
+from .concurrency import shield_to_completion
 from .config import content_digest, content_hash, sanitize_document_path, settings
 from .converters import (
     ConversionPipeline,
@@ -66,6 +67,7 @@ from .converters.asset_processing import (
 from .converters.base import (
     DOCUMENT_EXTENSION,
     ExtractedImage,
+    decode_text,
     is_external_ref,
     is_image_suffix,
     is_markdown_suffix,
@@ -233,15 +235,16 @@ async def _write_markdown_projection(
 ) -> tuple[int, str]:
     """Write markdown content and persist chunks (with vectors) in one tx.
 
-    The chunk + embed + SQL upsert step is shielded so a cancel cannot
-    leave the workspace markdown without its SQL rows.  A partial
-    markdown file on disk is caught by the startup reconciler.
+    The chunk + embed + SQL upsert step runs to completion even under a cancel
+    (:func:`shield_to_completion`), so it finishes while the casebase lock is
+    still held and cannot leave the workspace markdown without its SQL rows.  A
+    partial markdown file from a hard crash is caught by the startup reconciler.
     """
     workspace_dir = store.workspace_dir(settings.data_dir)
     full_path = workspace_dir / description_path
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
-    chunked = await asyncio.shield(
+    chunked = await shield_to_completion(
         chunk_and_index_document(
             store,
             description_path,
@@ -482,6 +485,53 @@ async def _upload_binary_stub_locked(
     )
 
 
+async def _upload_unconvertible_locked(
+    store: Casebase,
+    filepath: str,
+    content: bytes,
+    spec: PipelineSpec,
+    *,
+    origin: EntryOrigin,
+) -> UploadCompleteEvent:
+    """AUTO fallback when no converter fits the file.
+
+    Bytes that decode as UTF-8 are indexed verbatim as a plain-text document so
+    their content stays searchable; genuinely binary bytes get a metadata-only
+    stub. The caller has already written the original file to the workspace.
+    """
+    text = decode_text(content)
+    if text is None:
+        return await _upload_binary_stub_locked(
+            store, filepath, content, spec, origin=origin, original_written=True
+        )
+    stem_path = stem_path_from_reference(filepath)
+    description_path = description_path_for_stem(stem_path)
+    chunk_count, chunking_used = await _write_markdown_projection(
+        store,
+        description_path,
+        text,
+        spec,
+        entry_metadata=_build_entry_metadata(
+            stem_path=stem_path,
+            description_path=description_path,
+            original_path=filepath,
+            assets_dir=None,
+            entry_kind="convertible",
+            origin=origin,
+            generated_by="converter",
+        ),
+    )
+    return UploadCompleteEvent(
+        filename=filepath,
+        converted_filename=description_path,
+        size_bytes=len(content),
+        conversion_pipeline_used=ConversionPipeline.TEXT_CHEF.value,
+        chunk_count=chunk_count,
+        chunking_pipeline_used=chunking_used,
+        message="Document uploaded as plain text",
+    )
+
+
 async def _process_conversion_assets(
     store: Casebase,
     workspace_dir: Path,
@@ -583,13 +633,8 @@ async def _upload_convertible_locked(
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
     except (ImportError, ValueError) as exc:
         if conversion_pipeline == ConversionPipeline.AUTO:
-            return await _upload_binary_stub_locked(
-                store,
-                filepath,
-                content,
-                spec,
-                origin=origin,
-                original_written=True,
+            return await _upload_unconvertible_locked(
+                store, filepath, content, spec, origin=origin
             )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -609,14 +654,13 @@ async def _upload_convertible_locked(
             span.set_attribute("image_count", len(result.images))
     except Exception as exc:
         if conversion_pipeline == ConversionPipeline.AUTO:
-            logger.warning("Falling back to stub markdown for %s: %s", filepath, exc)
-            return await _upload_binary_stub_locked(
-                store,
+            logger.warning(
+                "AUTO conversion failed for %s, indexing as plain text or stub: %s",
                 filepath,
-                content,
-                spec,
-                origin=origin,
-                original_written=True,
+                exc,
+            )
+            return await _upload_unconvertible_locked(
+                store, filepath, content, spec, origin=origin
             )
         raise HTTPException(
             status_code=500,
@@ -758,11 +802,15 @@ async def _safe_delete_locked(store: Casebase, safe: str) -> None:
 async def _rollback_on_failure(
     store: Casebase, touched: Sequence[str]
 ) -> AsyncIterator[None]:
-    """Run a block; on any exception, shield-delete every entry in *touched* and re-raise.
+    """Run a block; on any exception, delete every entry in *touched* and re-raise.
 
     Caller must hold the casebase lock.  *touched* may be a live list that
     the body appends to — it is read on exit, so accumulating call sites
-    work as expected.
+    work as expected.  The rollback runs to completion even when the failure is
+    a cancellation (:func:`shield_to_completion`), so the partial artifacts are
+    gone before the caller's lock is released — a bare ``asyncio.shield`` would
+    detach the rollback and let a subsequent operation acquire the lock and race
+    the still-running deletes.
     """
     try:
         yield
@@ -772,7 +820,7 @@ async def _rollback_on_failure(
             for safe in touched:
                 await _safe_delete_locked(store, safe)
 
-        await asyncio.shield(_rollback())
+        await shield_to_completion(_rollback())
         raise
 
 
@@ -840,7 +888,7 @@ async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
         # companion-metadata drift.  No re-embed.
         return await _refresh_unchanged_entry(store, state, entry_metadata, stat)
 
-    await asyncio.shield(
+    await shield_to_completion(
         chunk_and_index_document(
             store,
             resolved.description_path,
@@ -1024,14 +1072,15 @@ async def rechunk(
 ) -> DocumentMetadata:
     """Re-chunk an existing markdown document.
 
-    The chunk + embed + SQL upsert is shielded so a cancel mid-write
-    cannot tear the workspace markdown out of sync with SQL.
+    The chunk + embed + SQL upsert runs to completion even on a cancel
+    (:func:`shield_to_completion`), so it finishes under the lock and cannot
+    tear the workspace markdown out of sync with SQL.
     """
     spec = spec or PipelineSpec()
     async with store_lock(store):
         file_path = store.workspace_dir(settings.data_dir) / safe
         text = _read_text_file(file_path)
-        return await asyncio.shield(
+        return await shield_to_completion(
             chunk_and_index_document(
                 store, safe, text, spec.chunking, stat=ContentStat.from_path(file_path)
             )
@@ -1079,7 +1128,7 @@ async def _replace_text_locked(
     _enforce_file_size(content.encode("utf-8"))
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
-    await asyncio.shield(
+    await shield_to_completion(
         chunk_and_index_document(
             store, safe, content, stat=ContentStat.from_path(full_path)
         )
@@ -1163,78 +1212,93 @@ async def write_document_text(
 
 
 async def delete_document(store: Casebase, safe: str) -> None:
-    """Delete a logical entry and all of its files."""
+    """Delete a logical entry and all of its files.
+
+    The file + SQL removal runs to completion under the lock even on a cancel
+    (:func:`shield_to_completion`) so it cannot leave files without their rows
+    or rows without their files.
+    """
     async with store_lock(store):
-        await _delete_single_locked(store, safe)
+        await shield_to_completion(_delete_single_locked(store, safe))
+
+
+async def _move_document_locked(
+    store: Casebase, src: str, dst: str
+) -> MoveDocumentResponse:
+    """Move a logical entry's files and SQL rows. Caller holds the lock."""
+    workspace_dir = store.workspace_dir(settings.data_dir)
+
+    metadata = await db_documents.get_document(store, src)
+    if not metadata:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    src_stem = metadata.stem_path or stem_path_from_reference(src)
+    dst_stem = stem_path_from_reference(dst)
+    if src_stem != dst_stem and entry_exists(workspace_dir, dst):
+        raise HTTPException(status_code=409, detail="Destination already exists")
+
+    src_description = metadata.description_path or description_path_for_stem(src_stem)
+    dst_description = description_path_for_stem(dst_stem)
+    src_description_path = workspace_dir / src_description
+    if not src_description_path.exists():
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    dst_description_path = workspace_dir / dst_description
+    dst_description_path.parent.mkdir(parents=True, exist_ok=True)
+    src_description_path.rename(dst_description_path)
+    cleanup_empty_parents(src_description_path, workspace_dir)
+
+    if metadata.original_path:
+        src_original_path = workspace_dir / metadata.original_path
+        if src_original_path.exists():
+            dst_original = f"{dst_stem}{src_original_path.suffix}"
+            dst_original_path = workspace_dir / dst_original
+            dst_original_path.parent.mkdir(parents=True, exist_ok=True)
+            src_original_path.rename(dst_original_path)
+            cleanup_empty_parents(src_original_path, workspace_dir)
+
+    src_assets_dir = metadata.assets_dir
+    dst_assets_dir: str | None = None
+    if src_assets_dir:
+        dst_assets_dir = assets_dir_for_stem(dst_stem)
+        src_assets_path = workspace_dir / src_assets_dir
+        if src_assets_path.exists():
+            dst_assets_path = workspace_dir / dst_assets_dir
+            dst_assets_path.parent.mkdir(parents=True, exist_ok=True)
+            src_assets_path.rename(dst_assets_path)
+            cleanup_empty_parents(src_assets_path, workspace_dir)
+
+            src_assets_name = PurePosixPath(src_assets_dir).name
+            dst_assets_name = PurePosixPath(dst_assets_dir).name
+            if src_assets_name != dst_assets_name:
+                body = dst_description_path.read_text(encoding="utf-8")
+                body = body.replace(f"{src_assets_name}/", f"{dst_assets_name}/")
+                dst_description_path.write_text(body, encoding="utf-8")
+
+    await db_documents.move_subtree(store, src_stem, dst_stem)
+    # The described/extracted asset children live under the ``.assets``
+    # sibling of ``src_stem``, which the parent subtree filter (matching
+    # ``src_stem`` / ``src_stem/…``) never covers — move their rows too so
+    # nothing stays searchable at a path that no longer exists.
+    if src_assets_dir and dst_assets_dir:
+        await db_documents.move_subtree(store, src_assets_dir, dst_assets_dir)
+
+    return MoveDocumentResponse(
+        source=src,
+        destination=dst_description,
+        message="Document moved successfully",
+    )
 
 
 async def move_document(store: Casebase, src: str, dst: str) -> MoveDocumentResponse:
-    """Move a logical entry, its original, and its child-assets subtree."""
+    """Move a logical entry, its original, and its child-assets subtree.
+
+    The FS renames + SQL move run to completion under the lock even on a cancel
+    (:func:`shield_to_completion`) so a mid-move cancellation cannot leave the
+    renamed files pointing at stale SQL rows.
+    """
     async with store_lock(store):
-        workspace_dir = store.workspace_dir(settings.data_dir)
-
-        metadata = await db_documents.get_document(store, src)
-        if not metadata:
-            raise HTTPException(status_code=404, detail="Document not found")
-
-        src_stem = metadata.stem_path or stem_path_from_reference(src)
-        dst_stem = stem_path_from_reference(dst)
-        if src_stem != dst_stem and entry_exists(workspace_dir, dst):
-            raise HTTPException(status_code=409, detail="Destination already exists")
-
-        src_description = metadata.description_path or description_path_for_stem(
-            src_stem
-        )
-        dst_description = description_path_for_stem(dst_stem)
-        src_description_path = workspace_dir / src_description
-        if not src_description_path.exists():
-            raise HTTPException(status_code=404, detail="Document not found")
-
-        dst_description_path = workspace_dir / dst_description
-        dst_description_path.parent.mkdir(parents=True, exist_ok=True)
-        src_description_path.rename(dst_description_path)
-        cleanup_empty_parents(src_description_path, workspace_dir)
-
-        if metadata.original_path:
-            src_original_path = workspace_dir / metadata.original_path
-            if src_original_path.exists():
-                dst_original = f"{dst_stem}{src_original_path.suffix}"
-                dst_original_path = workspace_dir / dst_original
-                dst_original_path.parent.mkdir(parents=True, exist_ok=True)
-                src_original_path.rename(dst_original_path)
-                cleanup_empty_parents(src_original_path, workspace_dir)
-
-        src_assets_dir = metadata.assets_dir
-        dst_assets_dir: str | None = None
-        if src_assets_dir:
-            dst_assets_dir = assets_dir_for_stem(dst_stem)
-            src_assets_path = workspace_dir / src_assets_dir
-            if src_assets_path.exists():
-                dst_assets_path = workspace_dir / dst_assets_dir
-                dst_assets_path.parent.mkdir(parents=True, exist_ok=True)
-                src_assets_path.rename(dst_assets_path)
-                cleanup_empty_parents(src_assets_path, workspace_dir)
-
-                src_assets_name = PurePosixPath(src_assets_dir).name
-                dst_assets_name = PurePosixPath(dst_assets_dir).name
-                if src_assets_name != dst_assets_name:
-                    body = dst_description_path.read_text(encoding="utf-8")
-                    body = body.replace(f"{src_assets_name}/", f"{dst_assets_name}/")
-                    dst_description_path.write_text(body, encoding="utf-8")
-
-        await db_documents.move_subtree(store, src_stem, dst_stem)
-        # The described/extracted asset children live under the ``.assets``
-        # sibling of ``src_stem``, which the parent subtree filter (matching
-        # ``src_stem`` / ``src_stem/…``) never covers — move their rows too so
-        # nothing stays searchable at a path that no longer exists.
-        if src_assets_dir and dst_assets_dir:
-            await db_documents.move_subtree(store, src_assets_dir, dst_assets_dir)
-
-        return MoveDocumentResponse(
-            source=src,
-            destination=dst_description,
-            message="Document moved successfully",
-        )
+        return await shield_to_completion(_move_document_locked(store, src, dst))
 
 
 def _resolve_asset_path(assets_path: Path, asset_name: str) -> tuple[str, Path]:
@@ -1364,47 +1428,69 @@ async def create_directory(store: Casebase, path: str) -> None:
         directory_path.mkdir(parents=True, exist_ok=True)
 
 
+async def _move_directory_locked(
+    store: Casebase, src: str, dst: str
+) -> MoveDirectoryResponse:
+    """Move a directory's files and SQL rows. Caller holds the lock."""
+    workspace_dir = store.workspace_dir(settings.data_dir)
+
+    src_dir = workspace_dir / src
+    if not src_dir.exists() or not src_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Directory not found")
+    dst_dir = workspace_dir / dst
+    if dst_dir.exists():
+        raise HTTPException(status_code=409, detail="Destination already exists")
+
+    files_moved = sum(1 for file_path in src_dir.rglob("*") if file_path.is_file())
+    dst_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src_dir), str(dst_dir))
+    cleanup_empty_parents(src_dir, workspace_dir)
+
+    await db_documents.move_subtree(store, src, dst)
+
+    return MoveDirectoryResponse(
+        source=src,
+        destination=dst,
+        files_moved=files_moved,
+        message="Directory moved successfully",
+    )
+
+
 async def move_directory(store: Casebase, src: str, dst: str) -> MoveDirectoryResponse:
-    """Move or rename a workspace directory; document rows follow via SQL."""
+    """Move or rename a workspace directory; document rows follow via SQL.
+
+    The FS move + SQL move run to completion under the lock even on a cancel
+    (:func:`shield_to_completion`) so the directory and its rows cannot drift
+    apart.
+    """
     async with store_lock(store):
-        workspace_dir = store.workspace_dir(settings.data_dir)
+        return await shield_to_completion(_move_directory_locked(store, src, dst))
 
-        src_dir = workspace_dir / src
-        if not src_dir.exists() or not src_dir.is_dir():
-            raise HTTPException(status_code=404, detail="Directory not found")
-        dst_dir = workspace_dir / dst
-        if dst_dir.exists():
-            raise HTTPException(status_code=409, detail="Destination already exists")
 
-        files_moved = sum(1 for file_path in src_dir.rglob("*") if file_path.is_file())
-        dst_dir.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src_dir), str(dst_dir))
-        cleanup_empty_parents(src_dir, workspace_dir)
-
-        await db_documents.move_subtree(store, src, dst)
-
-        return MoveDirectoryResponse(
-            source=src,
-            destination=dst,
-            files_moved=files_moved,
-            message="Directory moved successfully",
-        )
+async def _delete_directory_locked(store: Casebase, path: str) -> int:
+    """Delete a directory's files and SQL rows. Caller holds the lock."""
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    directory_path = workspace_dir / path
+    if not directory_path.exists() or not directory_path.is_dir():
+        raise HTTPException(status_code=404, detail="Directory not found")
+    files_deleted = sum(
+        1 for file_path in directory_path.rglob("*") if file_path.is_file()
+    )
+    shutil.rmtree(directory_path)
+    cleanup_empty_parents(directory_path, workspace_dir)
+    await db_documents.delete_subtree(store, path)
+    return files_deleted
 
 
 async def delete_directory(store: Casebase, path: str) -> int:
-    """Delete a workspace directory; matching SQL documents cascade out."""
+    """Delete a workspace directory; matching SQL documents cascade out.
+
+    The FS removal + SQL delete run to completion under the lock even on a
+    cancel (:func:`shield_to_completion`) so the directory cannot vanish while
+    its rows linger.
+    """
     async with store_lock(store):
-        workspace_dir = store.workspace_dir(settings.data_dir)
-        directory_path = workspace_dir / path
-        if not directory_path.exists() or not directory_path.is_dir():
-            raise HTTPException(status_code=404, detail="Directory not found")
-        files_deleted = sum(
-            1 for file_path in directory_path.rglob("*") if file_path.is_file()
-        )
-        shutil.rmtree(directory_path)
-        cleanup_empty_parents(directory_path, workspace_dir)
-        await db_documents.delete_subtree(store, path)
-        return files_deleted
+        return await shield_to_completion(_delete_directory_locked(store, path))
 
 
 async def delete_all(store: Casebase) -> None:

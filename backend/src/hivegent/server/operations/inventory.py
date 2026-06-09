@@ -1,5 +1,8 @@
 """Inventory and tree-building helpers for document stores."""
 
+import os
+import stat
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
@@ -18,16 +21,51 @@ from ...types import (
 __all__ = ["build_tree_response", "list_documents_for_store"]
 
 
-def _logical_entries_for_directory(
-    dir_path: Path,
+def _safe_iterdir(dir_path: Path) -> list[Path]:
+    """List *dir_path* sorted, tolerating it vanishing mid-scan.
+
+    The inventory endpoints walk the workspace read-only, without the casebase
+    lock, so a concurrent locked mutation (a delete or move issuing
+    ``rmtree``/``unlink``/``rename``) can remove entries underfoot. Returning an
+    empty listing for a vanished directory keeps these reads from raising and
+    surfacing as a 500.
+    """
+    try:
+        return sorted(dir_path.iterdir())
+    except OSError:
+        return []
+
+
+def _scan_directory(dir_path: Path) -> tuple[list[Path], dict[Path, os.stat_result]]:
+    """List *dir_path* once, returning its subdirectories and stat'd files.
+
+    A single listing plus one ``stat`` per child classifies entries into
+    subdirectories and ``{regular file: its stat}``; an entry that vanishes
+    between listing and stat is dropped (see :func:`_safe_iterdir`). Both tree
+    walkers share this so neither re-lists nor re-stats a directory.
+    """
+    subdirs: list[Path] = []
+    file_stats: dict[Path, os.stat_result] = {}
+    for item in _safe_iterdir(dir_path):
+        try:
+            st = item.stat()
+        except OSError:
+            continue
+        if stat.S_ISDIR(st.st_mode):
+            subdirs.append(item)
+        elif stat.S_ISREG(st.st_mode):
+            file_stats[item] = st
+    return subdirs, file_stats
+
+
+def _entries_from_files(
+    file_stats: Mapping[Path, os.stat_result],
     root_path: Path,
     chunk_counts: dict[str, int],
 ) -> list[DocumentInfo]:
-    """Group sibling files into logical stem entries for one directory."""
+    """Group already-stat'd sibling files into logical stem entries."""
     grouped: dict[str, list[Path]] = {}
-    for item in sorted(dir_path.iterdir()):
-        if not item.is_file():
-            continue
+    for item in file_stats:
         relative = item.relative_to(root_path)
         stem_path = str((relative.parent / item.stem).as_posix())
         grouped.setdefault(stem_path, []).append(item)
@@ -44,13 +82,9 @@ def _logical_entries_for_directory(
         if primary is None:
             continue
 
-        entry_path = (
-            str(description.relative_to(root_path).as_posix())
-            if description is not None
-            else str(primary.relative_to(root_path).as_posix())
-        )
-        modified_at = max(file.stat().st_mtime for file in files)
-        size_bytes = primary.stat().st_size
+        entry_path = str((description or primary).relative_to(root_path).as_posix())
+        modified_at = max(file_stats[file].st_mtime for file in files)
+        size_bytes = file_stats[primary].st_size
         entries.append(
             DocumentInfo(
                 filename=entry_path,
@@ -72,6 +106,16 @@ def _logical_entries_for_directory(
             )
         )
     return entries
+
+
+def _logical_entries_for_directory(
+    dir_path: Path,
+    root_path: Path,
+    chunk_counts: dict[str, int],
+) -> list[DocumentInfo]:
+    """Group sibling files into logical stem entries for one directory."""
+    _, file_stats = _scan_directory(dir_path)
+    return _entries_from_files(file_stats, root_path, chunk_counts)
 
 
 async def list_documents_for_store(store: Casebase) -> DocumentListResponse:
@@ -105,27 +149,25 @@ def _build_directory_tree(
     entry_path = relative if relative != "." else ""
     children: list[DirectoryEntry] = []
 
-    if dir_path.exists():
-        for item in sorted(dir_path.iterdir()):
-            if item.is_dir() and not is_assets_dir(item.name):
-                children.append(_build_directory_tree(item, root_path, chunk_counts))
+    subdirs, file_stats = _scan_directory(dir_path)
+    for item in subdirs:
+        if not is_assets_dir(item.name):
+            children.append(_build_directory_tree(item, root_path, chunk_counts))
 
-        for file_entry in _logical_entries_for_directory(
-            dir_path, root_path, chunk_counts
-        ):
-            children.append(
-                DirectoryEntry(
-                    type="file",
-                    name=file_entry.display_name,
-                    path=file_entry.filename,
-                    size_bytes=file_entry.size_bytes,
-                    modified_at=file_entry.modified_at,
-                    chunk_count=file_entry.chunk_count,
-                    has_original=file_entry.has_original,
-                    original_path=file_entry.original_path,
-                    assets_dir=file_entry.assets_dir,
-                )
+    for file_entry in _entries_from_files(file_stats, root_path, chunk_counts):
+        children.append(
+            DirectoryEntry(
+                type="file",
+                name=file_entry.display_name,
+                path=file_entry.filename,
+                size_bytes=file_entry.size_bytes,
+                modified_at=file_entry.modified_at,
+                chunk_count=file_entry.chunk_count,
+                has_original=file_entry.has_original,
+                original_path=file_entry.original_path,
+                assets_dir=file_entry.assets_dir,
             )
+        )
 
     return DirectoryEntry(
         type="directory",

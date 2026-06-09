@@ -18,6 +18,7 @@ __all__ = [
     "DocumentConverter",
     "ExtractedImage",
     "collect_dir_images",
+    "decode_text",
     "is_external_ref",
     "is_image_suffix",
     "is_markdown_suffix",
@@ -57,6 +58,28 @@ def is_markdown_suffix(suffix: str) -> bool:
 def is_image_suffix(suffix: str) -> bool:
     """Return whether *suffix* matches a known image extension."""
     return suffix.lower() in IMAGE_EXTENSIONS
+
+
+def decode_text(content: bytes) -> str | None:
+    """Return *content* decoded as UTF-8 text, or ``None`` if it looks binary.
+
+    A NUL byte is both the strongest binary signal and illegal in a PostgreSQL
+    ``text`` column, so its presence rejects the content even when the
+    remaining bytes would decode. This is the content-based gate used to index
+    arbitrary plain text (JSON, logs, source, extension-less files) as-is
+    rather than discarding it behind a metadata-only stub.
+
+    >>> decode_text(b'{"a": 1}')
+    '{"a": 1}'
+    >>> decode_text(b"\\x89PNG\\r\\n") is None
+    True
+    """
+    if b"\x00" in content:
+        return None
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
 
 
 def is_external_ref(ref: str) -> bool:

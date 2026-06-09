@@ -36,6 +36,7 @@ from cbrkit.typing import AsyncRetrieverFunc
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .chunkers.base import ChunkData, RetrievedChunk
+from .concurrency import shield_to_completion
 from .config import settings
 from .db import documents as db_documents
 from .db.engine import session
@@ -220,7 +221,7 @@ async def index_document(document_id: str, chunks: Sequence[ChunkData]) -> None:
     ]
     data = {row.id: row for row in rows}
 
-    await asyncio.shield(storage.replace_where(where, data))
+    await shield_to_completion(storage.replace_where(where, data))
 
 
 async def reconcile_index_state() -> None:
