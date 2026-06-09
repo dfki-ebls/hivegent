@@ -321,6 +321,10 @@ class Document(Timestamped, Base):
 
     pipeline: Mapped[str]
     content_digest: Mapped[str | None]
+    # ``(mtime_ns, size)`` of the indexed markdown: a stat fast-path that lets
+    # the reconciler skip re-reading a description whose stat is unchanged.
+    content_mtime_ns: Mapped[int | None] = mapped_column(sa.BigInteger())
+    content_size: Mapped[int | None] = mapped_column(sa.BigInteger())
 
     owner_user: Mapped[User | None] = relationship(
         back_populates="documents", foreign_keys=[owner_user_id]

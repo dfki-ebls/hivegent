@@ -50,14 +50,16 @@ async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
         _ = document_id, raw_chunks
         raise RuntimeError("index failed")
 
-    async def set_content_digest(document_id: str, digest: str) -> None:
+    async def set_content_state(
+        document_id: str, digest: str, stat: object
+    ) -> None:
         nonlocal stamped
-        _ = document_id, digest
+        _ = document_id, digest, stat
         stamped = True
 
     monkeypatch.setattr(chunks.db_documents, "upsert_document", upsert_document)
     monkeypatch.setattr(chunks, "index_document", index_document)
-    monkeypatch.setattr(chunks.db_documents, "set_content_digest", set_content_digest)
+    monkeypatch.setattr(chunks.db_documents, "set_content_state", set_content_state)
 
     with pytest.raises(RuntimeError, match="index failed"):
         await chunks.chunk_and_index_document(
@@ -65,6 +67,7 @@ async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
             "doc.md",
             "body",
             ChunkingSpec(pipeline=ChunkingPipeline.NONE),
+            stat=None,
             entry_metadata=_entry_metadata(),
         )
 

@@ -74,6 +74,7 @@ from .converters.images import guess_image_media_type, sanitize_image_bytes
 from .converters.wikilinks import preprocess_markdown
 from .db import documents as db_documents
 from .entries import (
+    ContentStat,
     EntryPaths,
     asset_ref_for,
     assets_dir_for_stem,
@@ -194,6 +195,26 @@ def _same_persisted_entry_metadata(
     )
 
 
+async def _refresh_unchanged_entry(
+    store: Casebase,
+    state: db_documents.EntryState,
+    current: EntryMetadata,
+    stat: ContentStat | None,
+) -> bool:
+    """Sync a digest-unchanged entry's metadata + stat key, skipping no-op writes.
+
+    Chunks are never touched here: write only when the companion-file metadata
+    or the stat key drifted, so a steady-state boot does no SQL work at all.
+    Returns whether SQL changed.
+    """
+    if (
+        _same_persisted_entry_metadata(state.metadata, current)
+        and state.content_stat == stat
+    ):
+        return False
+    return await db_documents.update_entry(store, current, stat)
+
+
 def _write_original_file(workspace_dir: Path, filepath: str, content: bytes) -> Path:
     """Write a binary original file into the workspace."""
     full_path = workspace_dir / filepath
@@ -226,6 +247,7 @@ async def _write_markdown_projection(
             description_path,
             content,
             spec.chunking,
+            stat=ContentStat.from_path(full_path),
             entry_metadata=entry_metadata,
         )
     )
@@ -776,12 +798,14 @@ async def _ensure_upload_slot_locked(
 async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
     """Re-derive one logical entry's SQL + chunk rows from its on-disk markdown.
 
-    The single idempotent ingest path: drop the row if the description is
-    gone, refresh metadata if only companion files changed, otherwise chunk,
-    embed, and upsert.  An entry with no prior SQL row is stamped
-    ``origin="imported"`` since its provenance cannot be recovered from disk,
-    an existing entry keeps its stored provenance.  Returns whether SQL
-    changed.  Caller must hold the casebase lock.
+    The single idempotent ingest path: drop the row if the description is gone;
+    skip an untouched description via a cheap ``(mtime, size)`` stat fast-path;
+    re-stamp metadata/stat when only companion files or the stat moved; chunk,
+    embed, and upsert only when the content digest actually changed.  An entry
+    with no prior SQL row is stamped ``origin="imported"`` since its provenance
+    cannot be recovered from disk, an existing entry keeps its stored
+    provenance.  Returns whether SQL changed.  Caller must hold the casebase
+    lock.
     """
     workspace_dir = store.workspace_dir(settings.data_dir)
     resolved = resolve_entry_paths(workspace_dir, reference)
@@ -791,19 +815,38 @@ async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
         # Entry gone on disk: drop the row if one exists (chunks cascade).
         return await _delete_chunked_document(store, resolved.description_path)
 
-    content = description_full.read_text(encoding="utf-8")
-    digest = content_digest(content)
     state = await db_documents.get_entry_state(store, resolved.description_path)
     existing = state.metadata if state else None
     entry_metadata = _entry_metadata_from_disk(resolved, existing)
+    stat = ContentStat.from_path(description_full)
+
+    # Fast path: a stored stat equal to the file's stat means the digest cannot
+    # have changed, so skip the read + hash and only reconcile companion-file
+    # metadata.  The stat is only ever stamped together with a digest, so its
+    # presence implies an indexed row.
+    if (
+        state is not None
+        and state.content_digest is not None
+        and stat is not None
+        and state.content_stat == stat
+    ):
+        return await _refresh_unchanged_entry(store, state, entry_metadata, stat)
+
+    content = description_full.read_text(encoding="utf-8")
+    digest = content_digest(content)
     if state is not None and state.content_digest == digest:
-        if _same_persisted_entry_metadata(state.metadata, entry_metadata):
-            return False
-        return await db_documents.update_entry_metadata(store, entry_metadata)
+        # Content identical despite a moved stat (touch, checkout, restore):
+        # persist the fresh stat so the next boot hits the fast path, plus any
+        # companion-metadata drift.  No re-embed.
+        return await _refresh_unchanged_entry(store, state, entry_metadata, stat)
 
     await asyncio.shield(
         chunk_and_index_document(
-            store, resolved.description_path, content, entry_metadata=entry_metadata
+            store,
+            resolved.description_path,
+            content,
+            stat=stat,
+            entry_metadata=entry_metadata,
         )
     )
     return True
@@ -986,10 +1029,12 @@ async def rechunk(
     """
     spec = spec or PipelineSpec()
     async with store_lock(store):
-        workspace_dir = store.workspace_dir(settings.data_dir)
-        text = _read_text_file(workspace_dir / safe)
+        file_path = store.workspace_dir(settings.data_dir) / safe
+        text = _read_text_file(file_path)
         return await asyncio.shield(
-            chunk_and_index_document(store, safe, text, spec.chunking)
+            chunk_and_index_document(
+                store, safe, text, spec.chunking, stat=ContentStat.from_path(file_path)
+            )
         )
 
 
@@ -1034,7 +1079,11 @@ async def _replace_text_locked(
     _enforce_file_size(content.encode("utf-8"))
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
-    await asyncio.shield(chunk_and_index_document(store, safe, content))
+    await asyncio.shield(
+        chunk_and_index_document(
+            store, safe, content, stat=ContentStat.from_path(full_path)
+        )
+    )
 
 
 async def edit_document_text(
@@ -1227,7 +1276,9 @@ async def _persist_asset_description(
     description_path = str(md_path.relative_to(workspace).as_posix())
     rel_path = str(asset_path.relative_to(workspace).as_posix())
 
-    await chunk_and_index_document(store, description_path, content)
+    await chunk_and_index_document(
+        store, description_path, content, stat=ContentStat.from_path(md_path)
+    )
     return AssetEntry(
         name=safe_name,
         path=rel_path,

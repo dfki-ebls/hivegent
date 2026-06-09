@@ -82,7 +82,9 @@ A failed migration aborts startup with a non-zero exit code, which trips the uni
 
 The workspace tree under `data/workspace/<store_key>/` is authoritative for document content (markdown, originals, and assets), and the Postgres `documents` plus `chunks` rows are a derived index reconciled from it.
 The single idempotent ingest path is `workspace.sync_entry_from_disk` (one entry) and `workspace.sync_entries_from_disk` (a batch under one casebase lock).
-Both read an entry's on-disk markdown, compare its `content_digest` (see `config.content_digest`) against the stored `documents.content_digest`, and re-chunk only when the bytes changed, so a full re-derive is cheap.
+Both compare the entry's `content_digest` (see `config.content_digest`) against the stored `documents.content_digest` and re-chunk only when the bytes changed, so a full re-derive is cheap.
+A cheap `(mtime, size)` stat fast-path (`documents.content_mtime_ns` / `content_size`, captured by `entries.ContentStat`) avoids even reading and hashing a description whose stat is unchanged since it was last indexed: the stat is only a pre-filter, so a stat that moved without a content change (a `touch`, checkout, or restore) costs one read, never a re-embed, and a stat that lied the other way cannot happen because the digest is re-checked whenever the stat differs.
+The digest, `mtime`, and `size` are cleared together when `documents.upsert_document` writes the row and stamped together by `set_content_state` only after the chunks are durable, so a null digest always means "not indexed yet, re-derive".
 A description with no prior row is ingested and stamped `origin = imported`, since its real provenance is not recoverable from disk.
 `reconcile.reconcile_store` runs this ingest over every on-disk markdown first, then prunes disk files no surviving entry vouches for and drops SQL rows whose description vanished.
 `entries.is_description_file` is the scratch-versus-document policy seam: only markdown files become document entries, every other file is kept on disk but never chunked on its own.

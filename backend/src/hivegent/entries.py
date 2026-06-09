@@ -2,10 +2,12 @@
 
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Self
 
 from .converters.base import DOCUMENT_EXTENSION, is_markdown_suffix
 
 __all__ = [
+    "ContentStat",
     "EntryPaths",
     "asset_ref_for",
     "assets_dir_for_stem",
@@ -20,6 +22,31 @@ __all__ = [
     "stem_display_name",
     "stem_path_from_reference",
 ]
+
+
+@dataclass(slots=True, frozen=True)
+class ContentStat:
+    """A markdown file's ``(mtime_ns, size)`` fingerprint for the reconcile fast-path.
+
+    Lets the reconciler skip reading and hashing a description whose stat is
+    unchanged since it was last indexed.  The content digest stays the
+    authority: a stat mismatch only triggers a read + hash, and a re-embed
+    happens solely when the digest itself differs, so a stat that lies in the
+    "changed" direction (a ``touch``, checkout, or restore) costs one read, not
+    a re-embed.
+    """
+
+    mtime_ns: int
+    size: int
+
+    @classmethod
+    def from_path(cls, path: Path) -> Self | None:
+        """Return the stat fingerprint of *path*, or ``None`` if it is unreadable."""
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        return cls(mtime_ns=st.st_mtime_ns, size=st.st_size)
 
 
 @dataclass(slots=True, frozen=True)

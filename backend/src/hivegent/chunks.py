@@ -21,6 +21,7 @@ from .chunkers.base import (
 from .config import content_digest, settings
 from .db import documents as db_documents
 from .entries import (
+    ContentStat,
     resolve_entry_paths,
     stem_path_from_reference,
 )
@@ -72,9 +73,15 @@ async def chunk_and_index_document(
     content: str,
     chunking: ChunkingSpec | None = None,
     *,
+    stat: ContentStat | None,
     entry_metadata: EntryMetadata | None = None,
 ) -> DocumentMetadata:
-    """Chunk a document, embed it, and persist everything in one transaction."""
+    """Chunk a document, embed it, and persist everything in one transaction.
+
+    *stat* is the on-disk ``(mtime, size)`` fingerprint of *content*, captured
+    by the caller when it read or wrote the file so the stamped stat matches the
+    indexed bytes without this coordinator reaching back to disk for it.
+    """
     spec = chunking or ChunkingSpec()
 
     if entry_metadata is None:
@@ -115,7 +122,7 @@ async def chunk_and_index_document(
             pipeline=chunker.name,
         )
         await index_document(doc.id, raw_chunks)
-        await db_documents.set_content_digest(doc.id, digest)
+        await db_documents.set_content_state(doc.id, digest, stat)
         return doc.model_copy(
             update={"chunks": list(raw_chunks), "content_digest": digest}
         )

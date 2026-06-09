@@ -15,6 +15,7 @@ from hivegent import workspace
 from hivegent.chunkers.base import EntryMetadata
 from hivegent.config import content_digest, content_hash, settings
 from hivegent.db.documents import EntryState
+from hivegent.entries import ContentStat
 from hivegent.store import Casebase
 
 
@@ -179,7 +180,7 @@ def _entry_metadata(
 
 
 class TestSyncEntryFromDisk:
-    async def test_refreshes_metadata_when_markdown_digest_matches(
+    async def test_refreshes_metadata_when_digest_matches_but_stat_moved(
         self,
         user_store: Casebase,
         workspace_dir: Path,
@@ -192,15 +193,18 @@ class TestSyncEntryFromDisk:
 
         async def get_entry_state(store: Casebase, reference: str) -> EntryState:
             _ = store, reference
+            # Stale stat forces the read + hash; the digest then matches.
             return EntryState(
-                content_digest=content_digest("body"), metadata=_entry_metadata()
+                content_digest=content_digest("body"),
+                content_stat=ContentStat(mtime_ns=0, size=0),
+                metadata=_entry_metadata(),
             )
 
-        async def update_entry_metadata(
-            store: Casebase, entry: EntryMetadata
+        async def update_entry(
+            store: Casebase, entry: EntryMetadata, stat: ContentStat | None
         ) -> bool:
             nonlocal updated
-            _ = store
+            _ = store, stat
             updated = entry
             return True
 
@@ -208,9 +212,7 @@ class TestSyncEntryFromDisk:
             raise AssertionError("unchanged markdown should not be indexed")
 
         monkeypatch.setattr(workspace.db_documents, "get_entry_state", get_entry_state)
-        monkeypatch.setattr(
-            workspace.db_documents, "update_entry_metadata", update_entry_metadata
-        )
+        monkeypatch.setattr(workspace.db_documents, "update_entry", update_entry)
         monkeypatch.setattr(workspace, "chunk_and_index_document", chunk_and_index_document)
 
         changed = await workspace.sync_entry_from_disk(user_store, "doc.md")
@@ -220,3 +222,31 @@ class TestSyncEntryFromDisk:
         assert updated.original_path == "doc.pdf"
         assert updated.assets_dir == "doc.assets"
         assert updated.origin == "upload"
+
+    async def test_fast_path_skips_unchanged_stat(
+        self,
+        user_store: Casebase,
+        workspace_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (workspace_dir / "doc.md").write_text("body", encoding="utf-8")
+        stat = ContentStat.from_path(workspace_dir / "doc.md")
+
+        async def get_entry_state(store: Casebase, reference: str) -> EntryState:
+            _ = store, reference
+            return EntryState(
+                content_digest=content_digest("nonsense"),  # never read
+                content_stat=stat,
+                metadata=_entry_metadata(),
+            )
+
+        async def fail(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("matching stat must skip read, index, and write")
+
+        monkeypatch.setattr(workspace.db_documents, "get_entry_state", get_entry_state)
+        monkeypatch.setattr(workspace.db_documents, "update_entry", fail)
+        monkeypatch.setattr(workspace, "chunk_and_index_document", fail)
+
+        changed = await workspace.sync_entry_from_disk(user_store, "doc.md")
+
+        assert changed is False

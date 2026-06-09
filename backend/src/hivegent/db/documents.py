@@ -29,6 +29,7 @@ from ..chunkers.base import (
 )
 from ..config import settings
 from ..entries import (
+    ContentStat,
     assets_dir_for_stem,
     description_path_for_stem,
     original_path_for_stem,
@@ -58,18 +59,38 @@ __all__ = [
     "move_document",
     "move_subtree",
     "resolve_accessible_document_ids",
-    "set_content_digest",
-    "update_entry_metadata",
+    "set_content_state",
+    "update_entry",
     "upsert_document",
 ]
 
 
 @dataclass(slots=True, frozen=True)
 class EntryState:
-    """An entry's persisted drift fingerprint and metadata, without chunks."""
+    """An entry's persisted drift fingerprint, stat, and metadata, without chunks."""
 
     content_digest: str | None
+    content_stat: ContentStat | None
     metadata: EntryMetadata
+
+
+def _stat_columns(stat: ContentStat | None) -> dict[str, int | None]:
+    """Map a stat fingerprint, or its absence, onto its two nullable columns.
+
+    The ``(content_mtime_ns, content_size)`` pair is always written and nulled
+    together, so the ``None``-collapse lives here instead of at every writer.
+    """
+    return {
+        "content_mtime_ns": stat.mtime_ns if stat else None,
+        "content_size": stat.size if stat else None,
+    }
+
+
+def _stat_from_row(row: Document) -> ContentStat | None:
+    """Rebuild the stat fingerprint persisted across the two stat columns."""
+    if row.content_mtime_ns is None or row.content_size is None:
+        return None
+    return ContentStat(mtime_ns=row.content_mtime_ns, size=row.content_size)
 
 
 # ─── Filters ───────────────────────────────────────────────────────────
@@ -217,10 +238,11 @@ async def get_document(store: Casebase, reference: str) -> DocumentMetadata | No
 async def get_entry_state(store: Casebase, reference: str) -> EntryState | None:
     """Return an entry's drift fingerprint and metadata, or ``None`` if absent.
 
-    One row fetch for the reconcile/sync path, which needs both the stored
-    drift fingerprint and the persisted metadata without loading chunks.  The
-    digest is ``None`` for a row whose content was never indexed durably (see
-    :func:`set_content_digest`), which the caller treats as "needs re-indexing".
+    One row fetch for the reconcile/sync path, which needs the stored drift
+    fingerprint, the stat fast-path key, and the persisted metadata without
+    loading chunks.  The digest and stat are ``None`` for a row whose content
+    was never indexed durably (see :func:`set_content_state`), which the caller
+    treats as "needs re-indexing".
     """
     stem_path = stem_path_from_reference(reference)
     async with session() as s:
@@ -228,7 +250,9 @@ async def get_entry_state(store: Casebase, reference: str) -> EntryState | None:
         if row is None:
             return None
         return EntryState(
-            content_digest=row.content_digest, metadata=_entry_from_row(row)
+            content_digest=row.content_digest,
+            content_stat=_stat_from_row(row),
+            metadata=_entry_from_row(row),
         )
 
 
@@ -300,7 +324,7 @@ class _EntryColumns:
     """The mutable document columns an entry's metadata maps to.
 
     Defined and typed in one place so :func:`upsert_document` and
-    :func:`update_entry_metadata` cannot drift, and a column rename or retype
+    :func:`update_entry` cannot drift, and a column rename or retype
     surfaces as a type error rather than a silent dict-key mismatch.
     """
 
@@ -341,9 +365,10 @@ async def upsert_document(
     :class:`DocumentMetadata` carries an empty ``chunks`` list; the
     orchestrator fills it after calling the indexer.
 
-    The row's ``content_digest`` is cleared here because the replacement chunks
-    are not durable yet.  :func:`set_content_digest` stamps the digest only
-    after indexing succeeds.
+    The row's ``content_digest`` and stat columns are cleared here because the
+    replacement chunks are not durable yet.  :func:`set_content_state` stamps
+    them only after indexing succeeds, so a null digest always means "needs
+    re-indexing".
 
     Concurrency-safe ``INSERT ... ON CONFLICT DO UPDATE`` keyed on the
     ``(owner, stem_path)`` unique constraint: two requests racing to
@@ -354,6 +379,7 @@ async def upsert_document(
         **_EntryColumns.from_entry(entry).as_values(),
         "pipeline": pipeline,
         "content_digest": None,
+        **_stat_columns(None),
     }
     owner_col = (
         Document.owner_user_id if store.kind == "user" else Document.owner_group_id
@@ -374,25 +400,39 @@ async def upsert_document(
         return _document_from_row(doc, [], workspace_root)
 
 
-async def update_entry_metadata(store: Casebase, entry: EntryMetadata) -> bool:
-    """Refresh a document's persisted entry metadata without touching chunks."""
+async def update_entry(
+    store: Casebase, entry: EntryMetadata, stat: ContentStat | None
+) -> bool:
+    """Refresh a document's entry metadata + stat fast-path key, leaving chunks.
+
+    Called only when the content digest is unchanged, so the digest column is
+    left untouched; this re-stamps the metadata columns (companion originals
+    and assets can change without the markdown changing) and the stat so a
+    later boot hits the fast path.
+    """
     columns = _EntryColumns.from_entry(entry).as_values()
     async with session() as s:
         result = await s.execute(
             update(Document)
             .where(_owner_filter(store), Document.stem_path == entry.stem_path)
-            .values(**columns, updated_at=func.now())
+            .values(**columns, **_stat_columns(stat), updated_at=func.now())
         )
     return affected_rows(result) > 0
 
 
-async def set_content_digest(document_id: str, content_digest: str) -> None:
-    """Stamp a document's indexed content fingerprint after chunks are durable."""
+async def set_content_state(
+    document_id: str, content_digest: str, stat: ContentStat | None
+) -> None:
+    """Stamp a document's content fingerprint + stat after chunks are durable."""
     async with session() as s:
         await s.execute(
             update(Document)
             .where(Document.id == document_id)
-            .values(content_digest=content_digest, updated_at=func.now())
+            .values(
+                content_digest=content_digest,
+                **_stat_columns(stat),
+                updated_at=func.now(),
+            )
         )
 
 
