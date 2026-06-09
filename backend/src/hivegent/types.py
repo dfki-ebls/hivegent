@@ -7,6 +7,7 @@ from typing import Any, Literal, Self, get_args
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from pydantic_ai.settings import ThinkingEffort
+from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 
 from .chunkers import ChunkingSpec
 from .config import ADMIN_ROLE, settings
@@ -441,9 +442,17 @@ class ConversationListResponse(BaseModel):
 
 
 class CompactConversationRequest(BaseModel):
-    """Request to compact a conversation."""
+    """Request to compact a conversation.
+
+    The client sends its in-memory message history rather than relying on
+    the server to re-read it: the turn that triggers auto-compaction fails
+    on a context-length error and is never persisted, and a freshly minted
+    conversation may not be reconciled to its server ID yet. Summarizing
+    the messages the client holds avoids both races.
+    """
 
     llm: LlmConfig = Field(default_factory=LlmConfig)
+    messages: list[UIMessage] = Field(default_factory=list)
 
 
 class CompactConversationResponse(BaseModel):

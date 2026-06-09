@@ -633,11 +633,12 @@ export async function generateConversationTitle(
 export async function compactConversation(
   conversationId: string,
   llm: LlmConfig,
+  messages: UIMessage[],
 ): Promise<CompactConversationResponse> {
   const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}/compaction`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ llm }),
+    body: JSON.stringify({ llm, messages }),
   });
 
   if (!res.ok) {

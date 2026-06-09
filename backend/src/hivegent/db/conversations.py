@@ -45,6 +45,7 @@ __all__ = [
     "create_compacted_conversation",
     "delete_all_conversations",
     "export_conversation",
+    "extract_title",
     "list_conversations",
     "load_conversation",
     "load_messages",
@@ -150,7 +151,7 @@ def _message_kind(msg: ModelMessage) -> MessageKind:
     raise TypeError(f"Unknown ModelMessage subtype: {type(msg).__name__}")
 
 
-def _extract_title(messages: Sequence[ModelMessage]) -> str | None:
+def extract_title(messages: Sequence[ModelMessage]) -> str | None:
     """Pull a one-line title from the first user prompt, if any."""
     for msg in messages:
         for part in msg.parts:
@@ -373,7 +374,7 @@ async def append_messages(
             return
 
         if conv.title is None:
-            conv.title = _extract_title(msg_list)
+            conv.title = extract_title(msg_list)
 
         for offset, (msg, payload) in enumerate(
             zip(new_msgs, _dump_messages(new_msgs), strict=True)
@@ -456,11 +457,16 @@ async def delete_all_conversations(user_id: str) -> int:
 
 async def create_compacted_conversation(
     user_id: str,
-    original_conversation_id: str,
+    original_conversation_id: str | None,
     summary_message: ModelMessage,
     title: str,
 ) -> str:
-    """Persist a fresh conversation seeded with one summary message."""
+    """Persist a fresh conversation seeded with one summary message.
+
+    ``original_conversation_id`` is ``None`` when the source conversation
+    was never persisted (e.g. a draft compacted before its first turn
+    committed), in which case there is no ``compacted_from`` link to set.
+    """
     conversation_id = new_id()
     async with session() as s:
         await ensure_user(s, user_id)

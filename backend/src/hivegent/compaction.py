@@ -16,7 +16,11 @@ from pydantic_ai.messages import (
 )
 
 from .agents import base_agent
-from .db.conversations import create_compacted_conversation, load_conversation
+from .db.conversations import (
+    conversation_exists,
+    create_compacted_conversation,
+    extract_title,
+)
 from .llm import model_from_config
 from .types import LlmConfig
 
@@ -51,39 +55,49 @@ class CompactionResult:
 async def compact_conversation(
     user_id: str,
     conversation_id: str,
+    messages: Sequence[ModelMessage],
     llm_config: LlmConfig,
 ) -> CompactionResult:
     """Compact a conversation by summarizing it into a new conversation.
 
-    Loads the original conversation, generates a summary using a lightweight
-    LLM, and creates a new conversation with the summary as the initial
-    system context. The new conversation links back to the original via
-    ``compacted_from``.
+    Generates a summary of the supplied messages using a lightweight LLM
+    and creates a new conversation with the summary as the initial context.
+    The messages come from the client rather than the database: the turn
+    that triggers auto-compaction fails on a context-length error and is
+    never persisted, so the database copy would be stale or missing.
+
+    The new conversation links back to the original via ``compacted_from``
+    only when the original is a persisted row — a freshly minted draft has
+    no row to reference yet.
 
     Args:
         user_id: The user who owns the conversation.
-        conversation_id: The conversation to compact.
+        conversation_id: The conversation being compacted.
+        messages: The conversation messages to summarize.
         llm_config: LLM configuration for the summarization model.
 
     Returns:
         A CompactionResult with the new conversation ID and summary.
 
     Raises:
-        ValueError: If the conversation is not found or has no messages.
+        ValueError: If no messages are supplied.
     """
-    conversation = await load_conversation(user_id, conversation_id)
-    if not conversation or not conversation.messages:
+    if not messages:
         raise ValueError(f"Conversation {conversation_id} not found or empty")
 
-    summary = await _summarize_conversation(conversation.messages, llm_config)
+    summary = await _summarize_conversation(messages, llm_config)
 
-    original_title = conversation.title or "Untitled"
+    base_title = extract_title(messages) or "Untitled"
     summary_message = ModelResponse(parts=[TextPart(content=summary)])
     new_id = await create_compacted_conversation(
         user_id,
-        original_conversation_id=conversation_id,
+        original_conversation_id=(
+            conversation_id
+            if await conversation_exists(user_id, conversation_id)
+            else None
+        ),
         summary_message=summary_message,
-        title=f"{original_title} (continued)",
+        title=f"{base_title} (continued)",
     )
 
     logger.info(

@@ -227,9 +227,13 @@ async def create_conversation_compaction(
 ) -> CompactConversationResponse:
     """Compact a conversation by summarizing it into a new conversation."""
 
+    messages = VercelAIAdapter.load_messages(request.messages)
+
     async def _compact() -> CompactionResult:
         llm_config = await prepare_llm_config(request.llm)
-        return await compact_conversation(user.id, conversation_id, llm_config)
+        return await compact_conversation(
+            user.id, conversation_id, messages, llm_config
+        )
 
     try:
         result = await run_until_disconnect(http_request, _compact())

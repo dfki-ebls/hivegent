@@ -37,7 +37,11 @@ export function useAutoCompact({
       setIsCompacting(true);
       setError(null);
       try {
-        const result = await compactConversation(id, buildAuxLlmConfig(overrides));
+        const result = await compactConversation(
+          id,
+          buildAuxLlmConfig(overrides),
+          messagesRef.current,
+        );
         clearAll();
         if (retryMessageText) {
           pendingRetryRef.current = retryMessageText;
