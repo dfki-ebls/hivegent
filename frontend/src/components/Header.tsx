@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { Bug, LogOut, User, UserCog } from "lucide-react";
 import { useOidc } from "../oidc";
 import { Logo } from "./Logo";
+import { VersionBadge } from "./VersionBadge";
 import { selectIsAdmin, useSettingsStore } from "../stores/settings-store";
 import { Button } from "./ui/button";
 import {
@@ -83,6 +84,7 @@ export function Header() {
       >
         <Logo className="h-6 w-6" />
         <h1 className="text-xl font-semibold">Hivegent</h1>
+        <VersionBadge />
       </Link>
 
       <UserMenu />

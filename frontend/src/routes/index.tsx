@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { BackendReadyGate } from "../components/BackendReadyGate";
 import { Logo } from "../components/Logo";
+import { VersionBadge } from "../components/VersionBadge";
 import { ChatLayout } from "../components/ChatLayout";
 import { Button } from "../components/ui/button";
 import { Spinner } from "../components/ui/spinner";
@@ -31,6 +32,7 @@ function IndexPage() {
         <div className="flex items-center gap-3">
           <Logo className="h-12 w-12" />
           <h1 className="text-4xl font-bold">Hivegent</h1>
+          <VersionBadge className="self-start" />
         </div>
         <p className="text-lg text-muted-foreground max-w-md">
           Your intelligent document assistant powered by RAG. Upload documents and chat with your
