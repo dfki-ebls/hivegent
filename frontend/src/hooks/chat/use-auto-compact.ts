@@ -2,9 +2,12 @@ import type { UIMessage } from "@ai-sdk/react";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildAuxLlmConfig, compactConversation } from "@/lib/api";
-import { getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
+import { canCompact, getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { useSettingsStore } from "@/stores/settings-store";
+
+const MESSAGE_TOO_LARGE =
+  "This message is too large for the model's context window. Compacting earlier history won't help because the message exceeds the limit on its own. Shorten it or split it into smaller parts.";
 
 interface UseAutoCompactArgs {
   id: string;
@@ -51,7 +54,8 @@ export function useAutoCompact({
           params: { id: result.new_conversation_id },
         });
       } catch (err) {
-        setError(err instanceof Error ? err : new Error(String(err)));
+        const message = err instanceof Error ? err.message : String(err);
+        setError(new Error(`Couldn't compact the conversation: ${message}`));
       } finally {
         setIsCompacting(false);
       }
@@ -62,6 +66,10 @@ export function useAutoCompact({
   useEffect(() => {
     if (!isContextLengthError(chatError)) return;
     if (error) return;
+    if (!canCompact(messagesRef.current)) {
+      setError(new Error(MESSAGE_TOO_LARGE));
+      return;
+    }
     void compact(getLastUserMessage(messagesRef.current)?.text);
   }, [chatError, compact, error]);
 
@@ -71,6 +79,12 @@ export function useAutoCompact({
     pendingRetryRef.current = null;
     onRetryRef.current(text);
   }, [isLoadingHistory]);
+
+  // Drop a stale recovery error once the chat error clears, which happens when
+  // the user sends the next (e.g. shortened) message, so the banner doesn't linger.
+  useEffect(() => {
+    if (!chatError) setError(null);
+  }, [chatError]);
 
   const clearError = useCallback(() => setError(null), []);
 

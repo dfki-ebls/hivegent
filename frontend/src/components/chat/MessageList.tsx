@@ -54,9 +54,10 @@ export function MessageList({
   onDeny,
   onExecutePlan,
 }: MessageListProps) {
-  const errorMessage = compactionError
-    ? `Compaction failed: ${compactionError.message}`
-    : chatError?.message || "An error occurred while processing your request.";
+  const errorMessage =
+    compactionError?.message ||
+    chatError?.message ||
+    "An error occurred while processing your request.";
 
   return (
     <Conversation className="min-h-0 flex-1">

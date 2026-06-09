@@ -24,3 +24,21 @@ export function isContextLengthError(error: Error | null | undefined): boolean {
   const msg = error.message || "";
   return msg.includes("context_length_exceeded") || msg.includes("maximum context length");
 }
+
+/**
+ * Whether compacting the conversation could plausibly resolve an overflow.
+ *
+ * Compaction summarizes everything before the last user message and then
+ * re-sends that message. It can only free up room when there is a prior user
+ * turn to compress: a lone oversized turn (a huge pasted file, a request that
+ * pulls in too much context) just overflows again, and a freshly compacted
+ * conversation starts with only its summary plus one new turn. Requiring a
+ * second user turn stops both from looping.
+ */
+export function canCompact(messages: UIMessage[]): boolean {
+  let userTurns = 0;
+  for (const message of messages) {
+    if (message.role === "user" && ++userTurns >= 2) return true;
+  }
+  return false;
+}
