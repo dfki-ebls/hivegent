@@ -51,6 +51,7 @@ from ...prompts import (
     Personality,
     join_instructions,
 )
+from ...tools.formatting import BLOCK_SEP
 from ...types import (
     BulkDeleteConversationsResponse,
     ChatRequestConfig,
@@ -155,7 +156,7 @@ async def generate_conversation_title(
     if not messages_text:
         return GenerateTitleResponse(title=conversation.title or "Untitled")
 
-    conversation_preview = "\n---\n".join(messages_text)
+    conversation_preview = BLOCK_SEP.join(messages_text)
     instructions = """Generate a short, descriptive title (max 60 characters) for the conversation.
 The title should capture the main topic or question.
 Return ONLY the title, no quotes or extra text.

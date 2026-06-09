@@ -11,7 +11,6 @@ from pydantic import Field
 
 from ..subprocesses import rg_search
 from .base import (
-    BLOCK_SEP,
     WORKSPACE_SCOPE_HINT,
     AsyncPathTool,
     IncludeIgnoredArg,
@@ -20,6 +19,7 @@ from .base import (
     excluded_dirs,
     file_allowed,
 )
+from .formatting import BLOCK_SEP, GROUP_SEP, number_line
 
 __all__ = [
     "GrepCaseSensitiveArg",
@@ -236,16 +236,12 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
         total_lines = sum(len(m.lines) for m in matches)
         out: list[str] = []
         total = 0
-        shown = 0
-        for starts_block, line in self._iter_lines(matches):
-            sep = (BLOCK_SEP if starts_block else "\n") if out else ""
-            if total + len(sep) + len(line) > self.max_formatted_chars:
+        for line in self._iter_lines(matches):
+            if total + len(line) > self.max_formatted_chars:
                 break
-            out.append(sep)
             out.append(line)
-            total += len(sep) + len(line)
-            shown += 1
-        omitted = total_lines - shown
+            total += len(line)
+        omitted = total_lines - len(out)
         if omitted:
             notice = (
                 f"({omitted} of {total_lines} lines omitted, "
@@ -254,15 +250,31 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
             out.append(f"{BLOCK_SEP}{notice}" if out else notice)
         return "".join(out)
 
-    def _iter_lines(self, matches: list[GrepMatch]) -> Iterator[tuple[bool, str]]:
-        """Yield ``(starts_block, formatted_line)`` for every match line."""
+    def _iter_lines(self, matches: list[GrepMatch]) -> Iterator[str]:
+        """Yield each match line with the separator that precedes it.
+
+        The document path is emitted once as a heading; every line then
+        carries only its number with ``:`` for matches and ``-`` for context.
+        Distinct documents are split by :data:`BLOCK_SEP` and discontiguous
+        blocks within a document by :data:`GROUP_SEP`, with each heading folded
+        into its block's first line so the two stay together under the budget.
+        """
+        prev_file: str | None = None
         for m in matches:
+            if prev_file is None:
+                head = f"{m.filename}\n"
+            elif m.filename != prev_file:
+                head = f"{BLOCK_SEP}{m.filename}\n"
+            else:
+                head = GROUP_SEP
+            prev_file = m.filename
             for i, line in enumerate(m.lines):
-                text = (
-                    f"{m.filename}:{line.line_number}"
-                    f"{':' if line.is_match else '-'}{self._truncate_line(line.text)}"
+                prefix = head if i == 0 else "\n"
+                mark = ":" if line.is_match else "-"
+                body = number_line(
+                    line.line_number, self._truncate_line(line.text), mark
                 )
-                yield i == 0, text
+                yield f"{prefix}{body}"
 
     def _truncate_line(self, text: str) -> str:
         if len(text) <= self.max_line_chars:

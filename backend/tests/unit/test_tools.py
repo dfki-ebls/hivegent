@@ -617,36 +617,61 @@ class TestGrepFormatting:
     """Tests for GrepTool match formatting and the line-level char budget."""
 
     @staticmethod
-    def _block(n: int) -> GrepMatch:
+    def _block(n: int, filename: str = "f.md") -> GrepMatch:
         return GrepMatch(
-            filename="f.md",
+            filename=filename,
             lines=tuple(
                 GrepLine(line_number=i, text="x", is_match=True)
                 for i in range(1, n + 1)
             ),
         )
 
+    def test_grouped_under_single_heading_with_line_prefixes(
+        self, tmp_path: Path
+    ) -> None:
+        # The path appears once as a heading; lines carry only their number
+        # with ``:`` for matches and ``-`` for context.
+        tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
+        block = GrepMatch(
+            filename="doc.md",
+            lines=(
+                GrepLine(line_number=10, text="ctx", is_match=False),
+                GrepLine(line_number=11, text="hit", is_match=True),
+            ),
+        )
+        formatted = tool._format_matches([block])
+        assert formatted == "doc.md\n10-ctx\n11:hit"
+
     def test_oversized_block_truncates_instead_of_dropping(
         self, tmp_path: Path
     ) -> None:
         # A single merged block larger than the budget must still show its
-        # leading lines (truncated), never just a notice with a stray "--".
+        # leading lines (truncated), never just a heading with no content.
         tool = GrepTool(paths=tmp_path, max_formatted_chars=40)
         formatted = tool._format_matches([self._block(50)])
-        shown = formatted.count("f.md:")
+        shown = formatted.count(":x")
         assert 0 < shown < 50
-        assert formatted.startswith("f.md:1:")
+        assert formatted.startswith("f.md\n1:x")
         assert not formatted.startswith("\n---\n")
         assert f"({50 - shown} of 50 lines omitted" in formatted
 
     def test_fully_shown_has_no_omitted_notice(self, tmp_path: Path) -> None:
         tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
         formatted = tool._format_matches([self._block(3)])
-        assert formatted.count("f.md:") == 3
+        assert formatted == "f.md\n1:x\n2:x\n3:x"
         assert "omitted" not in formatted
 
-    def test_separate_blocks_joined_by_separator(self, tmp_path: Path) -> None:
+    def test_blocks_within_document_separated_by_dashes(
+        self, tmp_path: Path
+    ) -> None:
         tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
         formatted = tool._format_matches([self._block(1), self._block(1)])
-        assert "\n---\n" in formatted
+        assert formatted == "f.md\n1:x\n--\n1:x"
+
+    def test_separate_documents_joined_by_separator(self, tmp_path: Path) -> None:
+        tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
+        formatted = tool._format_matches(
+            [self._block(1, "a.md"), self._block(1, "b.md")]
+        )
+        assert formatted == "a.md\n1:x\n---\nb.md\n1:x"
         assert "omitted" not in formatted

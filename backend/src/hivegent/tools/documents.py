@@ -23,6 +23,7 @@ from .base import (
     resolve_accessible_file,
 )
 from .binary import binary_media_type
+from .formatting import annotate_lines
 
 __all__ = [
     "DocumentFilePathArg",
@@ -511,7 +512,7 @@ class ReadDocumentTool(SyncPathTool[DocumentRange | None]):
             total_lines=total,
             content="\n".join(selected),
         )
-        annotated = "\n".join(f"{start + i}: {line}" for i, line in enumerate(selected))
+        annotated = annotate_lines(selected, start)
         remaining = total - end
         suffix = (
             f"\n\n[{remaining} more lines — call again with offset={end + 1}]"

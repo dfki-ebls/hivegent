@@ -14,7 +14,8 @@ from ..security import (
     create_safe_async_client,
     validate_external_url_async,
 )
-from .base import BLOCK_SEP, AsyncTool, SyncTool, ToolOutput
+from .base import AsyncTool, SyncTool, ToolOutput
+from .formatting import BLOCK_SEP
 
 __all__ = [
     "WebFetch",

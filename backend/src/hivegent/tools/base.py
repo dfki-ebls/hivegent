@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 from .scope import Scope
 
 __all__ = [
-    "BLOCK_SEP",
     "DEFAULT_EXCLUDE_DIRS",
     "AsyncPathTool",
     "AsyncTool",
@@ -43,9 +42,6 @@ __all__ = [
     "tool_description",
     "tool_name",
 ]
-
-BLOCK_SEP = "\n---\n"
-"""Separator placed between distinct blocks in formatted tool output."""
 
 DEFAULT_EXCLUDE_DIRS: tuple[str, ...] = (
     "node_modules",
