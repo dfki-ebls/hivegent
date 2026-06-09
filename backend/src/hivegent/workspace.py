@@ -49,7 +49,7 @@ from .chunks import (
     chunk_and_index_document,
     delete_document as _delete_chunked_document,
 )
-from .config import sanitize_document_path, settings
+from .config import content_hash, sanitize_document_path, settings
 from .converters import (
     ConversionPipeline,
     get_converter,
@@ -904,6 +904,35 @@ def _read_text_file(file_path: Path) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
+def _check_expected_hash(safe: str, current: str | None, expected_hash: str | None) -> None:
+    """Reject the mutation unless *current* still matches *expected_hash*.
+
+    The optimistic-concurrency guard: a non-``None`` *expected_hash* comes
+    from an earlier read. A mismatch means the document moved on since, and a
+    missing file (*current* is ``None``) means the caller never read it at all,
+    so the hash is hallucinated. Both are rejected with a 409.
+    """
+    if expected_hash is None:
+        return
+    if current is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{safe}' does not exist, so it could not have been read "
+                f"(expected hash {expected_hash}); omit expected_hash to create it"
+            ),
+        )
+    if (actual := content_hash(current)) != expected_hash:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{safe}' changed since it was read "
+                f"(expected hash {expected_hash}, found {actual}); "
+                "re-read it and retry with the new hash"
+            ),
+        )
+
+
 async def _replace_text_locked(
     store: Casebase, safe: str, full_path: Path, content: str
 ) -> None:
@@ -919,6 +948,7 @@ async def edit_document_text(
     old_string: str,
     new_string: str,
     replace_all: bool = False,
+    expected_hash: str | None = None,
 ) -> str:
     """Edit a workspace text document through the canonical mutation gateway."""
     safe = sanitize_document_path(safe)
@@ -926,6 +956,7 @@ async def edit_document_text(
         workspace_dir = store.workspace_dir(settings.data_dir)
         file_path = workspace_dir / safe
         content = _read_text_file(file_path)
+        _check_expected_hash(safe, content, expected_hash)
         count = content.count(old_string)
         if count == 0:
             raise HTTPException(
@@ -956,25 +987,28 @@ async def write_document_text(
     safe: str,
     content: str,
     mode: str = "replace",
+    expected_hash: str | None = None,
 ) -> str:
     """Write a workspace text document through the canonical mutation gateway."""
     safe = sanitize_document_path(safe)
     async with store_lock(store):
         workspace_dir = store.workspace_dir(settings.data_dir)
         file_path = workspace_dir / safe
+        current = file_path.read_text(encoding="utf-8") if file_path.is_file() else None
+        _check_expected_hash(safe, current, expected_hash)
         if mode == "replace":
             new_content = content
             message = f"Wrote {len(content)} characters to '{safe}'."
-        elif not file_path.is_file():
+        elif current is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"'{safe}' does not exist (use mode='replace' to create)",
             )
         elif mode == "append":
-            new_content = file_path.read_text(encoding="utf-8") + content
+            new_content = current + content
             message = f"Appended {len(content)} characters to '{safe}'."
         elif mode == "prepend":
-            new_content = content + file_path.read_text(encoding="utf-8")
+            new_content = content + current
             message = f"Prepended {len(content)} characters to '{safe}'."
         else:
             raise HTTPException(

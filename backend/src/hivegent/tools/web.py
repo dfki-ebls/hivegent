@@ -14,7 +14,7 @@ from ..security import (
     create_safe_async_client,
     validate_external_url_async,
 )
-from .base import AsyncTool, SyncTool, ToolOutput
+from .base import AsyncTool, SyncTool, ToolOutput, ToolRetry
 from .formatting import BLOCK_SEP
 
 __all__ = [
@@ -100,15 +100,17 @@ class WebFetch(AsyncTool[str]):
         """
         try:
             return await self._fetch(url)
-        except httpx.TimeoutException:
-            return ToolOutput(data="Error: request timed out.")
+        except ToolRetry:
+            raise
+        except httpx.TimeoutException as exc:
+            raise ToolRetry("request timed out.") from exc
         except httpx.HTTPStatusError as exc:
-            return ToolOutput(data=f"Error: HTTP {exc.response.status_code}.")
+            raise ToolRetry(f"HTTP {exc.response.status_code}.") from exc
         except UnsafeUrlError as exc:
-            return ToolOutput(data=f"Error: {exc}")
-        except Exception:
+            raise ToolRetry(str(exc)) from exc
+        except Exception as exc:
             logger.exception("Web fetch failed for URL %r", url)
-            return ToolOutput(data="Error: failed to fetch URL.")
+            raise ToolRetry("failed to fetch URL.") from exc
 
     async def _fetch(self, url: str) -> ToolOutput[str]:
         current = url
@@ -122,13 +124,13 @@ class WebFetch(AsyncTool[str]):
                 if not response.is_redirect or response.next_request is None:
                     return self._finalize(response)
                 current = str(response.next_request.url)
-            return ToolOutput(data="Error: too many redirects.")
+            raise ToolRetry("too many redirects.")
 
     def _finalize(self, response: httpx.Response) -> ToolOutput[str]:
         response.raise_for_status()
         content_type = response.headers.get("content-type", "")
         if "text/" not in content_type and "application/json" not in content_type:
-            return ToolOutput(data=f"Error: unsupported content type '{content_type}'.")
+            raise ToolRetry(f"unsupported content type '{content_type}'.")
         body = response.text
         cap = settings.network.webfetch_max_response_bytes
         if len(body) > cap:

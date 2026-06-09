@@ -7,7 +7,7 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..subprocesses import jq_filter
-from .base import AsyncPathTool, ToolOutput, resolve_accessible_file
+from .base import AsyncPathTool, ToolOutput, ToolRetry, resolve_accessible_file
 from .documents import DocumentFilePathArg
 
 __all__ = ["JqFilterArg", "JqTool"]
@@ -33,13 +33,13 @@ class JqTool(AsyncPathTool[str]):
         """Run a jq filter expression against a JSON file."""
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None or not resolved[2].is_file():
-            return ToolOutput(data=f"Error: file '{file_path}' not found.")
+            raise ToolRetry(f"file '{file_path}' not found.")
         data = json.loads(resolved[2].read_text(encoding="utf-8"))
 
         try:
             result = await jq_filter(filter, data)
         except ValueError as exc:
-            return ToolOutput(data=f"Error: {exc}")
+            raise ToolRetry(str(exc)) from exc
         output = json.dumps(result, default=str)
         if len(output) > self.max_output_chars:
             output = output[: self.max_output_chars] + "\n\n[truncated]"

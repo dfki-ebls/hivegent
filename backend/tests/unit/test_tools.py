@@ -3,10 +3,11 @@
 import json
 from pathlib import Path
 
+import pytest
 from fastapi import HTTPException
 
 from hivegent.store import WorkspaceScope
-from hivegent.tools.base import SearchPath, scope_paths
+from hivegent.tools.base import SearchPath, ToolRetry, scope_paths
 from hivegent.tools.documents import (
     DocumentRange,
     DocumentSummary,
@@ -376,14 +377,17 @@ class TestReadDocumentTool:
         assert result.start_line == 1
         assert result.end_line == 1
         assert result.total_lines == 1
+        assert result.content_hash  # surfaced for optimistic-concurrency edits
 
-    def test_returns_none_for_nonexistent(self, tmp_path: Path) -> None:
+    def test_rejects_nonexistent(self, tmp_path: Path) -> None:
         tool = ReadDocumentTool(paths=tmp_path)
-        assert tool("missing.md").data is None
+        with pytest.raises(ToolRetry, match="not found"):
+            tool("missing.md")
 
     def test_rejects_path_traversal(self, tmp_path: Path) -> None:
         tool = ReadDocumentTool(paths=tmp_path)
-        assert tool("../../../etc/passwd").data is None
+        with pytest.raises(ToolRetry, match="not found"):
+            tool("../../../etc/passwd")
 
     def test_reads_group_document(self, tmp_path: Path) -> None:
         group_dir = tmp_path / "group"
@@ -399,9 +403,10 @@ class TestReadDocumentTool:
         assert isinstance(result, DocumentRange)
         assert result.content == "group content"
 
-    def test_returns_none_for_unknown_prefix(self, tmp_path: Path) -> None:
+    def test_rejects_unknown_prefix(self, tmp_path: Path) -> None:
         tool = ReadDocumentTool(paths=tmp_path)
-        assert tool("@unknown/doc.md").data is None
+        with pytest.raises(ToolRetry, match="not found"):
+            tool("@unknown/doc.md")
 
     def test_formatted_always_includes_line_numbers(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("alpha\nbeta")
@@ -497,34 +502,37 @@ class TestEditDocumentTool:
     """
 
     async def test_delegates_to_mutator(self, tmp_path: Path) -> None:
-        calls: list[tuple[str, str, str, bool]] = []
+        calls: list[tuple[str, str, str, bool, str | None]] = []
 
         async def _mutate(
             filename: str,
             old_string: str,
             new_string: str,
             replace_all: bool,
+            expected_hash: str | None,
         ) -> str:
-            calls.append((filename, old_string, new_string, replace_all))
+            calls.append((filename, old_string, new_string, replace_all, expected_hash))
             return "edited"
 
         tool = EditDocumentTool(paths=tmp_path, mutator=_mutate)
-        result = (await tool("doc.md", "hello", "goodbye", replace_all=True)).data
+        result = (
+            await tool("doc.md", "hello", "goodbye", replace_all=True, expected_hash="h")
+        ).data
         assert result == "edited"
-        assert calls == [("doc.md", "hello", "goodbye", True)]
+        assert calls == [("doc.md", "hello", "goodbye", True, "h")]
 
     async def test_rejects_inaccessible_path(self, tmp_path: Path) -> None:
         tool = EditDocumentTool(paths=tmp_path, mutator=_unreachable_edit)
-        result = (await tool("../escape.md", "a", "b")).data
-        assert "not accessible" in result
+        with pytest.raises(ToolRetry, match="not accessible"):
+            await tool("../escape.md", "a", "b")
 
     async def test_translates_mutator_error(self, tmp_path: Path) -> None:
         async def _mutate(*_: object) -> str:
             raise HTTPException(status_code=404, detail="Document not found")
 
         tool = EditDocumentTool(paths=tmp_path, mutator=_mutate)
-        result = (await tool("doc.md", "a", "b")).data
-        assert result == "Error: Document not found"
+        with pytest.raises(ToolRetry, match="Document not found"):
+            await tool("doc.md", "a", "b")
 
 
 class TestWriteDocumentTool:
@@ -535,26 +543,32 @@ class TestWriteDocumentTool:
     """
 
     async def test_delegates_to_mutator(self, tmp_path: Path) -> None:
-        calls: list[tuple[str, str, str]] = []
+        calls: list[tuple[str, str, str, str | None]] = []
 
-        async def _mutate(filename: str, content: str, mode: str) -> str:
-            calls.append((filename, content, mode))
+        async def _mutate(
+            filename: str, content: str, mode: str, expected_hash: str | None
+        ) -> str:
+            calls.append((filename, content, mode, expected_hash))
             return "written"
 
         tool = WriteDocumentTool(paths=tmp_path, glob="*.md", mutator=_mutate)
-        result = (await tool("doc.md", "content", mode="append")).data
+        result = (
+            await tool("doc.md", "content", mode="append", expected_hash="h")
+        ).data
         assert result == "written"
-        assert calls == [("doc.md", "content", "append")]
+        assert calls == [("doc.md", "content", "append", "h")]
 
     async def test_rejects_non_matching_glob(self, tmp_path: Path) -> None:
         tool = WriteDocumentTool(
             paths=tmp_path, glob="*.md", mutator=_unreachable_write
         )
-        result = (await tool("doc.txt", "content")).data
-        assert "Error" in result
+        with pytest.raises(ToolRetry, match="does not match pattern"):
+            await tool("doc.txt", "content")
 
     async def test_none_glob_allows_any(self, tmp_path: Path) -> None:
-        async def _mutate(filename: str, content: str, mode: str) -> str:
+        async def _mutate(
+            filename: str, content: str, mode: str, expected_hash: str | None
+        ) -> str:
             return f"wrote {filename}"
 
         tool = WriteDocumentTool(paths=tmp_path, mutator=_mutate)
@@ -566,8 +580,8 @@ class TestWriteDocumentTool:
             raise HTTPException(status_code=400, detail="Unsupported write mode: x")
 
         tool = WriteDocumentTool(paths=tmp_path, mutator=_mutate)
-        result = (await tool("doc.md", "content")).data
-        assert result == "Error: Unsupported write mode: x"
+        with pytest.raises(ToolRetry, match="Unsupported write mode"):
+            await tool("doc.md", "content")
 
 
 async def _unreachable_edit(*_: object) -> str:
@@ -591,18 +605,18 @@ class TestJqTool:
     async def test_invalid_jq_expression(self, tmp_path: Path) -> None:
         (tmp_path / "item.json").write_text(json.dumps({"x": 1}))
         tool = JqTool(paths=tmp_path)
-        result = (await tool("invalid [[[", "item.json")).data
-        assert result.startswith("Error:")
+        with pytest.raises(ToolRetry):
+            await tool("invalid [[[", "item.json")
 
     async def test_nonexistent_file_path(self, tmp_path: Path) -> None:
         tool = JqTool(paths=tmp_path)
-        result = (await tool(".", "missing.json")).data
-        assert result.startswith("Error:")
+        with pytest.raises(ToolRetry, match="not found"):
+            await tool(".", "missing.json")
 
     async def test_path_traversal(self, tmp_path: Path) -> None:
         tool = JqTool(paths=tmp_path)
-        result = (await tool(".", "../etc/passwd")).data
-        assert result.startswith("Error:")
+        with pytest.raises(ToolRetry, match="not found"):
+            await tool(".", "../etc/passwd")
 
     async def test_large_output_truncated(self, tmp_path: Path) -> None:
         data = {"items": ["x" * 100 for _ in range(50)]}

@@ -259,6 +259,7 @@ export const DocumentRangeSchema = z.object({
   end_line: z.number(),
   total_lines: z.number(),
   content: z.string(),
+  content_hash: z.string(),
 });
 export type DocumentRange = z.infer<typeof DocumentRangeSchema>;
 

@@ -10,6 +10,7 @@ from typing import Annotated, override
 
 from pydantic import Field
 
+from ..config import content_hash
 from .base import (
     WORKSPACE_PATH_HINT,
     WORKSPACE_SCOPE_HINT,
@@ -17,6 +18,7 @@ from .base import (
     SearchPath,
     SyncPathTool,
     ToolOutput,
+    ToolRetry,
     excluded_dirs,
     file_allowed,
     is_in_excluded_dir,
@@ -44,8 +46,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-_NOT_FOUND_MSG = "(document not found)"
 
 _SIZE_UNITS = ("B", "K", "M", "G")
 
@@ -78,6 +78,8 @@ class DocumentRange:
     end_line: int
     total_lines: int
     content: str
+    content_hash: str
+    """Fingerprint of the *full* document, for ``expected_hash`` on a later edit."""
 
 
 DocumentFilePathArg = Annotated[
@@ -439,7 +441,7 @@ class GlobDocumentsTool(SyncPathTool[list[str]]):
 
 
 @dataclass(slots=True, frozen=True)
-class ReadDocumentTool(SyncPathTool[DocumentRange | None]):
+class ReadDocumentTool(SyncPathTool[DocumentRange]):
     """Read a document's content as a line range with line numbers."""
 
     default_lines: int = 2000
@@ -451,7 +453,7 @@ class ReadDocumentTool(SyncPathTool[DocumentRange | None]):
         file_path: DocumentFilePathArg,
         offset: DocumentOffsetArg = 1,
         limit: DocumentLimitArg = None,
-    ) -> ToolOutput[DocumentRange | None]:
+    ) -> ToolOutput[DocumentRange]:
         """Read a document's content.
 
         Returns the lines from ``offset`` (1-indexed) up to ``limit`` lines,
@@ -462,30 +464,37 @@ class ReadDocumentTool(SyncPathTool[DocumentRange | None]):
         """
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None or not resolved[2].is_file():
-            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
+            raise ToolRetry(f"'{file_path}' not found.")
         _sp, _local, absolute = resolved
 
         media_type = binary_media_type(file_path)
         if media_type is not None:
-            return ToolOutput(
-                data=None,
-                formatted=(
-                    f"({file_path} is a {media_type} binary — "
-                    "use read_binary_document to send it to a vision model)"
-                ),
+            raise ToolRetry(
+                f"'{file_path}' is a {media_type} binary — "
+                "use read_binary_document to send it to a vision model."
             )
 
-        all_lines = absolute.read_text(encoding="utf-8").splitlines()
+        raw_text = absolute.read_text(encoding="utf-8")
+        file_hash = content_hash(raw_text)
+        all_lines = raw_text.splitlines()
         total = len(all_lines)
         start = max(1, offset)
         if total == 0:
             empty = DocumentRange(
-                start_line=start, end_line=start - 1, total_lines=0, content=""
+                start_line=start,
+                end_line=start - 1,
+                total_lines=0,
+                content="",
+                content_hash=file_hash,
             )
             return ToolOutput(data=empty, formatted="(empty file)")
         if start > total:
             past_eof = DocumentRange(
-                start_line=start, end_line=start - 1, total_lines=total, content=""
+                start_line=start,
+                end_line=start - 1,
+                total_lines=total,
+                content="",
+                content_hash=file_hash,
             )
             return ToolOutput(
                 data=past_eof,
@@ -511,6 +520,7 @@ class ReadDocumentTool(SyncPathTool[DocumentRange | None]):
             end_line=end,
             total_lines=total,
             content="\n".join(selected),
+            content_hash=file_hash,
         )
         annotated = annotate_lines(selected, start)
         remaining = total - end
@@ -523,6 +533,6 @@ class ReadDocumentTool(SyncPathTool[DocumentRange | None]):
             data=result,
             formatted=(
                 f"lines {result.start_line}-{result.end_line} of "
-                f"{result.total_lines}:\n{annotated}{suffix}"
+                f"{result.total_lines} (hash {file_hash}):\n{annotated}{suffix}"
             ),
         )

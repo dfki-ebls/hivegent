@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from fastmcp import FastMCP
 from fastmcp.dependencies import Depends
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import ToolResult
 from mcp.types import (
     BlobResourceContents,
@@ -17,7 +18,14 @@ from mcp.types import (
     TextContent,
 )
 
-from .base import BinaryAttachment, CallInfo, Tool, ToolOutput, factory_tool_name
+from .base import (
+    BinaryAttachment,
+    CallInfo,
+    Tool,
+    ToolOutput,
+    factory_tool_name,
+    translate_tool_retry,
+)
 
 __all__ = ["for_fastmcp", "register_mcp_tools"]
 
@@ -93,14 +101,18 @@ def for_fastmcp(
         "return": str,
     }
 
+    # Surface a ToolRetry as a FastMCP ToolError so the message reaches the MCP
+    # client instead of being masked as an internal error.
     if info.is_async:
 
         async def wrapper(**kwargs: Any) -> Any:
-            return wrap_tool_output(await kwargs.pop("_tool_")(**kwargs))
+            with translate_tool_retry(ToolError):
+                return wrap_tool_output(await kwargs.pop("_tool_")(**kwargs))
     else:
 
         def wrapper(**kwargs: Any) -> Any:
-            return wrap_tool_output(kwargs.pop("_tool_")(**kwargs))
+            with translate_tool_retry(ToolError):
+                return wrap_tool_output(kwargs.pop("_tool_")(**kwargs))
 
     info.apply_to(wrapper, new_sig, new_annotations)
     return wrapper

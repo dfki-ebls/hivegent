@@ -1,5 +1,6 @@
 """Configuration settings for the hivegent application."""
 
+import hashlib
 import os
 import re
 from pathlib import Path, PurePosixPath
@@ -38,11 +39,32 @@ __all__ = [
     "RerankSettings",
     "SecuritySettings",
     "Settings",
+    "content_hash",
     "sanitize_document_path",
     "sanitize_group_id",
     "sanitize_user_id",
     "settings",
 ]
+
+
+def content_hash(text: str) -> str:
+    """Return a short content fingerprint for optimistic-concurrency checks.
+
+    The read tools surface this hash so a later edit or write can pass it
+    back as ``expected_hash``; the mutation gateway then rejects the change
+    if the document moved on in between, guarding against a model acting on
+    a stale read.
+
+    Args:
+        text: The full document text to fingerprint.
+
+    Returns:
+        The first 12 hex characters of the SHA-256 digest of *text*.
+
+    >>> content_hash("hello world")
+    'b94d27b9934d'
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 def sanitize_user_id(user_id: str) -> str:

@@ -19,6 +19,7 @@ from .base import (
     BinaryAttachment,
     SyncPathTool,
     ToolOutput,
+    ToolRetry,
     resolve_accessible_file,
 )
 
@@ -29,7 +30,6 @@ __all__ = [
     "binary_media_type",
 ]
 
-_NOT_FOUND_MSG = "(document not found)"
 _MAX_BYTES = 20 * 1024 * 1024
 
 BINARY_MEDIA_TYPES: dict[str, str] = {
@@ -115,7 +115,7 @@ def _extract_pdf_pages(pdf_bytes: bytes, spec: str) -> tuple[bytes, tuple[int, .
 
 
 @dataclass(slots=True, frozen=True)
-class ReadBinaryDocumentTool(SyncPathTool[BinaryReadResult | None]):
+class ReadBinaryDocumentTool(SyncPathTool[BinaryReadResult]):
     """Read an image or PDF as binary content for vision-capable models."""
 
     @override
@@ -123,7 +123,7 @@ class ReadBinaryDocumentTool(SyncPathTool[BinaryReadResult | None]):
         self,
         file_path: BinaryFilePathArg,
         pages: PagesArg = None,
-    ) -> ToolOutput[BinaryReadResult | None]:
+    ) -> ToolOutput[BinaryReadResult]:
         """Read an image or PDF and attach it to the tool result.
 
         Use this when the textual conversion of a document is missing
@@ -138,32 +138,23 @@ class ReadBinaryDocumentTool(SyncPathTool[BinaryReadResult | None]):
         """
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None or not resolved[2].is_file():
-            return ToolOutput(data=None, formatted=_NOT_FOUND_MSG)
+            raise ToolRetry(f"'{file_path}' not found.")
         sp, local, absolute = resolved
 
         media_type = binary_media_type(local)
         if media_type is None:
-            return ToolOutput(
-                data=None,
-                formatted=(
-                    f"({file_path} is not a supported binary type — "
-                    "use read_document for text files)"
-                ),
+            raise ToolRetry(
+                f"'{file_path}' is not a supported binary type — "
+                "use read_document for text files."
             )
 
         if pages is not None and media_type != "application/pdf":
-            return ToolOutput(
-                data=None,
-                formatted=f"(pages= is only valid for PDF inputs, got {media_type})",
-            )
+            raise ToolRetry(f"pages= is only valid for PDF inputs, got {media_type}.")
 
         if absolute.stat().st_size > _MAX_BYTES:
-            return ToolOutput(
-                data=None,
-                formatted=(
-                    f"(file too large: exceeds {_MAX_BYTES} byte limit — "
-                    "narrow with pages= for PDFs)"
-                ),
+            raise ToolRetry(
+                f"file too large: exceeds {_MAX_BYTES} byte limit — "
+                "narrow with pages= for PDFs."
             )
 
         raw = absolute.read_bytes()
@@ -173,12 +164,12 @@ class ReadBinaryDocumentTool(SyncPathTool[BinaryReadResult | None]):
             try:
                 raw, selected_pages = _extract_pdf_pages(raw, pages)
             except ValueError as exc:
-                return ToolOutput(data=None, formatted=f"(invalid pages: {exc})")
+                raise ToolRetry(f"invalid pages: {exc}") from exc
         elif media_type.startswith("image/"):
             try:
                 raw = sanitize_image_bytes(raw, media_type)
             except ValueError as exc:
-                return ToolOutput(data=None, formatted=f"(image rejected: {exc})")
+                raise ToolRetry(f"image rejected: {exc}") from exc
 
         canonical = sp.prefixed(local)
         page_text = (

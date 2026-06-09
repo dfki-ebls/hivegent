@@ -6,10 +6,18 @@ from typing import Annotated, Any, cast
 
 from pydantic import BeforeValidator
 from pydantic_ai import BinaryContent, FunctionToolset, RunContext
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
-from .base import BinaryAttachment, CallInfo, Tool, ToolOutput, factory_tool_name
+from .base import (
+    BinaryAttachment,
+    CallInfo,
+    Tool,
+    ToolOutput,
+    factory_tool_name,
+    translate_tool_retry,
+)
 
 __all__ = [
     "for_pydantic_ai",
@@ -155,16 +163,20 @@ def for_pydantic_ai[D](
         "return": ToolReturn,
     }
 
+    # Surface a ToolRetry as pydantic-ai's ModelRetry so the model can fix its
+    # input and retry (any other exception would abort the whole run).
     if info.is_async:
 
         async def wrapper(ctx: Any, **kwargs: Any) -> Any:
-            result = cast(Awaitable[ToolOutput[Any]], factory(ctx.deps)(**kwargs))
-            return wrap_tool_output(await result, tool_call_id=ctx.tool_call_id)
+            with translate_tool_retry(ModelRetry):
+                result = cast(Awaitable[ToolOutput[Any]], factory(ctx.deps)(**kwargs))
+                return wrap_tool_output(await result, tool_call_id=ctx.tool_call_id)
     else:
 
         def wrapper(ctx: Any, **kwargs: Any) -> Any:
-            result = cast(ToolOutput[Any], factory(ctx.deps)(**kwargs))
-            return wrap_tool_output(result, tool_call_id=ctx.tool_call_id)
+            with translate_tool_retry(ModelRetry):
+                result = cast(ToolOutput[Any], factory(ctx.deps)(**kwargs))
+                return wrap_tool_output(result, tool_call_id=ctx.tool_call_id)
 
     info.apply_to(wrapper, new_sig, new_annotations)
     return wrapper

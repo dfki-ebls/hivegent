@@ -12,7 +12,7 @@ import pytest
 from fastapi import HTTPException
 
 from hivegent import workspace
-from hivegent.config import settings
+from hivegent.config import content_hash, settings
 from hivegent.store import Casebase
 
 
@@ -71,6 +71,25 @@ class TestEditDocumentText:
             await workspace.edit_document_text(user_store, "nope.md", "a", "b")
         assert exc.value.status_code == 404
 
+    async def test_matching_expected_hash_succeeds(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        (workspace_dir / "doc.md").write_text("hello world")
+        result = await workspace.edit_document_text(
+            user_store, "doc.md", "hello", "hi", expected_hash=content_hash("hello world")
+        )
+        assert "Replaced 1 occurrence" in result
+
+    async def test_stale_expected_hash_is_409(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        (workspace_dir / "doc.md").write_text("hello world")
+        with pytest.raises(HTTPException) as exc:
+            await workspace.edit_document_text(
+                user_store, "doc.md", "hello", "hi", expected_hash="stale0000000"
+            )
+        assert exc.value.status_code == 409
+
 
 class TestWriteDocumentText:
     async def test_replace_creates_file(
@@ -104,3 +123,33 @@ class TestWriteDocumentText:
                 user_store, "nope.md", "x", mode="append"
             )
         assert exc.value.status_code == 404
+
+    async def test_stale_expected_hash_is_409(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        (workspace_dir / "doc.md").write_text("start")
+        with pytest.raises(HTTPException) as exc:
+            await workspace.write_document_text(
+                user_store, "doc.md", " end", mode="append", expected_hash="stale0000000"
+            )
+        assert exc.value.status_code == 409
+
+    async def test_matching_expected_hash_succeeds(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        (workspace_dir / "doc.md").write_text("start")
+        result = await workspace.write_document_text(
+            user_store, "doc.md", " end", mode="append", expected_hash=content_hash("start")
+        )
+        assert "Appended" in result
+        assert (workspace_dir / "doc.md").read_text() == "start end"
+
+    async def test_expected_hash_on_missing_file_is_409(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        """A hash for a file that does not exist signals a hallucinated read."""
+        with pytest.raises(HTTPException) as exc:
+            await workspace.write_document_text(
+                user_store, "new.md", "body", expected_hash="deadbeef0000"
+            )
+        assert exc.value.status_code == 409

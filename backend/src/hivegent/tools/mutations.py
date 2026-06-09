@@ -8,7 +8,7 @@ from typing import Annotated, Literal, override
 from fastapi import HTTPException
 from pydantic import Field
 
-from .base import AsyncPathTool, ToolOutput, resolve_accessible_file
+from .base import AsyncPathTool, ToolOutput, ToolRetry, resolve_accessible_file
 from .documents import DocumentFilePathArg
 
 __all__ = [
@@ -18,6 +18,7 @@ __all__ = [
     "EditOldStringArg",
     "EditReplaceAllArg",
     "EditMutation",
+    "ExpectedHashArg",
     "WriteDocumentTool",
     "WriteMutation",
     "WriteModeArg",
@@ -50,6 +51,17 @@ DocumentContentArg = Annotated[
     str,
     Field(description="Text content to write to the document."),
 ]
+ExpectedHashArg = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Content hash from a prior read of this document. When given, "
+            "the mutation is rejected if the document changed since, so you "
+            "should re-read it and retry with the new hash. Omit to write "
+            "unconditionally."
+        ),
+    ),
+]
 WriteModeArg = Annotated[
     Literal["prepend", "append", "replace"],
     Field(
@@ -60,17 +72,16 @@ WriteModeArg = Annotated[
     ),
 ]
 
-EditMutation = Callable[[str, str, str, bool], Awaitable[str]]
+EditMutation = Callable[[str, str, str, bool, str | None], Awaitable[str]]
 """Canonical edit operation for a resolved local document path."""
 
-WriteMutation = Callable[[str, str, WriteModeArg], Awaitable[str]]
+WriteMutation = Callable[[str, str, WriteModeArg, str | None], Awaitable[str]]
 """Canonical write operation for a resolved local document path."""
 
 
-def _mutation_error(exc: HTTPException | ValueError) -> ToolOutput[str]:
-    """Render a failed mutation as a tool error message."""
-    detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
-    return ToolOutput(data=f"Error: {detail}")
+def _mutation_detail(exc: HTTPException | ValueError) -> str:
+    """Extract the human-readable detail from a failed-mutation exception."""
+    return exc.detail if isinstance(exc, HTTPException) else str(exc)
 
 
 @dataclass(slots=True, frozen=True)
@@ -91,21 +102,25 @@ class EditDocumentTool(AsyncPathTool[str]):
         old_string: EditOldStringArg,
         new_string: EditNewStringArg,
         replace_all: EditReplaceAllArg = False,
+        expected_hash: ExpectedHashArg = None,
     ) -> ToolOutput[str]:
         """Replace an exact string in a document.
 
         By default the match must be unique — fails if ``old_string`` does
         not exist or appears more than once.  Pass ``replace_all=True`` to
-        substitute every occurrence instead.
+        substitute every occurrence instead.  Pass ``expected_hash`` from a
+        prior read to reject the edit if the document changed since.
         """
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None:
-            return ToolOutput(data=f"Error: '{file_path}' is not accessible.")
+            raise ToolRetry(f"'{file_path}' is not accessible.")
         _sp, local, _absolute = resolved
         try:
-            data = await self.mutator(local, old_string, new_string, replace_all)
+            data = await self.mutator(
+                local, old_string, new_string, replace_all, expected_hash
+            )
         except (HTTPException, ValueError) as exc:
-            return _mutation_error(exc)
+            raise ToolRetry(_mutation_detail(exc)) from exc
         return ToolOutput(data=data)
 
 
@@ -127,18 +142,21 @@ class WriteDocumentTool(AsyncPathTool[str]):
         file_path: DocumentFilePathArg,
         content: DocumentContentArg,
         mode: WriteModeArg = "replace",
+        expected_hash: ExpectedHashArg = None,
     ) -> ToolOutput[str]:
-        """Write content to a document."""
+        """Write content to a document.
+
+        Pass ``expected_hash`` from a prior read to reject the write if the
+        document changed since.
+        """
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None:
-            return ToolOutput(data=f"Error: '{file_path}' is not accessible.")
+            raise ToolRetry(f"'{file_path}' is not accessible.")
         _sp, local, _absolute = resolved
         if self.glob and not PurePosixPath(local).match(self.glob):
-            return ToolOutput(
-                data=f"Error: '{file_path}' does not match pattern '{self.glob}'.",
-            )
+            raise ToolRetry(f"'{file_path}' does not match pattern '{self.glob}'.")
         try:
-            data = await self.mutator(local, content, mode)
+            data = await self.mutator(local, content, mode, expected_hash)
         except (HTTPException, ValueError) as exc:
-            return _mutation_error(exc)
+            raise ToolRetry(_mutation_detail(exc)) from exc
         return ToolOutput(data=data)

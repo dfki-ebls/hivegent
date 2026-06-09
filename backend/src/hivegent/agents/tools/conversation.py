@@ -1,6 +1,7 @@
 """Conversation-oriented agent tool registrations."""
 
 from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturn
 
 from ...db.conversations import (
@@ -54,10 +55,7 @@ async def get_conversation(
     """
     conv = await _load_conversation(ctx.deps.store.id, conversation_id)
     if conv is None:
-        return wrap_tool_output(
-            ToolOutput(data=None, formatted="(conversation not found)"),
-            tool_call_id=ctx.tool_call_id,
-        )
+        raise ModelRetry(f"conversation '{conversation_id}' not found.")
     return wrap_tool_output(
         ToolOutput(data=conv, formatted=conv.title or "(untitled)"),
         tool_call_id=ctx.tool_call_id,

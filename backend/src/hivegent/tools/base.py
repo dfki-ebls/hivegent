@@ -5,7 +5,8 @@ import json
 import re
 import types
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Self, get_type_hints, override
@@ -28,6 +29,7 @@ __all__ = [
     "SyncTool",
     "Tool",
     "ToolOutput",
+    "ToolRetry",
     "WORKSPACE_PATH_HINT",
     "WORKSPACE_SCOPE_HINT",
     "coerce_paths",
@@ -41,7 +43,34 @@ __all__ = [
     "scope_paths",
     "tool_description",
     "tool_name",
+    "translate_tool_retry",
 ]
+
+class ToolRetry(Exception):
+    """A model-correctable tool failure.
+
+    Raised by tools for inputs the model can fix and retry — a missing or
+    inaccessible path, an ambiguous edit, or a stale ``expected_hash``. The
+    framework adapters translate it: the pydantic-ai adapter re-raises it as
+    ``ModelRetry`` so the model self-corrects, and the MCP adapter raises a
+    FastMCP ``ToolError``. Keeping it framework-neutral lets the tool
+    implementations stay free of any framework import.
+    """
+
+
+@contextmanager
+def translate_tool_retry(into: Callable[[str], Exception]) -> Iterator[None]:
+    """Re-raise any :class:`ToolRetry` from the block as *into* the message.
+
+    The single translation point each framework adapter wraps its tool call
+    in, so the retry signal reaches the framework in its own idiom (FastMCP
+    ``ToolError``, pydantic-ai ``ModelRetry``) instead of aborting the run.
+    """
+    try:
+        yield
+    except ToolRetry as exc:
+        raise into(str(exc)) from exc
+
 
 DEFAULT_EXCLUDE_DIRS: tuple[str, ...] = (
     "node_modules",
