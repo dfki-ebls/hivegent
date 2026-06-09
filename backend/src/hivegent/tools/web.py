@@ -58,7 +58,9 @@ class WebSearch(SyncTool[list[dict[str, str]]]):
         max_results = min(max(1, max_results), 20)
         try:
             with DDGS() as ddgs:
-                raw = list(ddgs.text(query, max_results=max_results))
+                raw = list(
+                    ddgs.text(query, max_results=max_results, backend="duckduckgo")
+                )
             results = [
                 {
                     "title": r.get("title", ""),
