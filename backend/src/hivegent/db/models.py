@@ -148,6 +148,9 @@ class Origin(enum.StrEnum):
     UPLOAD = "upload"
     COLLECTION = "collection"
     EXTRACTED = "extracted"
+    # Discovered on disk by the reconciler with no prior row (hand-dropped
+    # files, and the future read-write shell tool's fold-back).
+    IMPORTED = "imported"
 
 
 class GeneratedBy(enum.StrEnum):
@@ -317,7 +320,7 @@ class Document(Timestamped, Base):
     mime: Mapped[str | None]
 
     pipeline: Mapped[str]
-    content_sha256: Mapped[str | None]
+    content_digest: Mapped[str | None]
 
     owner_user: Mapped[User | None] = relationship(
         back_populates="documents", foreign_keys=[owner_user_id]

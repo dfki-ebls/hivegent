@@ -30,7 +30,7 @@ import tempfile
 import threading
 import zipfile
 import zlib
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
 
@@ -49,7 +49,7 @@ from .chunks import (
     chunk_and_index_document,
     delete_document as _delete_chunked_document,
 )
-from .config import content_hash, sanitize_document_path, settings
+from .config import content_digest, content_hash, sanitize_document_path, settings
 from .converters import (
     ConversionPipeline,
     get_converter,
@@ -74,6 +74,7 @@ from .converters.images import guess_image_media_type, sanitize_image_bytes
 from .converters.wikilinks import preprocess_markdown
 from .db import documents as db_documents
 from .entries import (
+    EntryPaths,
     asset_ref_for,
     assets_dir_for_stem,
     cleanup_empty_parents,
@@ -111,6 +112,8 @@ __all__ = [
     "reconvert",
     "replace_original",
     "store_lock",
+    "sync_entries_from_disk",
+    "sync_entry_from_disk",
     "update_asset_description",
     "upload",
     "write_document_text",
@@ -163,6 +166,31 @@ def _build_entry_metadata(
         origin=origin,
         generated_by=generated_by,
         files=files,
+    )
+
+
+def _entry_metadata_from_disk(
+    resolved: EntryPaths, existing: EntryMetadata | None
+) -> EntryMetadata:
+    """Build current disk metadata, preserving SQL-only provenance when present."""
+    return _build_entry_metadata(
+        stem_path=resolved.stem_path,
+        description_path=resolved.description_path,
+        original_path=resolved.original_path,
+        assets_dir=resolved.assets_dir,
+        entry_kind=existing.entry_kind if existing else "user_markdown",
+        origin=existing.origin if existing else "imported",
+        generated_by=existing.generated_by if existing else "user",
+    )
+
+
+def _same_persisted_entry_metadata(
+    existing: EntryMetadata, current: EntryMetadata
+) -> bool:
+    """Return whether the SQL-backed entry metadata already matches disk."""
+    persisted_fields = set(EntryMetadata.model_fields) - {"files"}
+    return existing.model_dump(include=persisted_fields) == current.model_dump(
+        include=persisted_fields
     )
 
 
@@ -738,6 +766,73 @@ async def _ensure_upload_slot_locked(
     await _delete_single_locked(
         store, description_path_for_stem(stem_path_from_reference(reference))
     )
+
+
+# ---------------------------------------------------------------------------
+# Disk → SQL entry sync (reconciler today, shell-tool fold-back later)
+# ---------------------------------------------------------------------------
+
+
+async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
+    """Re-derive one logical entry's SQL + chunk rows from its on-disk markdown.
+
+    The single idempotent ingest path: drop the row if the description is
+    gone, refresh metadata if only companion files changed, otherwise chunk,
+    embed, and upsert.  An entry with no prior SQL row is stamped
+    ``origin="imported"`` since its provenance cannot be recovered from disk,
+    an existing entry keeps its stored provenance.  Returns whether SQL
+    changed.  Caller must hold the casebase lock.
+    """
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    resolved = resolve_entry_paths(workspace_dir, reference)
+    description_full = workspace_dir / resolved.description_path
+
+    if not description_full.is_file():
+        # Entry gone on disk: drop the row if one exists (chunks cascade).
+        return await _delete_chunked_document(store, resolved.description_path)
+
+    content = description_full.read_text(encoding="utf-8")
+    digest = content_digest(content)
+    state = await db_documents.get_entry_state(store, resolved.description_path)
+    existing = state.metadata if state else None
+    entry_metadata = _entry_metadata_from_disk(resolved, existing)
+    if state is not None and state.content_digest == digest:
+        if _same_persisted_entry_metadata(state.metadata, entry_metadata):
+            return False
+        return await db_documents.update_entry_metadata(store, entry_metadata)
+
+    await asyncio.shield(
+        chunk_and_index_document(
+            store, resolved.description_path, content, entry_metadata=entry_metadata
+        )
+    )
+    return True
+
+
+async def sync_entry_from_disk(store: Casebase, reference: str) -> bool:
+    """Bring one logical entry's SQL state into agreement with its disk bytes.
+
+    Lock-acquiring form of :func:`_sync_entry_from_disk_locked`.  Returns
+    whether SQL changed.
+    """
+    async with store_lock(store):
+        return await _sync_entry_from_disk_locked(store, reference)
+
+
+async def sync_entries_from_disk(store: Casebase, references: Iterable[str]) -> int:
+    """Fold a batch of on-disk entry changes into SQL under one lock.
+
+    The fold-back primitive a future read-write shell tool calls once a
+    session ends: pass every touched description path and SQL is re-derived
+    from the current bytes in a single locked, idempotent pass.  Reused by the
+    startup reconciler.  Returns the number of entries whose index changed.
+    """
+    async with store_lock(store):
+        changed = 0
+        for reference in references:
+            if await _sync_entry_from_disk_locked(store, reference):
+                changed += 1
+        return changed
 
 
 # ---------------------------------------------------------------------------

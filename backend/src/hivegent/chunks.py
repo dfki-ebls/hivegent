@@ -18,7 +18,7 @@ from .chunkers.base import (
     DocumentMetadata,
     EntryMetadata,
 )
-from .config import settings
+from .config import content_digest, settings
 from .db import documents as db_documents
 from .entries import (
     resolve_entry_paths,
@@ -108,11 +108,17 @@ async def chunk_and_index_document(
         span.set_attribute("chunker", chunker.name)
         span.set_attribute("chunk_count", len(raw_chunks))
 
+        digest = content_digest(content)
         doc = await db_documents.upsert_document(
-            store, entry_metadata, pipeline=chunker.name
+            store,
+            entry_metadata,
+            pipeline=chunker.name,
         )
         await index_document(doc.id, raw_chunks)
-        return doc.model_copy(update={"chunks": list(raw_chunks)})
+        await db_documents.set_content_digest(doc.id, digest)
+        return doc.model_copy(
+            update={"chunks": list(raw_chunks), "content_digest": digest}
+        )
 
 
 async def delete_document(store: Casebase, filepath: str) -> bool:

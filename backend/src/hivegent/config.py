@@ -39,12 +39,25 @@ __all__ = [
     "RerankSettings",
     "SecuritySettings",
     "Settings",
+    "content_digest",
     "content_hash",
     "sanitize_document_path",
     "sanitize_group_id",
     "sanitize_user_id",
     "settings",
 ]
+
+
+def content_digest(text: str) -> str:
+    """Return the full SHA-256 hex digest of *text*.
+
+    Database operations store this as a drift fingerprint, so the reconciler
+    can skip re-indexing an entry whose on-disk bytes are unchanged.
+
+    >>> content_digest("hello world")
+    'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9'
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def content_hash(text: str) -> str:
@@ -64,7 +77,7 @@ def content_hash(text: str) -> str:
     >>> content_hash("hello world")
     'b94d27b9934d'
     """
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return content_digest(text)[:12]
 
 
 def sanitize_user_id(user_id: str) -> str:

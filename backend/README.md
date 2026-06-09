@@ -77,3 +77,24 @@ uv run alembic downgrade -1
 The systemd unit shipped by [`raise-infra`](../../raise-infra/nixos/options/hivegent.nix) runs `hivegent serve`, and the lifespan handler then runs the migrations during startup.
 For the local Postgres case (`custom.hivegent.postgresql.createLocally = true`), the unit is ordered after `postgresql.target`, so the database role and the `hivegent` database exist before migrations run.
 A failed migration aborts startup with a non-zero exit code, which trips the unit's `Restart = "on-failure"` policy and surfaces in `journalctl -u hivegent`.
+
+## Filesystem as the source of truth for content
+
+The workspace tree under `data/workspace/<store_key>/` is authoritative for document content (markdown, originals, and assets), and the Postgres `documents` plus `chunks` rows are a derived index reconciled from it.
+The single idempotent ingest path is `workspace.sync_entry_from_disk` (one entry) and `workspace.sync_entries_from_disk` (a batch under one casebase lock).
+Both read an entry's on-disk markdown, compare its `content_digest` (see `config.content_digest`) against the stored `documents.content_digest`, and re-chunk only when the bytes changed, so a full re-derive is cheap.
+A description with no prior row is ingested and stamped `origin = imported`, since its real provenance is not recoverable from disk.
+`reconcile.reconcile_store` runs this ingest over every on-disk markdown first, then prunes disk files no surviving entry vouches for and drops SQL rows whose description vanished.
+`entries.is_description_file` is the scratch-versus-document policy seam: only markdown files become document entries, every other file is kept on disk but never chunked on its own.
+
+### Preparing for a read-write shell tool
+
+A future shell tool will let the agent run native commands such as `ls`, `cat`, `find`, `grep`, and editors that modify files directly, bypassing the structured mutation gateway.
+The ingest seam above is the integration point: after a session, call `workspace.sync_entries_from_disk(store, touched_paths)` under the casebase lock to fold the filesystem changes back into SQL.
+The following pieces still need to be built before that tool ships, and none of them require breaking changes to the code above.
+
+- TODO(shell): sandbox arbitrary command execution per casebase (bind-mount only that store's workspace, no or restricted network, resource, time, and output-size limits). `subprocesses.run` is unsandboxed and is safe only for the fixed-argument tools (`rg`, `jq`, `pandoc`), not for agent-driven commands.
+- TODO(shell): run each session against an isolated working copy or overlay of the store so the casebase lock is taken only at fold-back time, never held for an interactive session. overlayfs and `systemd-nspawn` are Linux-only, so dev on macOS needs a copy-based working dir or a Linux VM.
+- TODO(shell): surface the session diff for approval before fold-back, which keeps the "mutations go through a gateway" guarantee and gives free rollback (discard the working copy).
+- TODO(shell): decide whether shell-created originals with no markdown companion should be auto-converted into entries, or stay inert. `is_description_file` currently ingests only markdown, so a lone hand-dropped binary is treated as scratch and is pruned by `reconcile` unless it has a companion `.md`.
+- TODO(shell): keep all workspace access behind `Casebase.workspace_dir(data_dir)` so the working-copy root can be injected in one place. Do not hardcode the workspace path elsewhere.

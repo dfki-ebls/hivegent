@@ -9,7 +9,9 @@ touch ``documents``.
 """
 
 from collections.abc import Sequence
+from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
+from typing import Any, Self
 
 import sqlalchemy as sa
 from sqlalchemy import delete, func, select, update
@@ -47,15 +49,27 @@ __all__ = [
     "delete_all_documents",
     "delete_document",
     "delete_documents",
+    "EntryState",
     "delete_subtree",
     "get_document",
+    "get_entry_state",
     "list_document_paths",
     "list_known_stores",
     "move_document",
     "move_subtree",
     "resolve_accessible_document_ids",
+    "set_content_digest",
+    "update_entry_metadata",
     "upsert_document",
 ]
+
+
+@dataclass(slots=True, frozen=True)
+class EntryState:
+    """An entry's persisted drift fingerprint and metadata, without chunks."""
+
+    content_digest: str | None
+    metadata: EntryMetadata
 
 
 # ─── Filters ───────────────────────────────────────────────────────────
@@ -128,6 +142,7 @@ def _document_from_row(
         pipeline=doc.pipeline,
         created_at=doc.created_at,
         chunks=list(chunks_data),
+        content_digest=doc.content_digest,
     )
 
 
@@ -199,6 +214,24 @@ async def get_document(store: Casebase, reference: str) -> DocumentMetadata | No
         return _document_from_row(row, chunks_data, workspace_root)
 
 
+async def get_entry_state(store: Casebase, reference: str) -> EntryState | None:
+    """Return an entry's drift fingerprint and metadata, or ``None`` if absent.
+
+    One row fetch for the reconcile/sync path, which needs both the stored
+    drift fingerprint and the persisted metadata without loading chunks.  The
+    digest is ``None`` for a row whose content was never indexed durably (see
+    :func:`set_content_digest`), which the caller treats as "needs re-indexing".
+    """
+    stem_path = stem_path_from_reference(reference)
+    async with session() as s:
+        row = await _find(s, store, stem_path)
+        if row is None:
+            return None
+        return EntryState(
+            content_digest=row.content_digest, metadata=_entry_from_row(row)
+        )
+
+
 async def list_document_paths(store: Casebase) -> dict[str, int]:
     """Return ``{description_path: chunk_count}`` for every doc in *store*."""
     async with session() as s:
@@ -262,14 +295,45 @@ async def resolve_accessible_document_ids(stores: Sequence[Casebase]) -> list[st
 # ─── Writes ────────────────────────────────────────────────────────────
 
 
+@dataclass(slots=True, frozen=True)
+class _EntryColumns:
+    """The mutable document columns an entry's metadata maps to.
+
+    Defined and typed in one place so :func:`upsert_document` and
+    :func:`update_entry_metadata` cannot drift, and a column rename or retype
+    surfaces as a type error rather than a silent dict-key mismatch.
+    """
+
+    original_ext: str | None
+    has_assets: bool
+    entry_kind: EntryKind
+    origin: Origin
+    generated_by: GeneratedBy
+    mime: str | None
+
+    @classmethod
+    def from_entry(cls, entry: EntryMetadata) -> Self:
+        """Derive the column values from an entry's metadata."""
+        return cls(
+            original_ext=_original_ext(entry.original_path),
+            has_assets=entry.assets_dir is not None,
+            entry_kind=EntryKind(entry.entry_kind),
+            origin=Origin(entry.origin),
+            generated_by=GeneratedBy(entry.generated_by),
+            mime=entry.mime,
+        )
+
+    def as_values(self) -> dict[str, Any]:
+        """Return the column mapping for a SQLAlchemy ``.values()`` / ``set_``."""
+        return asdict(self)
+
+
 async def upsert_document(
     store: Casebase,
     entry: EntryMetadata,
     pipeline: str,
-    *,
-    content_sha256: str | None = None,
 ) -> DocumentMetadata:
-    """Insert or replace the SQL row for a document.
+    """Insert or replace the SQL row for a document before indexing chunks.
 
     Chunk rows are written separately by
     :func:`hivegent.retrieval.index_document` so the embedding +
@@ -277,20 +341,19 @@ async def upsert_document(
     :class:`DocumentMetadata` carries an empty ``chunks`` list; the
     orchestrator fills it after calling the indexer.
 
+    The row's ``content_digest`` is cleared here because the replacement chunks
+    are not durable yet.  :func:`set_content_digest` stamps the digest only
+    after indexing succeeds.
+
     Concurrency-safe ``INSERT ... ON CONFLICT DO UPDATE`` keyed on the
     ``(owner, stem_path)`` unique constraint: two requests racing to
     index the same stem cannot trip the constraint and roll back the
     transaction (losing the document).
     """
     mutable = {
-        "original_ext": _original_ext(entry.original_path),
-        "has_assets": entry.assets_dir is not None,
-        "entry_kind": EntryKind(entry.entry_kind),
-        "origin": Origin(entry.origin),
-        "generated_by": GeneratedBy(entry.generated_by),
-        "mime": entry.mime,
+        **_EntryColumns.from_entry(entry).as_values(),
         "pipeline": pipeline,
-        "content_sha256": content_sha256,
+        "content_digest": None,
     }
     owner_col = (
         Document.owner_user_id if store.kind == "user" else Document.owner_group_id
@@ -309,6 +372,28 @@ async def upsert_document(
         doc = (await s.scalars(stmt)).one()
         workspace_root = store.workspace_path(settings.data_dir)
         return _document_from_row(doc, [], workspace_root)
+
+
+async def update_entry_metadata(store: Casebase, entry: EntryMetadata) -> bool:
+    """Refresh a document's persisted entry metadata without touching chunks."""
+    columns = _EntryColumns.from_entry(entry).as_values()
+    async with session() as s:
+        result = await s.execute(
+            update(Document)
+            .where(_owner_filter(store), Document.stem_path == entry.stem_path)
+            .values(**columns, updated_at=func.now())
+        )
+    return affected_rows(result) > 0
+
+
+async def set_content_digest(document_id: str, content_digest: str) -> None:
+    """Stamp a document's indexed content fingerprint after chunks are durable."""
+    async with session() as s:
+        await s.execute(
+            update(Document)
+            .where(Document.id == document_id)
+            .values(content_digest=content_digest, updated_at=func.now())
+        )
 
 
 async def delete_document(store: Casebase, reference: str) -> bool:

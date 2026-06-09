@@ -12,7 +12,9 @@ import pytest
 from fastapi import HTTPException
 
 from hivegent import workspace
-from hivegent.config import content_hash, settings
+from hivegent.chunkers.base import EntryMetadata
+from hivegent.config import content_digest, content_hash, settings
+from hivegent.db.documents import EntryState
 from hivegent.store import Casebase
 
 
@@ -153,3 +155,68 @@ class TestWriteDocumentText:
                 user_store, "new.md", "body", expected_hash="deadbeef0000"
             )
         assert exc.value.status_code == 409
+
+
+def _entry_metadata(
+    *,
+    original_path: str | None = None,
+    assets_dir: str | None = None,
+) -> EntryMetadata:
+    files = ["doc.md"]
+    if original_path is not None:
+        files.append(original_path)
+    return EntryMetadata(
+        entry_kind="user_markdown",
+        stem_path="doc",
+        description_path="doc.md",
+        original_path=original_path,
+        assets_dir=assets_dir,
+        mime="text/markdown",
+        origin="upload",
+        generated_by="user",
+        files=files,
+    )
+
+
+class TestSyncEntryFromDisk:
+    async def test_refreshes_metadata_when_markdown_digest_matches(
+        self,
+        user_store: Casebase,
+        workspace_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (workspace_dir / "doc.md").write_text("body", encoding="utf-8")
+        (workspace_dir / "doc.pdf").write_bytes(b"%PDF")
+        (workspace_dir / "doc.assets").mkdir()
+        updated: EntryMetadata | None = None
+
+        async def get_entry_state(store: Casebase, reference: str) -> EntryState:
+            _ = store, reference
+            return EntryState(
+                content_digest=content_digest("body"), metadata=_entry_metadata()
+            )
+
+        async def update_entry_metadata(
+            store: Casebase, entry: EntryMetadata
+        ) -> bool:
+            nonlocal updated
+            _ = store
+            updated = entry
+            return True
+
+        async def chunk_and_index_document(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("unchanged markdown should not be indexed")
+
+        monkeypatch.setattr(workspace.db_documents, "get_entry_state", get_entry_state)
+        monkeypatch.setattr(
+            workspace.db_documents, "update_entry_metadata", update_entry_metadata
+        )
+        monkeypatch.setattr(workspace, "chunk_and_index_document", chunk_and_index_document)
+
+        changed = await workspace.sync_entry_from_disk(user_store, "doc.md")
+
+        assert changed is True
+        assert updated is not None
+        assert updated.original_path == "doc.pdf"
+        assert updated.assets_dir == "doc.assets"
+        assert updated.origin == "upload"

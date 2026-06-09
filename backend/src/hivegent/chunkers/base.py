@@ -48,8 +48,14 @@ type EntryKind = Literal[
 ]
 """Logical entry kinds stored in document metadata."""
 
-type EntryOrigin = Literal["upload", "collection", "extracted"]
-"""Origin of a logical entry."""
+type EntryOrigin = Literal["upload", "collection", "extracted", "imported"]
+"""Origin of a logical entry.
+
+``imported`` marks an entry the filesystem reconciler discovered on disk
+without a prior SQL row — a hand-dropped file today, and the output of the
+future read-write shell tool's fold-back.  Its real provenance is not
+recoverable from disk, so it is stamped imported rather than guessed.
+"""
 
 type EntryGeneratedBy = Literal["user", "converter", "vision", "stub"]
 """How the markdown representation of an entry was produced."""
@@ -101,6 +107,14 @@ class DocumentMetadata(EntryMetadata):
     pipeline: str = Field(description="The chunking pipeline used")
     created_at: datetime = Field(description="When the metadata was created")
     chunks: list[ChunkData] = Field(description="The document chunks")
+    content_digest: str | None = Field(
+        default=None,
+        description=(
+            "Full SHA-256 digest of the chunked markdown. Lets the reconciler "
+            "and the future shell fold-back skip re-indexing an entry whose "
+            "on-disk bytes are unchanged."
+        ),
+    )
 
 
 class ChunkSummary(BaseModel):

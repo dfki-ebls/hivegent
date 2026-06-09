@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from .converters.base import DOCUMENT_EXTENSION
+from .converters.base import DOCUMENT_EXTENSION, is_markdown_suffix
 
 __all__ = [
     "EntryPaths",
@@ -14,6 +14,7 @@ __all__ = [
     "entry_exists",
     "find_original_for_reference",
     "is_assets_dir",
+    "is_description_file",
     "original_path_for_stem",
     "resolve_entry_paths",
     "stem_display_name",
@@ -42,6 +43,23 @@ def stem_path_from_reference(reference: str) -> str:
 def is_assets_dir(name: str) -> bool:
     """Return whether a directory name is a child-assets directory."""
     return name.endswith(".assets")
+
+
+def is_description_file(rel_path: str) -> bool:
+    """Return whether a workspace-relative path is an ingestable description.
+
+    The scratch-versus-document policy seam: only markdown files map to
+    logical document entries that the reconciler folds into SQL.  Every
+    other on-disk file (originals, store-only assets, and any scratch output
+    a future shell tool produces) is inert workspace content that is kept on
+    disk but never chunked on its own.
+
+    >>> is_description_file("docs/report.md")
+    True
+    >>> is_description_file("docs/report.pdf")
+    False
+    """
+    return is_markdown_suffix(PurePosixPath(rel_path).suffix)
 
 
 def description_path_for_stem(stem_path: str) -> str:
