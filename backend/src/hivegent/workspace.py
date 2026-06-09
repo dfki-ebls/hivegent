@@ -1683,6 +1683,11 @@ async def process_collection(
                             original_path = workspace_dir / safe
                             original_path.parent.mkdir(parents=True, exist_ok=True)
                             original_path.write_bytes(original_bytes)
+                            # The owning markdown sorts before its companion and
+                            # so is already indexed with no original linked; fold
+                            # the just-written original into its SQL row so delete,
+                            # move, and reconvert see it without waiting for a boot.
+                            await _sync_entry_from_disk_locked(store, safe)
                         status = "ok"
                     except Exception as exc:
                         logger.warning(

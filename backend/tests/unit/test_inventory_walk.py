@@ -24,10 +24,10 @@ def test_file_vanishing_mid_scan_is_skipped_not_raised(
     """A delete landing between listing and stat must not 500 the walk."""
     real_stat = Path.stat
 
-    def flaky_stat(self: Path, *args: object, **kwargs: object) -> object:
+    def flaky_stat(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
         if self.name == "laws2":  # the original vanishes exactly when stat'd
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(self))
-        return real_stat(self, *args, **kwargs)  # type: ignore[arg-type]
+        return real_stat(self, follow_symlinks=follow_symlinks)
 
     monkeypatch.setattr(Path, "stat", flaky_stat)
 

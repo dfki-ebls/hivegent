@@ -128,7 +128,7 @@ def _walk_assets(workspace_root: Path, assets_dir: str) -> list[str]:
 def _entry_from_row(doc: Document, workspace_root: Path | None = None) -> EntryMetadata:
     """Build an :class:`EntryMetadata` from a row, deriving the path columns."""
     description_path = description_path_for_stem(doc.stem_path)
-    original_path = original_path_for_stem(doc.stem_path, doc.original_ext)
+    original_path = original_path_for_stem(doc.stem_path, doc.original_suffix)
     assets_dir = assets_dir_for_stem(doc.stem_path) if doc.has_assets else None
 
     files = [description_path]
@@ -200,11 +200,15 @@ async def _load_chunks(s: AsyncSession, doc_id: str) -> list[ChunkData]:
 # ─── Helpers ──────────────────────────────────────────────────────────
 
 
-def _original_ext(original_path: str | None) -> str | None:
-    """Return the extension (without leading dot) of *original_path*."""
-    if not original_path:
-        return None
-    return PurePosixPath(original_path).suffix.lstrip(".") or None
+def _original_suffix(original_path: str | None) -> str | None:
+    """Return the pathlib suffix (with its leading dot) of *original_path*.
+
+    ``None`` means there is no original file; an empty string means the original
+    has no extension (its path is the bare stem) and must stay distinct from
+    ``None`` so extension-less and dotfile originals survive the round-trip
+    through :func:`original_path_for_stem`.
+    """
+    return PurePosixPath(original_path).suffix if original_path else None
 
 
 async def _ensure_owner(s: AsyncSession, store: Casebase) -> None:
@@ -328,7 +332,7 @@ class _EntryColumns:
     surfaces as a type error rather than a silent dict-key mismatch.
     """
 
-    original_ext: str | None
+    original_suffix: str | None
     has_assets: bool
     entry_kind: EntryKind
     origin: Origin
@@ -339,7 +343,7 @@ class _EntryColumns:
     def from_entry(cls, entry: EntryMetadata) -> Self:
         """Derive the column values from an entry's metadata."""
         return cls(
-            original_ext=_original_ext(entry.original_path),
+            original_suffix=_original_suffix(entry.original_path),
             has_assets=entry.assets_dir is not None,
             entry_kind=EntryKind(entry.entry_kind),
             origin=Origin(entry.origin),

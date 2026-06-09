@@ -289,7 +289,7 @@ class Document(Timestamped, Base):
 
     Path columns hold only the irreducible bits.  ``description_path``,
     ``original_path`` and ``assets_dir`` are derived from ``stem_path``,
-    ``original_ext`` and ``has_assets`` at the repository layer.
+    ``original_suffix`` and ``has_assets`` at the repository layer.
     """
 
     __tablename__ = "documents"
@@ -311,7 +311,11 @@ class Document(Timestamped, Base):
     )
 
     stem_path: Mapped[str]
-    original_ext: Mapped[str | None]
+    # The original file's pathlib suffix, dot included (``.pdf``); ``""`` for an
+    # extension-less or dotfile original whose path is the bare stem; ``None``
+    # when the entry has no original.  ``original_path`` is reconstructed from
+    # ``stem_path`` + this in the repository layer.
+    original_suffix: Mapped[str | None]
     has_assets: Mapped[bool] = mapped_column(default=False)
 
     entry_kind: Mapped[EntryKind] = mapped_column(_enum(EntryKind))

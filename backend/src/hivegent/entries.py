@@ -112,15 +112,23 @@ def asset_ref_for(assets_dir: str, relpath: str) -> str:
     return str(PurePosixPath(PurePosixPath(assets_dir).name) / relpath)
 
 
-def original_path_for_stem(stem_path: str, original_ext: str | None) -> str | None:
+def original_path_for_stem(stem_path: str, original_suffix: str | None) -> str | None:
     """Return the original-file path for a stem, or ``None`` when there is none.
 
-    >>> original_path_for_stem("docs/report", "pdf")
+    *original_suffix* is the original file's pathlib suffix including its
+    leading dot.  ``None`` means there is no original; an empty string means the
+    original has no extension and so its path is the bare stem — the case for an
+    extension-less upload (``abc``) or a dotfile (``.env``), both of which
+    pathlib reports as having no suffix.
+
+    >>> original_path_for_stem("docs/report", ".pdf")
     'docs/report.pdf'
+    >>> original_path_for_stem("docs/data", "")
+    'docs/data'
     >>> original_path_for_stem("docs/note", None) is None
     True
     """
-    return f"{stem_path}.{original_ext}" if original_ext else None
+    return f"{stem_path}{original_suffix}" if original_suffix is not None else None
 
 
 def find_original_for_reference(workspace_dir: Path, reference: str) -> str | None:
