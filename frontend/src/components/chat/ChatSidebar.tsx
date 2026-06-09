@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { type FileUIPart } from "ai";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AiDisclosure } from "@/components/chat/AiDisclosure";
 import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Composer } from "@/components/chat/composer/Composer";
 import { MessageList } from "@/components/chat/MessageList";
@@ -239,6 +240,7 @@ export function ChatSidebar({
             onRemoveDocument={onRemoveDocument}
             onTranscriptionChange={handleTranscriptionChange}
           />
+          <AiDisclosure />
         </div>
       </TabsContent>
 
