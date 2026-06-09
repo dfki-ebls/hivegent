@@ -171,7 +171,9 @@ def resolve_llm_config(
         api_key=llm.api_key or settings.llm.api_key,
         base_url=llm.base_url or configured_base_url,
     )
-    resolved._base_url_is_trusted = not llm.base_url and configured_base_url is not None
+    resolved._base_url_is_trusted = llm.base_url_is_trusted or (
+        not llm.base_url and configured_base_url is not None
+    )
     return resolved
 
 

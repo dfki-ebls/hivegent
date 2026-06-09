@@ -10,7 +10,7 @@ from hivegent.config import settings
 from hivegent.security import create_safe_async_client
 from hivegent.server.common import prepare_llm_config
 from hivegent.server.operations import read_upload_file
-from hivegent.types import LlmConfig
+from hivegent.types import LlmConfig, resolve_llm_config
 
 
 async def test_safe_async_client_blocks_private_ip_connections() -> None:
@@ -45,6 +45,21 @@ async def test_prepare_llm_config_trusts_configured_base_url_only(
 
     assert exc_info.value.status_code == 400
     assert "Unsafe LLM base_url" in str(exc_info.value.detail)
+
+
+async def test_resolve_llm_config_is_idempotent_on_trust(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-resolving a trusted config keeps it trusted (image captioning re-resolves)."""
+    monkeypatch.setattr(settings.llm, "base_url", "http://127.0.0.1:18000/v1")
+    monkeypatch.setattr(settings.llm, "aux_model", "aux-model")
+
+    once = resolve_llm_config(LlmConfig())
+    twice = resolve_llm_config(once, default_model=settings.llm.aux_model)
+
+    assert once.base_url_is_trusted is True
+    assert twice.base_url == "http://127.0.0.1:18000/v1"
+    assert twice.base_url_is_trusted is True
 
 
 async def test_read_upload_file_rejects_over_limit(
