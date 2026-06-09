@@ -27,8 +27,29 @@ class ChonkieTextConverter(DocumentConverter):
 
     name: ClassVar[str] = "text-chef"
     label: ClassVar[str] = "Text Chef"
-    description: ClassVar[str] = "Plain text files as-is"
-    extensions: ClassVar[frozenset[str]] = frozenset({".txt"})
+    description: ClassVar[str] = "Plain text, config, and data-serialization files as-is"
+    # Raw-text formats with no richer converter, read verbatim. Notably ``.json``
+    # must land here and not on docling, which only accepts its own
+    # ``DoclingDocument`` JSON schema and rejects ordinary JSON as invalid.
+    # Structured text that converts to better markdown (csv/tsv tables, html,
+    # xml, rst, org, latex, ...) is deliberately left to docling/pandoc.
+    extensions: ClassVar[frozenset[str]] = frozenset(
+        {
+            ".txt",
+            ".text",
+            ".log",
+            ".json",
+            ".jsonl",
+            ".ndjson",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".ini",
+            ".cfg",
+            ".conf",
+            ".env",
+        }
+    )
 
     async def _convert(self, path: Path, /) -> ConversionResult:
         doc = await asyncio.to_thread(_build_chef().process, path)

@@ -71,7 +71,8 @@ class LLMConverter(DocumentConverter):
 
         suffix = path.suffix.lower()
         media_type = MEDIA_TYPES.get(suffix)
-        assert media_type is not None, f"Unsupported extension: {suffix}"
+        if media_type is None:
+            raise ValueError(f"Unsupported extension: {suffix!r}")
 
         raw_bytes = path.read_bytes()
         content = BinaryContent(

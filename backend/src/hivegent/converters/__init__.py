@@ -82,11 +82,13 @@ _CONVERTERS: dict[ConversionPipeline, str] = {
 }
 
 
-# AUTO routing preference: docling claims every format it can handle, pandoc
-# covers the rest, and anything neither supports falls back to the LLM pipeline.
+# AUTO routing preference: text-chef claims raw-text formats (read as-is),
+# docling claims every binary/office format it can handle, pandoc covers the
+# rest, and anything none of them supports falls back to the LLM pipeline.
 # Routing is derived from each converter's own ``extensions`` (see
 # ``_auto_mapping``) so it can never drift from what the converters declare.
 _AUTO_PRIORITY: tuple[ConversionPipeline, ...] = (
+    ConversionPipeline.TEXT_CHEF,
     ConversionPipeline.DOCLING,
     ConversionPipeline.PANDOC,
 )
