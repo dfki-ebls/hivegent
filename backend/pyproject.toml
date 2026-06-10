@@ -38,7 +38,7 @@ all = ["hivegent[docling,markitdown,kreuzberg,pdf-oxide,semantic]"]
 # code = ["chonkie[code]>=1,<2"]
 # marker = ["marker-pdf[full]>=1,<2"]
 # mineru = ["mineru[all]>=3,<4"]
-docling = ["docling>=2,<3"]
+docling = ["docling>=2,<3", "tesserocr>=2.10,<3"]
 kreuzberg = ["kreuzberg>=4,<5"]
 markitdown = ["markitdown[all]>=0.1,<1"]
 pdf-oxide = ["pdf_oxide>=0.3,<1"]
@@ -87,6 +87,7 @@ cbrkit = false
 antlr4-python3-runtime = ["setuptools"]
 ebooklib = ["setuptools"]
 pylatexenc = ["setuptools"]
+cysignals = ["meson-python", "cython"]
 
 [tool.uv.sources]
 # cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }

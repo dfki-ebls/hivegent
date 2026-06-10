@@ -17,6 +17,7 @@
   pandoc,
   ripgrep,
   tesseract,
+  ninja,
 }:
 let
   workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
@@ -39,6 +40,14 @@ let
       })
     );
   packageOverlay = final: prev: {
+    cysignals = prev.cysignals.overrideAttrs (old: {
+      buildInputs = (old.buildInputs or [ ]) ++ [ ninja ];
+      # cysignals installs its own stack-overflow/signal handlers and refuses
+      # to compile with glibc fortification (same fix as nixpkgs' cysignals).
+      # The nix cc-wrapper appends -D_FORTIFY_SOURCE after the build system's
+      # -U_FORTIFY_SOURCE, so it must be disabled at the wrapper level.
+      hardeningDisable = [ "fortify" ];
+    });
     hivegent = prev.hivegent.overrideAttrs (old: {
       passthru = lib.recursiveUpdate (old.passthru or { }) {
         tests.pytest = stdenv.mkDerivation {
@@ -117,7 +126,6 @@ let
   # - jq, pandoc, ripgrep: used by `hivegent/subprocesses/` wrappers.
   # - ffmpeg: pydub audio decoding (markitdown audio converter, non-wav).
   # - exiftool: optional audio metadata extraction in markitdown.
-  # - tesseract: optional OCR backend for docling (`TesseractCliOcrOptions`).
   # - libreofficeHeadless: docling docx→pdf conversion; Linux-only in nixpkgs.
   runtimeInputs = [
     exiftool
@@ -125,18 +133,24 @@ let
     jq
     pandoc
     ripgrep
-    tesseract
   ]
   ++ lib.optionals stdenv.hostPlatform.isLinux [ libreofficeHeadless ];
+
+  # tesserocr (docling OCR) and kreuzberg link their own libtesseract but
+  # carry no language data; both resolve tessdata from TESSDATA_PREFIX at
+  # runtime.  Only nixpkgs' tessdata (all languages) is injected — the
+  # tesseract CLI itself is not shipped.
+  tessdataPrefix = tesseract.tessdata;
 in
 app.overrideAttrs (oldAttrs: {
   nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ makeBinaryWrapper ];
   postFixup = (oldAttrs.postFixup or "") + ''
     wrapProgram "$out/bin/hivegent" \
       --prefix PATH : ${lib.makeBinPath runtimeInputs} \
+      --set-default TESSDATA_PREFIX ${tessdataPrefix} \
       --set-default LOGFIRE_IGNORE_NO_CONFIG 1
   '';
   passthru = (oldAttrs.passthru or { }) // {
-    inherit runtimeInputs;
+    inherit runtimeInputs tessdataPrefix;
   };
 })

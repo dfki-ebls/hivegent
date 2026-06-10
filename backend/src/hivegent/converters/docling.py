@@ -10,13 +10,20 @@ import PIL.ImageFile
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
 from docling.datamodel.pipeline_options import (
     ConvertPipelineOptions,
-    TesseractCliOcrOptions,
+    TesseractOcrOptions,
     ThreadedPdfPipelineOptions,
 )
 from docling.document_converter import DocumentConverter as DoclingDocumentConverter
 from docling_core.types.doc import DoclingDocument, PictureItem
 from docling_core.types.doc.labels import PictureClassificationLabel
 from pydantic import BaseModel, Field
+
+# Imported eagerly: tesserocr pulls in cysignals, which installs signal
+# handlers at import time and therefore only imports cleanly on the main
+# thread.  Docling's lazy import inside the OCR model would run in the
+# ``asyncio.to_thread`` worker (see ``_convert``) and crash with
+# "signal only works in main thread of the main interpreter".
+import tesserocr  # noqa: F401  # isort: skip
 
 from ..config import settings
 from .base import (
@@ -37,18 +44,20 @@ def _default_pdf_options() -> ThreadedPdfPipelineOptions:
     expensive vision-model description step.  Users can disable the
     classifier per-request through the existing per-pipeline config UI.
 
-    OCR runs through the Tesseract CLI rather than docling's default
-    RapidOCR engine: RapidOCR downloads ONNX models into its read-only
-    package directory at first use (fatal under the production unit's
-    ``ProtectSystem=strict``) and only ships Chinese/English models. The
-    bundled ``tesseract`` already carries every language pack, so OCR
-    stays fully offline and reproducible with native German support.
-    ``path`` is left unset so Tesseract resolves tessdata from its own
-    ``TESSDATA_PREFIX``.
+    OCR runs in-process through the ``tesserocr`` bindings rather than
+    docling's default RapidOCR engine or the Tesseract CLI: RapidOCR
+    downloads ONNX models into its read-only package directory at first
+    use (fatal under the production unit's ``ProtectSystem=strict``) and
+    only ships Chinese/English models, while the CLI engine spawns two
+    ``tesseract`` subprocesses (OSD + OCR) and round-trips a PNG through
+    a temp file for every OCR rectangle.  tesserocr bundles its own
+    libtesseract but no language data; ``path`` is left unset so it
+    resolves the nixpkgs tessdata via ``TESSDATA_PREFIX``, which the nix
+    package and dev shell both set.
     """
     return ThreadedPdfPipelineOptions(
         do_picture_classification=True,
-        ocr_options=TesseractCliOcrOptions(lang=["deu", "eng"]),
+        ocr_options=TesseractOcrOptions(lang=settings.conversion.ocr_languages),
     )
 
 

@@ -5,9 +5,10 @@ from io import BytesIO
 from pathlib import Path
 
 import PIL.Image
-from kreuzberg import ExtractionConfig, ImageExtractionConfig, extract_file
+from kreuzberg import ExtractionConfig, ImageExtractionConfig, OcrConfig, extract_file
 from pydantic import BaseModel, Field
 
+from ..config import settings
 from .base import ConversionResult, DocumentConverter, ExtractedImage, pil_to_png_bytes
 
 __all__ = ["KreuzbergConverter", "KreuzbergConverterConfig"]
@@ -91,6 +92,12 @@ class KreuzbergConverter(DocumentConverter):
             output_format="markdown",
             enable_quality_processing=self.config.enable_quality_processing,
             include_document_structure=self.config.include_document_structure,
+            # Kreuzberg links its own libtesseract and resolves the language
+            # packs via TESSDATA_PREFIX, same as the docling pipeline.
+            ocr=OcrConfig(
+                backend="tesseract",
+                language="+".join(settings.conversion.ocr_languages),
+            ),
             images=ImageExtractionConfig(
                 inject_placeholders=True,  # type: ignore[call-arg]  # pyright: ignore[reportCallIssue]  # ty: ignore[unknown-argument]
             ),

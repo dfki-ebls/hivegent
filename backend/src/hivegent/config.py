@@ -362,6 +362,18 @@ class SecuritySettings(BaseModel):
     expose_api_docs: bool = False
 
 
+class ConversionSettings(BaseModel):
+    """Document conversion (OCR) tunables.
+
+    ``ocr_languages`` lists the Tesseract language codes (ISO 639-2,
+    e.g. ``deu``, ``eng``) used by the docling and kreuzberg pipelines.
+    The matching ``*.traineddata`` packs must be resolvable through
+    ``TESSDATA_PREFIX`` (wired up by the nix package and dev shell).
+    """
+
+    ocr_languages: list[str] = ["deu", "eng"]
+
+
 class LimitsSettings(BaseModel):
     """Upload, collection, and decoder size/count limits.
 
@@ -460,6 +472,7 @@ class Settings(BaseSettings):
     claims: ClaimSettings = ClaimSettings()
     auth: AuthSettings = AuthSettings()
     security: SecuritySettings = SecuritySettings()
+    conversion: ConversionSettings = ConversionSettings()
     limits: LimitsSettings = LimitsSettings()
     network: NetworkSettings = NetworkSettings()
     db: DatabaseSettings = DatabaseSettings()
