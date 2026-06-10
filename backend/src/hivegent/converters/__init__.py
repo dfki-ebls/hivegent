@@ -161,6 +161,7 @@ def get_converter(
     filename: str = "",
     config: dict[str, Any] | None = None,
     llm_options: _LlmOptions | None = None,
+    detect_asset_roles: bool = False,
 ) -> DocumentConverter:
     """Get a converter instance for the specified pipeline.
 
@@ -172,6 +173,9 @@ def get_converter(
         filename: The document filename (required when pipeline is AUTO).
         config: Optional raw config dict to parse into the pipeline's config model.
         llm_options: LLM provider options (only used for the LLM pipeline).
+        detect_asset_roles: Whether to compute asset-role signals for
+            extracted assets. Converters may skip the work of producing
+            them (e.g. docling's picture classifier) when ``False``.
 
     Raises:
         ImportError: If the converter's dependencies are not installed.
@@ -206,7 +210,7 @@ def get_converter(
     if pipeline == ConversionPipeline.LLM and llm_options is not None:
         kwargs["llm_options"] = llm_options
 
-    return cls(**kwargs)
+    return cls(detect_asset_roles=detect_asset_roles, **kwargs)
 
 
 def get_conversion_pipelines_info() -> list[ConversionPipelineInfo]:

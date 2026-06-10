@@ -41,8 +41,10 @@ def _default_pdf_options() -> ThreadedPdfPipelineOptions:
 
     The classifier feeds the asset-triage layer so that decorative
     classes (icons, logos, signatures, page thumbnails …) can skip the
-    expensive vision-model description step.  Users can disable the
-    classifier per-request through the existing per-pipeline config UI.
+    expensive vision-model description step.  It only runs when the
+    converter's ``detect_asset_roles`` flag is set (triage happens only
+    in DESCRIBE asset mode); users can additionally disable it
+    per-request through the existing per-pipeline config UI.
 
     OCR runs in-process through the ``tesserocr`` bindings rather than
     docling's default RapidOCR engine or the Tesseract CLI: RapidOCR
@@ -144,7 +146,18 @@ class DoclingConverter(DocumentConverter):
     config: DoclingConverterConfig = field(default_factory=DoclingConverterConfig)
 
     def _convert_sync(self, path: Path) -> ConversionResult:
-        converter = _build_converter(self.config)
+        config = self.config
+        if not self.detect_asset_roles and config.pdf_options.do_picture_classification:
+            # The classifier's labels only feed asset triage, which runs in
+            # DESCRIBE mode; skip the model entirely otherwise.
+            config = config.model_copy(
+                update={
+                    "pdf_options": config.pdf_options.model_copy(
+                        update={"do_picture_classification": False}
+                    )
+                }
+            )
+        converter = _build_converter(config)
         result = converter.convert(str(path))
         doc = result.document
 

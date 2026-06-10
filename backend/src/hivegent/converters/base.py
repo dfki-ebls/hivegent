@@ -223,6 +223,7 @@ def collect_dir_images(root: Path, relative_to: Path) -> dict[str, ExtractedImag
     return result
 
 
+@dataclass(slots=True, frozen=True)
 class DocumentConverter(ABC):
     """Abstract base class for document converters.
 
@@ -240,6 +241,14 @@ class DocumentConverter(ABC):
     description: ClassVar[str]
     extensions: ClassVar[frozenset[str]]
     _invoke_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
+
+    detect_asset_roles: bool = field(default=False, kw_only=True)
+    """Whether to compute :class:`AssetRole` signals for extracted assets.
+
+    The roles only feed the asset-triage layer, which runs solely in
+    DESCRIBE asset mode; when ``False``, converters may skip the work of
+    producing them (e.g. docling's picture classifier).
+    """
 
     @abstractmethod
     async def _convert(self, path: Path, /) -> ConversionResult:

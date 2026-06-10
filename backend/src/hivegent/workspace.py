@@ -699,6 +699,7 @@ async def _upload_convertible_locked(
             filename=basename,
             config=spec.conversion.config,
             llm_options=llm,
+            detect_asset_roles=spec.process_assets is AssetProcessingMode.DESCRIBE,
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
