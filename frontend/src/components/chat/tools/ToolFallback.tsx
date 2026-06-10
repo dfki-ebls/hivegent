@@ -2,6 +2,7 @@ import type { ToolUIPart } from "ai";
 import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
 import { ApprovalRequest } from "@/components/chat/tools/ApprovalRequest";
 import { ToolError, ToolParameters, ToolResult } from "@/components/ToolDisplay";
+import { useStayScrolledOnToggle } from "@/hooks/chat/use-stay-scrolled-on-toggle";
 import { parseJson, prettyPrint, type ToolPart } from "@/lib/chat/tool-part";
 import { snakeCaseToTitleCase } from "@/lib/utils";
 
@@ -17,9 +18,10 @@ export function ToolFallback({ toolName, part, formatted, onApprove, onDeny }: T
   const state: ToolPart["state"] = part.state ?? "output-available";
   const approval = "approval" in part ? (part as ToolUIPart).approval : undefined;
   const input = parseJson<Record<string, unknown>>(part.input);
+  const stayScrolled = useStayScrolledOnToggle();
 
   return (
-    <Tool defaultOpen={state === "approval-requested"}>
+    <Tool defaultOpen={state === "approval-requested"} onOpenChange={stayScrolled}>
       <ToolHeader title={snakeCaseToTitleCase(toolName)} type={`tool-${toolName}`} state={state} />
       <ToolContent>
         {input && <ToolParameters params={input} />}

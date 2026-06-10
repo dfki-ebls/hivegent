@@ -2,6 +2,7 @@ import { FileImage, FileText, Paperclip } from "lucide-react";
 import { useCallback } from "react";
 import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
 import { ToolParameters } from "@/components/ToolDisplay";
+import { useStayScrolledOnToggle } from "@/hooks/chat/use-stay-scrolled-on-toggle";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { fetchDocumentAsset } from "@/lib/api";
 import { parseJson, type SyncOutput, type ToolPart } from "@/lib/chat/tool-part";
@@ -106,9 +107,10 @@ export function ReadBinaryDocumentTool({ part, metadata }: ReadBinaryDocumentToo
   const input = parseJson<Record<string, unknown>>(part.input);
   const result = isBinaryReadResult(metadata) ? metadata : null;
   const Icon = result?.media_type === "application/pdf" ? FileText : FileImage;
+  const stayScrolled = useStayScrolledOnToggle();
 
   return (
-    <Tool defaultOpen={false}>
+    <Tool defaultOpen={false} onOpenChange={stayScrolled}>
       <ToolHeader title="Read Binary Document" type="tool-read_binary_document" state={state} />
       <ToolContent>
         {input && <ToolParameters params={input} />}
