@@ -7,7 +7,6 @@ identity table lives in that table's own module (:mod:`.users`,
 
 from typing import Any
 
-from sqlalchemy import or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,5 +39,13 @@ async def ensure_row(s: AsyncSession, model: type[Base], /, **values: Any) -> No
 
 
 def stem_subtree_filter(prefix: str):
-    """WHERE matching ``stem_path == prefix`` or ``stem_path LIKE 'prefix/%'``."""
-    return or_(Document.stem_path == prefix, Document.stem_path.like(prefix + "/%"))
+    """WHERE matching stems strictly below *prefix* (``prefix/...``).
+
+    Deliberately excludes ``stem_path == prefix`` itself: a stem equal to a
+    directory path is the same-named *sibling document* (``notes.md`` next to
+    ``notes/``), which must not be swept along when the directory moves or is
+    deleted.  LIKE wildcards in the prefix are escaped so a stem containing
+    ``%`` or ``_`` cannot widen the match.
+    """
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return Document.stem_path.like(escaped + "/%", escape="\\")

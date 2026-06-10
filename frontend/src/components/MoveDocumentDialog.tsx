@@ -41,9 +41,8 @@ export function MoveDocumentDialog({
     onOpenChange(isOpen);
   };
 
-  const canSubmit = isBulk
-    ? destination.trim().length > 0
-    : destination.trim().length > 0 && destination.trim() !== currentPath;
+  // Bulk mode allows an empty destination, which targets the workspace root.
+  const canSubmit = isBulk || (destination.trim().length > 0 && destination.trim() !== currentPath);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,17 +58,19 @@ export function MoveDocumentDialog({
   let placeholder: string;
   if (isBulk) {
     title = `Move ${bulkFileCount} Documents`;
-    description = "Enter the destination directory for the selected documents.";
+    description =
+      "Enter the destination directory (empty moves to the workspace root). The selection keeps its directory structure relative to its common parent.";
     inputLabel = "Destination directory";
     placeholder = "projects/reports";
   } else if (isDirectory) {
     title = "Move Directory";
-    description = "Enter the new path for the directory.";
+    description = "Enter the new path, or an existing directory to move into.";
     inputLabel = "New path";
     placeholder = "projects/reports";
   } else {
     title = "Move Document";
-    description = "Enter the new path for the document. Include the filename.";
+    description =
+      "Enter the new path including the filename, or an existing directory to move into.";
     inputLabel = "New path";
     placeholder = "projects/report.md";
   }

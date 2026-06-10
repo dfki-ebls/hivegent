@@ -86,8 +86,10 @@ Both compare the entry's `content_digest` (see `config.content_digest`) against 
 A cheap `(mtime, size)` stat fast-path (`documents.content_mtime_ns` / `content_size`, captured by `entries.ContentStat`) avoids even reading and hashing a description whose stat is unchanged since it was last indexed: the stat is only a pre-filter, so a stat that moved without a content change (a `touch`, checkout, or restore) costs one read, never a re-embed, and a stat that lied the other way cannot happen because the digest is re-checked whenever the stat differs.
 The digest, `mtime`, and `size` are cleared together when `documents.upsert_document` writes the row and stamped together by `set_content_state` only after the chunks are durable, so a null digest always means "not indexed yet, re-derive".
 A description with no prior row is ingested and stamped `origin = imported`, since its real provenance is not recoverable from disk.
-`reconcile.reconcile_store` runs this ingest over every on-disk markdown first, then prunes disk files no surviving entry vouches for and drops SQL rows whose description vanished.
+`reconcile.reconcile_store` runs this ingest over every on-disk markdown first, then drops SQL rows whose description vanished.
+Reconciliation never deletes workspace files: they are the authoritative content, so a file without an owning entry is inert workspace content rather than an orphan to prune.
 `entries.is_description_file` is the scratch-versus-document policy seam: only markdown files become document entries, every other file is kept on disk but never chunked on its own.
+A lone binary without a companion `.md` therefore survives reconciliation, shows up in the document tree, and can be deleted or replaced (upload with overwrite) through the API.
 
 ### Preparing for a read-write shell tool
 
@@ -98,5 +100,5 @@ The following pieces still need to be built before that tool ships, and none of 
 - TODO(shell): sandbox arbitrary command execution per casebase (bind-mount only that store's workspace, no or restricted network, resource, time, and output-size limits). `subprocesses.run` is unsandboxed and is safe only for the fixed-argument tools (`rg`, `jq`, `pandoc`), not for agent-driven commands.
 - TODO(shell): run each session against an isolated working copy or overlay of the store so the casebase lock is taken only at fold-back time, never held for an interactive session. overlayfs and `systemd-nspawn` are Linux-only, so dev on macOS needs a copy-based working dir or a Linux VM.
 - TODO(shell): surface the session diff for approval before fold-back, which keeps the "mutations go through a gateway" guarantee and gives free rollback (discard the working copy).
-- TODO(shell): decide whether shell-created originals with no markdown companion should be auto-converted into entries, or stay inert. `is_description_file` currently ingests only markdown, so a lone hand-dropped binary is treated as scratch and is pruned by `reconcile` unless it has a companion `.md`.
+- TODO(shell): decide whether shell-created originals with no markdown companion should be auto-converted into entries. `is_description_file` currently ingests only markdown, so a lone hand-dropped binary stays inert on disk (listed in the tree, never chunked) until it is re-uploaded through the API.
 - TODO(shell): keep all workspace access behind `Casebase.workspace_dir(data_dir)` so the working-copy root can be injected in one place. Do not hardcode the workspace path elsewhere.

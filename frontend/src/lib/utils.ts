@@ -20,6 +20,17 @@ export function fileStem(name: string): string {
   return dot > 0 ? name.slice(0, dot) : name;
 }
 
+/** Longest common parent directory of *paths*, as `""` or a `dir/`-style prefix. */
+export function commonParentDir(paths: string[]): string {
+  const parentOf = (path: string) => path.slice(0, path.lastIndexOf("/") + 1);
+  return paths.map(parentOf).reduce((prefix, dir) => {
+    while (!dir.startsWith(prefix)) {
+      prefix = parentOf(prefix.slice(0, -1));
+    }
+    return prefix;
+  }, parentOf(paths[0] ?? ""));
+}
+
 /** Collect all file paths under a directory entry (recursive). */
 export function collectFilePaths(entry: DirectoryEntry, out: string[] = []): string[] {
   if (entry.type === "file") {

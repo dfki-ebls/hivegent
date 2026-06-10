@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useImperativeHandle, useState } from "react";
 
+import { commonParentDir } from "@/lib/utils";
 import { useDocumentsStore } from "../../stores/documents-store";
 import { CreateDirectoryDialog } from "../CreateDirectoryDialog";
 import { MoveDocumentDialog } from "../MoveDocumentDialog";
@@ -82,9 +83,13 @@ export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(fu
       const files = bulkMoveFiles ?? [];
       setBulkMoveFiles(null);
       onBulkDone();
+      // Preserve the selection's directory structure: each file keeps its
+      // path relative to the selection's common parent directory.
+      const commonParent = commonParentDir(files);
       for (const path of files) {
-        const name = path.split("/").pop() ?? path;
-        await storeMove(scope, path, destinationDir ? `${destinationDir}/${name}` : name);
+        const relative = path.slice(commonParent.length);
+        const destination = destinationDir ? `${destinationDir}/${relative}` : relative;
+        if (destination !== path) await storeMove(scope, path, destination);
       }
     },
     [bulkMoveFiles, onBulkDone, storeMove, scope],

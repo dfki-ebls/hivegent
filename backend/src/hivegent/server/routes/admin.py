@@ -5,9 +5,11 @@ via the router-level dependency.  The actions mirror the destructive
 operations exposed in open-webui's admin panel, mapped onto Hivegent's
 storage layout:
 
-* Workspace files live in ``<data_dir>/workspace/<store_key>/``
-* PostgreSQL is the source of truth for documents, chunks (text +
-  vector), conversations, memory, users, groups, and group membership.
+* Workspace files live in ``<data_dir>/workspace/<store_key>/`` and
+  are the source of truth for document content; the ``documents`` and
+  ``chunks`` rows (text + vector) are an index derived from them.
+* PostgreSQL is authoritative for everything else: conversations,
+  memory, users, groups, and group membership.
 
 A full ``POST /admin/reset/factory`` wipes workspace + database and
 leaves the deployment in the same state as a clean checkout.
@@ -136,7 +138,7 @@ async def admin_reset_database() -> AdminResetResponse:
 
 @router.post("/reindex")
 async def admin_reindex() -> AdminReindexResponse:
-    """Reconcile every casebase: prune disk and SQL orphans."""
+    """Reconcile every casebase: re-derive the document index from disk."""
     reports = await reconcile_all()
     return AdminReindexResponse(
         stores_reconciled=len(reports),

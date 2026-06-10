@@ -3,10 +3,14 @@
 The filesystem is the source of truth for content.  On boot this module
 folds every on-disk markdown description into SQL — new entries are
 ingested, drifted entries are re-indexed, unchanged entries are skipped —
-then prunes disk files no surviving entry vouches for and drops SQL rows
-whose description file is missing on disk.  Chunks live in the same
-Postgres database as documents and cascade-delete with them, so no
-separate index sweep is needed.
+and drops SQL rows whose description file is missing on disk.  Chunks
+live in the same Postgres database as documents and cascade-delete with
+them, so no separate index sweep is needed.
+
+Reconciliation never deletes workspace files: they are the authoritative
+content, and a non-markdown file without an owning entry is inert
+workspace content, not an error (see
+:func:`hivegent.entries.is_description_file`).
 
 The ingest pass runs through :func:`hivegent.workspace.sync_entries_from_disk`,
 the same idempotent fold-back primitive a future read-write shell tool will
@@ -17,17 +21,11 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import PurePosixPath
 
 from .chunks import delete_documents as _delete_chunked_documents
 from .config import settings
 from .db import documents as db_documents
-from .entries import (
-    cleanup_empty_parents,
-    is_assets_dir,
-    is_description_file,
-    stem_path_from_reference,
-)
+from .entries import is_description_file
 from .store import Casebase
 from .workspace import store_lock, sync_entries_from_disk
 
@@ -45,64 +43,7 @@ class ReconcileReport:
     """Per-casebase summary of work done during reconciliation."""
 
     entries_ingested: int = 0
-    disk_orphans_removed: int = 0
     sql_orphans_removed: int = 0
-
-
-def _owning_stem_for_path(rel: PurePosixPath) -> str:
-    """Return the SQL stem that owns the file at *rel*, walking ``.assets``.
-
-    Files inside ``foo.assets/`` belong to the document with stem
-    ``foo``; nested asset subtrees collapse to the outermost owner.
-    """
-    parts = rel.parts
-    for i, part in enumerate(parts):
-        if not is_assets_dir(part):
-            continue
-        stem = part.removesuffix(".assets")
-        if stem:
-            return "/".join((*parts[:i], stem))
-    return stem_path_from_reference(str(rel))
-
-
-def _is_vouched(rel: PurePosixPath, sql_stems: set[str]) -> bool:
-    """Return whether a live SQL stem vouches for the file at *rel*.
-
-    True when either its owning stem (store-only assets attach to the parent
-    entry) or its own stem (an asset markdown companion is its own document)
-    is a live SQL row.
-    """
-    return (
-        _owning_stem_for_path(rel) in sql_stems
-        or stem_path_from_reference(str(rel)) in sql_stems
-    )
-
-
-async def _sweep_disk_orphans(store: Casebase, sql_stems: set[str]) -> int:
-    """Delete workspace files whose owning stem is not in SQL."""
-    workspace = store.workspace_path(settings.data_dir)
-    if not workspace.exists():
-        return 0
-    removed = 0
-    for file_path in workspace.rglob("*"):
-        if not file_path.is_file():
-            continue
-        rel = PurePosixPath(file_path.relative_to(workspace).as_posix())
-        if _is_vouched(rel, sql_stems):
-            continue
-        try:
-            file_path.unlink()
-            cleanup_empty_parents(file_path, workspace)
-        except OSError:
-            logger.warning(
-                "Failed to remove disk orphan %s/%s",
-                store.store_key,
-                rel,
-                exc_info=True,
-            )
-            continue
-        removed += 1
-    return removed
 
 
 async def _sweep_sql_orphans(store: Casebase, sql_paths: Mapping[str, int]) -> int:
@@ -137,23 +78,20 @@ def _disk_description_paths(store: Casebase) -> list[str]:
 
 
 async def reconcile_store(store: Casebase) -> ReconcileReport:
-    """Bring *store*'s disk and SQL layers back into agreement.
+    """Bring *store*'s SQL index back into agreement with its disk content.
 
-    The filesystem is the source of truth for content: every on-disk
-    description is folded into SQL first, then disk and SQL orphans are
-    swept.  Chunks cascade with documents and need no separate sweep.
+    The filesystem is the source of truth: every on-disk description is
+    folded into SQL first, then SQL rows whose description vanished are
+    dropped.  Chunks cascade with documents and need no separate sweep, and
+    workspace files are never deleted here.
     """
     ingested = await sync_entries_from_disk(store, _disk_description_paths(store))
     async with store_lock(store):
         sql_paths = await db_documents.list_document_paths(store)
-        sql_stems = {stem_path_from_reference(path) for path in sql_paths}
-
-        disk_removed = await _sweep_disk_orphans(store, sql_stems)
         sql_removed = await _sweep_sql_orphans(store, sql_paths)
 
     return ReconcileReport(
         entries_ingested=ingested,
-        disk_orphans_removed=disk_removed,
         sql_orphans_removed=sql_removed,
     )
 

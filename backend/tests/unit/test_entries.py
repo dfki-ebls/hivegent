@@ -12,6 +12,7 @@ round-trip so the projection cannot regress.
 import pytest
 
 from hivegent.chunkers.base import EntryMetadata
+from hivegent.db._common import stem_subtree_filter
 from hivegent.db.documents import _EntryColumns, _entry_from_row, _original_suffix
 from hivegent.db.models import Document
 from hivegent.entries import (
@@ -102,3 +103,17 @@ def test_stored_suffix_distinguishes_absent_from_empty() -> None:
     assert original_path_for_stem("docs/note", None) is None
     assert original_path_for_stem("abc", "") == "abc"
     assert original_path_for_stem("docs/report", ".pdf") == "docs/report.pdf"
+
+
+def test_subtree_filter_excludes_equal_stem_and_escapes_wildcards() -> None:
+    """The subtree filter matches children only, with LIKE wildcards escaped.
+
+    A stem equal to the prefix is the same-named sibling document
+    (``notes.md`` next to ``notes/``) and must never be swept along.
+    """
+    sql = str(
+        stem_subtree_filter("100%_a").compile(compile_kwargs={"literal_binds": True})
+    )
+    assert "LIKE '100\\%\\_a/%'" in sql
+    assert "=" not in sql
+

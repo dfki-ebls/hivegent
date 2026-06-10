@@ -367,10 +367,6 @@ async def move_document(
         raise HTTPException(
             status_code=400, detail="Cannot move a document across workspaces"
         )
-    if src == dst:
-        raise HTTPException(
-            status_code=400, detail="Source and destination are the same"
-        )
     return await workspace.move_document(src_store, src, dst)
 
 

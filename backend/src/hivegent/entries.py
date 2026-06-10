@@ -11,10 +11,9 @@ __all__ = [
     "EntryPaths",
     "asset_ref_for",
     "assets_dir_for_stem",
-    "cleanup_empty_parents",
     "description_path_for_stem",
     "entry_exists",
-    "find_original_for_reference",
+    "find_original_for_stem",
     "is_assets_dir",
     "is_description_file",
     "original_path_for_stem",
@@ -131,9 +130,14 @@ def original_path_for_stem(stem_path: str, original_suffix: str | None) -> str |
     return f"{stem_path}{original_suffix}" if original_suffix is not None else None
 
 
-def find_original_for_reference(workspace_dir: Path, reference: str) -> str | None:
-    """Return the workspace-relative original path for a logical entry."""
-    stem_path = stem_path_from_reference(reference)
+def find_original_for_stem(workspace_dir: Path, stem_path: str) -> str | None:
+    """Return the workspace-relative original path for a logical stem.
+
+    Takes a raw stem path, not a reference: a stem may itself contain dots
+    (``a.tar`` from ``a.tar.gz``), so re-deriving it here via
+    :func:`stem_path_from_reference` would strip part of the name and miss
+    the entry's sibling files.
+    """
     stem_pure = PurePosixPath(stem_path)
     parent_dir = workspace_dir / stem_pure.parent
     if not parent_dir.exists():
@@ -159,7 +163,7 @@ def resolve_entry_paths(workspace_dir: Path, reference: str) -> EntryPaths:
     return EntryPaths(
         stem_path=stem_path,
         description_path=description_path_for_stem(stem_path),
-        original_path=find_original_for_reference(workspace_dir, stem_path),
+        original_path=find_original_for_stem(workspace_dir, stem_path),
         assets_dir=assets_dir
         if assets_full.exists() and assets_full.is_dir()
         else None,
@@ -186,12 +190,3 @@ def stem_display_name(stem_path: str) -> str:
     return PurePosixPath(stem_path).name
 
 
-def cleanup_empty_parents(path: Path, stop_at: Path) -> None:
-    """Remove empty parent directories of *path* up to ``stop_at``."""
-    parent = path.parent
-    while parent != stop_at:
-        try:
-            parent.rmdir()
-        except OSError:
-            break
-        parent = parent.parent

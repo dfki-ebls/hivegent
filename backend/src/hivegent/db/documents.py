@@ -469,7 +469,11 @@ async def delete_documents(store: Casebase, references: Sequence[str]) -> int:
 
 
 async def delete_subtree(store: Casebase, prefix: str) -> int:
-    """Delete every document whose stem_path equals *prefix* or starts with ``prefix/``."""
+    """Delete every document whose stem lies strictly below ``prefix/``.
+
+    A same-named sibling document (stem equal to *prefix*) is left alone —
+    delete it explicitly via :func:`delete_document`.
+    """
     if not prefix:
         return 0
     async with session() as s:
@@ -499,16 +503,16 @@ async def delete_all_documents() -> int:
     return affected_rows(result)
 
 
-async def move_document(
-    store: Casebase, src_reference: str, dst_reference: str
-) -> bool:
+async def move_document(store: Casebase, src_stem: str, dst_stem: str) -> bool:
     """Rename a document's ``stem_path``.
 
-    Chunks reference the document by id (which never changes) so the
-    vector index needs no reindex after a rename.
+    Takes raw stem paths, not references: a stem may itself contain dots
+    (``a.tar`` from ``a.tar.gz``), so re-deriving it here via
+    :func:`stem_path_from_reference` would strip part of the name and
+    miss or mis-target the row.  Chunks reference the document by id
+    (which never changes) so the vector index needs no reindex after a
+    rename.
     """
-    src_stem = stem_path_from_reference(src_reference)
-    dst_stem = stem_path_from_reference(dst_reference)
     if src_stem == dst_stem:
         return False
     async with session() as s:
@@ -521,11 +525,13 @@ async def move_document(
 
 
 async def move_subtree(store: Casebase, src_prefix: str, dst_prefix: str) -> None:
-    """Rename every document under ``src_prefix`` to live under ``dst_prefix``.
+    """Rename every document strictly below ``src_prefix/`` to live under ``dst_prefix/``.
 
     A single bulk UPDATE rewrites the ``src_prefix`` portion of each
     matched ``stem_path`` to ``dst_prefix``.  No vector reindex needed —
-    chunks reference the immutable document id.
+    chunks reference the immutable document id.  A same-named sibling
+    document (stem equal to *src_prefix*) is left alone — rename it
+    explicitly via :func:`move_document`.
     """
     if not src_prefix or src_prefix == dst_prefix:
         return

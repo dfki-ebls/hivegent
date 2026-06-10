@@ -363,7 +363,7 @@ export function ScopeSection({
               canWrite &&
               !isSearching &&
               fileCount > 0 && (
-                <div className="flex items-center gap-2 py-1">
+                <div className="flex items-center gap-2 px-2 py-1">
                   <Checkbox
                     checked={allSelected ? true : someSelected ? "indeterminate" : false}
                     onCheckedChange={toggleSelectAll}

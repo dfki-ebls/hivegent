@@ -14,9 +14,12 @@ chunks in the same transaction.  Routes, agents, and MCP tools never
 touch the workspace or the database directly — they call into this
 module instead.
 
-SQL is the source of truth; workspace files are a derived projection.
-Disk-vs-SQL orphans are reconciled at startup by
-:mod:`hivegent.reconcile`.
+The filesystem is the source of truth for content; document rows and
+chunks are an index derived from it.  Markdown changed or dropped on
+disk by hand is folded back into SQL at startup by
+:mod:`hivegent.reconcile`, and rows whose description file vanished are
+dropped there — workspace files themselves are never deleted outside
+the explicit mutation API.
 """
 
 import asyncio
@@ -80,9 +83,9 @@ from .entries import (
     EntryPaths,
     asset_ref_for,
     assets_dir_for_stem,
-    cleanup_empty_parents,
     description_path_for_stem,
     entry_exists,
+    is_assets_dir,
     resolve_entry_paths,
     stem_path_from_reference,
 )
@@ -225,6 +228,75 @@ def _write_original_file(workspace_dir: Path, filepath: str, content: bytes) -> 
     return full_path
 
 
+def _is_same_file(a: Path, b: Path) -> bool:
+    """Whether *a* and *b* are the same inode.
+
+    True for a case-aliased path on a case-insensitive filesystem (macOS,
+    Windows), where ``exists()`` alone cannot distinguish "occupied by another
+    file" from "the source under its other spelling".  Missing paths are never
+    the same file.
+    """
+    try:
+        return a.samefile(b)
+    except OSError:
+        return False
+
+
+def _is_blocked_by_other(target: Path, source: Path) -> bool:
+    """Whether *target* exists as a node distinct from *source*.
+
+    A target that aliases *source* (a case-only rename on a case-insensitive
+    filesystem) is not a blocker, since a plain rename handles it.
+    """
+    return target.exists() and not _is_same_file(target, source)
+
+
+def _resolve_move_destination(
+    workspace_dir: Path, src_name: str, dst: str, src_path: Path
+) -> str:
+    """Apply ``mv`` semantics: an existing-directory destination means move into it.
+
+    The source itself is exempt: on a case-insensitive filesystem the
+    destination of a case-only rename aliases the source and must stay a plain
+    rename instead of nesting the source inside itself.
+    """
+    dst_path = workspace_dir / dst
+    if not dst or (dst_path.is_dir() and not _is_same_file(dst_path, src_path)):
+        return str(PurePosixPath(dst) / src_name)
+    return dst
+
+
+def _check_destination_parents(workspace_dir: Path, target: str) -> None:
+    """Reject a destination path whose parent chain is blocked by an existing file."""
+    blocker = next(
+        (
+            parent
+            for parent in PurePosixPath(target).parents
+            if (workspace_dir / parent).is_file()
+        ),
+        None,
+    )
+    if blocker is not None:
+        raise HTTPException(
+            status_code=409, detail=f"Destination parent '{blocker}' is a file"
+        )
+
+
+def _check_not_assets_path(path: str) -> None:
+    """Reject paths that reach into the managed ``.assets`` layer.
+
+    ``.assets`` directories are derived storage owned by their document entry
+    and hidden from the directory tree, so creating or renaming one through
+    the generic directory/move API would silently strand content the UI can
+    never show again.
+    """
+    if any(is_assets_dir(part) for part in PurePosixPath(path).parts):
+        raise HTTPException(
+            status_code=400,
+            detail="'.assets' directories are managed through their owning document",
+        )
+
+
 async def _write_markdown_projection(
     store: Casebase,
     description_path: str,
@@ -364,7 +436,6 @@ async def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
     workspace_assets = workspace_dir / assets_dir
     if workspace_assets.exists():
         shutil.rmtree(workspace_assets)
-        cleanup_empty_parents(workspace_assets, workspace_dir)
     await db_documents.delete_subtree(store, assets_dir)
 
 
@@ -654,10 +725,14 @@ async def _upload_convertible_locked(
             span.set_attribute("image_count", len(result.images))
     except Exception as exc:
         if conversion_pipeline == ConversionPipeline.AUTO:
+            # exc_info captures the chained cause: docling re-raises pipeline
+            # errors as a bare "Pipeline ... failed" with the root cause only
+            # attached via `from`.
             logger.warning(
                 "AUTO conversion failed for %s, indexing as plain text or stub: %s",
                 filepath,
                 exc,
+                exc_info=exc,
             )
             return await _upload_unconvertible_locked(
                 store, filepath, content, spec, origin=origin
@@ -743,15 +818,16 @@ async def _upload_locked(
 
 
 async def _delete_single_locked(store: Casebase, safe: str) -> None:
-    """Remove a logical entry's files, metadata, and index rows."""
+    """Remove a logical entry's files, metadata, and index rows.
+
+    Works for entries without a SQL row or description file too (e.g. a
+    stray original that was never ingested), so any on-disk entry can
+    always be removed through the API.
+    """
     workspace = store.workspace_dir(settings.data_dir)
     metadata = await db_documents.get_document(store, safe)
-    if not metadata:
-        description_path = workspace / safe
-        if not description_path.exists():
-            raise HTTPException(status_code=404, detail="Document not found")
-        if not description_path.is_file():
-            raise HTTPException(status_code=400, detail="Path is not a file")
+    if not metadata and not entry_exists(workspace, safe):
+        raise HTTPException(status_code=404, detail="Document not found")
 
     resolved = resolve_entry_paths(workspace, safe)
     description_rel = (
@@ -762,21 +838,18 @@ async def _delete_single_locked(store: Casebase, safe: str) -> None:
     description_path = workspace / description_rel
     if description_path.exists():
         description_path.unlink()
-        cleanup_empty_parents(description_path, workspace)
 
     original_rel = metadata.original_path if metadata else resolved.original_path
     if original_rel:
         original_path = workspace / original_rel
         if original_path.exists():
             original_path.unlink()
-            cleanup_empty_parents(original_path, workspace)
 
     assets_rel = metadata.assets_dir if metadata else resolved.assets_dir
     if assets_rel:
         assets_path = workspace / assets_rel
         if assets_path.exists():
             shutil.rmtree(assets_path)
-            cleanup_empty_parents(assets_path, workspace)
         await db_documents.delete_subtree(store, assets_rel)
 
     await _delete_chunked_document(store, safe)
@@ -827,8 +900,20 @@ async def _rollback_on_failure(
 async def _ensure_upload_slot_locked(
     store: Casebase, reference: str, *, overwrite: bool
 ) -> None:
-    """Free up an upload slot for *reference*, raising 409 if occupied."""
+    """Free up an upload slot for *reference*, raising 409 if occupied.
+
+    Directory collisions (the target itself or a parent component occupied by
+    the wrong kind of node) are rejected up front so they surface as a clear
+    409 instead of an ``OSError`` from the write.
+    """
     workspace_dir = store.workspace_dir(settings.data_dir)
+    _check_destination_parents(workspace_dir, reference)
+    stem_path = stem_path_from_reference(reference)
+    for rel in {reference, description_path_for_stem(stem_path)}:
+        if (workspace_dir / rel).is_dir():
+            raise HTTPException(
+                status_code=409, detail=f"'{rel}' is an existing directory"
+            )
     if not entry_exists(workspace_dir, reference):
         return
     if not overwrite:
@@ -956,6 +1041,8 @@ async def upload(
     The casebase lock is held for the entire operation.  On cancellation
     or failure, partial artifacts are rolled back via :func:`_safe_delete_locked`.
     """
+    if not filepath:
+        raise HTTPException(status_code=400, detail="Document path required")
     _enforce_file_size(content)
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
@@ -1126,6 +1213,9 @@ async def _replace_text_locked(
     store: Casebase, safe: str, full_path: Path, content: str
 ) -> None:
     _enforce_file_size(content.encode("utf-8"))
+    if full_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"'{safe}' is a directory")
+    _check_destination_parents(store.workspace_dir(settings.data_dir), safe)
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
     await shield_to_completion(
@@ -1229,59 +1319,88 @@ async def _move_document_locked(
     workspace_dir = store.workspace_dir(settings.data_dir)
 
     metadata = await db_documents.get_document(store, src)
-    if not metadata:
+    if not metadata or not (workspace_dir / metadata.description_path).exists():
         raise HTTPException(status_code=404, detail="Document not found")
+    src_stem = metadata.stem_path
+    src_description_full = workspace_dir / metadata.description_path
 
-    src_stem = metadata.stem_path or stem_path_from_reference(src)
-    dst_stem = stem_path_from_reference(dst)
-    if src_stem != dst_stem and entry_exists(workspace_dir, dst):
-        raise HTTPException(status_code=409, detail="Destination already exists")
+    # Move-into resolution appends the description *filename* (a reference),
+    # never the bare stem name: ``stem_path_from_reference`` strips the last
+    # dotted segment, so a stem like ``report.v1`` passed back through it
+    # would collapse to ``report``.
+    dst_stem = stem_path_from_reference(
+        _resolve_move_destination(
+            workspace_dir,
+            PurePosixPath(metadata.description_path).name,
+            dst,
+            src_description_full,
+        )
+    )
+    _check_not_assets_path(dst_stem)
+    if dst_stem == src_stem:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Source and destination refer to the same document; "
+                "extensions are derived from the entry and cannot change by moving"
+            ),
+        )
 
-    src_description = metadata.description_path or description_path_for_stem(src_stem)
     dst_description = description_path_for_stem(dst_stem)
-    src_description_path = workspace_dir / src_description
-    if not src_description_path.exists():
-        raise HTTPException(status_code=404, detail="Document not found")
 
-    dst_description_path = workspace_dir / dst_description
-    dst_description_path.parent.mkdir(parents=True, exist_ok=True)
-    src_description_path.rename(dst_description_path)
-    cleanup_empty_parents(src_description_path, workspace_dir)
+    # Plan every rename up front and validate all destinations before touching
+    # the filesystem: a conflict discovered halfway through the renames would
+    # tear the entry into two half-moved halves.
+    renames: list[tuple[str, str]] = [(metadata.description_path, dst_description)]
+    if metadata.original_path and (workspace_dir / metadata.original_path).exists():
+        suffix = PurePosixPath(metadata.original_path).suffix
+        renames.append((metadata.original_path, f"{dst_stem}{suffix}"))
+    has_assets = (
+        metadata.assets_dir is not None
+        and (workspace_dir / metadata.assets_dir).exists()
+    )
+    if metadata.assets_dir is not None and has_assets:
+        renames.append((metadata.assets_dir, assets_dir_for_stem(dst_stem)))
 
-    if metadata.original_path:
-        src_original_path = workspace_dir / metadata.original_path
-        if src_original_path.exists():
-            dst_original = f"{dst_stem}{src_original_path.suffix}"
-            dst_original_path = workspace_dir / dst_original
-            dst_original_path.parent.mkdir(parents=True, exist_ok=True)
-            src_original_path.rename(dst_original_path)
-            cleanup_empty_parents(src_original_path, workspace_dir)
+    _check_destination_parents(workspace_dir, dst_stem)
+    # A destination occupied by the entry itself is a case-only rename on a
+    # case-insensitive filesystem, which a plain rename handles fine.
+    same_entry = _is_same_file(workspace_dir / dst_description, src_description_full)
+    # entry_exists takes a reference, so hand it the description path: a raw
+    # dotted stem would be re-stemmed and the wrong entry checked.
+    if not same_entry and entry_exists(workspace_dir, dst_description):
+        raise HTTPException(status_code=409, detail="Destination already exists")
+    for source, target in renames:
+        if _is_blocked_by_other(workspace_dir / target, workspace_dir / source):
+            raise HTTPException(
+                status_code=409, detail=f"Destination already exists: {target}"
+            )
 
-    src_assets_dir = metadata.assets_dir
-    dst_assets_dir: str | None = None
-    if src_assets_dir:
-        dst_assets_dir = assets_dir_for_stem(dst_stem)
-        src_assets_path = workspace_dir / src_assets_dir
-        if src_assets_path.exists():
-            dst_assets_path = workspace_dir / dst_assets_dir
-            dst_assets_path.parent.mkdir(parents=True, exist_ok=True)
-            src_assets_path.rename(dst_assets_path)
-            cleanup_empty_parents(src_assets_path, workspace_dir)
+    for source, target in renames:
+        target_path = workspace_dir / target
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        (workspace_dir / source).rename(target_path)
 
-            src_assets_name = PurePosixPath(src_assets_dir).name
-            dst_assets_name = PurePosixPath(dst_assets_dir).name
-            if src_assets_name != dst_assets_name:
-                body = dst_description_path.read_text(encoding="utf-8")
-                body = body.replace(f"{src_assets_name}/", f"{dst_assets_name}/")
-                dst_description_path.write_text(body, encoding="utf-8")
+    src_name = PurePosixPath(src_stem).name
+    dst_name = PurePosixPath(dst_stem).name
+    if has_assets and src_name != dst_name:
+        # The markdown references its assets as ``<stem>.assets/...``; rewrite
+        # those references when the stem's basename changed.
+        description_full = workspace_dir / dst_description
+        body = description_full.read_text(encoding="utf-8")
+        body = body.replace(f"{src_name}.assets/", f"{dst_name}.assets/")
+        description_full.write_text(body, encoding="utf-8")
 
-    await db_documents.move_subtree(store, src_stem, dst_stem)
-    # The described/extracted asset children live under the ``.assets``
-    # sibling of ``src_stem``, which the parent subtree filter (matching
-    # ``src_stem`` / ``src_stem/…``) never covers — move their rows too so
-    # nothing stays searchable at a path that no longer exists.
-    if src_assets_dir and dst_assets_dir:
-        await db_documents.move_subtree(store, src_assets_dir, dst_assets_dir)
+    # Move exactly this entry's row; a same-named sibling directory's rows
+    # (stems below ``src_stem/``) belong to other documents and stay put.
+    await db_documents.move_document(store, src_stem, dst_stem)
+    # The described/extracted asset children live under the ``.assets`` sibling
+    # of ``src_stem`` — move their rows too so nothing stays searchable at a
+    # path that no longer exists.
+    if metadata.assets_dir:
+        await db_documents.move_subtree(
+            store, metadata.assets_dir, assets_dir_for_stem(dst_stem)
+        )
 
     return MoveDocumentResponse(
         source=src,
@@ -1421,10 +1540,15 @@ async def generate_asset_description(
 
 async def create_directory(store: Casebase, path: str) -> None:
     """Create an empty workspace directory."""
+    if not path:
+        raise HTTPException(status_code=400, detail="Directory path required")
+    _check_not_assets_path(path)
     async with store_lock(store):
-        directory_path = store.workspace_dir(settings.data_dir) / path
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        directory_path = workspace_dir / path
         if directory_path.exists():
-            raise HTTPException(status_code=409, detail="Directory already exists")
+            raise HTTPException(status_code=409, detail="Path already exists")
+        _check_destination_parents(workspace_dir, path)
         directory_path.mkdir(parents=True, exist_ok=True)
 
 
@@ -1434,18 +1558,40 @@ async def _move_directory_locked(
     """Move a directory's files and SQL rows. Caller holds the lock."""
     workspace_dir = store.workspace_dir(settings.data_dir)
 
+    if not src:
+        raise HTTPException(status_code=400, detail="Directory path required")
+    _check_not_assets_path(src)
     src_dir = workspace_dir / src
-    if not src_dir.exists() or not src_dir.is_dir():
+    if not src_dir.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
+
+    dst = _resolve_move_destination(workspace_dir, PurePosixPath(src).name, dst, src_dir)
+    _check_not_assets_path(dst)
+    if dst == src:
+        raise HTTPException(
+            status_code=400, detail="Source and destination are the same"
+        )
     dst_dir = workspace_dir / dst
-    if dst_dir.exists():
+    # Reject moving a directory beneath itself.  Inode comparison against the
+    # destination's existing ancestors also catches case-aliased spellings on
+    # a case-insensitive filesystem, where a string prefix check would not.
+    for ancestor in dst_dir.parents:
+        if ancestor == workspace_dir:
+            break
+        if _is_same_file(ancestor, src_dir):
+            raise HTTPException(
+                status_code=400, detail="Cannot move a directory into itself"
+            )
+    _check_destination_parents(workspace_dir, dst)
+    if _is_blocked_by_other(dst_dir, src_dir):
         raise HTTPException(status_code=409, detail="Destination already exists")
 
     files_moved = sum(1 for file_path in src_dir.rglob("*") if file_path.is_file())
     dst_dir.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(src_dir), str(dst_dir))
-    cleanup_empty_parents(src_dir, workspace_dir)
+    src_dir.rename(dst_dir)
 
+    # Children-only: a same-named sibling document (stem equal to ``src``)
+    # lives outside the directory and keeps its row.
     await db_documents.move_subtree(store, src, dst)
 
     return MoveDirectoryResponse(
@@ -1469,15 +1615,21 @@ async def move_directory(store: Casebase, src: str, dst: str) -> MoveDirectoryRe
 
 async def _delete_directory_locked(store: Casebase, path: str) -> int:
     """Delete a directory's files and SQL rows. Caller holds the lock."""
+    if not path:
+        # A bare scope root resolves to an empty path; deleting it here would
+        # wipe the workspace files while leaving every SQL row behind.  The
+        # full wipe (files + rows) is `delete_all`.
+        raise HTTPException(status_code=400, detail="Directory path required")
     workspace_dir = store.workspace_dir(settings.data_dir)
     directory_path = workspace_dir / path
-    if not directory_path.exists() or not directory_path.is_dir():
+    if not directory_path.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
     files_deleted = sum(
         1 for file_path in directory_path.rglob("*") if file_path.is_file()
     )
     shutil.rmtree(directory_path)
-    cleanup_empty_parents(directory_path, workspace_dir)
+    # Children-only: a same-named sibling document (stem equal to *path*)
+    # lives outside the directory and keeps its row.
     await db_documents.delete_subtree(store, path)
     return files_deleted
 
