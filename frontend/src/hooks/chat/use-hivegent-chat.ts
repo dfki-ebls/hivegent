@@ -26,6 +26,16 @@ export function useHivegentChat(
 ) {
   const onCreatedRef = useRef(onConversationCreated);
   onCreatedRef.current = onConversationCreated;
+  // ID minted for the in-flight draft turn. The server only persists the
+  // conversation when the turn completes, so the ID is staged here and
+  // reported via `onConversationCreated` once the stream finishes cleanly —
+  // adopting it after an abort or error would point at a conversation that
+  // does not exist.
+  const mintedIdRef = useRef<string | null>(null);
+  // Once a draft turn is adopted, follow-up sends from this still-mounted
+  // instance (steering drain, approval auto-send) must target the adopted
+  // conversation: re-posting to the mint endpoint would create a duplicate.
+  const adoptedIdRef = useRef<string | null>(null);
 
   const transport = useMemo(
     () =>
@@ -34,6 +44,15 @@ export function useHivegentChat(
           ? `${API_BASE_URL}/api/conversations/chat`
           : `${API_BASE_URL}/api/conversations/${id}/chat`,
         headers: () => getAuthHeaders(),
+        prepareSendMessagesRequest: draft
+          ? ({ api, body, id: chatId, messages, trigger, messageId }) => ({
+              api: adoptedIdRef.current
+                ? `${API_BASE_URL}/api/conversations/${adoptedIdRef.current}/chat`
+                : api,
+              // Replicate the transport's default body shape.
+              body: { ...body, id: chatId, messages, trigger, messageId },
+            })
+          : undefined,
         // The server mints the conversation ID on the first turn and returns
         // it in a response header; capture it so the client can adopt it.
         // Cross-origin reads require the proxy to expose X-Conversation-Id via
@@ -41,8 +60,7 @@ export function useHivegentChat(
         fetch: draft
           ? async (input, init) => {
               const res = await fetch(input, init);
-              const newId = res.headers.get("X-Conversation-Id");
-              if (newId) onCreatedRef.current?.(newId);
+              mintedIdRef.current = res.headers.get("X-Conversation-Id");
               return res;
             }
           : undefined,
@@ -54,6 +72,14 @@ export function useHivegentChat(
     id,
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+    onFinish: ({ isAbort, isDisconnect, isError }) => {
+      const mintedId = mintedIdRef.current;
+      mintedIdRef.current = null;
+      if (mintedId && !isAbort && !isDisconnect && !isError) {
+        adoptedIdRef.current = mintedId;
+        onCreatedRef.current?.(mintedId);
+      }
+    },
   });
 
   const { sendMessage, regenerate } = chat;

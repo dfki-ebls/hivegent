@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { type FileUIPart } from "ai";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AiDisclosure } from "@/components/chat/AiDisclosure";
 import { ChatHeader } from "@/components/chat/ChatHeader";
@@ -50,7 +50,9 @@ export function ChatSidebar({
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const fetchConversations = useConversationsStore((state) => state.fetchConversations);
   const stashHandoff = useDraftHandoffStore((state) => state.stash);
-  const createdIdRef = useRef<string | null>(null);
+  // Server-issued ID of a draft whose first turn finished cleanly; state
+  // (not a ref) so the adoption effect below runs once it is reported.
+  const [createdId, setCreatedId] = useState<string | null>(null);
 
   const [inputValue, setInputValue] = useState("");
   const [activeTab, setActiveTab] = useState("chat");
@@ -77,27 +79,11 @@ export function ChatSidebar({
     isStreaming,
   } = useHivegentChat(id, {
     draft,
-    onConversationCreated: (newId) => {
-      createdIdRef.current = newId;
-    },
+    onConversationCreated: setCreatedId,
   });
 
   const { isLoadingHistory, compactedFrom } = useConversationHistory(id, setMessages, draft);
   const { editingId, setEditing, clear: clearEditing } = useMessageEditing(status);
-
-  // Once the first turn of a draft has settled, adopt the server-issued ID:
-  // hand the streamed messages to that route and navigate so reloads and the
-  // sidebar reflect the now-persisted conversation.
-  useEffect(() => {
-    const newId = createdIdRef.current;
-    if (!draft || !newId || status !== "ready" || messages.length === 0) return;
-    createdIdRef.current = null;
-    stashHandoff(newId, messages);
-    void fetchConversations();
-    // Replace, not push: the transient draft URL ("/") shouldn't be a
-    // back-button target once it has become a real conversation.
-    void navigate({ to: "/conversations/$id", params: { id: newId }, replace: true });
-  }, [draft, status, messages, stashHandoff, fetchConversations, navigate]);
 
   const handleSendMessage = useCallback(
     async (text: string, files?: FileUIPart[]) => {
@@ -113,6 +99,32 @@ export function ChatSidebar({
     isStreaming,
     handleSendMessage,
   );
+
+  // Once the first turn of a draft has settled, adopt the server-issued ID:
+  // hand the streamed messages to that route and navigate so reloads and the
+  // sidebar reflect the now-persisted conversation. Queued steering messages
+  // drain first (the transport already targets the adopted conversation) so
+  // their turns stream here and land in the handoff instead of being cut off
+  // mid-stream by the navigation.
+  useEffect(() => {
+    if (!draft || !createdId || status !== "ready" || messages.length === 0) return;
+    if (steeringQueue.length > 0) return;
+    setCreatedId(null);
+    stashHandoff(createdId, messages);
+    void fetchConversations();
+    // Replace, not push: the transient draft URL ("/") shouldn't be a
+    // back-button target once it has become a real conversation.
+    void navigate({ to: "/conversations/$id", params: { id: createdId }, replace: true });
+  }, [
+    draft,
+    createdId,
+    status,
+    messages,
+    steeringQueue,
+    stashHandoff,
+    fetchConversations,
+    navigate,
+  ]);
 
   const {
     compact,
