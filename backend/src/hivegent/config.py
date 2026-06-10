@@ -173,12 +173,18 @@ class LlmSettings(BaseModel):
     title generation, compaction, and LLM-guided chunking — so it must
     be small, fast, and vision-capable.  Those workloads call it many
     times per document (especially alt-text and chunking), so cost and
-    latency dominate over raw reasoning quality.  Both share the same
-    ``api_key`` and ``base_url``.
+    latency dominate over raw reasoning quality.  All models share the
+    same ``api_key`` and ``base_url``.
+
+    ``stt_model`` names an audio transcription model (e.g. ``whisper-1``)
+    served by the same OpenAI-compatible endpoint.  It backs the speech
+    input fallback for browsers without a working Web Speech API; when
+    unset, that fallback is disabled in the UI.
     """
 
     model: str = ""
     aux_model: str | None = None
+    stt_model: str | None = None
     api_key: str = ""
     base_url: str = ""
 

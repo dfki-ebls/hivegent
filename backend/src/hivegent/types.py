@@ -72,6 +72,7 @@ __all__ = [
     "ToolRunResult",
     "ToolSchema",
     "ToolsSpec",
+    "TranscriptionResponse",
     "UpdateTitleRequest",
     "UploadCompleteEvent",
     "UploadDocumentResponse",
@@ -529,6 +530,12 @@ class SettingsResponse(BaseModel):
             "Used for document conversion, alt text, titles, compaction, and chunking."
         ),
     )
+    stt_model: str | None = Field(
+        description=(
+            "Audio transcription model backing the speech input fallback; "
+            "None when transcription is not configured."
+        ),
+    )
     has_api_key: bool = Field(description="Whether a server-side API key is configured")
     base_url: str = Field(description="Default base URL for the LLM provider")
     user: UserResponse = Field(description="Authenticated user information")
@@ -544,6 +551,12 @@ class GenerateTitleResponse(BaseModel):
     """Response from title generation."""
 
     title: str = Field(description="The generated title")
+
+
+class TranscriptionResponse(BaseModel):
+    """Response from audio transcription."""
+
+    text: str = Field(description="The transcribed text")
 
 
 class DirectoryEntry(BaseModel):

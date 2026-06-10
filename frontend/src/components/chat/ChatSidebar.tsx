@@ -18,13 +18,14 @@ import { useHivegentChat } from "@/hooks/chat/use-hivegent-chat";
 import { useMessageEditing } from "@/hooks/chat/use-message-editing";
 import { useSteeringQueue } from "@/hooks/chat/use-steering-queue";
 import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
-import { exportConversation } from "@/lib/api";
+import { exportConversation, transcribeAudio } from "@/lib/api";
 import { downloadBlob } from "@/lib/download";
 import { getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
 import { type AgentMode, type ReasoningEffort } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
 import { useDraftHandoffStore } from "@/stores/draft-handoff-store";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
+import { useSettingsStore } from "@/stores/settings-store";
 
 interface ChatSidebarProps {
   id: string;
@@ -206,6 +207,19 @@ export function ChatSidebar({
     setInputValue((prev) => (prev ? `${prev} ${text}` : text));
   }, []);
 
+  // Server-side transcription backs the recording fallback for browsers
+  // without a working Web Speech API; only offered when an STT model is
+  // configured on the backend.
+  const sttModel = useSettingsStore((state) => state.backendDefaults?.stt_model);
+  const handleAudioRecorded = useCallback(async (audio: Blob) => {
+    try {
+      return await transcribeAudio(audio);
+    } catch {
+      toast.error("Failed to transcribe audio");
+      return "";
+    }
+  }, []);
+
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col">
       <ChatHeader
@@ -264,6 +278,7 @@ export function ChatSidebar({
             excludedDocuments={excludedDocuments}
             onRemoveDocument={onRemoveDocument}
             onTranscriptionChange={handleTranscriptionChange}
+            onAudioRecorded={sttModel ? handleAudioRecorded : undefined}
           />
           <AiDisclosure />
         </div>

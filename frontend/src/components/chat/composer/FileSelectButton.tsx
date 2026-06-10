@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 export function FileSelectButton() {
   const { openFileDialog } = usePromptInputAttachments();
   return (
-    <Button variant="ghost" size="icon" onClick={openFileDialog}>
+    <Button type="button" variant="ghost" size="icon" onClick={openFileDialog}>
       <Paperclip className="h-4 w-4" />
       <span className="sr-only">Attach file</span>
     </Button>

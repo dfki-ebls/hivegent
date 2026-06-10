@@ -69,6 +69,7 @@ describe("getSettings", () => {
     const mockSettings = {
       model: "gpt-4",
       aux_model: "gpt-4o-mini",
+      stt_model: "whisper-1",
       has_api_key: true,
       base_url: "https://api.openai.com",
       user: {

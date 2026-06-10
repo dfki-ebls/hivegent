@@ -62,6 +62,7 @@ import {
   ToolRunResultSchema,
   type ToolSchema,
   ToolSchemaSchema,
+  TranscriptionResponseSchema,
   MoveDocumentResponseSchema,
   type PipelineSpec,
   type RechunkCompleteEvent,
@@ -164,6 +165,21 @@ export async function getSettings(): Promise<BackendSettings> {
   }
   const data: unknown = await res.json();
   return BackendSettingsSchema.parse(data);
+}
+
+/** Transcribe recorded audio via the backend STT endpoint. */
+export async function transcribeAudio(audio: Blob): Promise<string> {
+  const form = new FormData();
+  form.append("audio", audio, "recording.webm");
+  const res = await authFetch(`${API_BASE_URL}/api/transcription`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    throw new Error("Failed to transcribe audio");
+  }
+  const data: unknown = await res.json();
+  return TranscriptionResponseSchema.parse(data).text;
 }
 
 /** Fetch available agent tools from the backend. */

@@ -32,6 +32,7 @@ interface ComposerProps {
   excludedDocuments: string[];
   onRemoveDocument: (filename: string) => void;
   onTranscriptionChange: (text: string) => void;
+  onAudioRecorded?: (audio: Blob) => Promise<string>;
 }
 
 export function Composer({
@@ -49,7 +50,16 @@ export function Composer({
   excludedDocuments,
   onRemoveDocument,
   onTranscriptionChange,
+  onAudioRecorded,
 }: ComposerProps) {
+  // Hide the mic when SpeechInput could only render disabled: no Web Speech
+  // API and no recording fallback (needs MediaRecorder plus a server-side
+  // transcriber). Mirrors the mode detection inside SpeechInput.
+  const showSpeechInput =
+    "SpeechRecognition" in window ||
+    "webkitSpeechRecognition" in window ||
+    ("MediaRecorder" in window && "mediaDevices" in navigator && Boolean(onAudioRecorded));
+
   return (
     <PromptInput onSubmit={(msg) => onSubmit(msg.text, msg.files)}>
       <DocumentFilterBadges
@@ -68,13 +78,17 @@ export function Composer({
       <PromptInputFooter>
         <PromptInputTools>
           <FileSelectButton />
-          <SpeechInput
-            variant="ghost"
-            size="icon"
-            className="bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md"
-            disabled={status !== "ready"}
-            onTranscriptionChange={onTranscriptionChange}
-          />
+          {showSpeechInput && (
+            <SpeechInput
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md"
+              disabled={status !== "ready"}
+              onTranscriptionChange={onTranscriptionChange}
+              onAudioRecorded={onAudioRecorded}
+            />
+          )}
           <SettingsDialog />
           <ReasoningEffortSelector value={reasoningEffort} onChange={onReasoningEffortChange} />
           {featureFlags.planning && <ModeSelector value={agentMode} onChange={onAgentModeChange} />}

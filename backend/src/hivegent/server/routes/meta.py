@@ -33,6 +33,7 @@ async def get_settings(
     return SettingsResponse(
         model=settings.llm.model,
         aux_model=settings.llm.aux_model,
+        stt_model=settings.llm.stt_model,
         has_api_key=bool(settings.llm.api_key),
         base_url=settings.llm.base_url,
         user=UserResponse.from_user(user),

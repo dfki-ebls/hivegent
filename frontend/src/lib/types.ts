@@ -158,6 +158,7 @@ export const AdminListGroupsResponseSchema = z.object({
 export const BackendSettingsSchema = z.object({
   model: z.string(),
   aux_model: z.string().nullable(),
+  stt_model: z.string().nullable(),
   has_api_key: z.boolean(),
   base_url: z.string(),
   user: UserResponseSchema,
@@ -322,6 +323,12 @@ export const GenerateTitleResponseSchema = z.object({
   title: z.string(),
 });
 export type GenerateTitleResponse = z.infer<typeof GenerateTitleResponseSchema>;
+
+/** Response for audio transcription. */
+export const TranscriptionResponseSchema = z.object({
+  text: z.string(),
+});
+export type TranscriptionResponse = z.infer<typeof TranscriptionResponseSchema>;
 
 /** A file or directory entry in the document tree (recursive). */
 export interface DirectoryEntry {
