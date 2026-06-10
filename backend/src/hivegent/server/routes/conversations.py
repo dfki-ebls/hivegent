@@ -35,6 +35,7 @@ from ...db.conversations import (
     list_conversations,
     load_conversation,
     load_messages,
+    messages_to_persist,
     remove_conversation,
     set_conversation_title,
 )
@@ -378,12 +379,16 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     user_group_stores = group_stores(user)
 
     async def on_complete(result: AgentRunResult[str]) -> None:
-        """Persist messages after the agent run completes.
+        """Persist this turn's messages after the agent run completes.
 
         Must be ``async`` — pydantic-ai runs sync callbacks in a worker
         thread without an event loop, which would break message saving.
         """
-        await append_messages(user.id, config.conversation_id, result.all_messages())
+        await append_messages(
+            user.id,
+            config.conversation_id,
+            messages_to_persist(result.all_messages(), result.new_messages()),
+        )
 
     thinking: ThinkingLevel
 

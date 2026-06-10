@@ -49,6 +49,7 @@ __all__ = [
     "list_conversations",
     "load_conversation",
     "load_messages",
+    "messages_to_persist",
     "remove_conversation",
     "set_conversation_title",
 ]
@@ -316,24 +317,61 @@ async def conversation_exists(user_id: str, conversation_id: str) -> bool:
 # ─── Writes ────────────────────────────────────────────────────────────
 
 
+def _opens_a_turn(message: ModelMessage) -> bool:
+    """Whether *message* is a request carrying a fresh user prompt."""
+    return isinstance(message, ModelRequest) and any(
+        isinstance(part, UserPromptPart) for part in message.parts
+    )
+
+
+def messages_to_persist(
+    all_messages: Sequence[ModelMessage],
+    new_messages: Sequence[ModelMessage],
+) -> list[ModelMessage]:
+    """Select the messages a finished turn should append to its conversation.
+
+    Pass a run result's ``all_messages()`` and ``new_messages()``.  Whatever
+    the agent generated this run (``new_messages()``) is always new.  The
+    Vercel adapter folds the submitted message into ``message_history``
+    instead of passing it as a separate prompt, so a fresh question appears
+    as the ``UserPromptPart`` request sitting just before the generated tail
+    and is stored with it.  A tool-approval resume has no new prompt in that
+    slot — it holds the already-stored assistant turn being continued — so
+    only the generated messages are appended.
+
+    The stored row count cannot locate this boundary: the SDK re-segments
+    the history it echoes back each turn, so its message count never lines
+    up positionally with what we persisted, and diffing by count re-appends
+    the previous turn's tail (the duplicate-message bug this avoids).
+    """
+    messages = list(all_messages)
+    start = len(messages) - len(new_messages)
+    if start > 0 and _opens_a_turn(messages[start - 1]):
+        start -= 1
+    return messages[start:]
+
+
 async def append_messages(
     user_id: str,
     conversation_id: str,
     messages: Sequence[ModelMessage],
 ) -> None:
-    """Persist new messages for *conversation_id*.
+    """Append one turn's messages to *conversation_id*.
+
+    *messages* must be just that turn's new messages (see
+    :func:`messages_to_persist`), which are appended verbatim past the
+    existing rows — prior payloads, including their tool-return metadata,
+    are never re-read or overwritten.
 
     The row is created lazily on the first turn — the id-less ``/chat``
     endpoint mints a server ID and only here does it become a real record,
     so abandoned chats never leave an empty row behind.  Existing-conversation
     chats are guarded at the route boundary, so an unknown ID only reaches
     this path as a fresh mint.
-
-    The SDK hands us the full message history on every turn — we only
-    insert rows past the current count, so prior payloads (including
-    their tool-return metadata) are never overwritten.
     """
     msg_list = list(messages)
+    if not msg_list:
+        return
 
     async with session() as s:
         # Serialise concurrent appends to the same conversation: the
@@ -369,15 +407,11 @@ async def append_messages(
                 or 0
             )
 
-        new_msgs = msg_list[existing_count:]
-        if not new_msgs and conv.title is not None:
-            return
-
         if conv.title is None:
             conv.title = extract_title(msg_list)
 
         for offset, (msg, payload) in enumerate(
-            zip(new_msgs, _dump_messages(new_msgs), strict=True)
+            zip(msg_list, _dump_messages(msg_list), strict=True)
         ):
             s.add(
                 Message(
@@ -388,10 +422,9 @@ async def append_messages(
                 )
             )
 
-        if new_msgs:
-            # Touch the row so `onupdate=_now` bumps `updated_at` even when
-            # only child Message rows are inserted.
-            conv.updated_at = datetime.now(UTC)
+        # Touch the row so `onupdate=_now` bumps `updated_at` even when
+        # only child Message rows are inserted.
+        conv.updated_at = datetime.now(UTC)
 
 
 async def set_conversation_title(
