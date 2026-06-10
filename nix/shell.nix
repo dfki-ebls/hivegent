@@ -34,6 +34,9 @@ mkShell {
   UV_PYTHON = lib.getExe python3;
   # tesserocr (in-process docling OCR) resolves tessdata from this prefix.
   TESSDATA_PREFIX = backend.tessdata;
+  # Keep dev parity with the wrapped binary: torch.compile needs runtime
+  # codegen tools the production sandbox lacks (see `backend/default.nix`).
+  DOCLING_INFERENCE_COMPILE_TORCH_MODELS = "0";
   packages = [
     nodejs
     python3

@@ -18,8 +18,23 @@
   ripgrep,
   tessdata,
   ninja,
+  gcc,
+  openssl,
+  # Whether docling may wrap its torch models (picture classifier &c.) in
+  # torch.compile.  TorchInductor does runtime codegen through external
+  # tools (verified: gcc and openssl suffice), so enabling this puts them
+  # on the wrapper's PATH.  The toolchain must stay ABI-compatible with
+  # the torch wheels pinned in uv.lock, which is why the switch lives here
+  # and not in deployments.  The GPU path additionally relies on the
+  # triton wheel already present in the closure.  Disabled by default:
+  # eager inference is fast enough for these small models, and compilation
+  # would otherwise be repaid on every service restart.  Only honored on
+  # Linux — inductor is untested on darwin dev machines and the deployment
+  # target is Linux.
+  enableTorchCompile ? false,
 }:
 let
+  torchCompile = enableTorchCompile && stdenv.hostPlatform.isLinux;
   workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
   projectOverlay = workspace.mkPyprojectOverlay {
     sourcePreference = "wheel";
@@ -134,20 +149,32 @@ let
     pandoc
     ripgrep
   ]
-  ++ lib.optionals stdenv.hostPlatform.isLinux [ libreofficeHeadless ];
+  ++ lib.optionals stdenv.hostPlatform.isLinux [ libreofficeHeadless ]
+  ++ lib.optionals torchCompile [
+    gcc
+    openssl
+  ];
 in
 app.overrideAttrs (oldAttrs: {
   nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ makeBinaryWrapper ];
   # tesserocr (docling OCR) and kreuzberg link their own libtesseract but
   # carry no language data; both resolve it from TESSDATA_PREFIX at runtime
   # (see `nix/tessdata.nix`) — the tesseract CLI itself is not shipped.
+  #
+  # DOCLING_INFERENCE_COMPILE_TORCH_MODELS tracks `enableTorchCompile`:
+  # without the toolchain on PATH, docling's default of compiling its torch
+  # models would make every PDF conversion die in the enrichment stage
+  # (TorchInductor cannot codegen).  `--set-default` keeps both env vars
+  # overridable from the unit or shell.
   postFixup = (oldAttrs.postFixup or "") + ''
     wrapProgram "$out/bin/hivegent" \
       --prefix PATH : ${lib.makeBinPath runtimeInputs} \
       --set-default TESSDATA_PREFIX ${tessdata} \
+      --set-default DOCLING_INFERENCE_COMPILE_TORCH_MODELS ${if torchCompile then "1" else "0"} \
       --set-default LOGFIRE_IGNORE_NO_CONFIG 1
   '';
   passthru = (oldAttrs.passthru or { }) // {
     inherit runtimeInputs tessdata;
+    enableTorchCompile = torchCompile;
   };
 })
