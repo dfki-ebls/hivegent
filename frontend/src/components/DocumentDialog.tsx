@@ -789,19 +789,12 @@ export function DocumentDialog({
                 setViewMode("chunk");
               }}
             >
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <Badge
-                  variant={
-                    viewMode === "chunk" && sibling.id === activeChunkId ? "default" : "outline"
-                  }
-                  className="text-[10px] shrink-0"
-                >
-                  {chunkPositionLabel(sibling.position)}
-                </Badge>
-                {sibling.score != null && (
-                  <span className="text-muted-foreground">{(sibling.score * 100).toFixed(0)}%</span>
-                )}
-              </div>
+              <Badge
+                variant={viewMode === "chunk" && sibling.id === activeChunkId ? "default" : "outline"}
+                className="text-[10px]"
+              >
+                {chunkPositionLabel(sibling.position)}
+              </Badge>
               <p className="truncate text-muted-foreground mt-0.5">
                 {sibling.content.slice(0, 60)}
                 {sibling.content.length > 60 ? "..." : ""}
@@ -882,11 +875,6 @@ export function DocumentDialog({
                 <Badge variant="secondary" className="text-xs">
                   {chunkPositionLabel(activeChunk.position)}
                 </Badge>
-                {activeChunk.score != null && (
-                  <Badge variant="secondary" className="text-xs">
-                    {(activeChunk.score * 100).toFixed(0)}%
-                  </Badge>
-                )}
               </div>
             )}
             {renderMainContent()}

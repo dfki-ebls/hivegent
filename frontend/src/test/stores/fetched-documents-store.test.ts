@@ -14,7 +14,6 @@ describe("useFetchedDocumentsStore", () => {
         content: "hello",
         source: "search",
         position: { type: "line", line: 1 },
-        score: 0.9,
       });
 
       const state = useFetchedDocumentsStore.getState();

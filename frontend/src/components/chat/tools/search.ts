@@ -19,7 +19,6 @@ export const syncSearchOutput: SyncOutput = (input, _text, metadata, addChunk) =
       filename: chunk.filename,
       content: chunk.text,
       source,
-      score: chunk.score,
       position,
       startIndex: chunk.start_index,
       endIndex: chunk.end_index,

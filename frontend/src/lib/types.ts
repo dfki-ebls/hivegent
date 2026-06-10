@@ -618,7 +618,6 @@ export interface FetchedChunk {
   filename: string;
   content: string;
   source: string;
-  score?: number;
   position: ChunkPosition;
   /**
    * Exact character offsets of the chunk in the original document.
