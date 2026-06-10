@@ -11,7 +11,7 @@ import {
   Scissors,
   Trash2,
 } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { type CSSProperties, useCallback, useMemo } from "react";
 
 import { DOCUMENT_ACTIONS, type DocumentActionId } from "@/lib/document-actions";
 import type { DirectoryEntry, OperationStage } from "@/lib/types";
@@ -45,6 +45,12 @@ interface FlatRow {
   depth: number;
   isExpanded?: boolean;
   fileCount?: number;
+}
+
+// 24px per level (checkbox 16px + gap 8px) lines children up under the parent's chevron,
+// 8px base matches the row's px-2 so depth-0 checkboxes align with the select-all checkbox.
+function indentStyle(depth: number): CSSProperties {
+  return { paddingLeft: `${depth * 24 + 8}px` };
 }
 
 function countFiles(entry: DirectoryEntry): number {
@@ -103,7 +109,7 @@ function FileRow({
   return (
     <div
       className="col-span-full grid grid-cols-[subgrid] items-center rounded-md px-2 py-1.5 hover:bg-muted/50 group"
-      style={{ paddingLeft: `${depth * 20 + 8}px` }}
+      style={indentStyle(depth)}
     >
       <div className="flex items-center gap-2 min-w-0">
         {onToggleSelect && (
@@ -216,7 +222,7 @@ function DirectoryRow({
   return (
     <div
       className="col-span-full grid grid-cols-[subgrid] items-center rounded-md px-2 py-1.5 hover:bg-muted/50 group"
-      style={{ paddingLeft: `${depth * 20 + 8}px` }}
+      style={indentStyle(depth)}
     >
       <div className="flex items-center gap-2 min-w-0">
         {onToggleSelect && (
