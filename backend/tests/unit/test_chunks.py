@@ -50,9 +50,7 @@ async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
         _ = document_id, raw_chunks
         raise RuntimeError("index failed")
 
-    async def set_content_state(
-        document_id: str, digest: str, stat: object
-    ) -> None:
+    async def set_content_state(document_id: str, digest: str, stat: object) -> None:
         nonlocal stamped
         _ = document_id, digest, stat
         stamped = True

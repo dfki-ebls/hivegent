@@ -188,5 +188,3 @@ def entry_exists(workspace_dir: Path, reference: str) -> bool:
 def stem_display_name(stem_path: str) -> str:
     """Return the user-facing basename for a logical stem."""
     return PurePosixPath(stem_path).name
-
-

@@ -6,8 +6,7 @@ import { cn } from "@/lib/utils";
 // interaction (Article 50(5)). A persistent marker under the composer keeps the
 // notice visible for the whole session, which the Commission guidance favours
 // over a one-time disclosure.
-const DISCLOSURE_TEXT =
-  "Hivegent is AI and can make mistakes. Please double-check responses.";
+const DISCLOSURE_TEXT = "Hivegent is AI and can make mistakes. Please double-check responses.";
 
 export function AiDisclosure({ className }: { className?: string }) {
   return (

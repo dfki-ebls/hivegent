@@ -353,7 +353,12 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         ]
 
     parts.extend(
-        [LANGUAGE_INSTRUCTIONS, CITATION_INSTRUCTIONS, IMAGE_INSTRUCTIONS, MATH_INSTRUCTIONS]
+        [
+            LANGUAGE_INSTRUCTIONS,
+            CITATION_INSTRUCTIONS,
+            IMAGE_INSTRUCTIONS,
+            MATH_INSTRUCTIONS,
+        ]
     )
 
     if config.mode == "plan":

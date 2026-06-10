@@ -46,6 +46,7 @@ __all__ = [
     "translate_tool_retry",
 ]
 
+
 class ToolRetry(Exception):
     """A model-correctable tool failure.
 

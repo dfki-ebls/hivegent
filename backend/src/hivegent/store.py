@@ -48,7 +48,9 @@ class WorkspaceScope:
     @property
     def prefix(self) -> str:
         """Leading token rendered into a path: ``~`` or ``@<group_id>``."""
-        return USER_PREFIX if self.group_id is None else f"{GROUP_PREFIX}{self.group_id}"
+        return (
+            USER_PREFIX if self.group_id is None else f"{GROUP_PREFIX}{self.group_id}"
+        )
 
     def render(self, local: str) -> str:
         """Render *local* as a canonical path under this scope (empty = root)."""

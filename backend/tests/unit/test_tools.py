@@ -516,7 +516,9 @@ class TestEditDocumentTool:
 
         tool = EditDocumentTool(paths=tmp_path, mutator=_mutate)
         result = (
-            await tool("doc.md", "hello", "goodbye", replace_all=True, expected_hash="h")
+            await tool(
+                "doc.md", "hello", "goodbye", replace_all=True, expected_hash="h"
+            )
         ).data
         assert result == "edited"
         assert calls == [("doc.md", "hello", "goodbye", True, "h")]
@@ -675,9 +677,7 @@ class TestGrepFormatting:
         assert formatted == "f.md\n1:x\n2:x\n3:x"
         assert "omitted" not in formatted
 
-    def test_blocks_within_document_separated_by_dashes(
-        self, tmp_path: Path
-    ) -> None:
+    def test_blocks_within_document_separated_by_dashes(self, tmp_path: Path) -> None:
         tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
         formatted = tool._format_matches([self._block(1), self._block(1)])
         assert formatted == "f.md\n1:x\n--\n1:x"

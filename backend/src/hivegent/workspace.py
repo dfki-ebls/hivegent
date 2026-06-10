@@ -1180,7 +1180,9 @@ def _read_text_file(file_path: Path) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
-def _check_expected_hash(safe: str, current: str | None, expected_hash: str | None) -> None:
+def _check_expected_hash(
+    safe: str, current: str | None, expected_hash: str | None
+) -> None:
     """Reject the mutation unless *current* still matches *expected_hash*.
 
     The optimistic-concurrency guard: a non-``None`` *expected_hash* comes
@@ -1565,7 +1567,9 @@ async def _move_directory_locked(
     if not src_dir.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
 
-    dst = _resolve_move_destination(workspace_dir, PurePosixPath(src).name, dst, src_dir)
+    dst = _resolve_move_destination(
+        workspace_dir, PurePosixPath(src).name, dst, src_dir
+    )
     _check_not_assets_path(dst)
     if dst == src:
         raise HTTPException(

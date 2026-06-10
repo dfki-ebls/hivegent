@@ -23,7 +23,9 @@ function UserMenu() {
   }
 
   const { decodedIdToken, logout } = oidc;
-  const fullName = [decodedIdToken.given_name, decodedIdToken.family_name].filter(Boolean).join(" ");
+  const fullName = [decodedIdToken.given_name, decodedIdToken.family_name]
+    .filter(Boolean)
+    .join(" ");
   const userName =
     fullName ||
     decodedIdToken.name ||

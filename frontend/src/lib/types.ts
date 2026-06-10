@@ -752,13 +752,7 @@ export interface LlmConfig {
 export type Personality = "default" | "concise" | "detailed" | "structured" | "custom";
 
 /** Zod schema for personality (used in store rehydration). */
-export const PersonalitySchema = z.enum([
-  "default",
-  "concise",
-  "detailed",
-  "structured",
-  "custom",
-]);
+export const PersonalitySchema = z.enum(["default", "concise", "detailed", "structured", "custom"]);
 
 /** Personality option for display in UI. */
 export interface PersonalityOption {

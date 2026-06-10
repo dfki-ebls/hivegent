@@ -16,9 +16,7 @@ from hivegent.store import Casebase
 
 
 @pytest.fixture()
-def workspace_dir(
-    user_store: Casebase, monkeypatch: pytest.MonkeyPatch
-) -> Path:
+def workspace_dir(user_store: Casebase, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Workspace root with the SQL layer stubbed for reconciliation runs."""
 
     async def get_entry_state(store: Casebase, reference: str) -> None:

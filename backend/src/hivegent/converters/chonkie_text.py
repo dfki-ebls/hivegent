@@ -27,7 +27,9 @@ class ChonkieTextConverter(DocumentConverter):
 
     name: ClassVar[str] = "text-chef"
     label: ClassVar[str] = "Text Chef"
-    description: ClassVar[str] = "Plain text, config, and data-serialization files as-is"
+    description: ClassVar[str] = (
+        "Plain text, config, and data-serialization files as-is"
+    )
     # Raw-text formats with no richer converter, read verbatim. Notably ``.json``
     # must land here and not on docling, which only accepts its own
     # ``DoclingDocument`` JSON schema and rejects ordinary JSON as invalid.

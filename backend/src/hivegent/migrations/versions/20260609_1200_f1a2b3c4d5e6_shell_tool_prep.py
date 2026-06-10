@@ -25,9 +25,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.alter_column(
-        "documents", "content_sha256", new_column_name="content_digest"
-    )
+    op.alter_column("documents", "content_sha256", new_column_name="content_digest")
     op.add_column(
         "documents", sa.Column("content_mtime_ns", sa.BigInteger(), nullable=True)
     )
@@ -42,9 +40,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_column("documents", "content_size")
     op.drop_column("documents", "content_mtime_ns")
-    op.alter_column(
-        "documents", "content_digest", new_column_name="content_sha256"
-    )
+    op.alter_column("documents", "content_digest", new_column_name="content_sha256")
     # PostgreSQL cannot drop an enum value; recreating the type to remove
     # ``imported`` would require rewriting every column that references it, so
     # the value is intentionally left in place on downgrade.

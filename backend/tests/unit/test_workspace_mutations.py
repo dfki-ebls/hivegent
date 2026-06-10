@@ -79,7 +79,11 @@ class TestEditDocumentText:
     ) -> None:
         (workspace_dir / "doc.md").write_text("hello world")
         result = await workspace.edit_document_text(
-            user_store, "doc.md", "hello", "hi", expected_hash=content_hash("hello world")
+            user_store,
+            "doc.md",
+            "hello",
+            "hi",
+            expected_hash=content_hash("hello world"),
         )
         assert "Replaced 1 occurrence" in result
 
@@ -133,7 +137,11 @@ class TestWriteDocumentText:
         (workspace_dir / "doc.md").write_text("start")
         with pytest.raises(HTTPException) as exc:
             await workspace.write_document_text(
-                user_store, "doc.md", " end", mode="append", expected_hash="stale0000000"
+                user_store,
+                "doc.md",
+                " end",
+                mode="append",
+                expected_hash="stale0000000",
             )
         assert exc.value.status_code == 409
 
@@ -142,7 +150,11 @@ class TestWriteDocumentText:
     ) -> None:
         (workspace_dir / "doc.md").write_text("start")
         result = await workspace.write_document_text(
-            user_store, "doc.md", " end", mode="append", expected_hash=content_hash("start")
+            user_store,
+            "doc.md",
+            " end",
+            mode="append",
+            expected_hash=content_hash("start"),
         )
         assert "Appended" in result
         assert (workspace_dir / "doc.md").read_text() == "start end"
@@ -213,7 +225,9 @@ class TestSyncEntryFromDisk:
 
         monkeypatch.setattr(workspace.db_documents, "get_entry_state", get_entry_state)
         monkeypatch.setattr(workspace.db_documents, "update_entry", update_entry)
-        monkeypatch.setattr(workspace, "chunk_and_index_document", chunk_and_index_document)
+        monkeypatch.setattr(
+            workspace, "chunk_and_index_document", chunk_and_index_document
+        )
 
         changed = await workspace.sync_entry_from_disk(user_store, "doc.md")
 

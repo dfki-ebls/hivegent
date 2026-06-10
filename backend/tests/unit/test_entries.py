@@ -116,4 +116,3 @@ def test_subtree_filter_excludes_equal_stem_and_escapes_wildcards() -> None:
     )
     assert "LIKE '100\\%\\_a/%'" in sql
     assert "=" not in sql
-
