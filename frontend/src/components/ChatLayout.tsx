@@ -1,5 +1,5 @@
 import { PanelLeftOpen } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { ChatSidebar } from "./chat/ChatSidebar";
 import { DocumentCanvas } from "./documents/DocumentCanvas";
@@ -13,37 +13,12 @@ interface ChatLayoutProps {
 
 export function ChatLayout({ id, draft = false }: ChatLayoutProps) {
   const [mobileDocumentsOpen, setMobileDocumentsOpen] = useState(false);
-  const [includedDocuments, setIncludedDocuments] = useState<string[]>([]);
-  const [excludedDocuments, setExcludedDocuments] = useState<string[]>([]);
-
-  const handleIncludeDocument = useCallback((filename: string) => {
-    setIncludedDocuments((prev) => (prev.includes(filename) ? prev : [...prev, filename]));
-    setExcludedDocuments((prev) => prev.filter((f) => f !== filename));
-  }, []);
-
-  const handleExcludeDocument = useCallback((filename: string) => {
-    setExcludedDocuments((prev) => (prev.includes(filename) ? prev : [...prev, filename]));
-    setIncludedDocuments((prev) => prev.filter((f) => f !== filename));
-  }, []);
-
-  const handleRemoveDocument = useCallback((filename: string) => {
-    setIncludedDocuments((prev) => prev.filter((f) => f !== filename));
-    setExcludedDocuments((prev) => prev.filter((f) => f !== filename));
-  }, []);
-
-  const handleClearDocuments = useCallback(() => {
-    setIncludedDocuments([]);
-    setExcludedDocuments([]);
-  }, []);
 
   return (
     <div className="flex h-full overflow-hidden">
       {/* Desktop: Always show DocumentCanvas */}
       <div className="hidden md:block h-full w-1/2 overflow-hidden border-r">
-        <DocumentCanvas
-          onIncludeDocument={handleIncludeDocument}
-          onExcludeDocument={handleExcludeDocument}
-        />
+        <DocumentCanvas />
       </div>
 
       {/* Mobile: Sheet for DocumentCanvas */}
@@ -54,10 +29,7 @@ export function ChatLayout({ id, draft = false }: ChatLayoutProps) {
             <SheetDescription className="sr-only">Browse fetched documents</SheetDescription>
           </SheetHeader>
           <div className="h-[calc(100%-60px)] overflow-hidden">
-            <DocumentCanvas
-              onIncludeDocument={handleIncludeDocument}
-              onExcludeDocument={handleExcludeDocument}
-            />
+            <DocumentCanvas />
           </div>
         </SheetContent>
       </Sheet>
@@ -72,14 +44,7 @@ export function ChatLayout({ id, draft = false }: ChatLayoutProps) {
           </Button>
         </div>
         <div className="flex-1 overflow-hidden">
-          <ChatSidebar
-            id={id}
-            draft={draft}
-            includedDocuments={includedDocuments}
-            excludedDocuments={excludedDocuments}
-            onRemoveDocument={handleRemoveDocument}
-            onClearDocuments={handleClearDocuments}
-          />
+          <ChatSidebar id={id} draft={draft} />
         </div>
       </div>
     </div>

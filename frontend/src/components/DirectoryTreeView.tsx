@@ -1,8 +1,6 @@
 import {
   ChevronDown,
   ChevronRight,
-  Eye,
-  EyeOff,
   FileText,
   Folder,
   FolderOpen,
@@ -13,6 +11,10 @@ import {
 } from "lucide-react";
 import { type CSSProperties, useCallback, useMemo } from "react";
 
+import {
+  FilterToggleButtons,
+  type FilterEntryState,
+} from "@/components/documents/FilterToggleButtons";
 import { DOCUMENT_ACTIONS, type DocumentActionId } from "@/lib/document-actions";
 import type { DirectoryEntry, OperationStage } from "@/lib/types";
 import { collectFilePaths, formatFileSize } from "@/lib/utils";
@@ -29,6 +31,8 @@ interface DirectoryTreeViewProps {
   onEditFile: (path: string) => void;
   onInclude: (path: string) => void;
   onExclude: (path: string) => void;
+  /** Current chat-filter state of a path (directories carry a trailing slash). */
+  filterState: (path: string) => FilterEntryState;
   /** Dispatched for file-operation actions (rechunk, reconvert, download, move, delete). */
   onFileAction?: (path: string, actionId: DocumentActionId) => void;
   onCreateSubdir?: (parentPath: string) => void;
@@ -92,6 +96,7 @@ function FileRow({
   onEdit,
   onInclude,
   onExclude,
+  filterState,
   onAction,
   selected,
   onToggleSelect,
@@ -103,6 +108,7 @@ function FileRow({
   onEdit: () => void;
   onInclude: () => void;
   onExclude: () => void;
+  filterState: FilterEntryState;
   onAction?: (actionId: DocumentActionId) => void;
   selected?: boolean;
   onToggleSelect?: () => void;
@@ -131,25 +137,14 @@ function FileRow({
           <span className="truncate text-xs text-muted-foreground">{operationStage.stage}...</span>
         )}
       </div>
-      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          title="Include in chat"
-          onClick={onInclude}
-        >
-          <Eye className="h-3 w-3" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          title="Exclude from chat"
-          onClick={onExclude}
-        >
-          <EyeOff className="h-3 w-3" />
-        </Button>
+      <div className="flex gap-0.5">
+        <FilterToggleButtons
+          state={filterState}
+          onInclude={onInclude}
+          onExclude={onExclude}
+          compact
+          revealOnHover
+        />
         {onAction &&
           DOCUMENT_ACTIONS.map((action) => {
             if (action.requiresOriginal && !entry.has_original) return null;
@@ -159,7 +154,7 @@ function FileRow({
                 key={action.id}
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6"
+                className="h-6 w-6 opacity-0 group-hover:opacity-100"
                 title={action.label}
                 onClick={() => onAction(action.id)}
                 disabled={isMutating}
@@ -196,6 +191,7 @@ function DirectoryRow({
   onToggle,
   onIncludeDir,
   onExcludeDir,
+  filterState,
   onCreateSubdir,
   onDeleteDir,
   onMoveDir,
@@ -210,6 +206,7 @@ function DirectoryRow({
   onToggle: () => void;
   onIncludeDir: () => void;
   onExcludeDir: () => void;
+  filterState: FilterEntryState;
   onCreateSubdir?: () => void;
   onDeleteDir?: () => void;
   onMoveDir?: () => void;
@@ -240,30 +237,19 @@ function DirectoryRow({
         </button>
         {isMutating && <Spinner className="size-3 shrink-0 text-muted-foreground" />}
       </div>
-      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          title="Include directory in chat"
-          onClick={onIncludeDir}
-        >
-          <Eye className="h-3 w-3" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          title="Exclude directory from chat"
-          onClick={onExcludeDir}
-        >
-          <EyeOff className="h-3 w-3" />
-        </Button>
+      <div className="flex gap-0.5">
+        <FilterToggleButtons
+          state={filterState}
+          onInclude={onIncludeDir}
+          onExclude={onExcludeDir}
+          compact
+          revealOnHover
+        />
         {onCreateSubdir && (
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6"
+            className="h-6 w-6 opacity-0 group-hover:opacity-100"
             title="Create subdirectory"
             onClick={onCreateSubdir}
             disabled={isMutating}
@@ -275,7 +261,7 @@ function DirectoryRow({
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6"
+            className="h-6 w-6 opacity-0 group-hover:opacity-100"
             title="Move directory"
             onClick={onMoveDir}
             disabled={isMutating}
@@ -287,7 +273,7 @@ function DirectoryRow({
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6"
+            className="h-6 w-6 opacity-0 group-hover:opacity-100"
             title="Delete directory"
             onClick={onDeleteDir}
             disabled={isMutating}
@@ -317,6 +303,7 @@ export function DirectoryTreeView({
   onEditFile,
   onInclude,
   onExclude,
+  filterState,
   onFileAction,
   onCreateSubdir,
   onDeleteDir,
@@ -366,6 +353,7 @@ export function DirectoryTreeView({
           onEdit={() => onEditFile(row.entry.path)}
           onInclude={() => onInclude(row.entry.path)}
           onExclude={() => onExclude(row.entry.path)}
+          filterState={filterState(row.entry.path)}
           onAction={onFileAction ? (actionId) => onFileAction(row.entry.path, actionId) : undefined}
           selected={selectedFiles?.has(row.entry.path)}
           onToggleSelect={onToggleSelectFile ? () => onToggleSelectFile(row.entry.path) : undefined}
@@ -397,6 +385,7 @@ export function DirectoryTreeView({
         onToggle={() => toggleDir(row.entry.path)}
         onIncludeDir={() => onInclude(dirPath)}
         onExcludeDir={() => onExclude(dirPath)}
+        filterState={filterState(dirPath)}
         onCreateSubdir={onCreateSubdir ? () => onCreateSubdir(row.entry.path) : undefined}
         onDeleteDir={onDeleteDir ? () => onDeleteDir(row.entry.path) : undefined}
         onMoveDir={onMoveDir ? () => onMoveDir(row.entry.path) : undefined}

@@ -35,12 +35,7 @@ import { PipelineSettingsBar } from "./PipelineSettingsBar";
 import { ScopeSection } from "./ScopeSection";
 import { UploadArea } from "./UploadArea";
 
-interface ManageDocumentsProps {
-  onIncludeDocument?: (filename: string) => void;
-  onExcludeDocument?: (filename: string) => void;
-}
-
-export function ManageDocuments({ onIncludeDocument, onExcludeDocument }: ManageDocumentsProps) {
+export function ManageDocuments() {
   const overrides = useSettingsStore((s) => s.overrides);
   const conversionPipeline = useSettingsStore((s) => s.conversionPipeline);
   const chunkingPipeline = useSettingsStore((s) => s.chunkingPipeline);
@@ -313,8 +308,6 @@ export function ManageDocuments({ onIncludeDocument, onExcludeDocument }: Manage
           defaultOpen
           searchQuery={searchQuery}
           pipelineSpec={pipelineSpec}
-          onIncludeDocument={onIncludeDocument}
-          onExcludeDocument={onExcludeDocument}
         />
         {groups.map((groupId) => (
           <ScopeSection
@@ -325,8 +318,6 @@ export function ManageDocuments({ onIncludeDocument, onExcludeDocument }: Manage
             defaultOpen={false}
             searchQuery={searchQuery}
             pipelineSpec={pipelineSpec}
-            onIncludeDocument={onIncludeDocument}
-            onExcludeDocument={onExcludeDocument}
           />
         ))}
       </div>

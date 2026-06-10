@@ -28,9 +28,6 @@ interface ComposerProps {
   onAgentModeChange: (value: AgentMode) => void;
   reasoningEffort: ReasoningEffort;
   onReasoningEffortChange: (value: ReasoningEffort) => void;
-  includedDocuments: string[];
-  excludedDocuments: string[];
-  onRemoveDocument: (filename: string) => void;
   onTranscriptionChange: (text: string) => void;
   onAudioRecorded?: (audio: Blob) => Promise<string>;
 }
@@ -46,9 +43,6 @@ export function Composer({
   onAgentModeChange,
   reasoningEffort,
   onReasoningEffortChange,
-  includedDocuments,
-  excludedDocuments,
-  onRemoveDocument,
   onTranscriptionChange,
   onAudioRecorded,
 }: ComposerProps) {
@@ -62,11 +56,7 @@ export function Composer({
 
   return (
     <PromptInput onSubmit={(msg) => onSubmit(msg.text, msg.files)}>
-      <DocumentFilterBadges
-        included={includedDocuments}
-        excluded={excludedDocuments}
-        onRemove={onRemoveDocument}
-      />
+      <DocumentFilterBadges />
       <AttachedFiles />
       <PromptInputBody>
         <PromptInputTextarea

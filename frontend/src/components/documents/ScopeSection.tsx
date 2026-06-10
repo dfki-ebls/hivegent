@@ -1,10 +1,11 @@
-import { ChevronDown, ChevronRight, Eye, EyeOff, FolderOpen, Loader2, Users } from "lucide-react";
+import { ChevronDown, ChevronRight, FolderOpen, Loader2, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PERSONAL_SCOPE, buildAuxLlmConfig, canonicalPath, uploadDocument } from "../../lib/api";
 import type { PipelineSpec } from "../../lib/types";
 import { downloadBlob } from "../../lib/download";
 import { collectFilePaths } from "../../lib/utils";
+import { useDocumentFilterStore } from "../../stores/document-filter-store";
 import { DEFAULT_SCOPE_STATE, useDocumentsStore } from "../../stores/documents-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import { DirectoryTreeView } from "../DirectoryTreeView";
@@ -16,6 +17,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/colla
 import { BulkActionBar } from "./BulkActionBar";
 import { DocumentListItem } from "./DocumentListItem";
 import { ErrorBanner } from "./ErrorBanner";
+import { FilterToggleButtons, type FilterEntryState } from "./FilterToggleButtons";
 import { ScopeDialogs, type ScopeDialogsHandle } from "./ScopeDialogs";
 
 /** Edit/view dialog target within a scope (local path). */
@@ -33,9 +35,6 @@ interface ScopeSectionProps {
   defaultOpen: boolean;
   searchQuery: string;
   pipelineSpec: PipelineSpec;
-  /** Receives a canonical path (scope-prefixed) for the chat document filter. */
-  onIncludeDocument?: (path: string) => void;
-  onExcludeDocument?: (path: string) => void;
 }
 
 /**
@@ -51,8 +50,6 @@ export function ScopeSection({
   defaultOpen,
   searchQuery,
   pipelineSpec,
-  onIncludeDocument,
-  onExcludeDocument,
 }: ScopeSectionProps) {
   const state = useDocumentsStore((s) => s.byScope[scope] ?? DEFAULT_SCOPE_STATE);
   const refresh = useDocumentsStore((s) => s.refresh);
@@ -62,6 +59,10 @@ export function ScopeSection({
   const storeBulkReconvert = useDocumentsStore((s) => s.bulkReconvert);
   const clearError = useDocumentsStore((s) => s.clearError);
   const overrides = useSettingsStore((s) => s.overrides);
+  const included = useDocumentFilterStore((s) => s.included);
+  const excluded = useDocumentFilterStore((s) => s.excluded);
+  const toggleInclude = useDocumentFilterStore((s) => s.toggleInclude);
+  const toggleExclude = useDocumentFilterStore((s) => s.toggleExclude);
 
   const {
     documents,
@@ -85,6 +86,15 @@ export function ScopeSection({
   }, [refresh, scope]);
 
   const toCanonical = useCallback((path: string) => canonicalPath(scope, path), [scope]);
+  const filterStateOf = useCallback(
+    (canonical: string): FilterEntryState =>
+      included.includes(canonical)
+        ? "included"
+        : excluded.includes(canonical)
+          ? "excluded"
+          : undefined,
+    [included, excluded],
+  );
   const isGroup = scope !== PERSONAL_SCOPE;
 
   const isSearching = searchQuery.trim().length > 0;
@@ -228,8 +238,9 @@ export function ScopeSection({
         mutatingPaths={mutatingPaths}
         operationStage={operationStage}
         onEditFile={(path) => setDialog({ path, editable: canWrite })}
-        onInclude={(path) => onIncludeDocument?.(toCanonical(path))}
-        onExclude={(path) => onExcludeDocument?.(toCanonical(path))}
+        onInclude={(path) => toggleInclude(toCanonical(path))}
+        onExclude={(path) => toggleExclude(toCanonical(path))}
+        filterState={(path) => filterStateOf(toCanonical(path))}
         onFileAction={
           canWrite
             ? (path, actionId) => {
@@ -278,8 +289,9 @@ export function ScopeSection({
               isMutating={docMutating}
               operationStage={docMutating ? operationStage : null}
               onEdit={() => setDialog({ path: doc.filename, editable: canWrite })}
-              onIncludeDocument={() => onIncludeDocument?.(toCanonical(doc.filename))}
-              onExcludeDocument={() => onExcludeDocument?.(toCanonical(doc.filename))}
+              filterState={filterStateOf(toCanonical(doc.filename))}
+              onIncludeDocument={() => toggleInclude(toCanonical(doc.filename))}
+              onExcludeDocument={() => toggleExclude(toCanonical(doc.filename))}
               onReconvert={() => handleReconvert(doc.filename)}
               onRemove={() => dialogs.current?.deleteFile(doc.filename)}
               selected={canWrite ? selectedFiles.has(doc.filename) : undefined}
@@ -312,28 +324,15 @@ export function ScopeSection({
             {label}
           </button>
         </CollapsibleTrigger>
-        {isGroup && (
-          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              title="Include workspace in chat"
-              onClick={() => onIncludeDocument?.(scope)}
-            >
-              <Eye className="h-3 w-3" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              title="Exclude workspace from chat"
-              onClick={() => onExcludeDocument?.(scope)}
-            >
-              <EyeOff className="h-3 w-3" />
-            </Button>
-          </div>
-        )}
+        <div className="flex gap-0.5">
+          <FilterToggleButtons
+            state={filterStateOf(scope)}
+            onInclude={() => toggleInclude(scope)}
+            onExclude={() => toggleExclude(scope)}
+            compact
+            revealOnHover
+          />
+        </div>
         <Badge variant="secondary" className="shrink-0 text-xs">
           {fileCount}
         </Badge>

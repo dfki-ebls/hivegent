@@ -1,17 +1,15 @@
 import { EyeOff, FileText, Folder, type LucideIcon, X } from "lucide-react";
 import { PromptInputHeader } from "@/components/ai-elements/prompt-input";
 import { Badge } from "@/components/ui/badge";
+import { useDocumentFilterStore } from "@/stores/document-filter-store";
 
-interface DocumentFilterBadgesProps {
-  included: string[];
-  excluded: string[];
-  onRemove: (filename: string) => void;
+/** Directory entries end with `/`; a bare scope (`~`, `@team`) is a whole workspace. */
+function isDirEntry(entry: string): boolean {
+  return entry.endsWith("/") || !entry.includes("/");
 }
 
 function entryDisplayName(entry: string): string {
-  const isDir = entry.endsWith("/");
-  if (isDir) return entry.slice(0, -1).split("/").pop() ?? entry;
-  return entry.split("/").pop() ?? entry;
+  return entry.replace(/\/$/, "").split("/").pop() ?? entry;
 }
 
 interface FilterBadgeProps {
@@ -37,7 +35,10 @@ function FilterBadge({ entry, variant, icon: Icon, onRemove }: FilterBadgeProps)
   );
 }
 
-export function DocumentFilterBadges({ included, excluded, onRemove }: DocumentFilterBadgesProps) {
+export function DocumentFilterBadges() {
+  const included = useDocumentFilterStore((s) => s.included);
+  const excluded = useDocumentFilterStore((s) => s.excluded);
+  const onRemove = useDocumentFilterStore((s) => s.remove);
   if (included.length === 0 && excluded.length === 0) return null;
 
   return (
@@ -47,7 +48,7 @@ export function DocumentFilterBadges({ included, excluded, onRemove }: DocumentF
           key={`inc-${entry}`}
           entry={entry}
           variant="secondary"
-          icon={entry.endsWith("/") ? Folder : FileText}
+          icon={isDirEntry(entry) ? Folder : FileText}
           onRemove={onRemove}
         />
       ))}
@@ -56,7 +57,7 @@ export function DocumentFilterBadges({ included, excluded, onRemove }: DocumentF
           key={`exc-${entry}`}
           entry={entry}
           variant="destructive"
-          icon={entry.endsWith("/") ? Folder : EyeOff}
+          icon={isDirEntry(entry) ? Folder : EyeOff}
           onRemove={onRemove}
         />
       ))}

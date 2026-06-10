@@ -13,6 +13,7 @@ from .chunkers import ChunkingSpec
 from .config import ADMIN_ROLE, settings
 from .converters import ConversionSpec
 from .db.conversations import ConversationSummary
+from .entries import stem_path_from_reference
 from .prompts import Personality
 from .security import (
     UnsafeUrlError,
@@ -84,27 +85,48 @@ __all__ = [
 
 @dataclass(slots=True, frozen=True)
 class DocumentFilter:
-    """Include and exclude filter applied to document-level operations."""
+    """Include and exclude filter applied to document-level operations.
 
-    included: frozenset[str] = field(default_factory=frozenset)
+    Entries use the workspace UI's conventions: ``dir/`` (trailing slash)
+    selects a directory subtree including the directory itself, ``/``
+    selects the whole store, and a file entry selects the logical document
+    — the file plus its same-stem siblings (description and original) and
+    its ``.assets`` payload, mirroring how the inventory groups files into
+    entries.
+
+    A path passes when no excluded entry selects it and, if an include
+    list is set, an included entry selects it or it is an ancestor
+    directory of an included entry (so listings can traverse into included
+    subtrees).  ``included=None`` means no include restriction, while an
+    empty set hides the whole store — the store was not part of a
+    non-empty whitelist.
+    """
+
+    included: frozenset[str] | None = None
     excluded: frozenset[str] = field(default_factory=frozenset)
 
     @staticmethod
-    def _matches(entry: str, filepath: str) -> bool:
-        """Check whether a filter entry matches a filepath."""
+    def _selects(entry: str, path: str) -> bool:
+        """Whether *entry* selects the file or directory *path*."""
         if entry.endswith("/"):
-            return filepath.startswith(entry)
-        return filepath == entry
+            return entry == "/" or path == entry[:-1] or path.startswith(entry)
+        if path == entry:
+            return True
+        stem = stem_path_from_reference(entry)
+        return (
+            stem_path_from_reference(path) == stem
+            or path.startswith(f"{stem}.assets/")
+        )
 
-    def __call__(self, filepath: str) -> bool:
-        """Return whether the filepath passes the filter."""
-        if self.included and not any(
-            self._matches(entry, filepath) for entry in self.included
-        ):
+    def __call__(self, path: str) -> bool:
+        """Return whether the file or directory *path* passes the filter."""
+        if any(self._selects(entry, path) for entry in self.excluded):
             return False
-        return not (
-            self.excluded
-            and any(self._matches(entry, filepath) for entry in self.excluded)
+        if self.included is None:
+            return True
+        return any(
+            self._selects(entry, path) or entry.startswith(f"{path}/")
+            for entry in self.included
         )
 
 

@@ -1,4 +1,4 @@
-import { Eye, EyeOff, FileText, RotateCcw, Scissors, Trash2 } from "lucide-react";
+import { FileText, RotateCcw, Scissors, Trash2 } from "lucide-react";
 
 import type { DocumentInfo, OperationStage } from "../../lib/types";
 import { formatFileSize } from "../../lib/utils";
@@ -6,6 +6,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Spinner } from "../ui/spinner";
+import { FilterToggleButtons, type FilterEntryState } from "./FilterToggleButtons";
 import { formatRelativeDate } from "./utils";
 
 interface DocumentListItemProps {
@@ -13,6 +14,7 @@ interface DocumentListItemProps {
   isMutating: boolean;
   operationStage: OperationStage | null;
   onEdit: () => void;
+  filterState: FilterEntryState;
   onIncludeDocument: () => void;
   onExcludeDocument: () => void;
   onReconvert: () => void;
@@ -26,6 +28,7 @@ export function DocumentListItem({
   isMutating,
   operationStage,
   onEdit,
+  filterState,
   onIncludeDocument,
   onExcludeDocument,
   onReconvert,
@@ -82,28 +85,11 @@ export function DocumentListItem({
           <RotateCcw className="h-4 w-4" />
         </Button>
       )}
-      <Button
-        variant="ghost"
-        size="icon"
-        title="Include in chat"
-        onClick={(e) => {
-          e.stopPropagation();
-          onIncludeDocument();
-        }}
-      >
-        <Eye className="h-4 w-4" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        title="Exclude from chat"
-        onClick={(e) => {
-          e.stopPropagation();
-          onExcludeDocument();
-        }}
-      >
-        <EyeOff className="h-4 w-4" />
-      </Button>
+      <FilterToggleButtons
+        state={filterState}
+        onInclude={onIncludeDocument}
+        onExclude={onExcludeDocument}
+      />
       <Button
         variant="ghost"
         size="icon"

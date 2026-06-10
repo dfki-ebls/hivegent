@@ -23,6 +23,7 @@ import { downloadBlob } from "@/lib/download";
 import { getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
 import { type AgentMode, type ReasoningEffort } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
+import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { useDraftHandoffStore } from "@/stores/draft-handoff-store";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -30,25 +31,15 @@ import { useSettingsStore } from "@/stores/settings-store";
 interface ChatSidebarProps {
   id: string;
   draft?: boolean;
-  includedDocuments: string[];
-  excludedDocuments: string[];
-  onRemoveDocument: (filename: string) => void;
-  onClearDocuments: () => void;
 }
 
-export function ChatSidebar({
-  id,
-  draft = false,
-  includedDocuments,
-  excludedDocuments,
-  onRemoveDocument,
-  onClearDocuments,
-}: ChatSidebarProps) {
+export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
   const navigate = useNavigate();
   const addChunk = useFetchedDocumentsStore((state) => state.addChunk);
   const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
   const addImage = useFetchedDocumentsStore((state) => state.addImage);
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
+  const clearFilter = useDocumentFilterStore((state) => state.clear);
   const fetchConversations = useConversationsStore((state) => state.fetchConversations);
   const setDocumentTab = useSettingsStore((state) => state.setDocumentTab);
   const stashHandoff = useDraftHandoffStore((state) => state.stash);
@@ -61,12 +52,7 @@ export function ChatSidebar({
   const [agentMode, setAgentMode] = useState<AgentMode>("execute");
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("auto");
 
-  const buildRequestBody = useBuildRequestBody({
-    agentMode,
-    reasoningEffort,
-    includedDocuments,
-    excludedDocuments,
-  });
+  const buildRequestBody = useBuildRequestBody({ agentMode, reasoningEffort });
 
   const {
     messages,
@@ -94,10 +80,9 @@ export function ChatSidebar({
       // pull documents; later turns leave the user's chosen tab alone.
       if (messages.length === 0) setDocumentTab("fetched");
       setInputValue("");
-      onClearDocuments();
       await sendUserMessage({ text, files }, buildRequestBody());
     },
-    [buildRequestBody, sendUserMessage, onClearDocuments, messages.length, setDocumentTab],
+    [buildRequestBody, sendUserMessage, messages.length, setDocumentTab],
   );
 
   const { queue: steeringQueue, enqueue: enqueueSteering } = useSteeringQueue(
@@ -171,15 +156,15 @@ export function ChatSidebar({
   const handleExecutePlan = useCallback(async () => {
     setAgentMode("execute");
     await sendUserMessage({ text: "Execute the plan." }, buildRequestBody("execute"));
-    onClearDocuments();
-  }, [buildRequestBody, sendUserMessage, onClearDocuments]);
+  }, [buildRequestBody, sendUserMessage]);
 
   const handleNewChat = useCallback(async () => {
     clearAll();
+    clearFilter();
     setActiveTab("chat");
     // The new chat is a draft until its first message mints a server ID.
     await navigate({ to: "/" });
-  }, [clearAll, navigate]);
+  }, [clearAll, clearFilter, navigate]);
 
   const handleExport = useCallback(async () => {
     try {
@@ -193,18 +178,20 @@ export function ChatSidebar({
   const handleConversationSelect = useCallback(
     async (conversationId: string) => {
       clearAll();
+      clearFilter();
       setActiveTab("chat");
       await navigate({ to: "/conversations/$id", params: { id: conversationId } });
     },
-    [clearAll, navigate],
+    [clearAll, clearFilter, navigate],
   );
 
   const handleNavigateToPrevious = useCallback(
     (previousId: string) => {
       clearAll();
+      clearFilter();
       void navigate({ to: "/conversations/$id", params: { id: previousId } });
     },
-    [clearAll, navigate],
+    [clearAll, clearFilter, navigate],
   );
 
   const handleTranscriptionChange = useCallback((text: string) => {
@@ -278,9 +265,6 @@ export function ChatSidebar({
             onAgentModeChange={setAgentMode}
             reasoningEffort={reasoningEffort}
             onReasoningEffortChange={setReasoningEffort}
-            includedDocuments={includedDocuments}
-            excludedDocuments={excludedDocuments}
-            onRemoveDocument={onRemoveDocument}
             onTranscriptionChange={handleTranscriptionChange}
             onAudioRecorded={sttModel ? handleAudioRecorded : undefined}
           />

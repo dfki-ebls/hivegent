@@ -1,13 +1,12 @@
 import { useCallback } from "react";
 import { buildLlmConfig, buildModePayload, buildToolsPayload } from "@/lib/api";
 import { type AgentMode, type ReasoningEffort } from "@/lib/types";
+import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { useSettingsStore } from "@/stores/settings-store";
 
 export interface BuildRequestBodyArgs {
   agentMode: AgentMode;
   reasoningEffort: ReasoningEffort;
-  includedDocuments: string[];
-  excludedDocuments: string[];
 }
 
 export type BuildRequestBody = (modeOverride?: AgentMode) => Record<string, unknown>;
@@ -15,10 +14,10 @@ export type BuildRequestBody = (modeOverride?: AgentMode) => Record<string, unkn
 export function useBuildRequestBody({
   agentMode,
   reasoningEffort,
-  includedDocuments,
-  excludedDocuments,
 }: BuildRequestBodyArgs): BuildRequestBody {
   const { overrides, personality, customSystemMessage, toolsSpec } = useSettingsStore();
+  const included = useDocumentFilterStore((s) => s.included);
+  const excluded = useDocumentFilterStore((s) => s.excluded);
 
   return useCallback(
     (modeOverride?: AgentMode) => ({
@@ -27,8 +26,8 @@ export function useBuildRequestBody({
       reasoning_effort: reasoningEffort,
       mode: buildModePayload(modeOverride ?? agentMode),
       llm: buildLlmConfig(overrides),
-      included_documents: includedDocuments,
-      excluded_documents: excludedDocuments,
+      included_documents: included,
+      excluded_documents: excluded,
       tools: buildToolsPayload(toolsSpec),
     }),
     [
@@ -37,8 +36,8 @@ export function useBuildRequestBody({
       reasoningEffort,
       agentMode,
       overrides,
-      includedDocuments,
-      excludedDocuments,
+      included,
+      excluded,
       toolsSpec,
     ],
   );

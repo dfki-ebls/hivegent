@@ -5,12 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { FetchedDocuments } from "./FetchedDocuments";
 import { ManageDocuments } from "./ManageDocuments";
 
-interface DocumentCanvasProps {
-  onIncludeDocument?: (filename: string) => void;
-  onExcludeDocument?: (filename: string) => void;
-}
-
-export function DocumentCanvas({ onIncludeDocument, onExcludeDocument }: DocumentCanvasProps) {
+export function DocumentCanvas() {
   const documentTab = useSettingsStore((state) => state.documentTab);
   const setDocumentTab = useSettingsStore((state) => state.setDocumentTab);
 
@@ -36,10 +31,7 @@ export function DocumentCanvas({ onIncludeDocument, onExcludeDocument }: Documen
         <FetchedDocuments />
       </TabsContent>
       <TabsContent value="manage" className="min-h-0 overflow-hidden">
-        <ManageDocuments
-          onIncludeDocument={onIncludeDocument}
-          onExcludeDocument={onExcludeDocument}
-        />
+        <ManageDocuments />
       </TabsContent>
     </Tabs>
   );

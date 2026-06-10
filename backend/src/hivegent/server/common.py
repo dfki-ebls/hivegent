@@ -59,43 +59,45 @@ def parse_document_filters(
     whole workspace (local ``/``). Unparseable entries and groups the
     caller cannot address (``user_groups``, i.e. :attr:`User.all_groups`)
     are skipped.
+
+    The include list is a whitelist over the whole corpus: as soon as any
+    include entry exists, every store gets a filter, so a store without
+    include entries of its own is hidden entirely rather than left
+    unrestricted.
     """
 
-    def partition(entries: list[str]) -> tuple[list[str], dict[str, list[str]]]:
-        personal: list[str] = []
-        by_group: dict[str, list[str]] = {}
+    def partition(entries: list[str]) -> dict[str | None, list[str]]:
+        by_store: dict[str | None, list[str]] = {}
         for entry in entries:
             try:
                 scope, local = WorkspaceScope.parse(entry)
             except ValueError:
                 continue
             group_id = scope.group_id
-            target = local or "/"
-            if group_id is None:
-                personal.append(target)
-            elif group_id in user_groups:
-                by_group.setdefault(group_id, []).append(target)
-        return personal, by_group
+            if group_id is None or group_id in user_groups:
+                by_store.setdefault(group_id, []).append(local or "/")
+        return by_store
 
-    user_included, group_included = partition(included_documents)
-    user_excluded, group_excluded = partition(excluded_documents)
+    included = partition(included_documents)
+    excluded = partition(excluded_documents)
+    # Whitelist intent is judged on the raw request, not the surviving
+    # entries: a list whose entries were all skipped fails closed (every
+    # store gets an empty include set) instead of granting full access.
+    whitelisting = bool(included_documents)
+    store_ids: set[str | None] = (
+        {None, *user_groups} if whitelisting else set(included) | set(excluded)
+    )
 
-    user_filter: DocumentFilter | None = None
-    if user_included or user_excluded:
-        user_filter = DocumentFilter(
-            included=frozenset(user_included),
-            excluded=frozenset(user_excluded),
+    filters = {
+        store_id: DocumentFilter(
+            included=frozenset(included.get(store_id, [])) if whitelisting else None,
+            excluded=frozenset(excluded.get(store_id, [])),
         )
-
-    group_filters = {
-        group_id: DocumentFilter(
-            included=frozenset(group_included.get(group_id, [])),
-            excluded=frozenset(group_excluded.get(group_id, [])),
-        )
-        for group_id in set(group_included) | set(group_excluded)
+        for store_id in store_ids
     }
-
-    return user_filter, group_filters
+    return filters.pop(None, None), {
+        group_id: f for group_id, f in filters.items() if group_id is not None
+    }
 
 
 def user_store(user: User) -> Casebase:
