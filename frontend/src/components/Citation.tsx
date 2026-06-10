@@ -8,7 +8,6 @@ import {
   chunkPositionLabel,
   type FetchedChunk,
   type LinePosition,
-  lineSource,
   makeChunkId,
   parseLinePositions,
 } from "@/lib/types";
@@ -41,7 +40,7 @@ export function Citation({ src, line }: CitationProps) {
   const positions = parseLinePositions(line);
 
   const chunkFor = (position: LinePosition): FetchedChunk => {
-    const source = lineSource(position);
+    const source = "citation";
     return { id: makeChunkId(src, source, position), filename: src, content: "", source, position };
   };
 

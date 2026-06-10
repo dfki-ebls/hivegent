@@ -738,13 +738,6 @@ export function parseLinePositions(line: string | undefined): LinePosition[] {
   return positions;
 }
 
-/** Lowercase span text for a line position, used as a chunk `source` label. */
-export function lineSource(position: LinePosition): string {
-  return position.type === "line_range"
-    ? `lines ${position.startLine}-${position.endLine}`
-    : `line ${position.line}`;
-}
-
 /** Sort chunks by position (full document first, then ascending). */
 export function sortChunks(chunks: FetchedChunk[]): FetchedChunk[] {
   return [...chunks].sort((a, b) => chunkSortKey(a.position) - chunkSortKey(b.position));
