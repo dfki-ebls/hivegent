@@ -19,10 +19,20 @@ export function getLastUserMessage(
   return text ? { id: last.id, text } : undefined;
 }
 
+/**
+ * Stable prefix the backend puts onto context-window overflow errors in the
+ * chat stream (see `chat_error_text` in `backend/src/hivegent/server/vercel.py`).
+ */
+const CONTEXT_LENGTH_ERROR_PREFIX = "context_length_exceeded: ";
+
+/**
+ * Whether a chat error means the conversation overflowed the model's context
+ * window, in which case auto-compaction can recover. The backend classifies
+ * provider errors and prefixes overflows with a stable code, so no matching
+ * of provider-specific message text happens here.
+ */
 export function isContextLengthError(error: Error | null | undefined): boolean {
-  if (!error) return false;
-  const msg = error.message || "";
-  return msg.includes("context_length_exceeded") || msg.includes("maximum context length");
+  return error?.message.startsWith(CONTEXT_LENGTH_ERROR_PREFIX) ?? false;
 }
 
 /**

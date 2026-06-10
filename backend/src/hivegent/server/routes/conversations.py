@@ -9,7 +9,6 @@ from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
-from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import Response
@@ -68,6 +67,7 @@ from ...types import (
     UpdateTitleRequest,
 )
 from ..cancellation import run_until_disconnect
+from ..vercel import ChatAdapter
 from ..common import (
     group_stores,
     parse_document_filters,
@@ -227,7 +227,7 @@ async def create_conversation_compaction(
 ) -> CompactConversationResponse:
     """Compact a conversation by summarizing it into a new conversation."""
 
-    messages = VercelAIAdapter.load_messages(request.messages)
+    messages = ChatAdapter.load_messages(request.messages)
 
     async def _compact() -> CompactionResult:
         llm_config = await prepare_llm_config(request.llm)
@@ -264,7 +264,7 @@ async def get_conversation_messages(
     messages = await load_messages(user.id, conversation_id)
     if not messages:
         return []
-    return VercelAIAdapter.dump_messages(messages)
+    return ChatAdapter.dump_messages(messages)
 
 
 @router.get("/conversations/{conversation_id}/export")
@@ -395,7 +395,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         case effort:
             thinking = effort
 
-    return await VercelAIAdapter.dispatch_request(
+    return await ChatAdapter.dispatch_request(
         request,
         agent=user_agent,
         deps=UserDeps(
