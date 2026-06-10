@@ -33,7 +33,7 @@ mkShell {
   VITE_FEATURE_ALL = "false";
   UV_PYTHON = lib.getExe python3;
   # tesserocr (in-process docling OCR) resolves tessdata from this prefix.
-  TESSDATA_PREFIX = backend.tessdataPrefix;
+  TESSDATA_PREFIX = backend.tessdata;
   packages = [
     nodejs
     python3

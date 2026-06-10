@@ -25,8 +25,10 @@
       packages = {
         backend = pkgs.callPackage ../backend {
           inherit (inputs) uv2nix pyproject-nix pyproject-build-systems;
+          inherit (config.packages) tessdata;
         };
         frontend = pkgs.callPackage ../frontend { };
+        tessdata = pkgs.callPackage ./tessdata.nix { };
       };
     };
 }

@@ -16,7 +16,7 @@
   libreoffice,
   pandoc,
   ripgrep,
-  tesseract,
+  tessdata,
   ninja,
 }:
 let
@@ -135,22 +135,19 @@ let
     ripgrep
   ]
   ++ lib.optionals stdenv.hostPlatform.isLinux [ libreofficeHeadless ];
-
-  # tesserocr (docling OCR) and kreuzberg link their own libtesseract but
-  # carry no language data; both resolve tessdata from TESSDATA_PREFIX at
-  # runtime.  Only nixpkgs' tessdata (all languages) is injected — the
-  # tesseract CLI itself is not shipped.
-  tessdataPrefix = tesseract.tessdata;
 in
 app.overrideAttrs (oldAttrs: {
   nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ makeBinaryWrapper ];
+  # tesserocr (docling OCR) and kreuzberg link their own libtesseract but
+  # carry no language data; both resolve it from TESSDATA_PREFIX at runtime
+  # (see `nix/tessdata.nix`) — the tesseract CLI itself is not shipped.
   postFixup = (oldAttrs.postFixup or "") + ''
     wrapProgram "$out/bin/hivegent" \
       --prefix PATH : ${lib.makeBinPath runtimeInputs} \
-      --set-default TESSDATA_PREFIX ${tessdataPrefix} \
+      --set-default TESSDATA_PREFIX ${tessdata} \
       --set-default LOGFIRE_IGNORE_NO_CONFIG 1
   '';
   passthru = (oldAttrs.passthru or { }) // {
-    inherit runtimeInputs tessdataPrefix;
+    inherit runtimeInputs tessdata;
   };
 })
