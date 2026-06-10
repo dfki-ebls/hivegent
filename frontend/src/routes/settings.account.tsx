@@ -185,7 +185,7 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
         <Button
           variant="destructive"
           size="sm"
-          className="justify-start col-span-2"
+          className="justify-start"
           onClick={() =>
             setAction({
               key: "user-everything",
@@ -215,6 +215,7 @@ interface AdminTargetSelectorProps<T extends { id: string }> {
   items: T[];
   loading: boolean;
   onSelect: (item: T) => void;
+  renderLabel?: (item: T) => string;
   renderMeta: (item: T) => string;
   icon: React.ReactNode;
   emptyLabel: string;
@@ -225,6 +226,7 @@ function AdminTargetList<T extends { id: string }>({
   items,
   loading,
   onSelect,
+  renderLabel = (item) => item.id,
   renderMeta,
   icon,
   emptyLabel,
@@ -249,7 +251,7 @@ function AdminTargetList<T extends { id: string }>({
               className="justify-between font-normal text-xs h-auto py-1.5"
               onClick={() => onSelect(item)}
             >
-              <span className="truncate">{item.id}</span>
+              <span className="truncate">{renderLabel(item)}</span>
               <span className="text-muted-foreground shrink-0 ml-2">{renderMeta(item)}</span>
             </Button>
           ))}
@@ -357,7 +359,7 @@ function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) =>
         <Button
           variant="destructive"
           size="sm"
-          className="justify-start col-span-2"
+          className="justify-start"
           onClick={() =>
             setAction({
               key: "admin-factory",
@@ -384,12 +386,13 @@ function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) =>
           loading={loading}
           icon={<UserXIcon className="h-4 w-4 text-destructive" />}
           emptyLabel="No users have left a footprint yet."
+          renderLabel={(u) => u.email ?? u.id}
           renderMeta={(u) => `${u.document_count}d / ${u.conversation_count}c`}
           onSelect={(u) =>
             setAction({
               key: `admin-user-${u.id}`,
-              title: `Wipe data for ${u.id}`,
-              description: `Delete every document, chunk, original, conversation, token, and memory entry owned by user ${u.id}. ${u.document_count} document(s) and ${u.conversation_count} conversation(s) will be removed. This action cannot be undone.`,
+              title: `Wipe data for ${u.email ?? u.id}`,
+              description: `Delete every document, chunk, original, conversation, token, and memory entry owned by user ${u.email ?? u.id}. ${u.document_count} document(s) and ${u.conversation_count} conversation(s) will be removed. This action cannot be undone.`,
               confirm: "Wipe User",
               run: async () => {
                 await adminDeleteUserData(u.id);
