@@ -22,6 +22,7 @@ __all__ = [
     "delete_user",
     "ensure_user",
     "list_users_with_counts",
+    "user_exists",
 ]
 
 
@@ -30,14 +31,24 @@ async def ensure_user(s: AsyncSession, user_id: str) -> None:
     await ensure_row(s, User, id=user_id)
 
 
-async def list_users_with_counts() -> list[
-    tuple[str, str | None, str | None, int, int]
-]:
-    """Return ``(user_id, email, display_name, document_count, conversation_count)``.
+async def user_exists(user_id: str) -> bool:
+    """Whether a user has left a footprint in the local database.
+
+    Reads only the user's own ``id`` — never group state, which lives
+    solely in the OIDC token.  Used to reject impersonation of an
+    identity the app has never seen.
+    """
+    async with session() as s:
+        return await s.get(User, user_id) is not None
+
+
+async def list_users_with_counts() -> list[tuple[str, int, int]]:
+    """Return ``(user_id, document_count, conversation_count)`` per user.
 
     Only rows materialised in the local database are returned — Hivegent
     is not an identity store and does not enumerate accounts that have
-    not yet interacted with the app.
+    not yet interacted with the app.  Email and display name live solely
+    in the OIDC token and are not stored.
     """
     docs_subq = (
         select(
@@ -61,8 +72,6 @@ async def list_users_with_counts() -> list[
             await s.execute(
                 select(
                     User.id,
-                    User.email,
-                    User.display_name,
                     func.coalesce(docs_subq.c.n, 0),
                     func.coalesce(convs_subq.c.n, 0),
                 )
@@ -71,10 +80,7 @@ async def list_users_with_counts() -> list[
                 .order_by(User.id)
             )
         ).all()
-    return [
-        (uid, email, display_name, int(docs), int(convs))
-        for uid, email, display_name, docs, convs in rows
-    ]
+    return [(uid, int(docs), int(convs)) for uid, docs, convs in rows]
 
 
 async def delete_all_users() -> int:

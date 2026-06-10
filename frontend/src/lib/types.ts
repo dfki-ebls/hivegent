@@ -130,8 +130,6 @@ export type AdminFactoryResetResponse = z.infer<typeof AdminFactoryResetResponse
 
 export const AdminUserInfoSchema = z.object({
   id: z.string(),
-  email: z.string().nullable().optional(),
-  name: z.string().nullable().optional(),
   document_count: z.number(),
   conversation_count: z.number(),
   has_workspace: z.boolean(),
@@ -145,7 +143,6 @@ export const AdminListUsersResponseSchema = z.object({
 export const AdminGroupInfoSchema = z.object({
   id: z.string(),
   document_count: z.number(),
-  member_count: z.number(),
   has_workspace: z.boolean(),
 });
 export type AdminGroupInfo = z.infer<typeof AdminGroupInfoSchema>;

@@ -245,3 +245,45 @@ async def test_validate_jwt_token_does_not_leak_sub_in_error_detail(
     detail = exc_info.value.detail
     assert isinstance(detail, str)
     assert secret_sub not in detail
+
+
+async def test_impersonation_requires_admin() -> None:
+    """A non-admin sending the impersonation header must get 403."""
+    actor = auth.User(id="u", roles=frozenset({"editor"}))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await auth._impersonate(actor, "victim")
+
+    assert exc_info.value.status_code == 403
+
+
+async def test_impersonation_rejects_malformed_target() -> None:
+    """Targets failing user-id sanitisation must yield 400, not a lookup."""
+    admin = auth.User(id="root", roles=frozenset({"admin"}))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await auth._impersonate(admin, "../etc/passwd")
+
+    assert exc_info.value.status_code == 400
+
+
+async def test_impersonation_yields_personal_scope_without_roles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An admin gets the target's id only; unknown targets yield 404."""
+
+    async def fake_exists(user_id: str) -> bool:
+        return user_id == "victim"
+
+    monkeypatch.setattr(auth, "user_exists", fake_exists)
+    admin = auth.User(id="root", roles=frozenset({"admin"}))
+
+    user = await auth._impersonate(admin, "victim")
+    assert user == auth.User(id="victim")
+    # Groups live only in the target's OIDC token, never reconstructed here.
+    assert not user.all_groups
+    assert not user.is_admin
+
+    with pytest.raises(HTTPException) as exc_info:
+        await auth._impersonate(admin, "ghost")
+    assert exc_info.value.status_code == 404

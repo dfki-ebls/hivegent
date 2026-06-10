@@ -118,6 +118,10 @@ class User:
     present in :attr:`roles` — no duplicate flag is stored anywhere.
     Grant admin by adding a user to that role in the IdP (or, for dev,
     auth is disabled and the local user is admin).
+
+    Group membership lives solely in the OIDC token and is never
+    persisted: every field here is reconstructed per request from the
+    validated JWT claims.
     """
 
     id: str
@@ -823,8 +827,6 @@ class AdminUserInfo(BaseModel):
     """
 
     id: str = Field(description="User identifier")
-    email: str | None = Field(default=None, description="User email address")
-    name: str | None = Field(default=None, description="User display name")
     document_count: int = Field(description="Number of documents owned by the user")
     conversation_count: int = Field(description="Number of conversations owned")
     has_workspace: bool = Field(
@@ -843,7 +845,6 @@ class AdminGroupInfo(BaseModel):
 
     id: str = Field(description="Group identifier")
     document_count: int = Field(description="Number of documents owned by the group")
-    member_count: int = Field(description="Number of members in the group")
     has_workspace: bool = Field(
         description="Whether a workspace directory exists on disk",
     )

@@ -9,7 +9,8 @@ storage layout:
   are the source of truth for document content; the ``documents`` and
   ``chunks`` rows (text + vector) are an index derived from them.
 * PostgreSQL is authoritative for everything else: conversations,
-  memory, users, groups, and group membership.
+  memory, users, and groups.  Group membership is not stored — it
+  lives solely in the OIDC token.
 
 A full ``POST /admin/reset/factory`` wipes workspace + database and
 leaves the deployment in the same state as a clean checkout.
@@ -67,13 +68,11 @@ async def list_users() -> AdminListUsersResponse:
     users = [
         AdminUserInfo(
             id=user_id,
-            email=email,
-            name=display_name,
             document_count=docs,
             conversation_count=convs,
             has_workspace=Casebase.for_user(user_id).store_key in on_disk,
         )
-        for user_id, email, display_name, docs, convs in rows
+        for user_id, docs, convs in rows
     ]
     return AdminListUsersResponse(users=users)
 
@@ -89,10 +88,9 @@ async def list_groups() -> AdminListGroupsResponse:
         AdminGroupInfo(
             id=group_id,
             document_count=docs,
-            member_count=members,
             has_workspace=Casebase.for_group(group_id).store_key in on_disk,
         )
-        for group_id, docs, members in rows
+        for group_id, docs in rows
     ]
     return AdminListGroupsResponse(groups=groups)
 
@@ -120,9 +118,9 @@ async def admin_reset_database() -> AdminResetResponse:
     """Drop every user, group, and the rows that cascade from them.
 
     Cascade chain (see ``backend/src/hivegent/db/models.py``):
-    users → memory, conversations (→ messages), documents (→ chunks),
-    group memberships; groups → group documents and memberships.  The
-    workspace tree on disk is not touched.
+    users → memory, conversations (→ messages), documents (→ chunks);
+    groups → group documents.  The workspace tree on disk is not
+    touched.
 
     Both deletes run in a single session so a crash between them cannot
     leave the database in a half-wiped state.

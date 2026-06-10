@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   DatabaseZapIcon,
+  EyeIcon,
   FactoryIcon,
   FileX2Icon,
   FolderXIcon,
@@ -41,6 +42,7 @@ import {
   deleteAllDocuments,
   deleteAllUserData,
 } from "../lib/api";
+import { startImpersonation } from "../lib/impersonation";
 import type { AdminGroupInfo, AdminUserInfo } from "../lib/types";
 import { errorMessage } from "../lib/utils";
 import { enforceLogin } from "../oidc";
@@ -261,7 +263,12 @@ function AdminTargetList<T extends { id: string }>({
   );
 }
 
-function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => void }) {
+const NO_USERS_LABEL = "No users have left a footprint yet.";
+
+const userMeta = (u: AdminUserInfo) => `${u.document_count}d / ${u.conversation_count}c`;
+
+// Fetches the admin overview once and feeds both admin sections.
+function AdminSections({ setAction }: { setAction: (a: DangerAction) => void }) {
   const [users, setUsers] = useState<AdminUserInfo[]>([]);
   const [groups, setGroups] = useState<AdminGroupInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -283,6 +290,66 @@ function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) =>
     void refresh();
   }, [refresh]);
 
+  return (
+    <>
+      <AdminImpersonationSection users={users} loading={loading} />
+      <AdminDangerZoneSection
+        setAction={setAction}
+        users={users}
+        groups={groups}
+        loading={loading}
+        refresh={refresh}
+      />
+    </>
+  );
+}
+
+function AdminImpersonationSection({
+  users,
+  loading,
+}: {
+  users: AdminUserInfo[];
+  loading: boolean;
+}) {
+  return (
+    <div className="grid gap-3 border-t pt-8">
+      <div className="flex items-center gap-2">
+        <EyeIcon className="h-5 w-5" />
+        <h2 className="text-lg font-semibold">Admin — Impersonation</h2>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Browse the app as another user to reproduce reported issues. The session carries the
+        privileges of the target user, never your admin powers, and a banner with an exit button
+        stays visible at the top.
+      </p>
+      <AdminTargetList
+        label="Impersonate a user"
+        items={users}
+        loading={loading}
+        icon={<EyeIcon className="h-4 w-4" />}
+        emptyLabel={NO_USERS_LABEL}
+        renderMeta={userMeta}
+        onSelect={(u) => startImpersonation(u.id)}
+      />
+    </div>
+  );
+}
+
+interface AdminDangerZoneProps {
+  setAction: (a: DangerAction) => void;
+  users: AdminUserInfo[];
+  groups: AdminGroupInfo[];
+  loading: boolean;
+  refresh: () => Promise<void>;
+}
+
+function AdminDangerZoneSection({
+  setAction,
+  users,
+  groups,
+  loading,
+  refresh,
+}: AdminDangerZoneProps) {
   return (
     <div className="grid gap-3 border-t pt-8">
       <div className="flex items-center gap-2">
@@ -344,7 +411,7 @@ function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) =>
               key: "admin-database",
               title: "Reset Database",
               description:
-                "Drop every user and group row along with everything that cascades: tokens, memory, conversations, documents, chunks, and group memberships. Workspace files on disk survive.",
+                "Drop every user and group row along with everything that cascades: tokens, memory, conversations, documents, and chunks. Workspace files on disk survive.",
               confirm: "Reset Database",
               run: async () => {
                 await adminResetDatabase();
@@ -385,14 +452,13 @@ function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) =>
           items={users}
           loading={loading}
           icon={<UserXIcon className="h-4 w-4 text-destructive" />}
-          emptyLabel="No users have left a footprint yet."
-          renderLabel={(u) => u.email ?? u.id}
-          renderMeta={(u) => `${u.document_count}d / ${u.conversation_count}c`}
+          emptyLabel={NO_USERS_LABEL}
+          renderMeta={userMeta}
           onSelect={(u) =>
             setAction({
               key: `admin-user-${u.id}`,
-              title: `Wipe data for ${u.email ?? u.id}`,
-              description: `Delete every document, chunk, original, conversation, token, and memory entry owned by user ${u.email ?? u.id}. ${u.document_count} document(s) and ${u.conversation_count} conversation(s) will be removed. This action cannot be undone.`,
+              title: `Wipe data for ${u.id}`,
+              description: `Delete every document, chunk, original, conversation, token, and memory entry owned by user ${u.id}. ${u.document_count} document(s) and ${u.conversation_count} conversation(s) will be removed. This action cannot be undone.`,
               confirm: "Wipe User",
               run: async () => {
                 await adminDeleteUserData(u.id);
@@ -407,12 +473,12 @@ function AdminDangerZoneSection({ setAction }: { setAction: (a: DangerAction) =>
           loading={loading}
           icon={<UsersIcon className="h-4 w-4 text-destructive" />}
           emptyLabel="No groups are registered yet."
-          renderMeta={(g) => `${g.document_count}d / ${g.member_count}m`}
+          renderMeta={(g) => `${g.document_count}d`}
           onSelect={(g) =>
             setAction({
               key: `admin-group-${g.id}`,
               title: `Wipe data for group ${g.id}`,
-              description: `Delete every document, chunk, and original owned by group ${g.id}. ${g.document_count} document(s) will be removed. Membership rows are kept so the group reappears the next time a member is granted access. This action cannot be undone.`,
+              description: `Delete every document, chunk, and original owned by group ${g.id}. ${g.document_count} document(s) will be removed. The group reappears the next time one of its members (per the OIDC token) uploads to it. This action cannot be undone.`,
               confirm: "Wipe Group",
               run: async () => {
                 await adminDeleteGroupData(g.id);
@@ -460,7 +526,7 @@ function AccountPage() {
       <div className="grid gap-8">
         <UserDangerZoneSection setAction={setAction} />
 
-        {isAdmin && <AdminDangerZoneSection setAction={setAction} />}
+        {isAdmin && <AdminSections setAction={setAction} />}
       </div>
 
       <ConfirmDialog

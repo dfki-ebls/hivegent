@@ -1,7 +1,8 @@
-"""Group repository: identity rows, membership lookups, admin overviews.
+"""Group repository: identity rows and admin overviews.
 
 Group rows model shared knowledge containers (see :mod:`hivegent.auth`)
-and are materialised lazily the first time a group is referenced.  This
+and are materialised lazily the first time a group is referenced.
+Membership is not stored — it lives solely in the OIDC token.  This
 module owns every group-specific table operation; cross-cutting helpers
 stay in :mod:`._common`.
 """
@@ -13,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ._common import affected_rows, ensure_row
 from .engine import session
-from .models import Document, Group, GroupMember
+from .models import Document, Group
 
 __all__ = [
     "delete_all_groups",
@@ -35,12 +36,12 @@ async def list_group_ids() -> frozenset[str]:
         return frozenset(result.scalars().all())
 
 
-async def list_groups_with_counts() -> list[tuple[str, int, int]]:
-    """Return ``(group_id, document_count, member_count)`` for every group.
+async def list_groups_with_counts() -> list[tuple[str, int]]:
+    """Return ``(group_id, document_count)`` for every group.
 
     Used by the admin overview to size each group's footprint before a
-    targeted wipe.  Counts run in a single query each so the call is
-    cheap even for many groups.
+    targeted wipe.  Membership is an OIDC concern and is never stored,
+    so only the owned-document count is local.
     """
     docs_subq = (
         select(
@@ -51,32 +52,19 @@ async def list_groups_with_counts() -> list[tuple[str, int, int]]:
         .group_by(Document.owner_group_id)
         .subquery()
     )
-    members_subq = (
-        select(
-            GroupMember.group_id.label("gid"),
-            func.count().label("n"),
-        )
-        .group_by(GroupMember.group_id)
-        .subquery()
-    )
     async with session() as s:
         rows = (
             await s.execute(
-                select(
-                    Group.id,
-                    func.coalesce(docs_subq.c.n, 0),
-                    func.coalesce(members_subq.c.n, 0),
-                )
+                select(Group.id, func.coalesce(docs_subq.c.n, 0))
                 .outerjoin(docs_subq, docs_subq.c.gid == Group.id)
-                .outerjoin(members_subq, members_subq.c.gid == Group.id)
                 .order_by(Group.id)
             )
         ).all()
-    return [(gid, int(docs), int(members)) for gid, docs, members in rows]
+    return [(gid, int(docs)) for gid, docs in rows]
 
 
 async def delete_all_groups() -> int:
-    """Delete every group row.  Cascades to memberships and group documents."""
+    """Delete every group row.  Cascades to group documents."""
     async with session() as s:
         result = await s.execute(delete(Group))
     return affected_rows(result)

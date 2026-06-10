@@ -47,13 +47,11 @@ __all__ = [
     "EntryKind",
     "GeneratedBy",
     "Group",
-    "GroupMember",
     "IndexState",
     "Memory",
     "Message",
     "MessageKind",
     "Origin",
-    "Permission",
     "Timestamped",
     "User",
 ]
@@ -132,11 +130,6 @@ def _enum(t: type[enum.StrEnum]) -> Enum:
 # ─── Enums ─────────────────────────────────────────────────────────────
 
 
-class Permission(enum.StrEnum):
-    READ = "read"
-    WRITE = "write"
-
-
 class EntryKind(enum.StrEnum):
     USER_MARKDOWN = "user_markdown"
     IMAGE = "image"
@@ -169,11 +162,17 @@ class MessageKind(enum.StrEnum):
 
 
 class User(Timestamped, Base):
+    """A user that has left a footprint in the local database.
+
+    Identity attributes (email, display name) and group membership are
+    not stored: they live solely in the OIDC token and are reconstructed
+    per request.  A row here is just the anchor that owns conversations,
+    documents, and memory.
+    """
+
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(primary_key=True)
-    email: Mapped[str | None] = mapped_column(unique=True)
-    display_name: Mapped[str | None]
 
     memory: Mapped["Memory | None"] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False
@@ -186,40 +185,24 @@ class User(Timestamped, Base):
         cascade="all, delete-orphan",
         foreign_keys="Document.owner_user_id",
     )
-    memberships: Mapped[list["GroupMember"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
 
 
 class Group(Timestamped, Base):
+    """A group that owns shared documents.
+
+    Like :class:`User`, membership is an OIDC concern and is never
+    persisted; a row here only anchors group-owned documents.
+    """
+
     __tablename__ = "groups"
 
     id: Mapped[str] = mapped_column(primary_key=True)
-    display_name: Mapped[str | None]
 
-    members: Mapped[list["GroupMember"]] = relationship(
-        back_populates="group", cascade="all, delete-orphan"
-    )
     documents: Mapped[list["Document"]] = relationship(
         back_populates="owner_group",
         cascade="all, delete-orphan",
         foreign_keys="Document.owner_group_id",
     )
-
-
-class GroupMember(Base):
-    __tablename__ = "group_members"
-
-    group_id: Mapped[str] = mapped_column(
-        ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True
-    )
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
-    )
-    permission: Mapped[Permission] = mapped_column(_enum(Permission))
-
-    group: Mapped[Group] = relationship(back_populates="members")
-    user: Mapped[User] = relationship(back_populates="memberships")
 
 
 # ─── Memory ────────────────────────────────────────────────────────────

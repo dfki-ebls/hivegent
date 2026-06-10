@@ -74,6 +74,7 @@ import {
 
 import { featureFlags } from "./feature-flags";
 
+import { getImpersonation, IMPERSONATE_HEADER } from "@/lib/impersonation";
 import { getOidc } from "@/oidc";
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
@@ -95,12 +96,16 @@ async function authFetch(url: string, options: RequestInit = {}): Promise<Respon
  * Get the current auth headers for use with external transports.
  */
 export async function getAuthHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
   const oidc = await getOidc();
   if (oidc.isUserLoggedIn) {
-    const token = await oidc.getAccessToken();
-    return { Authorization: `Bearer ${token}` };
+    headers.Authorization = `Bearer ${await oidc.getAccessToken()}`;
   }
-  return {};
+  const impersonation = getImpersonation();
+  if (impersonation) {
+    headers[IMPERSONATE_HEADER] = impersonation;
+  }
+  return headers;
 }
 
 /**

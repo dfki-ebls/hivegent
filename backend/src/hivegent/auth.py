@@ -1,12 +1,13 @@
 """OIDC authentication and JWT validation."""
 
 import asyncio
+import logging
 import time
 from collections.abc import Iterator, Mapping
 from typing import Annotated, Any
 
 import httpx
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastmcp.server.auth.oidc_proxy import OIDCConfiguration
 from joserfc import jwt
@@ -25,11 +26,13 @@ from pydantic import AnyHttpUrl, ValidationError
 
 from .config import ADMIN_ROLE, sanitize_user_id, settings
 from .db.groups import list_group_ids
+from .db.users import user_exists
 from .http_client import get_http_client
 from .types import User
 
 __all__ = [
     "DEFAULT_JWT_ALGORITHMS",
+    "IMPERSONATE_HEADER",
     "User",
     "build_discovery_url",
     "fetch_oidc_configuration",
@@ -37,6 +40,11 @@ __all__ = [
     "parse_group_claim",
     "require_admin",
 ]
+
+logger = logging.getLogger(__name__)
+
+# Request header through which an admin impersonates another user.
+IMPERSONATE_HEADER = "X-Impersonate-User"
 
 # Fallback when the IdP's discovery document doesn't advertise
 # ``id_token_signing_alg_values_supported`` and no explicit override is set.
@@ -425,17 +433,54 @@ async def validate_jwt_token(token: str) -> User:
 security = HTTPBearer(auto_error=False)
 
 
+async def _impersonate(actor: User, target_id: str) -> User:
+    """Resolve the request identity to *target_id* on behalf of an admin.
+
+    Stateless by construction: a user's groups and roles live only in
+    their OIDC token, which we neither hold for the target nor persist.
+    The impersonated session is therefore scoped to the target's
+    personal workspace — enough to reproduce reported conversations and
+    chunking — and carries no roles, so admin endpoints keep rejecting it
+    and nested impersonation is impossible.
+    """
+    if not actor.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator privileges required for impersonation",
+        )
+    try:
+        target_id = sanitize_user_id(target_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid impersonation target",
+        ) from exc
+    if not await user_exists(target_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Unknown impersonation target",
+        )
+    logger.info("admin %r impersonating user %r", actor.id, target_id)
+    return User(id=target_id)
+
+
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+    impersonate_user_id: Annotated[
+        str | None, Header(alias=IMPERSONATE_HEADER)
+    ] = None,
 ) -> User:
     """FastAPI dependency to get the current authenticated user.
 
-    Validates the OIDC Bearer JWT from the Authorization header.
+    Validates the OIDC Bearer JWT from the Authorization header.  An
+    admin may additionally send the ``X-Impersonate-User`` header to act
+    as another user for troubleshooting; see :func:`_impersonate`.
 
     When HIVEGENT_AUTH__ENABLE=false, returns a dev user without validation.
 
     Args:
         credentials: The HTTP Bearer credentials.
+        impersonate_user_id: Optional impersonation target (admins only).
 
     Returns:
         The authenticated User.
@@ -443,27 +488,30 @@ async def get_current_user(
     Raises:
         HTTPException: If authentication fails.
     """
-    # Bypass authentication in development mode
     if not settings.auth.enable:
-        # Give write access to every group registered in the database and
-        # the admin role, so destructive endpoints are reachable via the
-        # same property-derived `is_admin` check used in prod.
-        return User(
+        # Bypass authentication in development mode: give write access to
+        # every group registered in the database and the admin role, so
+        # destructive endpoints are reachable via the same
+        # property-derived `is_admin` check used in prod.
+        user = User(
             id="localhost",
             email="dev@localhost",
             name="Localhost User",
             write_groups=await list_group_ids(),
             roles=frozenset({ADMIN_ROLE}),
         )
-
-    if credentials is None:
+    elif credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    else:
+        user = await validate_jwt_token(credentials.credentials)
 
-    return await validate_jwt_token(credentials.credentials)
+    if impersonate_user_id is None:
+        return user
+    return await _impersonate(user, impersonate_user_id)
 
 
 async def require_admin(
