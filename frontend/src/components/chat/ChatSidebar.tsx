@@ -50,6 +50,7 @@ export function ChatSidebar({
   const addImage = useFetchedDocumentsStore((state) => state.addImage);
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const fetchConversations = useConversationsStore((state) => state.fetchConversations);
+  const setDocumentTab = useSettingsStore((state) => state.setDocumentTab);
   const stashHandoff = useDraftHandoffStore((state) => state.stash);
   // Server-issued ID of a draft whose first turn finished cleanly; state
   // (not a ref) so the adoption effect below runs once it is reported.
@@ -89,11 +90,14 @@ export function ChatSidebar({
   const handleSendMessage = useCallback(
     async (text: string, files?: FileUIPart[]) => {
       if (!text.trim() && (!files || files.length === 0)) return;
+      // Surface the Fetched panel as the conversation's first turn begins to
+      // pull documents; later turns leave the user's chosen tab alone.
+      if (messages.length === 0) setDocumentTab("fetched");
       setInputValue("");
       onClearDocuments();
       await sendUserMessage({ text, files }, buildRequestBody());
     },
-    [buildRequestBody, sendUserMessage, onClearDocuments],
+    [buildRequestBody, sendUserMessage, onClearDocuments, messages.length, setDocumentTab],
   );
 
   const { queue: steeringQueue, enqueue: enqueueSteering } = useSteeringQueue(
