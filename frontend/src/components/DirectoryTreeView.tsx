@@ -47,10 +47,11 @@ interface FlatRow {
   fileCount?: number;
 }
 
-// 24px per level (checkbox 16px + gap 8px) lines children up under the parent's chevron,
-// 8px base matches the row's px-2 so depth-0 checkboxes align with the select-all checkbox.
+// Applied to the row content after the checkbox, so checkboxes stay in a fixed column
+// under the section header's chevron. 24px per level (icon 16px + gap 8px) lines a
+// child's icon up under its parent's folder icon.
 function indentStyle(depth: number): CSSProperties {
-  return { paddingLeft: `${depth * 24 + 8}px` };
+  return { paddingLeft: `${depth * 24}px` };
 }
 
 function countFiles(entry: DirectoryEntry): number {
@@ -107,10 +108,7 @@ function FileRow({
   onToggleSelect?: () => void;
 }) {
   return (
-    <div
-      className="col-span-full grid grid-cols-[subgrid] items-center rounded-md px-2 py-1.5 hover:bg-muted/50 group"
-      style={indentStyle(depth)}
-    >
+    <div className="col-span-full grid grid-cols-[subgrid] items-center rounded-md px-2 py-1.5 hover:bg-muted/50 group">
       <div className="flex items-center gap-2 min-w-0">
         {onToggleSelect && (
           <Checkbox
@@ -122,6 +120,7 @@ function FileRow({
         <button
           type="button"
           className="flex flex-1 items-center gap-2 min-w-0 text-left cursor-pointer"
+          style={indentStyle(depth)}
           onClick={onEdit}
         >
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -220,10 +219,7 @@ function DirectoryRow({
   const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
 
   return (
-    <div
-      className="col-span-full grid grid-cols-[subgrid] items-center rounded-md px-2 py-1.5 hover:bg-muted/50 group"
-      style={indentStyle(depth)}
-    >
+    <div className="col-span-full grid grid-cols-[subgrid] items-center rounded-md px-2 py-1.5 hover:bg-muted/50 group">
       <div className="flex items-center gap-2 min-w-0">
         {onToggleSelect && (
           <Checkbox
@@ -235,6 +231,7 @@ function DirectoryRow({
         <button
           type="button"
           className="flex flex-1 items-center gap-2 min-w-0 text-left cursor-pointer"
+          style={indentStyle(depth)}
           onClick={onToggle}
         >
           <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />

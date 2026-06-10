@@ -23,7 +23,7 @@ export function BulkActionBar({
   onClear,
 }: BulkActionBarProps) {
   return (
-    <div className="flex h-9 items-center gap-2 py-1">
+    <div className="flex h-9 items-center gap-2 px-2 py-1">
       {bulkProgress ? (
         <>
           <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
@@ -38,6 +38,9 @@ export function BulkActionBar({
         </>
       ) : (
         <>
+          <Button variant="ghost" size="icon" className="h-7 w-7 -mx-1.5" onClick={onClear}>
+            <X className="h-4 w-4" />
+          </Button>
           <span className="text-sm font-medium">{selectedCount} selected</span>
           {DOCUMENT_ACTIONS.map((action) => {
             if (action.requiresOriginal && !hasReconvertable) return null;
@@ -54,9 +57,6 @@ export function BulkActionBar({
               </Button>
             );
           })}
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClear}>
-            <X className="h-4 w-4" />
-          </Button>
         </>
       )}
     </div>

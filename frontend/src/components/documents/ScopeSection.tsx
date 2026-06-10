@@ -339,7 +339,7 @@ export function ScopeSection({
         </Badge>
       </div>
 
-      <CollapsibleContent className="pl-2">
+      <CollapsibleContent>
         {error && (
           <div className="my-2">
             <ErrorBanner message={error} onDismiss={() => clearError(scope)} />
