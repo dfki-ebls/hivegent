@@ -102,7 +102,7 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
     async def __call__(
         self,
         query: SearchQueryArg,
-        max_results: SearchMaxResultsArg = 5,
+        max_results: SearchMaxResultsArg = 10,
         search_type: SearchTypeArg = "hybrid",
     ) -> ToolOutput[list[R]]:
         """Search indexed chunks using dense, sparse, or hybrid retrieval."""
