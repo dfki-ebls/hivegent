@@ -138,3 +138,12 @@ code {
     @apply bg-background text-foreground;
   }
 }
+
+/* Radix ScrollArea wraps the viewport content in `display: table` to measure
+   width for horizontal scrolling. Firefox then sizes that wrapper to the
+   content's max-content width, so pre-wrap/prose text never wraps and vertical
+   scrolling breaks. We only ever scroll vertically here, so force the wrapper
+   to block (sized to the viewport) to restore wrapping. */
+[data-slot="scroll-area-viewport"] > div {
+  display: block !important;
+}
