@@ -42,19 +42,15 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       const existing = newDocs.get(chunk.filename);
 
       if (existing) {
-        const newBest =
-          chunk.score != null ? Math.max(chunk.score, existing.bestScore ?? 0) : existing.bestScore;
         newDocs.set(chunk.filename, {
           ...existing,
           chunkIds: [...existing.chunkIds, id],
-          bestScore: newBest,
         });
       } else {
         newDocs.set(chunk.filename, {
           filename: chunk.filename,
           fullContentFetched: false,
           chunkIds: [id],
-          bestScore: chunk.score,
         });
       }
 

@@ -67,11 +67,6 @@ export function DocumentGroup({ doc, chunks, onChunkClick, onFilenameClick }: Do
             {contentChunks.length !== 1 ? "s" : ""}
           </Badge>
         )}
-        {doc.bestScore != null && (
-          <Badge variant="secondary" className="shrink-0 text-xs">
-            {(doc.bestScore * 100).toFixed(0)}%
-          </Badge>
-        )}
       </div>
       <CollapsibleContent>
         <div className="space-y-2 pb-2">

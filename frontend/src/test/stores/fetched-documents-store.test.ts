@@ -25,7 +25,6 @@ describe("useFetchedDocumentsStore", () => {
       expect(doc).toBeDefined();
       expect(doc!.filename).toBe("report.md");
       expect(doc!.chunkIds).toHaveLength(1);
-      expect(doc!.bestScore).toBe(0.9);
     });
 
     it("deduplicates chunks with the same id", () => {
@@ -43,25 +42,23 @@ describe("useFetchedDocumentsStore", () => {
       expect(state.chunks.size).toBe(1);
     });
 
-    it("updates bestScore on second chunk for same document", () => {
+    it("appends a second chunk to the same document", () => {
       useFetchedDocumentsStore.getState().addChunk({
         filename: "report.md",
         content: "a",
         source: "search",
         position: { type: "line", line: 1 },
-        score: 0.5,
       });
       useFetchedDocumentsStore.getState().addChunk({
         filename: "report.md",
         content: "b",
         source: "search",
         position: { type: "line", line: 2 },
-        score: 0.9,
       });
 
-      const doc = useFetchedDocumentsStore.getState().documents.get("report.md");
-      expect(doc!.bestScore).toBe(0.9);
-      expect(doc!.chunkIds).toHaveLength(2);
+      const state = useFetchedDocumentsStore.getState();
+      expect(state.documents.size).toBe(1);
+      expect(state.documents.get("report.md")!.chunkIds).toHaveLength(2);
     });
   });
 

@@ -17,11 +17,6 @@ export function ChunkCard({ chunk, onClick }: ChunkCardProps) {
         <Badge variant="outline" className="text-xs">
           {chunk.source}
         </Badge>
-        {chunk.score != null && (
-          <Badge variant="secondary" className="text-xs">
-            {(chunk.score * 100).toFixed(0)}%
-          </Badge>
-        )}
         <span className="text-xs text-muted-foreground">{chunkPositionLabel(chunk.position)}</span>
       </div>
       <p className="line-clamp-4 text-xs text-muted-foreground">{chunk.content.trim()}</p>

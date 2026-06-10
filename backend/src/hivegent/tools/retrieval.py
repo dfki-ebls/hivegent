@@ -179,7 +179,6 @@ def _format_results(results: Sequence[Any]) -> str:
     for i, r in enumerate(results, 1):
         key = getattr(r, "key", None) or getattr(r, "filename", "?")
         chunk_idx = getattr(r, "chunk_index", None)
-        score: float = getattr(r, "score", 0.0)
         text: str = getattr(r, "text", "")
         start_line = getattr(r, "start_line", None)
         end_line = getattr(r, "end_line", None)
@@ -187,5 +186,10 @@ def _format_results(results: Sequence[Any]) -> str:
         if start_line is not None and end_line is not None:
             label += f" L{start_line}-{end_line}"
             text = annotate_lines(text.splitlines(), start_line)
-        lines.append(f"[{i}] {label} ({score:.0%})\n{text}")
+        # The leading [i] is the relevance rank (results are sorted best-first).
+        # We deliberately omit the score: cbrkit min-max normalizes per query,
+        # so it pins the top hit to 100% and the worst to 0% even when every
+        # result is off-topic, which misleads the model. Rank carries the
+        # ordering without fabricating an absolute relevance magnitude.
+        lines.append(f"[{i}] {label}\n{text}")
     return BLOCK_SEP.join(lines)

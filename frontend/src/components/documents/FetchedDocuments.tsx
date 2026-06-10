@@ -18,8 +18,10 @@ export function FetchedDocuments() {
   const [initialFullDoc, setInitialFullDoc] = useState(false);
   const dialogOpen = selectedChunk !== null || dialogFilename !== undefined;
 
+  // Order documents lexically by filename; chunks within each group stay
+  // line-ordered via sortChunks in DocumentGroup.
   const sortedDocs = useMemo(
-    () => Array.from(documents.values()).sort((a, b) => (b.bestScore ?? 0) - (a.bestScore ?? 0)),
+    () => Array.from(documents.values()).sort((a, b) => a.filename.localeCompare(b.filename)),
     [documents],
   );
 

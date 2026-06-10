@@ -643,7 +643,6 @@ export interface FetchedDocument {
   fullContentFetched: boolean;
   fullContent?: string;
   chunkIds: string[];
-  bestScore?: number;
   /**
    * Set when the model read an image whose description lives at this
    * document's path (`<stem>.md`); merges the image with its caption.
