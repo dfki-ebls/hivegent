@@ -50,6 +50,8 @@ interface DocumentDialogProps {
   fallbackFilename?: string;
   /** When true the dialog opens directly into the full-document markdown view. */
   initialFullDoc?: boolean;
+  /** Citation view: hide the sidebar and show only the highlighted span. */
+  citationView?: boolean;
 
   /** Management mode: show pipeline/chunk_size/created_at badges. */
   showMetadata?: boolean;
@@ -122,6 +124,7 @@ export function DocumentDialog({
   chunk,
   fallbackFilename,
   initialFullDoc = false,
+  citationView = false,
   showMetadata = false,
   onRechunk,
   editable = false,
@@ -381,7 +384,7 @@ export function DocumentDialog({
 
   // --- Determine sidebar visibility ---
   const hasAssets = (assetsData?.assets.length ?? 0) > 0 || assetsLoading;
-  const hasSidebar = isNew
+  const hasSidebar = isNew || citationView
     ? false
     : isManagedMode
       ? managedLoading || (managedData?.chunks.length ?? 0) > 0 || hasAssets
@@ -390,22 +393,30 @@ export function DocumentDialog({
   // --- Render helpers ---
 
   const renderChunkHighlight = (content: string, start: number, end: number) => {
-    const before = content.slice(0, start);
     const highlighted = content.slice(start, end);
-    const after = content.slice(end);
+    const highlightSpan = (
+      <span
+        key={highlightKey}
+        ref={highlightRef}
+        className="bg-yellow-200/50 dark:bg-yellow-900/50 border-l-2 border-yellow-500 pl-1"
+      >
+        {highlighted}
+      </span>
+    );
 
+    // Citation view shows only the cited span, without surrounding context.
     return (
       <ScrollArea className="flex-1 min-h-0">
         <pre className="whitespace-pre-wrap text-sm p-4 font-mono">
-          <span className="text-muted-foreground">{before}</span>
-          <span
-            key={highlightKey}
-            ref={highlightRef}
-            className="bg-yellow-200/50 dark:bg-yellow-900/50 border-l-2 border-yellow-500 pl-1"
-          >
-            {highlighted}
-          </span>
-          <span className="text-muted-foreground">{after}</span>
+          {citationView ? (
+            highlightSpan
+          ) : (
+            <>
+              <span className="text-muted-foreground">{content.slice(0, start)}</span>
+              {highlightSpan}
+              <span className="text-muted-foreground">{content.slice(end)}</span>
+            </>
+          )}
         </pre>
       </ScrollArea>
     );

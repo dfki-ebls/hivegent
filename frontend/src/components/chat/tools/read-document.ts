@@ -1,4 +1,4 @@
-import type { ChunkPosition, DocumentRange } from "@/lib/types";
+import { type DocumentRange, type LinePosition, lineSource } from "@/lib/types";
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
 /** Reads always return a DocumentRange; spanning the whole file means a full-document fetch. */
@@ -23,15 +23,10 @@ export const syncReadDocumentOutput: SyncOutput = (
     return;
   }
 
-  const position: ChunkPosition = {
+  const position: LinePosition = {
     type: "line_range",
     startLine: result.start_line,
     endLine: result.end_line,
   };
-  addChunk({
-    filename,
-    content: result.content,
-    source: `lines ${result.start_line}-${result.end_line}`,
-    position,
-  });
+  addChunk({ filename, content: result.content, source: lineSource(position), position });
 };

@@ -49,23 +49,24 @@ Guidelines:
 """
 
 CITATION_INSTRUCTIONS = """
-When referencing information from documents, always use inline citation tags.
-Use the exact filename from your tool results as the filename attribute,
-keeping its leading workspace scope prefix (`~/` for the personal workspace,
-`@<group>/` for a shared group). A bare name like `doc.md` is not a valid
-citation, `~/doc.md` or `@team/doc.md` is.
-Place citations around the relevant text inline, not grouped at the end.
-Replace QUOTED_TEXT with the actual phrase you are citing — never leave it as the literal placeholder.
+When you use information from a document or web source, mark it with a
+self-closing <cite/> tag placed right after the sentence or clause it supports.
+A citation is a standalone marker — it has no inner text and is never wrapped
+around your prose. Cite a given source once per claim instead of repeating it.
 
-Citation formats:
-- Personal-workspace document with a line: <cite filename="~/reports/q1.md" line="42">QUOTED_TEXT</cite>
-- Group-workspace document: <cite filename="@research/papers/intro.md">QUOTED_TEXT</cite>
-- Web source: <cite filename="https://example.com">QUOTED_TEXT</cite>
+The src attribute must be the exact name from your tool results, including its
+workspace scope prefix (`~/` for the personal workspace, `@<group>/` for a
+shared group) or the full URL for a web source — a bare `doc.md` is invalid.
+The line attribute points at specific lines and accepts a single line, a
+comma-separated list, or a `start-end` range; the frontend turns each into its
+own clickable link. Line numbers come from search, grep, and read_document.
 
-Include the line attribute whenever you are quoting a specific line from
-a document — search, grep, and read_document results all include line
-numbers.  The frontend uses it to highlight the exact span.
-Use the URL from web_search/web_fetch results as the filename attribute.
+Formats:
+- Single line: <cite src="~/reports/q1.md" line="42" />
+- Several lines: <cite src="~/reports/q1.md" line="42,46,90" />
+- A range: <cite src="~/reports/q1.md" line="120-135" />
+- Group-workspace document: <cite src="@research/papers/intro.md" />
+- Web source: <cite src="https://example.com" />
 """
 
 MATH_INSTRUCTIONS = """
@@ -82,9 +83,10 @@ This holds regardless of the language of the retrieved documents or your interna
 """
 
 IMAGE_INSTRUCTIONS = """
-When search results include an `image_path` field, the chunk describes an image.
-To show the image inline, use: <imgref src="image_path value">caption</imgref>
-Use the exact `image_path` from the tool result as the `src` attribute.
+When a search result includes an `image_path` field, the chunk describes an
+image. Show it inline with a self-closing <imgref/> marker whose `src` is the
+exact `image_path` from the tool result and whose `alt` holds the caption:
+<imgref src="image_path value" alt="caption" />
 Only reference images that were returned by tools with an `image_path` field.
 """
 

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import {
   CITATION_ALLOWED_TAGS,
@@ -5,19 +6,25 @@ import {
   streamdownPlugins,
 } from "@/components/chat/markdown/plugins";
 import { normalizeMathDelimiters } from "@/lib/normalize-math";
+import { normalizeVoidTags } from "@/lib/normalize-void-tags";
 
 interface MarkdownTextProps {
   children: string;
 }
 
 export function MarkdownText({ children }: MarkdownTextProps) {
+  const normalized = useMemo(
+    () => normalizeVoidTags(normalizeMathDelimiters(children)),
+    [children],
+  );
+
   return (
     <MessageResponse
       allowedTags={CITATION_ALLOWED_TAGS}
       components={CITATION_COMPONENTS}
       plugins={streamdownPlugins}
     >
-      {normalizeMathDelimiters(children)}
+      {normalized}
     </MessageResponse>
   );
 }

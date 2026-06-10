@@ -713,6 +713,39 @@ export function chunkPositionLabel(position: ChunkPosition): string {
   }
 }
 
+/** The line-based `ChunkPosition` variants a citation `line` attribute yields. */
+export type LinePosition = Extract<ChunkPosition, { type: "line" | "line_range" }>;
+
+/**
+ * Parse a citation `line` attribute ("42", "42,46", "50-55", "42,50-55,90")
+ * into canonical line positions, skipping malformed tokens.
+ */
+export function parseLinePositions(line: string | undefined): LinePosition[] {
+  if (!line) return [];
+  const positions: LinePosition[] = [];
+  for (const token of line.split(",")) {
+    const range = /^\s*(\d+)\s*-\s*(\d+)\s*$/.exec(token);
+    if (range) {
+      const startLine = Number(range[1]);
+      const endLine = Number(range[2]);
+      if (startLine >= 1 && endLine >= startLine) {
+        positions.push({ type: "line_range", startLine, endLine });
+      }
+      continue;
+    }
+    const single = /^\s*(\d+)\s*$/.exec(token);
+    if (single && Number(single[1]) >= 1) positions.push({ type: "line", line: Number(single[1]) });
+  }
+  return positions;
+}
+
+/** Lowercase span text for a line position, used as a chunk `source` label. */
+export function lineSource(position: LinePosition): string {
+  return position.type === "line_range"
+    ? `lines ${position.startLine}-${position.endLine}`
+    : `line ${position.line}`;
+}
+
 /** Sort chunks by position (full document first, then ascending). */
 export function sortChunks(chunks: FetchedChunk[]): FetchedChunk[] {
   return [...chunks].sort((a, b) => chunkSortKey(a.position) - chunkSortKey(b.position));

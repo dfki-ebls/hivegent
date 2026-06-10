@@ -1,88 +1,86 @@
 "use client";
 
 import { FileTextIcon } from "lucide-react";
-import type { HTMLAttributes, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import type { HTMLAttributes } from "react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { type ChunkPosition, type FetchedChunk, makeChunkId } from "@/lib/types";
+import {
+  chunkPositionLabel,
+  type FetchedChunk,
+  type LinePosition,
+  lineSource,
+  makeChunkId,
+  parseLinePositions,
+} from "@/lib/types";
 import { DocumentDialog } from "./DocumentDialog";
 
 /**
  * Inline citation rendered by Streamdown for `<cite>` tags.
  *
- * Extends `HTMLAttributes<HTMLElement>` so it satisfies Streamdown's
- * `Components` mapped type for the intrinsic `cite` element.  The
- * custom `filename` and `line` attributes come from `allowedTags`.
+ * A citation is a self-contained void marker: all data lives in attributes and
+ * it has no children.  The `line` attribute accepts a single line, a
+ * comma-separated list, or `start-end` ranges; the filename is shown once and
+ * each resolved position becomes its own clickable chip that opens the document
+ * at that span.
  */
 interface CitationProps extends HTMLAttributes<HTMLElement> {
-  filename?: string;
+  src?: string;
   line?: string;
   node?: unknown;
 }
 
-function extractText(node: ReactNode): string {
-  if (node == null || typeof node === "boolean") return "";
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(extractText).join("");
-  if (typeof node === "object" && "props" in node) {
-    return extractText((node.props as { children?: ReactNode }).children);
-  }
-  return "";
-}
+/** Which target the dialog is open on: a position index, the full doc, or closed. */
+type OpenTarget = number | "full" | null;
 
-export function Citation({ filename, line, children }: CitationProps) {
-  const [dialogOpen, setDialogOpen] = useState(false);
+export function Citation({ src, line }: CitationProps) {
+  const [open, setOpen] = useState<OpenTarget>(null);
 
-  const lineNumber = useMemo(() => {
-    if (line === undefined) return null;
-    const n = parseInt(line, 10);
-    return Number.isFinite(n) && n >= 1 ? n : null;
-  }, [line]);
+  if (!src) return null;
 
-  const citedText = useMemo(() => extractText(children).trim(), [children]);
+  const displayName = src.split("/").pop() ?? src;
+  const positions = parseLinePositions(line);
 
-  const anchorChunk = useMemo((): FetchedChunk | null => {
-    if (!filename) return null;
-    if (lineNumber === null && !citedText) return null;
-    const position: ChunkPosition =
-      lineNumber !== null ? { type: "line", line: lineNumber } : { type: "text" };
-    const source = lineNumber !== null ? `line ${lineNumber}` : "cited text";
-    return {
-      id: makeChunkId(filename, source, position),
-      filename,
-      content: citedText,
-      source,
-      position,
-    };
-  }, [filename, lineNumber, citedText]);
-
-  if (!filename) {
-    return <span>{children}</span>;
-  }
-
-  const displayName = filename.split("/").pop() ?? filename;
-  const positionLabel = lineNumber !== null ? `L${lineNumber}` : undefined;
+  const chunkFor = (position: LinePosition): FetchedChunk => {
+    const source = lineSource(position);
+    return { id: makeChunkId(src, source, position), filename: src, content: "", source, position };
+  };
 
   return (
-    <span className="inline">
-      {children}
-      <Badge
-        variant="secondary"
-        className="ml-0.5 cursor-pointer rounded-full align-middle text-xs hover:bg-accent"
-        onClick={() => setDialogOpen(true)}
+    <Badge
+      variant="secondary"
+      className="inline-flex flex-wrap items-center gap-1 rounded-full align-middle text-xs font-normal"
+    >
+      <button
+        type="button"
+        className="flex cursor-pointer items-center gap-1 hover:text-accent-foreground"
+        onClick={() => setOpen("full")}
       >
-        <FileTextIcon className="mr-1 h-3 w-3" />
+        <FileTextIcon className="h-3 w-3 shrink-0" />
         {displayName}
-        {positionLabel && ` ${positionLabel}`}
-      </Badge>
-      <DocumentDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        filename={filename}
-        chunk={anchorChunk}
-        fallbackFilename={filename}
-        initialFullDoc={anchorChunk === null}
-      />
-    </span>
+      </button>
+      {positions.map((position, index) => (
+        <button
+          key={index}
+          type="button"
+          className="cursor-pointer rounded-full px-1.5 hover:bg-accent"
+          onClick={() => setOpen(index)}
+        >
+          {chunkPositionLabel(position)}
+        </button>
+      ))}
+      {open !== null && (
+        <DocumentDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setOpen(null);
+          }}
+          filename={src}
+          chunk={open === "full" ? null : chunkFor(positions[open])}
+          fallbackFilename={src}
+          initialFullDoc={open === "full"}
+          citationView
+        />
+      )}
+    </Badge>
   );
 }
