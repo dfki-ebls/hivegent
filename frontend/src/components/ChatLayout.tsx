@@ -39,7 +39,7 @@ export function ChatLayout({ id, draft = false }: ChatLayoutProps) {
   return (
     <div className="flex h-full overflow-hidden">
       {/* Desktop: Always show DocumentCanvas */}
-      <div className="hidden md:block h-full w-2/3 overflow-hidden border-r">
+      <div className="hidden md:block h-full w-1/2 overflow-hidden border-r">
         <DocumentCanvas
           onIncludeDocument={handleIncludeDocument}
           onExcludeDocument={handleExcludeDocument}
@@ -63,7 +63,7 @@ export function ChatLayout({ id, draft = false }: ChatLayoutProps) {
       </Sheet>
 
       {/* Chat Sidebar */}
-      <div className="h-full w-full md:w-1/3 overflow-hidden flex flex-col">
+      <div className="h-full w-full md:w-1/2 overflow-hidden flex flex-col">
         {/* Mobile: Toggle button for documents */}
         <div className="md:hidden border-b p-2">
           <Button variant="ghost" size="sm" onClick={() => setMobileDocumentsOpen(true)}>
