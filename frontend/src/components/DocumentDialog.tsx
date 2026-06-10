@@ -50,7 +50,7 @@ interface DocumentDialogProps {
   fallbackFilename?: string;
   /** When true the dialog opens directly into the full-document markdown view. */
   initialFullDoc?: boolean;
-  /** Citation view: hide the sidebar and show only the highlighted span. */
+  /** Citation view: hide the sidebar, showing the document with the cited span highlighted. */
   citationView?: boolean;
 
   /** Management mode: show pipeline/chunk_size/created_at badges. */
@@ -392,35 +392,21 @@ export function DocumentDialog({
 
   // --- Render helpers ---
 
-  const renderChunkHighlight = (content: string, start: number, end: number) => {
-    const highlighted = content.slice(start, end);
-    const highlightSpan = (
-      <span
-        key={highlightKey}
-        ref={highlightRef}
-        className="bg-yellow-200/50 dark:bg-yellow-900/50 border-l-2 border-yellow-500 pl-1"
-      >
-        {highlighted}
-      </span>
-    );
-
-    // Citation view shows only the cited span, without surrounding context.
-    return (
-      <ScrollArea className="flex-1 min-h-0">
-        <pre className="whitespace-pre-wrap text-sm p-4 font-mono">
-          {citationView ? (
-            highlightSpan
-          ) : (
-            <>
-              <span className="text-muted-foreground">{content.slice(0, start)}</span>
-              {highlightSpan}
-              <span className="text-muted-foreground">{content.slice(end)}</span>
-            </>
-          )}
-        </pre>
-      </ScrollArea>
-    );
-  };
+  const renderChunkHighlight = (content: string, start: number, end: number) => (
+    <ScrollArea className="flex-1 min-h-0">
+      <pre className="whitespace-pre-wrap text-sm p-4 font-mono">
+        <span className="text-muted-foreground">{content.slice(0, start)}</span>
+        <span
+          key={highlightKey}
+          ref={highlightRef}
+          className="bg-yellow-200/50 dark:bg-yellow-900/50 border-l-2 border-yellow-500 pl-1"
+        >
+          {content.slice(start, end)}
+        </span>
+        <span className="text-muted-foreground">{content.slice(end)}</span>
+      </pre>
+    </ScrollArea>
+  );
 
   const renderMainContent = () => {
     if (viewMode === "edit") {

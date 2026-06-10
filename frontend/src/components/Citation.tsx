@@ -52,17 +52,18 @@ export function Citation({ src, line }: CitationProps) {
     >
       <button
         type="button"
-        className="flex cursor-pointer items-center gap-1 hover:text-accent-foreground"
+        className="flex cursor-pointer items-center gap-1 rounded-full hover:text-accent-foreground"
         onClick={() => setOpen("full")}
       >
         <FileTextIcon className="h-3 w-3 shrink-0" />
         {displayName}
       </button>
+      {positions.length > 0 && <span aria-hidden className="h-3.5 w-px bg-border" />}
       {positions.map((position, index) => (
         <button
           key={index}
           type="button"
-          className="cursor-pointer rounded-full px-1.5 hover:bg-accent"
+          className="cursor-pointer rounded-full bg-background/60 px-1.5 hover:bg-accent"
           onClick={() => setOpen(index)}
         >
           {chunkPositionLabel(position)}
