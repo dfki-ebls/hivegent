@@ -390,6 +390,7 @@ def serve(
         host=host,
         port=port,
         reload=reload,
+        reload_dirs=str(Path(__file__).parent),
     )
 
 
