@@ -114,7 +114,7 @@ async def get_conversation(
     )
 
 
-@router.put("/conversations/{conversation_id}/title")
+@router.patch("/conversations/{conversation_id}")
 async def update_conversation_title(
     conversation_id: str,
     request: UpdateTitleRequest,

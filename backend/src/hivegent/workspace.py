@@ -41,6 +41,7 @@ import logfire
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from .chunkers import ChunkingSpec
 from .chunkers.base import (
     DocumentMetadata,
     EntryGeneratedBy,
@@ -1214,7 +1215,11 @@ def _check_expected_hash(
 
 
 async def _replace_text_locked(
-    store: Casebase, safe: str, full_path: Path, content: str
+    store: Casebase,
+    safe: str,
+    full_path: Path,
+    content: str,
+    chunking: ChunkingSpec | None = None,
 ) -> None:
     _enforce_file_size(content.encode("utf-8"))
     if full_path.is_dir():
@@ -1224,7 +1229,7 @@ async def _replace_text_locked(
     full_path.write_text(content, encoding="utf-8")
     await shield_to_completion(
         chunk_and_index_document(
-            store, safe, content, stat=ContentStat.from_path(full_path)
+            store, safe, content, chunking, stat=ContentStat.from_path(full_path)
         )
     )
 
@@ -1275,6 +1280,7 @@ async def write_document_text(
     content: str,
     mode: str = "replace",
     expected_hash: str | None = None,
+    chunking: ChunkingSpec | None = None,
 ) -> str:
     """Write a workspace text document through the canonical mutation gateway."""
     safe = sanitize_document_path(safe)
@@ -1301,7 +1307,7 @@ async def write_document_text(
             raise HTTPException(
                 status_code=400, detail=f"Unsupported write mode: {mode}"
             )
-        await _replace_text_locked(store, safe, file_path, new_content)
+        await _replace_text_locked(store, safe, file_path, new_content, chunking)
     return message
 
 

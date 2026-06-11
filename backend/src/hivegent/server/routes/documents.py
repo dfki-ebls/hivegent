@@ -44,6 +44,8 @@ from ...types import (
     UpdateAssetDescriptionRequest,
     UploadCompleteEvent,
     UploadDocumentResponse,
+    WriteDocumentRequest,
+    WriteDocumentResponse,
 )
 from ..common import (
     parse_pipeline_spec,
@@ -405,6 +407,26 @@ async def delete_asset_description(
     """Delete an asset's companion .md description, keeping the asset itself."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
     return await workspace.delete_asset_description(store, safe, asset_name)
+
+
+# Registered after the more specific /documents/assets/ PATCH route so the
+# catch-all path parameter cannot shadow it.
+@router.patch("/documents/{filepath:path}")
+async def write_document(
+    filepath: str,
+    request: WriteDocumentRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> WriteDocumentResponse:
+    """Replace a text document's content in place.
+
+    Unlike the PUT upload route this keeps the entry's original binary,
+    assets, and provenance, and only rewrites the markdown and its chunks.
+    """
+    store, safe = resolve_workspace_path(user, filepath, write=True)
+    message = await workspace.write_document_text(
+        store, safe, request.content, chunking=request.chunking
+    )
+    return WriteDocumentResponse(filename=safe, message=message)
 
 
 @router.get("/documents/{filepath:path}")

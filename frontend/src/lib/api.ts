@@ -409,6 +409,28 @@ export async function uploadDocument(
   return UploadDocumentResponseSchema.parse(data);
 }
 
+/**
+ * Replace a markdown document's content in place; `filename` is a canonical path.
+ * Unlike `uploadDocument` with overwrite, this keeps the document's original
+ * binary and assets and only rewrites the text and its chunks.
+ */
+export async function writeDocument(
+  filename: string,
+  content: string,
+  chunking?: PipelineSpec["chunking"],
+): Promise<void> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, chunking: chunking ?? null }),
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Save failed" }));
+    throw new Error(error.detail || "Save failed");
+  }
+}
+
 /** Options for collection upload (ZIP or directory). */
 export interface UploadCollectionOptions {
   spec?: PipelineSpec;
@@ -620,8 +642,8 @@ export async function updateConversationTitle(
   conversationId: string,
   title: string,
 ): Promise<ConversationSummary> {
-  const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}/title`, {
-    method: "PUT",
+  const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title }),
   });

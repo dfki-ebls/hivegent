@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, FolderOpen, Loader2, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { PERSONAL_SCOPE, buildAuxLlmConfig, canonicalPath, uploadDocument } from "../../lib/api";
+import { PERSONAL_SCOPE, buildAuxLlmConfig, canonicalPath, writeDocument } from "../../lib/api";
 import type { PipelineSpec } from "../../lib/types";
 import { downloadBlob } from "../../lib/download";
 import { collectFilePaths } from "../../lib/utils";
@@ -185,8 +185,7 @@ export function ScopeSection({
 
   const handleSave = useCallback(
     async (filename: string, content: string) => {
-      const file = new File([content], filename, { type: "text/plain" });
-      await uploadDocument(filename, file, { spec: pipelineSpec });
+      await writeDocument(filename, content, pipelineSpec.chunking);
       await refresh(scope);
     },
     [pipelineSpec, scope, refresh],

@@ -159,6 +159,7 @@ export function DocumentDialog({
   const [editFilename, setEditFilename] = useState(filenameProp);
   const [editContent, setEditContent] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chunks");
   const [assetsData, setAssetsData] = useState<AssetListResponse | null>(null);
@@ -213,6 +214,7 @@ export function DocumentDialog({
 
     isInitialScrollRef.current = true;
     setEditFilename(filenameProp);
+    setSaveError(null);
     setManagedData(null);
     setManagedError(null);
     setManagedActiveIndex(null);
@@ -400,9 +402,12 @@ export function DocumentDialog({
   const handleSave = async () => {
     if (!onSave || !editFilename.trim()) return;
     setIsSaving(true);
+    setSaveError(null);
     try {
       await onSave(editFilename.trim(), editContent);
       onOpenChange(false);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setIsSaving(false);
     }
@@ -459,6 +464,9 @@ export function DocumentDialog({
             />
           </div>
           <DialogFooter className="px-4 py-4">
+            {saveError && (
+              <p className="mr-auto self-center text-sm text-destructive">{saveError}</p>
+            )}
             <Button
               variant="outline"
               onClick={() => {
@@ -894,6 +902,7 @@ export function DocumentDialog({
                   onClick={() => {
                     setEditContent(fullContent ?? "");
                     setEditFilename(filename);
+                    setSaveError(null);
                     setViewMode("edit");
                   }}
                 >

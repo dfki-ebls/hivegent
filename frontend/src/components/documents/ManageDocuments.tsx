@@ -5,7 +5,9 @@ import {
   PERSONAL_SCOPE,
   type UploadDocumentOptions,
   buildAuxLlmConfig,
+  canonicalPath,
   groupScope,
+  uploadDocument,
 } from "../../lib/api";
 import {
   buildCollectionZip,
@@ -50,6 +52,7 @@ export function ManageDocuments() {
   const uploadMultiple = useDocumentsStore((s) => s.uploadMultiple);
   const uploadCol = useDocumentsStore((s) => s.uploadCol);
   const createDir = useDocumentsStore((s) => s.createDir);
+  const refresh = useDocumentsStore((s) => s.refresh);
 
   const groups = useMemo(() => getAllGroups(), []);
   const writableGroups = useMemo(() => groups.filter((g) => canWriteGroup(g)), [groups]);
@@ -240,13 +243,15 @@ export function ManageDocuments() {
     }
   }, [beginOp, pendingOverwrite, upload, uploadMultiple, uploadOptions, uploadScope]);
 
+  // Bypasses the store's error-swallowing upload so a failure (e.g. a name
+  // collision) propagates to the dialog, which stays open with the content.
   const handleSaveNew = useCallback(
     async (filename: string, content: string) => {
       const file = new File([content], filename, { type: "text/plain" });
-      await upload(uploadScope, file, { spec: pipelineSpec });
-      setNewDocOpen(false);
+      await uploadDocument(canonicalPath(uploadScope, filename), file, { spec: pipelineSpec });
+      await refresh(uploadScope);
     },
-    [upload, uploadScope, pipelineSpec],
+    [uploadScope, pipelineSpec, refresh],
   );
 
   return (

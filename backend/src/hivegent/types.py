@@ -79,6 +79,8 @@ __all__ = [
     "UploadDocumentResponse",
     "User",
     "UserResponse",
+    "WriteDocumentRequest",
+    "WriteDocumentResponse",
     "resolve_llm_config",
 ]
 
@@ -449,6 +451,23 @@ class DeleteDocumentResponse(BaseModel):
     """Response for document deletion."""
 
     filename: str = Field(description="The deleted filename")
+    message: str = Field(description="Status message")
+
+
+class WriteDocumentRequest(BaseModel):
+    """Request to replace a text document's content in place."""
+
+    content: str = Field(description="New full content for the document")
+    chunking: ChunkingSpec | None = Field(
+        default=None,
+        description="Chunking pipeline to re-index with (defaults to the standard pipeline)",
+    )
+
+
+class WriteDocumentResponse(BaseModel):
+    """Response for an in-place document text write."""
+
+    filename: str = Field(description="The written filename")
     message: str = Field(description="Status message")
 
 
