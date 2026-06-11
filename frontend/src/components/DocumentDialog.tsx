@@ -304,6 +304,17 @@ export function DocumentDialog({
   }, []);
   const highlightKey = isManagedMode ? `m:${managedActiveIndex}` : `f:${activeChunkId}`;
 
+  // --- Fetch assets lazily on first switch to the assets tab ---
+  // (404 when the document has none → tab stays hidden via assets_dir)
+  useEffect(() => {
+    if (!open || !isManagedMode || sidebarTab !== "assets" || assetsData || !filename) return;
+    setAssetsLoading(true);
+    listDocumentAssets(filename)
+      .then(setAssetsData)
+      .catch(() => setAssetsData(null))
+      .finally(() => setAssetsLoading(false));
+  }, [open, isManagedMode, sidebarTab, assetsData, filename]);
+
   // --- Rechunk handler ---
   const handleRechunk = useCallback(async () => {
     if (!onRechunk) return;
@@ -311,19 +322,12 @@ export function DocumentDialog({
     try {
       await onRechunk();
       fetchManagedChunks();
+      // Invalidate the asset list; the lazy effect refetches it on demand.
+      setAssetsData(null);
     } finally {
       setIsRechunking(false);
     }
   }, [onRechunk, fetchManagedChunks]);
-
-  useEffect(() => {
-    if (!open || !isManagedMode || !managedData?.assets_dir || !filename) return;
-    setAssetsLoading(true);
-    listDocumentAssets(filename)
-      .then(setAssetsData)
-      .catch(() => setAssetsData(null))
-      .finally(() => setAssetsLoading(false));
-  }, [open, isManagedMode, managedData?.assets_dir, filename]);
 
   const replaceActiveAsset = useCallback(
     (updated: AssetEntry) => {
@@ -383,7 +387,7 @@ export function DocumentDialog({
   if (!isNew && !chunk && !fallbackFilename && !filenameProp) return null;
 
   // --- Determine sidebar visibility ---
-  const hasAssets = (assetsData?.assets.length ?? 0) > 0 || assetsLoading;
+  const hasAssets = Boolean(managedData?.assets_dir);
   const hasSidebar = isNew || citationView
     ? false
     : isManagedMode

@@ -9,6 +9,7 @@ segment (``~`` or ``@<group>``); item endpoints take the full path.
 group membership (reads) or write access.
 """
 
+import asyncio
 import logging
 import mimetypes
 from collections.abc import AsyncIterable
@@ -377,7 +378,7 @@ async def list_document_assets(
 ) -> AssetListResponse:
     """List assets for a document."""
     store, safe = resolve_workspace_path(user, filepath)
-    return list_assets(store, safe)
+    return await asyncio.to_thread(list_assets, store, safe)
 
 
 @router.patch("/documents/assets/{filepath:path}")
