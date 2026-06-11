@@ -1,44 +1,46 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Hivegent">
   <defs>
+    <linearGradient id="comb" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFF0B8"/>
+      <stop offset="1" stop-color="#FFDC85"/>
+    </linearGradient>
     <linearGradient id="honey" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFDA6B"/>
-      <stop offset="1" stop-color="#F2A41C"/>
+      <stop offset="0" stop-color="#FFD45E"/>
+      <stop offset="1" stop-color="#F0A41C"/>
     </linearGradient>
     <clipPath id="dome">
-      <path d="M17 49C17 41 17 28 26 22Q32 18 38 22C47 28 47 41 47 49Z"/>
+      <path d="M19 48.5C19 41 19 30 26 25.5Q32 21.8 38 25.5C45 30 45 41 45 48.5Z"/>
     </clipPath>
     <clipPath id="beeBody">
-      <ellipse cx="17" cy="16" rx="6" ry="4.3"/>
+      <ellipse cx="31.5" cy="15" rx="5.2" ry="3.7"/>
     </clipPath>
   </defs>
 
-  <!-- Badge -->
-  <circle cx="32" cy="32" r="30" fill="#FFE9A6" stroke="#2A1E0B" stroke-width="3"/>
-
-  <!-- Document with folded corner -->
-  <path d="M20 11L40 11L48 19L48 47Q48 51 44 51L20 51Q16 51 16 47L16 15Q16 11 20 11Z"
-        fill="#FFF7DC" stroke="#2A1E0B" stroke-width="2.4" stroke-linejoin="round"/>
-  <path d="M40 11L48 19L40 19Z" fill="#EBCB7E" stroke="#2A1E0B" stroke-width="2.4" stroke-linejoin="round"/>
+  <!-- Honeycomb-cell badge -->
+  <path d="M37.2 7L51.05 15Q56.25 18 56.25 24L56.25 40Q56.25 46 51.05 49L37.2 57Q32 60 26.8 57L12.95 49Q7.75 46 7.75 40L7.75 24Q7.75 18 12.95 15L26.8 7Q32 4 37.2 7Z"
+        fill="url(#comb)" stroke="#2A1E0B" stroke-width="3" stroke-linejoin="round"/>
 
   <!-- Hive -->
   <g stroke="#2A1E0B" stroke-width="2.4" stroke-linejoin="round">
-    <path d="M17 49C17 41 17 28 26 22Q32 18 38 22C47 28 47 41 47 49Z" fill="url(#honey)"/>
+    <path d="M19 48.5C19 41 19 30 26 25.5Q32 21.8 38 25.5C45 30 45 41 45 48.5Z" fill="url(#honey)"/>
     <g clip-path="url(#dome)" stroke-linecap="round">
-      <line x1="14" y1="27" x2="50" y2="27"/>
-      <line x1="14" y1="34" x2="50" y2="34"/>
-      <line x1="14" y1="41" x2="50" y2="41"/>
+      <line x1="16" y1="30" x2="48" y2="30"/>
+      <line x1="16" y1="35.5" x2="48" y2="35.5"/>
+      <line x1="16" y1="41" x2="48" y2="41"/>
     </g>
-    <rect x="29" y="44" width="6" height="5" rx="1.5" fill="#2A1E0B" stroke="none"/>
+    <path d="M28.8 48.5V46.2A3.2 3.2 0 0 1 35.2 46.2V48.5Z" fill="#2A1E0B" stroke="none"/>
   </g>
 
-  <!-- Bee -->
-  <g transform="rotate(18 17 16)" stroke="#2A1E0B" stroke-linejoin="round">
-    <ellipse cx="16.5" cy="10.5" rx="4.4" ry="2.8" fill="#FFFFFF" fill-opacity="0.95" stroke-width="1.2"/>
-    <ellipse cx="17" cy="16" rx="6" ry="4.3" fill="#FBC02D" stroke-width="1.6"/>
+  <!-- Bee flying in above the hive -->
+  <g transform="translate(0 1) rotate(30 31.5 15)" stroke="#2A1E0B" stroke-linejoin="round">
+    <ellipse cx="29.5" cy="10.5" rx="3.4" ry="2" transform="rotate(-28 29.5 10.5)" fill="#FFFFFF" fill-opacity="0.95" stroke-width="1.3"/>
+    <ellipse cx="33.1" cy="10.9" rx="3.2" ry="1.9" transform="rotate(-14 33.1 10.9)" fill="#FFFFFF" fill-opacity="0.95" stroke-width="1.3"/>
+    <ellipse cx="31.5" cy="15" rx="5.2" ry="3.7" fill="#FFB300" stroke-width="1.6"/>
     <g clip-path="url(#beeBody)" fill="#2A1E0B" stroke="none">
-      <rect x="14" y="11" width="2" height="10"/>
-      <rect x="18" y="11" width="2" height="10"/>
+      <rect x="28.65" y="10" width="1.55" height="10"/>
+      <rect x="31.75" y="10" width="1.55" height="10"/>
     </g>
-    <circle cx="22.5" cy="16" r="2.7" fill="#2A1E0B" stroke="none"/>
+    <path d="M38 12.9Q38.7 11.2 40.1 10.8" fill="none" stroke-width="1.1" stroke-linecap="round"/>
+    <circle cx="37.3" cy="15" r="2.5" fill="#2A1E0B" stroke="none"/>
   </g>
 </svg>
