@@ -498,10 +498,36 @@ export function DocumentDialog({
     // Full-doc markdown view
     if (viewMode === "full-doc") {
       if (!fullContent) {
-        const isBinary = !filename.toLowerCase().endsWith(".md");
+        // No full content fetched — show the excerpts the model actually
+        // read (search snippets, grep hits) instead of a dead end.
+        if (siblingChunks.length > 0) {
+          return (
+            <ScrollArea className="flex-1 min-h-0">
+              <div className="p-4 space-y-4">
+                {siblingChunks.map((sibling) => (
+                  <div key={sibling.id} className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="text-xs">
+                        {sibling.source}
+                      </Badge>
+                      <Badge variant="secondary" className="text-xs">
+                        {chunkPositionLabel(sibling.position)}
+                      </Badge>
+                    </div>
+                    <pre className="whitespace-pre-wrap text-sm font-mono">{sibling.content}</pre>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          );
+        }
         return (
           <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
-            {isBinary ? "Binary file — preview not available" : "Document content unavailable"}
+            {isWeb
+              ? "Page content not available — it has not been fetched in this session"
+              : !filename.toLowerCase().endsWith(".md")
+                ? "Binary file — preview not available"
+                : "Document content unavailable"}
           </div>
         );
       }
@@ -652,6 +678,15 @@ export function DocumentDialog({
     if (!activeChunk) return null;
 
     if (!fullContent) {
+      // Full content was never fetched — the chunk text itself is still
+      // exactly what the model read, so show it instead of nothing.
+      if (activeChunk.content) {
+        return (
+          <ScrollArea className="flex-1 min-h-0">
+            <pre className="whitespace-pre-wrap text-sm p-4 font-mono">{activeChunk.content}</pre>
+          </ScrollArea>
+        );
+      }
       return (
         <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
           Document content unavailable

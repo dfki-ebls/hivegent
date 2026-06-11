@@ -19,8 +19,8 @@ export interface ToolPartInfo {
   input: Record<string, unknown> | undefined;
   /**
    * Plain-string tool output.  Set only for tools whose canonical
-   * payload is a string (e.g. full-document reads, web fetches) — these
-   * never emit a ``data-tool-output`` DataUIPart.
+   * payload is a string — these never emit a ``data-tool-output``
+   * DataUIPart.
    */
   text: string | null;
   /**

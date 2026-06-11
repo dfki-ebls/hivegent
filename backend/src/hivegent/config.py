@@ -355,10 +355,31 @@ class SecuritySettings(BaseModel):
     """SSRF and transport-safety settings.
 
     ``allow_private_urls`` opens the SSRF filter so user-supplied URLs
-    (LLM ``base_url``, MCP server URLs, ``WebFetch``) may dial private
+    (LLM ``base_url``, MCP server URLs, ``web_fetch``) may dial private
     or loopback addresses. Default off, turn on only when authenticated
     users are allowed to reach the same network. Server-configured URLs
     are trusted operator input and do not need this setting.
+
+    ``url_allow_hosts`` and ``url_deny_hosts`` form a host policy applied
+    to every user-supplied external URL (user LLM ``base_url``, MCP
+    server URLs).  An entry matches a hostname exactly; a
+    ``*.example.com`` entry additionally matches ``example.com`` and any
+    of its subdomains.  The deny list always wins; a non-empty allow
+    list refuses every host not on it, while an empty allow list permits
+    any public host.  Operator-configured URLs (the trusted HTTP client)
+    bypass the policy.
+
+    ``web_allow_hosts`` and ``web_deny_hosts`` scope what the model may
+    browse with the web tools (``web_search`` results, ``web_fetch``
+    targets and redirect hops), on top of the global ``url_deny_hosts``;
+    the global allow list does not apply to them.  The default allow
+    list is Wikipedia (every language edition via the wildcard), exactly
+    the hosts the default ``wikipedia`` search engine can return — a
+    curated, ad-free corpus that is safe to expose out of the box.  When
+    both web lists are empty, the web tools are not registered at all:
+    exposing the open web to the model needs an explicit operator
+    decision, and search results that could never be fetched would be
+    pointless.
 
     CORS, security headers, rate limiting, and body-size caps are
     enforced by the Caddy reverse proxy, not here.
@@ -366,6 +387,10 @@ class SecuritySettings(BaseModel):
 
     allow_private_urls: bool = False
     expose_api_docs: bool = False
+    url_allow_hosts: list[str] = []
+    url_deny_hosts: list[str] = []
+    web_allow_hosts: list[str] = ["*.wikipedia.org"]
+    web_deny_hosts: list[str] = []
 
 
 class ConversionSettings(BaseModel):
@@ -413,11 +438,23 @@ class DatabaseSettings(BaseModel):
 
 
 class NetworkSettings(BaseModel):
-    """Outbound HTTP client and WebFetch tunables.
+    """Outbound HTTP client and web-tool tunables.
 
     ``connect_timeout_seconds`` applies to every outbound request made
     through the shared HTTP client (LLM, embeddings, MCP, JWKS).  The
-    ``webfetch_*`` knobs only apply to the ``WebFetch`` agent tool.
+    ``webfetch_*`` knobs only apply to the ``web_fetch`` agent tool:
+    ``webfetch_max_response_bytes`` caps how many raw bytes are
+    downloaded per page and ``webfetch_max_chars`` caps the extracted
+    text handed to the model.  ``websearch_backend`` selects the ddgs
+    search engine(s).  It defaults to ``wikipedia``, which queries the
+    official Wikipedia API directly — no scraping, so no bot detection
+    or rate limits (DuckDuckGo's starve unattended deployments) — and
+    only ever returns ``*.wikipedia.org`` links, matching the default
+    ``web_allow_hosts``.  General engines (``bing``, ``brave``, ...) are
+    available individually or comma-separated, and ``auto`` rotates
+    across all of them; widen ``web_allow_hosts`` to match when
+    switching.  ``websearch_region`` is the ddgs region code (e.g.
+    ``de-de``); its language half selects the Wikipedia edition.
     ``llm_request_timeout_seconds`` caps individual non-streaming LLM
     calls (image description, document conversion, title generation,
     compaction, sub-agent / retrieval tool runs) so a hung inference
@@ -429,8 +466,11 @@ class NetworkSettings(BaseModel):
 
     connect_timeout_seconds: float = 5.0
     webfetch_timeout_seconds: float = 10.0
-    webfetch_max_response_bytes: int = 1_000_000
+    webfetch_max_response_bytes: int = 5_000_000
+    webfetch_max_chars: int = 100_000
     webfetch_max_redirects: int = 5
+    websearch_backend: str = "wikipedia"
+    websearch_region: str = "us-en"
     llm_request_timeout_seconds: float = 600.0
 
 

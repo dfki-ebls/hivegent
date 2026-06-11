@@ -14,7 +14,7 @@ import httpx
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, get_user_agent
 
 from .config import settings
-from .security import create_safe_async_client
+from .security import TRUSTED_URL_POLICY, create_safe_async_client
 
 __all__ = [
     "get_http_client",
@@ -50,13 +50,13 @@ class _SharedHttpClients:
             connect=settings.network.connect_timeout_seconds,
         )
         headers = {"User-Agent": get_user_agent()}
-        # The user client passes ``allow_private=None`` (the default) so it
-        # honours the global ``allow_private_urls`` toggle; the trusted client
-        # always allows private addresses.
+        # The user client omits the policy so it resolves the settings-derived
+        # one (``allow_private_urls`` toggle plus host allow/deny lists); the
+        # trusted client is unrestricted for operator-configured endpoints.
         self._clients = {
             "user": create_safe_async_client(timeout=timeout, headers=headers),
             "trusted": create_safe_async_client(
-                allow_private=True, timeout=timeout, headers=headers
+                policy=TRUSTED_URL_POLICY, timeout=timeout, headers=headers
             ),
         }
         try:

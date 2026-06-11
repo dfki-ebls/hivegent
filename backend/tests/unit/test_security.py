@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException, UploadFile
 
 from hivegent.config import settings
-from hivegent.security import create_safe_async_client
+from hivegent.security import UrlPolicy, create_safe_async_client
 from hivegent.server.common import prepare_llm_config
 from hivegent.server.operations import read_upload_file
 from hivegent.types import LlmConfig, resolve_llm_config
@@ -17,7 +17,7 @@ async def test_safe_async_client_blocks_private_ip_connections() -> None:
     """The safe transport rejects private addresses at connection time."""
     # Pin the guard on regardless of the ambient ``allow_private_urls`` the
     # dev shell exports, so the test exercises the filter, not the env.
-    async with create_safe_async_client(timeout=0.1, allow_private=False) as client:
+    async with create_safe_async_client(timeout=0.1, policy=UrlPolicy()) as client:
         with pytest.raises(httpx.ConnectError, match="private or reserved"):
             await client.get("http://127.0.0.1:1")
 
