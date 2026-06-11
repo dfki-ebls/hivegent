@@ -415,3 +415,13 @@ const ADMIN_ROLE = "admin";
 export function selectIsAdmin(state: SettingsState): boolean {
   return state.roles.includes(ADMIN_ROLE);
 }
+
+/**
+ * Zustand selector: the current user's backend id, if known.
+ *
+ * Shares the id space of the admin user listings, so it can filter the
+ * caller out of self-targeting lists (impersonation, per-user wipes).
+ */
+export function selectUserId(state: SettingsState): string | undefined {
+  return state.backendDefaults?.user.id;
+}

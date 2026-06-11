@@ -52,7 +52,7 @@ import type { AdminGroupInfo, AdminUserInfo } from "../lib/types";
 import { errorMessage } from "../lib/utils";
 import { enforceLogin } from "../oidc";
 import { useConversationsStore } from "../stores/conversations-store";
-import { selectIsAdmin, useSettingsStore } from "../stores/settings-store";
+import { selectIsAdmin, selectUserId, useSettingsStore } from "../stores/settings-store";
 import { clearAllStorage } from "../stores/storage";
 import { useDocumentsStore } from "../stores/documents-store";
 
@@ -274,6 +274,7 @@ const userMeta = (u: AdminUserInfo) => `${u.document_count}d / ${u.conversation_
 
 // Fetches the admin overview once and feeds both admin sections.
 function AdminSections({ setAction }: { setAction: (a: DangerAction) => void }) {
+  const currentUserId = useSettingsStore(selectUserId);
   const [users, setUsers] = useState<AdminUserInfo[]>([]);
   const [groups, setGroups] = useState<AdminGroupInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -295,13 +296,18 @@ function AdminSections({ setAction }: { setAction: (a: DangerAction) => void }) 
     void refresh();
   }, [refresh]);
 
+  // Self-targeting is never useful: an admin cannot impersonate themselves
+  // and wiping their own account belongs in the user danger zone.
+  const otherUsers = users.filter((u) => u.id !== currentUserId);
+
   return (
     <>
       <AdminMaintenanceSection />
-      <AdminImpersonationSection users={users} loading={loading} />
+      <AdminImpersonationSection users={otherUsers} loading={loading} />
+      <UserDangerZoneSection setAction={setAction} />
       <AdminDangerZoneSection
         setAction={setAction}
-        users={users}
+        users={otherUsers}
         groups={groups}
         loading={loading}
         refresh={refresh}
@@ -334,7 +340,7 @@ function AdminMaintenanceSection() {
   };
 
   return (
-    <div className="grid gap-3 border-t pt-8">
+    <div className="grid gap-3">
       <div className="flex items-center gap-2">
         <WrenchIcon className="h-5 w-5" />
         <h2 className="text-lg font-semibold">Admin — Maintenance</h2>
@@ -367,7 +373,7 @@ function AdminImpersonationSection({
   loading: boolean;
 }) {
   return (
-    <div className="grid gap-3 border-t pt-8">
+    <div className="grid gap-3">
       <div className="flex items-center gap-2">
         <EyeIcon className="h-5 w-5" />
         <h2 className="text-lg font-semibold">Admin — Impersonation</h2>
@@ -406,7 +412,7 @@ function AdminDangerZoneSection({
   refresh,
 }: AdminDangerZoneProps) {
   return (
-    <div className="grid gap-3 border-t pt-8">
+    <div className="grid gap-3">
       <div className="flex items-center gap-2">
         <ShieldAlertIcon className="h-5 w-5 text-destructive" />
         <h2 className="text-lg font-semibold text-destructive">Admin — Danger Zone</h2>
@@ -578,10 +584,14 @@ function AccountPage() {
         <h1 className="text-2xl font-semibold">Account</h1>
       </div>
 
-      <div className="grid gap-8">
-        <UserDangerZoneSection setAction={setAction} />
-
-        {isAdmin && <AdminSections setAction={setAction} />}
+      {/* Each section after the first is separated by a top divider, so the
+          ordering can change without per-section border bookkeeping. */}
+      <div className="grid gap-8 [&>*+*]:border-t [&>*+*]:pt-8">
+        {isAdmin ? (
+          <AdminSections setAction={setAction} />
+        ) : (
+          <UserDangerZoneSection setAction={setAction} />
+        )}
       </div>
 
       <ConfirmDialog
