@@ -106,6 +106,7 @@ from .types import (
 __all__ = [
     "create_directory",
     "delete_all",
+    "delete_asset_description",
     "delete_directory",
     "delete_document",
     "delete_workspace_root",
@@ -1441,6 +1442,40 @@ def _resolve_asset_path(assets_path: Path, asset_name: str) -> tuple[str, Path]:
     return safe_name, asset_path
 
 
+def _resolve_asset_for_description(
+    store: Casebase, safe: str, asset_name: str
+) -> tuple[Path, str, Path]:
+    """Resolve the workspace root and validated path of an asset.
+
+    Returns ``(workspace, safe_name, asset_path)``. The caller holds the store
+    lock and raises the 404 when the asset file itself is absent.
+    """
+    workspace = store.workspace_dir(settings.data_dir)
+    assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
+    assets_path = workspace / assets_dir
+    safe_name, asset_path = _resolve_asset_path(assets_path, asset_name)
+    return workspace, safe_name, asset_path
+
+
+def _asset_entry(
+    workspace: Path,
+    asset_path: Path,
+    safe_name: str,
+    size_bytes: int,
+    description: str,
+    description_path: str | None,
+) -> AssetEntry:
+    """Build an :class:`AssetEntry` from a resolved asset path."""
+    return AssetEntry(
+        name=safe_name,
+        path=str(asset_path.relative_to(workspace).as_posix()),
+        description_path=description_path,
+        description=description,
+        size_bytes=size_bytes,
+        media_type=mimetypes.guess_type(safe_name)[0],
+    )
+
+
 async def _persist_asset_description(
     store: Casebase,
     workspace: Path,
@@ -1459,18 +1494,11 @@ async def _persist_asset_description(
     md_path.write_text(content, encoding="utf-8")
 
     description_path = str(md_path.relative_to(workspace).as_posix())
-    rel_path = str(asset_path.relative_to(workspace).as_posix())
-
     await chunk_and_index_document(
         store, description_path, content, stat=ContentStat.from_path(md_path)
     )
-    return AssetEntry(
-        name=safe_name,
-        path=rel_path,
-        description_path=description_path,
-        description=content,
-        size_bytes=size_bytes,
-        media_type=mimetypes.guess_type(safe_name)[0],
+    return _asset_entry(
+        workspace, asset_path, safe_name, size_bytes, content, description_path
     )
 
 
@@ -1486,11 +1514,9 @@ async def update_asset_description(
     immediately after the call returns.
     """
     async with store_lock(store):
-        workspace = store.workspace_dir(settings.data_dir)
-        assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
-        assets_path = workspace / assets_dir
-        safe_name, asset_path = _resolve_asset_path(assets_path, asset_name)
-
+        workspace, safe_name, asset_path = _resolve_asset_for_description(
+            store, safe, asset_name
+        )
         try:
             size_bytes = asset_path.stat().st_size
         except FileNotFoundError as exc:
@@ -1514,11 +1540,9 @@ async def generate_asset_description(
     during ingestion, instead of receiving it from the caller.
     """
     async with store_lock(store):
-        workspace = store.workspace_dir(settings.data_dir)
-        assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
-        assets_path = workspace / assets_dir
-        safe_name, asset_path = _resolve_asset_path(assets_path, asset_name)
-
+        workspace, safe_name, asset_path = _resolve_asset_for_description(
+            store, safe, asset_name
+        )
         try:
             content_bytes = asset_path.read_bytes()
         except FileNotFoundError as exc:
@@ -1530,6 +1554,7 @@ async def generate_asset_description(
             stem_path_from_reference(safe)
         )
         if parent_md.exists():
+            assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
             windows = image_context_windows(parent_md.read_text(encoding="utf-8"))
             contexts.extend(windows.get(asset_ref_for(assets_dir, safe_name), []))
         description = await _build_image_description(
@@ -1538,6 +1563,49 @@ async def generate_asset_description(
         return await _persist_asset_description(
             store, workspace, asset_path, safe_name, description, len(content_bytes)
         )
+
+
+async def delete_asset_description(
+    store: Casebase,
+    safe: str,
+    asset_name: str,
+) -> AssetEntry:
+    """Delete the companion ``.md`` description of an asset.
+
+    The inverse of :func:`update_asset_description`: it removes the
+    description file and its chunk rows while leaving the asset itself in
+    place, and returns the asset entry with its description cleared. The file
+    and SQL removal runs to completion under the lock even on a cancel
+    (:func:`shield_to_completion`) so it cannot strand the file without its
+    rows or vice versa.
+    """
+    async with store_lock(store):
+        workspace, safe_name, asset_path = _resolve_asset_for_description(
+            store, safe, asset_name
+        )
+        try:
+            size_bytes = asset_path.stat().st_size
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Asset file not found") from exc
+
+        md_path = asset_path.with_suffix(DOCUMENT_EXTENSION)
+        description_path = str(md_path.relative_to(workspace).as_posix())
+        await shield_to_completion(
+            _clear_asset_description_locked(store, md_path, description_path)
+        )
+        return _asset_entry(workspace, asset_path, safe_name, size_bytes, "", None)
+
+
+async def _clear_asset_description_locked(
+    store: Casebase, md_path: Path, description_path: str
+) -> None:
+    """Remove a companion ``.md`` description file and its chunk rows.
+
+    Caller holds the store lock. Tolerates a missing file and absent rows so
+    clearing an asset that was only stored (never described) is a no-op.
+    """
+    md_path.unlink(missing_ok=True)
+    await _delete_chunked_document(store, description_path)
 
 
 async def create_directory(store: Casebase, path: str) -> None:

@@ -264,3 +264,48 @@ class TestSyncEntryFromDisk:
         changed = await workspace.sync_entry_from_disk(user_store, "doc.md")
 
         assert changed is False
+
+
+class TestDeleteAssetDescription:
+    async def test_removes_companion_md_and_clears_entry(
+        self,
+        user_store: Casebase,
+        workspace_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        deleted: list[str] = []
+
+        async def fake_delete(store: Casebase, reference: str) -> bool:
+            _ = store
+            deleted.append(reference)
+            return True
+
+        monkeypatch.setattr(workspace, "_delete_chunked_document", fake_delete)
+        assets = workspace_dir / "doc.assets"
+        assets.mkdir()
+        (assets / "img.png").write_bytes(b"binary")
+        (assets / "img.md").write_text("a description", encoding="utf-8")
+
+        entry = await workspace.delete_asset_description(user_store, "doc.md", "img.png")
+
+        assert not (assets / "img.md").exists()
+        assert (assets / "img.png").exists()
+        assert entry.description == ""
+        assert entry.description_path is None
+        assert deleted == ["doc.assets/img.md"]
+
+    async def test_missing_asset_is_404(
+        self,
+        user_store: Casebase,
+        workspace_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def fail(*_args: object, **_kwargs: object) -> bool:
+            raise AssertionError("must not touch the index when the asset is absent")
+
+        monkeypatch.setattr(workspace, "_delete_chunked_document", fail)
+        (workspace_dir / "doc.assets").mkdir()
+
+        with pytest.raises(HTTPException) as exc:
+            await workspace.delete_asset_description(user_store, "doc.md", "img.png")
+        assert exc.value.status_code == 404

@@ -396,6 +396,17 @@ async def generate_asset_description(
     )
 
 
+@router.delete("/documents/assets/{filepath:path}")
+async def delete_asset_description(
+    filepath: str,
+    asset_name: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> AssetEntry:
+    """Delete an asset's companion .md description, keeping the asset itself."""
+    store, safe = resolve_workspace_path(user, filepath, write=True)
+    return await workspace.delete_asset_description(store, safe, asset_name)
+
+
 @router.get("/documents/{filepath:path}")
 async def get_document_content(
     filepath: str,

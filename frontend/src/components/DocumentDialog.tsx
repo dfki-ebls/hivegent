@@ -1,10 +1,19 @@
-import { ExternalLink, FileText, ImageIcon, Pencil, RefreshCw, Sparkles } from "lucide-react";
+import {
+  ExternalLink,
+  FileText,
+  ImageIcon,
+  Pencil,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import { formatFileSize, isWebUrl } from "@/lib/utils";
 import Markdown from "markdown-to-jsx";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   buildAuxLlmConfig,
+  deleteAssetDescription,
   generateAssetDescription,
   getDocumentChunks,
   getDocumentContent,
@@ -159,6 +168,7 @@ export function DocumentDialog({
   const [isEditingAssetDescription, setIsEditingAssetDescription] = useState(false);
   const [isSavingAssetDescription, setIsSavingAssetDescription] = useState(false);
   const [isGeneratingAssetDescription, setIsGeneratingAssetDescription] = useState(false);
+  const [isDeletingAssetDescription, setIsDeletingAssetDescription] = useState(false);
 
   // When true, the next scroll-into-view uses "instant" instead of "smooth".
   const isInitialScrollRef = useRef(true);
@@ -372,6 +382,20 @@ export function DocumentDialog({
     }
   }, [activeAssetIndex, assetsData, filename, overrides, replaceActiveAsset]);
 
+  const handleDeleteAssetDescription = useCallback(async () => {
+    if (activeAssetIndex == null || !assetsData?.assets[activeAssetIndex]) return;
+    const asset = assetsData.assets[activeAssetIndex];
+    setIsDeletingAssetDescription(true);
+    try {
+      const updated = await deleteAssetDescription(filename, asset.name);
+      replaceActiveAsset(updated);
+      setAssetDescriptionDraft("");
+      setIsEditingAssetDescription(false);
+    } finally {
+      setIsDeletingAssetDescription(false);
+    }
+  }, [activeAssetIndex, assetsData, filename, replaceActiveAsset]);
+
   // --- Save handler ---
   const handleSave = async () => {
     if (!onSave || !editFilename.trim()) return;
@@ -488,6 +512,7 @@ export function DocumentDialog({
       // WorkspaceImage resolves src relative to the document's directory
       const assetsBasename = assetsData.assets_dir.split("/").pop() ?? "";
       const relativeSrc = `${assetsBasename}/${asset.name}`;
+      const assetActionPending = isGeneratingAssetDescription || isDeletingAssetDescription;
 
       return (
         <ScrollArea className="flex-1 min-h-0">
@@ -504,7 +529,7 @@ export function DocumentDialog({
                     <Button
                       variant="ghost"
                       size="sm"
-                      disabled={isGeneratingAssetDescription}
+                      disabled={assetActionPending}
                       onClick={handleGenerateAssetDescription}
                     >
                       {isGeneratingAssetDescription ? (
@@ -517,7 +542,7 @@ export function DocumentDialog({
                     <Button
                       variant="ghost"
                       size="sm"
-                      disabled={isGeneratingAssetDescription}
+                      disabled={assetActionPending}
                       onClick={() => {
                         setAssetDescriptionDraft(asset.description);
                         setIsEditingAssetDescription(true);
@@ -526,6 +551,21 @@ export function DocumentDialog({
                       <Pencil className="h-3 w-3 mr-1" />
                       Edit
                     </Button>
+                    {asset.description && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={assetActionPending}
+                        onClick={handleDeleteAssetDescription}
+                      >
+                        {isDeletingAssetDescription ? (
+                          <Spinner className="h-3 w-3 mr-1" />
+                        ) : (
+                          <Trash2 className="h-3 w-3 mr-1" />
+                        )}
+                        Delete
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>

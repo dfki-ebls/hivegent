@@ -767,6 +767,23 @@ export async function generateAssetDescription(
   return AssetEntrySchema.parse(data);
 }
 
+/** Delete an asset's companion .md description, keeping the asset itself. */
+export async function deleteAssetDescription(
+  filename: string,
+  assetName: string,
+): Promise<AssetEntry> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}?asset_name=${encodeURIComponent(assetName)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to delete description" }));
+    throw new Error(error.detail || "Failed to delete description");
+  }
+  const data: unknown = await res.json();
+  return AssetEntrySchema.parse(data);
+}
+
 /** Options for document reconversion. */
 export interface ReconvertDocumentOptions {
   spec?: PipelineSpec;
