@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from ..auth import User
 from ..config import sanitize_document_path, sanitize_group_id, settings
-from ..security import validate_optional_external_url
+from ..security import require_safe_external_url
 from ..store import Casebase, WorkspaceScope
 from ..types import DocumentFilter, LlmConfig, resolve_llm_config
 from .models import PipelineSpec
@@ -41,10 +41,15 @@ async def prepare_llm_config(
     """
     if default_model is None:
         default_model = settings.llm.aux_model
-    try:
-        await validate_optional_external_url(llm.base_url, "LLM base_url")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if llm.base_url:
+        try:
+            await require_safe_external_url(
+                llm.base_url,
+                "LLM base_url",
+                policy=settings.security.user_policy(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     return resolve_llm_config(llm, default_model=default_model)
 
 

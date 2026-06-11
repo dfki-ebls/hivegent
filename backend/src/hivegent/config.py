@@ -15,6 +15,7 @@ from pydantic_settings import (
 )
 
 from .converters.base import DOCUMENT_EXTENSION
+from .security import UrlPolicy
 
 CONFIG_FILE_ENV_VAR = "HIVEGENT_CONFIG_FILE"
 DEFAULT_CONFIG_FILE = Path("config.toml")
@@ -39,6 +40,7 @@ __all__ = [
     "RerankSettings",
     "SecuritySettings",
     "Settings",
+    "UrlPolicySettings",
     "content_digest",
     "content_hash",
     "sanitize_document_path",
@@ -351,6 +353,27 @@ class AuthSettings(BaseModel):
     jwks_timeout_seconds: float = 10.0
 
 
+class UrlPolicySettings(BaseModel):
+    """Host allow/deny rules for one class of outbound URLs.
+
+    An ``example.com`` entry matches ``example.com`` and any of its
+    subdomains.  The deny list always wins; a non-empty allow list
+    refuses every host not on it, while an empty allow list permits any
+    host the SSRF filter accepts.
+    """
+
+    allow_hosts: list[str] = []
+    deny_hosts: list[str] = []
+
+    def to_policy(self, *, allow_private: bool) -> UrlPolicy:
+        """Resolve into the runtime policy enforced by the security module."""
+        return UrlPolicy(
+            allow_private=allow_private,
+            allow_hosts=tuple(self.allow_hosts),
+            deny_hosts=tuple(self.deny_hosts),
+        )
+
+
 class SecuritySettings(BaseModel):
     """SSRF and transport-safety settings.
 
@@ -360,21 +383,16 @@ class SecuritySettings(BaseModel):
     users are allowed to reach the same network. Server-configured URLs
     are trusted operator input and do not need this setting.
 
-    ``url_allow_hosts`` and ``url_deny_hosts`` form a host policy applied
-    to every user-supplied external URL (user LLM ``base_url``, MCP
-    server URLs).  An entry matches a hostname exactly; a
-    ``*.example.com`` entry additionally matches ``example.com`` and any
-    of its subdomains.  The deny list always wins; a non-empty allow
-    list refuses every host not on it, while an empty allow list permits
-    any public host.  Operator-configured URLs (the trusted HTTP client)
-    bypass the policy.
-
-    ``web_allow_hosts`` and ``web_deny_hosts`` scope what the model may
-    browse with the web tools (``web_search`` results, ``web_fetch``
-    targets and redirect hops), on top of the global ``url_deny_hosts``;
-    the global allow list does not apply to them.  The default allow
-    list is Wikipedia (every language edition via the wildcard), exactly
-    the hosts the default ``wikipedia`` search engine can return — a
+    ``user_urls`` is the host policy applied to user-supplied endpoint
+    URLs (user LLM ``base_url``, MCP server URLs); operator-configured
+    URLs (the trusted HTTP client) bypass it.  ``web_urls``
+    independently scopes what the model may browse with the web tools
+    (``web_search`` results, ``web_fetch`` targets and redirect hops).
+    The two policies do not inherit from each other, so a host barred
+    from both goes on both deny lists.  The default web allow list is
+    Wikipedia (every language edition, since an entry covers all of its
+    subdomains), exactly the hosts the default ``wikipedia`` search
+    engine can return — a
     curated, ad-free corpus that is safe to expose out of the box.  When
     both web lists are empty, the web tools are not registered at all:
     exposing the open web to the model needs an explicit operator
@@ -387,10 +405,16 @@ class SecuritySettings(BaseModel):
 
     allow_private_urls: bool = False
     expose_api_docs: bool = False
-    url_allow_hosts: list[str] = []
-    url_deny_hosts: list[str] = []
-    web_allow_hosts: list[str] = ["*.wikipedia.org"]
-    web_deny_hosts: list[str] = []
+    user_urls: UrlPolicySettings = UrlPolicySettings()
+    web_urls: UrlPolicySettings = UrlPolicySettings(allow_hosts=["wikipedia.org"])
+
+    def user_policy(self) -> UrlPolicy:
+        """Resolve the policy for user-supplied endpoint URLs."""
+        return self.user_urls.to_policy(allow_private=self.allow_private_urls)
+
+    def web_policy(self) -> UrlPolicy:
+        """Resolve the policy for the model's web tools."""
+        return self.web_urls.to_policy(allow_private=self.allow_private_urls)
 
 
 class ConversionSettings(BaseModel):
@@ -449,10 +473,10 @@ class NetworkSettings(BaseModel):
     search engine(s).  It defaults to ``wikipedia``, which queries the
     official Wikipedia API directly — no scraping, so no bot detection
     or rate limits (DuckDuckGo's starve unattended deployments) — and
-    only ever returns ``*.wikipedia.org`` links, matching the default
-    ``web_allow_hosts``.  General engines (``bing``, ``brave``, ...) are
-    available individually or comma-separated, and ``auto`` rotates
-    across all of them; widen ``web_allow_hosts`` to match when
+    only ever returns ``wikipedia.org`` links, matching the default
+    ``web_urls`` allow list.  General engines (``bing``, ``brave``, ...)
+    are available individually or comma-separated, and ``auto`` rotates
+    across all of them; widen the ``web_urls`` allow list to match when
     switching.  ``websearch_region`` is the ddgs region code (e.g.
     ``de-de``); its language half selects the Wikipedia edition.
     ``llm_request_timeout_seconds`` caps individual non-streaming LLM

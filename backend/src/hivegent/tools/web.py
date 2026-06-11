@@ -17,7 +17,6 @@ from ..security import (
     UrlPolicy,
     create_safe_async_client,
     is_safe_external_url,
-    validate_external_url_async,
 )
 from .base import AsyncTool, SyncTool, ToolOutput, ToolRetry
 from .formatting import BLOCK_SEP, annotate_lines
@@ -173,8 +172,9 @@ class WebFetch(AsyncTool[WebPage]):
     """Fetch a web page and return its readable content.
 
     ``max_response_bytes`` caps how many raw bytes are downloaded per
-    page and ``max_chars`` caps the extracted text.  Every requested URL
-    and redirect hop is validated against ``policy``.
+    page and ``max_chars`` caps the extracted text.  The safe transport
+    validates the requested URL and every redirect hop against
+    ``policy``.
     """
 
     timeout_seconds: float = 10.0
@@ -189,10 +189,10 @@ class WebFetch(AsyncTool[WebPage]):
 
         HTML is reduced to its markdown text content; plain-text and JSON
         responses pass through unchanged.  Each content line is numbered
-        so it can be cited like a document line.  Follows redirects
-        manually, re-validating each hop against the SSRF filter and the
-        URL host policy so a public URL cannot redirect somewhere
-        disallowed.
+        so it can be cited like a document line.  Redirects are followed
+        by the client; the safe transport re-validates every hop against
+        the SSRF filter and the URL host policy so a public URL cannot
+        redirect somewhere disallowed.
         """
         try:
             return await self._fetch(url)
@@ -200,34 +200,30 @@ class WebFetch(AsyncTool[WebPage]):
             raise
         except httpx.TimeoutException as exc:
             raise ToolRetry("request timed out.") from exc
+        except httpx.TooManyRedirects as exc:
+            raise ToolRetry("too many redirects.") from exc
         except httpx.HTTPStatusError as exc:
             raise ToolRetry(f"HTTP {exc.response.status_code}.") from exc
-        except UnsafeUrlError as exc:
+        except (UnsafeUrlError, httpx.UnsupportedProtocol, httpx.ConnectError) as exc:
             raise ToolRetry(str(exc)) from exc
         except Exception as exc:
             logger.exception("Web fetch failed for URL %r", url)
             raise ToolRetry("failed to fetch URL.") from exc
 
     async def _fetch(self, url: str) -> ToolOutput[WebPage]:
-        current = url
         async with create_safe_async_client(
             policy=self.policy,
             timeout=self.timeout_seconds,
-            follow_redirects=False,
+            follow_redirects=True,
+            max_redirects=self.max_redirects,
         ) as client:
-            for _ in range(self.max_redirects):
-                await validate_external_url_async(current, policy=self.policy)
-                async with client.stream("GET", current) as response:
-                    if response.is_redirect and response.next_request is not None:
-                        current = str(response.next_request.url)
-                        continue
-                    response.raise_for_status()
-                    mime = _mime_type(response.headers.get("content-type", ""))
-                    if not _is_textual(mime) and not _is_html(mime):
-                        raise ToolRetry(f"unsupported content type '{mime}'.")
-                    body, truncated = await self._read_capped(response)
-                return self._finalize(current, response, mime, body, truncated)
-            raise ToolRetry("too many redirects.")
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                mime = _mime_type(response.headers.get("content-type", ""))
+                if not _is_textual(mime) and not _is_html(mime):
+                    raise ToolRetry(f"unsupported content type '{mime}'.")
+                body, truncated = await self._read_capped(response)
+            return self._finalize(str(response.url), response, mime, body, truncated)
 
     async def _read_capped(self, response: httpx.Response) -> tuple[bytes, bool]:
         """Stream the response body up to the configured byte cap."""

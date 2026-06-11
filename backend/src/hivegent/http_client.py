@@ -50,11 +50,15 @@ class _SharedHttpClients:
             connect=settings.network.connect_timeout_seconds,
         )
         headers = {"User-Agent": get_user_agent()}
-        # The user client omits the policy so it resolves the settings-derived
-        # one (``allow_private_urls`` toggle plus host allow/deny lists); the
+        # The user client enforces the settings-derived user URL policy
+        # (``allow_private_urls`` toggle plus host allow/deny lists); the
         # trusted client is unrestricted for operator-configured endpoints.
         self._clients = {
-            "user": create_safe_async_client(timeout=timeout, headers=headers),
+            "user": create_safe_async_client(
+                policy=settings.security.user_policy(),
+                timeout=timeout,
+                headers=headers,
+            ),
             "trusted": create_safe_async_client(
                 policy=TRUSTED_URL_POLICY, timeout=timeout, headers=headers
             ),

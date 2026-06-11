@@ -7,8 +7,8 @@ import pytest
 from ddgs.exceptions import DDGSException
 
 import hivegent.tools.web as web_module
-from hivegent.config import settings
-from hivegent.security import UrlPolicy, is_safe_external_url, web_url_policy
+from hivegent.config import SecuritySettings, UrlPolicySettings
+from hivegent.security import SafeAsyncHTTPTransport, UrlPolicy, is_safe_external_url
 from hivegent.tools.base import ToolRetry
 from hivegent.tools.web import WebFetch, WebSearch
 
@@ -16,8 +16,8 @@ from hivegent.tools.web import WebFetch, WebSearch
 class TestUrlPolicy:
     """Host allow/deny semantics."""
 
-    def test_wildcard_matches_domain_and_subdomains(self) -> None:
-        policy = UrlPolicy(allow_hosts=("*.example.com",))
+    def test_entry_matches_domain_and_subdomains(self) -> None:
+        policy = UrlPolicy(allow_hosts=("example.com",))
         policy.check_host("example.com")
         policy.check_host("docs.example.com")
         with pytest.raises(ValueError, match="allowlist"):
@@ -27,28 +27,28 @@ class TestUrlPolicy:
 
     def test_deny_list_wins_over_allow_list(self) -> None:
         policy = UrlPolicy(
-            allow_hosts=("*.example.com",), deny_hosts=("internal.example.com",)
+            allow_hosts=("example.com",), deny_hosts=("internal.example.com",)
         )
         policy.check_host("docs.example.com")
         with pytest.raises(ValueError, match="blocked"):
             policy.check_host("internal.example.com")
 
-    def test_web_policy_scopes_browsing_and_inherits_global_denies(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(settings.security, "web_allow_hosts", ["*.wikipedia.org"])
-        monkeypatch.setattr(settings.security, "web_deny_hosts", ["test.wikipedia.org"])
-        monkeypatch.setattr(settings.security, "url_allow_hosts", ["llm.corp.example"])
-        monkeypatch.setattr(settings.security, "url_deny_hosts", ["evil.com"])
-        policy = web_url_policy()
-        policy.check_host("de.wikipedia.org")
+    def test_settings_policies_are_independent(self) -> None:
+        sec = SecuritySettings(
+            web_urls=UrlPolicySettings(
+                allow_hosts=["wikipedia.org"], deny_hosts=["test.wikipedia.org"]
+            ),
+            user_urls=UrlPolicySettings(deny_hosts=["evil.com"]),
+        )
+        web = sec.web_policy()
+        web.check_host("de.wikipedia.org")
         with pytest.raises(ValueError, match="blocked"):
-            policy.check_host("test.wikipedia.org")
+            web.check_host("test.wikipedia.org")
+        # The user URL policy governs LLM/MCP URLs, not browsing.
+        user = sec.user_policy()
+        user.check_host("llm.corp.example")
         with pytest.raises(ValueError, match="blocked"):
-            policy.check_host("evil.com")
-        # The global allow list governs LLM/MCP URLs, not browsing.
-        with pytest.raises(ValueError, match="allowlist"):
-            policy.check_host("llm.corp.example")
+            user.check_host("evil.com")
 
     def test_is_safe_external_url_rejects_unsafe_shapes(self) -> None:
         policy = UrlPolicy()
@@ -118,26 +118,28 @@ def _fetch_tool(
     monkeypatch: pytest.MonkeyPatch,
     handler: Any,
     **kwargs: Any,
-) -> tuple[WebFetch, list[str]]:
-    """Build a WebFetch backed by a mock transport, recording validated hops."""
-    validated: list[str] = []
+) -> WebFetch:
+    """Build a WebFetch whose safe client is backed by a mock transport.
 
-    def fake_client(**client_kwargs: Any) -> httpx.AsyncClient:
-        client_kwargs.pop("policy", None)
-        return httpx.AsyncClient(transport=httpx.MockTransport(handler), **client_kwargs)
+    The real :class:`SafeAsyncHTTPTransport` wraps the mock, so the URL
+    shape and host-policy checks run on every hop exactly as in
+    production; only the network layer is substituted.
+    """
 
-    async def fake_validate(url: str, **_: Any) -> None:
-        validated.append(url)
+    def fake_client(*, policy: UrlPolicy, **client_kwargs: Any) -> httpx.AsyncClient:
+        transport = SafeAsyncHTTPTransport(
+            policy=policy, inner=httpx.MockTransport(handler)
+        )
+        return httpx.AsyncClient(transport=transport, **client_kwargs)
 
     monkeypatch.setattr(web_module, "create_safe_async_client", fake_client)
-    monkeypatch.setattr(web_module, "validate_external_url_async", fake_validate)
-    return WebFetch(**kwargs), validated
+    return WebFetch(**kwargs)
 
 
 class TestWebFetch:
     """Redirect validation, HTML extraction, caps, and content-type gate."""
 
-    async def test_html_is_converted_and_hops_validated(
+    async def test_html_is_converted_and_redirects_followed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -147,16 +149,31 @@ class TestWebFetch:
                 200, content=HTML, headers={"content-type": "text/html; charset=utf-8"}
             )
 
-        tool, validated = _fetch_tool(monkeypatch, handler)
+        tool = _fetch_tool(monkeypatch, handler)
         out = await tool("https://example.com/start")
 
-        assert validated == ["https://example.com/start", "https://example.com/final"]
         assert out.data.url == "https://example.com/final"
         assert out.data.title == "Test Page"
         assert "# Hello" in out.data.content
         assert "tracking" not in out.data.content
         # Formatted output numbers every content line for citations.
         assert out.text.startswith("Test Page — https://example.com/final\n1: ")
+
+    async def test_redirect_to_denied_host_is_blocked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "example.com":
+                return httpx.Response(302, headers={"location": "https://evil.com/x"})
+            return httpx.Response(
+                200, content=b"hi", headers={"content-type": "text/plain"}
+            )
+
+        tool = _fetch_tool(
+            monkeypatch, handler, policy=UrlPolicy(deny_hosts=("evil.com",))
+        )
+        with pytest.raises(ToolRetry, match="blocked"):
+            await tool("https://example.com/start")
 
     async def test_unsupported_content_type_raises(
         self, monkeypatch: pytest.MonkeyPatch
@@ -166,7 +183,7 @@ class TestWebFetch:
                 200, content=b"\x89PNG", headers={"content-type": "image/png"}
             )
 
-        tool, _ = _fetch_tool(monkeypatch, handler)
+        tool = _fetch_tool(monkeypatch, handler)
         with pytest.raises(ToolRetry, match="unsupported content type"):
             await tool("https://example.com/img")
 
@@ -178,7 +195,7 @@ class TestWebFetch:
                 200, content=b"a" * 100, headers={"content-type": "text/plain"}
             )
 
-        tool, _ = _fetch_tool(monkeypatch, handler, max_chars=10)
+        tool = _fetch_tool(monkeypatch, handler, max_chars=10)
         out = await tool("https://example.com/big")
         assert out.data.content == "a" * 10
         assert out.data.truncated
@@ -190,6 +207,6 @@ class TestWebFetch:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(302, headers={"location": "/loop"})
 
-        tool, _ = _fetch_tool(monkeypatch, handler, max_redirects=3)
+        tool = _fetch_tool(monkeypatch, handler, max_redirects=3)
         with pytest.raises(ToolRetry, match="too many redirects"):
             await tool("https://example.com/loop")
