@@ -5,7 +5,7 @@ import {
   CITATION_COMPONENTS,
   streamdownPlugins,
 } from "@/components/chat/markdown/plugins";
-import { normalizeMathDelimiters } from "@/lib/normalize-math";
+import { normalizeMath } from "@/lib/normalize-math";
 import { normalizeVoidTags } from "@/lib/normalize-void-tags";
 
 interface MarkdownTextProps {
@@ -14,7 +14,7 @@ interface MarkdownTextProps {
 
 export function MarkdownText({ children }: MarkdownTextProps) {
   const normalized = useMemo(
-    () => normalizeVoidTags(normalizeMathDelimiters(children)),
+    () => normalizeVoidTags(normalizeMath(children)),
     [children],
   );
 
