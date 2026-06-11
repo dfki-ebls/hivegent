@@ -64,13 +64,14 @@ export function MoveDocumentDialog({
     placeholder = "projects/reports";
   } else if (isDirectory) {
     title = "Move Directory";
-    description = "Enter the new path, or an existing directory to move into.";
+    description =
+      "Enter the new path, or an existing directory to move into. If the destination is not an existing directory, the directory is renamed to it.";
     inputLabel = "New path";
     placeholder = "projects/reports";
   } else {
     title = "Move Document";
     description =
-      "Enter the new path including the filename, or an existing directory to move into.";
+      "Enter the new path including the filename, or an existing directory to move into. If the destination is not an existing directory, the file is renamed to it.";
     inputLabel = "New path";
     placeholder = "projects/report.md";
   }
