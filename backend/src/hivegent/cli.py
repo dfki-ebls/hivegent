@@ -391,6 +391,7 @@ def serve(
         port=port,
         reload=reload,
         reload_dirs=str(Path(__file__).parent),
+        timeout_keep_alive=300,
     )
 
 

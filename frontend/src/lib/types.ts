@@ -239,12 +239,6 @@ export const DocumentInfoSchema = z.object({
 });
 export type DocumentInfo = z.infer<typeof DocumentInfoSchema>;
 
-export const DocumentListResponseSchema = z.object({
-  documents: z.array(DocumentInfoSchema),
-  total_count: z.number(),
-});
-export type DocumentListResponse = z.infer<typeof DocumentListResponseSchema>;
-
 export const DocumentStatsSchema = z.object({
   line_count: z.number(),
   word_count: z.number(),

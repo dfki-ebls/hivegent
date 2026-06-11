@@ -22,7 +22,7 @@ vi.mock("@/lib/feature-flags", () => ({
   },
 }));
 
-import { buildLlmConfig, getSettings, requiresConversion } from "@/lib/api";
+import { buildLlmConfig, getDirectories, getSettings, requiresConversion } from "@/lib/api";
 
 describe("requiresConversion", () => {
   it("returns false for .md files", () => {
@@ -98,5 +98,32 @@ describe("getSettings", () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 500 }));
 
     await expect(getSettings()).rejects.toThrow("Failed to fetch settings");
+  });
+});
+
+describe("getDirectories", () => {
+  const tree = JSON.stringify({
+    root: { type: "directory", name: "", path: "", children: [] },
+    total_files: 0,
+    total_directories: 0,
+  });
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  it("fetches and parses the tree", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(tree, { status: 200 }));
+
+    const result = await getDirectories("~");
+    expect(result.root.type).toBe("directory");
+  });
+
+  it("includes the HTTP status in the error message", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 502 }));
+
+    await expect(getDirectories("~")).rejects.toThrow(
+      "Failed to fetch directory tree (HTTP 502)",
+    );
   });
 });

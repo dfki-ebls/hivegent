@@ -50,8 +50,6 @@ import {
   DirectoryTreeResponseSchema,
   type MoveDirectoryResponse,
   MoveDirectoryResponseSchema,
-  type DocumentInfo,
-  DocumentListResponseSchema,
   type GenerateTitleResponse,
   GenerateTitleResponseSchema,
   type LlmConfig,
@@ -90,6 +88,18 @@ async function authFetch(url: string, options: RequestInit = {}): Promise<Respon
   }
 
   return fetch(url, { ...options, headers });
+}
+
+/**
+ * GET a JSON endpoint, including the HTTP status in the thrown error so a
+ * failure report pinpoints the layer (backend status vs proxy 502/503).
+ */
+async function getJson(url: string, errorMsg: string): Promise<unknown> {
+  const res = await authFetch(url);
+  if (!res.ok) {
+    throw new Error(`${errorMsg} (HTTP ${res.status})`);
+  }
+  return (await res.json()) as unknown;
 }
 
 /**
@@ -164,11 +174,7 @@ export async function checkHealth(timeoutMs = 3000): Promise<boolean> {
 
 /** Fetch server-side LLM settings. */
 export async function getSettings(): Promise<BackendSettings> {
-  const res = await authFetch(`${API_BASE_URL}/api/settings`);
-  if (!res.ok) {
-    throw new Error("Failed to fetch settings");
-  }
-  const data: unknown = await res.json();
+  const data = await getJson(`${API_BASE_URL}/api/settings`, "Failed to fetch settings");
   return BackendSettingsSchema.parse(data);
 }
 
@@ -189,21 +195,14 @@ export async function transcribeAudio(audio: Blob): Promise<string> {
 
 /** Fetch available agent tools from the backend. */
 export async function listTools(): Promise<ToolInfo[]> {
-  const res = await authFetch(`${API_BASE_URL}/api/tools`);
-  if (!res.ok) {
-    throw new Error("Failed to fetch tools");
-  }
-  const data: unknown = await res.json();
+  const data = await getJson(`${API_BASE_URL}/api/tools`, "Failed to fetch tools");
   return z.array(ToolInfoSchema).parse(data);
 }
 
 /** Fetch every agent tool with its parameter JSON Schema (admin only). */
 export async function listToolSchemas(): Promise<ToolSchema[]> {
-  const res = await authFetch(`${API_BASE_URL}/api/debug/tools`);
-  if (!res.ok) {
-    throw new Error("Failed to fetch tool schemas");
-  }
-  return z.array(ToolSchemaSchema).parse(await res.json());
+  const data = await getJson(`${API_BASE_URL}/api/debug/tools`, "Failed to fetch tool schemas");
+  return z.array(ToolSchemaSchema).parse(data);
 }
 
 /** Invoke an agent tool with arbitrary arguments (admin only). */
@@ -341,16 +340,6 @@ export async function getConversationMessages(conversationId: string): Promise<U
 // ============================================================
 // User document API functions (authenticated user's personal documents)
 // ============================================================
-
-/** List documents in a workspace; `scope` is `~` (personal) or `@<group>`. */
-export async function listDocuments(scope: string): Promise<DocumentInfo[]> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(scope)}`);
-  if (!res.ok) {
-    throw new Error("Failed to list documents");
-  }
-  const data: unknown = await res.json();
-  return DocumentListResponseSchema.parse(data).documents;
-}
 
 /** Options for document upload. */
 export interface UploadDocumentOptions {
@@ -602,11 +591,7 @@ export async function replaceOriginal(
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {
-  const res = await authFetch(`${API_BASE_URL}/api/conversations`);
-  if (!res.ok) {
-    throw new Error("Failed to list conversations");
-  }
-  const data: unknown = await res.json();
+  const data = await getJson(`${API_BASE_URL}/api/conversations`, "Failed to list conversations");
   return ConversationListResponseSchema.parse(data).conversations;
 }
 
@@ -702,26 +687,20 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 // Conversion pipeline API functions
 
 export async function listConversionPipelines(): Promise<ConversionPipelineInfo[]> {
-  const res = await authFetch(`${API_BASE_URL}/api/pipelines/conversion`);
-
-  if (!res.ok) {
-    throw new Error("Failed to get conversion pipelines");
-  }
-
-  const data: unknown = await res.json();
+  const data = await getJson(
+    `${API_BASE_URL}/api/pipelines/conversion`,
+    "Failed to get conversion pipelines",
+  );
   return z.array(ConversionPipelineInfoSchema).parse(data);
 }
 
 // Chunking pipeline API functions
 
 export async function listChunkingPipelines(): Promise<ChunkingPipelineInfo[]> {
-  const res = await authFetch(`${API_BASE_URL}/api/pipelines/chunking`);
-
-  if (!res.ok) {
-    throw new Error("Failed to get chunking pipelines");
-  }
-
-  const data: unknown = await res.json();
+  const data = await getJson(
+    `${API_BASE_URL}/api/pipelines/chunking`,
+    "Failed to get chunking pipelines",
+  );
   return z.array(ChunkingPipelineInfoSchema).parse(data);
 }
 
@@ -1032,11 +1011,10 @@ export async function bulkDeleteStream(
 
 /** Fetch a workspace directory tree; `scope` is `~` (personal) or `@<group>`. */
 export async function getDirectories(scope: string): Promise<DirectoryTreeResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/directories/${encodeFilePath(scope)}`);
-  if (!res.ok) {
-    throw new Error("Failed to fetch directory tree");
-  }
-  const data: unknown = await res.json();
+  const data = await getJson(
+    `${API_BASE_URL}/api/directories/${encodeFilePath(scope)}`,
+    "Failed to fetch directory tree",
+  );
   return DirectoryTreeResponseSchema.parse(data);
 }
 
@@ -1203,16 +1181,14 @@ export function adminFactoryReset(): Promise<AdminFactoryResetResponse> {
 
 /** List every user known to the local database (footprint-bearing only). */
 export async function adminListUsers(): Promise<AdminUserInfo[]> {
-  const res = await authFetch(`${API_BASE_URL}/api/admin/users`);
-  if (!res.ok) throw new Error("Failed to list users");
-  return AdminListUsersResponseSchema.parse(await res.json()).users;
+  const data = await getJson(`${API_BASE_URL}/api/admin/users`, "Failed to list users");
+  return AdminListUsersResponseSchema.parse(data).users;
 }
 
 /** List every group known to the local database. */
 export async function adminListGroups(): Promise<AdminGroupInfo[]> {
-  const res = await authFetch(`${API_BASE_URL}/api/admin/groups`);
-  if (!res.ok) throw new Error("Failed to list groups");
-  return AdminListGroupsResponseSchema.parse(await res.json()).groups;
+  const data = await getJson(`${API_BASE_URL}/api/admin/groups`, "Failed to list groups");
+  return AdminListGroupsResponseSchema.parse(data).groups;
 }
 
 /** Wipe all data owned by a single user (workspace + SQL + index). */

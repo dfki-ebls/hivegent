@@ -3,7 +3,7 @@
 Every workspace reference lives in the URL path as a canonical
 workspace path: ``~/<local>`` for the caller's personal store, or
 ``@<group>/<local>`` for a group the caller can access. Scope-level
-endpoints (list, collection upload, delete-all) take the bare scope
+endpoints (collection upload, delete-all) take the bare scope
 segment (``~`` or ``@<group>``); item endpoints take the full path.
 :func:`resolve_workspace_path` maps either to its store and enforces
 group membership (reads) or write access.
@@ -33,7 +33,6 @@ from ...types import (
     CollectionProgressEvent,
     CollectionUploadResponse,
     DeleteDocumentResponse,
-    DocumentListResponse,
     GenerateAssetDescriptionRequest,
     LlmConfig,
     MoveDocumentRequest,
@@ -63,7 +62,6 @@ from ..operations import (
     find_original,
     get_document_response,
     list_assets,
-    list_documents_for_store,
     prepare_collection_upload,
     process_bulk_operation,
     read_collection_zip,
@@ -77,16 +75,6 @@ __all__ = ["router"]
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-@router.get("/documents/{scope}")
-async def list_documents(
-    scope: str,
-    user: Annotated[User, Depends(get_current_user)],
-) -> DocumentListResponse:
-    """List documents in a workspace (``~`` for personal, ``@<group>``)."""
-    store, _ = resolve_workspace_path(user, scope)
-    return await list_documents_for_store(store)
 
 
 @router.get("/documents/original/{filepath:path}")

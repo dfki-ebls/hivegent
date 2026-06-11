@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from typing import Annotated, Any
 
 import httpx
@@ -85,43 +85,80 @@ def fetch_oidc_configuration(
     )
 
 
-class JWKSFetcher:
-    """Fetch and cache JWKS from OIDC provider via discovery."""
+class _SingleFlightCache[T]:
+    """TTL cache whose refreshes are single-flighted with stale fallback.
 
-    def __init__(self) -> None:
-        self._cache: KeySet | None = None
-        self._cache_time: float = 0
-        self._discovery_cache: OIDCConfiguration | None = None
-        self._discovery_cache_time: float = 0
+    Concurrent cache misses share one refresh, and a failed refresh
+    serves the previously cached value instead of failing the caller —
+    re-stamping the TTL so the next retry is a full interval away.
+    """
 
-    def _cached_value[T](
-        self, cached: T | None, cached_time: float, *, force_refresh: bool
-    ) -> T | None:
-        if cached is None:
+    def __init__(self, name: str) -> None:
+        self._name = name
+        self._value: T | None = None
+        self._time: float = 0
+        self._lock = asyncio.Lock()
+
+    def _fresh(self, *, force_refresh: bool) -> T | None:
+        if self._value is None:
             return None
-        age = time.time() - cached_time
         ttl = (
             settings.auth.jwks_force_refresh_min_interval_seconds
             if force_refresh
             else settings.auth.jwks_cache_ttl
         )
-        return cached if age < ttl else None
+        return self._value if time.time() - self._time < ttl else None
 
-    async def _get_discovery(self, force_refresh: bool = False) -> OIDCConfiguration:
-        """Fetch the OIDC discovery document.
+    async def get(
+        self, refresh: Callable[[], Awaitable[T]], *, force_refresh: bool
+    ) -> T:
+        """Return the cached value, refreshing it through ``refresh`` on expiry.
+
+        Raises:
+            Exception: Whatever ``refresh`` raised, only when no cached
+                value is available to fall back to.
+        """
+        if (fresh := self._fresh(force_refresh=force_refresh)) is not None:
+            return fresh
+        async with self._lock:
+            if (fresh := self._fresh(force_refresh=force_refresh)) is not None:
+                return fresh
+            try:
+                value = await refresh()
+            except Exception as e:
+                if self._value is None:
+                    raise
+                logger.warning(
+                    "%s refresh failed, serving cached copy: %s", self._name, e
+                )
+                value = self._value
+            self._value = value
+            self._time = time.time()
+            return value
+
+
+class JWKSFetcher:
+    """Fetch and cache JWKS from OIDC provider via discovery.
+
+    The discovery document and the key set each live in a
+    :class:`_SingleFlightCache`: concurrent cache misses share one
+    request, and a transient IdP hiccup serves the cached value instead
+    of failing authenticated requests.  Key-rotation safety is preserved
+    by the kid-miss force-refresh path in :func:`validate_jwt_token`.
+    """
+
+    def __init__(self) -> None:
+        self._discovery = _SingleFlightCache[OIDCConfiguration]("OIDC discovery")
+        self._jwks = _SingleFlightCache[KeySet]("JWKS")
+
+    @staticmethod
+    async def _fetch_discovery() -> OIDCConfiguration:
+        """Fetch and validate the OIDC discovery document.
 
         Raises:
             HTTPException: 503 on transport failure, 500 on malformed payload
                 or missing configuration.
         """
-        cached = self._cached_value(
-            self._discovery_cache,
-            self._discovery_cache_time,
-            force_refresh=force_refresh,
-        )
-        if cached is not None:
-            return cached
-
         try:
             config = await asyncio.to_thread(
                 fetch_oidc_configuration, settings.auth.issuer
@@ -136,16 +173,24 @@ class JWKSFetcher:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Invalid OIDC discovery document: {e}",
             ) from e
-
         if not config.jwks_uri:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="OIDC discovery document missing jwks_uri",
             )
-
-        self._discovery_cache = config
-        self._discovery_cache_time = time.time()
         return config
+
+    async def _get_discovery(self, force_refresh: bool = False) -> OIDCConfiguration:
+        """Fetch the OIDC discovery document.
+
+        Raises:
+            HTTPException: 503 on transport failure, 500 on malformed payload
+                or missing configuration — only when no cached document is
+                available to fall back to.
+        """
+        return await self._discovery.get(
+            self._fetch_discovery, force_refresh=force_refresh
+        )
 
     async def get_allowed_algorithms(self, force_refresh: bool = False) -> list[str]:
         """Return the list of JWT signing algorithms accepted for tokens.
@@ -164,24 +209,17 @@ class JWKSFetcher:
             return list(advertised)
         return list(DEFAULT_JWT_ALGORITHMS)
 
-    async def get_jwks(self, force_refresh: bool = False) -> KeySet:
-        """Fetch JWKS from the OIDC provider, resolving the URI via discovery.
+    async def _fetch_jwks(self, force_refresh: bool) -> KeySet:
+        """Fetch the key set from the ``jwks_uri`` advertised by discovery.
 
         Raises:
-            HTTPException: If JWKS cannot be fetched.
+            HTTPException: 503 on transport failure, 500 on a malformed
+                key set, or whatever discovery itself raised.
         """
-        cached = self._cached_value(
-            self._cache, self._cache_time, force_refresh=force_refresh
-        )
-        if cached is not None:
-            return cached
-
         config = await self._get_discovery(force_refresh=force_refresh)
-        jwks_uri = str(config.jwks_uri)
-
         try:
             response = await get_http_client(allow_private=True).get(
-                jwks_uri, timeout=settings.auth.jwks_timeout_seconds
+                str(config.jwks_uri), timeout=settings.auth.jwks_timeout_seconds
             )
             response.raise_for_status()
             jwks_data = response.json()
@@ -190,16 +228,24 @@ class JWKSFetcher:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Failed to fetch JWKS: {e}",
             ) from e
-
         try:
-            self._cache = KeySet.import_key_set(jwks_data)
-            self._cache_time = time.time()
-            return self._cache
+            return KeySet.import_key_set(jwks_data)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Invalid JWKS format: {e}",
             ) from e
+
+    async def get_jwks(self, force_refresh: bool = False) -> KeySet:
+        """Fetch JWKS from the OIDC provider, resolving the URI via discovery.
+
+        Raises:
+            HTTPException: If JWKS cannot be fetched and no cached key set
+                is available to fall back to.
+        """
+        return await self._jwks.get(
+            lambda: self._fetch_jwks(force_refresh), force_refresh=force_refresh
+        )
 
 
 _jwks_fetcher = JWKSFetcher()

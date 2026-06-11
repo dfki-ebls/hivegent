@@ -1,7 +1,7 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
-import type { DirectoryEntry } from "./types";
+import type { DirectoryEntry, DocumentInfo } from "./types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -34,16 +34,39 @@ export function commonParentDir(paths: string[]): string {
   );
 }
 
-/** Collect all file paths under a directory entry (recursive). */
-export function collectFilePaths(entry: DirectoryEntry, out: string[] = []): string[] {
+/** Collect all file entries under a directory entry (recursive). */
+export function collectFileEntries(
+  entry: DirectoryEntry,
+  out: DirectoryEntry[] = [],
+): DirectoryEntry[] {
   if (entry.type === "file") {
-    out.push(entry.path);
+    out.push(entry);
   } else {
     for (const child of entry.children ?? []) {
-      collectFilePaths(child, out);
+      collectFileEntries(child, out);
     }
   }
   return out;
+}
+
+/** Collect all file paths under a directory entry (recursive). */
+export function collectFilePaths(entry: DirectoryEntry): string[] {
+  return collectFileEntries(entry).map((file) => file.path);
+}
+
+/** Derive the flat document listing from a directory tree's file entries. */
+export function treeDocuments(root: DirectoryEntry): DocumentInfo[] {
+  return collectFileEntries(root).map((file) => ({
+    filename: file.path,
+    display_name: file.name,
+    size_bytes: file.size_bytes ?? 0,
+    modified_at: file.modified_at ?? "",
+    chunk_count: file.chunk_count,
+    has_original: file.has_original ?? false,
+    original_path: file.original_path,
+    assets_dir: file.assets_dir,
+    kind: "document" as const,
+  }));
 }
 
 /** Convert a snake_case string to Title Case. */

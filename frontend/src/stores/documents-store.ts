@@ -13,7 +13,6 @@ import {
   deleteDirectory,
   deleteDocument,
   getDirectories,
-  listDocuments,
   moveDirectory,
   moveDocument,
   rechunkDocumentStream,
@@ -30,7 +29,7 @@ import type {
   PipelineSpec,
   UploadProgress,
 } from "../lib/types";
-import { isAbortError } from "../lib/utils";
+import { isAbortError, treeDocuments } from "../lib/utils";
 
 type Signalled<T> = T & { signal?: AbortSignal };
 
@@ -110,12 +109,17 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
     patch(scope, { operationStage: stage });
   };
 
+  // Monotonic per-scope refresh tokens: concurrent refreshes (e.g. a mount
+  // effect racing a post-mutation refresh) may resolve out of order, and an
+  // older response must not overwrite a newer one.
+  const refreshSeq: Record<string, number> = {};
+
   const silentRefresh = async (scope: string) => {
-    const [documents, directoryTree] = await Promise.all([
-      listDocuments(scope),
-      getDirectories(scope),
-    ]);
-    patch(scope, { documents, directoryTree, hasFetched: true });
+    const seq = (refreshSeq[scope] ?? 0) + 1;
+    refreshSeq[scope] = seq;
+    const directoryTree = await getDirectories(scope);
+    if (refreshSeq[scope] !== seq) return;
+    patch(scope, { documents: treeDocuments(directoryTree.root), directoryTree, hasFetched: true });
   };
 
   /** Run a single-path mutation with shared mutating-path tracking and refresh. */

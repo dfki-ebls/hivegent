@@ -31,10 +31,8 @@ def test_file_vanishing_mid_scan_is_skipped_not_raised(
 
     monkeypatch.setattr(Path, "stat", flaky_stat)
 
-    entries = inv._logical_entries_for_directory(workspace, workspace, {})
-    # The entry survives via its description; the vanished original is dropped.
-    assert {e.filename for e in entries} == {"laws2.md", "keep.md"}
     tree = inv._build_directory_tree(workspace, workspace, {})
+    # The entry survives via its description; the vanished original is dropped.
     assert {c.path for c in (tree.children or [])} == {"laws2.md", "keep.md"}
 
 

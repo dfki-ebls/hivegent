@@ -7,7 +7,7 @@ All workspace, metadata, and search-index *mutations* live in
 - SSE event wrappers around workspace mutations (:mod:`.streaming`)
 """
 
-from .inventory import build_tree_response, list_documents_for_store
+from .inventory import build_tree_response
 from .reads import (
     attachment_disposition,
     find_original,
@@ -32,7 +32,6 @@ __all__ = [
     "find_original",
     "get_document_response",
     "list_assets",
-    "list_documents_for_store",
     "prepare_collection_upload",
     "process_bulk_operation",
     "read_collection_zip",

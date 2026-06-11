@@ -15,10 +15,9 @@ from ...types import (
     DirectoryEntry,
     DirectoryTreeResponse,
     DocumentInfo,
-    DocumentListResponse,
 )
 
-__all__ = ["build_tree_response", "list_documents_for_store"]
+__all__ = ["build_tree_response"]
 
 
 def _safe_iterdir(dir_path: Path) -> list[Path]:
@@ -106,36 +105,6 @@ def _entries_from_files(
             )
         )
     return entries
-
-
-def _logical_entries_for_directory(
-    dir_path: Path,
-    root_path: Path,
-    chunk_counts: dict[str, int],
-) -> list[DocumentInfo]:
-    """Group sibling files into logical stem entries for one directory."""
-    _, file_stats = _scan_directory(dir_path)
-    return _entries_from_files(file_stats, root_path, chunk_counts)
-
-
-async def list_documents_for_store(store: Casebase) -> DocumentListResponse:
-    """Build a logical-entry listing for a single casebase."""
-    workspace = store.workspace_dir(settings.data_dir)
-    chunk_counts = await list_document_paths(store)
-    documents: list[DocumentInfo] = []
-
-    if workspace.exists():
-        for dir_path in sorted(
-            p for p in workspace.rglob("*") if p.is_dir() and not is_assets_dir(p.name)
-        ):
-            documents.extend(
-                _logical_entries_for_directory(dir_path, workspace, chunk_counts)
-            )
-        documents.extend(
-            _logical_entries_for_directory(workspace, workspace, chunk_counts)
-        )
-
-    return DocumentListResponse(documents=documents, total_count=len(documents))
 
 
 def _build_directory_tree(

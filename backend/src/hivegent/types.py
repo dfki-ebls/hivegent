@@ -52,7 +52,6 @@ __all__ = [
     "DirectoryTreeResponse",
     "DocumentFilter",
     "DocumentInfo",
-    "DocumentListResponse",
     "GenerateTitleRequest",
     "GenerateTitleResponse",
     "GroupInfo",
@@ -419,13 +418,6 @@ class GenerateAssetDescriptionRequest(BaseModel):
 
     asset_name: str = Field(description="Filename of the asset to describe")
     llm: LlmConfig = Field(default_factory=LlmConfig)
-
-
-class DocumentListResponse(BaseModel):
-    """Response for listing documents."""
-
-    documents: list[DocumentInfo] = Field(description="List of document metadata")
-    total_count: int = Field(description="Total number of documents")
 
 
 class UploadDocumentResponse(BaseModel):

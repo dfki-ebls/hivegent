@@ -100,6 +100,39 @@ async def test_validate_jwt_token_passes_discovery_algorithms(
     assert user.id == "user-1"
 
 
+async def test_get_jwks_serves_stale_keys_when_refresh_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed JWKS refresh must fall back to the cached key set.
+
+    A transient IdP outage at cache-TTL expiry would otherwise surface as
+    a 503 on whatever user request happened to trigger the refresh.
+    """
+    fetcher = JWKSFetcher()
+    stale = KeySet.import_key_set({"keys": [OctKey.generate_key().as_dict()]})
+    fetcher._jwks._value = stale
+    fetcher._jwks._time = 0  # long expired
+
+    async def fake_get_discovery(force_refresh: bool = False) -> SimpleNamespace:
+        return SimpleNamespace(jwks_uri="https://idp.example.com/jwks")
+
+    monkeypatch.setattr(fetcher, "_get_discovery", fake_get_discovery)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("idp unreachable", request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(auth, "get_http_client", lambda **_: client)
+
+    try:
+        assert await fetcher.get_jwks() is stale
+        # The failed refresh re-stamps the cache, so the retry window is a
+        # full TTL and the next call never reaches the IdP.
+        assert await fetcher.get_jwks() is stale
+    finally:
+        await client.aclose()
+
+
 def _install_fake_jwt_pipeline(
     monkeypatch: pytest.MonkeyPatch, claims: dict[str, Any]
 ) -> None:
