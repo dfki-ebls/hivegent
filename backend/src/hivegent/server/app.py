@@ -17,6 +17,7 @@ from ..mcp import mcp_app
 from ..observability import configure_observability
 from ..reconcile import reconcile_all
 from ..retrieval import reconcile_index_state
+from .maintenance import load_persisted_state
 from .routes import api_router
 from .routes.public import router as public_router
 
@@ -100,6 +101,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await apply_migrations()
         await _verify_vector_dim()
         await _verify_fts_config()
+        await load_persisted_state(app)
         await reconcile_index_state()
         try:
             reports = await reconcile_all()

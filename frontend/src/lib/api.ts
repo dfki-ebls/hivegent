@@ -17,6 +17,7 @@ import {
   type AdminGroupInfo,
   AdminListGroupsResponseSchema,
   AdminListUsersResponseSchema,
+  AdminMaintenanceStateSchema,
   type AdminReindexResponse,
   AdminReindexResponseSchema,
   type AdminResetResponse,
@@ -97,9 +98,29 @@ async function authFetch(url: string, options: RequestInit = {}): Promise<Respon
 async function getJson(url: string, errorMsg: string): Promise<unknown> {
   const res = await authFetch(url);
   if (!res.ok) {
+    await throwIfMaintenance(res);
     throw new Error(`${errorMsg} (HTTP ${res.status})`);
   }
   return (await res.json()) as unknown;
+}
+
+/**
+ * Thrown when the backend rejects a request with the maintenance gate
+ * (503 + `{"code": "maintenance"}` detail). The gate covers the whole
+ * `/api` router, so any {@link getJson} reader can hit it; the settings
+ * store turns it into the full-screen maintenance notice.
+ */
+export class MaintenanceError extends Error {}
+
+/** Raise {@link MaintenanceError} if `res` is the maintenance gate's 503. */
+async function throwIfMaintenance(res: Response): Promise<void> {
+  if (res.status !== 503) return;
+  const body = (await res.json().catch(() => null)) as {
+    detail?: { code?: string; message?: string };
+  } | null;
+  if (body?.detail?.code === "maintenance") {
+    throw new MaintenanceError(body.detail.message);
+  }
 }
 
 /**
@@ -1206,6 +1227,29 @@ export async function adminListUsers(): Promise<AdminUserInfo[]> {
 export async function adminListGroups(): Promise<AdminGroupInfo[]> {
   const data = await getJson(`${API_BASE_URL}/api/admin/groups`, "Failed to list groups");
   return AdminListGroupsResponseSchema.parse(data).groups;
+}
+
+/** Read the server's global maintenance flag. */
+export async function adminGetMaintenance(): Promise<boolean> {
+  const data = await getJson(
+    `${API_BASE_URL}/api/admin/maintenance`,
+    "Failed to read maintenance mode",
+  );
+  return AdminMaintenanceStateSchema.parse(data).enabled;
+}
+
+/** Set the server's global maintenance flag (persisted across restarts). */
+export async function adminSetMaintenance(enabled: boolean): Promise<boolean> {
+  const res = await authFetch(`${API_BASE_URL}/api/admin/maintenance`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to set maintenance mode" }));
+    throw new Error(error.detail || "Failed to set maintenance mode");
+  }
+  return AdminMaintenanceStateSchema.parse(await res.json()).enabled;
 }
 
 /** Wipe all data owned by a single user (workspace + SQL + index). */

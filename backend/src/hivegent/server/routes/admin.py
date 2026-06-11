@@ -18,7 +18,7 @@ leaves the deployment in the same state as a clean checkout.
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import delete
 
 from ... import workspace
@@ -27,6 +27,7 @@ from ...config import settings
 from ...db.documents import delete_all_documents
 from ...db.engine import session
 from ...db.groups import delete_all_groups, list_groups_with_counts
+from ...db.application_settings import write_maintenance_enabled
 from ...db.models import Group, User
 from ...db.users import delete_all_users, delete_user, list_users_with_counts
 from ...reconcile import reconcile_all
@@ -36,11 +37,13 @@ from ...types import (
     AdminGroupInfo,
     AdminListGroupsResponse,
     AdminListUsersResponse,
+    AdminMaintenanceState,
     AdminReindexResponse,
     AdminResetResponse,
     AdminUserInfo,
     BulkDeleteUserDataResponse,
 )
+from ..maintenance import is_enabled, set_enabled
 
 __all__ = ["router"]
 
@@ -93,6 +96,32 @@ async def list_groups() -> AdminListGroupsResponse:
         for group_id, docs in rows
     ]
     return AdminListGroupsResponse(groups=groups)
+
+
+# ─── Maintenance mode ─────────────────────────────────────────────────
+
+
+@router.get("/maintenance")
+async def get_maintenance(request: Request) -> AdminMaintenanceState:
+    """Report the current state of the global maintenance flag."""
+    return AdminMaintenanceState(enabled=is_enabled(request.app))
+
+
+@router.put("/maintenance")
+async def set_maintenance(
+    request: Request,
+    state: AdminMaintenanceState,
+) -> AdminMaintenanceState:
+    """Set the global maintenance flag.
+
+    While enabled, every ``/api`` request from a non-admin fails with
+    503 (see ``hivegent.server.maintenance``).  Persists the
+    ``ApplicationSettings`` row first, then updates the in-memory cache the
+    gate reads — a failed write leaves both layers unchanged.
+    """
+    await write_maintenance_enabled(state.enabled)
+    set_enabled(request.app, state.enabled)
+    return state
 
 
 # ─── System-wide resets ───────────────────────────────────────────────

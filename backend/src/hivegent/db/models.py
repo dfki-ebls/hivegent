@@ -46,6 +46,7 @@ __all__ = [
     "Document",
     "EntryKind",
     "GeneratedBy",
+    "ApplicationSettings",
     "Group",
     "IndexState",
     "Memory",
@@ -406,4 +407,24 @@ class IndexState(Base):
     embedding_model: Mapped[str]
     fingerprint_set_at: Mapped[datetime] = mapped_column(
         default=_now, onupdate=_now, server_default=sa.func.now()
+    )
+
+
+class ApplicationSettings(Timestamped, Base):
+    """Operator-set toggles that affect the entire instance.
+
+    Singleton row (``id = 1``), mirroring :class:`IndexState` and named
+    after GitLab's table of the same role.  Each global switch is a
+    column with a ``server_default`` so the row is fully usable whether
+    it predates the column or has never been written at all — readers
+    treat an absent row as all-defaults.  Add future instance-wide
+    toggles here instead of creating new singleton tables.
+    """
+
+    __tablename__ = "application_settings"
+    __table_args__ = (CheckConstraint("id = 1", name="singleton"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    maintenance_enabled: Mapped[bool] = mapped_column(
+        default=False, server_default=sa.false()
     )

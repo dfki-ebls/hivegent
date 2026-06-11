@@ -12,7 +12,7 @@ import { z } from "zod";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { getSettings } from "../lib/api";
+import { getSettings, MaintenanceError } from "../lib/api";
 import { featureFlags } from "../lib/feature-flags";
 import {
   AssetProcessingMode,
@@ -104,6 +104,11 @@ interface SettingsState {
   writeGroups: string[];
   roles: string[];
 
+  // Whether the backend rejected us with its maintenance gate. While
+  // true, the root route shows the maintenance screen instead of the
+  // app; the init loop keeps polling so it clears itself.
+  maintenance: boolean;
+
   // LLM actions
   setOverride: (partial: Partial<UserOverrides>) => void;
   reset: () => void;
@@ -165,6 +170,7 @@ export const useSettingsStore = create<SettingsState>()(
       readGroups: [],
       writeGroups: [],
       roles: [],
+      maintenance: false,
       ...UI_DEFAULTS,
 
       setOverride: (partial) =>
@@ -175,18 +181,26 @@ export const useSettingsStore = create<SettingsState>()(
       reset: () => set({ overrides: EMPTY_OVERRIDES }),
 
       initFromBackend: async () => {
+        // Keeps retrying on failure; during maintenance this doubles as
+        // the recovery poll, so the app loads by itself once an admin
+        // turns the mode back off.
         while (true) {
           try {
             const defaults = await getSettings();
             set({
+              maintenance: false,
               backendDefaults: defaults,
               readGroups: defaults.user.read_groups,
               writeGroups: defaults.user.write_groups,
               roles: defaults.user.roles,
             });
             return;
-          } catch {
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+          } catch (e) {
+            const maintenance = e instanceof MaintenanceError;
+            if (maintenance) {
+              set({ maintenance: true });
+            }
+            await new Promise((resolve) => setTimeout(resolve, maintenance ? 5000 : 1000));
           }
         }
       },

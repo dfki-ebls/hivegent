@@ -26,6 +26,7 @@ __all__ = [
     "AdminGroupInfo",
     "AdminListGroupsResponse",
     "AdminListUsersResponse",
+    "AdminMaintenanceState",
     "AdminReindexResponse",
     "AdminResetResponse",
     "AdminUserInfo",
@@ -829,6 +830,16 @@ class AdminFactoryResetResponse(BaseModel):
 
     actions: list[str] = Field(description="Reset steps that were executed")
     message: str = Field(description="Human-readable status message")
+
+
+class AdminMaintenanceState(BaseModel):
+    """State of the global maintenance flag (request body and response).
+
+    Persisted in the ``ApplicationSettings`` singleton and cached on
+    ``app.state`` — see ``hivegent.server.maintenance``.
+    """
+
+    enabled: bool = Field(description="Whether maintenance mode is active")
 
 
 class AdminUserInfo(BaseModel):

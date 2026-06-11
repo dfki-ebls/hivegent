@@ -13,11 +13,14 @@ import {
   UserCogIcon,
   UserXIcon,
   UsersIcon,
+  WrenchIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { BackendReadyGate } from "../components/BackendReadyGate";
 import { Button } from "../components/ui/button";
+import { Label } from "../components/ui/label";
+import { Switch } from "../components/ui/switch";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,12 +35,14 @@ import {
   adminDeleteGroupData,
   adminDeleteUserData,
   adminFactoryReset,
+  adminGetMaintenance,
   adminListGroups,
   adminListUsers,
   PERSONAL_SCOPE,
   adminReindex,
   adminResetDatabase,
   adminResetWorkspace,
+  adminSetMaintenance,
   deleteAllConversations,
   deleteAllDocuments,
   deleteAllUserData,
@@ -292,6 +297,7 @@ function AdminSections({ setAction }: { setAction: (a: DangerAction) => void }) 
 
   return (
     <>
+      <AdminMaintenanceSection />
       <AdminImpersonationSection users={users} loading={loading} />
       <AdminDangerZoneSection
         setAction={setAction}
@@ -301,6 +307,55 @@ function AdminSections({ setAction }: { setAction: (a: DangerAction) => void }) 
         refresh={refresh}
       />
     </>
+  );
+}
+
+// The switch stays disabled until the current server state is known, so
+// it never shows a guessed value.
+function AdminMaintenanceSection() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    adminGetMaintenance()
+      .then(setEnabled)
+      .catch((e: unknown) => {
+        console.error("Failed to read maintenance mode:", e);
+        toast.error("Failed to read maintenance mode", { description: errorMessage(e) });
+      });
+  }, []);
+
+  const toggle = async (next: boolean) => {
+    try {
+      setEnabled(await adminSetMaintenance(next));
+      toast.success(next ? "Maintenance mode enabled" : "Maintenance mode disabled");
+    } catch (e) {
+      toast.error("Failed to toggle maintenance mode", { description: errorMessage(e) });
+    }
+  };
+
+  return (
+    <div className="grid gap-3 border-t pt-8">
+      <div className="flex items-center gap-2">
+        <WrenchIcon className="h-5 w-5" />
+        <h2 className="text-lg font-semibold">Admin — Maintenance</h2>
+      </div>
+      <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+        <div className="grid gap-1">
+          <Label htmlFor="maintenance-mode">Maintenance mode</Label>
+          <p className="text-sm text-muted-foreground">
+            Lock out every non-admin user and show them a maintenance notice instead of the app.
+            Admins keep full access. The setting is persisted and stays active across server
+            restarts until an admin turns it off.
+          </p>
+        </div>
+        <Switch
+          id="maintenance-mode"
+          checked={enabled ?? false}
+          disabled={enabled === null}
+          onCheckedChange={(next) => void toggle(next)}
+        />
+      </div>
+    </div>
   );
 }
 

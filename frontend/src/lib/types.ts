@@ -151,6 +151,11 @@ export const AdminListGroupsResponseSchema = z.object({
   groups: z.array(AdminGroupInfoSchema),
 });
 
+/** State of the server's global maintenance flag. */
+export const AdminMaintenanceStateSchema = z.object({
+  enabled: z.boolean(),
+});
+
 /** Settings exposed by the backend. */
 export const BackendSettingsSchema = z.object({
   model: z.string(),
