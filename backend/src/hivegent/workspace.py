@@ -1432,9 +1432,8 @@ def _resolve_asset_path(assets_path: Path, asset_name: str) -> tuple[str, Path]:
     if PurePosixPath(safe_name).name != safe_name:
         raise HTTPException(status_code=400, detail="Asset name must be a filename")
 
-    root = assets_path.resolve()
-    asset_path = (assets_path / safe_name).resolve()
-    if not asset_path.is_relative_to(root):
+    asset_path = assets_path / safe_name
+    if not asset_path.resolve().is_relative_to(assets_path.resolve()):
         raise HTTPException(
             status_code=400,
             detail="Asset path escapes assets directory",
