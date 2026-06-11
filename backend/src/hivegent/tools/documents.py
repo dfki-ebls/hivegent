@@ -11,6 +11,7 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..config import content_hash
+from ..entries import is_assets_dir
 from .base import (
     WORKSPACE_PATH_HINT,
     WORKSPACE_SCOPE_HINT,
@@ -206,6 +207,14 @@ def _walk_entries(
             rel = str(absolute.relative_to(sp.path).as_posix())
             if is_in_excluded_dir(rel, exclude_dirs):
                 continue
+            # Elements of `.assets` payload directories pollute the context
+            # (a single converted document can carry hundreds of extracted
+            # images), so only the directory itself is listed; like the
+            # build/vendor dirs, ``include_ignored=True`` reveals them.
+            if exclude_dirs and any(
+                is_assets_dir(part) for part in rel.split("/")[:-1]
+            ):
+                continue
             if not file_allowed(sp.filter_func, rel):
                 continue
             yield sp, absolute, rel, is_dir
@@ -354,7 +363,8 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
 
         Set ``flatten=False`` to show a hierarchical directory tree.
         Use ``glob_documents`` for pattern-based file matching.  Common
-        build and vendor directories are skipped by default; pass
+        build and vendor directories and the contents of ``.assets``
+        payload directories are skipped by default; pass
         ``include_ignored=True`` to include them.
         """
         exclude = excluded_dirs(include_ignored)

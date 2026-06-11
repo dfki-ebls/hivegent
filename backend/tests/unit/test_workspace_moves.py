@@ -191,6 +191,23 @@ class TestMoveDirectory:
         assert (workspace_dir / "images").is_dir()
 
 
+class TestPruneEmptyDirs:
+    async def test_removes_emptied_chain_but_keeps_occupied_dirs(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        """After a bulk move, the emptied source chain vanishes while any
+        directory still holding content — even content the tree cannot
+        see — survives the non-recursive prune."""
+        (workspace_dir / "a/b").mkdir(parents=True)
+        (workspace_dir / "c").mkdir()
+        (workspace_dir / "c/keep.md").write_text("k")
+
+        await workspace.prune_empty_dirs(user_store, ["a/b/x.md", "c/y.md"])
+
+        assert not (workspace_dir / "a").exists()
+        assert (workspace_dir / "c/keep.md").is_file()
+
+
 class TestNativeSemanticGuards:
     """Operations that previously crashed with an ``OSError`` (a 500 to the
     client) or silently corrupted the workspace now fail with clear 4xx."""

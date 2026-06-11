@@ -5,7 +5,9 @@ import type {
   UploadDocumentOptions,
 } from "../lib/api";
 import {
+  type BulkMoveEntry,
   bulkDeleteStream,
+  bulkMoveStream,
   bulkRechunkStream,
   bulkReconvertStream,
   canonicalPath,
@@ -83,6 +85,7 @@ interface DocumentsStore {
     llm?: LlmConfig,
   ) => Promise<void>;
   bulkDelete: (scope: string, files: string[]) => Promise<void>;
+  bulkMove: (scope: string, moves: BulkMoveEntry[]) => Promise<void>;
   move: (scope: string, filepath: string, destination: string) => Promise<void>;
   createDir: (scope: string, path: string) => Promise<void>;
   deleteDir: (scope: string, path: string) => Promise<void>;
@@ -132,10 +135,12 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
     patch(scope, (s) => ({ mutatingPaths: new Set(s.mutatingPaths).add(path), error: null }));
     try {
       await operation();
-      await silentRefresh(scope);
     } catch (err) {
       patch(scope, { error: err instanceof Error ? err.message : errorMsg });
     } finally {
+      // Refresh even after a failure so a stale view (e.g. an entry the
+      // backend no longer knows about) converges with the server state.
+      await silentRefresh(scope).catch(() => {});
       patch(scope, (s) => {
         const next = new Set(s.mutatingPaths);
         next.delete(path);
@@ -182,12 +187,14 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
           ...options,
           onStage: onStage(scope),
         });
-        await silentRefresh(scope);
       } catch (err) {
         if (!isAbortError(err)) {
           patch(scope, { error: err instanceof Error ? err.message : "Upload failed" });
         }
       } finally {
+        // Refresh even after a cancel or failure: the backend rolls a
+        // cancelled upload back, so the view must converge with its state.
+        await silentRefresh(scope).catch(() => {});
         patch(scope, { isUploading: false, operationStage: null });
       }
     },
@@ -284,6 +291,17 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
       runBulk(scope, "Bulk delete failed", (onProgress) =>
         bulkDeleteStream(
           files.map((f) => canonicalPath(scope, f)),
+          { onProgress },
+        ),
+      ),
+
+    bulkMove: (scope, moves) =>
+      runBulk(scope, "Bulk move failed", (onProgress) =>
+        bulkMoveStream(
+          moves.map(({ source, destination }) => ({
+            source: canonicalPath(scope, source),
+            destination: canonicalPath(scope, destination),
+          })),
           { onProgress },
         ),
       ),

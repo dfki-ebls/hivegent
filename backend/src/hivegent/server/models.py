@@ -6,6 +6,8 @@ from ..types import LlmConfig, PipelineSpec
 
 __all__ = [
     "BulkDeleteRequest",
+    "BulkMoveEntry",
+    "BulkMoveRequest",
     "BulkRechunkRequest",
     "BulkReconvertRequest",
     "ReconvertRequest",
@@ -38,3 +40,16 @@ class BulkDeleteRequest(BaseModel):
     """Request to bulk delete multiple documents."""
 
     files: list[str] = Field(description="List of file paths to delete")
+
+
+class BulkMoveEntry(BaseModel):
+    """One source → destination pair of a bulk move."""
+
+    source: str = Field(description="Current file path")
+    destination: str = Field(description="New file path")
+
+
+class BulkMoveRequest(BaseModel):
+    """Request to bulk move multiple documents."""
+
+    moves: list[BulkMoveEntry] = Field(description="Source → destination pairs")

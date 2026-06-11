@@ -96,12 +96,15 @@ class DocumentFilter:
     its ``.assets`` payload, mirroring how the inventory groups files into
     entries.
 
-    A path passes when no excluded entry selects it and, if an include
-    list is set, an included entry selects it or it is an ancestor
-    directory of an included entry (so listings can traverse into included
-    subtrees).  ``included=None`` means no include restriction, while an
-    empty set hides the whole store — the store was not part of a
-    non-empty whitelist.
+    When both an included and an excluded entry select a path, the most
+    specific entry (the longest one) wins, with include winning ties — so
+    a child document can be re-included from an excluded directory and a
+    file can be excluded from an included directory.  Ancestor
+    directories of an included entry count as include matches so listings
+    can traverse into included subtrees.  Without any matching entry a
+    path passes unless an include list is set: ``included=None`` means no
+    include restriction, while an empty set hides the whole store — the
+    store was not part of a non-empty whitelist.
     """
 
     included: frozenset[str] | None = None
@@ -122,14 +125,23 @@ class DocumentFilter:
 
     def __call__(self, path: str) -> bool:
         """Return whether the file or directory *path* passes the filter."""
-        if any(self._selects(entry, path) for entry in self.excluded):
-            return False
-        if self.included is None:
-            return True
-        return any(
-            self._selects(entry, path) or entry.startswith(f"{path}/")
-            for entry in self.included
+        include_match = max(
+            (
+                len(entry)
+                for entry in self.included or ()
+                if self._selects(entry, path) or entry.startswith(f"{path}/")
+            ),
+            default=-1,
         )
+        exclude_match = max(
+            (len(entry) for entry in self.excluded if self._selects(entry, path)),
+            default=-1,
+        )
+        if include_match >= 0 and include_match >= exclude_match:
+            return True
+        if exclude_match >= 0:
+            return False
+        return self.included is None
 
 
 @dataclass(slots=True, frozen=True)

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.settings import ModelSettings, ThinkingLevel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import Response
@@ -23,7 +23,7 @@ from ...agents import (
 from ...auth import User, get_current_user
 from ...compaction import CompactionResult, compact_conversation
 from ...config import settings
-from ...llm import model_from_config
+from ...llm import model_from_config, thinking_model_settings
 from ...mcp import build_mcp_server, validate_mcp_servers
 from ...db._common import new_id
 from ...db.conversations import (
@@ -390,15 +390,17 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
             messages_to_persist(result.all_messages(), result.new_messages()),
         )
 
-    thinking: ThinkingLevel
-
-    match config.reasoning_effort:
-        case "none":
-            thinking = False
-        case "auto":
-            thinking = True
-        case effort:
-            thinking = effort
+    # "auto" omits the settings so the server-side default applies; every
+    # other level is forwarded via thinking_model_settings, with "none"
+    # mapping to False (disabled).
+    model_settings = (
+        ModelSettings()
+        if config.reasoning_effort == "auto"
+        else thinking_model_settings(
+            False if config.reasoning_effort == "none" else config.reasoning_effort,
+            config.llm,
+        )
+    )
 
     return await ChatAdapter.dispatch_request(
         request,
@@ -424,9 +426,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
             mode=config.mode,
         ),
         instructions=instructions,
-        model_settings=ModelSettings(
-            thinking=thinking,
-        ),
+        model_settings=model_settings,
         on_complete=on_complete,
     )
 

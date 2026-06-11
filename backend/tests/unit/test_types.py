@@ -38,13 +38,32 @@ class TestDocumentFilter:
         assert not f("other/file.md")
         assert not f("projectsfoo/file.md")
 
-    def test_exclude_overrides_include(self) -> None:
+    def test_specific_exclude_overrides_directory_include(self) -> None:
         f = DocumentFilter(
             included=frozenset({"projects/"}),
             excluded=frozenset({"projects/secret.md"}),
         )
         assert f("projects/report.md")
         assert not f("projects/secret.md")
+
+    def test_specific_include_overrides_directory_exclude(self) -> None:
+        f = DocumentFilter(
+            included=frozenset({"projects/keep.md"}),
+            excluded=frozenset({"projects/"}),
+        )
+        assert f("projects/keep.md")
+        # The excluded directory stays traversable to reach the include.
+        assert f("projects")
+        assert not f("projects/other.md")
+
+    def test_nested_include_exclude_alternation(self) -> None:
+        f = DocumentFilter(
+            included=frozenset({"a/", "a/b/c/"}),
+            excluded=frozenset({"a/b/"}),
+        )
+        assert f("a/file.md")
+        assert not f("a/b/file.md")
+        assert f("a/b/c/file.md")
 
     def test_exclude_only(self) -> None:
         f = DocumentFilter(excluded=frozenset({"private.md"}))

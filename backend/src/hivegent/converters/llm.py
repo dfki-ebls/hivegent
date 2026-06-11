@@ -5,10 +5,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 from pydantic_ai import BinaryContent
-from pydantic_ai.settings import ModelSettings
 
 from ..agents.app import base_agent
-from ..llm import model_from_config
+from ..llm import model_from_config, thinking_model_settings
 from ..types import LlmConfig
 from .base import ConversionResult, DocumentConverter
 from .images import sanitize_image_bytes
@@ -86,7 +85,7 @@ class LLMConverter(DocumentConverter):
         result = await base_agent.run(
             [self.config.prompt, content],
             model=model_from_config(self.llm_options),
-            model_settings=ModelSettings(thinking=False),
+            model_settings=thinking_model_settings(False, self.llm_options),
         )
 
         return ConversionResult(markdown=str(result.output))

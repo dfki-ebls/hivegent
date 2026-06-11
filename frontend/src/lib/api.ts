@@ -1043,6 +1043,35 @@ export async function bulkReconvertStream(
   );
 }
 
+export interface BulkMoveEntry {
+  source: string;
+  destination: string;
+}
+
+/** Bulk move multiple documents with streaming progress. */
+export async function bulkMoveStream(
+  moves: BulkMoveEntry[],
+  options?: BulkOperationStreamOptions,
+): Promise<BulkOperationCompleteEvent> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/move/bulk/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ moves }),
+    signal: options?.signal,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Bulk move failed" }));
+    throw new Error(error.detail || "Bulk move failed");
+  }
+
+  return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
+    res,
+    BulkOperationStreamEventSchema,
+    options?.onProgress,
+  );
+}
+
 /** Bulk delete multiple documents with streaming progress. */
 export async function bulkDeleteStream(
   files: string[],

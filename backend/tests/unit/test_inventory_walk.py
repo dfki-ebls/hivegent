@@ -31,9 +31,15 @@ def test_file_vanishing_mid_scan_is_skipped_not_raised(
 
     monkeypatch.setattr(Path, "stat", flaky_stat)
 
-    tree = inv._build_directory_tree(workspace, workspace, {})
+    tree = inv._build_directory_tree(workspace, workspace, {}, frozenset())
     # The entry survives via its description; the vanished original is dropped.
     assert {c.path for c in (tree.children or [])} == {"laws2.md", "keep.md"}
+
+
+def test_inflight_stem_is_hidden(workspace: Path) -> None:
+    """An entry whose stem has an upload in flight is hidden from the tree."""
+    tree = inv._build_directory_tree(workspace, workspace, {}, frozenset({"laws2"}))
+    assert {c.path for c in (tree.children or [])} == {"keep.md"}
 
 
 def test_vanished_directory_yields_empty_listing(tmp_path: Path) -> None:

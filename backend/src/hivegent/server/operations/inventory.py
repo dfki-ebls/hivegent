@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from ... import workspace
 from ...db.documents import list_document_paths
 from ...config import settings
 from ...converters.base import DOCUMENT_EXTENSION
@@ -61,6 +62,7 @@ def _entries_from_files(
     file_stats: Mapping[Path, os.stat_result],
     root_path: Path,
     chunk_counts: dict[str, int],
+    hidden_stems: frozenset[str],
 ) -> list[DocumentInfo]:
     """Group already-stat'd sibling files into logical stem entries."""
     grouped: dict[str, list[Path]] = {}
@@ -71,6 +73,10 @@ def _entries_from_files(
 
     entries: list[DocumentInfo] = []
     for stem_path, files in sorted(grouped.items()):
+        # An upload in flight (or its rollback) may have written some of the
+        # entry's files already; hide it until the mutation settles.
+        if stem_path in hidden_stems:
+            continue
         description = next(
             (file for file in files if file.suffix == DOCUMENT_EXTENSION), None
         )
@@ -111,6 +117,7 @@ def _build_directory_tree(
     dir_path: Path,
     root_path: Path,
     chunk_counts: dict[str, int],
+    hidden_stems: frozenset[str],
 ) -> DirectoryEntry:
     """Recursively build a logical-entry directory tree."""
     relative = str(dir_path.relative_to(root_path).as_posix())
@@ -121,9 +128,13 @@ def _build_directory_tree(
     subdirs, file_stats = _scan_directory(dir_path)
     for item in subdirs:
         if not is_assets_dir(item.name):
-            children.append(_build_directory_tree(item, root_path, chunk_counts))
+            children.append(
+                _build_directory_tree(item, root_path, chunk_counts, hidden_stems)
+            )
 
-    for file_entry in _entries_from_files(file_stats, root_path, chunk_counts):
+    for file_entry in _entries_from_files(
+        file_stats, root_path, chunk_counts, hidden_stems
+    ):
         children.append(
             DirectoryEntry(
                 type="file",
@@ -155,6 +166,7 @@ async def build_tree_response(store: Casebase) -> DirectoryTreeResponse:
         workspace_dir,
         workspace_dir,
         chunk_counts,
+        workspace.inflight_stems(store),
     )
 
     total_files = 0

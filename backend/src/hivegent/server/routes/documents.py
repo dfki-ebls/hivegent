@@ -23,6 +23,7 @@ from ... import workspace
 from ...auth import User, get_current_user
 from ...chunkers.base import DocumentMetadata
 from ...db.documents import get_document
+from ...store import Casebase
 from ...types import (
     AssetEntry,
     AssetListResponse,
@@ -54,6 +55,7 @@ from ..common import (
 )
 from ..models import (
     BulkDeleteRequest,
+    BulkMoveRequest,
     BulkRechunkRequest,
     BulkReconvertRequest,
     ReconvertRequest,
@@ -291,6 +293,37 @@ async def bulk_reconvert_stream(
     async for event in process_bulk_operation(
         request.files, _reconvert_one, "Reconverted"
     ):
+        yield event
+
+
+@router.post("/documents/move/bulk/stream", response_class=EventSourceResponse)
+async def bulk_move_stream(
+    request: BulkMoveRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> AsyncIterable[BulkOperationProgressEvent | BulkOperationCompleteEvent]:
+    """Bulk move multiple documents with streaming progress."""
+    destinations = {m.source: m.destination for m in request.moves}
+    moved: dict[str, tuple[Casebase, list[str]]] = {}
+
+    async def _move_one(filepath: str) -> None:
+        src_store, src = resolve_workspace_path(user, filepath, write=True)
+        dst_store, dst = resolve_workspace_path(
+            user, destinations[filepath], write=True
+        )
+        if src_store.store_key != dst_store.store_key:
+            raise HTTPException(
+                status_code=400, detail="Cannot move a document across workspaces"
+            )
+        await workspace.move_document(src_store, src, dst)
+        moved.setdefault(src_store.store_key, (src_store, []))[1].append(src)
+
+    async for event in process_bulk_operation(list(destinations), _move_one, "Moved"):
+        if isinstance(event, BulkOperationCompleteEvent):
+            # Per-entry moves leave their emptied source directories behind;
+            # prune them before completion so the client's refresh already
+            # sees the final state.
+            for store, sources in moved.values():
+                await workspace.prune_empty_dirs(store, sources)
         yield event
 
 

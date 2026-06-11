@@ -73,13 +73,15 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
   const { isLoadingHistory, compactedFrom } = useConversationHistory(id, setMessages, draft);
   const { editingId, setEditing, clear: clearEditing } = useMessageEditing(status);
 
+  // Deliberately leaves the input untouched: it is also invoked while the
+  // user may already be typing the next message (steering-queue drain,
+  // post-compaction retry), so clearing happens at the submit site instead.
   const handleSendMessage = useCallback(
     async (text: string, files?: FileUIPart[]) => {
       if (!text.trim() && (!files || files.length === 0)) return;
       // Surface the Fetched panel as the conversation's first turn begins to
       // pull documents; later turns leave the user's chosen tab alone.
       if (messages.length === 0) setDocumentTab("fetched");
-      setInputValue("");
       await sendUserMessage({ text, files }, buildRequestBody());
     },
     [buildRequestBody, sendUserMessage, messages.length, setDocumentTab],
@@ -129,6 +131,15 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
     onRetry: handleSendMessage,
   });
 
+  // Reset the fetched-documents panel whenever the chat identity changes —
+  // this covers every navigation path, including plain links like the header
+  // logo; the tool-output sync repopulates it from the loaded messages.
+  // Handlers that rewrite the current conversation (edit/retry/regenerate)
+  // still clear explicitly since the id stays the same there.
+  useEffect(() => {
+    clearAll();
+  }, [id, clearAll]);
+
   useToolOutputSync(messages, addChunk, markFullDocument, addImage);
   useChatErrorLogger(error, id, messages, buildRequestBody);
 
@@ -159,12 +170,11 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
   }, [buildRequestBody, sendUserMessage]);
 
   const handleNewChat = useCallback(async () => {
-    clearAll();
     clearFilter();
     setActiveTab("chat");
     // The new chat is a draft until its first message mints a server ID.
     await navigate({ to: "/" });
-  }, [clearAll, clearFilter, navigate]);
+  }, [clearFilter, navigate]);
 
   const handleExport = useCallback(async () => {
     try {
@@ -177,21 +187,19 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
 
   const handleConversationSelect = useCallback(
     async (conversationId: string) => {
-      clearAll();
       clearFilter();
       setActiveTab("chat");
       await navigate({ to: "/conversations/$id", params: { id: conversationId } });
     },
-    [clearAll, clearFilter, navigate],
+    [clearFilter, navigate],
   );
 
   const handleNavigateToPrevious = useCallback(
     (previousId: string) => {
-      clearAll();
       clearFilter();
       void navigate({ to: "/conversations/$id", params: { id: previousId } });
     },
-    [clearAll, clearFilter, navigate],
+    [clearFilter, navigate],
   );
 
   const handleTranscriptionChange = useCallback((text: string) => {
@@ -255,6 +263,7 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
             value={inputValue}
             onChange={setInputValue}
             onSubmit={(text, files) => {
+              setInputValue("");
               if (isStreaming) enqueueSteering(text);
               else void handleSendMessage(text, files);
             }}

@@ -33,8 +33,8 @@ import tempfile
 import threading
 import zipfile
 import zlib
-from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path, PurePosixPath
 
 import logfire
@@ -113,9 +113,11 @@ __all__ = [
     "delete_workspace_root",
     "edit_document_text",
     "generate_asset_description",
+    "inflight_stems",
     "move_directory",
     "move_document",
     "process_collection",
+    "prune_empty_dirs",
     "rechunk",
     "reconvert",
     "replace_original",
@@ -148,6 +150,31 @@ def store_lock(store: Casebase) -> asyncio.Lock:
             lock = asyncio.Lock()
             _locks[key] = lock
     return lock
+
+
+# Stems with an upload currently in flight, per store key.  Inventory reads
+# walk the workspace without the casebase lock, so they consult this set to
+# hide half-written entries — both during processing and during the rollback
+# after a failed or cancelled upload — instead of surfacing them as ghost
+# documents.
+_inflight_stems: dict[str, set[str]] = {}
+
+
+@contextmanager
+def _track_inflight(store: Casebase, reference: str) -> Iterator[None]:
+    """Mark *reference*'s stem as in flight for the duration of the block."""
+    stems = _inflight_stems.setdefault(store.store_key, set())
+    stem = stem_path_from_reference(reference)
+    stems.add(stem)
+    try:
+        yield
+    finally:
+        stems.discard(stem)
+
+
+def inflight_stems(store: Casebase) -> frozenset[str]:
+    """Stems with an upload in flight, to be hidden from lock-free reads."""
+    return frozenset(_inflight_stems.get(store.store_key, ()))
 
 
 def _build_entry_metadata(
@@ -1051,10 +1078,11 @@ async def upload(
     llm = llm or LlmConfig()
     async with store_lock(store):
         await _ensure_upload_slot_locked(store, filepath, overwrite=overwrite)
-        async with _rollback_on_failure(store, (filepath,)):
-            return await _upload_locked(
-                store, filepath, content, spec, llm, origin=origin
-            )
+        with _track_inflight(store, filepath):
+            async with _rollback_on_failure(store, (filepath,)):
+                return await _upload_locked(
+                    store, filepath, content, spec, llm, origin=origin
+                )
 
 
 async def replace_original(
@@ -1678,6 +1706,29 @@ async def _move_directory_locked(
         files_moved=files_moved,
         message="Directory moved successfully",
     )
+
+
+async def prune_empty_dirs(store: Casebase, sources: Iterable[str]) -> None:
+    """Remove directories left empty after their entries moved away.
+
+    *sources* are the workspace-relative paths of moved entries; every
+    ancestor directory of each is a candidate.  Removal uses non-recursive
+    ``rmdir`` deepest-first, so a directory still holding anything — even
+    content invisible to the directory tree — survives untouched.
+    """
+    candidates = {
+        str(ancestor)
+        for source in sources
+        for ancestor in PurePosixPath(source).parents
+        if str(ancestor) != "."
+    }
+    async with store_lock(store):
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        for rel in sorted(candidates, key=lambda p: p.count("/"), reverse=True):
+            try:
+                (workspace_dir / rel).rmdir()
+            except OSError:
+                continue
 
 
 async def move_directory(store: Casebase, src: str, dst: str) -> MoveDirectoryResponse:

@@ -104,6 +104,22 @@ class TestListDocumentsTool:
         tool = ListDocumentsTool(paths=tmp_path / "nonexistent", glob="*.md")
         assert tool().data == []
 
+    def test_assets_contents_hidden_unless_ignored_included(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "doc.md").write_text("text")
+        assets = tmp_path / "doc.assets"
+        assets.mkdir()
+        (assets / "img.png").write_bytes(b"\x89PNG")
+        tool = ListDocumentsTool(paths=tmp_path)
+        filenames = {r.filename for r in _as_summaries(tool(max_depth=None).data)}
+        assert filenames == {"doc.md", "doc.assets"}
+        revealed = {
+            r.filename
+            for r in _as_summaries(tool(max_depth=None, include_ignored=True).data)
+        }
+        assert "doc.assets/img.png" in revealed
+
     def test_multi_store(self, tmp_path: Path) -> None:
         user_dir = tmp_path / "user"
         user_dir.mkdir()

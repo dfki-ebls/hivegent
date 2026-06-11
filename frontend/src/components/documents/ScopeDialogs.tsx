@@ -48,6 +48,7 @@ export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(fu
   ref,
 ) {
   const storeMove = useDocumentsStore((s) => s.move);
+  const storeBulkMove = useDocumentsStore((s) => s.bulkMove);
   const storeMoveDir = useDocumentsStore((s) => s.moveDir);
   const createDir = useDocumentsStore((s) => s.createDir);
   const deleteDir = useDocumentsStore((s) => s.deleteDir);
@@ -84,15 +85,21 @@ export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(fu
       setBulkMoveFiles(null);
       onBulkDone();
       // Preserve the selection's directory structure: each file keeps its
-      // path relative to the selection's common parent directory.
+      // path relative to the selection's common parent directory.  The bulk
+      // endpoint also prunes source directories the move leaves empty.
       const commonParent = commonParentDir(files);
-      for (const path of files) {
-        const relative = path.slice(commonParent.length);
-        const destination = destinationDir ? `${destinationDir}/${relative}` : relative;
-        if (destination !== path) await storeMove(scope, path, destination);
-      }
+      const moves = files
+        .map((source) => {
+          const relative = source.slice(commonParent.length);
+          return {
+            source,
+            destination: destinationDir ? `${destinationDir}/${relative}` : relative,
+          };
+        })
+        .filter(({ source, destination }) => destination !== source);
+      if (moves.length > 0) await storeBulkMove(scope, moves);
     },
-    [bulkMoveFiles, onBulkDone, storeMove, scope],
+    [bulkMoveFiles, onBulkDone, storeBulkMove, scope],
   );
 
   const confirmDelete = useCallback(async () => {
