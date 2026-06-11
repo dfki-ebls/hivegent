@@ -38,7 +38,7 @@ function RootComponent() {
         <div className="flex h-screen flex-col">
           <ImpersonationBanner />
           <Header />
-          <main className="flex-1 overflow-hidden">
+          <main className="flex-1 overflow-y-auto">
             <Outlet />
           </main>
           <TanStackDevtools
