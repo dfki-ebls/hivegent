@@ -79,12 +79,12 @@ function UserMenu() {
 
 export function Header() {
   return (
-    <header className="flex items-center justify-between border-b bg-background px-4 py-3">
+    <header className="flex items-center justify-between border-b bg-background px-4 py-2">
       <Link
         to="/"
         className="flex items-center gap-2 text-foreground hover:opacity-80 transition-opacity"
       >
-        <Logo className="h-6 w-6" />
+        <Logo className="h-10 w-10" />
         <h1 className="text-xl font-semibold">Hivegent</h1>
         <VersionBadge />
       </Link>

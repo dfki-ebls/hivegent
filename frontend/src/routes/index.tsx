@@ -27,10 +27,10 @@ function IndexPage() {
   }
 
   return (
-    <div className="flex h-full items-center justify-center">
+    <div className="flex h-full items-center justify-center p-6">
       <div className="flex flex-col items-center gap-6 text-center">
+        <Logo className="w-60 max-w-full" />
         <div className="flex items-center gap-3">
-          <Logo className="h-12 w-12" />
           <h1 className="text-4xl font-bold">Hivegent</h1>
           <VersionBadge className="self-start" />
         </div>
