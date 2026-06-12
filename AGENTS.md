@@ -3,6 +3,7 @@
 - Integration through Vercel AI Data Stream Protocol implemented by Vercel AI Elements in frontend and Pydantic AI in backend
 - Development environment with Nix Flakes
 - Project has not yet been deployed, don't care about breaking changes and migrations, prefer clean solutions
+- Model structured data with a fixed set of keys as a frozen dataclass, Pydantic model, or `TypedDict` (TypeScript: an `interface` or `type`), never a bare `dict[str, Any]`, so the shape is type-checked.
 
 ## Frontend
 

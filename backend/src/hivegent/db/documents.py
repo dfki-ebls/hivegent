@@ -11,7 +11,7 @@ touch ``documents``.
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Self
+from typing import Any, Self, TypedDict
 
 import sqlalchemy as sa
 from sqlalchemy import delete, func, select, update
@@ -74,7 +74,14 @@ class EntryState:
     metadata: EntryMetadata
 
 
-def _stat_columns(stat: ContentStat | None) -> dict[str, int | None]:
+class _StatColumns(TypedDict):
+    """The two nullable stat columns, written and nulled together."""
+
+    content_mtime_ns: int | None
+    content_size: int | None
+
+
+def _stat_columns(stat: ContentStat | None) -> _StatColumns:
     """Map a stat fingerprint, or its absence, onto its two nullable columns.
 
     The ``(content_mtime_ns, content_size)`` pair is always written and nulled
@@ -103,7 +110,14 @@ def _owner_filter(store: Casebase):
     return Document.owner_group_id == store.id
 
 
-def _owner_kwargs(store: Casebase) -> dict[str, str | None]:
+class _OwnerColumns(TypedDict):
+    """The mutually exclusive single-owner FK columns."""
+
+    owner_user_id: str | None
+    owner_group_id: str | None
+
+
+def _owner_kwargs(store: Casebase) -> _OwnerColumns:
     """Single-owner FK kwargs for inserts."""
     if store.kind == "user":
         return {"owner_user_id": store.id, "owner_group_id": None}
