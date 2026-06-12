@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import ColumnElement, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ._common import affected_rows, new_id
@@ -48,6 +48,7 @@ __all__ = [
     "extract_title",
     "list_conversations",
     "load_conversation",
+    "load_conversation_summary",
     "load_messages",
     "messages_to_persist",
     "remove_conversation",
@@ -168,6 +169,46 @@ def extract_title(messages: Sequence[ModelMessage]) -> str | None:
     return None
 
 
+# ─── Summaries ─────────────────────────────────────────────────────────
+#
+# The sidebar's "N messages" should mirror what a reader sees: their own
+# prompts and the assistant's text replies.  The tool-call / tool-return
+# rows that sit between a question and its answer are an agent-loop
+# implementation detail, so they are left out of the count.
+
+
+def _visible_message_count() -> ColumnElement[int]:
+    """Correlated count of a conversation's user prompts and reply texts.
+
+    A user prompt only ever appears in a request and assistant text only
+    in a response, so one part-kind test selects a visible row without
+    consulting its ``kind``.
+    """
+    return (
+        select(func.count())
+        .where(
+            Message.conversation_id == Conversation.id,
+            or_(
+                Message.payload.contains({"parts": [{"part_kind": "user-prompt"}]}),
+                Message.payload.contains({"parts": [{"part_kind": "text"}]}),
+            ),
+        )
+        .scalar_subquery()
+    )
+
+
+def _to_summary(conv: Conversation, message_count: int) -> ConversationSummary:
+    """Build a list-view summary for *conv* with a precomputed count."""
+    return ConversationSummary(
+        id=conv.id,
+        title=conv.title or "",
+        created_at=conv.created_at,
+        updated_at=conv.updated_at,
+        message_count=message_count,
+        compacted_from=conv.compacted_from_id,
+    )
+
+
 # ─── Reads ─────────────────────────────────────────────────────────────
 
 
@@ -274,35 +315,32 @@ async def list_conversations(user_id: str) -> list[ConversationSummary]:
     Excludes empty conversations to mirror the previous file-walker
     behaviour (skipped JSONs without any messages).
     """
-    msg_counts = (
-        select(
-            Message.conversation_id.label("conversation_id"),
-            func.count().label("n"),
-        )
-        .group_by(Message.conversation_id)
-        .subquery()
-    )
+    count = _visible_message_count()
     async with session() as s:
         rows = (
             await s.execute(
-                select(Conversation, msg_counts.c.n)
-                .join(msg_counts, msg_counts.c.conversation_id == Conversation.id)
-                .where(Conversation.user_id == user_id)
-                .where(msg_counts.c.n > 0)
+                select(Conversation, count)
+                .where(Conversation.user_id == user_id, count > 0)
                 .order_by(Conversation.updated_at.desc())
             )
         ).all()
-    return [
-        ConversationSummary(
-            id=conv.id,
-            title=conv.title or "",
-            created_at=conv.created_at,
-            updated_at=conv.updated_at,
-            message_count=int(count),
-            compacted_from=conv.compacted_from_id,
-        )
-        for conv, count in rows
-    ]
+    return [_to_summary(conv, int(n)) for conv, n in rows]
+
+
+async def load_conversation_summary(
+    user_id: str, conversation_id: str
+) -> ConversationSummary | None:
+    """Return one conversation's summary, or ``None`` if missing or not owned."""
+    async with session() as s:
+        row = (
+            await s.execute(
+                select(Conversation, _visible_message_count()).where(
+                    Conversation.id == conversation_id,
+                    Conversation.user_id == user_id,
+                )
+            )
+        ).one_or_none()
+    return None if row is None else _to_summary(row[0], int(row[1]))
 
 
 async def conversation_exists(user_id: str, conversation_id: str) -> bool:
@@ -446,25 +484,7 @@ async def set_conversation_title(
         )
         if affected_rows(result) == 0:
             return None
-        row = (
-            await s.execute(
-                select(
-                    Conversation,
-                    select(func.count())
-                    .where(Message.conversation_id == Conversation.id)
-                    .scalar_subquery(),
-                ).where(Conversation.id == conversation_id)
-            )
-        ).one()
-    conv, message_count = row
-    return ConversationSummary(
-        id=conv.id,
-        title=conv.title or "",
-        created_at=conv.created_at,
-        updated_at=conv.updated_at,
-        message_count=int(message_count),
-        compacted_from=conv.compacted_from_id,
-    )
+    return await load_conversation_summary(user_id, conversation_id)
 
 
 async def remove_conversation(user_id: str, conversation_id: str) -> bool:

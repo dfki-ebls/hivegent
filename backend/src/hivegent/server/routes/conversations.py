@@ -33,6 +33,7 @@ from ...db.conversations import (
     export_conversation,
     list_conversations,
     load_conversation,
+    load_conversation_summary,
     load_messages,
     messages_to_persist,
     remove_conversation,
@@ -100,17 +101,10 @@ async def get_conversation(
     user: Annotated[User, Depends(get_current_user)],
 ) -> ConversationSummary:
     """Get summary information for a specific conversation."""
-    conversation = await load_conversation(user.id, conversation_id)
-    if not conversation:
+    summary = await load_conversation_summary(user.id, conversation_id)
+    if summary is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return ConversationSummary(
-        id=conversation.id,
-        title=conversation.title,
-        created_at=conversation.created_at,
-        updated_at=conversation.updated_at,
-        message_count=len(conversation.messages),
-        compacted_from=conversation.compacted_from,
-    )
+    return summary
 
 
 @router.patch("/conversations/{conversation_id}")
