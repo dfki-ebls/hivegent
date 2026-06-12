@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from pydantic import Field
-from pydantic_ai import FunctionToolset, RunContext, capture_run_messages
+from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel
 
 from ...config import settings
@@ -92,32 +92,41 @@ async def explore(
     """
     config = _SCOPES[scope]
     model = _subagent_model(ctx.deps)
-    with capture_run_messages() as messages:
+    # Drive the subagent with `iter` rather than `run` + `capture_run_messages`
+    # so its transcript comes off its own run (`run.all_messages()`), not an
+    # ambient capture context.  The main chat run wraps the whole turn in
+    # `capture_run_messages` for crash-safe persistence; a nested capture here
+    # would latch onto that outer list and summarise the wrong conversation.
+    async with user_agent.iter(
+        task,
+        model=model,
+        deps=ctx.deps,
+        toolsets=[config.toolset],
+        instructions=config.instructions,
+        usage=ctx.usage,
+    ) as run:
         try:
-            result = await user_agent.run(
-                task,
-                model=model,
-                deps=ctx.deps,
-                toolsets=[config.toolset],
-                instructions=config.instructions,
-                usage=ctx.usage,
-            )
+            async for _ in run:
+                pass
         except Exception as exc:
             # A subagent that overflows its context window has still done
-            # useful work — its transcript is sitting in `messages`.
-            # Compact it into a summary instead of failing the tool call,
-            # so the main thread keeps the findings and continues.
-            # Transcript fidelity follows `settings.summarization`, the
-            # same config every summarization consumer uses; with tool
-            # parts included the summary request can overflow again (it
-            # reuses the model that just overflowed on those payloads),
-            # in which case the error surfaces like any other tool error.
+            # useful work — its transcript is on the run.  Compact it into a
+            # summary instead of failing the tool call, so the main thread
+            # keeps the findings and continues.  Transcript fidelity follows
+            # `settings.summarization`, the same config every summarization
+            # consumer uses; with tool parts included the summary request can
+            # overflow again (it reuses the model that just overflowed on
+            # those payloads), in which case the error surfaces like any
+            # other tool error.
             if not is_context_overflow(exc):
                 raise
-            summary = await summarize_messages(messages, model)
+            summary = await summarize_messages(run.all_messages(), model)
             return (
                 "The exploration hit the model's context limit before "
                 "finishing. Summary of the findings so far:\n\n"
                 f"{summary}"
             )
-    return result.output
+        result = run.result  # a clean iteration always ends at a result
+        if result is None:
+            raise RuntimeError("subagent run produced no result")
+        return result.output

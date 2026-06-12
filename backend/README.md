@@ -12,8 +12,8 @@ Use one of two PostgreSQL-native tools:
   Lazy "materialise on first reference" identity rows use the `ensure_row` helper in `db/_common.py` (`ON CONFLICT DO NOTHING`); see `ensure_user` and `ensure_group`.
   Upserts that overwrite columns use `.on_conflict_do_update(index_elements=[...], set_={...})`, keyed on the relevant primary key or unique constraint; see `db.documents.upsert_document` and `db.memory.save_memory`.
   A core upsert does not fire the ORM `onupdate=_now`, so bump `updated_at` explicitly in `set_` with `func.now()`.
-- A transaction-scoped advisory lock (`pg_advisory_xact_lock`) for multi-row read-then-write sequences that no single constraint can guard, such as appending messages at a computed `idx`.
-  See `db.conversations.append_messages`, which serialises concurrent turns on the same conversation; the lock auto-releases on commit/rollback.
+- A transaction-scoped advisory lock (`pg_advisory_xact_lock`) for multi-row read-then-write sequences that no single constraint can guard, such as mirroring a conversation's messages into rows keyed by `idx`.
+  See `db.conversations.replace_messages`, which serialises concurrent turns on the same conversation; the lock auto-releases on commit/rollback.
 
 The schema's constraints are the safety net, not the obstacle: keep the primary keys, unique constraints, and the `documents.single_owner` check, and make the application cooperate with them atomically rather than racing them.
 The one accepted exception is a best-effort last-write-wins update with no constraint to violate — e.g. the throttled `last_used_at` bump in `tokens.validate_token` — where serialising would add cost for no correctness gain.

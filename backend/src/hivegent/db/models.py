@@ -244,11 +244,12 @@ class Conversation(Timestamped, Base):
 
 
 class Message(Base):
-    """An immutable, append-only turn in a conversation.
+    """One message of a conversation, addressed by its ``idx``.
 
-    Messages are never updated in place (new turns are inserted at the
-    next ``idx``), so the row carries only ``created_at`` — no
-    ``updated_at`` — and that timestamp also has a ``server_default``.
+    A turn mirrors the run's full message list by deleting the
+    conversation's rows and re-inserting them (see ``replace_messages``);
+    rows are never updated in place, so each carries only ``created_at`` —
+    no ``updated_at`` — and that timestamp also has a ``server_default``.
     """
 
     __tablename__ = "messages"

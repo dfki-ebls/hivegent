@@ -8,18 +8,35 @@ status code, and provider response body are still structured, and
 prefixes context-window overflows with a stable code that the frontend
 matches exactly (see ``isContextLengthError`` in
 ``frontend/src/lib/chat/chat-utils.ts``).
+
+It also owns :func:`run_and_persist`, which streams a turn and mirrors its
+full message list to storage on both clean and interrupted finishes.
 """
 
-from collections.abc import AsyncIterator
+import asyncio
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
+from pydantic_ai import capture_run_messages
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, ErrorChunk
+from starlette.responses import Response
 
 from ..llm import is_context_overflow
 
-__all__ = ["CONTEXT_LENGTH_EXCEEDED", "ChatAdapter", "chat_error_text"]
+__all__ = [
+    "CONTEXT_LENGTH_EXCEEDED",
+    "ChatAdapter",
+    "chat_error_text",
+    "run_and_persist",
+]
+
+logger = logging.getLogger(__name__)
 
 CONTEXT_LENGTH_EXCEEDED = "context_length_exceeded"
+
+type PersistTurn = Callable[[Sequence[ModelMessage]], Awaitable[None]]
 
 
 def chat_error_text(error: Exception) -> str:
@@ -55,3 +72,49 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
             sdk_version=self.sdk_version,
             server_message_id=self.server_message_id,
         )
+
+
+async def _persist_safely(persist: PersistTurn, messages: Sequence[ModelMessage]) -> None:
+    """Run *persist*, logging instead of raising on failure.
+
+    It fires after the response has already streamed — and possibly during
+    client-disconnect teardown — so a storage error must not crash the
+    request; it is logged for follow-up instead.
+    """
+    try:
+        await persist(messages)
+    except Exception:
+        logger.exception("Failed to persist conversation turn")
+
+
+async def run_and_persist[DepsT, OutputT](
+    adapter: VercelAIAdapter[DepsT, OutputT],
+    stream: AsyncIterator[BaseChunk],
+    *,
+    persist: PersistTurn,
+) -> Response:
+    """Stream a chat turn and mirror its full message list to storage.
+
+    *stream* is the still-unstarted event stream from ``adapter.run_stream``;
+    iterating it here, inside ``capture_run_messages``, exposes the run's live
+    message list — the same one the agent appends to — so whatever exists when
+    the stream ends is persisted: the whole conversation on a clean finish, or
+    the prompt plus whatever streamed before the failure on an error (the
+    Vercel adapter turns run errors into an in-band error chunk, so the stream
+    still ends normally) or a client disconnect.  A failed or stopped turn
+    therefore keeps the user's message and partial output rather than
+    vanishing.
+
+    The persist runs in a shielded ``finally`` so a disconnect mid-write
+    still lands the user's turn.
+    """
+
+    async def relay() -> AsyncIterator[BaseChunk]:
+        with capture_run_messages() as captured:
+            try:
+                async for chunk in stream:
+                    yield chunk
+            finally:
+                await asyncio.shield(_persist_safely(persist, list(captured)))
+
+    return adapter.streaming_response(relay())

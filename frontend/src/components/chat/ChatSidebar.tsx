@@ -97,12 +97,15 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
 
   // Once the first turn of a draft has settled, adopt the server-issued ID:
   // hand the streamed messages to that route and navigate so reloads and the
-  // sidebar reflect the now-persisted conversation. Queued steering messages
+  // sidebar reflect the now-persisted conversation. A turn that errored counts
+  // as settled (status "error") — its conversation is persisted too, so it
+  // must still adopt rather than strand the draft. Queued steering messages
   // drain first (the transport already targets the adopted conversation) so
   // their turns stream here and land in the handoff instead of being cut off
   // mid-stream by the navigation.
   useEffect(() => {
-    if (!draft || !createdId || status !== "ready" || messages.length === 0) return;
+    if (!draft || !createdId || messages.length === 0) return;
+    if (isStreaming) return;
     if (steeringQueue.length > 0) return;
     setCreatedId(null);
     stashHandoff(createdId, messages);
@@ -113,7 +116,7 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
   }, [
     draft,
     createdId,
-    status,
+    isStreaming,
     messages,
     steeringQueue,
     stashHandoff,

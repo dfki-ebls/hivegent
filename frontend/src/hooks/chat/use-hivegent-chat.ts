@@ -26,11 +26,12 @@ export function useHivegentChat(
 ) {
   const onCreatedRef = useRef(onConversationCreated);
   onCreatedRef.current = onConversationCreated;
-  // ID minted for the in-flight draft turn. The server only persists the
-  // conversation when the turn completes, so the ID is staged here and
-  // reported via `onConversationCreated` once the stream finishes cleanly —
-  // adopting it after an abort or error would point at a conversation that
-  // does not exist.
+  // ID minted for the in-flight draft turn. The server persists the turn
+  // whenever it has started responding — on success, error, or a stop — so
+  // once a minted ID came back (in the response header) the conversation is
+  // a real row. The ID is staged here and adopted on finish regardless of
+  // outcome, so a failed first turn still becomes a navigable conversation
+  // and its retry continues it instead of minting a duplicate.
   const mintedIdRef = useRef<string | null>(null);
   // Once a draft turn is adopted, follow-up sends from this still-mounted
   // instance (steering drain, approval auto-send) must target the adopted
@@ -72,10 +73,13 @@ export function useHivegentChat(
     id,
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-    onFinish: ({ isAbort, isDisconnect, isError }) => {
+    onFinish: () => {
       const mintedId = mintedIdRef.current;
       mintedIdRef.current = null;
-      if (mintedId && !isAbort && !isDisconnect && !isError) {
+      // The server mirrors the turn to storage on every finish (clean,
+      // errored, or stopped), so a minted ID always names a persisted
+      // conversation — adopt it unconditionally.
+      if (mintedId) {
         adoptedIdRef.current = mintedId;
         onCreatedRef.current?.(mintedId);
       }

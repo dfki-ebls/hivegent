@@ -1,16 +1,23 @@
 """Conversation repository (replaces ``hivegent.messages``).
 
-Each turn appends new ``Message`` rows rather than rewriting a full
-JSON file.  The metadata-preservation dance in the old module is no
-longer needed: prior rows in SQL keep their original ``ToolReturnPart``
-payloads, so the SDK losing metadata in the next request matters only
-for what it sends us, not for what we have stored.
+Each turn mirrors the agent's authoritative message list into SQL,
+replacing the conversation's rows so the stored copy always matches what
+the run produced — a turn that errors keeps its user prompt and partial
+output instead of vanishing, and edit / regenerate / retry replace the
+turn they rewrite instead of appending a duplicate.
+
+The one thing the browser's echoed history drops is
+``ToolReturnPart.metadata`` (the ``DataChunk`` tool-output payload the
+frontend renders): the Vercel adapter ignores those data parts on the
+way back.  Only the freshly generated tail of a turn still carries live
+metadata, so :func:`_restore_tool_metadata` re-attaches it onto echoed
+tool returns from the prior rows, keyed by ``tool_call_id``.
 """
 
 import contextlib
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypedDict
 
 from pydantic import (
     BaseModel,
@@ -29,6 +36,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 from sqlalchemy import ColumnElement, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ._common import affected_rows, new_id
@@ -40,7 +48,6 @@ __all__ = [
     "ConversationData",
     "ConversationExport",
     "ConversationSummary",
-    "append_messages",
     "conversation_exists",
     "create_compacted_conversation",
     "delete_all_conversations",
@@ -50,8 +57,8 @@ __all__ = [
     "load_conversation",
     "load_conversation_summary",
     "load_messages",
-    "messages_to_persist",
     "remove_conversation",
+    "replace_messages",
     "set_conversation_title",
 ]
 
@@ -355,51 +362,80 @@ async def conversation_exists(user_id: str, conversation_id: str) -> bool:
 # ─── Writes ────────────────────────────────────────────────────────────
 
 
-def _opens_a_turn(message: ModelMessage) -> bool:
-    """Whether *message* is a request carrying a fresh user prompt."""
-    return isinstance(message, ModelRequest) and any(
-        isinstance(part, UserPromptPart) for part in message.parts
+class _MessageRow(TypedDict):
+    """One row for the :func:`replace_messages` bulk upsert."""
+
+    conversation_id: str
+    idx: int
+    kind: MessageKind
+    payload: dict[str, Any]
+
+
+def _has_stripped_tool_returns(messages: Sequence[ModelMessage]) -> bool:
+    """Whether any tool return arrived without metadata (a browser echo).
+
+    A turn with none — no tools, or only its freshly generated tail — has
+    nothing to restore, so the prior rows need not be read at all.
+    """
+    return any(
+        isinstance(part, ToolReturnPart) and part.metadata is None
+        for msg in messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
     )
 
 
-def messages_to_persist(
-    all_messages: Sequence[ModelMessage],
-    new_messages: Sequence[ModelMessage],
-) -> list[ModelMessage]:
-    """Select the messages a finished turn should append to its conversation.
+def _restore_tool_metadata(
+    incoming: Sequence[ModelMessage], existing: Sequence[ModelMessage]
+) -> None:
+    """Re-attach tool-output metadata the browser's echoed history dropped.
 
-    Pass a run result's ``all_messages()`` and ``new_messages()``.  Whatever
-    the agent generated this run (``new_messages()``) is always new.  The
-    Vercel adapter folds the submitted message into ``message_history``
-    instead of passing it as a separate prompt, so a fresh question appears
-    as the ``UserPromptPart`` request sitting just before the generated tail
-    and is stored with it.  A tool-approval resume has no new prompt in that
-    slot — it holds the already-stored assistant turn being continued — so
-    only the generated messages are appended.
-
-    The stored row count cannot locate this boundary: the SDK re-segments
-    the history it echoes back each turn, so its message count never lines
-    up positionally with what we persisted, and diffing by count re-appends
-    the previous turn's tail (the duplicate-message bug this avoids).
+    The Vercel adapter discards ``ToolReturnPart.metadata`` (the
+    ``DataChunk`` the frontend renders) when it loads client messages, so
+    every tool return except this turn's freshly generated tail comes back
+    with ``metadata=None``.  Restore it in place from the prior rows, keyed
+    by ``tool_call_id`` (unique within a conversation); the live metadata on
+    the new tail has no match yet and is left untouched.
     """
-    messages = list(all_messages)
-    start = len(messages) - len(new_messages)
-    if start > 0 and _opens_a_turn(messages[start - 1]):
-        start -= 1
-    return messages[start:]
+    saved = {
+        part.tool_call_id: part.metadata
+        for msg in existing
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.metadata is not None
+    }
+    if not saved:
+        return
+    for msg in incoming:
+        if not isinstance(msg, ModelRequest):
+            continue
+        for part in msg.parts:
+            if (
+                isinstance(part, ToolReturnPart)
+                and part.metadata is None
+                and (metadata := saved.get(part.tool_call_id)) is not None
+            ):
+                part.metadata = metadata
 
 
-async def append_messages(
+async def replace_messages(
     user_id: str,
     conversation_id: str,
     messages: Sequence[ModelMessage],
 ) -> None:
-    """Append one turn's messages to *conversation_id*.
+    """Mirror a turn's full message list into *conversation_id*.
 
-    *messages* must be just that turn's new messages (see
-    :func:`messages_to_persist`), which are appended verbatim past the
-    existing rows — prior payloads, including their tool-return metadata,
-    are never re-read or overwritten.
+    *messages* is the whole conversation as the run sees it (its
+    ``all_messages()`` on a clean finish, or the partial transcript captured
+    so far when the run was interrupted), which replaces every stored row.
+    Mirroring rather than appending keeps the stored copy equal to the live
+    state through errors, edits, regenerations, and retries — all of which
+    rewrite the tail of the conversation client-side.
+
+    The rows are upserted by ``idx`` rather than dropped and re-inserted, so a
+    message that keeps its position keeps its original ``created_at`` instead
+    of being restamped every turn (``ON CONFLICT`` rewrites only ``kind`` and
+    ``payload``); only the rewritten tail (rows past the new length) is deleted.
 
     The row is created lazily on the first turn — the id-less ``/chat``
     endpoint mints a server ID and only here does it become a real record,
@@ -412,13 +448,11 @@ async def append_messages(
         return
 
     async with session() as s:
-        # Serialise concurrent appends to the same conversation: the
-        # existence check, message-count read, and idx-assigned inserts
-        # below form a read-then-write sequence that two racing turns
-        # (duplicate submit, multiple tabs) would otherwise interleave —
-        # tripping the conversations PK or the (conversation_id, idx) PK
-        # and rolling back the turn.  The transaction-scoped advisory
-        # lock auto-releases on commit/rollback.
+        # Serialise concurrent writes to the same conversation: the ownership
+        # check, metadata read, and idx-keyed upsert below form a
+        # read-then-write sequence that two racing turns (duplicate submit,
+        # multiple tabs) would otherwise interleave.  The transaction-scoped
+        # advisory lock auto-releases on commit/rollback.
         await s.execute(
             select(
                 func.pg_advisory_xact_lock(func.hashtextextended(conversation_id, 0))
@@ -430,38 +464,52 @@ async def append_messages(
         if conv is None:
             conv = Conversation(id=conversation_id, user_id=user_id)
             s.add(conv)
-            existing_count = 0
         elif conv.user_id != user_id:
             raise PermissionError(
                 f"conversation {conversation_id} is not owned by {user_id}"
             )
-        else:
-            existing_count = int(
-                await s.scalar(
-                    select(func.count())
-                    .select_from(Message)
-                    .where(Message.conversation_id == conversation_id)
-                )
-                or 0
+        elif _has_stripped_tool_returns(msg_list):
+            # The upsert needs no prior column, so read just the payloads, and
+            # only when there is dropped tool metadata to restore.
+            stored = await s.scalars(
+                select(Message.payload)
+                .where(Message.conversation_id == conversation_id)
+                .order_by(Message.idx)
             )
+            _restore_tool_metadata(msg_list, _load_messages(stored.all()))
 
         if conv.title is None:
             conv.title = extract_title(msg_list)
 
-        for offset, (msg, payload) in enumerate(
-            zip(msg_list, _dump_messages(msg_list), strict=True)
-        ):
-            s.add(
-                Message(
-                    conversation_id=conversation_id,
-                    idx=existing_count + offset,
-                    kind=_message_kind(msg),
-                    payload=payload,
-                )
+        rows: list[_MessageRow] = [
+            {
+                "conversation_id": conversation_id,
+                "idx": idx,
+                "kind": _message_kind(msg),
+                "payload": payload,
+            }
+            for idx, (msg, payload) in enumerate(
+                zip(msg_list, _dump_messages(msg_list), strict=True)
             )
+        ]
+        insert = pg_insert(Message).values(rows)
+        await s.execute(
+            insert.on_conflict_do_update(
+                index_elements=[Message.conversation_id, Message.idx],
+                set_={"kind": insert.excluded.kind, "payload": insert.excluded.payload},
+            )
+        )
+        # Trim a tail a shorter turn (e.g. an edit that replays fewer messages)
+        # left behind; a no-op when the conversation grew or kept its length.
+        await s.execute(
+            delete(Message).where(
+                Message.conversation_id == conversation_id,
+                Message.idx >= len(rows),
+            )
+        )
 
-        # Touch the row so `onupdate=_now` bumps `updated_at` even when
-        # only child Message rows are inserted.
+        # Touch the row so `onupdate=_now` bumps `updated_at` even when only
+        # child Message rows change.
         conv.updated_at = datetime.now(UTC)
 
 

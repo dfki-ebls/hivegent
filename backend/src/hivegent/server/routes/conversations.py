@@ -2,13 +2,13 @@
 
 import logging
 from collections.abc import Sequence
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import ValidationError
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
-from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import Response
@@ -27,7 +27,6 @@ from ...mcp import build_mcp_server, validate_mcp_servers
 from ...db._common import new_id
 from ...db.conversations import (
     ConversationSummary,
-    append_messages,
     conversation_exists,
     delete_all_conversations,
     export_conversation,
@@ -35,8 +34,8 @@ from ...db.conversations import (
     load_conversation,
     load_conversation_summary,
     load_messages,
-    messages_to_persist,
     remove_conversation,
+    replace_messages,
     set_conversation_title,
 )
 from ...db.memory import load_memory
@@ -68,7 +67,7 @@ from ...types import (
     UpdateTitleRequest,
 )
 from ..cancellation import run_until_disconnect
-from ..vercel import ChatAdapter
+from ..vercel import ChatAdapter, run_and_persist
 from ..common import (
     group_stores,
     parse_document_filters,
@@ -386,18 +385,6 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     store = user_store(user)
     user_group_stores = group_stores(user)
 
-    async def on_complete(result: AgentRunResult[str]) -> None:
-        """Persist this turn's messages after the agent run completes.
-
-        Must be ``async`` — pydantic-ai runs sync callbacks in a worker
-        thread without an event loop, which would break message saving.
-        """
-        await append_messages(
-            user.id,
-            config.conversation_id,
-            messages_to_persist(result.all_messages(), result.new_messages()),
-        )
-
     # "auto" maps to None so thinking_model_settings omits the field and the
     # server-side default applies; "none" maps to False (disabled), every
     # other level passes through.  A configured max_tokens applies regardless.
@@ -410,33 +397,49 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     )
     model_settings = thinking_model_settings(thinking, config.llm)
 
-    return await ChatAdapter.dispatch_request(
-        request,
-        agent=user_agent,
-        deps=UserDeps(
-            user_id=user.id,
-            store=store,
-            group_stores=user_group_stores,
-            document_filter=document_filter,
-            group_filters=group_filters,
-            llm=config.llm,
-        ),
-        sdk_version=6,
+    try:
+        # `from_request` is typed to return the base adapter with erased type
+        # parameters; the runtime object is a `ChatAdapter[UserDeps, str]`.
+        adapter = cast(
+            ChatAdapter[UserDeps, str],
+            await ChatAdapter[UserDeps, str].from_request(
+                request, agent=user_agent, sdk_version=6
+            ),
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid chat request") from exc
+
+    deps = UserDeps(
+        user_id=user.id,
+        store=store,
+        group_stores=user_group_stores,
+        document_filter=document_filter,
+        group_filters=group_filters,
+        llm=config.llm,
+    )
+    toolsets = build_toolsets(
+        TOOLSET_GROUPS,
+        config.tools,
+        extra=[
+            build_mcp_server(server)  # .defer_loading()
+            for server in config.tools.mcp_servers
+        ],
+        mode=config.mode,
+    )
+
+    stream = adapter.run_stream(
+        deps=deps,
         output_type=[str, DeferredToolRequests],
         model=model_from_config(config.llm),
-        toolsets=build_toolsets(
-            TOOLSET_GROUPS,
-            config.tools,
-            extra=[
-                build_mcp_server(server)  # .defer_loading()
-                for server in config.tools.mcp_servers
-            ],
-            mode=config.mode,
-        ),
+        toolsets=toolsets,
         instructions=instructions,
         model_settings=model_settings,
-        on_complete=on_complete,
     )
+
+    async def persist(messages: Sequence[ModelMessage]) -> None:
+        await replace_messages(user.id, config.conversation_id, messages)
+
+    return await run_and_persist(adapter, stream, persist=persist)
 
 
 @router.post("/conversations/chat")
@@ -446,9 +449,12 @@ async def create_new_conversation_chat(
 ) -> Response:
     """Start a new conversation: mint a server ID and stream the first turn.
 
-    The conversation row is created lazily when the first message is
-    persisted (see :func:`append_messages`), so an abandoned chat never
-    leaves an empty row behind.  The minted ID is returned in the
+    The conversation row is created lazily when the turn is persisted (see
+    :func:`replace_messages`), so an abandoned chat never leaves an empty
+    row behind.  Because the turn is mirrored on an interrupted finish too,
+    a first turn that errors still becomes a real row under the minted ID —
+    which the client adopts so its retry targets that conversation instead
+    of minting a duplicate.  The minted ID is returned in the
     ``X-Conversation-Id`` response header for the client to adopt.
 
     CORS constraint: the frontend can only read this header same-origin or
