@@ -23,6 +23,7 @@ import { downloadBlob } from "@/lib/download";
 import { getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
 import { type AgentMode, type ReasoningEffort } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
+import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { useDraftHandoffStore } from "@/stores/draft-handoff-store";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
@@ -41,7 +42,7 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const clearFilter = useDocumentFilterStore((state) => state.clear);
   const fetchConversations = useConversationsStore((state) => state.fetchConversations);
-  const setDocumentTab = useSettingsStore((state) => state.setDocumentTab);
+  const setDocumentTab = useDocumentCanvasStore((state) => state.setActiveTab);
   const stashHandoff = useDraftHandoffStore((state) => state.stash);
   // Server-issued ID of a draft whose first turn finished cleanly; state
   // (not a ref) so the adoption effect below runs once it is reported.
@@ -79,8 +80,10 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
   const handleSendMessage = useCallback(
     async (text: string, files?: FileUIPart[]) => {
       if (!text.trim() && (!files || files.length === 0)) return;
-      // Surface the Context panel as the conversation's first turn begins to
-      // pull documents; later turns leave the user's chosen tab alone.
+      // A draft streams its whole first turn before adoption navigates, and
+      // ChatLayout's openChat only re-surfaces on a route change, so this is
+      // the sole trigger that reveals the Context panel as documents are
+      // pulled. Later turns leave the user's chosen tab alone.
       if (messages.length === 0) setDocumentTab("context");
       await sendUserMessage({ text, files }, buildRequestBody());
     },

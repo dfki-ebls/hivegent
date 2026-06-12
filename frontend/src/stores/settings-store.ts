@@ -22,8 +22,6 @@ import {
   ChunkingPipelineSchema,
   ConversionPipeline,
   ConversionPipelineSchema,
-  type DocumentTab,
-  DocumentTabSchema,
   ExpandedDirsSchema,
   type McpServerEntry,
   type Personality,
@@ -54,7 +52,6 @@ export type PipelineConfigs = Record<string, Record<string, unknown>>;
  * {@link PersistedToolsSpec}, so the `partialize` return below cannot leak them.
  */
 interface PersistedSettings {
-  documentTab: DocumentTab;
   expandedDirs: string[];
   personality: Personality;
   customSystemMessage: string;
@@ -68,7 +65,6 @@ interface PersistedSettings {
 }
 
 const UI_DEFAULTS = {
-  documentTab: "documents" as DocumentTab,
   conversionPipeline: ConversionPipeline.AUTO,
   chunkingPipeline: ChunkingPipeline.AUTO,
   expandedDirs: [""] as string[],
@@ -88,7 +84,6 @@ interface SettingsState {
   overrides: UserOverrides;
 
   // UI preferences (persisted)
-  documentTab: DocumentTab;
   conversionPipeline: ConversionPipeline;
   chunkingPipeline: ChunkingPipeline;
   assetMode: AssetProcessingMode;
@@ -115,7 +110,6 @@ interface SettingsState {
   initFromBackend: () => Promise<void>;
 
   // UI preference actions
-  setDocumentTab: (tab: DocumentTab) => void;
   setConversionPipeline: (pipeline: ConversionPipeline) => void;
   setChunkingPipeline: (pipeline: ChunkingPipeline) => void;
   setAssetMode: (mode: AssetProcessingMode) => void;
@@ -204,8 +198,6 @@ export const useSettingsStore = create<SettingsState>()(
           }
         }
       },
-
-      setDocumentTab: (tab) => set({ documentTab: tab }),
 
       setConversionPipeline: (pipeline) => set({ conversionPipeline: pipeline }),
 
@@ -298,7 +290,6 @@ export const useSettingsStore = create<SettingsState>()(
       name: "hivegent-settings",
       storage: createJSONStorage(() => localStorage),
       partialize: (state): PersistedSettings => ({
-        documentTab: state.documentTab,
         expandedDirs: state.expandedDirs,
         personality: state.personality,
         customSystemMessage: state.customSystemMessage,
@@ -328,7 +319,6 @@ export const useSettingsStore = create<SettingsState>()(
         // flag on is ignored.
         return {
           ...current,
-          documentTab: pick(DocumentTabSchema, data.documentTab, UI_DEFAULTS.documentTab),
           expandedDirs: pick(ExpandedDirsSchema, data.expandedDirs, UI_DEFAULTS.expandedDirs),
           personality: pick(PersonalitySchema, data.personality, UI_DEFAULTS.personality),
           customSystemMessage: pick(

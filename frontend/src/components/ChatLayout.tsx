@@ -1,6 +1,7 @@
 import { PanelLeftOpen } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { useDocumentCanvasStore } from "../stores/document-canvas-store";
 import { ChatSidebar } from "./chat/ChatSidebar";
 import { DocumentCanvas } from "./documents/DocumentCanvas";
 import { Button } from "./ui/button";
@@ -13,6 +14,14 @@ interface ChatLayoutProps {
 
 export function ChatLayout({ id, draft = false }: ChatLayoutProps) {
   const [mobileDocumentsOpen, setMobileDocumentsOpen] = useState(false);
+  const openChat = useDocumentCanvasStore((state) => state.openChat);
+
+  // Single entry point for every navigation path (sidebar, links, draft
+  // adoption): surfaces the chat's primary view, while a reload keeps the
+  // remembered tab and a manual switch within one conversation is left alone.
+  useEffect(() => {
+    openChat(id, draft);
+  }, [id, draft, openChat]);
 
   return (
     <div className="flex h-full overflow-hidden">

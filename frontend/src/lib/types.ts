@@ -63,11 +63,17 @@ const EntryOriginSchema = z.enum(["upload", "collection", "extracted", "imported
 const EntryGeneratedBySchema = z.enum(["user", "converter", "vision", "stub"]);
 
 // ============================================================
-// Persisted data schemas (localStorage)
+// Persisted data schemas (localStorage / sessionStorage)
 // ============================================================
 
-export const DocumentTabSchema = z.enum(["context", "documents"]);
-export type DocumentTab = z.infer<typeof DocumentTabSchema>;
+/**
+ * Tabs of the document canvas, in display order. Persisted to sessionStorage,
+ * so the schema doubles as the allow-list that validates the restored value.
+ * Add a future view (e.g. a graph or database panel) by extending this enum
+ * and the canvas tab registry — no other wiring required.
+ */
+export const DocumentCanvasTabSchema = z.enum(["documents", "context"]);
+export type DocumentCanvasTab = z.infer<typeof DocumentCanvasTabSchema>;
 
 export const ExpandedDirsSchema = z.array(z.string());
 
