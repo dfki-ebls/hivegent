@@ -30,7 +30,7 @@ import PIL.Image
 from pydantic_ai import BinaryContent
 
 from ..agents.app import base_agent
-from ..llm import model_from_config
+from ..llm import model_from_config, thinking_model_settings
 from ..types import LlmConfig
 from .base import AssetRole, ExtractedImage
 from .images import sanitize_image_bytes
@@ -257,11 +257,12 @@ async def caption_image(
     passed in *contexts*, so one image yields exactly one caption — the single
     source of truth shared by all its occurrences.
 
-    Reasoning-capable models are expected to emit the final description after
-    any ``<think>`` block — pydantic_ai aggregates the ``TextPart`` content and
-    discards thinking.  Disable thinking at the server (e.g. vLLM
-    ``chat_template_kwargs``) if the chosen model otherwise produces
-    thinking-only responses.
+    Thinking is disabled for this call (``thinking=False``): pydantic_ai
+    discards a ``<think>`` block and keeps only the ``TextPart``, so on a
+    small-context aux model an unbounded reasoning trace would otherwise fill
+    the window before any description is emitted (raising
+    ``UnexpectedModelBehavior``).  ``llm_options.max_tokens`` further bounds
+    the output.
 
     Args:
         image_bytes: The raw image bytes.
@@ -283,6 +284,7 @@ async def caption_image(
         base_agent.run(
             [_build_caption_prompt(_CAPTION_INSTRUCTIONS, contexts), content],
             model=model_from_config(llm_options),
+            model_settings=thinking_model_settings(False, llm_options),
         ),
         timeout=_VISION_TIMEOUT_S,
     )
@@ -322,7 +324,11 @@ async def caption_frames(
         parts.append(f"Frame at {frame.timestamp:.1f}s:")
         parts.append(BinaryContent(data=frame.data, media_type="image/png"))
     result = await asyncio.wait_for(
-        base_agent.run(parts, model=model_from_config(llm_options)),
+        base_agent.run(
+            parts,
+            model=model_from_config(llm_options),
+            model_settings=thinking_model_settings(False, llm_options),
+        ),
         timeout=_VISION_TIMEOUT_S,
     )
     return str(result.output).strip()

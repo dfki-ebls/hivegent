@@ -26,7 +26,10 @@ __all__ = [
 
 
 async def prepare_llm_config(
-    llm: LlmConfig, *, default_model: str | None = None
+    llm: LlmConfig,
+    *,
+    default_model: str | None = None,
+    default_max_tokens: int | None = None,
 ) -> LlmConfig:
     """Resolve defaults and check user-provided ``base_url`` values.
 
@@ -38,9 +41,13 @@ async def prepare_llm_config(
     *default_model* defaults to :attr:`settings.llm.aux_model` so the many
     ancillary routes (titles, image alt-text during upload) are right by
     default; the chat and compaction routes pass the main model explicitly.
+    The completion cap follows the same tier: an unspecified *default_model*
+    pairs the aux model with :attr:`settings.llm.aux_max_tokens`, while the
+    main-model callers pass :attr:`settings.llm.max_tokens` alongside it.
     """
     if default_model is None:
         default_model = settings.llm.aux_model
+        default_max_tokens = settings.llm.aux_max_tokens
     if llm.base_url:
         try:
             await require_safe_external_url(
@@ -50,7 +57,9 @@ async def prepare_llm_config(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return resolve_llm_config(llm, default_model=default_model)
+    return resolve_llm_config(
+        llm, default_model=default_model, default_max_tokens=default_max_tokens
+    )
 
 
 def parse_document_filters(

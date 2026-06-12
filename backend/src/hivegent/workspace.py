@@ -387,7 +387,11 @@ async def _describe_with_fallback(
     the entry still gets a searchable projection.  *media_kind* only
     labels the warning log.
     """
-    aux = resolve_llm_config(llm, default_model=settings.llm.aux_model)
+    aux = resolve_llm_config(
+        llm,
+        default_model=settings.llm.aux_model,
+        default_max_tokens=settings.llm.aux_max_tokens,
+    )
     fallback = PurePosixPath(filepath).stem
     if not aux.model:
         return f"{fallback}\n"

@@ -171,6 +171,7 @@ Return ONLY the title, no quotes or extra text.
         result = await base_agent.run(
             f"Conversation:\n{conversation_preview}",
             model=model_from_config(resolved),
+            model_settings=thinking_model_settings(False, resolved),
             instructions=instructions,
         )
         return result.output
@@ -238,7 +239,9 @@ async def create_conversation_compaction(
 
     async def _compact() -> CompactionResult:
         llm_config = await prepare_llm_config(
-            request.llm, default_model=settings.llm.model
+            request.llm,
+            default_model=settings.llm.model,
+            default_max_tokens=settings.llm.max_tokens,
         )
         return await compact_conversation(
             user.id, conversation_id, messages, llm_config
@@ -348,7 +351,11 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     config = await _parse_chat_config(request)
     config.conversation_id = conversation_id
 
-    config.llm = await prepare_llm_config(config.llm, default_model=settings.llm.model)
+    config.llm = await prepare_llm_config(
+        config.llm,
+        default_model=settings.llm.model,
+        default_max_tokens=settings.llm.max_tokens,
+    )
     try:
         await validate_mcp_servers(config.tools.mcp_servers)
     except ValueError as exc:
@@ -407,17 +414,19 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
             messages_to_persist(result.all_messages(), result.new_messages()),
         )
 
-    # "auto" omits the settings so the server-side default applies; every
-    # other level is forwarded via thinking_model_settings, with "none"
-    # mapping to False (disabled).
-    model_settings = (
-        ModelSettings()
-        if config.reasoning_effort == "auto"
-        else thinking_model_settings(
+    # "auto" omits the thinking setting so the server-side default applies;
+    # every other level is forwarded via thinking_model_settings, with "none"
+    # mapping to False (disabled).  A configured max_tokens applies regardless
+    # of the thinking level.
+    if config.reasoning_effort == "auto":
+        model_settings = ModelSettings()
+        if config.llm.max_tokens is not None:
+            model_settings["max_tokens"] = config.llm.max_tokens
+    else:
+        model_settings = thinking_model_settings(
             False if config.reasoning_effort == "none" else config.reasoning_effort,
             config.llm,
         )
-    )
 
     return await ChatAdapter.dispatch_request(
         request,

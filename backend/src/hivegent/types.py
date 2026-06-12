@@ -188,6 +188,7 @@ class LlmConfig(BaseModel):
     model: str = ""
     api_key: str = ""
     base_url: str | None = None
+    max_tokens: int | None = None
 
     _base_url_is_trusted: bool = PrivateAttr(default=False)
 
@@ -204,7 +205,10 @@ class LlmConfig(BaseModel):
 
 
 def resolve_llm_config(
-    llm: LlmConfig, *, default_model: str | None = None
+    llm: LlmConfig,
+    *,
+    default_model: str | None = None,
+    default_max_tokens: int | None = None,
 ) -> LlmConfig:
     """Apply server defaults to a client-provided LLM configuration."""
     configured_base_url = settings.llm.base_url or None
@@ -212,6 +216,7 @@ def resolve_llm_config(
         model=llm.model or default_model or settings.llm.model,
         api_key=llm.api_key or settings.llm.api_key,
         base_url=llm.base_url or configured_base_url,
+        max_tokens=llm.max_tokens or default_max_tokens,
     )
     resolved._base_url_is_trusted = llm.base_url_is_trusted or (
         not llm.base_url and configured_base_url is not None

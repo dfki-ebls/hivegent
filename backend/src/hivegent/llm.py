@@ -141,7 +141,7 @@ def model_from_config(config: LlmConfig) -> OpenAIChatModel:
 
 
 def thinking_model_settings(thinking: ThinkingLevel, config: LlmConfig) -> ModelSettings:
-    """Model settings applying *thinking* across heterogeneous endpoints.
+    """Model settings applying *thinking* and *max_tokens* across endpoints.
 
     Spec-compliant OpenAI servers receive the unified pydantic-ai
     ``thinking`` value (sent as ``reasoning_effort``).  llama.cpp and vLLM
@@ -150,8 +150,14 @@ def thinking_model_settings(thinking: ThinkingLevel, config: LlmConfig) -> Model
     server-side default (e.g. llama.cpp's ``--reasoning on``).  The kwarg
     is only added for self-hosted endpoints (``base_url`` set) — the real
     OpenAI API rejects unknown body fields.
+
+    ``config.max_tokens`` (resolved per tier in :func:`resolve_llm_config`)
+    is forwarded as the completion cap when set, so every call site that
+    builds settings this way inherits the configured bound.
     """
     settings = ModelSettings(thinking=thinking)
+    if config.max_tokens is not None:
+        settings["max_tokens"] = config.max_tokens
     if config.base_url:
         settings["extra_body"] = {
             "chat_template_kwargs": {"enable_thinking": thinking is not False}

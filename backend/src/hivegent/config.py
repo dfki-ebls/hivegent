@@ -182,6 +182,14 @@ class LlmSettings(BaseModel):
     served by the same OpenAI-compatible endpoint.  It backs the speech
     input fallback for browsers without a working Web Speech API; when
     unset, that fallback is disabled in the UI.
+
+    ``max_tokens`` caps the completion length per tier.  ``aux_max_tokens``
+    bounds the one-shot aux workloads (captions, titles, conversion): their
+    outputs are short and the aux model is usually small-context, so an
+    unbounded completion can fill the window before any answer is emitted.
+    ``max_tokens`` (the main chat tier) defaults to ``None`` — open-ended,
+    streamed answers should not be truncated — but is exposed so an operator
+    can impose a ceiling.
     """
 
     model: str = ""
@@ -189,6 +197,8 @@ class LlmSettings(BaseModel):
     stt_model: str | None = None
     api_key: str = ""
     base_url: str = ""
+    max_tokens: int | None = None
+    aux_max_tokens: int | None = 2048
 
 
 class SummarizationSettings(BaseModel):
