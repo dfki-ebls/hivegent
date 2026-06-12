@@ -286,7 +286,9 @@ class TestDeleteAssetDescription:
         (assets / "img.png").write_bytes(b"binary")
         (assets / "img.md").write_text("a description", encoding="utf-8")
 
-        entry = await workspace.delete_asset_description(user_store, "doc.md", "img.png")
+        entry = await workspace.delete_asset_description(
+            user_store, "doc.md", "img.png"
+        )
 
         assert not (assets / "img.md").exists()
         assert (assets / "img.png").exists()

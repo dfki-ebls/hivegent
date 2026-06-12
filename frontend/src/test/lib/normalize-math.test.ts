@@ -4,9 +4,7 @@ import { normalizeDisplayMath, normalizeMath } from "@/lib/normalize-math";
 
 describe("normalizeMath", () => {
   it("converts inline \\(...\\) to $...$", () => {
-    expect(normalizeMath("The equation \\(x^2\\) is simple")).toBe(
-      "The equation $x^2$ is simple",
-    );
+    expect(normalizeMath("The equation \\(x^2\\) is simple")).toBe("The equation $x^2$ is simple");
   });
 
   it("converts display \\[...\\] to $$...$$", () => {

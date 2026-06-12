@@ -20,10 +20,7 @@ interface ImageRefProps {
 }
 
 export function ImageRef({ src, alt }: ImageRefProps) {
-  const fetch = useCallback(
-    (signal: AbortSignal) => fetchDocumentAsset(src ?? "", signal),
-    [src],
-  );
+  const fetch = useCallback((signal: AbortSignal) => fetchDocumentAsset(src ?? "", signal), [src]);
   const [ref, inView] = useInView();
   const { url, error } = useObjectUrl(src && inView ? fetch : null);
 

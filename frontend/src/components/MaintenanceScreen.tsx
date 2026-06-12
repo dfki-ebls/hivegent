@@ -12,8 +12,8 @@ export function MaintenanceScreen() {
       <WrenchIcon className="h-12 w-12 text-muted-foreground" />
       <h1 className="text-2xl font-semibold">Down for maintenance</h1>
       <p className="max-w-md text-sm text-muted-foreground">
-        The application is temporarily unavailable while an administrator performs maintenance.
-        This page refreshes automatically once the app is back.
+        The application is temporarily unavailable while an administrator performs maintenance. This
+        page refreshes automatically once the app is back.
       </p>
     </div>
   );

@@ -417,11 +417,12 @@ export function DocumentDialog({
 
   // --- Determine sidebar visibility ---
   const hasAssets = Boolean(managedData?.assets_dir);
-  const hasSidebar = isNew || citationView
-    ? false
-    : isManagedMode
-      ? managedLoading || (managedData?.chunks.length ?? 0) > 0 || hasAssets
-      : true;
+  const hasSidebar =
+    isNew || citationView
+      ? false
+      : isManagedMode
+        ? managedLoading || (managedData?.chunks.length ?? 0) > 0 || hasAssets
+        : true;
 
   // --- Render helpers ---
 
@@ -877,7 +878,9 @@ export function DocumentDialog({
               }}
             >
               <Badge
-                variant={viewMode === "chunk" && sibling.id === activeChunkId ? "default" : "outline"}
+                variant={
+                  viewMode === "chunk" && sibling.id === activeChunkId ? "default" : "outline"
+                }
                 className="text-[10px]"
               >
                 {chunkPositionLabel(sibling.position)}

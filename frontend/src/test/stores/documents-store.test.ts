@@ -69,9 +69,7 @@ describe("useDocumentsStore refresh", () => {
   it("ignores an older refresh resolving after a newer one", async () => {
     const older = deferred<DirectoryTreeResponse>();
     const newer = deferred<DirectoryTreeResponse>();
-    vi.mocked(getDirectories)
-      .mockReturnValueOnce(older.promise)
-      .mockReturnValueOnce(newer.promise);
+    vi.mocked(getDirectories).mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
 
     const first = useDocumentsStore.getState().refresh("~");
     const second = useDocumentsStore.getState().refresh("~");

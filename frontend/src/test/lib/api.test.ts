@@ -122,8 +122,6 @@ describe("getDirectories", () => {
   it("includes the HTTP status in the error message", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 502 }));
 
-    await expect(getDirectories("~")).rejects.toThrow(
-      "Failed to fetch directory tree (HTTP 502)",
-    );
+    await expect(getDirectories("~")).rejects.toThrow("Failed to fetch directory tree (HTTP 502)");
   });
 });

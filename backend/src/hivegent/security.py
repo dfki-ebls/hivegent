@@ -320,9 +320,7 @@ def require_safe_url_shape(url: str, label: str) -> None:
         raise ValueError(f"Unsafe {label}: {exc}") from exc
 
 
-async def require_safe_external_url(
-    url: str, label: str, *, policy: UrlPolicy
-) -> None:
+async def require_safe_external_url(url: str, label: str, *, policy: UrlPolicy) -> None:
     """Async sibling of :func:`require_safe_url_shape` with the full check.
 
     Runs :func:`validate_external_url_async` (shape, host policy, DNS)

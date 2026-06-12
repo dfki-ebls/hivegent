@@ -49,7 +49,9 @@ def test_format_includes_everything_by_default() -> None:
     assert "User: What does the manual say?" in formatted
     assert "Reasoning: the user probably wants the safety chapter" in formatted
     assert 'Tool call (read_document): {"file_path":"manual.md"}' in formatted
-    assert "Tool result (read_document): Chapter 1 covers safety procedures." in formatted
+    assert (
+        "Tool result (read_document): Chapter 1 covers safety procedures." in formatted
+    )
     assert "Assistant: It covers safety procedures." in formatted
 
 

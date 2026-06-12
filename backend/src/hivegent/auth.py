@@ -512,9 +512,7 @@ async def _impersonate(actor: User, target_id: str) -> User:
 
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
-    impersonate_user_id: Annotated[
-        str | None, Header(alias=IMPERSONATE_HEADER)
-    ] = None,
+    impersonate_user_id: Annotated[str | None, Header(alias=IMPERSONATE_HEADER)] = None,
 ) -> User:
     """FastAPI dependency to get the current authenticated user.
 

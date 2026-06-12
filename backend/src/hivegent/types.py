@@ -118,9 +118,8 @@ class DocumentFilter:
         if path == entry:
             return True
         stem = stem_path_from_reference(entry)
-        return (
-            stem_path_from_reference(path) == stem
-            or path.startswith(f"{stem}.assets/")
+        return stem_path_from_reference(path) == stem or path.startswith(
+            f"{stem}.assets/"
         )
 
     def __call__(self, path: str) -> bool:

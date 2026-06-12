@@ -72,7 +72,9 @@ async def _run_turn(ui_messages: list[UIMessage]) -> AgentRunResult[str]:
 
     adapter = VercelAIAdapter(
         agent=agent,
-        run_input=SubmitMessage(id="c1", messages=ui_messages, trigger="submit-message"),
+        run_input=SubmitMessage(
+            id="c1", messages=ui_messages, trigger="submit-message"
+        ),
     )
     captured: list[AgentRunResult[str]] = []
 

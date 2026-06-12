@@ -98,5 +98,3 @@ async def compact_conversation(
         summary=summary,
         original_conversation_id=conversation_id,
     )
-
-

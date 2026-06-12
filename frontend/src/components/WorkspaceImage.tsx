@@ -60,11 +60,7 @@ export function WorkspaceImage({ src, alt, documentPath }: WorkspaceImageProps) 
   return (
     <span ref={ref}>
       {url ? (
-        <img
-          src={url}
-          alt={alt ?? ""}
-          className="h-auto max-w-full overflow-hidden rounded-md"
-        />
+        <img src={url} alt={alt ?? ""} className="h-auto max-w-full overflow-hidden rounded-md" />
       ) : (
         <span className="text-muted-foreground text-xs animate-pulse">Loading image...</span>
       )}

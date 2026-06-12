@@ -13,10 +13,7 @@ interface MarkdownTextProps {
 }
 
 export function MarkdownText({ children }: MarkdownTextProps) {
-  const normalized = useMemo(
-    () => normalizeVoidTags(normalizeMath(children)),
-    [children],
-  );
+  const normalized = useMemo(() => normalizeVoidTags(normalizeMath(children)), [children]);
 
   return (
     <MessageResponse
