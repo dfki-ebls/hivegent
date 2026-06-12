@@ -499,17 +499,15 @@ class NetworkSettings(BaseModel):
     ``webfetch_*`` knobs only apply to the ``web_fetch`` agent tool:
     ``webfetch_max_response_bytes`` caps how many raw bytes are
     downloaded per page and ``webfetch_max_chars`` caps the extracted
-    text handed to the model.  ``websearch_backend`` selects the ddgs
-    search engine(s).  It defaults to ``wikipedia``, which queries the
-    official Wikipedia API directly — no scraping, so no bot detection
-    or rate limits (DuckDuckGo's starve unattended deployments) — and
-    only ever returns ``wikipedia.org`` links, matching the default
-    ``web_urls`` allow list.  General engines (``bing``, ``brave``, ...)
-    are available individually or comma-separated, and ``auto`` rotates
-    across all of them; widen the ``web_urls`` allow list to match when
-    switching.  ``websearch_region`` is the ddgs region code (e.g.
-    ``de-de``); its language half selects the Wikipedia edition.
-    ``llm_request_timeout_seconds`` caps individual non-streaming LLM
+    text handed to the model.  ``web_search`` queries the official
+    Wikipedia API directly — no scraping, so no bot detection or rate
+    limits — and only ever returns ``wikipedia.org`` links, matching the
+    default ``web_urls`` allow list.  ``websearch_language`` selects the
+    Wikipedia edition (e.g. ``en`` → en.wikipedia.org, ``de`` →
+    de.wikipedia.org).  ``contact_email`` is the operator address put in
+    the web tools' ``User-Agent`` (as Wikimedia's policy asks, so traffic
+    questions reach a human); it falls back to the package author when
+    unset.  ``llm_request_timeout_seconds`` caps individual non-streaming LLM
     calls (image description, document conversion, title generation,
     compaction, sub-agent / retrieval tool runs) so a hung inference
     server cannot stall a handler indefinitely.  The default leaves
@@ -523,8 +521,8 @@ class NetworkSettings(BaseModel):
     webfetch_max_response_bytes: int = 5_000_000
     webfetch_max_chars: int = 100_000
     webfetch_max_redirects: int = 5
-    websearch_backend: str = "wikipedia"
-    websearch_region: str = "us-en"
+    websearch_language: str = "en"
+    contact_email: str = ""
     llm_request_timeout_seconds: float = 600.0
 
 

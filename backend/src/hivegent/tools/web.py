@@ -3,22 +3,18 @@
 import logging
 import re
 from dataclasses import dataclass, field
+from email.utils import parseaddr
+from importlib.metadata import metadata
 from typing import Annotated, override
+from urllib.parse import quote
 
 import httpx
 from bs4 import BeautifulSoup
-from ddgs import DDGS
-from ddgs.exceptions import DDGSException
 from markdownify import MarkdownConverter
 from pydantic import Field
 
-from ..security import (
-    UnsafeUrlError,
-    UrlPolicy,
-    create_safe_async_client,
-    is_safe_external_url,
-)
-from .base import AsyncTool, SyncTool, ToolOutput, ToolRetry
+from ..security import UnsafeUrlError, UrlPolicy, create_safe_async_client
+from .base import AsyncTool, ToolOutput, ToolRetry
 from .formatting import BLOCK_SEP, annotate_lines
 
 __all__ = [
@@ -28,9 +24,27 @@ __all__ = [
     "WebQueryArg",
     "WebSearch",
     "WebUrlArg",
+    "build_user_agent",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+def build_user_agent(contact: str = "") -> str:
+    """Build a descriptive User-Agent identifying the app and an operator.
+
+    Wikipedia (and other well-behaved hosts) reject requests carrying a
+    generic library agent — the default ``python-httpx/...`` earns an
+    HTTP 403 — so identify the application and a contact address, as
+    Wikimedia's User-Agent policy asks.  *contact* is the operator email
+    advertised for traffic questions; it falls back to the package
+    author when empty.
+    """
+    meta = metadata("hivegent")
+    contact = contact or parseaddr(meta.get("Author-email", ""))[1]
+    suffix = f" (+mailto:{contact})" if contact else ""
+    return f"{meta['Name']}/{meta['Version']}{suffix}"
+
 
 WebQueryArg = Annotated[
     str,
@@ -46,61 +60,78 @@ WebUrlArg = Annotated[
 ]
 
 
-@dataclass(slots=True, frozen=True)
-class WebSearch(SyncTool[list[dict[str, str]]]):
-    """Search the web for up-to-date information.
+def _snippet_text(html: str) -> str:
+    """Reduce a MediaWiki search snippet (highlighted HTML) to plain text."""
+    return " ".join(BeautifulSoup(html, "html.parser").get_text().split())
 
-    ``backend`` is the ddgs engine selection (``auto`` rotates across
-    several engines so one blocked provider does not take the tool down)
-    and ``region`` the ddgs region code (e.g. ``de-de``).  Result URLs
-    that violate ``policy`` are dropped.
+
+@dataclass(slots=True, frozen=True)
+class WebSearch(AsyncTool[list[dict[str, str]]]):
+    """Search Wikipedia for up-to-date information.
+
+    Queries the official MediaWiki API directly through the SSRF-safe
+    transport — no scraping, so no bot detection or rate limits — and
+    only ever returns ``wikipedia.org`` links.  ``language`` selects the
+    edition (``en`` → en.wikipedia.org, ``de`` → de.wikipedia.org), whose
+    host the transport checks against ``policy`` like any other request.
     """
 
-    backend: str = "auto"
-    region: str = "us-en"
+    language: str = "en"
+    timeout_seconds: float = 10.0
+    user_agent: str = field(default_factory=build_user_agent)
     policy: UrlPolicy = field(default_factory=UrlPolicy)
 
     @override
-    def __call__(
+    async def __call__(
         self,
         query: WebQueryArg,
         max_results: WebMaxResultsArg = 5,
     ) -> ToolOutput[list[dict[str, str]]]:
-        """Search the web for up-to-date information.
+        """Search Wikipedia (and only Wikipedia) for up-to-date information.
+
+        This searches the Wikipedia encyclopedia exclusively, not the
+        open web: every result is a Wikipedia article, so it is the tool
+        for encyclopedic facts, definitions, and background, but it
+        cannot find news, forums, product pages, or any other site.
 
         Returns a list of results with ``title``, ``href``, and ``body``
-        fields; ``body`` is only a short snippet, so follow up with
-        ``web_fetch`` on a result's ``href`` to read the full page.
+        fields. ``body`` is only a short snippet, so follow up with
+        ``web_fetch`` on a result's ``href`` to read the full article.
         """
         max_results = min(max(1, max_results), 20)
+        endpoint = f"https://{self.language}.wikipedia.org/w/api.php"
+        params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
+            "srlimit": max_results,
+            "srprop": "snippet",
+            "format": "json",
+            "formatversion": "2",
+        }
         try:
-            with DDGS() as ddgs:
-                raw = ddgs.text(
-                    query,
-                    max_results=max_results,
-                    backend=self.backend,
-                    region=self.region,
-                )
-        except DDGSException as exc:
-            # ddgs raises for backend failures and empty result sets alike,
-            # so surface both as a retryable miss instead of a fake success.
+            async with create_safe_async_client(
+                policy=self.policy,
+                timeout=self.timeout_seconds,
+                headers={"User-Agent": self.user_agent},
+            ) as client:
+                response = await client.get(endpoint, params=params)
+                response.raise_for_status()
+                hits = response.json().get("query", {}).get("search", [])
+        except (httpx.HTTPError, UnsafeUrlError) as exc:
             logger.warning("Web search failed for query %r: %s", query, exc)
             raise ToolRetry(
-                "web search returned nothing — the search backends may be "
-                "unavailable or the query too narrow; try different terms."
+                "web search failed — the Wikipedia API may be unavailable or "
+                "the query too narrow; try again or rephrase the query."
             ) from exc
-        except Exception as exc:
-            logger.exception("Web search failed for query %r", query)
-            raise ToolRetry("web search backend failed.") from exc
         results = [
             {
-                "title": r.get("title", ""),
-                "href": r.get("href", ""),
-                "body": r.get("body", ""),
+                "title": hit.get("title", ""),
+                "href": f"https://{self.language}.wikipedia.org/wiki/"
+                + quote(hit.get("title", "").replace(" ", "_")),
+                "body": _snippet_text(hit.get("snippet", "")),
             }
-            for r in raw
-            # Only surface results the fetch tool would also accept.
-            if is_safe_external_url(r.get("href", ""), policy=self.policy)
+            for hit in hits
         ]
         if not results:
             return ToolOutput(data=results, formatted="(no results)")
@@ -181,6 +212,7 @@ class WebFetch(AsyncTool[WebPage]):
     max_response_bytes: int = 5_000_000
     max_chars: int = 100_000
     max_redirects: int = 5
+    user_agent: str = field(default_factory=build_user_agent)
     policy: UrlPolicy = field(default_factory=UrlPolicy)
 
     @override
@@ -216,6 +248,7 @@ class WebFetch(AsyncTool[WebPage]):
             timeout=self.timeout_seconds,
             follow_redirects=True,
             max_redirects=self.max_redirects,
+            headers={"User-Agent": self.user_agent},
         ) as client:
             async with client.stream("GET", url) as response:
                 response.raise_for_status()

@@ -4,13 +4,29 @@ from typing import Any
 
 import httpx
 import pytest
-from ddgs.exceptions import DDGSException
 
 import hivegent.tools.web as web_module
 from hivegent.config import SecuritySettings, UrlPolicySettings
 from hivegent.security import SafeAsyncHTTPTransport, UrlPolicy, is_safe_external_url
 from hivegent.tools.base import ToolRetry
 from hivegent.tools.web import WebFetch, WebSearch
+
+
+def _patch_safe_client(monkeypatch: pytest.MonkeyPatch, handler: Any) -> None:
+    """Back the web tools' safe client with a mock transport.
+
+    The real :class:`SafeAsyncHTTPTransport` still wraps the mock, so the
+    URL shape and host-policy checks run on every hop exactly as in
+    production; only the network layer is substituted.
+    """
+
+    def fake_client(*, policy: UrlPolicy, **client_kwargs: Any) -> httpx.AsyncClient:
+        transport = SafeAsyncHTTPTransport(
+            policy=policy, inner=httpx.MockTransport(handler)
+        )
+        return httpx.AsyncClient(transport=transport, **client_kwargs)
+
+    monkeypatch.setattr(web_module, "create_safe_async_client", fake_client)
 
 
 class TestUrlPolicy:
@@ -59,53 +75,60 @@ class TestUrlPolicy:
         assert not is_safe_external_url("", policy=policy)
 
 
-class _FakeDDGS:
-    """Stand-in for ddgs.DDGS with canned results or a canned error."""
-
-    results: list[dict[str, str]] = []
-    error: Exception | None = None
-
-    def __enter__(self) -> "_FakeDDGS":
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        return None
-
-    def text(self, query: str, **kwargs: Any) -> list[dict[str, str]]:
-        if self.error is not None:
-            raise self.error
-        return self.results
+def _search_response(*titles_and_snippets: tuple[str, str]) -> dict[str, Any]:
+    """A MediaWiki ``list=search`` JSON body for the given hits."""
+    return {
+        "query": {
+            "search": [
+                {"title": title, "snippet": snippet}
+                for title, snippet in titles_and_snippets
+            ]
+        }
+    }
 
 
 class TestWebSearch:
-    """Failure surfacing and result filtering."""
+    """Wikipedia API call, result shaping, and failure surfacing."""
 
-    def test_backend_failure_raises_tool_retry(
+    async def test_results_are_shaped_from_the_configured_edition(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(_FakeDDGS, "error", DDGSException("No results found."))
-        monkeypatch.setattr(web_module, "DDGS", _FakeDDGS)
-        with pytest.raises(ToolRetry, match="returned nothing"):
-            WebSearch()("anything")
+        def handler(request: httpx.Request) -> httpx.Response:
+            # The configured language picks the Wikipedia edition.
+            assert request.url.host == "de.wikipedia.org"
+            assert request.url.params["srsearch"] == "ChatGPT"
+            # The configured operator User-Agent is sent on the request.
+            assert request.headers["user-agent"] == "hivegent-test (+mailto:a@b.org)"
+            return httpx.Response(
+                200,
+                json=_search_response(
+                    ("ChatGPT", 'a <span class="searchmatch">ChatGPT</span> bot'),
+                    ("GPT-4", "a language model"),
+                ),
+            )
 
-    def test_unsafe_results_are_filtered(
+        _patch_safe_client(monkeypatch, handler)
+        out = await WebSearch(
+            language="de", user_agent="hivegent-test (+mailto:a@b.org)"
+        )("ChatGPT")
+
+        assert [r["href"] for r in out.data] == [
+            "https://de.wikipedia.org/wiki/ChatGPT",
+            "https://de.wikipedia.org/wiki/GPT-4",
+        ]
+        # The highlighted snippet HTML is reduced to plain text.
+        assert out.data[0]["body"] == "a ChatGPT bot"
+        assert "[1] ChatGPT (https://de.wikipedia.org/wiki/ChatGPT)" in out.text
+
+    async def test_api_failure_raises_tool_retry(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(_FakeDDGS, "error", None)
-        monkeypatch.setattr(
-            _FakeDDGS,
-            "results",
-            [
-                {"title": "ok", "href": "https://example.com/a", "body": "snippet"},
-                {"title": "bad", "href": "http://127.0.0.1/admin", "body": "x"},
-                {"title": "denied", "href": "https://evil.com/b", "body": "y"},
-            ],
-        )
-        monkeypatch.setattr(web_module, "DDGS", _FakeDDGS)
-        out = WebSearch(policy=UrlPolicy(deny_hosts=("evil.com",)))("query")
-        assert [r["href"] for r in out.data] == ["https://example.com/a"]
-        assert "[1] ok (https://example.com/a)" in out.text
-        assert "snippet" in out.text
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503)
+
+        _patch_safe_client(monkeypatch, handler)
+        with pytest.raises(ToolRetry, match="web search failed"):
+            await WebSearch()("anything")
 
 
 HTML = b"""
@@ -119,20 +142,8 @@ def _fetch_tool(
     handler: Any,
     **kwargs: Any,
 ) -> WebFetch:
-    """Build a WebFetch whose safe client is backed by a mock transport.
-
-    The real :class:`SafeAsyncHTTPTransport` wraps the mock, so the URL
-    shape and host-policy checks run on every hop exactly as in
-    production; only the network layer is substituted.
-    """
-
-    def fake_client(*, policy: UrlPolicy, **client_kwargs: Any) -> httpx.AsyncClient:
-        transport = SafeAsyncHTTPTransport(
-            policy=policy, inner=httpx.MockTransport(handler)
-        )
-        return httpx.AsyncClient(transport=transport, **client_kwargs)
-
-    monkeypatch.setattr(web_module, "create_safe_async_client", fake_client)
+    """Build a WebFetch whose safe client is backed by a mock transport."""
+    _patch_safe_client(monkeypatch, handler)
     return WebFetch(**kwargs)
 
 

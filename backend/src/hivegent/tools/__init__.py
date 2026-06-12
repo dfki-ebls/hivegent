@@ -27,7 +27,7 @@ from .mutations import EditDocumentTool, WriteDocumentTool
 from .plan import CreatePlanTool
 from .retrieval import SearchResult, SearchType, VectorSearchTool
 from .scope import Scope
-from .web import WebFetch, WebPage, WebSearch
+from .web import WebFetch, WebPage, WebSearch, build_user_agent
 
 __all__ = [
     "DEFAULT_EXCLUDE_DIRS",
@@ -57,6 +57,7 @@ __all__ = [
     "WebPage",
     "WebSearch",
     "WriteDocumentTool",
+    "build_user_agent",
     "file_allowed",
     "tool_name",
 ]

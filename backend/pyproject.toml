@@ -9,7 +9,6 @@ dependencies = [
   "alembic>=1.13,<2",
   "cbrkit[sql,pgvector]>=1.5.2,<2",
   "chonkie>=1,<2",
-  "ddgs>=9,<10",
   "fastapi[standard]>=0.120,<1",
   "fastmcp>=3,<4",
   "frozendict>=2.4.7",

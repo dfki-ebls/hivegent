@@ -13,19 +13,20 @@ altogether.
 from pydantic_ai import FunctionToolset
 
 from ...config import settings
-from ...tools import WebFetch, WebSearch
+from ...tools import WebFetch, WebSearch, build_user_agent
 from ...tools.pydantic_ai import register_agent_tools
 from ..common import UserDeps
 
 __all__ = ["web_toolset"]
 
 _policy = settings.security.web_policy()
+_user_agent = build_user_agent(settings.network.contact_email)
 
 
 def _web_search(_deps: UserDeps) -> WebSearch:
     return WebSearch(
-        backend=settings.network.websearch_backend,
-        region=settings.network.websearch_region,
+        language=settings.network.websearch_language,
+        user_agent=_user_agent,
         policy=_policy,
     )
 
@@ -37,6 +38,7 @@ def _web_fetch(_deps: UserDeps) -> WebFetch:
         max_response_bytes=network.webfetch_max_response_bytes,
         max_chars=network.webfetch_max_chars,
         max_redirects=network.webfetch_max_redirects,
+        user_agent=_user_agent,
         policy=_policy,
     )
 
