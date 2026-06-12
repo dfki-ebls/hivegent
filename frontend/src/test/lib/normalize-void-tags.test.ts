@@ -33,6 +33,16 @@ describe("normalizeVoidTags", () => {
     );
   });
 
+  it("detaches a cite glued to a closing fence so the block can close", () => {
+    expect(normalizeVoidTags('```\ncode\n```<cite src="~/x.md" line="42" />')).toBe(
+      '```\ncode\n```\n<cite src="~/x.md" line="42"></cite>',
+    );
+  });
+
+  it("leaves an opening fence with a language info string untouched", () => {
+    expect(normalizeVoidTags("```java\ncode\n```")).toBe("```java\ncode\n```");
+  });
+
   it("returns text without void tags unchanged", () => {
     expect(normalizeVoidTags("no tags here")).toBe("no tags here");
   });
