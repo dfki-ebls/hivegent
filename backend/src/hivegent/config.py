@@ -168,15 +168,15 @@ def sanitize_document_path(path: str) -> str:
 class LlmSettings(BaseModel):
     """LLM provider defaults, configurable via environment variables.
 
-    ``model`` drives the main chat agent and any subagents (e.g.
-    exploration), since those run with large contexts and tool calling
-    where tiny models tend to fail.  ``aux_model`` powers supplementary
-    one-shot workloads — document conversion, alt-text generation,
-    title generation, compaction, and LLM-guided chunking — so it must
-    be small, fast, and vision-capable.  Those workloads call it many
-    times per document (especially alt-text and chunking), so cost and
-    latency dominate over raw reasoning quality.  All models share the
-    same ``api_key`` and ``base_url``.
+    ``model`` drives the main chat agent, subagents (e.g. exploration),
+    and conversation summarization for compaction, since those run with
+    large contexts and tool calling where tiny models tend to fail.
+    ``aux_model`` powers supplementary one-shot workloads — document
+    conversion, alt-text and caption generation, title generation, and
+    LLM-guided chunking — so it must be small, fast, and vision-capable.
+    Those workloads call it many times per document (especially alt-text
+    and chunking), so cost and latency dominate over raw reasoning
+    quality.  All models share the same ``api_key`` and ``base_url``.
 
     ``stt_model`` names an audio transcription model (e.g. ``whisper-1``)
     served by the same OpenAI-compatible endpoint.  It backs the speech
@@ -189,6 +189,26 @@ class LlmSettings(BaseModel):
     stt_model: str | None = None
     api_key: str = ""
     base_url: str = ""
+
+
+class SummarizationSettings(BaseModel):
+    """Transcript fidelity for conversation summarization.
+
+    Applies to every summarization consumer — conversation compaction
+    and subagent overflow recovery — so both produce summaries from the
+    same view of a transcript.  The defaults include everything for
+    maximum summary fidelity.  Summarization carries no token budget:
+    the conversation just (nearly) fit the model's context window, and
+    the short summary instructions usually leave enough headroom even
+    for a full transcript.  Disabling the toggles shrinks the request
+    when a deployment sees residual overflow errors instead.
+    """
+
+    include_tools: bool = True
+    """Whether transcripts carry tool calls and their results."""
+
+    include_reasoning: bool = True
+    """Whether transcripts carry the assistant's reasoning parts."""
 
 
 class LogfireSettings(BaseModel):
@@ -535,6 +555,7 @@ class Settings(BaseSettings):
         )
 
     llm: LlmSettings = LlmSettings()
+    summarization: SummarizationSettings = SummarizationSettings()
     embedding: EmbeddingSettings = EmbeddingSettings()
     rerank: RerankSettings = RerankSettings()
     logfire: LogfireSettings = LogfireSettings()

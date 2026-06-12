@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic_ai import DeferredToolRequests
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
@@ -226,12 +227,19 @@ async def create_conversation_compaction(
     http_request: Request,
     user: Annotated[User, Depends(get_current_user)],
 ) -> CompactConversationResponse:
-    """Compact a conversation by summarizing it into a new conversation."""
+    """Compact a conversation by summarizing it into a new conversation.
+
+    Summarization defaults to the regular chat model, not ``aux_model``:
+    it spans the whole (typically overflowing) conversation, which needs
+    the full context window rather than a small scoped-task model.
+    """
 
     messages = ChatAdapter.load_messages(request.messages)
 
     async def _compact() -> CompactionResult:
-        llm_config = await prepare_llm_config(request.llm)
+        llm_config = await prepare_llm_config(
+            request.llm, default_model=settings.llm.model
+        )
         return await compact_conversation(
             user.id, conversation_id, messages, llm_config
         )
@@ -242,6 +250,15 @@ async def create_conversation_compaction(
         raise
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ModelHTTPError as exc:
+        logger.exception("Failed to compact conversation %s", conversation_id)
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "The summarization model rejected the request "
+                f"(HTTP {exc.status_code})."
+            ),
+        ) from exc
     except Exception as exc:
         logger.exception("Failed to compact conversation %s", conversation_id)
         raise HTTPException(

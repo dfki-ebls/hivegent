@@ -36,8 +36,8 @@ async def prepare_llm_config(
     Server-configured base URLs are trusted operator input.
 
     *default_model* defaults to :attr:`settings.llm.aux_model` so the many
-    ancillary routes (titles, compaction, image alt-text during upload)
-    are right by default; the chat route passes the main model explicitly.
+    ancillary routes (titles, image alt-text during upload) are right by
+    default; the chat and compaction routes pass the main model explicitly.
     """
     if default_model is None:
         default_model = settings.llm.aux_model

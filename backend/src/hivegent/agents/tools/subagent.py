@@ -4,14 +4,15 @@ from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from pydantic import Field
-from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai import FunctionToolset, RunContext, capture_run_messages
 from pydantic_ai.models.openai import OpenAIChatModel
 
 from ...config import settings
-from ...llm import create_openai_chat_model
+from ...llm import create_openai_chat_model, is_context_overflow
 from ...prompts import EXPLORE_INSTRUCTIONS, join_instructions
 from ..app import user_agent
 from ..common import ExploreTaskArg, UserDeps
+from ..summarize import summarize_messages
 from .conversation import conversation_toolset
 from .explore import explore_toolset
 from .web import web_toolset
@@ -90,12 +91,33 @@ async def explore(
     reviewing past conversations, or researching topics on the web.
     """
     config = _SCOPES[scope]
-    result = await user_agent.run(
-        task,
-        model=_subagent_model(ctx.deps),
-        deps=ctx.deps,
-        toolsets=[config.toolset],
-        instructions=config.instructions,
-        usage=ctx.usage,
-    )
+    model = _subagent_model(ctx.deps)
+    with capture_run_messages() as messages:
+        try:
+            result = await user_agent.run(
+                task,
+                model=model,
+                deps=ctx.deps,
+                toolsets=[config.toolset],
+                instructions=config.instructions,
+                usage=ctx.usage,
+            )
+        except Exception as exc:
+            # A subagent that overflows its context window has still done
+            # useful work — its transcript is sitting in `messages`.
+            # Compact it into a summary instead of failing the tool call,
+            # so the main thread keeps the findings and continues.
+            # Transcript fidelity follows `settings.summarization`, the
+            # same config every summarization consumer uses; with tool
+            # parts included the summary request can overflow again (it
+            # reuses the model that just overflowed on those payloads),
+            # in which case the error surfaces like any other tool error.
+            if not is_context_overflow(exc):
+                raise
+            summary = await summarize_messages(messages, model)
+            return (
+                "The exploration hit the model's context limit before "
+                "finishing. Summary of the findings so far:\n\n"
+                f"{summary}"
+            )
     return result.output

@@ -1,7 +1,7 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { buildAuxLlmConfig, compactConversation } from "@/lib/api";
+import { buildLlmConfig, compactConversation } from "@/lib/api";
 import { canCompact, getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -40,9 +40,12 @@ export function useAutoCompact({
       setIsCompacting(true);
       setError(null);
       try {
+        // Summarization spans the whole (overflowing) conversation, so it
+        // needs the regular model's context window — the aux model is
+        // reserved for small scoped tasks like titles and captions.
         const result = await compactConversation(
           id,
-          buildAuxLlmConfig(overrides),
+          buildLlmConfig(overrides),
           messagesRef.current,
         );
         clearAll();

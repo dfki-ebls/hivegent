@@ -1,6 +1,9 @@
 """LLM client construction helpers."""
 
+from collections.abc import Mapping
+
 from openai import AsyncOpenAI
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -13,9 +16,57 @@ __all__ = [
     "create_openai_chat_model",
     "create_openai_client",
     "create_openai_provider",
+    "is_context_overflow",
     "model_from_config",
     "thinking_model_settings",
 ]
+
+# Stable identifiers providers attach to an oversized-prompt rejection:
+# OpenAI puts ``context_length_exceeded`` in ``code``, llama.cpp puts
+# ``exceed_context_size_error`` in ``type``.
+_CONTEXT_OVERFLOW_CODES = frozenset(
+    {"context_length_exceeded", "exceed_context_size_error"}
+)
+# Prose fallbacks for servers whose 400 body carries no stable
+# identifier (a numeric ``code`` and a generic exception-class ``type``):
+# - vLLM: "This model's maximum context length is N tokens." — also
+#   covers SGLang's total-token variant ("Requested token count exceeds
+#   the model's maximum context length of N tokens.").
+# - SGLang: "The input (N tokens) is longer than the model's context
+#   length (M tokens)."
+# - SGLang's scheduler: "Input length (N tokens) exceeds the maximum
+#   allowed length (M tokens)." (the KV-pool bound below the context
+#   length).
+_CONTEXT_OVERFLOW_PHRASES = (
+    "maximum context length",
+    "the model's context length",
+    "exceeds the maximum allowed length",
+)
+
+
+def is_context_overflow(error: Exception) -> bool:
+    """Whether *error* means the prompt overflowed the model's context window.
+
+    Classifies on the structure the exception offers first: providers
+    reject an oversized prompt with a 400 whose body carries a stable
+    identifier (see :data:`_CONTEXT_OVERFLOW_CODES`). Message matching
+    remains only where no structure exists: vLLM's and SGLang's 400
+    bodies are plain prose, and pydantic-ai collapses an empty response
+    with ``finish_reason == "length"`` into the message of an
+    ``UnexpectedModelBehavior``.
+    """
+    match error:
+        case ModelHTTPError(status_code=400, body=body):
+            if isinstance(body, Mapping) and (
+                body.get("code") in _CONTEXT_OVERFLOW_CODES
+                or body.get("type") in _CONTEXT_OVERFLOW_CODES
+            ):
+                return True
+            return any(phrase in str(body) for phrase in _CONTEXT_OVERFLOW_PHRASES)
+        case UnexpectedModelBehavior(message=message):
+            return "exceeded before any response was generated" in message
+        case _:
+            return False
 
 
 def create_openai_provider(

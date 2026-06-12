@@ -10,11 +10,12 @@ matches exactly (see ``isContextLengthError`` in
 ``frontend/src/lib/chat/chat-utils.ts``).
 """
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, ErrorChunk
+
+from ..llm import is_context_overflow
 
 __all__ = ["CONTEXT_LENGTH_EXCEEDED", "ChatAdapter", "chat_error_text"]
 
@@ -29,30 +30,9 @@ def chat_error_text(error: Exception) -> str:
     auto-compaction with an exact match instead of fuzzy-matching
     provider prose.
     """
-    if _is_context_overflow(error):
+    if is_context_overflow(error):
         return f"{CONTEXT_LENGTH_EXCEEDED}: {error}"
     return str(error)
-
-
-def _is_context_overflow(error: Exception) -> bool:
-    """Whether *error* means the conversation overflowed the context window.
-
-    Classifies on the structure the exception offers first: OpenAI rejects
-    an oversized prompt with a 400 whose body carries ``code ==
-    "context_length_exceeded"``. Message matching remains only where no
-    structure exists: vLLM's 400 body is plain prose, and pydantic-ai
-    collapses an empty response with ``finish_reason == "length"`` into
-    the message of an ``UnexpectedModelBehavior``.
-    """
-    match error:
-        case ModelHTTPError(status_code=400, body=body):
-            if isinstance(body, Mapping) and body.get("code") == CONTEXT_LENGTH_EXCEEDED:
-                return True
-            return "maximum context length" in str(body)
-        case UnexpectedModelBehavior(message=message):
-            return "exceeded before any response was generated" in message
-        case _:
-            return False
 
 
 class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):

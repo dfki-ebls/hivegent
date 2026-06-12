@@ -18,6 +18,22 @@ def test_openai_structured_code() -> None:
     assert _is_overflow(error)
 
 
+def test_llamacpp_structured_type() -> None:
+    error = ModelHTTPError(
+        status_code=400,
+        model_name="qwen3.6-27b",
+        body={
+            "code": 400,
+            "message": (
+                "the request exceeds the available context size. try increasing "
+                "the context size or enable context shift"
+            ),
+            "type": "exceed_context_size_error",
+        },
+    )
+    assert _is_overflow(error)
+
+
 def test_vllm_prose_body() -> None:
     error = ModelHTTPError(
         status_code=400,
@@ -26,6 +42,26 @@ def test_vllm_prose_body() -> None:
             "object": "error",
             "message": "This model's maximum context length is 8192 tokens.",
             "type": "BadRequestError",
+        },
+    )
+    assert _is_overflow(error)
+
+
+def test_sglang_prose_body() -> None:
+    # SGLang's body is flat (no nested `error` object), with a numeric
+    # code and a generic type — only the message names the overflow.
+    error = ModelHTTPError(
+        status_code=400,
+        model_name="qwen3.5-27b",
+        body={
+            "object": "error",
+            "message": (
+                "The input (5000 tokens) is longer than the model's "
+                "context length (4096 tokens)."
+            ),
+            "type": "BadRequest",
+            "param": None,
+            "code": 400,
         },
     )
     assert _is_overflow(error)

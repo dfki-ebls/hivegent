@@ -124,6 +124,22 @@ async function throwIfMaintenance(res: Response): Promise<void> {
 }
 
 /**
+ * Build the error for a failed response: the backend's `detail` when the
+ * body carries one, otherwise `fallback` suffixed with the HTTP status.
+ * Proxy-level failures (e.g. a 502 for an upload that tripped a gateway
+ * timeout) have no JSON body, and a bare fallback would hide the only
+ * diagnostic available.
+ */
+async function responseError(res: Response, fallback: string): Promise<Error> {
+  const body = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+  return new Error(
+    typeof body?.detail === "string" && body.detail
+      ? body.detail
+      : `${fallback} (HTTP ${res.status})`,
+  );
+}
+
+/**
  * Get the current auth headers for use with external transports.
  */
 export async function getAuthHeaders(): Promise<Record<string, string>> {
@@ -292,7 +308,7 @@ export function buildLlmConfig(s: {
   return config;
 }
 
-/** LLM config for auxiliary tasks (titles, compaction): prefer aux model, fall back to primary. */
+/** LLM config for auxiliary tasks (titles, captions): prefer aux model, fall back to primary. */
 export function buildAuxLlmConfig(overrides: {
   model: string;
   auxModel: string;
@@ -401,8 +417,7 @@ export async function uploadDocument(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Upload failed" }));
-    throw new Error(error.detail || "Upload failed");
+    throw await responseError(res, "Upload failed");
   }
 
   const data: unknown = await res.json();
@@ -426,8 +441,7 @@ export async function writeDocument(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Save failed" }));
-    throw new Error(error.detail || "Save failed");
+    throw await responseError(res, "Save failed");
   }
 }
 
@@ -467,8 +481,7 @@ export async function uploadCollectionStream(
   );
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Collection upload failed" }));
-    throw new Error(error.detail || "Collection upload failed");
+    throw await responseError(res, "Collection upload failed");
   }
 
   return parseSseProgressStream<CollectionStreamEvent, CollectionUploadResponse>(
@@ -568,8 +581,7 @@ export async function deleteDocument(filename: string): Promise<void> {
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Delete failed" }));
-    throw new Error(error.detail || "Delete failed");
+    throw await responseError(res, "Delete failed");
   }
 }
 
@@ -600,8 +612,7 @@ export async function downloadOriginal(filepath: string): Promise<Blob> {
   const res = await authFetch(`${API_BASE_URL}/api/documents/original/${encodeFilePath(filepath)}`);
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Download failed" }));
-    throw new Error(error.detail || "Download failed");
+    throw await responseError(res, "Download failed");
   }
 
   return res.blob();
@@ -625,8 +636,7 @@ export async function replaceOriginal(
   );
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Replace failed" }));
-    throw new Error(error.detail || "Replace failed");
+    throw await responseError(res, "Replace failed");
   }
 
   const data: unknown = await res.json();
@@ -649,8 +659,7 @@ export async function updateConversationTitle(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Update failed" }));
-    throw new Error(error.detail || "Update failed");
+    throw await responseError(res, "Update failed");
   }
 
   const data: unknown = await res.json();
@@ -671,8 +680,7 @@ export async function generateConversationTitle(
   );
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Title generation failed" }));
-    throw new Error(error.detail || "Title generation failed");
+    throw await responseError(res, "Title generation failed");
   }
 
   const data: unknown = await res.json();
@@ -691,8 +699,7 @@ export async function compactConversation(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Compaction failed" }));
-    throw new Error(error.detail || "Compaction failed");
+    throw await responseError(res, "Compaction failed");
   }
 
   const data: unknown = await res.json();
@@ -710,8 +717,7 @@ export async function getConversation(conversationId: string): Promise<Conversat
 export async function exportConversation(conversationId: string): Promise<Blob> {
   const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}/export`);
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Export failed" }));
-    throw new Error(error.detail || "Export failed");
+    throw await responseError(res, "Export failed");
   }
   return res.blob();
 }
@@ -722,8 +728,7 @@ export async function deleteConversation(conversationId: string): Promise<void> 
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Delete failed" }));
-    throw new Error(error.detail || "Delete failed");
+    throw await responseError(res, "Delete failed");
   }
 }
 
@@ -751,8 +756,7 @@ export async function getDocumentChunks(filename: string): Promise<ChunkedDocume
   const res = await authFetch(`${API_BASE_URL}/api/documents/chunks/${encodeFilePath(filename)}`);
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to fetch chunks" }));
-    throw new Error(error.detail || "Failed to fetch chunks");
+    throw await responseError(res, "Failed to fetch chunks");
   }
 
   const data: unknown = await res.json();
@@ -765,8 +769,7 @@ export async function getDocumentChunks(filename: string): Promise<ChunkedDocume
 export async function listDocumentAssets(filename: string): Promise<AssetListResponse> {
   const res = await authFetch(`${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`);
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to list assets" }));
-    throw new Error(error.detail || "Failed to list assets");
+    throw await responseError(res, "Failed to list assets");
   }
   const data: unknown = await res.json();
   return AssetListResponseSchema.parse(data);
@@ -784,8 +787,7 @@ export async function updateAssetDescription(
     body: JSON.stringify({ asset_name: assetName, content }),
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to update description" }));
-    throw new Error(error.detail || "Failed to update description");
+    throw await responseError(res, "Failed to update description");
   }
   const data: unknown = await res.json();
   return AssetEntrySchema.parse(data);
@@ -803,8 +805,7 @@ export async function generateAssetDescription(
     body: JSON.stringify({ asset_name: assetName, llm: llm ?? {} }),
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to generate description" }));
-    throw new Error(error.detail || "Failed to generate description");
+    throw await responseError(res, "Failed to generate description");
   }
   const data: unknown = await res.json();
   return AssetEntrySchema.parse(data);
@@ -820,8 +821,7 @@ export async function deleteAssetDescription(
     { method: "DELETE" },
   );
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to delete description" }));
-    throw new Error(error.detail || "Failed to delete description");
+    throw await responseError(res, "Failed to delete description");
   }
   const data: unknown = await res.json();
   return AssetEntrySchema.parse(data);
@@ -849,8 +849,7 @@ export async function reconvertDocument(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Reconvert failed" }));
-    throw new Error(error.detail || "Reconvert failed");
+    throw await responseError(res, "Reconvert failed");
   }
 
   const data: unknown = await res.json();
@@ -868,8 +867,7 @@ export async function rechunkDocument(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Rechunk failed" }));
-    throw new Error(error.detail || "Rechunk failed");
+    throw await responseError(res, "Rechunk failed");
   }
 
   const data: unknown = await res.json();
@@ -921,8 +919,7 @@ export async function uploadDocumentStream(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Upload failed" }));
-    throw new Error(error.detail || "Upload failed");
+    throw await responseError(res, "Upload failed");
   }
 
   return parseSseStageStream<UploadDocumentResponse>(
@@ -950,8 +947,7 @@ export async function reconvertDocumentStream(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Reconvert failed" }));
-    throw new Error(error.detail || "Reconvert failed");
+    throw await responseError(res, "Reconvert failed");
   }
 
   return parseSseStageStream<UploadDocumentResponse>(
@@ -977,8 +973,7 @@ export async function rechunkDocumentStream(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Rechunk failed" }));
-    throw new Error(error.detail || "Rechunk failed");
+    throw await responseError(res, "Rechunk failed");
   }
 
   return parseSseStageStream<RechunkCompleteEvent>(res, RechunkStreamEventSchema, options?.onStage);
@@ -1006,8 +1001,7 @@ export async function bulkRechunkStream(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Bulk rechunk failed" }));
-    throw new Error(error.detail || "Bulk rechunk failed");
+    throw await responseError(res, "Bulk rechunk failed");
   }
 
   return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
@@ -1032,8 +1026,7 @@ export async function bulkReconvertStream(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Bulk reconvert failed" }));
-    throw new Error(error.detail || "Bulk reconvert failed");
+    throw await responseError(res, "Bulk reconvert failed");
   }
 
   return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
@@ -1061,8 +1054,7 @@ export async function bulkMoveStream(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Bulk move failed" }));
-    throw new Error(error.detail || "Bulk move failed");
+    throw await responseError(res, "Bulk move failed");
   }
 
   return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
@@ -1085,8 +1077,7 @@ export async function bulkDeleteStream(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Bulk delete failed" }));
-    throw new Error(error.detail || "Bulk delete failed");
+    throw await responseError(res, "Bulk delete failed");
   }
 
   return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
@@ -1115,8 +1106,7 @@ export async function createDirectory(path: string): Promise<CreateDirectoryResp
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to create directory" }));
-    throw new Error(error.detail || "Failed to create directory");
+    throw await responseError(res, "Failed to create directory");
   }
 
   const data: unknown = await res.json();
@@ -1131,8 +1121,7 @@ export async function deleteDirectory(dirpath: string): Promise<DeleteDirectoryR
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to delete directory" }));
-    throw new Error(error.detail || "Failed to delete directory");
+    throw await responseError(res, "Failed to delete directory");
   }
 
   const data: unknown = await res.json();
@@ -1150,8 +1139,7 @@ export async function moveDirectory(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to move directory" }));
-    throw new Error(error.detail || "Failed to move directory");
+    throw await responseError(res, "Failed to move directory");
   }
 
   const data: unknown = await res.json();
@@ -1169,8 +1157,7 @@ export async function moveDocument(
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Move failed" }));
-    throw new Error(error.detail || "Move failed");
+    throw await responseError(res, "Move failed");
   }
 
   const data: unknown = await res.json();
@@ -1187,8 +1174,7 @@ export async function deleteAllConversations(): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to delete conversations" }));
-    throw new Error(error.detail || "Failed to delete conversations");
+    throw await responseError(res, "Failed to delete conversations");
   }
 }
 
@@ -1201,8 +1187,7 @@ export async function deleteAllDocuments(scope: string): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to delete documents" }));
-    throw new Error(error.detail || "Failed to delete documents");
+    throw await responseError(res, "Failed to delete documents");
   }
 }
 
@@ -1212,8 +1197,7 @@ export async function clearMemory(): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to clear memory" }));
-    throw new Error(error.detail || "Failed to clear memory");
+    throw await responseError(res, "Failed to clear memory");
   }
 }
 
@@ -1223,8 +1207,7 @@ export async function deleteAllUserData(): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to delete user data" }));
-    throw new Error(error.detail || "Failed to delete user data");
+    throw await responseError(res, "Failed to delete user data");
   }
 }
 
@@ -1242,8 +1225,7 @@ export async function deleteAllUserData(): Promise<void> {
 async function adminPost<T>(path: string, schema: z.ZodType<T>): Promise<T> {
   const res = await authFetch(`${API_BASE_URL}${path}`, { method: "POST" });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Admin action failed" }));
-    throw new Error(error.detail || "Admin action failed");
+    throw await responseError(res, "Admin action failed");
   }
   return schema.parse(await res.json());
 }
@@ -1297,8 +1279,7 @@ export async function adminSetMaintenance(enabled: boolean): Promise<boolean> {
     body: JSON.stringify({ enabled }),
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to set maintenance mode" }));
-    throw new Error(error.detail || "Failed to set maintenance mode");
+    throw await responseError(res, "Failed to set maintenance mode");
   }
   return AdminMaintenanceStateSchema.parse(await res.json()).enabled;
 }
@@ -1310,8 +1291,7 @@ export async function adminDeleteUserData(userId: string): Promise<void> {
     { method: "DELETE" },
   );
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to delete user data" }));
-    throw new Error(error.detail || "Failed to delete user data");
+    throw await responseError(res, "Failed to delete user data");
   }
 }
 
@@ -1322,7 +1302,6 @@ export async function adminDeleteGroupData(groupId: string): Promise<void> {
     { method: "DELETE" },
   );
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Failed to delete group data" }));
-    throw new Error(error.detail || "Failed to delete group data");
+    throw await responseError(res, "Failed to delete group data");
   }
 }
