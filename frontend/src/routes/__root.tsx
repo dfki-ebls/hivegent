@@ -7,6 +7,7 @@ import { AppErrorBoundary } from "../components/AppErrorBoundary";
 import { Header } from "../components/Header";
 import { ImpersonationBanner } from "../components/ImpersonationBanner";
 import { MaintenanceScreen } from "../components/MaintenanceScreen";
+import { NotFound } from "../components/NotFound";
 import { ThemeProvider } from "../components/ThemeProvider";
 import { Toaster } from "../components/ui/sonner";
 import { useOidc } from "../oidc";
@@ -58,4 +59,5 @@ function RootComponent() {
 
 export const Route = createRootRoute({
   component: RootComponent,
+  notFoundComponent: NotFound,
 });
