@@ -55,7 +55,7 @@ async def test_resolve_llm_config_is_idempotent_on_trust(
     monkeypatch.setattr(settings.llm, "aux_model", "aux-model")
 
     once = resolve_llm_config(LlmConfig())
-    twice = resolve_llm_config(once, default_model=settings.llm.aux_model)
+    twice = resolve_llm_config(once)
 
     assert once.base_url_is_trusted is True
     assert twice.base_url == "http://127.0.0.1:18000/v1"

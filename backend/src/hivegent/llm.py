@@ -140,7 +140,9 @@ def model_from_config(config: LlmConfig) -> OpenAIChatModel:
     )
 
 
-def thinking_model_settings(thinking: ThinkingLevel, config: LlmConfig) -> ModelSettings:
+def thinking_model_settings(
+    thinking: ThinkingLevel | None, config: LlmConfig
+) -> ModelSettings:
     """Model settings applying *thinking* and *max_tokens* across endpoints.
 
     Spec-compliant OpenAI servers receive the unified pydantic-ai
@@ -151,15 +153,18 @@ def thinking_model_settings(thinking: ThinkingLevel, config: LlmConfig) -> Model
     is only added for self-hosted endpoints (``base_url`` set) — the real
     OpenAI API rejects unknown body fields.
 
-    ``config.max_tokens`` (resolved per tier in :func:`resolve_llm_config`)
-    is forwarded as the completion cap when set, so every call site that
-    builds settings this way inherits the configured bound.
+    *thinking* of ``None`` omits both fields so the server-side default
+    decides (the "auto" reasoning level).  ``config.max_tokens`` (resolved
+    per tier in :func:`resolve_llm_config`) is forwarded as the completion
+    cap whenever set, regardless of the thinking level.
     """
-    settings = ModelSettings(thinking=thinking)
+    settings = ModelSettings()
     if config.max_tokens is not None:
         settings["max_tokens"] = config.max_tokens
-    if config.base_url:
-        settings["extra_body"] = {
-            "chat_template_kwargs": {"enable_thinking": thinking is not False}
-        }
+    if thinking is not None:
+        settings["thinking"] = thinking
+        if config.base_url:
+            settings["extra_body"] = {
+                "chat_template_kwargs": {"enable_thinking": thinking is not False}
+            }
     return settings

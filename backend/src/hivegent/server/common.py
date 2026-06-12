@@ -7,7 +7,7 @@ from ..auth import User
 from ..config import sanitize_document_path, sanitize_group_id, settings
 from ..security import require_safe_external_url
 from ..store import Casebase, WorkspaceScope
-from ..types import DocumentFilter, LlmConfig, resolve_llm_config
+from ..types import DocumentFilter, LlmConfig, LlmTier, resolve_llm_config
 from .models import PipelineSpec
 
 __all__ = [
@@ -25,12 +25,7 @@ __all__ = [
 ]
 
 
-async def prepare_llm_config(
-    llm: LlmConfig,
-    *,
-    default_model: str | None = None,
-    default_max_tokens: int | None = None,
-) -> LlmConfig:
+async def prepare_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:
     """Resolve defaults and check user-provided ``base_url`` values.
 
     Centralizes the request-boundary check so each route can stay a
@@ -38,16 +33,11 @@ async def prepare_llm_config(
     that actually resolves the host and rejects private user targets.
     Server-configured base URLs are trusted operator input.
 
-    *default_model* defaults to :attr:`settings.llm.aux_model` so the many
-    ancillary routes (titles, image alt-text during upload) are right by
-    default; the chat and compaction routes pass the main model explicitly.
-    The completion cap follows the same tier: an unspecified *default_model*
-    pairs the aux model with :attr:`settings.llm.aux_max_tokens`, while the
-    main-model callers pass :attr:`settings.llm.max_tokens` alongside it.
+    *tier* selects which configured ``(model, max_tokens)`` pair backs the
+    request; it defaults to ``"aux"`` so the many ancillary routes (titles,
+    image alt-text during upload) are right by default, while the chat and
+    compaction routes pass ``tier="main"``.
     """
-    if default_model is None:
-        default_model = settings.llm.aux_model
-        default_max_tokens = settings.llm.aux_max_tokens
     if llm.base_url:
         try:
             await require_safe_external_url(
@@ -57,9 +47,7 @@ async def prepare_llm_config(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return resolve_llm_config(
-        llm, default_model=default_model, default_max_tokens=default_max_tokens
-    )
+    return resolve_llm_config(llm, tier=tier)
 
 
 def parse_document_filters(

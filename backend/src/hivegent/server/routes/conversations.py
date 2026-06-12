@@ -9,7 +9,6 @@ from pydantic_ai import DeferredToolRequests
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.settings import ModelSettings
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import Response
@@ -23,7 +22,6 @@ from ...agents import (
 )
 from ...auth import User, get_current_user
 from ...compaction import CompactionResult, compact_conversation
-from ...config import settings
 from ...llm import model_from_config, thinking_model_settings
 from ...mcp import build_mcp_server, validate_mcp_servers
 from ...db._common import new_id
@@ -238,11 +236,7 @@ async def create_conversation_compaction(
     messages = ChatAdapter.load_messages(request.messages)
 
     async def _compact() -> CompactionResult:
-        llm_config = await prepare_llm_config(
-            request.llm,
-            default_model=settings.llm.model,
-            default_max_tokens=settings.llm.max_tokens,
-        )
+        llm_config = await prepare_llm_config(request.llm, tier="main")
         return await compact_conversation(
             user.id, conversation_id, messages, llm_config
         )
@@ -351,11 +345,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     config = await _parse_chat_config(request)
     config.conversation_id = conversation_id
 
-    config.llm = await prepare_llm_config(
-        config.llm,
-        default_model=settings.llm.model,
-        default_max_tokens=settings.llm.max_tokens,
-    )
+    config.llm = await prepare_llm_config(config.llm, tier="main")
     try:
         await validate_mcp_servers(config.tools.mcp_servers)
     except ValueError as exc:
@@ -414,19 +404,17 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
             messages_to_persist(result.all_messages(), result.new_messages()),
         )
 
-    # "auto" omits the thinking setting so the server-side default applies;
-    # every other level is forwarded via thinking_model_settings, with "none"
-    # mapping to False (disabled).  A configured max_tokens applies regardless
-    # of the thinking level.
-    if config.reasoning_effort == "auto":
-        model_settings = ModelSettings()
-        if config.llm.max_tokens is not None:
-            model_settings["max_tokens"] = config.llm.max_tokens
-    else:
-        model_settings = thinking_model_settings(
-            False if config.reasoning_effort == "none" else config.reasoning_effort,
-            config.llm,
-        )
+    # "auto" maps to None so thinking_model_settings omits the field and the
+    # server-side default applies; "none" maps to False (disabled), every
+    # other level passes through.  A configured max_tokens applies regardless.
+    thinking = (
+        None
+        if config.reasoning_effort == "auto"
+        else False
+        if config.reasoning_effort == "none"
+        else config.reasoning_effort
+    )
+    model_settings = thinking_model_settings(thinking, config.llm)
 
     return await ChatAdapter.dispatch_request(
         request,

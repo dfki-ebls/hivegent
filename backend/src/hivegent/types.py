@@ -204,13 +204,21 @@ class LlmConfig(BaseModel):
         return self
 
 
-def resolve_llm_config(
-    llm: LlmConfig,
-    *,
-    default_model: str | None = None,
-    default_max_tokens: int | None = None,
-) -> LlmConfig:
-    """Apply server defaults to a client-provided LLM configuration."""
+type LlmTier = Literal["main", "aux"]
+
+
+def resolve_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:
+    """Apply server defaults to a client-provided LLM configuration.
+
+    *tier* selects which configured ``(model, max_tokens)`` pair backs the
+    fields the client left blank, so the two always move together.  The aux
+    model falls back to the main model when unset.
+    """
+    main_tier = tier == "main"
+    default_model = settings.llm.model if main_tier else settings.llm.aux_model
+    default_max_tokens = (
+        settings.llm.max_tokens if main_tier else settings.llm.aux_max_tokens
+    )
     configured_base_url = settings.llm.base_url or None
     resolved = LlmConfig(
         model=llm.model or default_model or settings.llm.model,
