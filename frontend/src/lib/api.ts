@@ -596,8 +596,10 @@ export async function getDocumentContent(filename: string): Promise<string> {
 }
 
 /** Fetch a workspace asset (e.g. image) as a blob URL for display. */
-export async function fetchDocumentAsset(filepath: string): Promise<string> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`);
+export async function fetchDocumentAsset(filepath: string, signal?: AbortSignal): Promise<string> {
+  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`, {
+    signal,
+  });
 
   if (!res.ok) {
     throw new Error("Failed to fetch document asset");

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { useInView } from "@/hooks/use-in-view";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { fetchDocumentAsset } from "@/lib/api";
 
@@ -19,8 +20,12 @@ interface ImageRefProps {
 }
 
 export function ImageRef({ src, alt }: ImageRefProps) {
-  const fetch = useCallback(() => fetchDocumentAsset(src ?? ""), [src]);
-  const { url, error } = useObjectUrl(src ? fetch : null);
+  const fetch = useCallback(
+    (signal: AbortSignal) => fetchDocumentAsset(src ?? "", signal),
+    [src],
+  );
+  const [ref, inView] = useInView();
+  const { url, error } = useObjectUrl(src && inView ? fetch : null);
 
   if (!src) return null;
 
@@ -30,15 +35,21 @@ export function ImageRef({ src, alt }: ImageRefProps) {
     );
   }
 
-  if (!url) {
-    return <span className="text-sm text-muted-foreground italic">Loading image…</span>;
-  }
-
+  // The figure stays mounted across the loading transition so the observer
+  // keeps a stable target and the fetched object URL is not revoked early.
   return (
-    <figure className="my-4">
-      <img src={url} alt={alt ?? src} className="max-w-full rounded-md border" />
-      {alt && (
-        <figcaption className="mt-1 text-center text-sm text-muted-foreground">{alt}</figcaption>
+    <figure ref={ref} className="my-4">
+      {url ? (
+        <>
+          <img src={url} alt={alt ?? src} className="max-w-full rounded-md border" />
+          {alt && (
+            <figcaption className="mt-1 text-center text-sm text-muted-foreground">
+              {alt}
+            </figcaption>
+          )}
+        </>
+      ) : (
+        <span className="text-sm text-muted-foreground italic">Loading image…</span>
       )}
     </figure>
   );

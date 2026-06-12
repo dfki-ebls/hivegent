@@ -46,7 +46,10 @@ function BinaryMeta({ result }: { result: BinaryReadResult }) {
 
 /** Inline preview for image binaries, fetched lazily when the tool is expanded. */
 function ImagePreview({ result }: { result: BinaryReadResult }) {
-  const fetch = useCallback(() => fetchDocumentAsset(result.file_path), [result.file_path]);
+  const fetch = useCallback(
+    (signal: AbortSignal) => fetchDocumentAsset(result.file_path, signal),
+    [result.file_path],
+  );
   const { url, error } = useObjectUrl(fetch);
 
   return (

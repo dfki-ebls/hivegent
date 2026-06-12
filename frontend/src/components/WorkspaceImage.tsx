@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 
+import { useInView } from "@/hooks/use-in-view";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { fetchDocumentAsset } from "@/lib/api";
 
@@ -36,32 +37,37 @@ function isWorkspaceRelative(src: string): boolean {
  * right scope. Non-relative sources are unsupported and render as a fallback.
  */
 export function WorkspaceImage({ src, alt, documentPath }: WorkspaceImageProps) {
-  const fetch = useCallback(() => {
-    if (!src || !isWorkspaceRelative(src)) {
-      return Promise.reject(new Error("unsupported image source"));
-    }
-    // Resolve relative path against the document directory (prefix preserved).
-    const lastSlash = documentPath.lastIndexOf("/");
-    const docDir = lastSlash >= 0 ? documentPath.substring(0, lastSlash) : "";
-    return fetchDocumentAsset(docDir ? `${docDir}/${src}` : src);
-  }, [src, documentPath]);
+  const fetch = useCallback(
+    (signal: AbortSignal) => {
+      // Resolve relative path against the document directory (prefix preserved).
+      const lastSlash = documentPath.lastIndexOf("/");
+      const docDir = lastSlash >= 0 ? documentPath.substring(0, lastSlash) : "";
+      return fetchDocumentAsset(docDir ? `${docDir}/${src}` : src!, signal);
+    },
+    [src, documentPath],
+  );
 
-  const { url, error } = useObjectUrl(src ? fetch : null);
+  const supported = !!src && isWorkspaceRelative(src);
+  const [ref, inView] = useInView();
+  const { url, error } = useObjectUrl(supported && inView ? fetch : null);
 
-  if (error || !src) {
+  if (!supported || error) {
     return <span className="text-muted-foreground text-xs">[{alt || "image"}]</span>;
   }
 
-  if (!url) {
-    return <span className="text-muted-foreground text-xs animate-pulse">Loading image...</span>;
-  }
-
+  // The wrapper stays mounted across the loading transition so the observer
+  // keeps a stable target and the fetched object URL is not revoked early.
   return (
-    <img
-      src={url}
-      alt={alt ?? ""}
-      loading="lazy"
-      className="h-auto max-w-full overflow-hidden rounded-md"
-    />
+    <span ref={ref}>
+      {url ? (
+        <img
+          src={url}
+          alt={alt ?? ""}
+          className="h-auto max-w-full overflow-hidden rounded-md"
+        />
+      ) : (
+        <span className="text-muted-foreground text-xs animate-pulse">Loading image...</span>
+      )}
+    </span>
   );
 }

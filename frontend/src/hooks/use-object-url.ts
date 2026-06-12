@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
 
 /**
- * Fetch a resource as an object URL, revoking it on unmount or when the
- * fetcher changes.
+ * Fetch a resource as an object URL, aborting the request and revoking the URL
+ * on unmount or when the fetcher changes.
  *
- * The fetcher must return a freshly created object URL (e.g. from
- * `URL.createObjectURL`); the hook owns its lifetime. Memoize the fetcher
- * with `useCallback` so it only re-runs when its inputs change. Pass `null`
- * to skip fetching.
+ * The fetcher receives an `AbortSignal` and must return a freshly created
+ * object URL (e.g. from `URL.createObjectURL`); the hook owns its lifetime.
+ * Memoize the fetcher with `useCallback` so it only re-runs when its inputs
+ * change. Pass `null` to skip fetching — combine with {@link useInView} to defer
+ * loading until the target is on screen.
  */
-export function useObjectUrl(fetch: (() => Promise<string>) | null): {
+export function useObjectUrl(fetch: ((signal: AbortSignal) => Promise<string>) | null): {
   url: string | null;
   error: boolean;
 } {
@@ -21,24 +22,25 @@ export function useObjectUrl(fetch: (() => Promise<string>) | null): {
     setError(false);
     if (!fetch) return;
 
-    let active = true;
+    const controller = new AbortController();
     let created: string | null = null;
 
-    fetch()
-      .then((u) => {
-        if (active) {
-          created = u;
-          setUrl(u);
-        } else {
-          URL.revokeObjectURL(u);
+    fetch(controller.signal)
+      .then((objectUrl) => {
+        // Aborts can land after the blob resolves; revoke instead of leaking.
+        if (controller.signal.aborted) {
+          URL.revokeObjectURL(objectUrl);
+          return;
         }
+        created = objectUrl;
+        setUrl(objectUrl);
       })
       .catch(() => {
-        if (active) setError(true);
+        if (!controller.signal.aborted) setError(true);
       });
 
     return () => {
-      active = false;
+      controller.abort();
       if (created) URL.revokeObjectURL(created);
     };
   }, [fetch]);
