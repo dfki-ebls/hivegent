@@ -34,10 +34,12 @@ from ..llm import model_from_config
 from ..types import LlmConfig
 from .base import AssetRole, ExtractedImage
 from .images import sanitize_image_bytes
+from .video import MediaSample
 
 __all__ = [
     "MD_IMAGE_RE",
     "TriageDecision",
+    "caption_frames",
     "caption_image",
     "image_context_windows",
     "perceptual_key",
@@ -215,15 +217,30 @@ _CAPTION_INSTRUCTIONS = (
 )
 
 
-def _build_caption_prompt(contexts: Sequence[str]) -> str:
-    """Assemble the caption prompt, appending de-duplicated occurrence contexts."""
+_ANIMATION_CAPTION_INSTRUCTIONS = (
+    "You are writing the canonical, reusable description of a video or "
+    "animation from technical documentation, based on still frames sampled "
+    "evenly across its timeline (each labeled with its timestamp). It is "
+    "stored once and used both as alt text and as a standalone search "
+    "result, so it must stand on its own.\n\n"
+    "Describe what the video shows and how it progresses over time: the "
+    "setting, the actions or steps performed, any on-screen text, and the "
+    "outcome. If it demonstrates a workflow (e.g. a screen recording), "
+    "transcribe the steps in order.\n\n"
+    "Be factual and specific. Do not invent details that are not visible. "
+    "Do not start with 'This video shows' or similar."
+)
+
+
+def _build_caption_prompt(instructions: str, contexts: Sequence[str]) -> str:
+    """Assemble a caption prompt, appending de-duplicated occurrence contexts."""
     cleaned = [c.strip() for c in contexts if c.strip()]
     if not cleaned:
-        return _CAPTION_INSTRUCTIONS
+        return instructions
     joined = "\n\n---\n\n".join(dict.fromkeys(cleaned))
     return (
-        f"{_CAPTION_INSTRUCTIONS}\n\n"
-        f"Context where this image appears in the documentation:\n{joined}"
+        f"{instructions}\n\n"
+        f"Context where this content appears in the documentation:\n{joined}"
     )
 
 
@@ -264,9 +281,48 @@ async def caption_image(
     content = BinaryContent(data=sanitized, media_type=media_type)
     result = await asyncio.wait_for(
         base_agent.run(
-            [_build_caption_prompt(contexts), content],
+            [_build_caption_prompt(_CAPTION_INSTRUCTIONS, contexts), content],
             model=model_from_config(llm_options),
         ),
+        timeout=_VISION_TIMEOUT_S,
+    )
+    return str(result.output).strip()
+
+
+async def caption_frames(
+    sample: MediaSample,
+    contexts: Sequence[str],
+    llm_options: LlmConfig,
+) -> str:
+    """Caption a video or animation from its sampled frames.
+
+    The counterpart of :func:`caption_image` for animated media: the
+    frames in *sample* (see :func:`~hivegent.converters.video.sample_video`
+    and :func:`~hivegent.converters.video.sample_animated_image`) are sent
+    to the vision model interleaved with their timestamps, asking for a
+    description of how the content progresses over time.
+
+    Args:
+        sample: Evenly sampled frames with the source duration.
+        contexts: Surrounding-text snippets, one per occurrence (may be empty).
+        llm_options: LLM configuration with a vision-capable model.
+
+    Returns:
+        A concise description of the video or animation.
+
+    Raises:
+        asyncio.TimeoutError: If the vision model does not respond within
+            :data:`_VISION_TIMEOUT_S` seconds.
+    """
+    prompt = _build_caption_prompt(_ANIMATION_CAPTION_INSTRUCTIONS, contexts)
+    parts: list[str | BinaryContent] = [
+        f"{prompt}\n\nTotal duration: {sample.duration:.1f}s."
+    ]
+    for frame in sample.frames:
+        parts.append(f"Frame at {frame.timestamp:.1f}s:")
+        parts.append(BinaryContent(data=frame.data, media_type="image/png"))
+    result = await asyncio.wait_for(
+        base_agent.run(parts, model=model_from_config(llm_options)),
         timeout=_VISION_TIMEOUT_S,
     )
     return str(result.output).strip()

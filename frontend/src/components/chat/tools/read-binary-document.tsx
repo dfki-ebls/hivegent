@@ -1,4 +1,4 @@
-import { FileImage, FileText, Paperclip } from "lucide-react";
+import { FileImage, FileText, FileVideo, Paperclip } from "lucide-react";
 import { useCallback } from "react";
 import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
 import { ToolParameters } from "@/components/ToolDisplay";
@@ -13,6 +13,8 @@ interface BinaryReadResult {
   media_type: string;
   size: number;
   pages: number[];
+  frames?: number;
+  duration?: number | null;
 }
 
 function isBinaryReadResult(value: unknown): value is BinaryReadResult {
@@ -32,6 +34,8 @@ function BinaryMeta({ result }: { result: BinaryReadResult }) {
       <span>{result.media_type}</span>
       <span>{formatFileSize(result.size)}</span>
       {result.pages.length > 0 && <span>pages {result.pages.join(", ")}</span>}
+      {result.frames ? <span>{result.frames} frames sampled</span> : null}
+      {result.duration ? <span>{result.duration.toFixed(1)}s</span> : null}
       <span className="flex items-center gap-1">
         <Paperclip className="size-3" />
         attached to model
@@ -74,7 +78,7 @@ function descriptionPath(filePath: string): string {
 /**
  * Surface image binaries in the fetched panel, keyed by their description
  * path so they merge with the caption document (same stem) when both are read.
- * Non-image binaries (PDFs) are skipped — they have no inline preview yet.
+ * Non-image binaries (PDFs, videos) are skipped — they have no inline preview yet.
  *
  * Deliberately, a thumbnail appears only when the image was read *as a binary*
  * (its pixels entered the model's context). A caption retrieved by search that
@@ -106,7 +110,12 @@ export function ReadBinaryDocumentTool({ part, metadata }: ReadBinaryDocumentToo
   const state: ToolPart["state"] = part.state ?? "output-available";
   const input = parseJson<Record<string, unknown>>(part.input);
   const result = isBinaryReadResult(metadata) ? metadata : null;
-  const Icon = result?.media_type === "application/pdf" ? FileText : FileImage;
+  const Icon =
+    result?.media_type === "application/pdf"
+      ? FileText
+      : result?.media_type.startsWith("video/")
+        ? FileVideo
+        : FileImage;
   const stayScrolled = useStayScrolledOnToggle();
 
   return (

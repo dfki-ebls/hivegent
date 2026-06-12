@@ -134,6 +134,7 @@ def _enum(t: type[enum.StrEnum]) -> Enum:
 class EntryKind(enum.StrEnum):
     USER_MARKDOWN = "user_markdown"
     IMAGE = "image"
+    VIDEO = "video"
     CONVERTIBLE = "convertible"
     BINARY_STUB = "binary_stub"
 

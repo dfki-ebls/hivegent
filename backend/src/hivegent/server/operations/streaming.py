@@ -17,6 +17,7 @@ from ... import workspace
 from ...db.documents import get_document
 from ...config import settings
 from ...converters.base import is_image_suffix, is_markdown_suffix
+from ...converters.video import is_video_suffix
 from ...store import Casebase
 from ...types import (
     BulkOperationCompleteEvent,
@@ -59,6 +60,8 @@ async def upload_file_stream(
             yield OperationStageEvent(stage="Chunking document")
         elif is_image_suffix(suffix):
             yield OperationStageEvent(stage="Generating image description")
+        elif is_video_suffix(suffix):
+            yield OperationStageEvent(stage="Generating video description")
         else:
             yield OperationStageEvent(stage="Processing document")
         result = await workspace.upload(
@@ -90,6 +93,8 @@ async def reconvert_single_stream(
             original_suffix = PurePosixPath(metadata.original_path).suffix.lower()
             if is_image_suffix(original_suffix):
                 yield OperationStageEvent(stage="Regenerating image description")
+            elif is_video_suffix(original_suffix):
+                yield OperationStageEvent(stage="Regenerating video description")
             else:
                 yield OperationStageEvent(stage="Reprocessing document")
         else:

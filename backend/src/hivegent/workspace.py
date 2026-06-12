@@ -33,7 +33,15 @@ import tempfile
 import threading
 import zipfile
 import zlib
-from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Iterator, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Iterator,
+    Sequence,
+)
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path, PurePosixPath
 
@@ -63,6 +71,7 @@ from .converters import (
 from .converters.asset_processing import (
     MD_IMAGE_RE,
     TriageDecision,
+    caption_frames,
     caption_image,
     image_context_windows,
     perceptual_key,
@@ -77,6 +86,12 @@ from .converters.base import (
     is_markdown_suffix,
 )
 from .converters.images import guess_image_media_type, sanitize_image_bytes
+from .converters.video import (
+    animation_frame_count,
+    is_video_suffix,
+    sample_animated_image,
+    sample_video,
+)
 from .converters.wikilinks import preprocess_markdown
 from .db import documents as db_documents
 from .entries import (
@@ -358,6 +373,37 @@ async def _write_markdown_projection(
     return len(chunked.chunks), chunked.pipeline
 
 
+async def _describe_with_fallback(
+    filepath: str,
+    media_kind: str,
+    llm: LlmConfig,
+    describe: Callable[[LlmConfig], Awaitable[str]],
+) -> str:
+    """Run *describe* against the aux model, falling back to the file stem.
+
+    Centralizes the description envelope shared by every vision entry:
+    resolve the aux config, short-circuit to the stem when no model is
+    configured, and turn any failure (or empty output) into the stem so
+    the entry still gets a searchable projection.  *media_kind* only
+    labels the warning log.
+    """
+    aux = resolve_llm_config(llm, default_model=settings.llm.aux_model)
+    fallback = PurePosixPath(filepath).stem
+    if not aux.model:
+        return f"{fallback}\n"
+    try:
+        description = await describe(aux)
+    except Exception:
+        logger.warning(
+            "%s description generation failed for %s",
+            media_kind,
+            filepath,
+            exc_info=True,
+        )
+        description = fallback
+    return f"{description.strip() or fallback}\n"
+
+
 async def _build_image_description(
     filepath: str,
     content: bytes,
@@ -365,19 +411,23 @@ async def _build_image_description(
     contexts: Sequence[str],
     llm: LlmConfig,
 ) -> str:
-    """Generate markdown describing an image, grounded in *contexts*, with fallback."""
-    aux = resolve_llm_config(llm, default_model=settings.llm.aux_model)
-    fallback = PurePosixPath(filepath).stem
-    if not aux.model or not media_type:
-        return f"{fallback}\n"
-    try:
-        description = await caption_image(content, media_type, contexts, aux)
-    except Exception:
-        logger.warning(
-            "Image description generation failed for %s", filepath, exc_info=True
-        )
-        description = fallback
-    return f"{description.strip() or fallback}\n"
+    """Generate markdown describing an image, grounded in *contexts*, with fallback.
+
+    Animated images (multi-frame GIF/WebP) are captioned from frames
+    sampled across their timeline rather than from the container bytes —
+    vision models would otherwise see only the first frame, and a large
+    animation would blow the provider's request size limit.
+    """
+
+    async def describe(aux: LlmConfig) -> str:
+        if not media_type:
+            return ""
+        if await asyncio.to_thread(animation_frame_count, content, media_type) > 1:
+            sample = await asyncio.to_thread(sample_animated_image, content)
+            return await caption_frames(sample, contexts, aux)
+        return await caption_image(content, media_type, contexts, aux)
+
+    return await _describe_with_fallback(filepath, "Image", llm, describe)
 
 
 async def _persist_image_entry(
@@ -541,6 +591,72 @@ async def _upload_image_locked(
         chunk_count=chunk_count,
         chunking_pipeline_used=chunking_used,
         message="Image uploaded and described successfully",
+    )
+
+
+async def _build_video_description(
+    filepath: str,
+    full_path: Path,
+    contexts: Sequence[str],
+    llm: LlmConfig,
+) -> str:
+    """Generate markdown describing a video from sampled frames, with fallback."""
+
+    async def describe(aux: LlmConfig) -> str:
+        sample = await sample_video(full_path)
+        return await caption_frames(sample, contexts, aux)
+
+    return await _describe_with_fallback(filepath, "Video", llm, describe)
+
+
+async def _upload_video_locked(
+    store: Casebase,
+    filepath: str,
+    content: bytes,
+    spec: PipelineSpec,
+    llm: LlmConfig,
+    *,
+    origin: EntryOrigin,
+) -> UploadCompleteEvent:
+    """Persist a video and its frame-based description. Caller holds the lock.
+
+    Mirrors :func:`_upload_image_locked`: the original file is the entry's
+    payload and the vision-generated markdown is its searchable projection.
+    Frames are sampled from the written file via ffmpeg (see
+    :func:`~hivegent.converters.video.sample_video`).
+    """
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    full_path = _write_original_file(workspace_dir, filepath, content)
+    stem_path = stem_path_from_reference(filepath)
+    description_path = description_path_for_stem(stem_path)
+    markdown = await _build_video_description(
+        filepath,
+        full_path,
+        [f"File name: {PurePosixPath(filepath).name}"],
+        llm,
+    )
+    chunk_count, chunking_used = await _write_markdown_projection(
+        store,
+        description_path,
+        markdown,
+        spec,
+        entry_metadata=_build_entry_metadata(
+            stem_path=stem_path,
+            description_path=description_path,
+            original_path=filepath,
+            assets_dir=None,
+            entry_kind="video",
+            origin=origin,
+            generated_by="vision",
+        ),
+    )
+    return UploadCompleteEvent(
+        filename=filepath,
+        converted_filename=description_path,
+        size_bytes=len(content),
+        chunk_count=chunk_count,
+        chunking_pipeline_used=chunking_used,
+        message="Video uploaded and described successfully",
     )
 
 
@@ -840,6 +956,10 @@ async def _upload_locked(
         )
     if is_image_suffix(suffix):
         return await _upload_image_locked(
+            store, filepath, content, spec, llm, origin=origin
+        )
+    if is_video_suffix(suffix):
+        return await _upload_video_locked(
             store, filepath, content, spec, llm, origin=origin
         )
     return await _upload_convertible_locked(

@@ -99,3 +99,38 @@ The following pieces still need to be built before that tool ships, and none of 
 - TODO(shell): surface the session diff for approval before fold-back, which keeps the "mutations go through a gateway" guarantee and gives free rollback (discard the working copy).
 - TODO(shell): decide whether shell-created originals with no markdown companion should be auto-converted into entries. `is_description_file` currently ingests only markdown, so a lone hand-dropped binary stays inert on disk (listed in the tree, never chunked) until it is re-uploaded through the API.
 - TODO(shell): keep all workspace access behind `Casebase.workspace_dir(data_dir)` so the working-copy root can be injected in one place. Do not hardcode the workspace path elsewhere.
+
+## Video and animated-media pipeline
+
+Vision chat models only accept still images: the OpenAI Chat Completions spec has no video content type, and pydantic-ai's OpenAI path rejects every form of video content with `NotImplementedError`.
+All animated media is therefore represented as a bounded set of still frames sampled evenly across the timeline, each downscaled and labeled with its timestamp — the same shape Qwen's own video preprocessing produces internally.
+
+```
+upload .mp4/.webm/.mov/.mkv          upload animated .gif/.webp
+        │                                     │
+ _upload_video_locked                  _upload_image_locked
+ (entry_kind = video)                  (entry_kind = image)
+        │ ffmpeg/ffprobe                      │ Pillow ImageSequence
+ converters.video.sample_video         converters.video.sample_animated_image
+        └──────────────┬──────────────────────┘
+                       ▼
+        MediaSample (≤ 8 PNG frames + timestamps + duration)
+                       │
+        asset_processing.caption_frames (aux vision model)
+                       │
+        <stem>.md description → chunks + embeddings (pgvector)
+```
+
+The same sampling backs the `read_binary_document` agent tool: for videos and multi-frame GIF/WebP it attaches the sampled frames (each tagged `<path>#t=<ts>s`) instead of the raw container bytes, which would otherwise reach the model as its first frame only — or blow the serving gateway's request size limit outright.
+Static images keep the verbatim pass-through, and single-image captioning (`caption_image`) is untouched.
+Frame extraction for container formats shells out to `ffmpeg`/`ffprobe` via `subprocesses/ffmpeg.py` (already a runtime dependency); GIF/WebP animations decode in-process with Pillow.
+Reconversion needs no special casing because `workspace.reconvert` re-dispatches the stored original through `_upload_locked`.
+
+### Migrating to native video input
+
+The serving stack is converging on native video: Qwen3.6 checkpoints understand video directly, and llama.cpp merged ffmpeg-based video input in June 2026, but pydantic-ai cannot send video through the OpenAI protocol, so the frame sampling stays for now.
+When the full chain (served model + llama.cpp build + pydantic-ai mapping) supports video, the swap is local and the rest of the entry plumbing (entry kinds, description projection, chunking) is format-agnostic and stays as is.
+
+- `ReadBinaryDocumentTool._read_video` / `_read_animation` attach the media as one `BinaryAttachment(media_type="video/…")` instead of sampled frames.
+- `caption_frames` sends the video as a single `BinaryContent` instead of interleaved frame images (watch the aux model's context budget — native video tokens are far heavier than 8 frames).
+- `converters/video.py` and `subprocesses/ffmpeg.py` shrink to media-type tables or disappear entirely.

@@ -43,6 +43,7 @@ class ChunkData(BaseModel):
 type EntryKind = Literal[
     "user_markdown",
     "image",
+    "video",
     "convertible",
     "binary_stub",
 ]

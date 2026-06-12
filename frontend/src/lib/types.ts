@@ -58,8 +58,8 @@ export enum AssetProcessingMode {
 
 export const AssetProcessingModeSchema = z.enum(AssetProcessingMode);
 
-const EntryKindSchema = z.enum(["user_markdown", "image", "convertible", "binary_stub"]);
-const EntryOriginSchema = z.enum(["upload", "collection", "extracted"]);
+const EntryKindSchema = z.enum(["user_markdown", "image", "video", "convertible", "binary_stub"]);
+const EntryOriginSchema = z.enum(["upload", "collection", "extracted", "imported"]);
 const EntryGeneratedBySchema = z.enum(["user", "converter", "vision", "stub"]);
 
 // ============================================================
