@@ -66,7 +66,7 @@ const EntryGeneratedBySchema = z.enum(["user", "converter", "vision", "stub"]);
 // Persisted data schemas (localStorage)
 // ============================================================
 
-export const DocumentTabSchema = z.enum(["fetched", "manage"]);
+export const DocumentTabSchema = z.enum(["context", "documents"]);
 export type DocumentTab = z.infer<typeof DocumentTabSchema>;
 
 export const ExpandedDirsSchema = z.array(z.string());

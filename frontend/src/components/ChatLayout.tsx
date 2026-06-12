@@ -26,7 +26,7 @@ export function ChatLayout({ id, draft = false }: ChatLayoutProps) {
         <SheetContent side="left" className="w-full sm:max-w-lg p-0">
           <SheetHeader className="border-b">
             <SheetTitle>Documents</SheetTitle>
-            <SheetDescription className="sr-only">Browse fetched documents</SheetDescription>
+            <SheetDescription className="sr-only">Browse context and documents</SheetDescription>
           </SheetHeader>
           <div className="h-[calc(100%-60px)] overflow-hidden">
             <DocumentCanvas />

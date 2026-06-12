@@ -79,7 +79,7 @@ function descriptionPath(filePath: string): string {
 }
 
 /**
- * Surface image binaries in the fetched panel, keyed by their description
+ * Surface image binaries in the context panel, keyed by their description
  * path so they merge with the caption document (same stem) when both are read.
  * Non-image binaries (PDFs, videos) are skipped — they have no inline preview yet.
  *

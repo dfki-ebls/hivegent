@@ -40,7 +40,7 @@ interface ScopeSectionProps {
 /**
  * Self-contained document manager for one workspace scope. Used identically
  * for the personal store and each group, so the two share one code path. The
- * shared upload area (in ManageDocuments) deposits into the selected scope and
+ * shared upload area (in DocumentManager) deposits into the selected scope and
  * the store refresh flows back here through `byScope[scope]`.
  */
 export function ScopeSection({

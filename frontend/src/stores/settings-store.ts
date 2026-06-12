@@ -68,7 +68,7 @@ interface PersistedSettings {
 }
 
 const UI_DEFAULTS = {
-  documentTab: "manage" as DocumentTab,
+  documentTab: "documents" as DocumentTab,
   conversionPipeline: ConversionPipeline.AUTO,
   chunkingPipeline: ChunkingPipeline.AUTO,
   expandedDirs: [""] as string[],

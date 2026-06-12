@@ -79,9 +79,9 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
   const handleSendMessage = useCallback(
     async (text: string, files?: FileUIPart[]) => {
       if (!text.trim() && (!files || files.length === 0)) return;
-      // Surface the Fetched panel as the conversation's first turn begins to
+      // Surface the Context panel as the conversation's first turn begins to
       // pull documents; later turns leave the user's chosen tab alone.
-      if (messages.length === 0) setDocumentTab("fetched");
+      if (messages.length === 0) setDocumentTab("context");
       await sendUserMessage({ text, files }, buildRequestBody());
     },
     [buildRequestBody, sendUserMessage, messages.length, setDocumentTab],

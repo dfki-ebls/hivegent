@@ -8,7 +8,7 @@ import { ScrollArea } from "../ui/scroll-area";
 import { DocumentGroup } from "./DocumentGroup";
 import { EmptyState } from "./EmptyState";
 
-export function FetchedDocuments() {
+export function ContextDocuments() {
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
 
@@ -66,7 +66,7 @@ export function FetchedDocuments() {
     return (
       <EmptyState
         icon={<Search className="h-12 w-12 opacity-50" />}
-        title="Fetched documents will appear here"
+        title="Context documents will appear here"
         description="Ask questions in the chat to search and fetch documents"
       />
     );

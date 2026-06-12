@@ -37,7 +37,7 @@ import { PipelineSettingsBar } from "./PipelineSettingsBar";
 import { ScopeSection } from "./ScopeSection";
 import { UploadArea } from "./UploadArea";
 
-export function ManageDocuments() {
+export function DocumentManager() {
   const overrides = useSettingsStore((s) => s.overrides);
   const conversionPipeline = useSettingsStore((s) => s.conversionPipeline);
   const chunkingPipeline = useSettingsStore((s) => s.chunkingPipeline);
