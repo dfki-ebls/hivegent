@@ -75,18 +75,27 @@ The systemd unit shipped by [`raise-infra`](../../raise-infra/nixos/options/hive
 For the local Postgres case (`custom.hivegent.postgresql.createLocally = true`), the unit is ordered after `postgresql.target`, so the database role and the `hivegent` database exist before migrations run.
 A failed migration aborts startup with a non-zero exit code, which trips the unit's `Restart = "on-failure"` policy and surfaces in `journalctl -u hivegent`.
 
-## Persisting interrupted chat turns
+## Conversations are a server-authoritative message tree
 
-`server/vercel.py`'s `run_and_persist` mirrors each chat turn into storage on every finish, including a stop, a client disconnect, or a mid-stream error.
-pydantic-ai 1.x only appends a `ModelResponse` to the run's message list once it has fully streamed, so to keep a partial answer `run_and_persist` taps the native event stream, rebuilds the in-flight response from its part deltas, and appends it with `state='interrupted'` when the captured tail is still a `ModelRequest` (the value pydantic-ai's own `StreamedRunResult.cancel()` records).
-The interrupted state is informational only: the agent never reads it when replaying history, and the Vercel protocol does not carry it to the frontend.
+The database is the source of truth for chat history, not the browser.
+A conversation's messages form a tree: every `Message` row has a global `id` and a nullable `parent_id`, and the conversation points at the tip of the selected branch via `active_leaf_id`, a `DEFERRABLE INITIALLY DEFERRED` foreign key so the conversation and its leaf can be inserted in one transaction while the database still rejects a dangling pointer.
+The linear history the frontend sees is the *active path*: `active_leaf_id` walked up to the root via `parent_id` (`_load_active_path` in `db/conversations.py`).
+The sidebar's visible-message count is read from the active leaf's `Message.visible_prefix` — a running count of reader-visible messages from the root that each node carries, set once from its fork parent at insert and never updated (the tree is append-only), so the count needs no tree walk and no denormalized counter that could drift.
 
-### Removing the reconstruction on pydantic-ai v2
+Each turn the client sends only the new message plus the operation (`trigger` and `messageId`), never the full history.
+`_run_chat` calls `resolve_fork` to load the active-path prefix up to a fork point and replays it as the run's `message_history`; `run_and_persist` then persists the run's message list on every finish, and the route's persist closure appends only the new tail (`captured[len(prefix):]`) as a chain under the fork point (`append_branch`).
+A plain submit forks at the active leaf (linear continuation); editing a message forks at its parent and regenerating forks at the nearest user turn, so the prior branch is preserved as a sibling rather than overwritten.
+`GET /conversations/{id}/messages` projects the active path with `dump_messages_with_ids`, which anchors each `UIMessage.id` to its tree-node id (so the client can address a node for edit / regenerate / branch-select) and annotates forking nodes with branch metadata; `POST /conversations/{id}/branches/select` moves `active_leaf_id` to another branch's tip.
 
-pydantic-ai v2 makes `capture_run_messages()` capture partial messages from interrupted runs directly (a v2.0.0b1 breaking change), which obsoletes the manual reconstruction.
-On the upgrade, revert `run_and_persist` to persisting `list(captured)`, switch `_run_chat` back from `adapter.run_stream_native()` to `adapter.run_stream()`, and drop the explicit `state='interrupted'` since the framework records it.
-The work is gated on the whole 2.0 major bump, which is still beta (2.0.0b7) and needs a v2-compatible `pydantic-ai-harness` release.
-The other 2.0 breaking changes do not affect this backend, which pins `pydantic-ai-slim[ui,openai,mcp]`, builds models through `OpenAIChatModel`, and ships its own `WebSearch`/`WebFetch` tools rather than the native builtins.
+Because history is loaded from SQL, there is no browser round-trip to strip `ToolReturnPart.metadata`, and the client-trust surface shrinks from the whole conversation to one new message.
+Persistence is therefore hard-fail: a failed write surfaces as a trailing error chunk on a clean drain (no echo to recover from), and is only logged on a client disconnect.
+
+### Interrupted turns and pydantic-ai v2
+
+`run_and_persist` persists exactly what `capture_run_messages()` holds, with no reconstruction.
+On pydantic-ai 1.x a clean or errored turn keeps its prompt and completed messages, but an answer cut off mid-stream leaves no partial in the captured list, so it is not persisted.
+pydantic-ai v2 makes `capture_run_messages()` capture partial messages from interrupted runs directly (a v2.0.0b1 change), so the same `captured[len(prefix):]` tail will then include the partial with no code change here.
+The v2 bump is gated on the whole 2.0 major release (still beta, and needing a v2-compatible `pydantic-ai-harness`); its other breaking changes do not affect this backend, which pins `pydantic-ai-slim[ui,openai,mcp]`, builds models through `OpenAIChatModel`, and ships its own `WebSearch`/`WebFetch` tools rather than the native builtins.
 
 ## Filesystem as the source of truth for content
 

@@ -9,38 +9,34 @@ prefixes context-window overflows with a stable code that the frontend
 matches exactly (see ``isContextLengthError`` in
 ``frontend/src/lib/chat/chat-utils.ts``).
 
-It also owns :func:`run_and_persist`, which streams a turn and mirrors its
-full message list to storage on both clean and interrupted finishes,
-reconstructing the still-streaming response so an answer cut off mid-flight
-is persisted too.
+It also owns :func:`run_and_persist`, which streams a turn and mirrors the
+run's message list to storage on every finish, and :func:`dump_messages_with_ids`,
+which projects stored tree nodes to ``UIMessage``s whose ids are the node ids
+the client addresses for edit / regenerate / branch-select.
 """
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from typing import TypedDict
 
 from pydantic_ai import capture_run_messages
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    PartDeltaEvent,
-    PartStartEvent,
-    TextPart,
-    ThinkingPart,
-)
-from pydantic_ai.ui import NativeEvent
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
+from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, ErrorChunk
 from starlette.responses import Response
 
+from ..db._common import new_id
 from ..llm import is_context_overflow
 
 __all__ = [
     "CONTEXT_LENGTH_EXCEEDED",
+    "SDK_VERSION",
+    "BranchInfo",
     "ChatAdapter",
     "chat_error_text",
+    "dump_messages_with_ids",
     "run_and_persist",
 ]
 
@@ -48,7 +44,23 @@ logger = logging.getLogger(__name__)
 
 CONTEXT_LENGTH_EXCEEDED = "context_length_exceeded"
 
+# Vercel AI data-stream protocol version the frontend speaks; request parsing
+# and response dumping must agree on it.
+SDK_VERSION = 6
+
 type PersistTurn = Callable[[Sequence[ModelMessage]], Awaitable[None]]
+
+
+class BranchInfo(TypedDict):
+    """Branch annotation merged into a forking node's ``UIMessage`` metadata.
+
+    The camelCase keys are the wire shape the frontend reads; index and count
+    are derived here from the sibling list the repository returns.
+    """
+
+    branchCount: int
+    branchIndex: int
+    siblingIds: list[str]
 
 
 def chat_error_text(error: Exception) -> str:
@@ -99,76 +111,88 @@ async def _persist_safely(persist: PersistTurn, messages: Sequence[ModelMessage]
         logger.exception("Failed to persist conversation turn")
 
 
+def dump_messages_with_ids(
+    pairs: Sequence[tuple[str, ModelMessage]],
+    *,
+    siblings: Mapping[str, Sequence[str]] | None = None,
+) -> list[UIMessage]:
+    """Project ``(node_id, message)`` pairs to ``UIMessage``s keyed by node id.
+
+    Each ``UIMessage.id`` is set to its head node's id, so the client's edit /
+    regenerate / branch-select ``messageId`` maps straight back to a tree node.
+    The adapter invokes the id generator with the exact objects passed here (it
+    iterates this same list), so the identity lookup is an exact match and
+    stays correct even when one request emits two ``UIMessage``s (system +
+    user); a tool-return-only request emits none and is never looked up.  An
+    unmapped object — unreachable today — degrades to a fresh non-addressable id
+    rather than raising.  When given, *siblings* maps a forking node to its
+    ordered sibling ids; its :class:`BranchInfo` is merged under a ``branch``
+    metadata key (leaving the framework key intact) so the frontend can render
+    branch navigation.
+    """
+    node_by_obj = {id(msg): node_id for node_id, msg in pairs}
+    if siblings:
+        for node_id, msg in pairs:
+            sibs = siblings.get(node_id)
+            if sibs is not None:
+                sib_ids = list(sibs)
+                branch = BranchInfo(
+                    branchCount=len(sib_ids),
+                    branchIndex=sib_ids.index(node_id),
+                    siblingIds=sib_ids,
+                )
+                msg.metadata = {**(msg.metadata or {}), "branch": branch}
+
+    def assign_id(msg: ModelMessage, _role: str, _index: int) -> str:
+        return node_by_obj.get(id(msg)) or new_id()
+
+    return ChatAdapter.dump_messages(
+        [msg for _, msg in pairs],
+        generate_message_id=assign_id,
+        sdk_version=SDK_VERSION,
+    )
+
+
 async def run_and_persist[DepsT, OutputT](
     adapter: VercelAIAdapter[DepsT, OutputT],
-    events: AsyncIterator[NativeEvent],
+    stream: AsyncIterator[BaseChunk],
     *,
     persist: PersistTurn,
 ) -> Response:
-    """Stream a chat turn and mirror its full message list to storage.
+    """Stream a chat turn and persist the run's message list on every finish.
 
-    *events* is the still-unstarted native event stream from
-    ``adapter.run_stream_native``; transforming it here, inside
-    ``capture_run_messages``, exposes the run's live message list — the same
-    one the agent appends to — so whatever exists when the stream ends is
-    persisted: the whole conversation on a clean finish, or the prompt plus
-    whatever streamed before an error (the Vercel adapter turns run errors into
-    an in-band error chunk, so the stream still ends normally) or a client
-    disconnect.
+    *stream* is the still-unstarted chunk stream from ``adapter.run_stream``;
+    iterating it inside ``capture_run_messages`` exposes the run's live message
+    list, so whatever exists when the stream ends is persisted: the full turn on
+    a clean finish, or the prompt plus completed messages on an error (the
+    Vercel adapter turns run errors into an in-band error chunk, so the stream
+    still ends normally).  An answer cut off mid-stream is not reconstructed:
+    pydantic-ai 1.x leaves its partial out of ``capture_run_messages`` and we
+    persist exactly what it holds (pydantic-ai v2 captures partials upstream, so
+    the same path picks them up with no change).
 
-    The agent only appends a ``ModelResponse`` to that list once it has fully
-    streamed, so an interrupted answer is missing from it.  We rebuild the live
-    response from the part-delta events as they pass — parts re-index from zero
-    per response, so an ``index == 0`` start begins a fresh one — and append its
-    visible text whenever the captured tail is still a ``ModelRequest``, i.e.
-    the latest response never landed.  A stopped turn then keeps the user's
-    message *and* the partial answer rather than only the prompt.
-
-    The persist runs in a shielded ``finally`` so a disconnect mid-write
-    still lands the user's turn.
+    Persistence is server-authoritative with no browser echo to recover from, so
+    a failed write hard-fails the turn: on a clean drain the failure surfaces as
+    a trailing error chunk; on a client disconnect the write is shielded and a
+    failure can only be logged.
     """
-    # TODO(pydantic-ai v2): v2's `capture_run_messages()` captures partials from
-    # interrupted runs directly (v2.0.0b1), so this tap and reconstruction can be
-    # deleted — revert to persisting `list(captured)`, switch `_run_chat` back to
-    # `adapter.run_stream()`, and drop the explicit `state='interrupted'`.  Gated
-    # on the 2.0 upgrade (still beta); see backend/README.md, "Persisting
-    # interrupted chat turns".
-    parts: dict[int, ModelResponsePart] = {}
-
-    async def tapped() -> AsyncIterator[NativeEvent]:
-        async for event in events:
-            if isinstance(event, PartStartEvent):
-                if event.index == 0:
-                    parts.clear()
-                parts[event.index] = event.part
-
-            elif isinstance(event, PartDeltaEvent) and event.index in parts:
-                parts[event.index] = event.delta.apply(parts[event.index])
-
-            yield event
 
     async def relay() -> AsyncIterator[BaseChunk]:
         with capture_run_messages() as captured:
             try:
-                async for chunk in adapter.transform_stream(tapped()):
+                async for chunk in stream:
                     yield chunk
-            finally:
-                messages = list(captured)
-                # Keep only the streamed visible parts: a tool call interrupted
-                # before it ran has no return, so persisting it would leave a
-                # dangling call that breaks the next turn.
-                visible = [
-                    part
-                    for _, part in sorted(parts.items())
-                    if isinstance(part, (TextPart, ThinkingPart))
-                ]
-                if visible and messages and isinstance(messages[-1], ModelRequest):
-                    # ``state='interrupted'`` is pydantic-ai's first-class lifecycle
-                    # value for a response stopped before it finished — the same one
-                    # its native ``StreamedRunResult.cancel()`` records.  It is purely
-                    # informational: the agent never reads it when replaying history,
-                    # so it does not affect future turns.
-                    messages.append(ModelResponse(parts=visible, state="interrupted"))
-                await asyncio.shield(_persist_safely(persist, messages))
+            except BaseException:
+                # Client disconnect / cancellation: persist what completed
+                # (shielded — the client is gone, so a failure can only be
+                # logged) and propagate.
+                await asyncio.shield(_persist_safely(persist, list(captured)))
+                raise
+
+            try:
+                await asyncio.shield(persist(list(captured)))
+            except Exception:
+                logger.exception("Failed to persist conversation turn")
+                yield ErrorChunk(error_text="Failed to save the conversation.")
 
     return adapter.streaming_response(relay())

@@ -27,15 +27,17 @@ from ...mcp import build_mcp_server, validate_mcp_servers
 from ...db._common import new_id
 from ...db.conversations import (
     ConversationSummary,
+    append_branch,
     conversation_exists,
     delete_all_conversations,
     export_conversation,
     list_conversations,
+    load_active_for_display,
     load_conversation,
     load_conversation_summary,
-    load_messages,
     remove_conversation,
-    replace_messages,
+    resolve_fork,
+    set_active_leaf,
     set_conversation_title,
 )
 from ...db.memory import load_memory
@@ -63,11 +65,12 @@ from ...types import (
     GenerateTitleRequest,
     GenerateTitleResponse,
     LlmConfig,
+    SelectBranchRequest,
     ToolsSpec,
     UpdateTitleRequest,
 )
 from ..cancellation import run_until_disconnect
-from ..vercel import ChatAdapter, run_and_persist
+from ..vercel import SDK_VERSION, ChatAdapter, dump_messages_with_ids, run_and_persist
 from ..common import (
     group_stores,
     parse_document_filters,
@@ -268,11 +271,33 @@ async def get_conversation_messages(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
 ) -> list[UIMessage]:
-    """Get messages for a conversation in Vercel AI format."""
-    messages = await load_messages(user.id, conversation_id)
-    if not messages:
+    """Get the active path of a conversation in Vercel AI format.
+
+    Each ``UIMessage.id`` is the tree-node id the client addresses for edit /
+    regenerate / branch-select; forking nodes carry branch metadata.
+    """
+    result = await load_active_for_display(user.id, conversation_id)
+    if result is None:
         return []
-    return ChatAdapter.dump_messages(messages)
+    pairs, siblings = result
+    return dump_messages_with_ids(pairs, siblings=siblings)
+
+
+@router.post("/conversations/{conversation_id}/branches/select")
+async def select_branch(
+    conversation_id: str,
+    request: SelectBranchRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> list[UIMessage]:
+    """Switch the active branch to the one containing ``message_id``.
+
+    Returns the new active path; the active leaf moves to that branch's tip.
+    """
+    result = await set_active_leaf(user.id, conversation_id, request.message_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Conversation or message not found")
+    pairs, siblings = result
+    return dump_messages_with_ids(pairs, siblings=siblings)
 
 
 @router.get("/conversations/{conversation_id}/export")
@@ -319,6 +344,12 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     tools = ToolsSpec(**(body.get("tools") or {}))
     raw_mode = body.get("mode", "execute")
     mode = raw_mode if raw_mode in ("plan", "execute") else "execute"
+    raw_trigger = body.get("trigger")
+    trigger = (
+        raw_trigger
+        if raw_trigger in ("submit-message", "regenerate-message")
+        else "submit-message"
+    )
 
     return ChatRequestConfig(
         conversation_id=body.get("conversation_id", ""),
@@ -330,6 +361,8 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
         included_documents=included_documents,
         excluded_documents=excluded_documents,
         tools=tools,
+        trigger=trigger,
+        message_id=body.get("messageId") or None,
     )
 
 
@@ -403,7 +436,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         adapter = cast(
             ChatAdapter[UserDeps, str],
             await ChatAdapter[UserDeps, str].from_request(
-                request, agent=user_agent, sdk_version=6
+                request, agent=user_agent, sdk_version=SDK_VERSION
             ),
         )
     except ValidationError as exc:
@@ -427,19 +460,36 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         mode=config.mode,
     )
 
-    events = adapter.run_stream_native(
+    # History is server-authoritative: load the active-path prefix up to the
+    # fork point from the DB and replay it, ignoring the browser echo.  The
+    # client sends only the new message (none for a regenerate).
+    prefix, fork_id = await resolve_fork(
+        user.id,
+        conversation_id,
+        regenerate=config.trigger == "regenerate-message",
+        message_id=config.message_id,
+    )
+
+    stream = adapter.run_stream(
         deps=deps,
         output_type=[str, DeferredToolRequests],
         model=model_from_config(config.llm),
         toolsets=toolsets,
         instructions=instructions,
         model_settings=model_settings,
+        message_history=prefix,
     )
 
-    async def persist(messages: Sequence[ModelMessage]) -> None:
-        await replace_messages(user.id, config.conversation_id, messages)
+    # Capture only the prefix length, not the prefix list, so the closure
+    # (held for the whole stream) does not pin the full replayed history.
+    prefix_len = len(prefix)
 
-    return await run_and_persist(adapter, events, persist=persist)
+    async def persist(messages: Sequence[ModelMessage]) -> None:
+        # Append only the turn's new messages (past the replayed prefix) as a
+        # branch under the fork point.
+        await append_branch(user.id, conversation_id, fork_id, messages[prefix_len:])
+
+    return await run_and_persist(adapter, stream, persist=persist)
 
 
 @router.post("/conversations/chat")
@@ -450,8 +500,8 @@ async def create_new_conversation_chat(
     """Start a new conversation: mint a server ID and stream the first turn.
 
     The conversation row is created lazily when the turn is persisted (see
-    :func:`replace_messages`), so an abandoned chat never leaves an empty
-    row behind.  Because the turn is mirrored on an interrupted finish too,
+    :func:`append_branch`), so an abandoned chat never leaves an empty
+    row behind.  Because the turn is persisted on an errored finish too,
     a first turn that errors still becomes a real row under the minted ID —
     which the client adopts so its retry targets that conversation instead
     of minting a duplicate.  The minted ID is returned in the

@@ -1,24 +1,23 @@
-"""Tests for mirroring a chat turn into storage.
+"""Tests for the stateless surface of DB-first chat persistence.
 
-The conversation repository stores the run's whole message list each turn
-rather than appending a delta, so the stored copy stays equal to the live
-state through errors and retries.  These exercise the parts that need no
-database: ``run_and_persist`` (which picks what to persist on clean versus
-interrupted finishes) and ``_restore_tool_metadata`` (which heals the
-tool-output metadata the browser's echoed history drops).  The actual SQL
-write in ``replace_messages`` is covered by manual smoke tests.
+The conversation store is a server-authoritative message tree: each turn loads
+the active-path prefix from SQL, runs the agent on it, and appends the turn's
+new messages (``captured[len(prefix):]``) as a branch.  The tree writes
+(``resolve_fork`` / ``append_branch``) touch PostgreSQL and are covered by
+manual smoke tests; these exercise the parts that need no database:
+``run_and_persist`` (what the persist callback receives on clean, errored, and
+interrupted finishes, and the hard-fail error chunk) and
+``dump_messages_with_ids`` (anchoring ``UIMessage`` ids to tree-node ids).
 """
 
 from collections.abc import AsyncIterator, Sequence
-from typing import Any
 
-from pydantic_ai import Agent, ModelMessagesTypeAdapter, RunContext
+from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
     TextPart,
-    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -27,11 +26,14 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
-from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 from starlette.responses import StreamingResponse
 
-from hivegent.db.conversations import _restore_tool_metadata
-from hivegent.server.vercel import ChatAdapter, run_and_persist
+from hivegent.server.vercel import (
+    ChatAdapter,
+    PersistTurn,
+    dump_messages_with_ids,
+    run_and_persist,
+)
 
 
 def _texts(messages: Sequence[ModelMessage]) -> list[str]:
@@ -43,94 +45,117 @@ def _texts(messages: Sequence[ModelMessage]) -> list[str]:
     ]
 
 
-async def _persisted_turn(
+def _adapter(
     ui_messages: list[UIMessage],
     *,
     model: Model | None = None,
     tool_raises: bool = False,
-) -> list[ModelMessage]:
-    """Run one turn through ``run_and_persist`` and return what it stored."""
-    agent = Agent(
-        model=model or TestModel(custom_output_text="ANSWER"), output_type=str
-    )
+) -> ChatAdapter[None, str]:
+    agent = Agent(model=model or TestModel(custom_output_text="ANSWER"), output_type=str)
 
-    @agent.tool
-    def lookup(ctx: RunContext[None], query: str) -> str:
-        if tool_raises:
+    if tool_raises:
+
+        @agent.tool_plain
+        def boom() -> str:
             raise RuntimeError("simulated tool failure mid-run")
-        return "DOC-CONTENT"
 
-    adapter = ChatAdapter[None, str](
+    return ChatAdapter[None, str](
         agent=agent,
         run_input=SubmitMessage(
             id="c1", messages=ui_messages, trigger="submit-message"
         ),
     )
+
+
+async def _run_turn(
+    ui_messages: list[UIMessage],
+    *,
+    model: Model | None = None,
+    message_history: Sequence[ModelMessage] | None = None,
+    tool_raises: bool = False,
+    persist: PersistTurn | None = None,
+) -> tuple[list[list[ModelMessage]], str]:
+    """Run one turn through ``run_and_persist``; return recorded turns + body."""
+    adapter = _adapter(ui_messages, model=model, tool_raises=tool_raises)
     recorded: list[list[ModelMessage]] = []
 
-    async def persist(messages: Sequence[ModelMessage]) -> None:
+    async def _record(messages: Sequence[ModelMessage]) -> None:
         recorded.append(list(messages))
 
     response = await run_and_persist(
-        adapter, adapter.run_stream_native(), persist=persist
+        adapter,
+        adapter.run_stream(message_history=list(message_history or [])),
+        persist=persist or _record,
     )
     assert isinstance(response, StreamingResponse)
-    async for _ in response.body_iterator:
-        pass
+    chunks = [chunk async for chunk in response.body_iterator]
+    body = "".join(
+        chunk.decode() if isinstance(chunk, bytes) else str(chunk) for chunk in chunks
+    )
+    return recorded, body
+
+
+async def test_clean_turn_persists_only_the_new_tail() -> None:
+    """A turn appends only its new messages past the replayed history prefix."""
+    prefix: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content="q1")]),
+        ModelResponse(parts=[TextPart(content="a1")]),
+    ]
+    recorded, _ = await _run_turn(
+        [UIMessage(id="m2", role="user", parts=[TextUIPart(text="q2")])],
+        message_history=prefix,
+    )
 
     assert len(recorded) == 1
-    return recorded[0]
-
-
-async def test_clean_turn_persists_whole_conversation() -> None:
-    """A successful second turn mirrors the full history, not just its delta.
-
-    The first turn is dumped to UI messages and echoed back with a new
-    prompt appended — the exact round-trip the frontend performs — and the
-    persisted set keeps the echoed turn so a reload sees it.
-    """
-    first = await _persisted_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])]
-    )
-    echoed = [*ChatAdapter.dump_messages(first)]
-    echoed.append(UIMessage(id="m2", role="user", parts=[TextUIPart(text="q2")]))
-
-    persisted = await _persisted_turn(echoed)
-
-    texts = _texts(persisted)
-    assert "q1" in texts
+    delta = recorded[0][len(prefix) :]
+    texts = _texts(delta)
     assert "q2" in texts
     assert "ANSWER" in texts
+    assert "q1" not in texts  # the prefix is replayed, not re-persisted
 
 
-async def test_errored_turn_keeps_the_partial_transcript() -> None:
-    """A turn whose tool fails keeps the prompt and the partial it produced.
+async def test_regenerate_reruns_from_history_without_a_new_message() -> None:
+    """Regenerate runs on a prefix ending in a user request with no client message.
 
-    ``capture_run_messages`` exposes the live run, so the user's prompt and
-    the tool call streamed before the failure are stored — only the answer
-    that never came is missing.
+    The frontend sends ``messages: []`` for a regenerate; the agent must still
+    produce a response from the replayed history, and the delta is just that
+    response.
     """
-    persisted = await _persisted_turn(
+    prefix: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content="q1")])]
+    recorded, _ = await _run_turn([], message_history=prefix)
+
+    delta = recorded[0][len(prefix) :]
+    assert any(isinstance(msg, ModelResponse) for msg in delta)
+    assert "ANSWER" in _texts(delta)
+
+
+async def test_errored_turn_keeps_the_prompt() -> None:
+    """A turn whose tool fails keeps its prompt and the completed tool call.
+
+    ``capture_run_messages`` holds whatever completed before the failure, which
+    the Vercel adapter turns into an in-band error chunk, so the persist still
+    fires on the clean-drain path.
+    """
+    recorded, _ = await _run_turn(
         [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
         tool_raises=True,
     )
 
-    assert "q1" in _texts(persisted)
+    assert "q1" in _texts(recorded[0])
     assert any(
         isinstance(part, ToolCallPart)
-        for message in persisted
+        for message in recorded[0]
         for part in message.parts
     )
-    assert "ANSWER" not in _texts(persisted)
+    assert "ANSWER" not in _texts(recorded[0])
 
 
-async def test_interrupted_stream_keeps_partial_answer() -> None:
-    """A turn cut off mid-answer persists the text streamed so far.
+async def test_interrupted_stream_drops_the_partial_answer() -> None:
+    """An interrupted turn keeps its prompt but not the in-flight partial.
 
-    The agent only appends a ``ModelResponse`` once it has fully streamed, so
-    ``capture_run_messages`` never sees an interrupted answer.  Reconstructing
-    it from the run events keeps the prompt *and* the partial reply, mirroring
-    what the user saw before the stream dropped.
+    pydantic-ai 1.x leaves a partial response out of ``capture_run_messages``
+    and we no longer reconstruct it; v2 captures partials upstream, at which
+    point the same path persists them with no change here.
     """
 
     async def stream_partial(
@@ -140,116 +165,58 @@ async def test_interrupted_stream_keeps_partial_answer() -> None:
         yield "is 42"
         raise RuntimeError("connection dropped mid-stream")
 
-    persisted = await _persisted_turn(
+    recorded, _ = await _run_turn(
         [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
         model=FunctionModel(stream_function=stream_partial),
     )
 
-    assert "q1" in _texts(persisted)
-    assert "The answer is 42" in _texts(persisted)
-
-    # The salvaged turn records pydantic-ai's first-class interrupted state.
-    last = persisted[-1]
-    assert isinstance(last, ModelResponse)
-    assert last.state == "interrupted"
+    assert "q1" in _texts(recorded[0])
+    assert "The answer is 42" not in _texts(recorded[0])
 
 
-def _content(messages: Sequence[ModelMessage]) -> Any:
-    """JSON dump with volatile request-part timestamps stripped.
+async def test_persist_failure_hard_fails_with_an_error_chunk() -> None:
+    """A failed write surfaces a trailing error chunk on a clean drain."""
 
-    ``UserPromptPart`` / ``ToolReturnPart`` carry a ``timestamp`` that the
-    Vercel round-trip regenerates on load; it is bookkeeping, not content, so
-    drop it before comparing what a re-persist would actually store.
-    """
-    dumped = ModelMessagesTypeAdapter.dump_python(list(messages), mode="json")
+    async def failing(messages: Sequence[ModelMessage]) -> None:
+        raise RuntimeError("db down")
 
-    def strip(node: Any) -> Any:
-        if isinstance(node, dict):
-            return {k: strip(v) for k, v in node.items() if k != "timestamp"}
-        if isinstance(node, list):
-            return [strip(v) for v in node]
-        return node
+    _, body = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        persist=failing,
+    )
 
-    return strip(dumped)
+    assert "Failed to save the conversation" in body
 
 
-def test_round_trip_is_lossless_except_restored_metadata() -> None:
-    """dump -> browser echo -> load -> restore loses no message content.
-
-    Full mirror re-persists the echoed history every turn, so the round-trip
-    must not silently drop anything.  pydantic-ai preserves all content except
-    ``ToolReturnPart.metadata`` (which ``_restore_tool_metadata`` re-supplies)
-    and the regenerated request-part timestamps; this pins that contract so an
-    upgrade that starts losing more fails loudly here.
-    """
-    stored: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content="explain the architecture")]),
-        ModelResponse(
-            parts=[
-                ThinkingPart(content="I should search the docs first"),
-                TextPart(content="Let me look that up."),
-                ToolCallPart(
-                    tool_name="search", args={"query": "architecture"}, tool_call_id="c1"
-                ),
-            ]
+def test_dump_messages_with_ids_anchors_node_ids() -> None:
+    """Each ``UIMessage.id`` is its head node id; tool-return rows emit none."""
+    pairs: list[tuple[str, ModelMessage]] = [
+        ("n1", ModelRequest(parts=[UserPromptPart(content="q")])),
+        (
+            "n2",
+            ModelResponse(
+                parts=[ToolCallPart(tool_name="t", args={}, tool_call_id="c1")]
+            ),
         ),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name="search",
-                    content="found 3 relevant chunks",
-                    tool_call_id="c1",
-                    metadata=DataChunk(
-                        type="data-tool-output", id="c1", data={"chunks": [1, 2, 3]}
-                    ),
-                )
-            ]
+        (
+            "n3",
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name="t", content="r", tool_call_id="c1")]
+            ),
         ),
-        ModelResponse(parts=[TextPart(content="The system has two layers.")]),
+        ("n4", ModelResponse(parts=[TextPart(content="answer")])),
     ]
 
-    reloaded = ChatAdapter.load_messages(ChatAdapter.dump_messages(stored))
+    ui = dump_messages_with_ids(pairs, siblings={"n4": ["n4", "n5"]})
 
-    # The lone casualty of the round-trip is the tool-output metadata.
-    tool_return = reloaded[2].parts[0]
-    assert isinstance(tool_return, ToolReturnPart) and tool_return.metadata is None
+    ids = [msg.id for msg in ui]
+    # The user request and each assistant response head are addressable; the
+    # tool-return-only request emits no UIMessage.
+    assert ids == ["n1", "n2", "n4"]
 
-    # Restoring it from the prior rows makes the mirror byte-for-byte faithful.
-    _restore_tool_metadata(reloaded, stored)
-    assert _content(reloaded) == _content(stored)
-
-
-def test_restore_tool_metadata_heals_echoed_history() -> None:
-    """Prior rows re-supply tool-output metadata the browser echo dropped."""
-    kept = DataChunk(type="data-tool-output", id="c1", data={"kept": True})
-    live = DataChunk(type="data-tool-output", id="c2", data={"live": True})
-    existing = [
-        ModelRequest(parts=[UserPromptPart(content="q")]),
-        ModelResponse(parts=[ToolCallPart(tool_name="t", args={}, tool_call_id="c1")]),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name="t", content="r", tool_call_id="c1", metadata=kept
-                )
-            ]
-        ),
-    ]
-    incoming = [
-        ModelRequest(  # echoed history: metadata stripped on the way back
-            parts=[ToolReturnPart(tool_name="t", content="r", tool_call_id="c1")]
-        ),
-        ModelRequest(  # this turn's fresh tail: live metadata, must be left alone
-            parts=[
-                ToolReturnPart(
-                    tool_name="t2", content="r2", tool_call_id="c2", metadata=live
-                )
-            ]
-        ),
-    ]
-
-    _restore_tool_metadata(incoming, existing)
-
-    restored = incoming[0].parts[0]
-    untouched = incoming[1].parts[0]
-    assert isinstance(restored, ToolReturnPart) and restored.metadata == kept
-    assert isinstance(untouched, ToolReturnPart) and untouched.metadata == live
+    # branchCount / branchIndex are derived from the sibling list.
+    answer = next(msg for msg in ui if msg.id == "n4")
+    assert isinstance(answer.metadata, dict)
+    assert answer.metadata["branch"]["branchCount"] == 2
+    assert answer.metadata["branch"]["branchIndex"] == 0
+    assert answer.metadata["branch"]["siblingIds"] == ["n4", "n5"]

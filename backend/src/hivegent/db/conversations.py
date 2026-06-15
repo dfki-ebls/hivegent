@@ -1,23 +1,24 @@
-"""Conversation repository (replaces ``hivegent.messages``).
+"""Conversation repository — a server-authoritative message tree.
 
-Each turn mirrors the agent's authoritative message list into SQL,
-replacing the conversation's rows so the stored copy always matches what
-the run produced — a turn that errors keeps its user prompt and partial
-output instead of vanishing, and edit / regenerate / retry replace the
-turn they rewrite instead of appending a duplicate.
+The database is the source of truth for history.  Each turn loads the
+active-path prefix from SQL, runs the agent on it, and appends the turn's
+new messages as a chain under a fork point (:func:`append_branch`).  Editing
+or regenerating forks a sibling chain instead of overwriting, so prior
+branches are preserved; the linear history the frontend sees is the *active
+path* — a conversation's ``active_leaf_id`` walked up to the root via
+``Message.parent_id`` (:func:`_load_active_path`).
 
-The one thing the browser's echoed history drops is
-``ToolReturnPart.metadata`` (the ``DataChunk`` tool-output payload the
-frontend renders): the Vercel adapter ignores those data parts on the
-way back.  Only the freshly generated tail of a turn still carries live
-metadata, so :func:`_restore_tool_metadata` re-attaches it onto echoed
-tool returns from the prior rows, keyed by ``tool_call_id``.
+Because history is loaded from SQL rather than echoed by the browser, stored
+``ToolReturnPart.metadata`` (the ``DataChunk`` tool-output payload the frontend
+renders) is never stripped; :func:`_load_messages` only re-types it from the
+stored JSON on the way back out.
 """
 
 import contextlib
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, TypedDict
+from typing import Any
 
 from pydantic import (
     BaseModel,
@@ -31,13 +32,14 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    TextPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
-from sqlalchemy import ColumnElement, delete, func, or_, select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import CTE, delete, func, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from ._common import affected_rows, new_id
 from .engine import session
@@ -48,19 +50,34 @@ __all__ = [
     "ConversationData",
     "ConversationExport",
     "ConversationSummary",
+    "append_branch",
     "conversation_exists",
     "create_compacted_conversation",
     "delete_all_conversations",
     "export_conversation",
     "extract_title",
     "list_conversations",
+    "load_active_for_display",
     "load_conversation",
     "load_conversation_summary",
-    "load_messages",
     "remove_conversation",
-    "replace_messages",
+    "resolve_fork",
+    "set_active_leaf",
     "set_conversation_title",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveNode:
+    """A node id, its parent id, and decoded message, in root->leaf order."""
+
+    id: str
+    parent_id: str | None
+    message: ModelMessage
+
+
+# A node id paired with its decoded message — the public active-path shape.
+type MessagePair = tuple[str, ModelMessage]
 
 
 # ─── Boundary types ────────────────────────────────────────────────────
@@ -99,19 +116,20 @@ class ConversationSummary(BaseModel):
 
 
 class ExportMessage(BaseModel):
-    """One stored turn, dumped verbatim from the database for export."""
+    """One stored tree node, dumped verbatim from the database for export."""
 
-    idx: int
+    id: str
+    parent_id: str | None
     kind: MessageKind
     created_at: datetime
     payload: dict[str, Any]
 
 
 class ConversationExport(BaseModel):
-    """A whole conversation with its raw message payloads for debugging.
+    """A whole conversation tree with raw message payloads for debugging.
 
-    Unlike :class:`ConversationData`, the payloads are passed through
-    untouched (no ``ModelMessage`` round-trip), so the export mirrors
+    Unlike :class:`ConversationData`, every node is exported (not just the
+    active path) with payloads passed through untouched, so the export mirrors
     exactly what is stored in the ``messages`` table.
     """
 
@@ -160,6 +178,26 @@ def _message_kind(msg: ModelMessage) -> MessageKind:
     raise TypeError(f"Unknown ModelMessage subtype: {type(msg).__name__}")
 
 
+def _is_user_request(msg: ModelMessage) -> bool:
+    """Whether *msg* is a user turn (a request carrying a user prompt).
+
+    Tool-return-only requests in the middle of an agent loop are not user
+    turns, so a regenerate forks from the nearest message this selects.
+    """
+    return isinstance(msg, ModelRequest) and any(
+        isinstance(part, UserPromptPart) for part in msg.parts
+    )
+
+
+def _is_visible(msg: ModelMessage) -> bool:
+    """Whether *msg* is reader-visible (a user prompt or an assistant reply).
+
+    The sidebar count mirrors what a reader sees, skipping the tool-call /
+    tool-return rows that are an agent-loop implementation detail.
+    """
+    return any(isinstance(part, (UserPromptPart, TextPart)) for part in msg.parts)
+
+
 def extract_title(messages: Sequence[ModelMessage]) -> str | None:
     """Pull a one-line title from the first user prompt, if any."""
     for msg in messages:
@@ -176,36 +214,102 @@ def extract_title(messages: Sequence[ModelMessage]) -> str | None:
     return None
 
 
-# ─── Summaries ─────────────────────────────────────────────────────────
-#
-# The sidebar's "N messages" should mirror what a reader sees: their own
-# prompts and the assistant's text replies.  The tool-call / tool-return
-# rows that sit between a question and its answer are an agent-loop
-# implementation detail, so they are left out of the count.
+# ─── Active-path traversal ─────────────────────────────────────────────
 
 
-def _visible_message_count() -> ColumnElement[int]:
-    """Correlated count of a conversation's user prompts and reply texts.
+def _active_path_cte(conversation_id: str, leaf_id: str) -> CTE:
+    """Recursive CTE of the nodes from *leaf_id* up to the root.
 
-    A user prompt only ever appears in a request and assistant text only
-    in a response, so one part-kind test selects a visible row without
-    consulting its ``kind``.
+    Columns ``id``, ``parent_id``, ``payload``, ``depth`` (0 at the leaf).
     """
-    return (
-        select(func.count())
-        .where(
-            Message.conversation_id == Conversation.id,
-            or_(
-                Message.payload.contains({"parts": [{"part_kind": "user-prompt"}]}),
-                Message.payload.contains({"parts": [{"part_kind": "text"}]}),
-            ),
+    anchor = (
+        select(
+            Message.id,
+            Message.parent_id,
+            Message.payload,
+            literal(0).label("depth"),
         )
-        .scalar_subquery()
+        .where(Message.id == leaf_id, Message.conversation_id == conversation_id)
+        .cte(recursive=True)
+    )
+    parent = aliased(Message)
+    return anchor.union_all(
+        select(
+            parent.id,
+            parent.parent_id,
+            parent.payload,
+            anchor.c.depth + 1,
+        ).where(
+            parent.id == anchor.c.parent_id,
+            parent.conversation_id == conversation_id,
+        )
     )
 
 
+async def _load_active_path(
+    s: AsyncSession, conversation_id: str, leaf_id: str | None
+) -> list[ActiveNode]:
+    """Walk *leaf_id* up to the root via ``parent_id``, returned root->leaf."""
+    if leaf_id is None:
+        return []
+
+    cte = _active_path_cte(conversation_id, leaf_id)
+    rows = (
+        await s.execute(
+            select(cte.c.id, cte.c.parent_id, cte.c.payload).order_by(
+                cte.c.depth.desc()
+            )
+        )
+    ).all()
+    messages = _load_messages([row[2] for row in rows])
+    return [
+        ActiveNode(row[0], row[1], msg)
+        for row, msg in zip(rows, messages, strict=True)
+    ]
+
+
+async def _sibling_map(
+    s: AsyncSession, conversation_id: str, path: Sequence[ActiveNode]
+) -> dict[str, list[str]]:
+    """Map each active node that has siblings to its ordered sibling ids.
+
+    Only the children of the active path's parents are fetched (those are the
+    siblings), not the whole conversation tree.  Branch index and count are
+    derived from this list where the wire projection happens.
+    """
+    active_parents = {node.parent_id for node in path}
+    if not active_parents:
+        return {}
+
+    branch = [Message.parent_id == p for p in active_parents]
+    rows = (
+        await s.execute(
+            select(Message.id, Message.parent_id)
+            .where(Message.conversation_id == conversation_id, or_(*branch))
+            .order_by(Message.created_at)
+        )
+    ).all()
+    children: dict[str | None, list[str]] = {}
+    for node_id, parent_id in rows:
+        children.setdefault(parent_id, []).append(node_id)
+
+    return {
+        node.id: siblings
+        for node in path
+        if len(siblings := children.get(node.parent_id, [])) > 1
+    }
+
+
+async def _display(
+    s: AsyncSession, conversation_id: str, leaf_id: str | None
+) -> tuple[list[MessagePair], dict[str, list[str]]]:
+    path = await _load_active_path(s, conversation_id, leaf_id)
+    pairs = [(node.id, node.message) for node in path]
+    return pairs, await _sibling_map(s, conversation_id, path)
+
+
 def _to_summary(conv: Conversation, message_count: int) -> ConversationSummary:
-    """Build a list-view summary for *conv* with a precomputed count."""
+    """Build a list-view summary; *message_count* is the active leaf's prefix."""
     return ConversationSummary(
         id=conv.id,
         title=conv.title or "",
@@ -232,40 +336,42 @@ async def _get_owned(
 async def load_conversation(
     user_id: str, conversation_id: str
 ) -> ConversationData | None:
-    """Return full conversation data, or ``None`` if missing or not owned."""
+    """Return full conversation data (active path), or ``None`` if not owned."""
     async with session() as s:
         conv = await _get_owned(s, user_id, conversation_id)
         if conv is None:
             return None
-        rows = (
-            (
-                await s.execute(
-                    select(Message.payload)
-                    .where(Message.conversation_id == conversation_id)
-                    .order_by(Message.idx)
-                )
-            )
-            .scalars()
-            .all()
-        )
+        path = await _load_active_path(s, conversation_id, conv.active_leaf_id)
     return ConversationData(
         id=conv.id,
         title=conv.title or "",
         created_at=conv.created_at,
         updated_at=conv.updated_at,
-        messages=_load_messages(rows),
+        messages=[node.message for node in path],
         compacted_from=conv.compacted_from_id,
     )
+
+
+async def load_active_for_display(
+    user_id: str, conversation_id: str
+) -> tuple[list[MessagePair], dict[str, list[str]]] | None:
+    """Return the active path as ``(node_id, message)`` pairs plus sibling map.
+
+    The node ids anchor each ``UIMessage.id`` so the client can address a
+    message for edit / regenerate / branch-select; the sibling map lists each
+    forking node's siblings.  ``None`` if the conversation is missing or not owned.
+    """
+    async with session() as s:
+        conv = await _get_owned(s, user_id, conversation_id)
+        if conv is None:
+            return None
+        return await _display(s, conversation_id, conv.active_leaf_id)
 
 
 async def export_conversation(
     user_id: str, conversation_id: str
 ) -> ConversationExport | None:
-    """Return a conversation with its raw message payloads, or ``None``.
-
-    Intended for debugging exports: payloads are returned exactly as
-    stored, without the ``ModelMessage`` validation round-trip.
-    """
+    """Return the whole conversation tree with raw payloads, or ``None``."""
     async with session() as s:
         conv = await _get_owned(s, user_id, conversation_id)
         if conv is None:
@@ -273,13 +379,14 @@ async def export_conversation(
         rows = (
             await s.execute(
                 select(
-                    Message.idx,
+                    Message.id,
+                    Message.parent_id,
                     Message.kind,
                     Message.created_at,
                     Message.payload,
                 )
                 .where(Message.conversation_id == conversation_id)
-                .order_by(Message.idx)
+                .order_by(Message.created_at)
             )
         ).all()
     return ConversationExport(
@@ -289,65 +396,54 @@ async def export_conversation(
         updated_at=conv.updated_at,
         compacted_from=conv.compacted_from_id,
         messages=[
-            ExportMessage(idx=idx, kind=kind, created_at=created_at, payload=payload)
-            for idx, kind, created_at, payload in rows
+            ExportMessage(
+                id=node_id,
+                parent_id=parent_id,
+                kind=kind,
+                created_at=created_at,
+                payload=payload,
+            )
+            for node_id, parent_id, kind, created_at, payload in rows
         ],
     )
 
 
-async def load_messages(user_id: str, conversation_id: str) -> list[ModelMessage]:
-    """Return just the message list for a conversation."""
-    async with session() as s:
-        rows = (
-            (
-                await s.execute(
-                    select(Message.payload)
-                    .join(Conversation, Message.conversation_id == Conversation.id)
-                    .where(
-                        Conversation.id == conversation_id,
-                        Conversation.user_id == user_id,
-                    )
-                    .order_by(Message.idx)
-                )
-            )
-            .scalars()
-            .all()
-        )
-    return _load_messages(rows)
-
-
 async def list_conversations(user_id: str) -> list[ConversationSummary]:
-    """List a user's conversations newest first.
+    """List a user's non-empty conversations newest first.
 
-    Excludes empty conversations to mirror the previous file-walker
-    behaviour (skipped JSONs without any messages).
+    The inner join to the active leaf (a PK lookup) both supplies the visible
+    count and excludes empties: no leaf, or a leaf whose prefix is 0.
     """
-    count = _visible_message_count()
+    leaf = aliased(Message)
     async with session() as s:
         rows = (
             await s.execute(
-                select(Conversation, count)
-                .where(Conversation.user_id == user_id, count > 0)
+                select(Conversation, leaf.visible_prefix)
+                .join(leaf, leaf.id == Conversation.active_leaf_id)
+                .where(Conversation.user_id == user_id, leaf.visible_prefix > 0)
                 .order_by(Conversation.updated_at.desc())
             )
         ).all()
-    return [_to_summary(conv, int(n)) for conv, n in rows]
+    return [_to_summary(conv, count) for conv, count in rows]
 
 
 async def load_conversation_summary(
     user_id: str, conversation_id: str
 ) -> ConversationSummary | None:
     """Return one conversation's summary, or ``None`` if missing or not owned."""
+    leaf = aliased(Message)
     async with session() as s:
         row = (
             await s.execute(
-                select(Conversation, _visible_message_count()).where(
+                select(Conversation, leaf.visible_prefix)
+                .outerjoin(leaf, leaf.id == Conversation.active_leaf_id)
+                .where(
                     Conversation.id == conversation_id,
                     Conversation.user_id == user_id,
                 )
             )
         ).one_or_none()
-    return None if row is None else _to_summary(row[0], int(row[1]))
+    return None if row is None else _to_summary(row[0], row[1] or 0)
 
 
 async def conversation_exists(user_id: str, conversation_id: str) -> bool:
@@ -362,102 +458,90 @@ async def conversation_exists(user_id: str, conversation_id: str) -> bool:
 # ─── Writes ────────────────────────────────────────────────────────────
 
 
-class _MessageRow(TypedDict):
-    """One row for the :func:`replace_messages` bulk upsert."""
+async def _lock(s: AsyncSession, conversation_id: str) -> None:
+    """Serialise concurrent writes to one conversation for this transaction.
 
-    conversation_id: str
-    idx: int
-    kind: MessageKind
-    payload: dict[str, Any]
-
-
-def _has_stripped_tool_returns(messages: Sequence[ModelMessage]) -> bool:
-    """Whether any tool return arrived without metadata (a browser echo).
-
-    A turn with none — no tools, or only its freshly generated tail — has
-    nothing to restore, so the prior rows need not be read at all.
+    The fork-load / append / active-leaf sequences below are read-then-write,
+    so two racing turns (duplicate submit, multiple tabs) would otherwise
+    interleave.  The advisory lock auto-releases on commit/rollback.
     """
-    return any(
-        isinstance(part, ToolReturnPart) and part.metadata is None
-        for msg in messages
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
+    await s.execute(
+        select(func.pg_advisory_xact_lock(func.hashtextextended(conversation_id, 0)))
     )
 
 
-def _restore_tool_metadata(
-    incoming: Sequence[ModelMessage], existing: Sequence[ModelMessage]
-) -> None:
-    """Re-attach tool-output metadata the browser's echoed history dropped.
+def _fork_for_path(
+    path: Sequence[ActiveNode], *, regenerate: bool, message_id: str | None
+) -> tuple[list[ModelMessage], str | None]:
+    """Resolve the (prefix, fork-parent) for a turn over a loaded active path.
 
-    The Vercel adapter discards ``ToolReturnPart.metadata`` (the
-    ``DataChunk`` the frontend renders) when it loads client messages, so
-    every tool return except this turn's freshly generated tail comes back
-    with ``metadata=None``.  Restore it in place from the prior rows, keyed
-    by ``tool_call_id`` (unique within a conversation); the live metadata on
-    the new tail has no match yet and is left untouched.
+    The new branch is appended under the returned fork node, and the run
+    replays the returned prefix as history:
+
+    - regenerate: fork at the nearest user request at/above the target node;
+      the prefix ends with that user turn and no new client message follows.
+    - edit (submit + a node id): fork at the edited node's parent; the prefix
+      stops before it, so the edited node and its subtree become a sibling.
+    - plain submit: fork at the active leaf, continuing the conversation.
     """
-    saved = {
-        part.tool_call_id: part.metadata
-        for msg in existing
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart) and part.metadata is not None
-    }
-    if not saved:
-        return
-    for msg in incoming:
-        if not isinstance(msg, ModelRequest):
-            continue
-        for part in msg.parts:
-            if (
-                isinstance(part, ToolReturnPart)
-                and part.metadata is None
-                and (metadata := saved.get(part.tool_call_id)) is not None
-            ):
-                part.metadata = metadata
+    ids = [node.id for node in path]
+    msgs = [node.message for node in path]
+
+    if not ids:
+        return [], None
+
+    if regenerate:
+        idx = ids.index(message_id) if message_id in ids else len(ids) - 1
+        for i in range(idx, -1, -1):
+            if _is_user_request(msgs[i]):
+                return msgs[: i + 1], ids[i]
+        return msgs, ids[-1]
+
+    if message_id and message_id in ids:
+        idx = ids.index(message_id)
+        return (msgs[:idx], ids[idx - 1]) if idx > 0 else ([], None)
+
+    return msgs, ids[-1]
 
 
-async def replace_messages(
+async def resolve_fork(
+    user_id: str, conversation_id: str, *, regenerate: bool, message_id: str | None
+) -> tuple[list[ModelMessage], str | None]:
+    """Return the history prefix and fork-parent node for the next turn.
+
+    Reads the active path; a missing or unowned conversation (or one with no
+    messages yet) forks at the root with an empty prefix.
+    """
+    async with session() as s:
+        conv = await _get_owned(s, user_id, conversation_id)
+        if conv is None or conv.active_leaf_id is None:
+            return [], None
+        path = await _load_active_path(s, conversation_id, conv.active_leaf_id)
+    return _fork_for_path(path, regenerate=regenerate, message_id=message_id)
+
+
+async def append_branch(
     user_id: str,
     conversation_id: str,
+    parent_id: str | None,
     messages: Sequence[ModelMessage],
-) -> None:
-    """Mirror a turn's full message list into *conversation_id*.
+) -> str | None:
+    """Append *messages* as a chain under *parent_id* and make it active.
 
-    *messages* is the whole conversation as the run sees it (its
-    ``all_messages()`` on a clean finish, or the partial transcript captured
-    so far when the run was interrupted), which replaces every stored row.
-    Mirroring rather than appending keeps the stored copy equal to the live
-    state through errors, edits, regenerations, and retries — all of which
-    rewrite the tail of the conversation client-side.
-
-    The rows are upserted by ``idx`` rather than dropped and re-inserted, so a
-    message that keeps its position keeps its original ``created_at`` instead
-    of being restamped every turn (``ON CONFLICT`` rewrites only ``kind`` and
-    ``payload``); only the rewritten tail (rows past the new length) is deleted.
-
-    The row is created lazily on the first turn — the id-less ``/chat``
-    endpoint mints a server ID and only here does it become a real record,
-    so abandoned chats never leave an empty row behind.  Existing-conversation
-    chats are guarded at the route boundary, so an unknown ID only reaches
-    this path as a fresh mint.
+    *messages* is the turn's delta (its new messages past the loaded prefix).
+    Each becomes a node chained by ``parent_id``; the conversation's
+    ``active_leaf_id`` moves to the last one, so the turn extends the active
+    path (plain submit) or forks a sibling branch (edit / regenerate) without
+    touching the preserved prior branches.  Empty delta is a no-op.  The
+    conversation row is created lazily on the first turn.  Raises on failure
+    so the caller can surface a hard error rather than silently lose the turn.
     """
     msg_list = list(messages)
     if not msg_list:
-        return
+        return None
 
     async with session() as s:
-        # Serialise concurrent writes to the same conversation: the ownership
-        # check, metadata read, and idx-keyed upsert below form a
-        # read-then-write sequence that two racing turns (duplicate submit,
-        # multiple tabs) would otherwise interleave.  The transaction-scoped
-        # advisory lock auto-releases on commit/rollback.
-        await s.execute(
-            select(
-                func.pg_advisory_xact_lock(func.hashtextextended(conversation_id, 0))
-            )
-        )
+        await _lock(s, conversation_id)
         await ensure_user(s, user_id)
 
         conv = await s.get(Conversation, conversation_id)
@@ -468,59 +552,97 @@ async def replace_messages(
             raise PermissionError(
                 f"conversation {conversation_id} is not owned by {user_id}"
             )
-        elif _has_stripped_tool_returns(msg_list):
-            # The upsert needs no prior column, so read just the payloads, and
-            # only when there is dropped tool metadata to restore.
-            stored = await s.scalars(
-                select(Message.payload)
-                .where(Message.conversation_id == conversation_id)
-                .order_by(Message.idx)
-            )
-            _restore_tool_metadata(msg_list, _load_messages(stored.all()))
 
+        # Continue the running visible count from the fork parent (one PK
+        # lookup, 0 at the root) so each new node carries its own prefix.
+        prefix = 0
+        if parent_id is not None:
+            prefix = (
+                await s.scalar(
+                    select(Message.visible_prefix).where(Message.id == parent_id)
+                )
+                or 0
+            )
+
+        parent = parent_id
+        last_id: str | None = None
+        for msg, payload in zip(msg_list, _dump_messages(msg_list), strict=True):
+            prefix += 1 if _is_visible(msg) else 0
+            node_id = new_id()
+            s.add(
+                Message(
+                    id=node_id,
+                    conversation_id=conversation_id,
+                    parent_id=parent,
+                    kind=_message_kind(msg),
+                    payload=payload,
+                    visible_prefix=prefix,
+                )
+            )
+            parent = last_id = node_id
+
+        conv.active_leaf_id = last_id
         if conv.title is None:
             conv.title = extract_title(msg_list)
-
-        rows: list[_MessageRow] = [
-            {
-                "conversation_id": conversation_id,
-                "idx": idx,
-                "kind": _message_kind(msg),
-                "payload": payload,
-            }
-            for idx, (msg, payload) in enumerate(
-                zip(msg_list, _dump_messages(msg_list), strict=True)
-            )
-        ]
-        insert = pg_insert(Message).values(rows)
-        await s.execute(
-            insert.on_conflict_do_update(
-                index_elements=[Message.conversation_id, Message.idx],
-                set_={"kind": insert.excluded.kind, "payload": insert.excluded.payload},
-            )
-        )
-        # Trim a tail a shorter turn (e.g. an edit that replays fewer messages)
-        # left behind; a no-op when the conversation grew or kept its length.
-        await s.execute(
-            delete(Message).where(
-                Message.conversation_id == conversation_id,
-                Message.idx >= len(rows),
-            )
-        )
-
-        # Touch the row so `onupdate=_now` bumps `updated_at` even when only
-        # child Message rows change.
         conv.updated_at = datetime.now(UTC)
+    return last_id
+
+
+async def _descend_to_leaf(
+    s: AsyncSession, conversation_id: str, node_id: str
+) -> str | None:
+    """Follow the newest child from *node_id* to a leaf, or ``None`` if absent.
+
+    Selecting a branch by any of its nodes lands on that branch's current tip.
+    """
+    exists = await s.scalar(
+        select(Message.id).where(
+            Message.id == node_id, Message.conversation_id == conversation_id
+        )
+    )
+    if exists is None:
+        return None
+    current = node_id
+    while True:
+        child = await s.scalar(
+            select(Message.id)
+            .where(
+                Message.parent_id == current,
+                Message.conversation_id == conversation_id,
+            )
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        if child is None:
+            return current
+        current = child
+
+
+async def set_active_leaf(
+    user_id: str, conversation_id: str, node_id: str
+) -> tuple[list[MessagePair], dict[str, list[str]]] | None:
+    """Switch the active branch to the one containing *node_id*, return its path.
+
+    *node_id* may be any node on the target branch; the active leaf moves to
+    that branch's tip.  ``None`` if the conversation or node is missing.
+    """
+    async with session() as s:
+        await _lock(s, conversation_id)
+        conv = await _get_owned(s, user_id, conversation_id)
+        if conv is None:
+            return None
+        tip = await _descend_to_leaf(s, conversation_id, node_id)
+        if tip is None:
+            return None
+        conv.active_leaf_id = tip
+        conv.updated_at = datetime.now(UTC)
+        return await _display(s, conversation_id, tip)
 
 
 async def set_conversation_title(
     user_id: str, conversation_id: str, title: str
 ) -> ConversationSummary | None:
-    """Set the title on a conversation owned by *user_id*.
-
-    Returns the updated summary, or ``None`` if no such conversation
-    exists for that user.
-    """
+    """Set the title on a conversation owned by *user_id*."""
     async with session() as s:
         result = await s.execute(
             update(Conversation)
@@ -562,13 +684,14 @@ async def create_compacted_conversation(
     summary_message: ModelMessage,
     title: str,
 ) -> str:
-    """Persist a fresh conversation seeded with one summary message.
+    """Persist a fresh conversation seeded with one summary message as its root.
 
     ``original_conversation_id`` is ``None`` when the source conversation
     was never persisted (e.g. a draft compacted before its first turn
     committed), in which case there is no ``compacted_from`` link to set.
     """
     conversation_id = new_id()
+    node_id = new_id()
     async with session() as s:
         await ensure_user(s, user_id)
         s.add(
@@ -577,14 +700,17 @@ async def create_compacted_conversation(
                 user_id=user_id,
                 title=title,
                 compacted_from_id=original_conversation_id,
+                active_leaf_id=node_id,
             )
         )
         s.add(
             Message(
+                id=node_id,
                 conversation_id=conversation_id,
-                idx=0,
+                parent_id=None,
                 kind=_message_kind(summary_message),
                 payload=_dump_messages([summary_message])[0],
+                visible_prefix=1 if _is_visible(summary_message) else 0,
             )
         )
     return conversation_id

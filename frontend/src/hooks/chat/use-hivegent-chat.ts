@@ -45,15 +45,34 @@ export function useHivegentChat(
           ? `${API_BASE_URL}/api/conversations/chat`
           : `${API_BASE_URL}/api/conversations/${id}/chat`,
         headers: () => getAuthHeaders(),
-        prepareSendMessagesRequest: draft
-          ? ({ api, body, id: chatId, messages, trigger, messageId }) => ({
-              api: adoptedIdRef.current
+        // DB-first: the server owns history, so send only the new message
+        // (none for a regenerate) plus the operation. The backend loads the
+        // active-path prefix from its store and forks/appends under the node
+        // addressed by `messageId`, ignoring the rest of the client array.
+        prepareSendMessagesRequest: ({
+          api,
+          body,
+          id: chatId,
+          messages,
+          trigger,
+          messageId,
+        }) => {
+          const lastMessage =
+            trigger === "regenerate-message" ? undefined : messages.at(-1);
+          return {
+            api:
+              draft && adoptedIdRef.current
                 ? `${API_BASE_URL}/api/conversations/${adoptedIdRef.current}/chat`
                 : api,
-              // Replicate the transport's default body shape.
-              body: { ...body, id: chatId, messages, trigger, messageId },
-            })
-          : undefined,
+            body: {
+              ...body,
+              id: chatId,
+              messages: lastMessage ? [lastMessage] : [],
+              trigger,
+              messageId,
+            },
+          };
+        },
         // The server mints the conversation ID on the first turn and returns
         // it in a response header; capture it so the client can adopt it.
         // Cross-origin reads require the proxy to expose X-Conversation-Id via

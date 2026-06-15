@@ -68,6 +68,7 @@ __all__ = [
     "OperationStageEvent",
     "PipelineSpec",
     "RechunkCompleteEvent",
+    "SelectBranchRequest",
     "SettingsResponse",
     "ToolInfo",
     "ToolRunResult",
@@ -368,6 +369,20 @@ class ChatRequestConfig(BaseModel):
     included_documents: list[str] = Field(default_factory=list)
     excluded_documents: list[str] = Field(default_factory=list)
     tools: ToolsSpec = Field(default_factory=ToolsSpec)
+    trigger: Literal["submit-message", "regenerate-message"] = Field(
+        default="submit-message",
+        description="Whether this turn submits a new/edited message or regenerates one",
+    )
+    message_id: str | None = Field(
+        default=None,
+        description="Target node id: the edited message (submit) or the regenerated one",
+    )
+
+
+class SelectBranchRequest(BaseModel):
+    """Switch the active branch to the one containing a given node."""
+
+    message_id: str = Field(description="A node id on the branch to activate")
 
 
 class ClearMemoryResponse(BaseModel):
