@@ -9,7 +9,7 @@ tool-output metadata the browser's echoed history drops).  The actual SQL
 write in ``replace_messages`` is covered by manual smoke tests.
 """
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from pydantic_ai import Agent, ModelMessagesTypeAdapter, RunContext
@@ -23,6 +23,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
@@ -42,10 +44,15 @@ def _texts(messages: Sequence[ModelMessage]) -> list[str]:
 
 
 async def _persisted_turn(
-    ui_messages: list[UIMessage], *, tool_raises: bool = False
+    ui_messages: list[UIMessage],
+    *,
+    model: Model | None = None,
+    tool_raises: bool = False,
 ) -> list[ModelMessage]:
     """Run one turn through ``run_and_persist`` and return what it stored."""
-    agent = Agent(model=TestModel(custom_output_text="ANSWER"), output_type=str)
+    agent = Agent(
+        model=model or TestModel(custom_output_text="ANSWER"), output_type=str
+    )
 
     @agent.tool
     def lookup(ctx: RunContext[None], query: str) -> str:
@@ -64,7 +71,9 @@ async def _persisted_turn(
     async def persist(messages: Sequence[ModelMessage]) -> None:
         recorded.append(list(messages))
 
-    response = await run_and_persist(adapter, adapter.run_stream(), persist=persist)
+    response = await run_and_persist(
+        adapter, adapter.run_stream_native(), persist=persist
+    )
     assert isinstance(response, StreamingResponse)
     async for _ in response.body_iterator:
         pass
@@ -113,6 +122,36 @@ async def test_errored_turn_keeps_the_partial_transcript() -> None:
         for part in message.parts
     )
     assert "ANSWER" not in _texts(persisted)
+
+
+async def test_interrupted_stream_keeps_partial_answer() -> None:
+    """A turn cut off mid-answer persists the text streamed so far.
+
+    The agent only appends a ``ModelResponse`` once it has fully streamed, so
+    ``capture_run_messages`` never sees an interrupted answer.  Reconstructing
+    it from the run events keeps the prompt *and* the partial reply, mirroring
+    what the user saw before the stream dropped.
+    """
+
+    async def stream_partial(
+        messages: Sequence[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str]:
+        yield "The answer "
+        yield "is 42"
+        raise RuntimeError("connection dropped mid-stream")
+
+    persisted = await _persisted_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        model=FunctionModel(stream_function=stream_partial),
+    )
+
+    assert "q1" in _texts(persisted)
+    assert "The answer is 42" in _texts(persisted)
+
+    # The salvaged turn records pydantic-ai's first-class interrupted state.
+    last = persisted[-1]
+    assert isinstance(last, ModelResponse)
+    assert last.state == "interrupted"
 
 
 def _content(messages: Sequence[ModelMessage]) -> Any:

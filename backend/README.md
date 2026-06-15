@@ -75,6 +75,19 @@ The systemd unit shipped by [`raise-infra`](../../raise-infra/nixos/options/hive
 For the local Postgres case (`custom.hivegent.postgresql.createLocally = true`), the unit is ordered after `postgresql.target`, so the database role and the `hivegent` database exist before migrations run.
 A failed migration aborts startup with a non-zero exit code, which trips the unit's `Restart = "on-failure"` policy and surfaces in `journalctl -u hivegent`.
 
+## Persisting interrupted chat turns
+
+`server/vercel.py`'s `run_and_persist` mirrors each chat turn into storage on every finish, including a stop, a client disconnect, or a mid-stream error.
+pydantic-ai 1.x only appends a `ModelResponse` to the run's message list once it has fully streamed, so to keep a partial answer `run_and_persist` taps the native event stream, rebuilds the in-flight response from its part deltas, and appends it with `state='interrupted'` when the captured tail is still a `ModelRequest` (the value pydantic-ai's own `StreamedRunResult.cancel()` records).
+The interrupted state is informational only: the agent never reads it when replaying history, and the Vercel protocol does not carry it to the frontend.
+
+### Removing the reconstruction on pydantic-ai v2
+
+pydantic-ai v2 makes `capture_run_messages()` capture partial messages from interrupted runs directly (a v2.0.0b1 breaking change), which obsoletes the manual reconstruction.
+On the upgrade, revert `run_and_persist` to persisting `list(captured)`, switch `_run_chat` back from `adapter.run_stream_native()` to `adapter.run_stream()`, and drop the explicit `state='interrupted'` since the framework records it.
+The work is gated on the whole 2.0 major bump, which is still beta (2.0.0b7) and needs a v2-compatible `pydantic-ai-harness` release.
+The other 2.0 breaking changes do not affect this backend, which pins `pydantic-ai-slim[ui,openai,mcp]`, builds models through `OpenAIChatModel`, and ships its own `WebSearch`/`WebFetch` tools rather than the native builtins.
+
 ## Filesystem as the source of truth for content
 
 The workspace tree under `data/workspace/<store_key>/` is authoritative for document content (markdown, originals, and assets), and the Postgres `documents` plus `chunks` rows are a derived index reconciled from it.

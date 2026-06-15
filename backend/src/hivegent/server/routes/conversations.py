@@ -427,7 +427,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         mode=config.mode,
     )
 
-    stream = adapter.run_stream(
+    events = adapter.run_stream_native(
         deps=deps,
         output_type=[str, DeferredToolRequests],
         model=model_from_config(config.llm),
@@ -439,7 +439,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     async def persist(messages: Sequence[ModelMessage]) -> None:
         await replace_messages(user.id, config.conversation_id, messages)
 
-    return await run_and_persist(adapter, stream, persist=persist)
+    return await run_and_persist(adapter, events, persist=persist)
 
 
 @router.post("/conversations/chat")

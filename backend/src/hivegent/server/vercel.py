@@ -10,7 +10,9 @@ matches exactly (see ``isContextLengthError`` in
 ``frontend/src/lib/chat/chat-utils.ts``).
 
 It also owns :func:`run_and_persist`, which streams a turn and mirrors its
-full message list to storage on both clean and interrupted finishes.
+full message list to storage on both clean and interrupted finishes,
+reconstructing the still-streaming response so an answer cut off mid-flight
+is persisted too.
 """
 
 import asyncio
@@ -18,7 +20,17 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
 from pydantic_ai import capture_run_messages
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ModelResponsePart,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    ThinkingPart,
+)
+from pydantic_ai.ui import NativeEvent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, ErrorChunk
 from starlette.responses import Response
@@ -89,32 +101,74 @@ async def _persist_safely(persist: PersistTurn, messages: Sequence[ModelMessage]
 
 async def run_and_persist[DepsT, OutputT](
     adapter: VercelAIAdapter[DepsT, OutputT],
-    stream: AsyncIterator[BaseChunk],
+    events: AsyncIterator[NativeEvent],
     *,
     persist: PersistTurn,
 ) -> Response:
     """Stream a chat turn and mirror its full message list to storage.
 
-    *stream* is the still-unstarted event stream from ``adapter.run_stream``;
-    iterating it here, inside ``capture_run_messages``, exposes the run's live
-    message list — the same one the agent appends to — so whatever exists when
-    the stream ends is persisted: the whole conversation on a clean finish, or
-    the prompt plus whatever streamed before the failure on an error (the
-    Vercel adapter turns run errors into an in-band error chunk, so the stream
-    still ends normally) or a client disconnect.  A failed or stopped turn
-    therefore keeps the user's message and partial output rather than
-    vanishing.
+    *events* is the still-unstarted native event stream from
+    ``adapter.run_stream_native``; transforming it here, inside
+    ``capture_run_messages``, exposes the run's live message list — the same
+    one the agent appends to — so whatever exists when the stream ends is
+    persisted: the whole conversation on a clean finish, or the prompt plus
+    whatever streamed before an error (the Vercel adapter turns run errors into
+    an in-band error chunk, so the stream still ends normally) or a client
+    disconnect.
+
+    The agent only appends a ``ModelResponse`` to that list once it has fully
+    streamed, so an interrupted answer is missing from it.  We rebuild the live
+    response from the part-delta events as they pass — parts re-index from zero
+    per response, so an ``index == 0`` start begins a fresh one — and append its
+    visible text whenever the captured tail is still a ``ModelRequest``, i.e.
+    the latest response never landed.  A stopped turn then keeps the user's
+    message *and* the partial answer rather than only the prompt.
 
     The persist runs in a shielded ``finally`` so a disconnect mid-write
     still lands the user's turn.
     """
+    # TODO(pydantic-ai v2): v2's `capture_run_messages()` captures partials from
+    # interrupted runs directly (v2.0.0b1), so this tap and reconstruction can be
+    # deleted — revert to persisting `list(captured)`, switch `_run_chat` back to
+    # `adapter.run_stream()`, and drop the explicit `state='interrupted'`.  Gated
+    # on the 2.0 upgrade (still beta); see backend/README.md, "Persisting
+    # interrupted chat turns".
+    parts: dict[int, ModelResponsePart] = {}
+
+    async def tapped() -> AsyncIterator[NativeEvent]:
+        async for event in events:
+            if isinstance(event, PartStartEvent):
+                if event.index == 0:
+                    parts.clear()
+                parts[event.index] = event.part
+
+            elif isinstance(event, PartDeltaEvent) and event.index in parts:
+                parts[event.index] = event.delta.apply(parts[event.index])
+
+            yield event
 
     async def relay() -> AsyncIterator[BaseChunk]:
         with capture_run_messages() as captured:
             try:
-                async for chunk in stream:
+                async for chunk in adapter.transform_stream(tapped()):
                     yield chunk
             finally:
-                await asyncio.shield(_persist_safely(persist, list(captured)))
+                messages = list(captured)
+                # Keep only the streamed visible parts: a tool call interrupted
+                # before it ran has no return, so persisting it would leave a
+                # dangling call that breaks the next turn.
+                visible = [
+                    part
+                    for _, part in sorted(parts.items())
+                    if isinstance(part, (TextPart, ThinkingPart))
+                ]
+                if visible and messages and isinstance(messages[-1], ModelRequest):
+                    # ``state='interrupted'`` is pydantic-ai's first-class lifecycle
+                    # value for a response stopped before it finished — the same one
+                    # its native ``StreamedRunResult.cancel()`` records.  It is purely
+                    # informational: the agent never reads it when replaying history,
+                    # so it does not affect future turns.
+                    messages.append(ModelResponse(parts=visible, state="interrupted"))
+                await asyncio.shield(_persist_safely(persist, messages))
 
     return adapter.streaming_response(relay())
