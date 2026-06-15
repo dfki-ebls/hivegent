@@ -95,17 +95,21 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
     handleSendMessage,
   );
 
-  // Once the first turn of a draft has settled, adopt the server-issued ID:
-  // hand the streamed messages to that route and navigate so reloads and the
-  // sidebar reflect the now-persisted conversation. A turn that errored counts
-  // as settled (status "error") — its conversation is persisted too, so it
-  // must still adopt rather than strand the draft. Queued steering messages
-  // drain first (the transport already targets the adopted conversation) so
-  // their turns stream here and land in the handoff instead of being cut off
-  // mid-stream by the navigation.
+  // Once the first turn of a draft has settled cleanly, adopt the server-issued
+  // ID: hand the streamed messages to that route and navigate so reloads and the
+  // sidebar reflect the now-persisted conversation. The minted ID is already
+  // adopted for the transport in `onFinish`, so a retry continues this
+  // conversation regardless of navigation — the URL change is purely cosmetic.
+  // That lets us stay put while the turn is in an error state: navigating would
+  // discard this chat instance and with it the SDK error, hiding the in-place
+  // error bar (and its retry) since the destination only receives the messages.
+  // Once the error is retried into a clean turn or dismissed, navigation
+  // proceeds. Queued steering messages drain first (the transport already
+  // targets the adopted conversation) so their turns stream here and land in the
+  // handoff instead of being cut off mid-stream by the navigation.
   useEffect(() => {
     if (!draft || !createdId || messages.length === 0) return;
-    if (isStreaming) return;
+    if (isStreaming || error) return;
     if (steeringQueue.length > 0) return;
     setCreatedId(null);
     stashHandoff(createdId, messages);
@@ -117,6 +121,7 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
     draft,
     createdId,
     isStreaming,
+    error,
     messages,
     steeringQueue,
     stashHandoff,
