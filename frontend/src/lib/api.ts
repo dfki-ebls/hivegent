@@ -209,6 +209,28 @@ export async function checkHealth(timeoutMs = 3000): Promise<boolean> {
   }
 }
 
+const READY_POLL_INTERVAL_MS = 1000;
+
+let readyProbe: Promise<void> | null = null;
+
+/**
+ * Resolve once the backend reports healthy, polling `/api/health` until then.
+ *
+ * The probe runs once per app lifetime — the promise is cached and shared by
+ * every caller — so startup fetches such as settings can gate on readiness
+ * without each racing the backend with their own retry loop. The health route
+ * is exempt from the maintenance gate, so this still resolves during
+ * maintenance and lets gated callers observe their own 503.
+ */
+export function waitForBackendReady(): Promise<void> {
+  readyProbe ??= (async () => {
+    while (!(await checkHealth())) {
+      await new Promise((resolve) => setTimeout(resolve, READY_POLL_INTERVAL_MS));
+    }
+  })();
+  return readyProbe;
+}
+
 /** Fetch server-side LLM settings. */
 export async function getSettings(): Promise<BackendSettings> {
   const data = await getJson(`${API_BASE_URL}/api/settings`, "Failed to fetch settings");

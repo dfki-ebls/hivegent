@@ -1,11 +1,10 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
-import { checkHealth } from "@/lib/api";
+import { waitForBackendReady } from "@/lib/api";
 
 import { Spinner } from "./ui/spinner";
 
-const POLL_INTERVAL_MS = 1000;
 const STILL_WAITING_MS = 10_000;
 
 let cachedReady = false;
@@ -17,16 +16,11 @@ export function BackendReadyGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isReady) return;
     let cancelled = false;
-    void (async () => {
-      while (!cancelled) {
-        if (await checkHealth()) {
-          cachedReady = true;
-          setIsReady(true);
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-      }
-    })();
+    void waitForBackendReady().then(() => {
+      if (cancelled) return;
+      cachedReady = true;
+      setIsReady(true);
+    });
     const timer = setTimeout(() => setStillWaiting(true), STILL_WAITING_MS);
     return () => {
       cancelled = true;
