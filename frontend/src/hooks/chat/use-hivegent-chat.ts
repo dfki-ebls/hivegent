@@ -4,8 +4,9 @@ import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithApprovalResponses,
 } from "ai";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
+import type { SubagentSteps, SubagentUpdate } from "@/lib/chat/subagent";
 
 export interface SendUserMessageInput {
   text: string;
@@ -88,10 +89,26 @@ export function useHivegentChat(
     [id, draft],
   );
 
+  // Live subagent transcripts for the current conversation, keyed by parent
+  // tool-call id. Built from transient `data-subagent` parts, which never reach
+  // `message.parts`, so this is the only live source; a fresh map per event
+  // changes the reference so context consumers re-render.
+  const [subagentSteps, setSubagentSteps] = useState<SubagentSteps>(() => new Map());
+
+  useEffect(() => {
+    setSubagentSteps(new Map());
+  }, [id]);
+
   const chat = useChat({
     id,
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+    onData: (dataPart) => {
+      if (dataPart.type !== "data-subagent") return;
+
+      const { tool_call_id, transcript } = dataPart.data as SubagentUpdate;
+      setSubagentSteps((prev) => new Map(prev).set(tool_call_id, transcript.steps));
+    },
     onFinish: () => {
       const mintedId = mintedIdRef.current;
       mintedIdRef.current = null;
@@ -128,5 +145,5 @@ export function useHivegentChat(
 
   const isStreaming = chat.status === "submitted" || chat.status === "streaming";
 
-  return { ...chat, sendUserMessage, regenerateWithBody, isStreaming };
+  return { ...chat, sendUserMessage, regenerateWithBody, isStreaming, subagentSteps };
 }

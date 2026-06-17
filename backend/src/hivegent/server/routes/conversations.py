@@ -1,5 +1,6 @@
 """Routes for conversations and chat orchestration."""
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from typing import Annotated, cast
@@ -20,6 +21,7 @@ from ...agents import (
     build_toolsets,
     user_agent,
 )
+from ...agents.subagent_events import SubagentUpdate
 from ...auth import User, get_current_user
 from ...compaction import CompactionResult, compact_conversation
 from ...llm import model_from_config, thinking_model_settings
@@ -442,6 +444,9 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail="Invalid chat request") from exc
 
+    # Live subagent transcript snapshots flow through this sink; the streaming
+    # response drains it concurrently with the run (see `run_and_persist`).
+    subagent_sink: asyncio.Queue[SubagentUpdate] = asyncio.Queue()
     deps = UserDeps(
         user_id=user.id,
         store=store,
@@ -449,6 +454,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         document_filter=document_filter,
         group_filters=group_filters,
         llm=config.llm,
+        subagent_sink=subagent_sink,
     )
     toolsets = build_toolsets(
         TOOLSET_GROUPS,
@@ -489,7 +495,9 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         # branch under the fork point.
         await append_branch(user.id, conversation_id, fork_id, messages[prefix_len:])
 
-    return await run_and_persist(adapter, stream, persist=persist)
+    return await run_and_persist(
+        adapter, stream, persist=persist, subagent_sink=subagent_sink
+    )
 
 
 @router.post("/conversations/chat")

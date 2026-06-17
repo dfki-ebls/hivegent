@@ -16,23 +16,33 @@ the client addresses for edit / regenerate / branch-select.
 """
 
 import asyncio
+import contextlib
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from typing import TypedDict
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Mapping,
+    Sequence,
+)
+from typing import Any, TypedDict
 
 from pydantic_ai import capture_run_messages
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
-from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, ErrorChunk
+from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk, ErrorChunk
 from starlette.responses import Response
 
+from ..agents.subagent_events import SubagentUpdate
 from ..db._common import new_id
 from ..llm import is_context_overflow
 
 __all__ = [
     "CONTEXT_LENGTH_EXCEEDED",
     "SDK_VERSION",
+    "SUBAGENT_CHUNK_TYPE",
     "BranchInfo",
     "ChatAdapter",
     "chat_error_text",
@@ -47,6 +57,10 @@ CONTEXT_LENGTH_EXCEEDED = "context_length_exceeded"
 # Vercel AI data-stream protocol version the frontend speaks; request parsing
 # and response dumping must agree on it.
 SDK_VERSION = 6
+
+# Transient data-part type carrying live subagent transcript snapshots; the
+# frontend consumes these via `useChat({ onData })` (see `lib/chat/subagent.ts`).
+SUBAGENT_CHUNK_TYPE = "data-subagent"
 
 type PersistTurn = Callable[[Sequence[ModelMessage]], Awaitable[None]]
 
@@ -153,11 +167,67 @@ def dump_messages_with_ids(
     )
 
 
+async def _merge_subagent_events(
+    stream: AsyncIterator[BaseChunk],
+    sink: asyncio.Queue[SubagentUpdate],
+) -> AsyncGenerator[BaseChunk]:
+    """Interleave live subagent transcript snapshots into the protocol stream.
+
+    A subagent runs inside a parent tool call, so its activity would otherwise be
+    trapped until that tool returns.  A forwarder drains *sink* while a driver
+    pumps the adapter *stream*; both feed one ordered queue, so subagent steps
+    surface as they happen and stay in order with the parent's own chunks.
+
+    Each snapshot becomes a transient ``data-subagent`` part (delivered to the
+    client but never persisted): the authoritative transcript is persisted
+    separately on the subagent tool's return metadata.  That persisted chunk is
+    itself a parent ``stream`` chunk, so a trailing snapshot the forwarder has
+    not drained when the run ends is simply superseded, never lost.
+    """
+    outbox: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+
+    async def forward_sink() -> None:
+        while True:
+            outbox.put_nowait(("event", await sink.get()))
+
+    async def drive() -> None:
+        try:
+            async for chunk in stream:
+                outbox.put_nowait(("chunk", chunk))
+
+        except BaseException as exc:
+            outbox.put_nowait(("error", exc))
+
+        else:
+            outbox.put_nowait(("done", None))
+
+    forwarder = asyncio.create_task(forward_sink())
+    driver = asyncio.create_task(drive())
+    try:
+        while True:
+            kind, payload = await outbox.get()
+            if kind == "event":
+                yield DataChunk(type=SUBAGENT_CHUNK_TYPE, data=payload, transient=True)
+            elif kind == "chunk":
+                yield payload
+            elif kind == "error":
+                raise payload
+            else:  # done
+                return
+
+    finally:
+        forwarder.cancel()
+        driver.cancel()
+        with contextlib.suppress(BaseException):
+            await driver
+
+
 async def run_and_persist[DepsT, OutputT](
     adapter: VercelAIAdapter[DepsT, OutputT],
     stream: AsyncIterator[BaseChunk],
     *,
     persist: PersistTurn,
+    subagent_sink: asyncio.Queue[SubagentUpdate] | None = None,
 ) -> Response:
     """Stream a chat turn and persist the run's message list on every finish.
 
@@ -171,16 +241,33 @@ async def run_and_persist[DepsT, OutputT](
     persist exactly what it holds (pydantic-ai v2 captures partials upstream, so
     the same path picks them up with no change).
 
+    When *subagent_sink* is given, live subagent transcript snapshots queued on
+    it are interleaved into the response as transient ``data-subagent`` parts.
+
     Persistence is server-authoritative with no browser echo to recover from, so
     a failed write hard-fails the turn: on a clean drain the failure surfaces as
     a trailing error chunk; on a client disconnect the write is shielded and a
     failure can only be logged.
     """
 
+    async def drain() -> AsyncIterator[BaseChunk]:
+        if subagent_sink is None:
+            async for chunk in stream:
+                yield chunk
+            return
+
+        # `aclosing` guarantees the merge's driver/forwarder tasks (and the
+        # underlying run) are torn down on client disconnect, not leaked.
+        async with contextlib.aclosing(
+            _merge_subagent_events(stream, subagent_sink)
+        ) as merged:
+            async for chunk in merged:
+                yield chunk
+
     async def relay() -> AsyncIterator[BaseChunk]:
         with capture_run_messages() as captured:
             try:
-                async for chunk in stream:
+                async for chunk in drain():
                     yield chunk
             except BaseException:
                 # Client disconnect / cancellation: persist what completed

@@ -5,13 +5,17 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai.messages import ToolReturn
 from pydantic_ai.models.openai import OpenAIChatModel
 
 from ...config import settings
 from ...llm import create_openai_chat_model, is_context_overflow
 from ...prompts import EXPLORE_INSTRUCTIONS, join_instructions
+from ...tools.base import ToolOutput
+from ...tools.pydantic_ai import wrap_tool_output
 from ..app import user_agent
 from ..common import ExploreTaskArg, UserDeps
+from ..subagent_events import SubagentTranscriptBuilder, SubagentUpdate
 from ..summarize import summarize_messages
 from .conversation import conversation_toolset
 from .explore import explore_toolset
@@ -19,6 +23,7 @@ from .web import web_toolset
 
 __all__ = [
     "explore",
+    "run_subagent",
     "subagent_toolset",
 ]
 
@@ -77,37 +82,73 @@ _SCOPES: dict[str, _ScopeConfig] = {
 }
 
 
-@subagent_toolset.tool
-async def explore(
-    ctx: RunContext[UserDeps],
-    task: ExploreTaskArg,
-    scope: ExploreScopeArg = "documents",
-) -> str:
-    """Explore using a subagent.
+def _subagent_result(
+    tool_call_id: str, builder: SubagentTranscriptBuilder, text: str
+) -> ToolReturn:
+    """Pack the model-facing *text* with the subagent transcript for the UI.
 
-    Delegates to a subagent that can search and read within the chosen scope.
-    Returns a summary of findings. Use this for broad exploration tasks
-    like surveying available documents, finding patterns across files,
-    reviewing past conversations, or researching topics on the web.
+    The transcript rides on the tool return's metadata as a ``data-tool-output``
+    chunk (via :func:`wrap_tool_output`), so it persists and re-renders on
+    reload like any other structured tool output; the model only ever sees
+    *text*.
     """
-    config = _SCOPES[scope]
+    return wrap_tool_output(
+        ToolOutput(data=builder.transcript, formatted=text), tool_call_id=tool_call_id
+    )
+
+
+async def run_subagent(
+    ctx: RunContext[UserDeps],
+    task: str,
+    *,
+    toolset: FunctionToolset[UserDeps],
+    instructions: str | None = None,
+) -> ToolReturn:
+    """Run ``user_agent`` as a subagent over a restricted *toolset*.
+
+    The reusable core behind every subagent tool: drive a delegated run and
+    surface its reasoning, tool calls, and messages to the frontend.  Drives the
+    run with ``iter`` rather than ``run`` + ``capture_run_messages`` so its
+    transcript comes off its own run (``run.all_messages()``), not an ambient
+    capture context — the main chat run wraps the whole turn in
+    ``capture_run_messages`` for crash-safe persistence, and a nested capture
+    here would latch onto that outer list and summarise the wrong conversation.
+
+    Each node's events stream live as ``data-subagent`` parts (via the sink on
+    ``ctx.deps``), and the full transcript is packed onto the return metadata so
+    it persists.  A context-window overflow is summarised and returned instead
+    of failing the call, so the parent keeps the partial findings.
+    """
     model = _subagent_model(ctx.deps)
-    # Drive the subagent with `iter` rather than `run` + `capture_run_messages`
-    # so its transcript comes off its own run (`run.all_messages()`), not an
-    # ambient capture context.  The main chat run wraps the whole turn in
-    # `capture_run_messages` for crash-safe persistence; a nested capture here
-    # would latch onto that outer list and summarise the wrong conversation.
+    tool_call_id = ctx.tool_call_id or ""
+    builder = SubagentTranscriptBuilder(tool_call_id)
+    sink = ctx.deps.subagent_sink
+
+    def emit(update: SubagentUpdate | None) -> None:
+        # The sink is unbounded, so `put_nowait` never blocks the run; it is
+        # drained concurrently by the streaming response (None outside chat).
+        if update is not None and sink is not None:
+            sink.put_nowait(update)
+
     async with user_agent.iter(
         task,
         model=model,
         deps=ctx.deps,
-        toolsets=[config.toolset],
-        instructions=config.instructions,
+        toolsets=[toolset],
+        instructions=instructions,
         usage=ctx.usage,
     ) as run:
         try:
-            async for _ in run:
-                pass
+            async for node in run:
+                # Reasoning/message starts come off the model-request node, tool
+                # calls off the call-tools node; the builder discriminates both.
+                if user_agent.is_model_request_node(
+                    node
+                ) or user_agent.is_call_tools_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for event in stream:
+                            emit(builder.on_event(event))
+
         except Exception as exc:
             # A subagent that overflows its context window has still done
             # useful work — its transcript is on the run.  Compact it into a
@@ -121,12 +162,34 @@ async def explore(
             if not is_context_overflow(exc):
                 raise
             summary = await summarize_messages(run.all_messages(), model)
-            return (
-                "The exploration hit the model's context limit before "
+            return _subagent_result(
+                tool_call_id,
+                builder,
+                "The subagent hit the model's context limit before "
                 "finishing. Summary of the findings so far:\n\n"
-                f"{summary}"
+                f"{summary}",
             )
+
         result = run.result  # a clean iteration always ends at a result
         if result is None:
             raise RuntimeError("subagent run produced no result")
-        return result.output
+        return _subagent_result(tool_call_id, builder, result.output)
+
+
+@subagent_toolset.tool
+async def explore(
+    ctx: RunContext[UserDeps],
+    task: ExploreTaskArg,
+    scope: ExploreScopeArg = "documents",
+) -> ToolReturn:
+    """Explore using a subagent.
+
+    Delegates to a subagent that can search and read within the chosen scope.
+    Returns a summary of findings. Use this for broad exploration tasks
+    like surveying available documents, finding patterns across files,
+    reviewing past conversations, or researching topics on the web.
+    """
+    config = _SCOPES[scope]
+    return await run_subagent(
+        ctx, task, toolset=config.toolset, instructions=config.instructions
+    )

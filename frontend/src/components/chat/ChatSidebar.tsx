@@ -15,6 +15,7 @@ import { useBuildRequestBody } from "@/hooks/chat/use-build-request-body";
 import { useChatErrorLogger } from "@/hooks/chat/use-chat-error-logger";
 import { useConversationHistory } from "@/hooks/chat/use-conversation-history";
 import { useHivegentChat } from "@/hooks/chat/use-hivegent-chat";
+import { SubagentLiveProvider } from "@/hooks/chat/use-subagent-live";
 import { useMessageEditing } from "@/hooks/chat/use-message-editing";
 import { useSteeringQueue } from "@/hooks/chat/use-steering-queue";
 import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
@@ -66,6 +67,7 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
     sendUserMessage,
     regenerateWithBody,
     isStreaming,
+    subagentSteps,
   } = useHivegentChat(id, {
     draft,
     onConversationCreated: setCreatedId,
@@ -242,30 +244,32 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
       />
 
       <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
-        <MessageList
-          messages={messages}
-          status={status}
-          chatError={error}
-          compactionError={compactionError}
-          isLoadingHistory={isLoadingHistory}
-          isCompacting={isCompacting}
-          compactedFrom={compactedFrom}
-          editingId={editingId}
-          showChatError={!!error && !isContextLengthError(error)}
-          onNavigatePrevious={handleNavigateToPrevious}
-          onRetry={handleRetry}
-          onDismissError={() => {
-            clearCompactionError();
-            clearError();
-          }}
-          onSetEditing={setEditing}
-          onCancelEdit={clearEditing}
-          onSubmitEdit={handleEditMessage}
-          onRegenerate={handleRegenerate}
-          onApprove={(approvalId) => addToolApprovalResponse({ id: approvalId, approved: true })}
-          onDeny={(approvalId) => addToolApprovalResponse({ id: approvalId, approved: false })}
-          onExecutePlan={agentMode === "plan" ? handleExecutePlan : undefined}
-        />
+        <SubagentLiveProvider value={subagentSteps}>
+          <MessageList
+            messages={messages}
+            status={status}
+            chatError={error}
+            compactionError={compactionError}
+            isLoadingHistory={isLoadingHistory}
+            isCompacting={isCompacting}
+            compactedFrom={compactedFrom}
+            editingId={editingId}
+            showChatError={!!error && !isContextLengthError(error)}
+            onNavigatePrevious={handleNavigateToPrevious}
+            onRetry={handleRetry}
+            onDismissError={() => {
+              clearCompactionError();
+              clearError();
+            }}
+            onSetEditing={setEditing}
+            onCancelEdit={clearEditing}
+            onSubmitEdit={handleEditMessage}
+            onRegenerate={handleRegenerate}
+            onApprove={(approvalId) => addToolApprovalResponse({ id: approvalId, approved: true })}
+            onDeny={(approvalId) => addToolApprovalResponse({ id: approvalId, approved: false })}
+            onExecutePlan={agentMode === "plan" ? handleExecutePlan : undefined}
+          />
+        </SubagentLiveProvider>
 
         <div className="border-t p-4 space-y-3">
           {messages.length === 0 && <ChatSuggestions onSelect={handleSendMessage} />}

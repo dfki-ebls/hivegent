@@ -1,5 +1,6 @@
 """Shared helpers for the agents package."""
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -7,6 +8,7 @@ from pydantic import Field
 
 from ..store import Casebase
 from ..types import DocumentFilter, LlmConfig
+from .subagent_events import SubagentUpdate
 
 __all__ = ["ExploreTaskArg", "MemoryContentArg", "UserDeps"]
 
@@ -30,6 +32,9 @@ class UserDeps:
     document_filter: DocumentFilter | None = None
     group_filters: dict[str, DocumentFilter] = field(default_factory=dict)
     llm: LlmConfig | None = None
+    # Sink for live subagent transcript snapshots; set only on the chat path,
+    # where the streaming response drains it (None elsewhere disables it).
+    subagent_sink: asyncio.Queue[SubagentUpdate] | None = None
 
     @property
     def all_stores(self) -> tuple[Casebase, ...]:
