@@ -5,8 +5,9 @@ active-path prefix from SQL, runs the agent on it, and appends the turn's
 new messages as a chain under a fork point (:func:`append_branch`).  Editing
 or regenerating forks a sibling chain instead of overwriting, so prior
 branches are preserved; the linear history the frontend sees is the *active
-path* — a conversation's ``active_leaf_id`` walked up to the root via
-``Message.parent_id`` (:func:`_load_active_path`).
+path* — the conversation's newest message walked up to the root via
+``Message.parent_id`` (:func:`_load_active_path`).  The active branch is just
+the most recently appended one, so no branch pointer is stored.
 
 Because history is loaded from SQL rather than echoed by the browser, stored
 ``ToolReturnPart.metadata`` (the ``DataChunk`` tool-output payload the frontend
@@ -31,13 +32,12 @@ from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    ModelResponse,
     TextPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
-from sqlalchemy import CTE, delete, func, literal, or_, select, update
+from sqlalchemy import CTE, ColumnElement, delete, func, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -62,7 +62,6 @@ __all__ = [
     "load_conversation_summary",
     "remove_conversation",
     "resolve_fork",
-    "set_active_leaf",
     "set_conversation_title",
 ]
 
@@ -170,14 +169,6 @@ def _load_messages(payloads: Sequence[dict[str, Any]]) -> list[ModelMessage]:
     return messages
 
 
-def _message_kind(msg: ModelMessage) -> MessageKind:
-    if isinstance(msg, ModelRequest):
-        return MessageKind.REQUEST
-    if isinstance(msg, ModelResponse):
-        return MessageKind.RESPONSE
-    raise TypeError(f"Unknown ModelMessage subtype: {type(msg).__name__}")
-
-
 def _is_user_request(msg: ModelMessage) -> bool:
     """Whether *msg* is a user turn (a request carrying a user prompt).
 
@@ -217,10 +208,28 @@ def extract_title(messages: Sequence[ModelMessage]) -> str | None:
 # ─── Active-path traversal ─────────────────────────────────────────────
 
 
-def _active_path_cte(conversation_id: str, leaf_id: str) -> CTE:
+def _newest_leaf_id(conversation_id: str) -> ColumnElement[str]:
+    """Scalar subquery of a conversation's newest message id (its active leaf)."""
+    return (
+        select(Message.id)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+
+
+def _active_path_cte(conversation_id: str, leaf_id: str | ColumnElement[str]) -> CTE:
     """Recursive CTE of the nodes from *leaf_id* up to the root.
 
-    Columns ``id``, ``parent_id``, ``payload``, ``depth`` (0 at the leaf).
+    *leaf_id* is the active leaf — either an explicit node id or the scalar
+    subquery selecting the conversation's newest message.  The anchor is a plain
+    equality (no ordering or limit inside the recursive term), and walking *up*
+    the unique ``parent_id`` is provably terminating: ``parent_id`` only ever
+    points at an already-created node, so the chain strictly recedes in time and
+    can neither cycle nor escape the conversation (the recursive term re-checks
+    ``conversation_id``).  Columns: ``id``, ``parent_id``, ``payload``, ``depth``
+    (0 at the leaf).
     """
     anchor = (
         select(
@@ -247,13 +256,15 @@ def _active_path_cte(conversation_id: str, leaf_id: str) -> CTE:
 
 
 async def _load_active_path(
-    s: AsyncSession, conversation_id: str, leaf_id: str | None
+    s: AsyncSession, conversation_id: str, leaf_id: str | None = None
 ) -> list[ActiveNode]:
-    """Walk *leaf_id* up to the root via ``parent_id``, returned root->leaf."""
-    if leaf_id is None:
-        return []
+    """Walk a leaf up to the root via ``parent_id``, returned root->leaf.
 
-    cte = _active_path_cte(conversation_id, leaf_id)
+    *leaf_id* defaults to the conversation's newest message (the active leaf);
+    an explicit id anchors at another branch's tip.  An absent or unmatched leaf
+    yields an empty path.
+    """
+    cte = _active_path_cte(conversation_id, leaf_id or _newest_leaf_id(conversation_id))
     rows = (
         await s.execute(
             select(cte.c.id, cte.c.parent_id, cte.c.payload).order_by(
@@ -301,11 +312,27 @@ async def _sibling_map(
 
 
 async def _display(
-    s: AsyncSession, conversation_id: str, leaf_id: str | None
+    s: AsyncSession, conversation_id: str
 ) -> tuple[list[MessagePair], dict[str, list[str]]]:
-    path = await _load_active_path(s, conversation_id, leaf_id)
+    path = await _load_active_path(s, conversation_id)
     pairs = [(node.id, node.message) for node in path]
     return pairs, await _sibling_map(s, conversation_id, path)
+
+
+def _newest_leaf_prefix() -> ColumnElement[int]:
+    """Correlated ``visible_prefix`` of a conversation's newest message.
+
+    The newest message is the active leaf, so its running visible count is the
+    conversation's whole active-path count — read in one ``LIMIT 1`` lookup with
+    no tree walk.  ``NULL`` for an empty conversation (no messages).
+    """
+    return (
+        select(Message.visible_prefix)
+        .where(Message.conversation_id == Conversation.id)
+        .order_by(Message.created_at.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
 
 
 def _to_summary(conv: Conversation, message_count: int) -> ConversationSummary:
@@ -341,7 +368,7 @@ async def load_conversation(
         conv = await _get_owned(s, user_id, conversation_id)
         if conv is None:
             return None
-        path = await _load_active_path(s, conversation_id, conv.active_leaf_id)
+        path = await _load_active_path(s, conversation_id)
     return ConversationData(
         id=conv.id,
         title=conv.title or "",
@@ -358,14 +385,14 @@ async def load_active_for_display(
     """Return the active path as ``(node_id, message)`` pairs plus sibling map.
 
     The node ids anchor each ``UIMessage.id`` so the client can address a
-    message for edit / regenerate / branch-select; the sibling map lists each
-    forking node's siblings.  ``None`` if the conversation is missing or not owned.
+    message for edit / regenerate; the sibling map lists each forking node's
+    siblings.  ``None`` if the conversation is missing or not owned.
     """
     async with session() as s:
         conv = await _get_owned(s, user_id, conversation_id)
         if conv is None:
             return None
-        return await _display(s, conversation_id, conv.active_leaf_id)
+        return await _display(s, conversation_id)
 
 
 async def export_conversation(
@@ -381,7 +408,6 @@ async def export_conversation(
                 select(
                     Message.id,
                     Message.parent_id,
-                    Message.kind,
                     Message.created_at,
                     Message.payload,
                 )
@@ -399,11 +425,13 @@ async def export_conversation(
             ExportMessage(
                 id=node_id,
                 parent_id=parent_id,
-                kind=kind,
+                # ``kind`` is the request/response discriminator the payload
+                # already carries, derived here rather than stored as a column.
+                kind=MessageKind(payload["kind"]),
                 created_at=created_at,
                 payload=payload,
             )
-            for node_id, parent_id, kind, created_at, payload in rows
+            for node_id, parent_id, created_at, payload in rows
         ],
     )
 
@@ -411,33 +439,29 @@ async def export_conversation(
 async def list_conversations(user_id: str) -> list[ConversationSummary]:
     """List a user's non-empty conversations newest first.
 
-    The inner join to the active leaf (a PK lookup) both supplies the visible
-    count and excludes empties: no leaf, or a leaf whose prefix is 0.
+    The correlated active-leaf prefix both supplies the visible count and
+    excludes empties (a ``NULL`` or zero prefix).
     """
-    leaf = aliased(Message)
+    count = _newest_leaf_prefix()
     async with session() as s:
         rows = (
             await s.execute(
-                select(Conversation, leaf.visible_prefix)
-                .join(leaf, leaf.id == Conversation.active_leaf_id)
-                .where(Conversation.user_id == user_id, leaf.visible_prefix > 0)
+                select(Conversation, count)
+                .where(Conversation.user_id == user_id, count > 0)
                 .order_by(Conversation.updated_at.desc())
             )
         ).all()
-    return [_to_summary(conv, count) for conv, count in rows]
+    return [_to_summary(conv, int(n)) for conv, n in rows]
 
 
 async def load_conversation_summary(
     user_id: str, conversation_id: str
 ) -> ConversationSummary | None:
     """Return one conversation's summary, or ``None`` if missing or not owned."""
-    leaf = aliased(Message)
     async with session() as s:
         row = (
             await s.execute(
-                select(Conversation, leaf.visible_prefix)
-                .outerjoin(leaf, leaf.id == Conversation.active_leaf_id)
-                .where(
+                select(Conversation, _newest_leaf_prefix()).where(
                     Conversation.id == conversation_id,
                     Conversation.user_id == user_id,
                 )
@@ -514,9 +538,9 @@ async def resolve_fork(
     """
     async with session() as s:
         conv = await _get_owned(s, user_id, conversation_id)
-        if conv is None or conv.active_leaf_id is None:
+        if conv is None:
             return [], None
-        path = await _load_active_path(s, conversation_id, conv.active_leaf_id)
+        path = await _load_active_path(s, conversation_id)
     return _fork_for_path(path, regenerate=regenerate, message_id=message_id)
 
 
@@ -529,8 +553,8 @@ async def append_branch(
     """Append *messages* as a chain under *parent_id* and make it active.
 
     *messages* is the turn's delta (its new messages past the loaded prefix).
-    Each becomes a node chained by ``parent_id``; the conversation's
-    ``active_leaf_id`` moves to the last one, so the turn extends the active
+    Each becomes a node chained by ``parent_id``; the last one is the newest
+    message and therefore the new active leaf, so the turn extends the active
     path (plain submit) or forks a sibling branch (edit / regenerate) without
     touching the preserved prior branches.  Empty delta is a no-op.  The
     conversation row is created lazily on the first turn.  Raises on failure
@@ -574,69 +598,16 @@ async def append_branch(
                     id=node_id,
                     conversation_id=conversation_id,
                     parent_id=parent,
-                    kind=_message_kind(msg),
                     payload=payload,
                     visible_prefix=prefix,
                 )
             )
             parent = last_id = node_id
 
-        conv.active_leaf_id = last_id
         if conv.title is None:
             conv.title = extract_title(msg_list)
         conv.updated_at = datetime.now(UTC)
     return last_id
-
-
-async def _descend_to_leaf(
-    s: AsyncSession, conversation_id: str, node_id: str
-) -> str | None:
-    """Follow the newest child from *node_id* to a leaf, or ``None`` if absent.
-
-    Selecting a branch by any of its nodes lands on that branch's current tip.
-    """
-    exists = await s.scalar(
-        select(Message.id).where(
-            Message.id == node_id, Message.conversation_id == conversation_id
-        )
-    )
-    if exists is None:
-        return None
-    current = node_id
-    while True:
-        child = await s.scalar(
-            select(Message.id)
-            .where(
-                Message.parent_id == current,
-                Message.conversation_id == conversation_id,
-            )
-            .order_by(Message.created_at.desc())
-            .limit(1)
-        )
-        if child is None:
-            return current
-        current = child
-
-
-async def set_active_leaf(
-    user_id: str, conversation_id: str, node_id: str
-) -> tuple[list[MessagePair], dict[str, list[str]]] | None:
-    """Switch the active branch to the one containing *node_id*, return its path.
-
-    *node_id* may be any node on the target branch; the active leaf moves to
-    that branch's tip.  ``None`` if the conversation or node is missing.
-    """
-    async with session() as s:
-        await _lock(s, conversation_id)
-        conv = await _get_owned(s, user_id, conversation_id)
-        if conv is None:
-            return None
-        tip = await _descend_to_leaf(s, conversation_id, node_id)
-        if tip is None:
-            return None
-        conv.active_leaf_id = tip
-        conv.updated_at = datetime.now(UTC)
-        return await _display(s, conversation_id, tip)
 
 
 async def set_conversation_title(
@@ -700,7 +671,6 @@ async def create_compacted_conversation(
                 user_id=user_id,
                 title=title,
                 compacted_from_id=original_conversation_id,
-                active_leaf_id=node_id,
             )
         )
         s.add(
@@ -708,7 +678,6 @@ async def create_compacted_conversation(
                 id=node_id,
                 conversation_id=conversation_id,
                 parent_id=None,
-                kind=_message_kind(summary_message),
                 payload=_dump_messages([summary_message])[0],
                 visible_prefix=1 if _is_visible(summary_message) else 0,
             )

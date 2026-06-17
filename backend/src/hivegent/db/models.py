@@ -234,29 +234,11 @@ class Conversation(Timestamped, Base):
     compacted_from_id: Mapped[str | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL"), index=True
     )
-    # Tip of the currently selected branch; the active path is this node walked
-    # up to the root via ``Message.parent_id``.  The FK is ``DEFERRABLE INITIALLY
-    # DEFERRED`` (and ``use_alter`` for the conversations<->messages cycle) so a
-    # conversation and the leaf it points at can be inserted in one transaction,
-    # checked at commit; the DB then rejects a dangling pointer instead of
-    # trusting every write path to keep it valid.
-    active_leaf_id: Mapped[str | None] = mapped_column(
-        ForeignKey(
-            "messages.id",
-            ondelete="SET NULL",
-            deferrable=True,
-            initially="DEFERRED",
-            use_alter=True,
-        )
-    )
 
     user: Mapped[User] = relationship(back_populates="conversations")
-    # ``foreign_keys`` disambiguates from the second conversations<->messages FK
-    # path (``active_leaf_id``), which has no relationship of its own.
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
-        foreign_keys="Message.conversation_id",
     )
 
 
@@ -265,36 +247,36 @@ class Message(Base):
 
     Each turn appends its new messages as a chain under a fork point (see
     ``append_branch``); editing or regenerating forks a sibling chain rather
-    than overwriting, so prior branches are preserved.  The linear history the
-    frontend sees is the active path: the conversation's ``active_leaf_id``
-    walked up to the root via ``parent_id``.  Rows are never updated in place,
-    so each carries only ``created_at`` (with a ``server_default``).
+    than overwriting, so prior branches are preserved.  The active branch is
+    simply the newest one: the active path is the conversation's most recently
+    created message walked up to the root via ``parent_id``.  Rows are never
+    updated in place, so each carries only ``created_at`` (with a
+    ``server_default``); the ``(conversation_id, created_at)`` index serves both
+    that newest-leaf lookup and the per-conversation ordering.
     """
 
     __tablename__ = "messages"
+    __table_args__ = (Index(None, "conversation_id", "created_at"),)
 
     id: Mapped[str] = mapped_column(primary_key=True, default=_nid)
     conversation_id: Mapped[str] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
+        ForeignKey("conversations.id", ondelete="CASCADE")
     )
     parent_id: Mapped[str | None] = mapped_column(
         ForeignKey("messages.id", ondelete="CASCADE"), index=True
     )
-    kind: Mapped[MessageKind] = mapped_column(_enum(MessageKind))
     payload: Mapped[dict[str, Any]]
     # Running count of reader-visible messages (user prompts + assistant
     # replies) from the root down to this node.  Set once from the fork
     # parent's value at insert and never updated — the tree is append-only —
-    # so the active-path count is a single lookup of the leaf's value with no
-    # tree walk and no denormalized counter to drift.
+    # so the active-path count is a single lookup of the newest leaf's value
+    # with no tree walk and no denormalized counter to drift.
     visible_prefix: Mapped[int]
     created_at: Mapped[datetime] = mapped_column(
         default=_now, server_default=sa.func.now()
     )
 
-    conversation: Mapped[Conversation] = relationship(
-        back_populates="messages", foreign_keys=[conversation_id]
-    )
+    conversation: Mapped[Conversation] = relationship(back_populates="messages")
 
 
 # ─── Documents & chunks ────────────────────────────────────────────────

@@ -1,14 +1,17 @@
 """message tree
 
-Replaces the linear ``(conversation_id, idx)`` message store with a tree:
-each message has a global ``id``, a nullable ``parent_id``, and a
-``visible_prefix`` (running count of reader-visible messages from the root),
-and a conversation points at the tip of the active branch via a deferrable
-``active_leaf_id`` foreign key.  This lets edits and regenerations fork and
-preserve prior branches instead of overwriting them, makes the database the
-source of truth for history, and keeps the sidebar message count drift-free
-(read from the active leaf's ``visible_prefix``) with the leaf pointer's
-integrity enforced by the DB rather than by every write path.
+Replaces the linear ``(conversation_id, idx)`` message store with a tree: each
+message has a global ``id``, a nullable ``parent_id``, and a ``visible_prefix``
+(running count of reader-visible messages from the root).  This lets edits and
+regenerations fork and preserve prior branches instead of overwriting them and
+makes the database the source of truth for history.  The active branch is just
+the newest one — the active path is the conversation's most recently created
+message walked up to the root — so no branch pointer is stored and the
+``(conversation_id, created_at)`` index serves both the newest-leaf lookup and
+the sidebar count (the newest message's ``visible_prefix``).
+
+The request/response discriminator is not stored: it already lives in the
+``payload`` JSON, so the ``messagekind`` enum type is dropped here.
 
 The project is not deployed, so this is a clean recreate of ``messages``
 rather than a data migration; existing message rows are dropped.
@@ -36,12 +39,14 @@ _MESSAGE_KIND = ENUM("request", "response", name="messagekind", create_type=Fals
 
 def upgrade() -> None:
     op.drop_table("messages")
+    # Only ``messages.kind`` referenced the enum type; drop it now that the
+    # discriminator is read from the payload instead of a column.
+    _MESSAGE_KIND.drop(op.get_bind())
     op.create_table(
         "messages",
         sa.Column("id", sa.String(), nullable=False),
         sa.Column("conversation_id", sa.String(), nullable=False),
         sa.Column("parent_id", sa.String(), nullable=True),
-        sa.Column("kind", _MESSAGE_KIND, nullable=False),
         sa.Column("payload", JSONB(), nullable=False),
         sa.Column("visible_prefix", sa.Integer(), nullable=False),
         sa.Column(
@@ -65,37 +70,20 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_messages")),
     )
     op.create_index(
-        op.f("ix_messages_conversation_id"), "messages", ["conversation_id"]
+        op.f("ix_messages_conversation_id_created_at"),
+        "messages",
+        ["conversation_id", "created_at"],
     )
     op.create_index(op.f("ix_messages_parent_id"), "messages", ["parent_id"])
 
-    op.add_column(
-        "conversations", sa.Column("active_leaf_id", sa.String(), nullable=True)
-    )
-    # Added via ALTER (the cycle: conversations.active_leaf_id -> messages.id and
-    # messages.conversation_id -> conversations.id).  DEFERRABLE INITIALLY
-    # DEFERRED so a conversation and its leaf can be inserted in one transaction
-    # and the pointer is validated at commit.
-    op.create_foreign_key(
-        op.f("fk_conversations_active_leaf_id_messages"),
-        "conversations",
-        "messages",
-        ["active_leaf_id"],
-        ["id"],
-        ondelete="SET NULL",
-        deferrable=True,
-        initially="DEFERRED",
-    )
-
 
 def downgrade() -> None:
-    # Dropping the column drops its (deferrable) FK to ``messages`` too, so the
-    # table drop below is unblocked.
-    op.drop_column("conversations", "active_leaf_id")
-
     op.drop_index(op.f("ix_messages_parent_id"), table_name="messages")
-    op.drop_index(op.f("ix_messages_conversation_id"), table_name="messages")
+    op.drop_index(
+        op.f("ix_messages_conversation_id_created_at"), table_name="messages"
+    )
     op.drop_table("messages")
+    _MESSAGE_KIND.create(op.get_bind())
     op.create_table(
         "messages",
         sa.Column("conversation_id", sa.String(), nullable=False),

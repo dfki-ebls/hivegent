@@ -39,7 +39,6 @@ from ...db.conversations import (
     load_conversation_summary,
     remove_conversation,
     resolve_fork,
-    set_active_leaf,
     set_conversation_title,
 )
 from ...db.memory import load_memory
@@ -67,7 +66,6 @@ from ...types import (
     GenerateTitleRequest,
     GenerateTitleResponse,
     LlmConfig,
-    SelectBranchRequest,
     ToolsSpec,
     UpdateTitleRequest,
 )
@@ -276,28 +274,11 @@ async def get_conversation_messages(
     """Get the active path of a conversation in Vercel AI format.
 
     Each ``UIMessage.id`` is the tree-node id the client addresses for edit /
-    regenerate / branch-select; forking nodes carry branch metadata.
+    regenerate; forking nodes carry branch metadata.
     """
     result = await load_active_for_display(user.id, conversation_id)
     if result is None:
         return []
-    pairs, siblings = result
-    return dump_messages_with_ids(pairs, siblings=siblings)
-
-
-@router.post("/conversations/{conversation_id}/branches/select")
-async def select_branch(
-    conversation_id: str,
-    request: SelectBranchRequest,
-    user: Annotated[User, Depends(get_current_user)],
-) -> list[UIMessage]:
-    """Switch the active branch to the one containing ``message_id``.
-
-    Returns the new active path; the active leaf moves to that branch's tip.
-    """
-    result = await set_active_leaf(user.id, conversation_id, request.message_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Conversation or message not found")
     pairs, siblings = result
     return dump_messages_with_ids(pairs, siblings=siblings)
 

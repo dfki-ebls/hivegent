@@ -68,7 +68,6 @@ __all__ = [
     "OperationStageEvent",
     "PipelineSpec",
     "RechunkCompleteEvent",
-    "SelectBranchRequest",
     "SettingsResponse",
     "ToolInfo",
     "ToolRunResult",
@@ -377,12 +376,6 @@ class ChatRequestConfig(BaseModel):
         default=None,
         description="Target node id: the edited message (submit) or the regenerated one",
     )
-
-
-class SelectBranchRequest(BaseModel):
-    """Switch the active branch to the one containing a given node."""
-
-    message_id: str = Field(description="A node id on the branch to activate")
 
 
 class ClearMemoryResponse(BaseModel):
