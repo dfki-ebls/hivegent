@@ -9,23 +9,12 @@ interface ReasoningPartProps {
 }
 
 export function ReasoningPart({ part }: ReasoningPartProps) {
-  // pydantic-ai stores raw chain-of-thought in providerMetadata when
-  // the model (e.g. gpt-oss) doesn't produce reasoning summaries.
-  const reasoningText =
-    part.text ||
-    (
-      part.providerMetadata?.pydantic_ai as
-        | { provider_details?: { raw_content?: string[] } }
-        | undefined
-    )?.provider_details?.raw_content?.join("\n\n") ||
-    "";
-
-  if (!reasoningText && part.state !== "streaming") return null;
+  if (!part.text && part.state !== "streaming") return null;
 
   return (
     <Reasoning isStreaming={part.state === "streaming"}>
       <ReasoningTrigger />
-      <ReasoningMarkdown>{reasoningText}</ReasoningMarkdown>
+      <ReasoningMarkdown>{part.text}</ReasoningMarkdown>
     </Reasoning>
   );
 }
