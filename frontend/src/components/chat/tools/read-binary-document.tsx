@@ -1,11 +1,9 @@
 import { FileImage, FileText, FileVideo, Paperclip } from "lucide-react";
 import { useCallback } from "react";
-import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
-import { ToolParameters } from "@/components/ToolDisplay";
-import { useStayScrolledOnToggle } from "@/hooks/chat/use-stay-scrolled-on-toggle";
+import { ToolCard } from "@/components/chat/tools/ToolCard";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { fetchDocumentAsset } from "@/lib/api";
-import { parseJson, type SyncOutput, type ToolPart } from "@/lib/chat/tool-part";
+import type { SyncOutput, ToolPart } from "@/lib/chat/tool-part";
 import { fileStem, formatFileSize } from "@/lib/utils";
 
 interface BinaryReadResult {
@@ -110,8 +108,6 @@ interface ReadBinaryDocumentToolProps {
 }
 
 export function ReadBinaryDocumentTool({ part, metadata }: ReadBinaryDocumentToolProps) {
-  const state: ToolPart["state"] = part.state ?? "output-available";
-  const input = parseJson<Record<string, unknown>>(part.input);
   const result = isBinaryReadResult(metadata) ? metadata : null;
   const Icon =
     result?.media_type === "application/pdf"
@@ -119,28 +115,23 @@ export function ReadBinaryDocumentTool({ part, metadata }: ReadBinaryDocumentToo
       : result?.media_type.startsWith("video/")
         ? FileVideo
         : FileImage;
-  const stayScrolled = useStayScrolledOnToggle();
 
   return (
-    <Tool defaultOpen={false} onOpenChange={stayScrolled}>
-      <ToolHeader title="Read Binary Document" type="tool-read_binary_document" state={state} />
-      <ToolContent>
-        {input && <ToolParameters params={input} />}
-        {result &&
-          (result.media_type.startsWith("image/") ? (
-            <ImagePreview result={result} />
-          ) : (
-            <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3 text-sm">
-              <Icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1 space-y-1">
-                <div className="truncate font-medium" title={result.file_path}>
-                  {result.file_path}
-                </div>
-                <BinaryMeta result={result} />
+    <ToolCard toolName="read_binary_document" part={part}>
+      {result &&
+        (result.media_type.startsWith("image/") ? (
+          <ImagePreview result={result} />
+        ) : (
+          <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3 text-sm">
+            <Icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="truncate font-medium" title={result.file_path}>
+                {result.file_path}
               </div>
+              <BinaryMeta result={result} />
             </div>
-          ))}
-      </ToolContent>
-    </Tool>
+          </div>
+        ))}
+    </ToolCard>
   );
 }

@@ -1,12 +1,11 @@
 import { BrainIcon, type LucideIcon, MessageSquareIcon, WrenchIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought";
-import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
-import { ToolError, ToolParameters, ToolResult, ToolSection } from "@/components/ToolDisplay";
-import { useStayScrolledOnToggle } from "@/hooks/chat/use-stay-scrolled-on-toggle";
+import { ToolCard } from "@/components/chat/tools/ToolCard";
+import { ToolResult, ToolSection } from "@/components/ToolDisplay";
 import type { SubagentStep } from "@/lib/chat/subagent";
-import { parseJson, prettyPrint, type ToolPart } from "@/lib/chat/tool-part";
+import { prettyPrint, type ToolPart } from "@/lib/chat/tool-part";
 import { snakeCaseToTitleCase } from "@/lib/utils";
 
 function describeStep(step: SubagentStep): { icon: LucideIcon; label: string } {
@@ -34,9 +33,7 @@ interface SubagentToolProps {
  */
 export function SubagentTool({ toolName, part, steps }: SubagentToolProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
-  const input = parseJson<Record<string, unknown>>(part.input);
   const isRunning = state === "input-available" || state === "input-streaming";
-  const stayScrolled = useStayScrolledOnToggle();
 
   // Expand the card while the live run is working and collapse it once the
   // subagent returns, so its progress is visible without a manual click. A
@@ -49,51 +46,39 @@ export function SubagentTool({ toolName, part, steps }: SubagentToolProps) {
     setOpen(isRunning);
   }, [isRunning]);
 
-  const handleOpenChange = (next: boolean) => {
-    setOpen(next);
-    stayScrolled(next);
-  };
-
   return (
-    <Tool open={open} onOpenChange={handleOpenChange}>
-      <ToolHeader title={snakeCaseToTitleCase(toolName)} type={`tool-${toolName}`} state={state} />
-      <ToolContent>
-        {input && <ToolParameters params={input} />}
-        {(steps.length > 0 || isRunning) && (
-          <ToolSection title="Steps" border>
-            {steps.length > 0 ? (
-              <div className="space-y-3">
-                {steps.map((step, index) => {
-                  const { icon, label } = describeStep(step);
-                  const active = isRunning && index === steps.length - 1;
-                  return (
-                    <ChainOfThoughtStep
-                      key={index}
-                      icon={icon}
-                      label={label}
-                      status={active ? "active" : "complete"}
-                    />
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-muted-foreground animate-pulse">Working…</p>
-            )}
-          </ToolSection>
-        )}
-        {part.output !== undefined && (
-          <ToolResult>
-            {typeof part.output === "string" ? (
-              <MarkdownText>{part.output}</MarkdownText>
-            ) : (
-              <pre className="whitespace-pre-wrap text-xs font-mono">
-                {prettyPrint(part.output)}
-              </pre>
-            )}
-          </ToolResult>
-        )}
-        {state === "output-error" && part.errorText && <ToolError message={part.errorText} />}
-      </ToolContent>
-    </Tool>
+    <ToolCard toolName={toolName} part={part} open={open} onOpenChange={setOpen}>
+      {(steps.length > 0 || isRunning) && (
+        <ToolSection title="Steps" border>
+          {steps.length > 0 ? (
+            <div className="space-y-3">
+              {steps.map((step, index) => {
+                const { icon, label } = describeStep(step);
+                const active = isRunning && index === steps.length - 1;
+                return (
+                  <ChainOfThoughtStep
+                    key={index}
+                    icon={icon}
+                    label={label}
+                    status={active ? "active" : "complete"}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-muted-foreground animate-pulse">Working…</p>
+          )}
+        </ToolSection>
+      )}
+      {part.output !== undefined && (
+        <ToolResult>
+          {typeof part.output === "string" ? (
+            <MarkdownText>{part.output}</MarkdownText>
+          ) : (
+            <pre className="whitespace-pre-wrap text-xs font-mono">{prettyPrint(part.output)}</pre>
+          )}
+        </ToolResult>
+      )}
+    </ToolCard>
   );
 }
