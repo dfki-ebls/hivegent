@@ -100,7 +100,6 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
               title: summary.title,
               created_at: summary.created_at || new Date().toISOString(),
               updated_at: summary.updated_at || new Date().toISOString(),
-              message_count: summary.message_count || 0,
             },
             ...state.conversations,
           ],

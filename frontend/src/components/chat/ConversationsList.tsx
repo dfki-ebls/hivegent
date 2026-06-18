@@ -163,7 +163,6 @@ function ConversationActions({
 interface ConversationItemProps {
   title: string;
   updatedAt: string;
-  messageCount: number;
   isActive: boolean;
   onSelect: () => void;
   onDelete: () => void;
@@ -174,7 +173,6 @@ interface ConversationItemProps {
 function ConversationItem({
   title,
   updatedAt,
-  messageCount,
   isActive,
   onSelect,
   onDelete,
@@ -247,11 +245,9 @@ function ConversationItem({
           ) : (
             <p className="truncate text-sm font-medium">{title || "Untitled"}</p>
           )}
-          <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-            <span>{formatRelativeTime(updatedAt)}</span>
-            <span>·</span>
-            <span>{messageCount} messages</span>
-          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {formatRelativeTime(updatedAt)}
+          </p>
         </div>
       </div>
 
@@ -322,7 +318,6 @@ export function ConversationsList({
           key={conversation.id}
           title={conversation.title}
           updatedAt={conversation.updated_at}
-          messageCount={conversation.message_count}
           isActive={conversation.id === currentConversationId}
           onSelect={() => onConversationSelect(conversation.id)}
           onDelete={() => setPendingDelete({ id: conversation.id, title: conversation.title })}

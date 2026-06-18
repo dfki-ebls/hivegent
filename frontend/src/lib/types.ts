@@ -300,7 +300,6 @@ export const ConversationSummarySchema = z.object({
   title: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
-  message_count: z.number(),
   compacted_from: z.string().nullable().optional(),
 });
 export type ConversationSummary = z.infer<typeof ConversationSummarySchema>;

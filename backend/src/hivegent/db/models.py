@@ -266,12 +266,6 @@ class Message(Base):
         ForeignKey("messages.id", ondelete="CASCADE"), index=True
     )
     payload: Mapped[dict[str, Any]]
-    # Running count of reader-visible messages (user prompts + assistant
-    # replies) from the root down to this node.  Set once from the fork
-    # parent's value at insert and never updated — the tree is append-only —
-    # so the active-path count is a single lookup of the newest leaf's value
-    # with no tree walk and no denormalized counter to drift.
-    visible_prefix: Mapped[int]
     created_at: Mapped[datetime] = mapped_column(
         default=_now, server_default=sa.func.now()
     )

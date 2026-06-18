@@ -1,14 +1,12 @@
 """message tree
 
 Replaces the linear ``(conversation_id, idx)`` message store with a tree: each
-message has a global ``id``, a nullable ``parent_id``, and a ``visible_prefix``
-(running count of reader-visible messages from the root).  This lets edits and
+message has a global ``id`` and a nullable ``parent_id``.  This lets edits and
 regenerations fork and preserve prior branches instead of overwriting them and
 makes the database the source of truth for history.  The active branch is just
 the newest one — the active path is the conversation's most recently created
 message walked up to the root — so no branch pointer is stored and the
-``(conversation_id, created_at)`` index serves both the newest-leaf lookup and
-the sidebar count (the newest message's ``visible_prefix``).
+``(conversation_id, created_at)`` index serves the newest-leaf lookup.
 
 The request/response discriminator is not stored: it already lives in the
 ``payload`` JSON, so the ``messagekind`` enum type is dropped here.
@@ -48,7 +46,6 @@ def upgrade() -> None:
         sa.Column("conversation_id", sa.String(), nullable=False),
         sa.Column("parent_id", sa.String(), nullable=True),
         sa.Column("payload", JSONB(), nullable=False),
-        sa.Column("visible_prefix", sa.Integer(), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

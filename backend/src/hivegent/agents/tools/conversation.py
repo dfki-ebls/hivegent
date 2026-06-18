@@ -25,7 +25,7 @@ conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=
 async def list_conversations(
     ctx: RunContext[UserDeps],
 ) -> ToolReturn:
-    """List past conversations with titles, dates, and message counts.
+    """List past conversations with titles and dates.
 
     Returns summaries sorted by most recent first.
     """
@@ -34,7 +34,7 @@ async def list_conversations(
         formatted = "(no conversations)"
     else:
         formatted = "\n".join(
-            f"{c.id[:8]}  {c.updated_at:%Y-%m-%d}  {c.message_count:>3} msgs  {c.title}"
+            f"{c.id[:8]}  {c.updated_at:%Y-%m-%d}  {c.title}"
             for c in conversations
         )
     return wrap_tool_output(

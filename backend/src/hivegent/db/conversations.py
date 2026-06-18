@@ -32,7 +32,6 @@ from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    TextPart,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -110,7 +109,6 @@ class ConversationSummary(BaseModel):
     title: str
     created_at: datetime
     updated_at: datetime
-    message_count: int
     compacted_from: str | None = None
 
 
@@ -178,15 +176,6 @@ def _is_user_request(msg: ModelMessage) -> bool:
     return isinstance(msg, ModelRequest) and any(
         isinstance(part, UserPromptPart) for part in msg.parts
     )
-
-
-def _is_visible(msg: ModelMessage) -> bool:
-    """Whether *msg* is reader-visible (a user prompt or an assistant reply).
-
-    The sidebar count mirrors what a reader sees, skipping the tool-call /
-    tool-return rows that are an agent-loop implementation detail.
-    """
-    return any(isinstance(part, (UserPromptPart, TextPart)) for part in msg.parts)
 
 
 def extract_title(messages: Sequence[ModelMessage]) -> str | None:
@@ -319,30 +308,26 @@ async def _display(
     return pairs, await _sibling_map(s, conversation_id, path)
 
 
-def _newest_leaf_prefix() -> ColumnElement[int]:
-    """Correlated ``visible_prefix`` of a conversation's newest message.
+def _has_messages() -> ColumnElement[bool]:
+    """Whether a conversation has any message (excludes empty conversations).
 
-    The newest message is the active leaf, so its running visible count is the
-    conversation's whole active-path count — read in one ``LIMIT 1`` lookup with
-    no tree walk.  ``NULL`` for an empty conversation (no messages).
+    Served by the ``(conversation_id, created_at)`` index, so it is a cheap
+    existence check with no row scan.
     """
     return (
-        select(Message.visible_prefix)
+        select(literal(1))
         .where(Message.conversation_id == Conversation.id)
-        .order_by(Message.created_at.desc())
-        .limit(1)
-        .scalar_subquery()
+        .exists()
     )
 
 
-def _to_summary(conv: Conversation, message_count: int) -> ConversationSummary:
-    """Build a list-view summary; *message_count* is the active leaf's prefix."""
+def _to_summary(conv: Conversation) -> ConversationSummary:
+    """Build a list-view summary."""
     return ConversationSummary(
         id=conv.id,
         title=conv.title or "",
         created_at=conv.created_at,
         updated_at=conv.updated_at,
-        message_count=message_count,
         compacted_from=conv.compacted_from_id,
     )
 
@@ -437,21 +422,16 @@ async def export_conversation(
 
 
 async def list_conversations(user_id: str) -> list[ConversationSummary]:
-    """List a user's non-empty conversations newest first.
-
-    The correlated active-leaf prefix both supplies the visible count and
-    excludes empties (a ``NULL`` or zero prefix).
-    """
-    count = _newest_leaf_prefix()
+    """List a user's non-empty conversations newest first."""
     async with session() as s:
-        rows = (
-            await s.execute(
-                select(Conversation, count)
-                .where(Conversation.user_id == user_id, count > 0)
+        convs = (
+            await s.scalars(
+                select(Conversation)
+                .where(Conversation.user_id == user_id, _has_messages())
                 .order_by(Conversation.updated_at.desc())
             )
         ).all()
-    return [_to_summary(conv, int(n)) for conv, n in rows]
+    return [_to_summary(conv) for conv in convs]
 
 
 async def load_conversation_summary(
@@ -459,15 +439,8 @@ async def load_conversation_summary(
 ) -> ConversationSummary | None:
     """Return one conversation's summary, or ``None`` if missing or not owned."""
     async with session() as s:
-        row = (
-            await s.execute(
-                select(Conversation, _newest_leaf_prefix()).where(
-                    Conversation.id == conversation_id,
-                    Conversation.user_id == user_id,
-                )
-            )
-        ).one_or_none()
-    return None if row is None else _to_summary(row[0], row[1] or 0)
+        conv = await _get_owned(s, user_id, conversation_id)
+    return None if conv is None else _to_summary(conv)
 
 
 async def conversation_exists(user_id: str, conversation_id: str) -> bool:
@@ -577,21 +550,9 @@ async def append_branch(
                 f"conversation {conversation_id} is not owned by {user_id}"
             )
 
-        # Continue the running visible count from the fork parent (one PK
-        # lookup, 0 at the root) so each new node carries its own prefix.
-        prefix = 0
-        if parent_id is not None:
-            prefix = (
-                await s.scalar(
-                    select(Message.visible_prefix).where(Message.id == parent_id)
-                )
-                or 0
-            )
-
         parent = parent_id
         last_id: str | None = None
-        for msg, payload in zip(msg_list, _dump_messages(msg_list), strict=True):
-            prefix += 1 if _is_visible(msg) else 0
+        for payload in _dump_messages(msg_list):
             node_id = new_id()
             s.add(
                 Message(
@@ -599,7 +560,6 @@ async def append_branch(
                     conversation_id=conversation_id,
                     parent_id=parent,
                     payload=payload,
-                    visible_prefix=prefix,
                 )
             )
             parent = last_id = node_id
@@ -679,7 +639,6 @@ async def create_compacted_conversation(
                 conversation_id=conversation_id,
                 parent_id=None,
                 payload=_dump_messages([summary_message])[0],
-                visible_prefix=1 if _is_visible(summary_message) else 0,
             )
         )
     return conversation_id
