@@ -28,11 +28,13 @@ from ...llm import model_from_config, thinking_model_settings
 from ...mcp import build_mcp_server, validate_mcp_servers
 from ...db._common import new_id
 from ...db.conversations import (
+    ConversationExport,
     ConversationSummary,
     append_branch,
     conversation_exists,
     delete_all_conversations,
     export_conversation,
+    import_conversation,
     list_conversations,
     load_active_for_display,
     load_conversation,
@@ -290,7 +292,8 @@ async def export_conversation_route(
 ) -> Response:
     """Export a conversation as a downloadable JSON dump of its raw payloads.
 
-    Read-only debugging aid: there is no import counterpart.
+    The counterpart :func:`import_conversation_route` restores such a dump as a
+    new conversation owned by the importing user.
     """
     export = await export_conversation(user.id, conversation_id)
     if export is None:
@@ -304,6 +307,24 @@ async def export_conversation_route(
             )
         },
     )
+
+
+@router.post("/conversations/import")
+async def import_conversation_route(
+    export: ConversationExport,
+    user: Annotated[User, Depends(get_current_user)],
+) -> ConversationSummary:
+    """Restore an exported conversation as a new conversation owned by the user.
+
+    The dump is stored under fresh ids; a ``compacted_from`` link or documents
+    referenced by embedded tool outputs that do not exist for this user are
+    dropped or left unresolved rather than raising, so a conversation backed up
+    against a different document collection still imports cleanly.
+    """
+    try:
+        return await import_conversation(user.id, export)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 async def _parse_chat_config(request: Request) -> ChatRequestConfig:

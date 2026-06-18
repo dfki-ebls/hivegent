@@ -55,6 +55,7 @@ __all__ = [
     "delete_all_conversations",
     "export_conversation",
     "extract_title",
+    "import_conversation",
     "list_conversations",
     "load_active_for_display",
     "load_conversation",
@@ -607,6 +608,85 @@ async def delete_all_conversations(user_id: str) -> int:
             delete(Conversation).where(Conversation.user_id == user_id)
         )
     return affected_rows(result)
+
+
+@dataclass(frozen=True, slots=True)
+class _ImportNode:
+    """A re-keyed export node ready to insert as a fresh message row."""
+
+    id: str
+    parent_id: str | None
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+def _remapped_nodes(messages: Sequence[ExportMessage]) -> list[_ImportNode]:
+    """Re-key export nodes to fresh ids, remapping ``parent_id`` links.
+
+    Expects the export's parent-before-child order (its ``created_at`` order,
+    which the append-only tree guarantees), so a parent's new id is always
+    known by the time a child references it.  A node whose parent is absent
+    from the export becomes a root, so a dump with a dangling reference still
+    imports cleanly instead of orphaning a subtree onto a missing parent.
+    """
+    id_map: dict[str, str] = {}
+    nodes: list[_ImportNode] = []
+
+    for msg in messages:
+        node_id = new_id()
+        id_map[msg.id] = node_id
+        parent_id = id_map.get(msg.parent_id) if msg.parent_id else None
+        nodes.append(_ImportNode(node_id, parent_id, msg.payload, msg.created_at))
+
+    return nodes
+
+
+async def import_conversation(
+    user_id: str, export: ConversationExport
+) -> ConversationSummary:
+    """Persist an exported conversation tree as a fresh conversation for *user_id*.
+
+    Every node and the conversation itself get new ids (``parent_id`` links
+    remapped), so re-importing the same dump never collides, while each node's
+    ``created_at`` is preserved so the active path (newest leaf) and sibling
+    order survive the round-trip.  ``compacted_from`` is dropped on purpose: it
+    points at a conversation that is not part of this user's history, and the
+    foreign key would reject the dangling reference.  Payloads are stored
+    verbatim once validated, so documents that embedded tool outputs reference
+    but that are missing from this user's workspace stay unresolved rather than
+    failing the import.
+
+    Raises:
+        ValueError: if any message payload is not a valid stored message.
+    """
+    try:
+        ModelMessagesTypeAdapter.validate_python(
+            [msg.payload for msg in export.messages]
+        )
+    except ValidationError as exc:
+        raise ValueError("invalid conversation export") from exc
+
+    conversation_id = new_id()
+    nodes = _remapped_nodes(export.messages)
+
+    async with session() as s:
+        await ensure_user(s, user_id)
+        conv = Conversation(
+            id=conversation_id, user_id=user_id, title=export.title or None
+        )
+        s.add(conv)
+        for node in nodes:
+            s.add(
+                Message(
+                    id=node.id,
+                    conversation_id=conversation_id,
+                    parent_id=node.parent_id,
+                    payload=node.payload,
+                    created_at=node.created_at,
+                )
+            )
+        await s.flush()
+        return _to_summary(conv)
 
 
 async def create_compacted_conversation(

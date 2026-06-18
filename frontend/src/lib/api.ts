@@ -737,13 +737,29 @@ export async function getConversation(conversationId: string): Promise<Conversat
   return ConversationSummarySchema.parse(data);
 }
 
-/** Download a conversation's raw database payloads as a JSON blob (debugging aid). */
+/** Download a conversation's raw database payloads as a JSON blob. */
 export async function exportConversation(conversationId: string): Promise<Blob> {
   const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}/export`);
   if (!res.ok) {
     throw await responseError(res, "Export failed");
   }
   return res.blob();
+}
+
+/** Restore a previously exported conversation as a new chat owned by the user. */
+export async function importConversation(file: File): Promise<ConversationSummary> {
+  const res = await authFetch(`${API_BASE_URL}/api/conversations/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: await file.text(),
+  });
+
+  if (!res.ok) {
+    throw await responseError(res, "Import failed");
+  }
+
+  const data: unknown = await res.json();
+  return ConversationSummarySchema.parse(data);
 }
 
 export async function deleteConversation(conversationId: string): Promise<void> {

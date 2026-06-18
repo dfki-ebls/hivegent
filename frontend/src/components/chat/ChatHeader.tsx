@@ -1,22 +1,35 @@
-import { DownloadIcon, HistoryIcon, MessageSquareIcon, Minimize2, SquarePen } from "lucide-react";
+import {
+  DownloadIcon,
+  HistoryIcon,
+  MessageSquareIcon,
+  Minimize2,
+  SquarePen,
+  UploadIcon,
+} from "lucide-react";
 import { TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 
+export type ChatTab = "chat" | "history";
+
 interface ChatHeaderProps {
+  activeTab: ChatTab;
   hasMessages: boolean;
   compactDisabled: boolean;
   onCompact: () => void;
   onNewChat: () => void;
   onHistoryClick: () => void;
+  onImport: () => void;
   onExport?: () => void;
 }
 
 export function ChatHeader({
+  activeTab,
   hasMessages,
   compactDisabled,
   onCompact,
   onNewChat,
   onHistoryClick,
+  onImport,
   onExport,
 }: ChatHeaderProps) {
   return (
@@ -32,26 +45,39 @@ export function ChatHeader({
         </TabsTrigger>
       </TabsList>
       <div className="flex items-center gap-1">
-        {onExport && (
+        {activeTab === "history" ? (
           <Button
             variant="ghost"
             size="icon"
-            onClick={onExport}
-            title="Export conversation as JSON"
+            onClick={onImport}
+            title="Import conversation from JSON"
           >
-            <DownloadIcon className="h-4 w-4" />
+            <UploadIcon className="h-4 w-4" />
           </Button>
-        )}
-        {hasMessages && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onCompact}
-            disabled={compactDisabled}
-            title="Compact conversation"
-          >
-            <Minimize2 className="h-4 w-4" />
-          </Button>
+        ) : (
+          <>
+            {hasMessages && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onCompact}
+                disabled={compactDisabled}
+                title="Compact conversation"
+              >
+                <Minimize2 className="h-4 w-4" />
+              </Button>
+            )}
+            {onExport && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onExport}
+                title="Export conversation as JSON"
+              >
+                <DownloadIcon className="h-4 w-4" />
+              </Button>
+            )}
+          </>
         )}
         <Button variant="ghost" size="icon" onClick={onNewChat} title="New chat">
           <SquarePen className="h-4 w-4" />

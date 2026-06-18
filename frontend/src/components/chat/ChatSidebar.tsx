@@ -1,9 +1,9 @@
 import { useNavigate } from "@tanstack/react-router";
 import { type FileUIPart } from "ai";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AiDisclosure } from "@/components/chat/AiDisclosure";
-import { ChatHeader } from "@/components/chat/ChatHeader";
+import { ChatHeader, type ChatTab } from "@/components/chat/ChatHeader";
 import { Composer } from "@/components/chat/composer/Composer";
 import { MessageList } from "@/components/chat/MessageList";
 import { SteeringQueue } from "@/components/chat/SteeringQueue";
@@ -19,7 +19,7 @@ import { SubagentLiveProvider } from "@/hooks/chat/use-subagent-live";
 import { useMessageEditing } from "@/hooks/chat/use-message-editing";
 import { useSteeringQueue } from "@/hooks/chat/use-steering-queue";
 import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
-import { exportConversation, transcribeAudio } from "@/lib/api";
+import { exportConversation, importConversation, transcribeAudio } from "@/lib/api";
 import { downloadBlob } from "@/lib/download";
 import { getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
 import { type AgentMode, type ReasoningEffort } from "@/lib/types";
@@ -50,7 +50,7 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
   const [createdId, setCreatedId] = useState<string | null>(null);
 
   const [inputValue, setInputValue] = useState("");
-  const [activeTab, setActiveTab] = useState("chat");
+  const [activeTab, setActiveTab] = useState<ChatTab>("chat");
   const [agentMode, setAgentMode] = useState<AgentMode>("execute");
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("auto");
 
@@ -207,6 +207,26 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
     [clearFilter, navigate],
   );
 
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportFile = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      // Reset so re-picking the same file fires onChange again.
+      event.target.value = "";
+      if (!file) return;
+      try {
+        const summary = await importConversation(file);
+        await fetchConversations();
+        await handleConversationSelect(summary.id);
+        toast.success("Conversation imported");
+      } catch {
+        toast.error("Failed to import conversation");
+      }
+    },
+    [fetchConversations, handleConversationSelect],
+  );
+
   const handleNavigateToPrevious = useCallback(
     (previousId: string) => {
       clearFilter();
@@ -233,14 +253,28 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
   }, []);
 
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col">
+    <Tabs
+      value={activeTab}
+      onValueChange={(value) => setActiveTab(value as ChatTab)}
+      className="flex h-full flex-col"
+    >
       <ChatHeader
+        activeTab={activeTab}
         hasMessages={messages.length > 0}
         compactDisabled={status !== "ready" || isCompacting}
         onCompact={() => compact()}
         onNewChat={handleNewChat}
         onHistoryClick={() => fetchConversations()}
+        onImport={() => importInputRef.current?.click()}
         onExport={draft ? undefined : handleExport}
+      />
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        aria-label="Import conversation file"
+        onChange={handleImportFile}
       />
 
       <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
