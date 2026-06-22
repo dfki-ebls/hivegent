@@ -64,6 +64,8 @@ __all__ = [
     "MoveDocumentRequest",
     "MoveDocumentResponse",
     "AssetProcessingMode",
+    "FrontendConfigResponse",
+    "OidcPublicConfig",
     "OperationErrorEvent",
     "OperationStageEvent",
     "PipelineSpec",
@@ -609,6 +611,24 @@ class SettingsResponse(BaseModel):
     has_api_key: bool = Field(description="Whether a server-side API key is configured")
     base_url: str = Field(description="Default base URL for the LLM provider")
     user: UserResponse = Field(description="Authenticated user information")
+
+
+class OidcPublicConfig(BaseModel):
+    """Public OIDC parameters the SPA needs to start a login flow."""
+
+    issuer_uri: str = Field(description="OIDC issuer the SPA authenticates against")
+    client_id: str = Field(description="Public OIDC client id the SPA registers as")
+
+
+class FrontendConfigResponse(BaseModel):
+    """Runtime configuration the browser SPA fetches at startup.
+
+    Served unauthenticated and carrying only public values, this is the
+    frontend's single source of truth — it reads its OIDC config from here
+    instead of baking it in at build time.
+    """
+
+    oidc: OidcPublicConfig = Field(description="OIDC client configuration")
 
 
 class GenerateTitleRequest(BaseModel):

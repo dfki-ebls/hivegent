@@ -2,7 +2,7 @@ import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
 
-import { OidcInitializationGate } from "./oidc";
+import { initOidc, OidcInitializationGate } from "./oidc";
 import { routeTree } from "./routeTree.gen";
 
 import "./styles.css";
@@ -32,14 +32,22 @@ declare module "@tanstack/react-router" {
   }
 }
 
-const rootElement = document.getElementById("app");
-if (rootElement && !rootElement.innerHTML) {
-  const root = ReactDOM.createRoot(rootElement);
-  root.render(
-    <StrictMode>
-      <OidcInitializationGate>
-        <RouterProvider router={router} />
-      </OidcInitializationGate>
-    </StrictMode>,
-  );
+// Load the backend-served runtime config and bootstrap OIDC before rendering,
+// so the SPA has its issuer/client before the initialization gate mounts.
+async function main() {
+  await initOidc();
+
+  const rootElement = document.getElementById("app");
+  if (rootElement && !rootElement.innerHTML) {
+    const root = ReactDOM.createRoot(rootElement);
+    root.render(
+      <StrictMode>
+        <OidcInitializationGate>
+          <RouterProvider router={router} />
+        </OidcInitializationGate>
+      </StrictMode>,
+    );
+  }
 }
+
+void main();

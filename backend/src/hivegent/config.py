@@ -372,12 +372,18 @@ class AuthSettings(BaseModel):
     exactly.  A token whose ``aud`` matches nothing is rejected.  Required
     when ``enable`` is true.  ``jwks_timeout_seconds`` caps both the OIDC
     discovery and JWKS fetches.
+
+    ``frontend_client_id`` is the public OIDC client the browser SPA
+    registers as; the backend serves it together with ``issuer`` from the
+    ``GET /api/config`` endpoint so the frontend reads one source of truth
+    rather than baking its own copy at build time.
     """
 
     enable: bool = True
     allow_disabled: bool = False
     issuer: str = ""
     audience: list[str] = []
+    frontend_client_id: str = "hivegent-spa"
     jwks_cache_ttl: int = 3600
     jwks_force_refresh_min_interval_seconds: int = 60
     jwks_timeout_seconds: float = 10.0

@@ -1,18 +1,19 @@
 /**
  * OIDC configuration using oidc-spa.
  *
- * Environment variables:
- * - VITE_OIDC_ISSUER_URI: The OIDC provider's URL
- * - VITE_OIDC_CLIENT_ID: The client ID for this application
- * - VITE_OIDC_USE_MOCK: Set to "true" to opt into mock mode (dev builds only)
+ * The issuer and client id come from the backend at runtime via
+ * {@link fetchRuntimeConfig} (`GET /api/config`) — the single source of truth.
+ * Mock mode is used in dev builds when no issuer is configured (or the backend
+ * is unreachable); production builds fail loudly on a missing issuer rather than
+ * shipping a "logged in as Localhost User" page to real users.
  *
- * Production builds without VITE_OIDC_ISSUER_URI fail loudly rather than
- * silently falling back to mock mode, so a missing env var can't ship a
- * "logged in as Localhost User" page to real users.
+ * Call {@link initOidc} once before rendering (see `main.tsx`).
  */
 
 import { oidcSpa } from "oidc-spa/react-spa";
 import { z } from "zod";
+
+import { fetchRuntimeConfig } from "@/runtime-config";
 
 export const { bootstrapOidc, useOidc, getOidc, enforceLogin, OidcInitializationGate } = oidcSpa
   .withExpectedDecodedIdTokenShape({
@@ -33,35 +34,40 @@ export const { bootstrapOidc, useOidc, getOidc, enforceLogin, OidcInitialization
   })
   .createUtils();
 
-const mockExplicit = import.meta.env.VITE_OIDC_USE_MOCK === "true";
-const issuerUri = import.meta.env.VITE_OIDC_ISSUER_URI;
+export async function initOidc(): Promise<void> {
+  let issuerUri = "";
+  let clientId = "";
 
-if (mockExplicit && !import.meta.env.DEV) {
-  throw new Error("OIDC mock mode is only allowed in development builds.");
-}
+  try {
+    const config = await fetchRuntimeConfig();
+    issuerUri = config.oidc.issuer_uri;
+    clientId = config.oidc.client_id;
+  } catch (error) {
+    // An unreachable backend is a dev convenience (mock); in production it is a
+    // hard failure rather than a silent fallback.
+    if (!import.meta.env.DEV) throw error;
+    console.warn("[oidc] could not load /api/config; falling back to mock mode (dev only).", error);
+  }
 
-if (!mockExplicit && !issuerUri && !import.meta.env.DEV) {
-  throw new Error(
-    "OIDC misconfigured: VITE_OIDC_ISSUER_URI must be set in production builds. " +
-      "Mock mode is only available in development builds.",
+  if (!issuerUri && !import.meta.env.DEV) {
+    throw new Error(
+      "OIDC misconfigured: the backend returned no issuer. Set HIVEGENT_AUTH__ISSUER.",
+    );
+  }
+
+  // No issuer in a dev build → mock; production has already thrown above.
+  const useMock = import.meta.env.DEV && !issuerUri;
+
+  await bootstrapOidc(
+    useMock
+      ? {
+          implementation: "mock",
+          isUserInitiallyLoggedIn: true,
+        }
+      : {
+          implementation: "real",
+          issuerUri,
+          clientId,
+        },
   );
 }
-
-if (!mockExplicit && !issuerUri && import.meta.env.DEV) {
-  console.warn("[oidc] VITE_OIDC_ISSUER_URI is not set; falling back to mock mode (dev only).");
-}
-
-const useMock = import.meta.env.DEV && (mockExplicit || !issuerUri);
-
-void bootstrapOidc(
-  useMock
-    ? {
-        implementation: "mock",
-        isUserInitiallyLoggedIn: true,
-      }
-    : {
-        implementation: "real",
-        issuerUri,
-        clientId: import.meta.env.VITE_OIDC_CLIENT_ID,
-      },
-);
