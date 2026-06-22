@@ -1,0 +1,133 @@
+# Full example deployment of Hivegent with an OIDC provider (Rauthy).
+#
+# The backend and proxy images come from this repo's Nix flake; the database is
+# the upstream pgvector image and the IdP is the upstream Rauthy image. Build
+# and push the two flake images (per platform) with:
+#
+#   nix build .#packages.x86_64-linux.docker-backend
+#   ./result | gzip --fast | skopeo copy docker-archive:/dev/stdin \
+#       docker://ghcr.io/dfki-ebls/hivegent-backend:latest
+#
+#   nix build .#packages.x86_64-linux.docker-proxy
+#   ./result | gzip --fast | skopeo copy docker-archive:/dev/stdin \
+#       docker://ghcr.io/dfki-ebls/hivegent-proxy:latest
+#
+# `./result | docker load` works too. Both images are provider-agnostic: the SPA
+# reads its OIDC issuer/client at runtime from the backend's `/api/config`, which
+# the backend derives from HIVEGENT_AUTH__ISSUER (and HIVEGENT_AUTH__FRONTEND_CLIENT_ID,
+# default "hivegent-spa"). Point those at whichever provider you run — Rauthy,
+# Keycloak, Authentik, Auth0, ... — with no rebuild.
+#
+# First-run OIDC setup (each consumer does this themselves — the stack ships no
+# client bootstrap): `docker compose up -d`, read the one-time admin password
+# from `docker compose logs rauthy`, log in at http://auth.localhost:8081, and
+# create a public `hivegent-spa` client (PKCE/S256) with redirect + allowed
+# origin `http://localhost:8080`. Then open http://localhost:8080.
+
+name: hivegent
+
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    environment:
+      # POSTGRES_USER becomes a superuser, so the backend's Alembic migration
+      # can run `CREATE EXTENSION vector` on first start — no init script.
+      POSTGRES_USER: hivegent
+      POSTGRES_PASSWORD: hivegent
+      POSTGRES_DB: hivegent
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hivegent -d hivegent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  rauthy:
+    image: ghcr.io/sebadob/rauthy:0.35.2
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Networking. A *.localhost public URL resolves to loopback in the
+      # browser automatically, while the backend reaches it via `extra_hosts`.
+      LISTEN_SCHEME: http
+      LISTEN_PORT_HTTP: "8080"
+      PUB_URL: auth.localhost:8081
+      PROXY_MODE: "false"
+      HQL_INSECURE_COOKIE: "true" # the demo serves plain HTTP
+      # Single-node embedded Hiqlite database (persisted at /app/data).
+      HQL_NODE_ID: "1"
+      HQL_NODES: "1 localhost:8100 localhost:8200"
+      HQL_SECRET_RAFT: ChangeMeRaftSecretAtLeast16Chars
+      HQL_SECRET_API: ChangeMeApiSecretAtLeast16Chars
+      # Encryption keys — DEMO ONLY, generate your own for any real deployment.
+      ENC_KEYS: bVCyTsGaggVy5yqQ/UzluN29DZW41M3hTSkx6Y3NtZmRuQkR2TnJxUTYzcjQ=
+      ENC_KEY_ACTIVE: bVCyTsGaggVy5yqQ
+      # WebAuthn / passkeys.
+      RP_ID: auth.localhost
+      RP_ORIGIN: http://auth.localhost:8081
+      RP_NAME: Hivegent SSO
+    volumes:
+      - rauthy-data:/app/data
+    ports:
+      - "8081:8080"
+    # Rauthy ships as a distroless image (no shell), so it carries no
+    # in-container healthcheck. The backend tolerates it not being ready yet
+    # via its restart policy, and the proxy waits on the backend instead.
+    restart: unless-stopped
+
+  backend:
+    image: ghcr.io/dfki-ebls/hivegent-backend:latest
+    depends_on:
+      db:
+        condition: service_healthy
+      rauthy:
+        condition: service_started
+    extra_hosts:
+      # Resolve the public issuer host to the Docker host so the backend fetches
+      # OIDC discovery/JWKS from the same URL the browser uses.
+      - "auth.localhost:host-gateway"
+    environment:
+      HIVEGENT_DB__URL: postgresql+psycopg://hivegent:hivegent@db:5432/hivegent
+      # Point at an OpenAI-compatible inference server on the Docker host.
+      HIVEGENT_LLM__MODEL: qwen3.6-27b
+      HIVEGENT_LLM__AUX_MODEL: qwen3.5-0.8b
+      HIVEGENT_LLM__BASE_URL: http://host.docker.internal:18000/v1
+      # Validate tokens Rauthy issues for the hivegent-* clients.
+      HIVEGENT_AUTH__ISSUER: http://auth.localhost:8081/auth/v1
+      HIVEGENT_AUTH__AUDIENCE: '["hivegent-*"]'
+    volumes:
+      - backend-data:/data
+    restart: unless-stopped
+    # CUDA document/OCR models need the host GPU; uncomment for nvidia runtime.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  proxy:
+    image: ghcr.io/dfki-ebls/hivegent-proxy:latest
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      HIVEGENT_SITE_ADDRESS: ":8080"
+      HIVEGENT_BACKEND_UPSTREAM: "backend:8000"
+    ports:
+      - "8080:8080"
+    volumes:
+      - proxy-data:/data
+      - proxy-config:/config
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  rauthy-data:
+  backend-data:
+  proxy-data:
+  proxy-config:

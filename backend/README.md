@@ -71,8 +71,8 @@ uv run alembic downgrade -1
 
 ### Production (NixOS / systemd)
 
-The systemd unit shipped by [`raise-infra`](../../raise-infra/nixos/options/hivegent.nix) runs `hivegent serve`, and the lifespan handler then runs the migrations during startup.
-For the local Postgres case (`custom.hivegent.postgresql.createLocally = true`), the unit is ordered after `postgresql.target`, so the database role and the `hivegent` database exist before migrations run.
+The systemd unit shipped by the [`nixosModules.default`](../../nix/nixos/service.nix) module runs `hivegent serve`, and the lifespan handler then runs the migrations during startup.
+For the local Postgres case (`services.hivegent.postgresql.createLocally = true`), the unit is ordered after `postgresql.target`, so the database role and the `hivegent` database exist before migrations run.
 A failed migration aborts startup with a non-zero exit code, which trips the unit's `Restart = "on-failure"` policy and surfaces in `journalctl -u hivegent`.
 
 ## Conversations are a server-authoritative message tree
