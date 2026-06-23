@@ -413,123 +413,50 @@ export const UploadDocumentResponseSchema = z.object({
 });
 export type UploadDocumentResponse = z.infer<typeof UploadDocumentResponseSchema>;
 
-/** Response from collection (directory/ZIP) upload. */
-export const CollectionUploadResponseSchema = z.object({
-  total_files: z.number(),
-  markdown_files: z.number(),
-  converted_attachments: z.number(),
-  failed_files: z.array(z.string()),
-  message: z.string(),
-});
-export type CollectionUploadResponse = z.infer<typeof CollectionUploadResponseSchema>;
+/** Lifecycle status of a background job. */
+export const JobStatusSchema = z.enum([
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
+export type JobStatus = z.infer<typeof JobStatusSchema>;
 
-/** SSE progress event from streaming collection upload. */
-export const CollectionProgressEventSchema = z.object({
-  type: z.literal("progress"),
-  file: z.string(),
+/** Discrete progress of a job (e.g. files processed in a collection). */
+export const JobProgressSchema = z.object({
   current: z.number(),
   total: z.number(),
-  status: z.enum(["ok", "failed"]),
 });
-export type CollectionProgressEvent = z.infer<typeof CollectionProgressEventSchema>;
+export type JobProgress = z.infer<typeof JobProgressSchema>;
 
-/** SSE completion event from streaming collection upload. */
-export const CollectionCompleteEventSchema = CollectionUploadResponseSchema.extend({
-  type: z.literal("complete"),
+/**
+ * Snapshot of a background job — the generic shape the `/jobs` feed emits
+ * and the job tray renders, independent of which feature submitted it.
+ */
+export const JobViewSchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  title: z.string(),
+  scope: z.string().nullable(),
+  status: JobStatusSchema,
+  stage: z.string().nullable(),
+  progress: JobProgressSchema.nullable(),
+  error: z.string().nullable(),
+  created_at: z.number(),
+  updated_at: z.number(),
 });
-export type CollectionCompleteEvent = z.infer<typeof CollectionCompleteEventSchema>;
+export type JobView = z.infer<typeof JobViewSchema>;
 
-/** Discriminated union of SSE events from streaming collection upload. */
-export const CollectionStreamEventSchema = z.discriminatedUnion("type", [
-  CollectionProgressEventSchema,
-  CollectionCompleteEventSchema,
+/** Terminal job statuses — no further updates will arrive. */
+export const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
 ]);
-export type CollectionStreamEvent = z.infer<typeof CollectionStreamEventSchema>;
 
-/** SSE progress event from a bulk rechunk/reconvert operation. */
-export const BulkOperationProgressEventSchema = z.object({
-  type: z.literal("progress"),
-  file: z.string(),
-  current: z.number(),
-  total: z.number(),
-  status: z.enum(["ok", "failed"]),
-});
-export type BulkOperationProgressEvent = z.infer<typeof BulkOperationProgressEventSchema>;
-
-/** SSE completion event from a bulk operation. */
-export const BulkOperationCompleteEventSchema = z.object({
-  type: z.literal("complete"),
-  total_files: z.number(),
-  failed_files: z.array(z.string()),
-  message: z.string(),
-});
-export type BulkOperationCompleteEvent = z.infer<typeof BulkOperationCompleteEventSchema>;
-
-/** Discriminated union of SSE events from a bulk operation stream. */
-export const BulkOperationStreamEventSchema = z.discriminatedUnion("type", [
-  BulkOperationProgressEventSchema,
-  BulkOperationCompleteEventSchema,
-]);
-export type BulkOperationStreamEvent = z.infer<typeof BulkOperationStreamEventSchema>;
-
-/** Upload progress state shared between multi-file and collection uploads. */
-export interface UploadProgress {
-  current: number;
-  total: number;
-  currentFile: string;
-  failedFiles: string[];
-}
-
-/** SSE stage event from a single-document operation. */
-export const OperationStageEventSchema = z.object({
-  type: z.literal("stage"),
-  stage: z.string(),
-  detail: z.string().default(""),
-});
-export type OperationStageEvent = z.infer<typeof OperationStageEventSchema>;
-
-/** SSE error event from a single-document operation. */
-export const OperationErrorEventSchema = z.object({
-  type: z.literal("error"),
-  detail: z.string(),
-});
-export type OperationErrorEvent = z.infer<typeof OperationErrorEventSchema>;
-
-/** SSE completion event for upload/reconvert operations. */
-export const UploadCompleteEventSchema = UploadDocumentResponseSchema.extend({
-  type: z.literal("complete"),
-});
-export type UploadCompleteEvent = z.infer<typeof UploadCompleteEventSchema>;
-
-/** Discriminated union of SSE events from a single upload/reconvert stream. */
-export const UploadStreamEventSchema = z.discriminatedUnion("type", [
-  OperationStageEventSchema,
-  OperationErrorEventSchema,
-  UploadCompleteEventSchema,
-]);
-export type UploadStreamEvent = z.infer<typeof UploadStreamEventSchema>;
-
-/** SSE completion event for rechunk operations. */
-export const RechunkCompleteEventSchema = z.object({
-  type: z.literal("complete"),
-  pipeline: z.string(),
-  chunk_count: z.number(),
-});
-export type RechunkCompleteEvent = z.infer<typeof RechunkCompleteEventSchema>;
-
-/** Discriminated union of SSE events from a rechunk stream. */
-export const RechunkStreamEventSchema = z.discriminatedUnion("type", [
-  OperationStageEventSchema,
-  OperationErrorEventSchema,
-  RechunkCompleteEventSchema,
-]);
-export type RechunkStreamEvent = z.infer<typeof RechunkStreamEventSchema>;
-
-/** Current processing stage for a single-document operation. */
-export interface OperationStage {
-  stage: string;
-  detail: string;
-}
+/** Active job statuses — work is queued or in progress (the complement of terminal). */
+export const ACTIVE_JOB_STATUSES: ReadonlySet<JobStatus> = new Set(["queued", "running"]);
 
 /** Metadata about an available agent tool. */
 export const ToolInfoSchema = z.object({

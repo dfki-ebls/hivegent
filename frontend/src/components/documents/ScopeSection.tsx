@@ -64,15 +64,7 @@ export function ScopeSection({
   const toggleInclude = useDocumentFilterStore((s) => s.toggleInclude);
   const toggleExclude = useDocumentFilterStore((s) => s.toggleExclude);
 
-  const {
-    documents,
-    directoryTree,
-    mutatingPaths,
-    bulkProgress,
-    operationStage,
-    error,
-    hasFetched,
-  } = state;
+  const { documents, directoryTree, mutatingPaths, error, hasFetched } = state;
 
   const dialogs = useRef<ScopeDialogsHandle>(null);
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -235,7 +227,6 @@ export function ScopeSection({
       <DirectoryTreeView
         entry={directoryTree.root}
         mutatingPaths={mutatingPaths}
-        operationStage={operationStage}
         onEditFile={(path) => setDialog({ path, editable: canWrite })}
         onInclude={(path) => toggleInclude(toCanonical(path))}
         onExclude={(path) => toggleExclude(toCanonical(path))}
@@ -286,7 +277,6 @@ export function ScopeSection({
               key={doc.filename}
               doc={doc}
               isMutating={docMutating}
-              operationStage={docMutating ? operationStage : null}
               onEdit={() => setDialog({ path: doc.filename, editable: canWrite })}
               filterState={filterStateOf(toCanonical(doc.filename))}
               onIncludeDocument={() => toggleInclude(toCanonical(doc.filename))}
@@ -303,7 +293,7 @@ export function ScopeSection({
   };
 
   const fileCount = directoryTree?.total_files ?? documents.length;
-  const showBulkBar = canWrite && (selectedFiles.size > 0 || bulkProgress !== null);
+  const showBulkBar = canWrite && selectedFiles.size > 0;
 
   return (
     <Collapsible open={expanded} onOpenChange={setIsOpen} className="mb-1">
@@ -351,7 +341,6 @@ export function ScopeSection({
           <>
             {showBulkBar ? (
               <BulkActionBar
-                bulkProgress={bulkProgress}
                 selectedCount={selectedFiles.size}
                 hasReconvertable={selectedReconvertable.length > 0}
                 handlers={bulkHandlers}

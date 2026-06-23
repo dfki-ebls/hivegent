@@ -6,10 +6,10 @@ import type {
 } from "../lib/api";
 import {
   type BulkMoveEntry,
-  bulkDeleteStream,
-  bulkMoveStream,
-  bulkRechunkStream,
-  bulkReconvertStream,
+  bulkDelete as apiBulkDelete,
+  bulkMove as apiBulkMove,
+  bulkRechunk as apiBulkRechunk,
+  bulkReconvert as apiBulkReconvert,
   canonicalPath,
   createDirectory,
   deleteDirectory,
@@ -17,21 +17,20 @@ import {
   getDirectories,
   moveDirectory,
   moveDocument,
-  rechunkDocumentStream,
-  reconvertDocumentStream,
-  uploadCollectionStream,
-  uploadDocumentStream,
+  rechunkDocument,
+  reconvertDocument,
+  uploadCollection,
+  uploadDocument,
 } from "../lib/api";
 import type {
-  CollectionUploadResponse,
   DirectoryTreeResponse,
   DocumentInfo,
+  JobView,
   LlmConfig,
-  OperationStage,
   PipelineSpec,
-  UploadProgress,
 } from "../lib/types";
 import { isAbortError, treeDocuments } from "../lib/utils";
+import { awaitJobSettled, onJobSettled, useJobsStore } from "./jobs-store";
 
 type Signalled<T> = T & { signal?: AbortSignal };
 
@@ -42,9 +41,6 @@ export interface ScopeState {
   mutatingPaths: Set<string>;
   isUploading: boolean;
   hasFetched: boolean;
-  uploadProgress: UploadProgress | null;
-  bulkProgress: UploadProgress | null;
-  operationStage: OperationStage | null;
   error: string | null;
 }
 
@@ -54,9 +50,6 @@ export const DEFAULT_SCOPE_STATE: ScopeState = {
   mutatingPaths: new Set(),
   isUploading: false,
   hasFetched: false,
-  uploadProgress: null,
-  bulkProgress: null,
-  operationStage: null,
   error: null,
 };
 
@@ -73,7 +66,7 @@ interface DocumentsStore {
     scope: string,
     file: File,
     options?: Signalled<UploadCollectionOptions>,
-  ) => Promise<CollectionUploadResponse>;
+  ) => Promise<void>;
   remove: (scope: string, filename: string) => Promise<void>;
   rechunk: (scope: string, filename: string, spec?: PipelineSpec) => Promise<void>;
   reconvert: (scope: string, filename: string, options?: ReconvertDocumentOptions) => Promise<void>;
@@ -93,9 +86,7 @@ interface DocumentsStore {
   clearError: (scope: string) => void;
 }
 
-export const useDocumentsStore = create<DocumentsStore>((set, get) => {
-  const scopeState = (scope: string): ScopeState => get().byScope[scope] ?? DEFAULT_SCOPE_STATE;
-
+export const useDocumentsStore = create<DocumentsStore>((set) => {
   const patch = (
     scope: string,
     update: Partial<ScopeState> | ((s: ScopeState) => Partial<ScopeState>),
@@ -105,12 +96,6 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
       const delta = typeof update === "function" ? update(current) : update;
       return { byScope: { ...store.byScope, [scope]: { ...current, ...delta } } };
     });
-
-  const onStage = (scope: string) => (stage: OperationStage) => {
-    const current = scopeState(scope).operationStage;
-    if (current?.stage === stage.stage && current?.detail === stage.detail) return;
-    patch(scope, { operationStage: stage });
-  };
 
   // Monotonic per-scope refresh tokens: concurrent refreshes (e.g. a mount
   // effect racing a post-mutation refresh) may resolve out of order, and an
@@ -144,26 +129,34 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
       patch(scope, (s) => {
         const next = new Set(s.mutatingPaths);
         next.delete(path);
-        return { mutatingPaths: next, operationStage: null };
+        return { mutatingPaths: next };
       });
     }
   };
 
-  /** Run a bulk operation with shared progress tracking and refresh. */
-  const runBulk = async (
+  // Submit a background job: the tray shows its progress and the job-settle
+  // handler refreshes the scope, so the store only has to record the new job
+  // (or surface a submit failure). Shared by the bulk operations.
+  const submitJob = async (
     scope: string,
     errorMsg: string,
-    operation: (onProgress: (p: UploadProgress) => void) => Promise<unknown>,
+    submit: () => Promise<JobView>,
   ): Promise<void> => {
-    patch(scope, { bulkProgress: null, error: null });
+    patch(scope, { error: null });
     try {
-      await operation((bulkProgress) => patch(scope, { bulkProgress }));
-      await silentRefresh(scope);
+      useJobsStore.getState().upsert(await submit());
     } catch (err) {
       patch(scope, { error: err instanceof Error ? err.message : errorMsg });
-    } finally {
-      patch(scope, { bulkProgress: null });
     }
+  };
+
+  // Submit a job, record it, and resolve once it settles — for the callers
+  // (reconvert, the dialog's rechunk) that refresh inline on completion while
+  // the work itself runs off the request.
+  const submitAndAwait = async (submit: () => Promise<JobView>): Promise<void> => {
+    const job = await submit();
+    useJobsStore.getState().upsert(job);
+    await awaitJobSettled(job.id);
   };
 
   return {
@@ -180,73 +173,66 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
       }
     },
 
+    // Uploads are connection-bound only while the bytes transfer; the PUT
+    // returns a job that converts and indexes server-side, so `isUploading`
+    // covers the brief send and the job tray shows the rest.
     upload: async (scope, file, options) => {
-      patch(scope, { isUploading: true, operationStage: null, error: null });
+      patch(scope, { isUploading: true, error: null });
       try {
-        await uploadDocumentStream(canonicalPath(scope, file.name), file, {
-          ...options,
-          onStage: onStage(scope),
-        });
+        const job = await uploadDocument(canonicalPath(scope, file.name), file, options);
+        useJobsStore.getState().upsert(job);
       } catch (err) {
         if (!isAbortError(err)) {
           patch(scope, { error: err instanceof Error ? err.message : "Upload failed" });
         }
       } finally {
-        // Refresh even after a cancel or failure: the backend rolls a
-        // cancelled upload back, so the view must converge with its state.
-        await silentRefresh(scope).catch(() => {});
-        patch(scope, { isUploading: false, operationStage: null });
+        patch(scope, { isUploading: false });
       }
     },
 
+    // Submit each file sequentially as its own tray job; the tray shows the
+    // per-file conversion, so the store only flags the brief send and reports
+    // any submits that never became a job. Aborting stops the remaining sends.
     uploadMultiple: async (scope, files, options) => {
       const signal = options?.signal;
-      patch(scope, { isUploading: true, error: null, uploadProgress: null });
-      let failedSnapshot: string[] = [];
+      patch(scope, { isUploading: true, error: null });
+      const failed: string[] = [];
       try {
-        for (let i = 0; i < files.length; i++) {
-          if (signal?.aborted) break;
-          const file = files[i];
-          patch(scope, {
-            uploadProgress: {
-              current: i,
-              total: files.length,
-              currentFile: file.name,
-              failedFiles: failedSnapshot,
-            },
-          });
-          try {
-            await uploadDocumentStream(canonicalPath(scope, file.name), file, {
-              ...options,
-              onStage: onStage(scope),
-            });
-          } catch (err) {
-            if (isAbortError(err)) break;
-            failedSnapshot = [...failedSnapshot, file.name];
-          }
-        }
-        await silentRefresh(scope);
+        await files.reduce(
+          (chain, file) =>
+            chain.then(async () => {
+              if (signal?.aborted) return;
+              try {
+                const job = await uploadDocument(canonicalPath(scope, file.name), file, options);
+                useJobsStore.getState().upsert(job);
+              } catch (err) {
+                if (!isAbortError(err)) failed.push(file.name);
+              }
+            }),
+          Promise.resolve(),
+        );
       } finally {
-        patch(scope, { isUploading: false, uploadProgress: null, operationStage: null });
+        patch(scope, {
+          isUploading: false,
+          ...(failed.length > 0 && {
+            error: `Failed to upload ${failed.length} file${failed.length > 1 ? "s" : ""}: ${failed.join(", ")}`,
+          }),
+        });
       }
     },
 
     uploadCol: async (scope, file, options) => {
-      patch(scope, { isUploading: true, error: null, uploadProgress: null });
+      patch(scope, { isUploading: true, error: null });
       try {
-        const result = await uploadCollectionStream(scope, file, {
-          ...options,
-          onProgress: (uploadProgress) => patch(scope, { uploadProgress }),
-        });
-        await silentRefresh(scope);
-        return result;
+        const job = await uploadCollection(scope, file, options);
+        useJobsStore.getState().upsert(job);
       } catch (err) {
         if (!isAbortError(err)) {
           patch(scope, { error: err instanceof Error ? err.message : "Collection upload failed" });
         }
         throw err;
       } finally {
-        patch(scope, { isUploading: false, uploadProgress: null });
+        patch(scope, { isUploading: false });
       }
     },
 
@@ -255,54 +241,55 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
         deleteDocument(canonicalPath(scope, filename)),
       ),
 
-    rechunk: (scope, filename, spec) =>
-      withMutating(scope, filename, "Rechunk failed", () =>
-        rechunkDocumentStream(canonicalPath(scope, filename), spec, { onStage: onStage(scope) }),
-      ),
+    // Rechunk runs as a background job; the tray shows its progress. The promise
+    // resolves once the job settles so a caller that needs the fresh chunks (the
+    // document dialog) can refetch, while the work itself runs off the request.
+    rechunk: async (scope, filename, spec) => {
+      patch(scope, { error: null });
+      try {
+        await submitAndAwait(() => rechunkDocument(canonicalPath(scope, filename), spec));
+      } catch (err) {
+        patch(scope, { error: err instanceof Error ? err.message : "Rechunk failed" });
+      }
+    },
 
+    // Reconvert runs as a background job (the tray surfaces its progress), but
+    // the targeted row also spins until the job settles so the document visibly
+    // reflects that it is being reprocessed.
     reconvert: (scope, filename, options) =>
       withMutating(scope, filename, "Reconvert failed", () =>
-        reconvertDocumentStream(canonicalPath(scope, filename), {
-          ...options,
-          onStage: onStage(scope),
-        }),
+        submitAndAwait(() => reconvertDocument(canonicalPath(scope, filename), options)),
       ),
 
     bulkRechunk: (scope, files, spec) =>
-      runBulk(scope, "Bulk rechunk failed", (onProgress) =>
-        bulkRechunkStream(
+      submitJob(scope, "Bulk rechunk failed", () =>
+        apiBulkRechunk(
           files.map((f) => canonicalPath(scope, f)),
           spec,
-          { onProgress },
         ),
       ),
 
     bulkReconvert: (scope, files, spec, llm) =>
-      runBulk(scope, "Bulk reconvert failed", (onProgress) =>
-        bulkReconvertStream(
+      submitJob(scope, "Bulk reconvert failed", () =>
+        apiBulkReconvert(
           files.map((f) => canonicalPath(scope, f)),
           spec,
           llm,
-          { onProgress },
         ),
       ),
 
     bulkDelete: (scope, files) =>
-      runBulk(scope, "Bulk delete failed", (onProgress) =>
-        bulkDeleteStream(
-          files.map((f) => canonicalPath(scope, f)),
-          { onProgress },
-        ),
+      submitJob(scope, "Bulk delete failed", () =>
+        apiBulkDelete(files.map((f) => canonicalPath(scope, f))),
       ),
 
     bulkMove: (scope, moves) =>
-      runBulk(scope, "Bulk move failed", (onProgress) =>
-        bulkMoveStream(
+      submitJob(scope, "Bulk move failed", () =>
+        apiBulkMove(
           moves.map(({ source, destination }) => ({
             source: canonicalPath(scope, source),
             destination: canonicalPath(scope, destination),
           })),
-          { onProgress },
         ),
       ),
 
@@ -328,4 +315,14 @@ export const useDocumentsStore = create<DocumentsStore>((set, get) => {
 
     clearError: (scope) => patch(scope, { error: null }),
   };
+});
+
+// A settled document job may have changed its scope on disk: a success adds or
+// reconverts an entry, a failed/cancelled one drops the entry it had reserved,
+// and a bulk op moves or deletes many. Either way the view can be stale, so
+// refresh the scope on every terminal document job, not just successes.
+onJobSettled((job) => {
+  if (job.scope && job.kind.startsWith("document.")) {
+    void useDocumentsStore.getState().refresh(job.scope);
+  }
 });

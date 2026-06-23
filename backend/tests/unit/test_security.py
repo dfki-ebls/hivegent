@@ -9,7 +9,7 @@ from fastapi import HTTPException, UploadFile
 from hivegent.config import settings
 from hivegent.security import UrlPolicy, create_safe_async_client
 from hivegent.server.common import prepare_llm_config
-from hivegent.server.operations import read_upload_file
+from hivegent.server.operations import enforce_upload_size
 from hivegent.types import LlmConfig, resolve_llm_config
 
 
@@ -62,16 +62,12 @@ async def test_resolve_llm_config_is_idempotent_on_trust(
     assert twice.base_url_is_trusted is True
 
 
-async def test_read_upload_file_rejects_over_limit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Single-file uploads must be capped while streaming from the request."""
-    monkeypatch.setattr(settings.limits, "max_file_size_bytes", 3)
-    monkeypatch.setattr(settings.limits, "upload_read_chunk_size", 2)
-    upload = UploadFile(file=BytesIO(b"abcd"), filename="big.md")
+def test_enforce_upload_size_rejects_over_limit() -> None:
+    """Uploads whose parsed size exceeds the cap are rejected."""
+    upload = UploadFile(file=BytesIO(b"abcd"), size=4, filename="big.md")
 
     with pytest.raises(HTTPException) as exc_info:
-        await read_upload_file(upload)
+        enforce_upload_size(upload, limit=3, label="File")
 
     assert exc_info.value.status_code == 400
     assert "File too large" in str(exc_info.value.detail)

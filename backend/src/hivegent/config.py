@@ -468,10 +468,6 @@ class ConversionSettings(BaseModel):
 class LimitsSettings(BaseModel):
     """Upload, collection, and decoder size/count limits.
 
-    ``upload_read_chunk_size`` controls the streaming read buffer used
-    when ingesting collection ZIPs; larger values trade memory for
-    fewer ``await`` hops.
-
     ``max_image_pixels`` raises Pillow's decompression-bomb threshold
     so large embedded images inside PDFs (common with scanned pages)
     decode successfully; the value still guards against truly
@@ -481,8 +477,21 @@ class LimitsSettings(BaseModel):
     max_file_size_bytes: int = 50 * 1024 * 1024  # 50 MB
     max_collection_size_bytes: int = 512 * 1024 * 1024  # 512 MB
     max_collection_files: int = 10_000
-    upload_read_chunk_size: int = 1024 * 1024  # 1 MB
     max_image_pixels: int = 1_000_000_000  # ~3 GB uncompressed
+
+
+class JobSettings(BaseModel):
+    """Background-job manager tunables.
+
+    ``max_concurrency`` caps how many uploads convert and index at once;
+    ``retain_seconds`` is how long a finished job stays visible in the feed
+    and listing before it is pruned.  ``queue_maxsize`` bounds each
+    subscriber's snapshot queue so a stalled SSE consumer cannot leak memory.
+    """
+
+    max_concurrency: int = 2
+    retain_seconds: float = 3600.0
+    queue_maxsize: int = 1024
 
 
 class DatabaseSettings(BaseModel):
@@ -580,6 +589,7 @@ class Settings(BaseSettings):
     conversion: ConversionSettings = ConversionSettings()
     limits: LimitsSettings = LimitsSettings()
     network: NetworkSettings = NetworkSettings()
+    jobs: JobSettings = JobSettings()
     db: DatabaseSettings = DatabaseSettings()
 
     data_dir: Path = Path("data")

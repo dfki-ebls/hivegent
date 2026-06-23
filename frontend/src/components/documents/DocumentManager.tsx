@@ -7,7 +7,7 @@ import {
   buildAuxLlmConfig,
   canonicalPath,
   groupScope,
-  uploadDocument,
+  writeDocument,
 } from "../../lib/api";
 import {
   buildCollectionZip,
@@ -121,13 +121,10 @@ export function DocumentManager() {
       setUploadError(null);
 
       const stems = fileArray.map((f) => fileStem(f.name));
-      const seen = new Set<string>();
-      for (const stem of stems) {
-        if (seen.has(stem)) {
-          setUploadError(`Batch contains files with the same stem "${stem}"`);
-          return;
-        }
-        seen.add(stem);
+      const duplicateStem = stems.find((stem, i) => stems.indexOf(stem) !== i);
+      if (duplicateStem) {
+        setUploadError(`Batch contains files with the same stem "${duplicateStem}"`);
+        return;
       }
 
       const existingStems = new Set(target.documents.map((d) => fileStem(d.filename)));
@@ -243,12 +240,18 @@ export function DocumentManager() {
     }
   }, [beginOp, pendingOverwrite, upload, uploadMultiple, uploadOptions, uploadScope]);
 
-  // Bypasses the store's error-swallowing upload so a failure (e.g. a name
-  // collision) propagates to the dialog, which stays open with the content.
+  // New in-browser markdown is written synchronously (not as a background job)
+  // in "create" mode, so a name collision rejects with a 409 that propagates to
+  // the dialog (which stays open with the content) instead of silently
+  // overwriting the existing document; the entry appears the moment we refresh.
   const handleSaveNew = useCallback(
     async (filename: string, content: string) => {
-      const file = new File([content], filename, { type: "text/plain" });
-      await uploadDocument(canonicalPath(uploadScope, filename), file, { spec: pipelineSpec });
+      await writeDocument(
+        canonicalPath(uploadScope, filename),
+        content,
+        pipelineSpec.chunking,
+        "create",
+      );
       await refresh(uploadScope);
     },
     [uploadScope, pipelineSpec, refresh],
@@ -262,8 +265,6 @@ export function DocumentManager() {
         isDragging={isDragging}
         isUploading={target.isUploading}
         isPreparing={isPreparing}
-        uploadProgress={target.uploadProgress}
-        operationStage={target.operationStage}
         fileInputRef={fileInputRef}
         directoryInputRef={directoryInputRef}
         zipInputRef={zipInputRef}

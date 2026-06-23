@@ -1,7 +1,6 @@
 """Unit tests for context-aware, per-conversion deduplicated captioning."""
 
 import io
-from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -12,8 +11,7 @@ from hivegent.converters.asset_processing import (
     perceptual_key,
 )
 from hivegent.converters.base import AssetRole, ExtractedImage
-from hivegent.store import Casebase
-from hivegent.types import AssetProcessingMode, LlmConfig, PipelineSpec
+from hivegent.types import AssetProcessingMode, LlmConfig
 
 
 def _png(img: Image.Image) -> bytes:
@@ -38,33 +36,22 @@ def test_perceptual_key_dedups_identical_and_skips_uniform() -> None:
     assert perceptual_key(_png(Image.new("RGB", (80, 60), (40, 40, 40)))) is None
 
 
-async def test_process_conversion_assets_captions_duplicates_once(
-    monkeypatch: pytest.MonkeyPatch, user_store: Casebase, tmp_path: Path
+async def test_prepare_conversion_assets_captions_duplicates_once(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captioned: list[tuple[str, list[str]]] = []
-    written: list[str] = []
 
-    async def fake_persist(
-        store,
-        workspace_dir,
-        filepath,
-        content,
-        media_type,
-        contexts,
-        spec,
-        llm,
-        *,
-        origin,
-    ) -> tuple[int, str, str]:
+    async def fake_describe(
+        filepath: str,
+        content: bytes,
+        media_type: str,
+        contexts: list[str],
+        llm: LlmConfig,
+    ) -> str:
         captioned.append((filepath, list(contexts)))
-        return (1, "none", f"{filepath}.md")
+        return "caption\n"
 
-    def fake_write(workspace_dir: Path, filepath: str, content: bytes) -> Path:
-        written.append(filepath)
-        return tmp_path / filepath
-
-    monkeypatch.setattr(workspace, "_persist_image_entry", fake_persist)
-    monkeypatch.setattr(workspace, "_write_original_file", fake_write)
+    monkeypatch.setattr(workspace, "_build_image_description", fake_describe)
 
     dup = _png(Image.radial_gradient("L").convert("RGB"))
     images = {
@@ -79,14 +66,11 @@ async def test_process_conversion_assets_captions_duplicates_once(
     }
     contexts = {"fig_a.png": ["near A"], "fig_b.png": ["near B"]}
 
-    ref_mapping = await workspace._process_conversion_assets(
-        user_store,
-        tmp_path,
+    ref_mapping, assets, asset_entries = await workspace._prepare_conversion_assets(
         "doc.assets",
         images,
         contexts,
         AssetProcessingMode.DESCRIBE,
-        PipelineSpec(),
         LlmConfig(),
     )
 
@@ -99,9 +83,14 @@ async def test_process_conversion_assets_captions_duplicates_once(
     assert "near B" in joint
     assert "Figure caption: Figure 1" in joint
 
-    # Both figure refs point at the single representative; only the decorative
-    # logo is stored verbatim.
+    # Both figure refs point at the single representative; the decorative logo
+    # keeps its own reference.
     assert ref_mapping["fig_a.png"] == "doc.assets/fig_a.png"
     assert ref_mapping["fig_b.png"] == "doc.assets/fig_a.png"
     assert ref_mapping["logo.png"] == "doc.assets/logo.png"
-    assert written == ["doc.assets/logo.png"]
+
+    # The representative figure and the decorative logo are both staged for
+    # writing; only the figure also gets a caption entry.
+    assert {a.path for a in assets} == {"doc.assets/fig_a.png", "doc.assets/logo.png"}
+    assert len(asset_entries) == 1
+    assert asset_entries[0].description_path == "doc.assets/fig_a.md"

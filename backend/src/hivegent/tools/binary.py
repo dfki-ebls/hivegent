@@ -221,10 +221,9 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
             except ValueError as exc:
                 raise ToolRetry(f"invalid pages: {exc}") from exc
         elif media_type.startswith("image/"):
-            try:
-                raw = sanitize_image_bytes(raw, media_type)
-            except ValueError as exc:
-                raise ToolRetry(f"image rejected: {exc}") from exc
+            # Best-effort metadata strip; a quirky-but-storable image is returned
+            # verbatim rather than raising, so a read never fails on sanitisation.
+            raw = sanitize_image_bytes(raw, media_type)
 
         page_text = (
             f" pages {','.join(str(p) for p in selected_pages)}"

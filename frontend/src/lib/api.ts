@@ -1,16 +1,7 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { z } from "zod";
 
-import type {
-  AgentMode,
-  BulkOperationCompleteEvent,
-  BulkOperationStreamEvent,
-  CollectionStreamEvent,
-  McpServerEntry,
-  OperationStage,
-  ToolsSpec,
-  UploadProgress,
-} from "./types";
+import type { AgentMode, McpServerEntry, ToolsSpec } from "./types";
 import {
   type AdminFactoryResetResponse,
   AdminFactoryResetResponseSchema,
@@ -29,13 +20,10 @@ import {
   AssetListResponseSchema,
   type BackendSettings,
   BackendSettingsSchema,
-  BulkOperationStreamEventSchema,
   type ChunkedDocumentResponse,
   ChunkedDocumentResponseSchema,
   type ChunkingPipelineInfo,
   ChunkingPipelineInfoSchema,
-  type CollectionUploadResponse,
-  CollectionStreamEventSchema,
   type CompactConversationResponse,
   CompactConversationResponseSchema,
   ConversationListResponseSchema,
@@ -53,6 +41,8 @@ import {
   MoveDirectoryResponseSchema,
   type GenerateTitleResponse,
   GenerateTitleResponseSchema,
+  type JobView,
+  JobViewSchema,
   type LlmConfig,
   type MoveDocumentResponse,
   type ToolInfo,
@@ -64,11 +54,6 @@ import {
   TranscriptionResponseSchema,
   MoveDocumentResponseSchema,
   type PipelineSpec,
-  type RechunkCompleteEvent,
-  RechunkStreamEventSchema,
-  type UploadDocumentResponse,
-  UploadDocumentResponseSchema,
-  UploadStreamEventSchema,
 } from "./types";
 
 import { featureFlags } from "./feature-flags";
@@ -137,6 +122,28 @@ async function responseError(res: Response, fallback: string): Promise<Error> {
       ? body.detail
       : `${fallback} (HTTP ${res.status})`,
   );
+}
+
+/**
+ * Validate a job-submission response into a {@link JobView}, raising `errorMsg`
+ * on an HTTP error. Shared by every endpoint that starts a background job —
+ * uploads (multipart) and the JSON job posts via {@link postJob}.
+ */
+async function parseJobResponse(res: Response, errorMsg: string): Promise<JobView> {
+  if (!res.ok) {
+    throw await responseError(res, errorMsg);
+  }
+  return JobViewSchema.parse(await res.json());
+}
+
+/** POST a JSON body to a job endpoint and return the started job's snapshot. */
+async function postJob(url: string, body: unknown, errorMsg: string): Promise<JobView> {
+  const res = await authFetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJobResponse(res, errorMsg);
 }
 
 /**
@@ -407,7 +414,7 @@ export interface UploadDocumentOptions {
   overwrite?: boolean;
 }
 
-/** Build the multipart body shared by the PUT and streaming document uploads. */
+/** Build the multipart body for a document upload PUT. */
 function documentUploadFormData(
   filename: string,
   file: File,
@@ -427,39 +434,42 @@ function documentUploadFormData(
   return formData;
 }
 
-/** Upload or replace a document; `filename` is a canonical path (`~/…` or `@<group>/…`). */
+/**
+ * Upload or replace a document and start its background job; `filename` is a
+ * canonical path (`~/…` or `@<group>/…`). Resolves once the bytes are received
+ * with the job's initial snapshot — conversion and indexing then run off the
+ * request and are observable through the `/jobs` feed.
+ */
 export async function uploadDocument(
   filename: string,
   file: File,
-  options?: UploadDocumentOptions,
-): Promise<UploadDocumentResponse> {
+  options?: UploadDocumentOptions & { signal?: AbortSignal },
+): Promise<JobView> {
   const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`, {
     method: "PUT",
     body: documentUploadFormData(filename, file, options),
+    signal: options?.signal,
   });
 
-  if (!res.ok) {
-    throw await responseError(res, "Upload failed");
-  }
-
-  const data: unknown = await res.json();
-  return UploadDocumentResponseSchema.parse(data);
+  return parseJobResponse(res, "Upload failed");
 }
 
 /**
- * Replace a markdown document's content in place; `filename` is a canonical path.
- * Unlike `uploadDocument` with overwrite, this keeps the document's original
- * binary and assets and only rewrites the text and its chunks.
+ * Write a markdown document's content; `filename` is a canonical path. Keeps the
+ * document's original binary and assets and only rewrites the text and its
+ * chunks. `mode` defaults to `"replace"` (overwrite or create); pass `"create"`
+ * to reject an existing path with a 409 instead of overwriting it.
  */
 export async function writeDocument(
   filename: string,
   content: string,
   chunking?: PipelineSpec["chunking"],
+  mode: "replace" | "create" = "replace",
 ): Promise<void> {
   const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, chunking: chunking ?? null }),
+    body: JSON.stringify({ content, mode, chunking: chunking ?? null }),
   });
 
   if (!res.ok) {
@@ -473,21 +483,16 @@ export interface UploadCollectionOptions {
   llm?: LlmConfig;
 }
 
-/** Options for streaming collection upload (extends base with progress + abort). */
-export type StreamingCollectionOptions = UploadCollectionOptions & {
-  onProgress?: (progress: UploadProgress) => void;
-  signal?: AbortSignal;
-};
-
 /**
- * Upload a markdown collection ZIP with streaming progress events via SSE.
- * `scope` is `~` (personal) or `@<group>`.
+ * Upload a collection ZIP and start its background job; `scope` is `~`
+ * (personal) or `@<group>`. Resolves with the job's initial snapshot; per-file
+ * progress then arrives through the `/jobs` feed.
  */
-export async function uploadCollectionStream(
+export async function uploadCollection(
   scope: string,
   file: File,
-  options?: StreamingCollectionOptions,
-): Promise<CollectionUploadResponse> {
+  options?: UploadCollectionOptions & { signal?: AbortSignal },
+): Promise<JobView> {
   const formData = new FormData();
   formData.append("file", file);
   if (options?.spec) {
@@ -498,19 +503,11 @@ export async function uploadCollectionStream(
   }
 
   const res = await authFetch(
-    `${API_BASE_URL}/api/documents/collections/stream/${encodeFilePath(scope)}`,
+    `${API_BASE_URL}/api/documents/collections/${encodeFilePath(scope)}`,
     { method: "POST", body: formData, signal: options?.signal },
   );
 
-  if (!res.ok) {
-    throw await responseError(res, "Collection upload failed");
-  }
-
-  return parseSseProgressStream<CollectionStreamEvent, CollectionUploadResponse>(
-    res,
-    CollectionStreamEventSchema,
-    options?.onProgress,
-  );
+  return parseJobResponse(res, "Collection upload failed");
 }
 
 /**
@@ -519,7 +516,7 @@ export async function uploadCollectionStream(
  * Returns the value stored by `onEvent` via its return value (non-undefined
  * means "this is the final result").
  */
-async function readSseEvents<TEvent extends { type: string }, TResult>(
+async function readSseEvents<TEvent, TResult>(
   res: Response,
   schema: z.ZodType<TEvent>,
   onEvent: (event: TEvent) => TResult | undefined,
@@ -558,43 +555,6 @@ async function readSseEvents<TEvent extends { type: string }, TResult>(
 
   if (result === undefined) throw new Error("Stream ended without completion event");
   return result;
-}
-
-/**
- * Generic SSE stream parser for progress + completion event protocols.
- *
- * Works with any discriminated union where progress events have
- * `type: "progress"` with `file`, `current`, `total`, `status` fields,
- * and completion events have `type: "complete"`.
- */
-async function parseSseProgressStream<TEvent extends { type: string }, TComplete>(
-  res: Response,
-  schema: z.ZodType<TEvent>,
-  onProgress?: (progress: UploadProgress) => void,
-): Promise<TComplete> {
-  const failedFiles: string[] = [];
-
-  return readSseEvents(res, schema, (event) => {
-    if (event.type === "progress") {
-      const p = event as TEvent & {
-        file: string;
-        current: number;
-        total: number;
-        status: string;
-      };
-      if (p.status === "failed") {
-        failedFiles.push(p.file);
-      }
-      onProgress?.({
-        current: p.current,
-        total: p.total,
-        currentFile: p.file,
-        failedFiles: [...failedFiles],
-      });
-      return undefined;
-    }
-    return event as unknown as TComplete;
-  });
 }
 
 export async function deleteDocument(filename: string): Promise<void> {
@@ -642,13 +602,16 @@ export async function downloadOriginal(filepath: string): Promise<Blob> {
   return res.blob();
 }
 
-/** Replace the original binary file and reconvert the document. */
+/**
+ * Replace the original binary file and reconvert the document as a background
+ * job; resolves with the job's initial snapshot. Progress arrives via the feed.
+ */
 export async function replaceOriginal(
   filepath: string,
   file: File,
   spec?: PipelineSpec,
   llm?: LlmConfig,
-): Promise<UploadDocumentResponse> {
+): Promise<JobView> {
   const formData = new FormData();
   formData.append("file", file);
   if (spec) formData.append("pipeline_spec", JSON.stringify(spec));
@@ -659,12 +622,7 @@ export async function replaceOriginal(
     { method: "PUT", body: formData },
   );
 
-  if (!res.ok) {
-    throw await responseError(res, "Replace failed");
-  }
-
-  const data: unknown = await res.json();
-  return UploadDocumentResponseSchema.parse(data);
+  return parseJobResponse(res, "Replace failed");
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {
@@ -873,206 +831,108 @@ export interface ReconvertDocumentOptions {
   llm?: LlmConfig;
 }
 
-export async function reconvertDocument(
-  filename: string,
-  options?: ReconvertDocumentOptions,
-): Promise<UploadDocumentResponse> {
-  const url = `${API_BASE_URL}/api/documents/reconvert/${encodeFilePath(filename)}`;
-
-  const res = await authFetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      pipeline: options?.spec ?? {},
-      llm: options?.llm ?? {},
-    }),
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Reconvert failed");
-  }
-
-  const data: unknown = await res.json();
-  return UploadDocumentResponseSchema.parse(data);
+/**
+ * Rechunk a document with new settings as a background job; resolves with the
+ * job's initial snapshot. Progress arrives via the `/jobs` feed.
+ */
+export async function rechunkDocument(filename: string, spec?: PipelineSpec): Promise<JobView> {
+  return postJob(
+    `${API_BASE_URL}/api/documents/rechunk/${encodeFilePath(filename)}`,
+    spec ?? {},
+    "Rechunk failed",
+  );
 }
-
-export async function rechunkDocument(
-  filename: string,
-  spec?: PipelineSpec,
-): Promise<ChunkedDocumentResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/rechunk/${encodeFilePath(filename)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(spec ?? {}),
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Rechunk failed");
-  }
-
-  const data: unknown = await res.json();
-  return ChunkedDocumentResponseSchema.parse(data);
-}
-
-// --- SSE stage-based stream parser ---
 
 /**
- * Parse an SSE stream that emits stage, error, and complete events.
- * Calls `onStage` for each stage event, throws on error events,
- * and returns the complete event payload.
+ * Reconvert a document from its original and start its background job.
+ * Resolves with the job's initial snapshot; progress arrives via the feed.
  */
-async function parseSseStageStream<TComplete>(
-  res: Response,
-  schema: z.ZodType<{ type: string }>,
-  onStage?: (stage: OperationStage) => void,
-): Promise<TComplete> {
-  return readSseEvents(res, schema, (event) => {
-    if (event.type === "stage") {
-      const s = event as { type: "stage"; stage: string; detail: string };
-      onStage?.({ stage: s.stage, detail: s.detail });
-      return undefined;
-    }
-    if (event.type === "error") {
-      const e = event as { type: "error"; detail: string };
-      throw new Error(e.detail);
-    }
-    return event as unknown as TComplete;
-  });
-}
-
-/** Options for streaming single-document operations. */
-export interface StreamingOperationOptions {
-  onStage?: (stage: OperationStage) => void;
-  signal?: AbortSignal;
-}
-
-/** Upload a document with streaming progress events via SSE. */
-export async function uploadDocumentStream(
+export async function reconvertDocument(
   filename: string,
-  file: File,
-  options?: UploadDocumentOptions & StreamingOperationOptions,
-): Promise<UploadDocumentResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/stream/${encodeFilePath(filename)}`, {
-    method: "PUT",
-    body: documentUploadFormData(filename, file, options),
-    signal: options?.signal,
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Upload failed");
-  }
-
-  return parseSseStageStream<UploadDocumentResponse>(
-    res,
-    UploadStreamEventSchema,
-    options?.onStage,
+  options?: ReconvertDocumentOptions & { signal?: AbortSignal },
+): Promise<JobView> {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/documents/reconvert/${encodeFilePath(filename)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pipeline: options?.spec ?? {}, llm: options?.llm ?? {} }),
+      signal: options?.signal,
+    },
   );
+
+  return parseJobResponse(res, "Reconvert failed");
 }
 
-/** Reconvert a document with streaming progress events via SSE. */
-export async function reconvertDocumentStream(
-  filename: string,
-  options?: ReconvertDocumentOptions & StreamingOperationOptions,
-): Promise<UploadDocumentResponse> {
-  const url = `${API_BASE_URL}/api/documents/reconvert/stream/${encodeFilePath(filename)}`;
+// --- Background jobs (generic) ---
 
-  const res = await authFetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      pipeline: options?.spec ?? {},
-      llm: options?.llm ?? {},
-    }),
-    signal: options?.signal,
-  });
-
+/** List the caller's known background jobs. */
+export async function listJobs(): Promise<JobView[]> {
+  const res = await authFetch(`${API_BASE_URL}/api/jobs`);
   if (!res.ok) {
-    throw await responseError(res, "Reconvert failed");
+    throw await responseError(res, "Failed to list jobs");
   }
-
-  return parseSseStageStream<UploadDocumentResponse>(
-    res,
-    UploadStreamEventSchema,
-    options?.onStage,
-  );
+  return z.array(JobViewSchema).parse(await res.json());
 }
 
-/** Rechunk a document with streaming progress events via SSE. */
-export async function rechunkDocumentStream(
-  filename: string,
-  spec?: PipelineSpec,
-  options?: StreamingOperationOptions,
-): Promise<RechunkCompleteEvent> {
-  const url = `${API_BASE_URL}/api/documents/rechunk/stream/${encodeFilePath(filename)}`;
-
-  const res = await authFetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(spec ?? {}),
-    signal: options?.signal,
+/** Request cancellation of a background job. Idempotent server-side. */
+export async function cancelJob(id: string): Promise<void> {
+  const res = await authFetch(`${API_BASE_URL}/api/jobs/${encodeURIComponent(id)}`, {
+    method: "DELETE",
   });
-
   if (!res.ok) {
-    throw await responseError(res, "Rechunk failed");
+    throw await responseError(res, "Failed to cancel job");
+  }
+}
+
+/**
+ * Subscribe to the caller's job feed, invoking `onJob` for every snapshot
+ * until the connection ends or `signal` aborts. The feed seeds the current
+ * jobs on connect, so a reconnect re-converges on live state.
+ */
+export async function subscribeJobs(
+  onJob: (job: JobView) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await authFetch(`${API_BASE_URL}/api/jobs/events`, { signal });
+  if (!res.ok) {
+    throw new Error(`Job feed failed (HTTP ${res.status})`);
   }
 
-  return parseSseStageStream<RechunkCompleteEvent>(res, RechunkStreamEventSchema, options?.onStage);
+  // The feed never terminates with a completion event, so `readSseEvents`
+  // throws "Stream ended..." when the connection drops — the caller's
+  // reconnect loop handles that as a normal reconnect signal.
+  await readSseEvents(res, JobViewSchema, (job) => {
+    onJob(job);
+    return undefined;
+  });
 }
 
 // --- Bulk operation API functions ---
+//
+// Each bulk operation runs as one background job: the POST resolves with the
+// job's initial snapshot and per-file progress then arrives through the `/jobs`
+// feed, just like single uploads and reconverts.
 
-/** Options for streaming bulk operations. */
-export interface BulkOperationStreamOptions {
-  onProgress?: (progress: UploadProgress) => void;
-  signal?: AbortSignal;
-}
-
-/** Bulk rechunk multiple documents with streaming progress. */
-export async function bulkRechunkStream(
-  files: string[],
-  spec?: PipelineSpec,
-  options?: BulkOperationStreamOptions,
-): Promise<BulkOperationCompleteEvent> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/rechunk/bulk/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ files, pipeline: spec ?? {} }),
-    signal: options?.signal,
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Bulk rechunk failed");
-  }
-
-  return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
-    res,
-    BulkOperationStreamEventSchema,
-    options?.onProgress,
+/** Bulk rechunk multiple documents as a background job. */
+export function bulkRechunk(files: string[], spec?: PipelineSpec): Promise<JobView> {
+  return postJob(
+    `${API_BASE_URL}/api/documents/rechunk/bulk`,
+    { files, pipeline: spec ?? {} },
+    "Bulk rechunk failed",
   );
 }
 
-/** Bulk reconvert multiple documents with streaming progress. */
-export async function bulkReconvertStream(
+/** Bulk reconvert multiple documents as a background job. */
+export function bulkReconvert(
   files: string[],
   spec?: PipelineSpec,
   llm?: LlmConfig,
-  options?: BulkOperationStreamOptions,
-): Promise<BulkOperationCompleteEvent> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/reconvert/bulk/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ files, pipeline: spec ?? {}, llm: llm ?? {} }),
-    signal: options?.signal,
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Bulk reconvert failed");
-  }
-
-  return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
-    res,
-    BulkOperationStreamEventSchema,
-    options?.onProgress,
+): Promise<JobView> {
+  return postJob(
+    `${API_BASE_URL}/api/documents/reconvert/bulk`,
+    { files, pipeline: spec ?? {}, llm: llm ?? {} },
+    "Bulk reconvert failed",
   );
 }
 
@@ -1081,50 +941,14 @@ export interface BulkMoveEntry {
   destination: string;
 }
 
-/** Bulk move multiple documents with streaming progress. */
-export async function bulkMoveStream(
-  moves: BulkMoveEntry[],
-  options?: BulkOperationStreamOptions,
-): Promise<BulkOperationCompleteEvent> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/move/bulk/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ moves }),
-    signal: options?.signal,
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Bulk move failed");
-  }
-
-  return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
-    res,
-    BulkOperationStreamEventSchema,
-    options?.onProgress,
-  );
+/** Bulk move multiple documents as a background job. */
+export function bulkMove(moves: BulkMoveEntry[]): Promise<JobView> {
+  return postJob(`${API_BASE_URL}/api/documents/move/bulk`, { moves }, "Bulk move failed");
 }
 
-/** Bulk delete multiple documents with streaming progress. */
-export async function bulkDeleteStream(
-  files: string[],
-  options?: BulkOperationStreamOptions,
-): Promise<BulkOperationCompleteEvent> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/delete/bulk/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ files }),
-    signal: options?.signal,
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Bulk delete failed");
-  }
-
-  return parseSseProgressStream<BulkOperationStreamEvent, BulkOperationCompleteEvent>(
-    res,
-    BulkOperationStreamEventSchema,
-    options?.onProgress,
-  );
+/** Bulk delete multiple documents as a background job. */
+export function bulkDelete(files: string[]): Promise<JobView> {
+  return postJob(`${API_BASE_URL}/api/documents/delete/bulk`, { files }, "Bulk delete failed");
 }
 
 // User directory management

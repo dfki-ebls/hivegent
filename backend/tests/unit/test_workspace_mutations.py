@@ -106,6 +106,21 @@ class TestWriteDocumentText:
         assert "Wrote" in result
         assert (workspace_dir / "new.md").read_text() == "content"
 
+    async def test_create_mode_rejects_existing_path(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        result = await workspace.write_document_text(
+            user_store, "fresh.md", "body", mode="create"
+        )
+        assert "Created" in result
+
+        with pytest.raises(HTTPException) as exc:
+            await workspace.write_document_text(
+                user_store, "fresh.md", "other", mode="create"
+            )
+        assert exc.value.status_code == 409
+        assert (workspace_dir / "fresh.md").read_text() == "body"
+
     async def test_append(self, user_store: Casebase, workspace_dir: Path) -> None:
         (workspace_dir / "doc.md").write_text("start")
         result = await workspace.write_document_text(

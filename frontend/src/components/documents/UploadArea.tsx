@@ -1,15 +1,11 @@
 import { Archive, FolderOpen, FolderPlus, Loader2, Paperclip, Plus, Upload, X } from "lucide-react";
 
-import type { OperationStage, UploadProgress } from "../../lib/types";
 import { Button } from "../ui/button";
-import { Progress } from "../ui/progress";
 
 interface UploadAreaProps {
   isDragging: boolean;
   isUploading: boolean;
   isPreparing: boolean;
-  uploadProgress: UploadProgress | null;
-  operationStage: OperationStage | null;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   directoryInputRef: React.RefObject<HTMLInputElement | null>;
   zipInputRef: React.RefObject<HTMLInputElement | null>;
@@ -31,8 +27,6 @@ export function UploadArea({
   isDragging,
   isUploading,
   isPreparing,
-  uploadProgress,
-  operationStage,
   fileInputRef,
   directoryInputRef,
   zipInputRef,
@@ -50,11 +44,7 @@ export function UploadArea({
   onCancel,
 }: UploadAreaProps) {
   const busy = isPreparing || isUploading;
-  const busyLabel = isPreparing
-    ? "Preparing files..."
-    : operationStage
-      ? `${operationStage.stage}...`
-      : "Uploading...";
+  const busyLabel = isPreparing ? "Preparing files..." : "Uploading...";
   return (
     <div className="border-b p-4">
       <div
@@ -71,31 +61,6 @@ export function UploadArea({
           <div className="flex w-full flex-col items-center gap-2">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
             <p className="text-sm font-medium">{busyLabel}</p>
-            {uploadProgress && (
-              <>
-                <p className="max-w-full truncate text-xs text-muted-foreground">
-                  {uploadProgress.currentFile}
-                </p>
-                <div className="flex w-full items-center gap-2">
-                  <Progress
-                    value={
-                      uploadProgress.total > 0
-                        ? (uploadProgress.current / uploadProgress.total) * 100
-                        : 0
-                    }
-                    className="flex-1"
-                  />
-                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                    {uploadProgress.current} / {uploadProgress.total}
-                  </span>
-                </div>
-                {uploadProgress.failedFiles.length > 0 && (
-                  <p className="text-xs text-destructive">
-                    {uploadProgress.failedFiles.length} failed
-                  </p>
-                )}
-              </>
-            )}
             <Button variant="outline" size="sm" onClick={onCancel}>
               <X className="h-4 w-4 mr-1" />
               Cancel

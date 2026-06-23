@@ -16,7 +16,7 @@ import {
   type FilterEntryState,
 } from "@/components/documents/FilterToggleButtons";
 import { DOCUMENT_ACTIONS, type DocumentActionId } from "@/lib/document-actions";
-import type { DirectoryEntry, OperationStage } from "@/lib/types";
+import type { DirectoryEntry } from "@/lib/types";
 import { collectFilePaths, formatFileSize } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings-store";
 import { Badge } from "./ui/badge";
@@ -27,7 +27,6 @@ import { Spinner } from "./ui/spinner";
 interface DirectoryTreeViewProps {
   entry: DirectoryEntry;
   mutatingPaths?: Set<string>;
-  operationStage?: OperationStage | null;
   onEditFile: (path: string) => void;
   onInclude: (path: string) => void;
   onExclude: (path: string) => void;
@@ -91,7 +90,6 @@ function flattenEntries(
 function FileRow({
   entry,
   isMutating,
-  operationStage,
   depth,
   onEdit,
   onInclude,
@@ -103,7 +101,6 @@ function FileRow({
 }: {
   entry: DirectoryEntry;
   isMutating: boolean;
-  operationStage?: OperationStage | null;
   depth: number;
   onEdit: () => void;
   onInclude: () => void;
@@ -133,9 +130,6 @@ function FileRow({
           <span className="min-w-0 truncate text-sm">{entry.name}</span>
         </button>
         {isMutating && <Spinner className="size-3 shrink-0 text-muted-foreground" />}
-        {isMutating && operationStage && (
-          <span className="truncate text-xs text-muted-foreground">{operationStage.stage}...</span>
-        )}
       </div>
       <div className="flex gap-0.5">
         <FilterToggleButtons
@@ -299,7 +293,6 @@ const EMPTY_SET = new Set<string>();
 export function DirectoryTreeView({
   entry,
   mutatingPaths = EMPTY_SET,
-  operationStage,
   onEditFile,
   onInclude,
   onExclude,
@@ -348,7 +341,6 @@ export function DirectoryTreeView({
           key={row.entry.path}
           entry={row.entry}
           isMutating={fileMutating}
-          operationStage={fileMutating ? operationStage : null}
           depth={row.depth}
           onEdit={() => onEditFile(row.entry.path)}
           onInclude={() => onInclude(row.entry.path)}

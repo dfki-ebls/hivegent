@@ -1,42 +1,36 @@
-"""Read-only and SSE-streaming helpers for document routes.
+"""Read-only and job helpers for document routes.
 
 All workspace, metadata, and search-index *mutations* live in
 :mod:`hivegent.workspace`.  This package contains only:
 
 - read-only filesystem helpers (:mod:`.reads`, :mod:`.inventory`)
-- SSE event wrappers around workspace mutations (:mod:`.streaming`)
+- upload guarding and the bulk-job runner shared by the routes (:mod:`.processing`)
 """
 
 from .inventory import build_tree_response
+from .processing import (
+    cleanup_spool_dir,
+    enforce_upload_size,
+    run_bulk_document_job,
+    spool_dir,
+    validate_collection_upload,
+)
 from .reads import (
     attachment_disposition,
     find_original,
     get_document_response,
     list_assets,
 )
-from .streaming import (
-    PreparedCollection,
-    prepare_collection_upload,
-    process_bulk_operation,
-    read_collection_zip,
-    read_upload_file,
-    reconvert_single_stream,
-    upload_file_stream,
-    validate_collection_upload,
-)
 
 __all__ = [
-    "PreparedCollection",
     "attachment_disposition",
     "build_tree_response",
+    "cleanup_spool_dir",
+    "enforce_upload_size",
     "find_original",
     "get_document_response",
     "list_assets",
-    "prepare_collection_upload",
-    "process_bulk_operation",
-    "read_collection_zip",
-    "read_upload_file",
-    "reconvert_single_stream",
-    "upload_file_stream",
+    "run_bulk_document_job",
+    "spool_dir",
     "validate_collection_upload",
 ]

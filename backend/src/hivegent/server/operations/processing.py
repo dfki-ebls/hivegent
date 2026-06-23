@@ -1,0 +1,118 @@
+"""Shared helpers for the document routes' background jobs.
+
+Single uploads, reconvert, collections, and the bulk operations all run as
+background jobs (see :mod:`hivegent.server.jobs`); this module holds the
+upload size guard those routes share, collection-request validation, and the
+per-file bulk runner that reports its progress to a job context.
+"""
+
+import logging
+import shutil
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+
+from fastapi import HTTPException, UploadFile
+
+from ...config import settings
+from ...types import LlmConfig, PipelineSpec, ProgressReporter
+from ..common import parse_pipeline_spec, prepare_llm_config
+
+__all__ = [
+    "cleanup_spool_dir",
+    "enforce_upload_size",
+    "run_bulk_document_job",
+    "spool_dir",
+    "validate_collection_upload",
+]
+
+logger = logging.getLogger(__name__)
+
+
+def _spool_root() -> Path:
+    """The single source of truth for where job spool files live."""
+    return settings.data_dir / "spool"
+
+
+def spool_dir() -> Path:
+    """Directory holding upload payloads spooled to disk for background jobs."""
+    path = _spool_root()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def cleanup_spool_dir() -> None:
+    """Drop spool files orphaned by a restart, called once at startup.
+
+    Jobs live only in memory, so any spool file present at startup belongs to a
+    job a restart cut short — its ``on_settled`` unlink never ran — and is safe
+    to remove.
+    """
+    path = _spool_root()
+    if path.exists():
+        shutil.rmtree(path, ignore_errors=True)
+
+
+async def run_bulk_document_job(
+    files: list[str],
+    process_one: Callable[[str], Awaitable[None]],
+    *,
+    verb: str,
+    ctx: ProgressReporter,
+) -> None:
+    """Run a per-file mutation over many documents, reporting progress to *ctx*.
+
+    Each ``process_one`` call is a workspace mutation that maintains its own
+    index entries; this helper only drives the loop. A failed file (including an
+    unauthorized path, whose access check raises) is logged and the batch keeps
+    going, so the files that can be processed are. If any file failed, the job is
+    raised as failed with the count and names, so a partial or total failure
+    surfaces in the tray instead of settling as a misleading success.
+    """
+    total = len(files)
+    failed: list[str] = []
+    ctx.set_progress(0, total)
+
+    for index, filepath in enumerate(files):
+        try:
+            await process_one(filepath)
+        except Exception as exc:
+            logger.warning("Bulk %s failed for %s: %s", verb.lower(), filepath, exc)
+            failed.append(filepath)
+
+        ctx.set_progress(index + 1, total)
+
+    if failed:
+        succeeded = total - len(failed)
+        raise RuntimeError(
+            f"{verb} {succeeded} of {total}; "
+            f"{len(failed)} failed: {', '.join(failed)}"
+        )
+
+
+async def validate_collection_upload(
+    pipeline_spec: str,
+    llm_config: str,
+) -> tuple[PipelineSpec, LlmConfig]:
+    """Parse and validate pipeline and LLM configuration for collection uploads.
+
+    Async because the SSRF check runs DNS off the event loop.
+    """
+    spec = parse_pipeline_spec(pipeline_spec)
+    resolved = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
+    return spec, resolved
+
+
+def enforce_upload_size(file: UploadFile, *, limit: int, label: str) -> None:
+    """Reject an upload whose size exceeds *limit*.
+
+    Starlette populates ``UploadFile.size`` while parsing the multipart body and
+    has already spooled the bytes to ``file.file`` by the time the route runs,
+    so the cap is enforced by inspecting the received upload rather than
+    re-reading it.  ``size`` is ``None`` only for uploads not built by the
+    multipart parser, which are left uncapped.
+    """
+    if file.size is not None and file.size > limit:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} too large. Maximum size: {limit} bytes",
+        )

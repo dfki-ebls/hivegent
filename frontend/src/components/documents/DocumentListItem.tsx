@@ -1,6 +1,6 @@
 import { FileText, RotateCcw, Scissors, Trash2 } from "lucide-react";
 
-import type { DocumentInfo, OperationStage } from "../../lib/types";
+import type { DocumentInfo } from "../../lib/types";
 import { formatFileSize } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -12,7 +12,6 @@ import { formatRelativeDate } from "./utils";
 interface DocumentListItemProps {
   doc: DocumentInfo;
   isMutating: boolean;
-  operationStage: OperationStage | null;
   onEdit: () => void;
   filterState: FilterEntryState;
   onIncludeDocument: () => void;
@@ -26,7 +25,6 @@ interface DocumentListItemProps {
 export function DocumentListItem({
   doc,
   isMutating,
-  operationStage,
   onEdit,
   filterState,
   onIncludeDocument,
@@ -55,11 +53,6 @@ export function DocumentListItem({
         <div className="flex items-center gap-2">
           <p className="truncate font-medium text-sm">{doc.display_name}</p>
           {isMutating && <Spinner className="size-3 shrink-0 text-muted-foreground" />}
-          {isMutating && operationStage && (
-            <span className="truncate text-xs text-muted-foreground">
-              {operationStage.stage}...
-            </span>
-          )}
           {doc.chunk_count != null && (
             <Badge variant="outline" className="shrink-0 text-xs gap-1">
               <Scissors className="h-3 w-3" />

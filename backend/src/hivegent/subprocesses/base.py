@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..concurrency import shield_to_completion
+
 __all__ = ["SubprocessError", "SubprocessResult", "run"]
 
 
@@ -82,7 +84,20 @@ async def run(
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
     )
-    stdout, stderr = await proc.communicate(input=stdin)
+
+    try:
+        stdout, stderr = await proc.communicate(input=stdin)
+    except BaseException:
+        # Never leave the child running when the await is interrupted — a
+        # cancelled background job (or any error) must reclaim the process
+        # instead of letting a long-running CLI keep pegging the CPU.  Reap it
+        # to completion (surviving a further cancel) so it cannot linger as a
+        # zombie with its pipes still open.
+        if proc.returncode is None:
+            proc.kill()
+            await shield_to_completion(proc.wait())
+
+        raise
     result = SubprocessResult(
         stdout=stdout,
         stderr=stderr,

@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal, Self, get_args
+from typing import Any, Literal, Protocol, Self, get_args
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from pydantic_ai.settings import ThinkingEffort
@@ -33,8 +33,6 @@ __all__ = [
     "BulkDeleteConversationsResponse",
     "BulkDeleteDocumentsResponse",
     "BulkDeleteUserDataResponse",
-    "BulkOperationCompleteEvent",
-    "BulkOperationProgressEvent",
     "ChatRequestConfig",
     "ClearMemoryResponse",
     "CollectionCompleteEvent",
@@ -66,10 +64,8 @@ __all__ = [
     "AssetProcessingMode",
     "FrontendConfigResponse",
     "OidcPublicConfig",
-    "OperationErrorEvent",
-    "OperationStageEvent",
     "PipelineSpec",
-    "RechunkCompleteEvent",
+    "ProgressReporter",
     "SettingsResponse",
     "ToolInfo",
     "ToolRunResult",
@@ -85,6 +81,23 @@ __all__ = [
     "WriteDocumentResponse",
     "resolve_llm_config",
 ]
+
+
+class ProgressReporter(Protocol):
+    """Sink a long-running operation reports its progress to.
+
+    Structural, so the workspace layer can report stages and counts without
+    depending on the server's job framework: any object exposing these two
+    methods — notably a job context — qualifies.
+    """
+
+    def set_stage(self, stage: str) -> None:
+        """Set the current human-readable stage label."""
+        ...
+
+    def set_progress(self, current: int, total: int) -> None:
+        """Set discrete progress, e.g. files processed so far."""
+        ...
 
 
 @dataclass(slots=True, frozen=True)
@@ -489,9 +502,13 @@ class DeleteDocumentResponse(BaseModel):
 
 
 class WriteDocumentRequest(BaseModel):
-    """Request to replace a text document's content in place."""
+    """Request to write a text document, replacing it or creating it fresh."""
 
     content: str = Field(description="New full content for the document")
+    mode: Literal["replace", "create"] = Field(
+        default="replace",
+        description="'replace' overwrites or creates; 'create' rejects an existing path",
+    )
     chunking: ChunkingSpec | None = Field(
         default=None,
         description="Chunking pipeline to re-index with (defaults to the standard pipeline)",
@@ -799,57 +816,10 @@ class CollectionCompleteEvent(CollectionUploadResponse):
     type: Literal["complete"] = "complete"
 
 
-class BulkOperationProgressEvent(BaseModel):
-    """SSE progress event emitted during a bulk rechunk or reconvert operation."""
-
-    type: Literal["progress"] = "progress"
-    file: str = Field(description="File currently being processed")
-    current: int = Field(description="Number of files processed so far")
-    total: int = Field(description="Total number of files to process")
-    status: Literal["ok", "failed"] = Field(
-        description="Whether this file succeeded or failed",
-    )
-
-
-class BulkOperationCompleteEvent(BaseModel):
-    """SSE completion event emitted at the end of a bulk operation."""
-
-    type: Literal["complete"] = "complete"
-    total_files: int = Field(description="Total files processed")
-    failed_files: list[str] = Field(
-        default_factory=list,
-        description="Files that failed to process",
-    )
-    message: str = Field(description="Status message")
-
-
-class OperationStageEvent(BaseModel):
-    """SSE stage event emitted during a single-document operation."""
-
-    type: Literal["stage"] = "stage"
-    stage: str = Field(description="Current processing stage label")
-    detail: str = Field(default="", description="Optional extra detail")
-
-
 class UploadCompleteEvent(UploadDocumentResponse):
-    """SSE completion event for upload and reconvert operations."""
+    """Completion payload for upload, reconvert, and replace operations."""
 
     type: Literal["complete"] = "complete"
-
-
-class RechunkCompleteEvent(BaseModel):
-    """SSE completion event for rechunk operations."""
-
-    type: Literal["complete"] = "complete"
-    pipeline: str = Field(description="Chunking pipeline used")
-    chunk_count: int = Field(description="Number of chunks created")
-
-
-class OperationErrorEvent(BaseModel):
-    """SSE error event emitted when a single-document operation fails."""
-
-    type: Literal["error"] = "error"
-    detail: str = Field(description="Error description")
 
 
 class GroupInfo(BaseModel):

@@ -17,7 +17,8 @@ async def shield_to_completion[T](coro: Coroutine[Any, Any, T]) -> T:
     finishes, so whatever runs next races the orphaned task. This helper instead
     keeps re-awaiting the shielded task through the caller's own cancellation, so
     the work is done before control returns. A deferred cancellation is re-raised
-    afterwards so it is never swallowed; an error from *coro* propagates as-is.
+    afterwards so it is never swallowed — even when the work itself ends by
+    raising, the caller's cancellation still takes precedence over that error.
 
     Args:
         coro: The coroutine to run to completion.
@@ -36,6 +37,13 @@ async def shield_to_completion[T](coro: Coroutine[Any, Any, T]) -> T:
             # Our own cancellation while the protected work is still in flight:
             # remember it and keep waiting for the task to finish.
             cancelled = exc
+        except BaseException:
+            # The protected work finished by raising.  A deferred cancellation of
+            # our own takes precedence (the caller asked to stop); otherwise the
+            # work's own error propagates unchanged.
+            if cancelled is not None:
+                raise cancelled
+            raise
         else:
             if cancelled is not None:
                 raise cancelled

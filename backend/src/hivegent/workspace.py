@@ -23,7 +23,6 @@ the explicit mutation API.
 """
 
 import asyncio
-import io
 import logging
 import mimetypes
 import re
@@ -43,6 +42,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 import logfire
@@ -85,7 +85,7 @@ from .converters.base import (
     is_image_suffix,
     is_markdown_suffix,
 )
-from .converters.images import guess_image_media_type, sanitize_image_bytes
+from .converters.images import guess_image_media_type
 from .converters.video import (
     animation_frame_count,
     is_video_suffix,
@@ -115,6 +115,7 @@ from .types import (
     MoveDirectoryResponse,
     MoveDocumentResponse,
     PipelineSpec,
+    ProgressReporter,
     UploadCompleteEvent,
     resolve_llm_config,
 )
@@ -174,17 +175,44 @@ def store_lock(store: Casebase) -> asyncio.Lock:
 # documents.
 _inflight_stems: dict[str, set[str]] = {}
 
+# Stores with a bulk import (a collection) in flight, by reference count.  A
+# collection commits its files one at a time with the lock released in between,
+# so a claim here blocks store-wide destructive ops (delete-all, directory
+# delete/move) for its whole duration without blocking its own per-file uploads.
+_inflight_store_claims: dict[str, int] = {}
+
+
+def _add_inflight(store: Casebase, reference: str) -> None:
+    """Mark *reference*'s stem as in flight (hidden from lock-free reads)."""
+    _inflight_stems.setdefault(store.store_key, set()).add(
+        stem_path_from_reference(reference)
+    )
+
+
+def _discard_inflight(store: Casebase, reference: str) -> None:
+    """Clear an in-flight mark set by :func:`_add_inflight`."""
+    stems = _inflight_stems.get(store.store_key)
+    if stems is not None:
+        stems.discard(stem_path_from_reference(reference))
+
 
 @contextmanager
-def _track_inflight(store: Casebase, reference: str) -> Iterator[None]:
-    """Mark *reference*'s stem as in flight for the duration of the block."""
-    stems = _inflight_stems.setdefault(store.store_key, set())
-    stem = stem_path_from_reference(reference)
-    stems.add(stem)
+def _store_claim(store: Casebase) -> Iterator[None]:
+    """Mark the whole store as having a bulk import in flight for the block.
+
+    Re-entrant (reference counted) so two concurrent collections on one store
+    each keep the claim alive until both finish.
+    """
+    key = store.store_key
+    _inflight_store_claims[key] = _inflight_store_claims.get(key, 0) + 1
     try:
         yield
     finally:
-        stems.discard(stem)
+        remaining = _inflight_store_claims.get(key, 0) - 1
+        if remaining > 0:
+            _inflight_store_claims[key] = remaining
+        else:
+            _inflight_store_claims.pop(key, None)
 
 
 def inflight_stems(store: Casebase) -> frozenset[str]:
@@ -430,49 +458,198 @@ async def _build_image_description(
     return await _describe_with_fallback(filepath, "Image", llm, describe)
 
 
-async def _persist_image_entry(
-    store: Casebase,
-    workspace_dir: Path,
-    filepath: str,
-    content: bytes,
-    media_type: str,
-    contexts: Sequence[str],
-    spec: PipelineSpec,
-    llm: LlmConfig,
-    *,
-    origin: EntryOrigin,
-) -> tuple[int, str, str]:
-    """Write an image plus its context-grounded caption as one vision entry.
+@dataclass(slots=True, frozen=True)
+class _PreparedEntry:
+    """A markdown projection to write and index when an upload commits."""
 
-    Shared by standalone image uploads and the described assets extracted from
-    a converted document; *contexts* carries every occurrence's surrounding
-    text so the caption is the single source of truth for that image. Returns
-    ``(chunk_count, chunking_pipeline_used, description_path)``.
+    description_path: str
+    markdown: str
+    entry_metadata: EntryMetadata
+
+
+@dataclass(slots=True, frozen=True)
+class _PreparedAsset:
+    """An extracted asset file to write verbatim when an upload commits."""
+
+    path: str
+    data: bytes
+
+
+@dataclass(slots=True, frozen=True)
+class _PreparedUpload:
+    """The side-effect-free result of preparing an upload.
+
+    Produced lock-free — the slow work (conversion, vision captioning,
+    frame sampling) happens here — then applied to the workspace and SQL
+    index atomically under the casebase lock by :func:`_commit_prepared`.
+    Holding the lock only for the brief commit, not the whole pipeline, is
+    what keeps the rest of the workspace usable while a long upload runs.
     """
-    _write_original_file(
-        workspace_dir, filepath, sanitize_image_bytes(content, media_type)
-    )
+
+    main: _PreparedEntry
+    filename: str
+    size_bytes: int
+    message: str
+    converted_filename: str | None = None
+    conversion_pipeline_used: str | None = None
+    assets: tuple[_PreparedAsset, ...] = ()
+    asset_entries: tuple[_PreparedEntry, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class _Reserved:
+    """What an upload's locked reserve phase captured for prepare and commit.
+
+    Reserve only validates and reads — it never mutates the workspace — so a
+    failure during the lock-free prepare leaves any pre-existing entry intact.
+    These fields tell :func:`_commit_prepared` how to apply the new content and
+    supersede a prior entry, all atomically under the lock.  ``preserve`` marks a
+    reprocess of an existing entry (reconvert/replace/overwrite): its stale
+    assets are cleared at commit and it survives a prepare-phase failure, whereas
+    a fresh upload (``preserve=False``) is rolled back by deletion.
+    """
+
+    reference: str
+    content: bytes
+    origin: EntryOrigin
+    write_original: bool = False
+    preserve: bool = False
+    supersede_original: str | None = None
+
+
+@contextmanager
+def _source_on_disk(filepath: str, content: bytes) -> Iterator[Path]:
+    """Materialise upload bytes at a temp path for converters that read a file.
+
+    Keeps the original basename so format detection by suffix still works, and
+    lives outside the workspace so a lock-free conversion never touches the live
+    entry — the commit is the only step that writes into the workspace.
+    """
+    with tempfile.TemporaryDirectory(prefix="hivegent-convert-") as tmp_dir:
+        path = Path(tmp_dir) / PurePosixPath(filepath).name
+        path.write_bytes(content)
+        yield path
+
+
+def _derived_entry(
+    filepath: str,
+    markdown: str,
+    *,
+    entry_kind: EntryKind,
+    generated_by: EntryGeneratedBy,
+    origin: EntryOrigin,
+    assets_dir: str | None = None,
+) -> _PreparedEntry:
+    """Build a prepared entry whose original is *filepath* and *markdown* its projection.
+
+    Centralises the stem → description derivation shared by every upload kind
+    that keeps a separate original (image, video, binary stub, plain text,
+    converted document).  User markdown is the exception — its own file is the
+    description — so it does not use this.
+    """
     stem_path = stem_path_from_reference(filepath)
     description_path = description_path_for_stem(stem_path)
-    markdown = await _build_image_description(
-        filepath, content, media_type, contexts, llm
-    )
-    chunk_count, chunking_used = await _write_markdown_projection(
-        store,
-        description_path,
-        markdown,
-        spec,
+    return _PreparedEntry(
+        description_path=description_path,
+        markdown=markdown,
         entry_metadata=_build_entry_metadata(
             stem_path=stem_path,
             description_path=description_path,
             original_path=filepath,
-            assets_dir=None,
-            entry_kind="image",
+            assets_dir=assets_dir,
+            entry_kind=entry_kind,
             origin=origin,
-            generated_by="vision",
+            generated_by=generated_by,
         ),
     )
-    return chunk_count, chunking_used, description_path
+
+
+async def _commit_prepared(
+    store: Casebase,
+    prepared: _PreparedUpload,
+    spec: PipelineSpec,
+    reserved: _Reserved,
+) -> UploadCompleteEvent:
+    """Write a prepared upload's files and index its entries. Caller holds the lock.
+
+    This is the only phase that mutates the workspace, so it applies the new
+    content and supersedes any prior entry in one locked, cancel-shielded step.
+    Old assets are cleared and the main description is *overwritten in place*
+    (never deleted first), so even a mid-commit error leaves the entry's
+    description as either the old or the new content — never missing.  Asset
+    files and their description entries land before the main entry, so the
+    markdown that references them is only indexed once its targets exist.
+    """
+    workspace_dir = store.workspace_dir(settings.data_dir)
+
+    # A reprocess (preserve) supersedes the prior entry: clear its stale assets
+    # before writing the new ones. The stem is the reference's stem by construction.
+    if reserved.preserve:
+        await _clear_assets_subtree(store, stem_path_from_reference(reserved.reference))
+
+    if reserved.write_original:
+        _write_original_file(workspace_dir, reserved.reference, reserved.content)
+
+    for asset in prepared.assets:
+        _write_original_file(workspace_dir, asset.path, asset.data)
+
+    for entry in prepared.asset_entries:
+        await _write_markdown_projection(
+            store,
+            entry.description_path,
+            entry.markdown,
+            spec,
+            entry_metadata=entry.entry_metadata,
+        )
+
+    chunk_count, chunking_used = await _write_markdown_projection(
+        store,
+        prepared.main.description_path,
+        prepared.main.markdown,
+        spec,
+        entry_metadata=prepared.main.entry_metadata,
+    )
+
+    # A superseded original on a different path than the new one (a replace that
+    # changed the suffix) is unlinked only after the new entry is fully written.
+    if (
+        reserved.supersede_original is not None
+        and reserved.supersede_original != reserved.reference
+    ):
+        (workspace_dir / reserved.supersede_original).unlink(missing_ok=True)
+
+    return UploadCompleteEvent(
+        filename=prepared.filename,
+        converted_filename=prepared.converted_filename,
+        size_bytes=prepared.size_bytes,
+        conversion_pipeline_used=prepared.conversion_pipeline_used,
+        chunk_count=chunk_count,
+        chunking_pipeline_used=chunking_used,
+        message=prepared.message,
+    )
+
+
+async def _prepare_image_entry(
+    filepath: str,
+    content: bytes,
+    media_type: str,
+    contexts: Sequence[str],
+    llm: LlmConfig,
+    *,
+    origin: EntryOrigin,
+) -> _PreparedEntry:
+    """Build the caption entry for an image without touching disk or SQL.
+
+    Shared by standalone image uploads and the described assets extracted from
+    a converted document; *contexts* carries every occurrence's surrounding
+    text so the caption is the single source of truth for that image.
+    """
+    markdown = await _build_image_description(
+        filepath, content, media_type, contexts, llm
+    )
+    return _derived_entry(
+        filepath, markdown, entry_kind="image", generated_by="vision", origin=origin
+    )
 
 
 def _build_binary_stub(filepath: str, size_bytes: int) -> str:
@@ -519,77 +696,76 @@ async def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Locked upload primitives
+# Per-kind preparation (lock-free)
 # ---------------------------------------------------------------------------
 
 
-async def _upload_markdown_locked(
+def _prepare_markdown(
     store: Casebase,
     filepath: str,
     content: bytes,
-    spec: PipelineSpec,
     *,
     origin: EntryOrigin,
-) -> UploadCompleteEvent:
-    """Persist a user-authored markdown document. Caller holds the lock."""
+    clearing_assets: bool,
+) -> _PreparedUpload:
+    """Prepare a user-authored markdown document for commit.
+
+    A markdown entry surfaces a companion ``.assets`` directory if one exists,
+    except when the commit will clear it (an overwrite), so the metadata never
+    claims a directory the same commit is about to remove.
+    """
     workspace_dir = store.workspace_dir(settings.data_dir)
     text = content.decode("utf-8")
     stem_path = stem_path_from_reference(filepath)
     assets_dir = assets_dir_for_stem(stem_path)
-    chunk_count, chunking_used = await _write_markdown_projection(
-        store,
-        filepath,
-        text,
-        spec,
+    has_assets = not clearing_assets and (workspace_dir / assets_dir).exists()
+    main = _PreparedEntry(
+        description_path=filepath,
+        markdown=text,
         entry_metadata=_build_entry_metadata(
             stem_path=stem_path,
             description_path=filepath,
             original_path=None,
-            assets_dir=assets_dir if (workspace_dir / assets_dir).exists() else None,
+            assets_dir=assets_dir if has_assets else None,
             entry_kind="user_markdown",
             origin=origin,
             generated_by="user",
         ),
     )
-    return UploadCompleteEvent(
+    return _PreparedUpload(
+        main=main,
         filename=filepath,
-        converted_filename=None,
         size_bytes=len(content),
-        chunk_count=chunk_count,
-        chunking_pipeline_used=chunking_used,
         message="Document uploaded successfully",
     )
 
 
-async def _upload_image_locked(
-    store: Casebase,
+async def _prepare_image(
     filepath: str,
     content: bytes,
-    spec: PipelineSpec,
     llm: LlmConfig,
     *,
     origin: EntryOrigin,
-) -> UploadCompleteEvent:
-    """Persist an image and its generated description. Caller holds the lock."""
-    workspace_dir = store.workspace_dir(settings.data_dir)
+    ctx: ProgressReporter | None,
+) -> _PreparedUpload:
+    """Prepare a standalone image and its generated description for commit."""
+    if ctx is not None:
+        ctx.set_stage("Generating image description")
+
     media_type = guess_image_media_type(filepath) or ""
-    chunk_count, chunking_used, description_path = await _persist_image_entry(
-        store,
-        workspace_dir,
+    entry = await _prepare_image_entry(
         filepath,
         content,
         media_type,
         [f"File name: {PurePosixPath(filepath).name}"],
-        spec,
         llm,
         origin=origin,
     )
-    return UploadCompleteEvent(
+    return _PreparedUpload(
+        main=entry,
         filename=filepath,
-        converted_filename=description_path,
         size_bytes=len(content),
-        chunk_count=chunk_count,
-        chunking_pipeline_used=chunking_used,
+        converted_filename=entry.description_path,
         message="Image uploaded and described successfully",
     )
 
@@ -609,169 +785,115 @@ async def _build_video_description(
     return await _describe_with_fallback(filepath, "Video", llm, describe)
 
 
-async def _upload_video_locked(
-    store: Casebase,
+async def _prepare_video(
     filepath: str,
     content: bytes,
-    spec: PipelineSpec,
     llm: LlmConfig,
     *,
     origin: EntryOrigin,
-) -> UploadCompleteEvent:
-    """Persist a video and its frame-based description. Caller holds the lock.
+    ctx: ProgressReporter | None,
+) -> _PreparedUpload:
+    """Prepare a video and its frame-based description for commit.
 
-    Mirrors :func:`_upload_image_locked`: the original file is the entry's
-    payload and the vision-generated markdown is its searchable projection.
-    Frames are sampled from the written file via ffmpeg (see
-    :func:`~hivegent.converters.video.sample_video`).
+    The original is the entry's payload and the vision-generated markdown is
+    its searchable projection.  Frames are sampled via ffmpeg from a temp copy
+    of the source (see :func:`~hivegent.converters.video.sample_video`), so the
+    lock-free prepare never touches the live workspace entry.
     """
-    workspace_dir = store.workspace_dir(settings.data_dir)
-    full_path = _write_original_file(workspace_dir, filepath, content)
-    stem_path = stem_path_from_reference(filepath)
-    description_path = description_path_for_stem(stem_path)
-    markdown = await _build_video_description(
-        filepath,
-        full_path,
-        [f"File name: {PurePosixPath(filepath).name}"],
-        llm,
+    if ctx is not None:
+        ctx.set_stage("Generating video description")
+
+    with _source_on_disk(filepath, content) as full_path:
+        markdown = await _build_video_description(
+            filepath,
+            full_path,
+            [f"File name: {PurePosixPath(filepath).name}"],
+            llm,
+        )
+    main = _derived_entry(
+        filepath, markdown, entry_kind="video", generated_by="vision", origin=origin
     )
-    chunk_count, chunking_used = await _write_markdown_projection(
-        store,
-        description_path,
-        markdown,
-        spec,
-        entry_metadata=_build_entry_metadata(
-            stem_path=stem_path,
-            description_path=description_path,
-            original_path=filepath,
-            assets_dir=None,
-            entry_kind="video",
-            origin=origin,
-            generated_by="vision",
-        ),
-    )
-    return UploadCompleteEvent(
+    return _PreparedUpload(
+        main=main,
         filename=filepath,
-        converted_filename=description_path,
         size_bytes=len(content),
-        chunk_count=chunk_count,
-        chunking_pipeline_used=chunking_used,
+        converted_filename=main.description_path,
         message="Video uploaded and described successfully",
     )
 
 
-async def _upload_binary_stub_locked(
-    store: Casebase,
-    filepath: str,
-    content: bytes,
-    spec: PipelineSpec,
-    *,
-    origin: EntryOrigin,
-    original_written: bool = False,
-) -> UploadCompleteEvent:
-    """Persist a non-convertible binary with a searchable stub."""
-    workspace_dir = store.workspace_dir(settings.data_dir)
-    if not original_written:
-        _write_original_file(workspace_dir, filepath, content)
-    stem_path = stem_path_from_reference(filepath)
-    description_path = description_path_for_stem(stem_path)
-    markdown = _build_binary_stub(filepath, len(content))
-    chunk_count, chunking_used = await _write_markdown_projection(
-        store,
-        description_path,
-        markdown,
-        spec,
-        entry_metadata=_build_entry_metadata(
-            stem_path=stem_path,
-            description_path=description_path,
-            original_path=filepath,
-            assets_dir=None,
-            entry_kind="binary_stub",
-            origin=origin,
-            generated_by="stub",
-        ),
+def _prepare_binary_stub(
+    filepath: str, content: bytes, *, origin: EntryOrigin
+) -> _PreparedUpload:
+    """Prepare a searchable stub for a non-convertible binary."""
+    main = _derived_entry(
+        filepath,
+        _build_binary_stub(filepath, len(content)),
+        entry_kind="binary_stub",
+        generated_by="stub",
+        origin=origin,
     )
-    return UploadCompleteEvent(
+    return _PreparedUpload(
+        main=main,
         filename=filepath,
-        converted_filename=description_path,
         size_bytes=len(content),
-        chunk_count=chunk_count,
-        chunking_pipeline_used=chunking_used,
+        converted_filename=main.description_path,
         message="Binary file uploaded with searchable stub",
     )
 
 
-async def _upload_unconvertible_locked(
-    store: Casebase,
-    filepath: str,
-    content: bytes,
-    spec: PipelineSpec,
-    *,
-    origin: EntryOrigin,
-) -> UploadCompleteEvent:
+def _prepare_unconvertible(
+    filepath: str, content: bytes, *, origin: EntryOrigin
+) -> _PreparedUpload:
     """AUTO fallback when no converter fits the file.
 
-    Bytes that decode as UTF-8 are indexed verbatim as a plain-text document so
-    their content stays searchable; genuinely binary bytes get a metadata-only
-    stub. The caller has already written the original file to the workspace.
+    Bytes that decode as UTF-8 are prepared as a plain-text document so their
+    content stays searchable; genuinely binary bytes get a metadata-only stub.
+    The reserve step has already written the original to the workspace.
     """
     text = decode_text(content)
     if text is None:
-        return await _upload_binary_stub_locked(
-            store, filepath, content, spec, origin=origin, original_written=True
-        )
-    stem_path = stem_path_from_reference(filepath)
-    description_path = description_path_for_stem(stem_path)
-    chunk_count, chunking_used = await _write_markdown_projection(
-        store,
-        description_path,
+        return _prepare_binary_stub(filepath, content, origin=origin)
+
+    main = _derived_entry(
+        filepath,
         text,
-        spec,
-        entry_metadata=_build_entry_metadata(
-            stem_path=stem_path,
-            description_path=description_path,
-            original_path=filepath,
-            assets_dir=None,
-            entry_kind="convertible",
-            origin=origin,
-            generated_by="converter",
-        ),
+        entry_kind="convertible",
+        generated_by="converter",
+        origin=origin,
     )
-    return UploadCompleteEvent(
+    return _PreparedUpload(
+        main=main,
         filename=filepath,
-        converted_filename=description_path,
         size_bytes=len(content),
+        converted_filename=main.description_path,
         conversion_pipeline_used=ConversionPipeline.TEXT_CHEF.value,
-        chunk_count=chunk_count,
-        chunking_pipeline_used=chunking_used,
         message="Document uploaded as plain text",
     )
 
 
-async def _process_conversion_assets(
-    store: Casebase,
-    workspace_dir: Path,
+async def _prepare_conversion_assets(
     assets_dir: str,
     images: dict[str, ExtractedImage],
     contexts_by_ref: dict[str, list[str]],
     mode: AssetProcessingMode,
-    spec: PipelineSpec,
     llm: LlmConfig,
-) -> dict[str, str | None]:
-    """Persist a conversion's extracted images and return their ref remapping.
+) -> tuple[dict[str, str | None], list[_PreparedAsset], list[_PreparedEntry]]:
+    """Triage, deduplicate, and caption a conversion's extracted images.
 
-    Store-only assets (decorative, or ``STORE`` mode) are written verbatim and
-    keep their own reference. Described assets are grouped by
-    :func:`perceptual_key`: each group is captioned once from the joint context
-    of all its occurrences, persisted as a single representative entry, and
-    every occurrence's reference is rewritten to that representative — so an
-    image is captioned once and shared, never once per occurrence.
+    Lock-free: returns the markdown reference remapping plus the asset files
+    and caption entries to apply at commit time, without touching disk or SQL.
+    Store-only assets (decorative, or ``STORE`` mode) keep their own reference;
+    described assets are grouped by :func:`perceptual_key` so an image is
+    captioned once and every occurrence's reference is rewritten to the single
+    stored representative — never once per occurrence.
     """
 
     def child_path(relpath: str) -> str:
         return str((PurePosixPath(assets_dir) / relpath).as_posix())
 
     ref_mapping: dict[str, str | None] = {}
+    assets: list[_PreparedAsset] = []
     # Group described occurrences by perceptual identity so duplicates collapse
     # to one captioned entry. Images with no stable key (uniform or undecodable)
     # get a unique sentinel so each stays its own singleton group.
@@ -784,14 +906,9 @@ async def _process_conversion_assets(
         )
         if not describe:
             ref_mapping[relpath] = asset_ref_for(assets_dir, relpath)
-            _write_original_file(
-                workspace_dir,
-                child_path(relpath),
-                sanitize_image_bytes(
-                    extracted.data, guess_image_media_type(relpath) or ""
-                ),
-            )
+            assets.append(_PreparedAsset(child_path(relpath), extracted.data))
             continue
+
         key = perceptual_key(extracted.data)
         groups.setdefault(key if key is not None else object(), []).append(relpath)
 
@@ -800,41 +917,52 @@ async def _process_conversion_assets(
         for member in members:
             ref_mapping[member] = rep_ref
 
+    asset_entries: list[_PreparedEntry] = []
+
     async def _caption_group(members: list[str]) -> None:
         representative = members[0]
+        rep_path = child_path(representative)
+        media_type = guess_image_media_type(representative) or ""
         contexts: list[str] = []
         for member in members:
             contexts.extend(contexts_by_ref.get(member, []))
             if caption := images[member].caption:
                 contexts.append(f"Figure caption: {caption}")
-        await _persist_image_entry(
-            store,
-            workspace_dir,
-            child_path(representative),
-            images[representative].data,
-            guess_image_media_type(representative) or "",
-            contexts,
-            spec,
-            llm,
-            origin="extracted",
+        assets.append(_PreparedAsset(rep_path, images[representative].data))
+        asset_entries.append(
+            await _prepare_image_entry(
+                rep_path,
+                images[representative].data,
+                media_type,
+                contexts,
+                llm,
+                origin="extracted",
+            )
         )
 
     await asyncio.gather(*(_caption_group(members) for members in groups.values()))
-    return ref_mapping
+    return ref_mapping, assets, asset_entries
 
 
-async def _upload_convertible_locked(
-    store: Casebase,
+async def _prepare_convertible(
     filepath: str,
     content: bytes,
     spec: PipelineSpec,
     llm: LlmConfig,
     *,
     origin: EntryOrigin,
-) -> UploadCompleteEvent:
-    """Convert a binary, persist its markdown, and process extracted assets."""
-    workspace_dir = store.workspace_dir(settings.data_dir)
-    original_full_path = _write_original_file(workspace_dir, filepath, content)
+    ctx: ProgressReporter | None,
+) -> _PreparedUpload:
+    """Convert a binary and prepare its markdown plus extracted assets.
+
+    Runs the converter against a temp copy of the source, then prepares the
+    asset files and caption entries — all without the casebase lock and without
+    touching the live workspace entry, so a long conversion never blocks the
+    rest of the workspace and a failure mid-conversion leaves nothing behind.
+    """
+    if ctx is not None:
+        ctx.set_stage("Processing document")
+
     basename = PurePosixPath(filepath).name
     conversion_pipeline = spec.conversion.pipeline
 
@@ -850,9 +978,7 @@ async def _upload_convertible_locked(
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
     except (ImportError, ValueError) as exc:
         if conversion_pipeline == ConversionPipeline.AUTO:
-            return await _upload_unconvertible_locked(
-                store, filepath, content, spec, origin=origin
-            )
+            return _prepare_unconvertible(filepath, content, origin=origin)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     resolved_conversion = conversion_pipeline
@@ -860,13 +986,16 @@ async def _upload_convertible_locked(
         resolved_conversion = resolve_auto_pipeline(basename)
 
     try:
-        with logfire.span(
-            "convert_document",
-            filepath=filepath,
-            converter=converter.name,
-            pipeline=resolved_conversion.value,
-        ) as span:
-            result = await converter(original_full_path)
+        with (
+            logfire.span(
+                "convert_document",
+                filepath=filepath,
+                converter=converter.name,
+                pipeline=resolved_conversion.value,
+            ) as span,
+            _source_on_disk(filepath, content) as source_path,
+        ):
+            result = await converter(source_path)
             span.set_attribute("markdown_length", len(result.markdown))
             span.set_attribute("image_count", len(result.images))
     except Exception as exc:
@@ -880,66 +1009,59 @@ async def _upload_convertible_locked(
                 exc,
                 exc_info=exc,
             )
-            return await _upload_unconvertible_locked(
-                store, filepath, content, spec, origin=origin
-            )
+            return _prepare_unconvertible(filepath, content, origin=origin)
         raise HTTPException(
             status_code=500,
             detail=f"Conversion failed: {exc!s}",
         ) from exc
 
-    stem_path = stem_path_from_reference(filepath)
-    description_path = description_path_for_stem(stem_path)
-    assets_dir = assets_dir_for_stem(stem_path)
+    assets_dir = assets_dir_for_stem(stem_path_from_reference(filepath))
     markdown = result.markdown
 
     mode = spec.process_assets
+    assets: tuple[_PreparedAsset, ...] = ()
+    asset_entries: tuple[_PreparedEntry, ...] = ()
     if mode is AssetProcessingMode.IGNORE:
         markdown = _replace_image_references(
             markdown, {ref: None for ref in result.images}
         )
         has_assets = False
     else:
-        ref_mapping = await _process_conversion_assets(
-            store,
-            workspace_dir,
+        if ctx is not None and mode is AssetProcessingMode.DESCRIBE and result.images:
+            ctx.set_stage("Describing images")
+        ref_mapping, asset_list, entry_list = await _prepare_conversion_assets(
             assets_dir,
             result.images,
             image_context_windows(markdown),
             mode,
-            spec,
             llm,
         )
         markdown = _replace_image_references(markdown, ref_mapping)
         has_assets = bool(result.images)
+        assets = tuple(asset_list)
+        asset_entries = tuple(entry_list)
 
-    chunk_count, chunking_used = await _write_markdown_projection(
-        store,
-        description_path,
+    main = _derived_entry(
+        filepath,
         markdown,
-        spec,
-        entry_metadata=_build_entry_metadata(
-            stem_path=stem_path,
-            description_path=description_path,
-            original_path=filepath,
-            assets_dir=assets_dir if has_assets else None,
-            entry_kind="convertible",
-            origin=origin,
-            generated_by="converter",
-        ),
+        entry_kind="convertible",
+        generated_by="converter",
+        origin=origin,
+        assets_dir=assets_dir if has_assets else None,
     )
-    return UploadCompleteEvent(
+    return _PreparedUpload(
+        main=main,
         filename=filepath,
-        converted_filename=description_path,
         size_bytes=len(content),
+        converted_filename=main.description_path,
         conversion_pipeline_used=resolved_conversion.value,
-        chunk_count=chunk_count,
-        chunking_pipeline_used=chunking_used,
+        assets=assets,
+        asset_entries=asset_entries,
         message="Document uploaded and converted successfully",
     )
 
 
-async def _upload_locked(
+async def _prepare_upload(
     store: Casebase,
     filepath: str,
     content: bytes,
@@ -947,23 +1069,21 @@ async def _upload_locked(
     llm: LlmConfig,
     *,
     origin: EntryOrigin,
-) -> UploadCompleteEvent:
-    """Dispatch to the per-kind upload handler. Caller holds the lock."""
+    ctx: ProgressReporter | None,
+    clearing_assets: bool,
+) -> _PreparedUpload:
+    """Dispatch to the per-kind preparation. No lock held."""
     suffix = PurePosixPath(filepath).suffix.lower()
     if is_markdown_suffix(suffix):
-        return await _upload_markdown_locked(
-            store, filepath, content, spec, origin=origin
+        return _prepare_markdown(
+            store, filepath, content, origin=origin, clearing_assets=clearing_assets
         )
     if is_image_suffix(suffix):
-        return await _upload_image_locked(
-            store, filepath, content, spec, llm, origin=origin
-        )
+        return await _prepare_image(filepath, content, llm, origin=origin, ctx=ctx)
     if is_video_suffix(suffix):
-        return await _upload_video_locked(
-            store, filepath, content, spec, llm, origin=origin
-        )
-    return await _upload_convertible_locked(
-        store, filepath, content, spec, llm, origin=origin
+        return await _prepare_video(filepath, content, llm, origin=origin, ctx=ctx)
+    return await _prepare_convertible(
+        filepath, content, spec, llm, origin=origin, ctx=ctx
     )
 
 
@@ -1047,14 +1167,16 @@ async def _rollback_on_failure(
         raise
 
 
-async def _ensure_upload_slot_locked(
+def _ensure_upload_slot_locked(
     store: Casebase, reference: str, *, overwrite: bool
 ) -> None:
-    """Free up an upload slot for *reference*, raising 409 if occupied.
+    """Validate that *reference*'s slot can be written, raising 409 if blocked.
 
-    Directory collisions (the target itself or a parent component occupied by
-    the wrong kind of node) are rejected up front so they surface as a clear
-    409 instead of an ``OSError`` from the write.
+    Rejects a destination whose parent chain is a file, a target occupied by a
+    directory, and a non-overwrite write onto an existing entry.  It performs no
+    deletion: an overwrite's stale parts are superseded atomically at commit
+    (see :func:`_commit_prepared`), so a failed or cancelled conversion can
+    never destroy the prior entry.
     """
     workspace_dir = store.workspace_dir(settings.data_dir)
     _check_destination_parents(workspace_dir, reference)
@@ -1064,13 +1186,8 @@ async def _ensure_upload_slot_locked(
             raise HTTPException(
                 status_code=409, detail=f"'{rel}' is an existing directory"
             )
-    if not entry_exists(workspace_dir, reference):
-        return
-    if not overwrite:
+    if entry_exists(workspace_dir, reference) and not overwrite:
         raise HTTPException(status_code=409, detail="Document already exists")
-    await _delete_single_locked(
-        store, description_path_for_stem(stem_path_from_reference(reference))
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1176,6 +1293,130 @@ def _enforce_file_size(content: bytes) -> None:
         )
 
 
+def _reject_if_inflight(store: Casebase, reference: str) -> None:
+    """Reject a mutation whose stem another phased upload already has in flight.
+
+    A phased upload marks its stem the moment it claims the entry, so a second
+    op on that stem 409s instead of racing the pending commit.  A markdown
+    upload writes nothing to disk during reserve, so the in-flight set is the
+    only thing that closes the window for it.
+    """
+    if stem_path_from_reference(reference) in inflight_stems(store):
+        raise HTTPException(
+            status_code=409, detail="Document is already being processed"
+        )
+
+
+def _reject_if_scope_inflight(store: Casebase, prefix: str | None) -> None:
+    """Reject a directory- or store-wide mutation while work inside it runs.
+
+    *prefix* is the directory whose contents the op removes or moves, or
+    ``None`` for the whole store (delete-all).  A phased upload commits lock-free
+    between its reserve and commit, and a bulk import commits its files one at a
+    time; tearing down an enclosing directory in either window would strip files
+    out from under a pending commit (orphaning an entry, or resurrecting one
+    after a wipe).  The 409 defers the op until the in-flight work settles.
+    """
+    if _inflight_store_claims.get(store.store_key, 0) > 0:
+        raise HTTPException(
+            status_code=409, detail="A document in this scope is still being processed"
+        )
+
+    stems = inflight_stems(store)
+    blocked = (
+        stems if prefix is None else {s for s in stems if s.startswith(f"{prefix}/")}
+    )
+    if blocked:
+        raise HTTPException(
+            status_code=409, detail="A document in this scope is still being processed"
+        )
+
+
+@asynccontextmanager
+async def _locked_for(
+    store: Casebase,
+    *entries: str,
+    scope: str | None = None,
+    whole_store: bool = False,
+) -> AsyncIterator[None]:
+    """Acquire the casebase lock for a mutation, rejecting in-flight conflicts.
+
+    Routing every mutation's lock acquisition through here makes the in-flight
+    check impossible to forget: pass the entry references a single-document op
+    touches, ``scope`` for a directory subtree it removes or moves, or
+    ``whole_store`` for a store-wide wipe.  A conflicting phased upload (or a
+    bulk import claiming the store) is rejected with 409 so the op can never
+    strip files out from under a pending commit.
+    """
+    async with store_lock(store):
+        for entry in entries:
+            _reject_if_inflight(store, entry)
+        if whole_store:
+            _reject_if_scope_inflight(store, None)
+        elif scope is not None:
+            _reject_if_scope_inflight(store, scope)
+
+        yield
+
+
+type _Reserve = Callable[[], Awaitable[_Reserved]]
+
+
+async def _phased_upload(
+    store: Casebase,
+    spec: PipelineSpec,
+    llm: LlmConfig,
+    *,
+    stem_reference: str,
+    reserve: _Reserve,
+    ctx: ProgressReporter | None,
+) -> UploadCompleteEvent:
+    """Run an upload's reserve → prepare → commit phases.
+
+    The lock is held only for the brief *reserve* (validate + capture) and the
+    final *commit* (apply); the slow *prepare* (conversion, captioning) runs
+    lock-free in between against a temp copy of the source, so it never touches
+    the live workspace.  Because nothing is written until commit, a failure or
+    cancellation during prepare leaves a pre-existing entry (``preserve``)
+    completely intact; only a genuinely new entry is rolled back by deleting it.
+    *stem_reference* is the stem this upload owns for its whole lifecycle.
+    """
+    claimed = False
+    reserved: _Reserved | None = None
+    try:
+        async with _locked_for(store, stem_reference):
+            reserved = await reserve()
+            _add_inflight(store, stem_reference)
+            claimed = True
+
+        prepared = await _prepare_upload(
+            store,
+            reserved.reference,
+            reserved.content,
+            spec,
+            llm,
+            origin=reserved.origin,
+            ctx=ctx,
+            clearing_assets=reserved.preserve,
+        )
+        async with store_lock(store):
+            return await shield_to_completion(
+                _commit_prepared(store, prepared, spec, reserved)
+            )
+    except BaseException:
+        # A new entry's partial artifacts are rolled back; a pre-existing entry
+        # is left untouched (prepare never wrote into the workspace).
+        if reserved is not None and not reserved.preserve:
+            async with store_lock(store):
+                await shield_to_completion(
+                    _safe_delete_locked(store, reserved.reference)
+                )
+        raise
+    finally:
+        if claimed:
+            _discard_inflight(store, stem_reference)
+
+
 async def upload(
     store: Casebase,
     filepath: str,
@@ -1185,24 +1426,47 @@ async def upload(
     llm: LlmConfig | None = None,
     origin: EntryOrigin = "upload",
     overwrite: bool = False,
+    ctx: ProgressReporter | None = None,
 ) -> UploadCompleteEvent:
-    """Upload a document to *store*, sanitising and chunking as needed.
+    """Upload a document to *store*, converting and chunking as needed.
 
-    The casebase lock is held for the entire operation.  On cancellation
-    or failure, partial artifacts are rolled back via :func:`_safe_delete_locked`.
+    See :func:`_phased_upload` for the reserve/prepare/commit lifecycle; here
+    reserve only validates the slot and captures the source, and an overwrite
+    supersedes the prior entry atomically at commit, so a failed conversion
+    never destroys it.
     """
     if not filepath:
         raise HTTPException(status_code=400, detail="Document path required")
     _enforce_file_size(content)
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
-    async with store_lock(store):
-        await _ensure_upload_slot_locked(store, filepath, overwrite=overwrite)
-        with _track_inflight(store, filepath):
-            async with _rollback_on_failure(store, (filepath,)):
-                return await _upload_locked(
-                    store, filepath, content, spec, llm, origin=origin
-                )
+    is_markdown = is_markdown_suffix(PurePosixPath(filepath).suffix.lower())
+
+    async def reserve() -> _Reserved:
+        _ensure_upload_slot_locked(store, filepath, overwrite=overwrite)
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        replacing = overwrite and entry_exists(workspace_dir, filepath)
+        supersede = None
+        if replacing:
+            metadata = await db_documents.get_document(store, filepath)
+            supersede = (
+                metadata.original_path
+                if metadata
+                else resolve_entry_paths(workspace_dir, filepath).original_path
+            )
+
+        return _Reserved(
+            reference=filepath,
+            content=content,
+            origin=origin,
+            write_original=not is_markdown,
+            preserve=replacing,
+            supersede_original=supersede,
+        )
+
+    return await _phased_upload(
+        store, spec, llm, stem_reference=filepath, reserve=reserve, ctx=ctx
+    )
 
 
 async def replace_original(
@@ -1213,15 +1477,20 @@ async def replace_original(
     new_filename: str | None,
     spec: PipelineSpec | None = None,
     llm: LlmConfig | None = None,
+    ctx: ProgressReporter | None = None,
 ) -> UploadCompleteEvent:
     """Replace the original file backing a logical entry and reconvert.
 
-    The new original keeps the entry's stem; only the suffix may change.
+    The new original keeps the entry's stem; only the suffix may change.  See
+    :func:`_phased_upload` for the lifecycle; the swap (new original written,
+    stale assets cleared, old original unlinked) happens atomically at commit,
+    so a failed conversion or a cancel leaves the prior entry intact.
     """
     _enforce_file_size(new_content)
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
-    async with store_lock(store):
+
+    async def reserve() -> _Reserved:
         metadata = await db_documents.get_document(store, safe)
         workspace_dir = store.workspace_dir(settings.data_dir)
         existing_original_rel = (
@@ -1234,31 +1503,25 @@ async def replace_original(
                 status_code=404,
                 detail=f"No original file found for '{safe}'",
             )
-        existing_original_path = workspace_dir / existing_original_rel
 
+        existing_suffix = PurePosixPath(existing_original_rel).suffix
         new_suffix = (
-            PurePosixPath(new_filename).suffix
-            if new_filename
-            else existing_original_path.suffix
-        ) or existing_original_path.suffix
+            PurePosixPath(new_filename).suffix if new_filename else existing_suffix
+        ) or existing_suffix
         new_original_relpath = f"{stem_path_from_reference(safe)}{new_suffix.lower()}"
 
-        if existing_original_rel != new_original_relpath:
-            existing_original_path.unlink(missing_ok=True)
+        return _Reserved(
+            reference=new_original_relpath,
+            content=new_content,
+            origin=metadata.origin if metadata else "upload",
+            write_original=True,
+            preserve=True,
+            supersede_original=existing_original_rel,
+        )
 
-        origin = metadata.origin if metadata else "upload"
-        await _clear_assets_subtree(
-            store,
-            metadata.stem_path if metadata else stem_path_from_reference(safe),
-        )
-        return await _upload_locked(
-            store,
-            new_original_relpath,
-            new_content,
-            spec,
-            llm,
-            origin=origin,
-        )
+    return await _phased_upload(
+        store, spec, llm, stem_reference=safe, reserve=reserve, ctx=ctx
+    )
 
 
 async def reconvert(
@@ -1267,39 +1530,43 @@ async def reconvert(
     *,
     spec: PipelineSpec | None = None,
     llm: LlmConfig | None = None,
+    ctx: ProgressReporter | None = None,
 ) -> UploadCompleteEvent:
     """Re-run conversion and chunking for an entry's existing original.
 
-    The assets-clear runs inside :func:`_rollback_on_failure` so a
-    cancel mid-clear (or mid-upload) drops the entry wholesale via
-    :func:`_safe_delete_locked`; the user can retry by re-uploading.
+    See :func:`_phased_upload` for the lifecycle; reserve only reads the
+    existing original, and the stale assets are cleared atomically at commit.
+    A cancel or a failed conversion therefore leaves the entry exactly as it
+    was, so the user can simply retry.
     """
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
-    async with store_lock(store):
+
+    async def reserve() -> _Reserved:
         metadata = await db_documents.get_document(store, safe)
         if not metadata or not metadata.original_path:
             raise HTTPException(
                 status_code=404,
                 detail=f"No original file found for '{safe}'",
             )
-        workspace_dir = store.workspace_dir(settings.data_dir)
-        original_path = workspace_dir / metadata.original_path
-        if not original_path.exists():
+        original_full = store.workspace_dir(settings.data_dir) / metadata.original_path
+        if not original_full.exists():
             raise HTTPException(
                 status_code=404,
                 detail=f"No original file found for '{safe}'",
             )
-        async with _rollback_on_failure(store, (safe,)):
-            await _clear_assets_subtree(store, metadata.stem_path)
-            return await _upload_locked(
-                store,
-                metadata.original_path,
-                original_path.read_bytes(),
-                spec,
-                llm,
-                origin=metadata.origin,
-            )
+
+        return _Reserved(
+            reference=metadata.original_path,
+            content=original_full.read_bytes(),
+            origin=metadata.origin,
+            write_original=False,
+            preserve=True,
+        )
+
+    return await _phased_upload(
+        store, spec, llm, stem_reference=safe, reserve=reserve, ctx=ctx
+    )
 
 
 async def rechunk(
@@ -1315,7 +1582,7 @@ async def rechunk(
     tear the workspace markdown out of sync with SQL.
     """
     spec = spec or PipelineSpec()
-    async with store_lock(store):
+    async with _locked_for(store, safe):
         file_path = store.workspace_dir(settings.data_dir) / safe
         text = _read_text_file(file_path)
         return await shield_to_completion(
@@ -1392,7 +1659,7 @@ async def edit_document_text(
 ) -> str:
     """Edit a workspace text document through the canonical mutation gateway."""
     safe = sanitize_document_path(safe)
-    async with store_lock(store):
+    async with _locked_for(store, safe):
         workspace_dir = store.workspace_dir(settings.data_dir)
         file_path = workspace_dir / safe
         content = _read_text_file(file_path)
@@ -1432,7 +1699,7 @@ async def write_document_text(
 ) -> str:
     """Write a workspace text document through the canonical mutation gateway."""
     safe = sanitize_document_path(safe)
-    async with store_lock(store):
+    async with _locked_for(store, safe):
         workspace_dir = store.workspace_dir(settings.data_dir)
         file_path = workspace_dir / safe
         current = file_path.read_text(encoding="utf-8") if file_path.is_file() else None
@@ -1440,6 +1707,13 @@ async def write_document_text(
         if mode == "replace":
             new_content = content
             message = f"Wrote {len(content)} characters to '{safe}'."
+        elif mode == "create":
+            if current is not None:
+                raise HTTPException(
+                    status_code=409, detail=f"'{safe}' already exists"
+                )
+            new_content = content
+            message = f"Created '{safe}' with {len(content)} characters."
         elif current is None:
             raise HTTPException(
                 status_code=404,
@@ -1466,7 +1740,7 @@ async def delete_document(store: Casebase, safe: str) -> None:
     (:func:`shield_to_completion`) so it cannot leave files without their rows
     or rows without their files.
     """
-    async with store_lock(store):
+    async with _locked_for(store, safe):
         await shield_to_completion(_delete_single_locked(store, safe))
 
 
@@ -1574,7 +1848,7 @@ async def move_document(store: Casebase, src: str, dst: str) -> MoveDocumentResp
     (:func:`shield_to_completion`) so a mid-move cancellation cannot leave the
     renamed files pointing at stale SQL rows.
     """
-    async with store_lock(store):
+    async with _locked_for(store, src):
         return await shield_to_completion(_move_document_locked(store, src, dst))
 
 
@@ -1858,7 +2132,7 @@ async def move_directory(store: Casebase, src: str, dst: str) -> MoveDirectoryRe
     (:func:`shield_to_completion`) so the directory and its rows cannot drift
     apart.
     """
-    async with store_lock(store):
+    async with _locked_for(store, scope=src):
         return await shield_to_completion(_move_directory_locked(store, src, dst))
 
 
@@ -1890,7 +2164,7 @@ async def delete_directory(store: Casebase, path: str) -> int:
     cancel (:func:`shield_to_completion`) so the directory cannot vanish while
     its rows linger.
     """
-    async with store_lock(store):
+    async with _locked_for(store, scope=path):
         return await shield_to_completion(_delete_directory_locked(store, path))
 
 
@@ -1899,7 +2173,7 @@ async def delete_all(store: Casebase) -> None:
 
     Chunks cascade-delete with the documents.
     """
-    async with store_lock(store):
+    async with _locked_for(store, whole_store=True):
         await db_documents.delete_all(store)
         workspace_path = store.workspace_path(settings.data_dir)
         if workspace_path.exists():
@@ -1987,98 +2261,97 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
 
 async def process_collection(
     store: Casebase,
-    raw: bytes,
+    archive_path: Path,
     spec: PipelineSpec,
     llm: LlmConfig,
 ) -> AsyncGenerator[CollectionProgressEvent | CollectionCompleteEvent]:
     """Process a ZIP collection and yield progress events for each file.
 
-    The casebase lock is held for the entire collection so a concurrent
-    upload elsewhere cannot interleave.  Each per-file upload indexes
-    its own chunks via :func:`hivegent.chunks.chunk_and_index_document`,
-    and is wrapped in its own :func:`_rollback_on_failure` so only the
-    in-flight file is rolled back on cancel — successfully-uploaded
-    files survive a client disconnect mid-collection.
+    Each file flows through the phased :func:`upload`, which holds the casebase
+    lock only for its brief reserve and commit — so the rest of the workspace
+    stays responsive while a large collection processes, and a cancel mid-run
+    rolls back only the in-flight file while earlier files survive.  The whole
+    import holds a store claim (:func:`_store_claim`) so a concurrent store-wide
+    delete or directory move cannot interleave between files and strip entries
+    the collection already committed.
     """
     failed: list[str] = []
     markdown_count = 0
     converted_count = 0
     current = 0
 
-    async with store_lock(store):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            extract_root = Path(tmp_dir)
+    with _store_claim(store), tempfile.TemporaryDirectory() as tmp_dir:
+        extract_root = Path(tmp_dir)
 
-            try:
-                with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-                    _validate_zip_entries(archive)
-                    archive.extractall(extract_root)
-            except zipfile.BadZipFile as exc:
-                raise HTTPException(status_code=400, detail="Invalid ZIP file") from exc
-            except zlib.error as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to decompress ZIP: {exc!s}",
-                ) from exc
+        try:
+            with zipfile.ZipFile(archive_path) as archive:
+                _validate_zip_entries(archive)
+                archive.extractall(extract_root)
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(status_code=400, detail="Invalid ZIP file") from exc
+        except zlib.error as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to decompress ZIP: {exc!s}",
+            ) from exc
 
-            top_items = list(extract_root.iterdir())
-            if len(top_items) == 1 and top_items[0].is_dir():
-                extract_root = top_items[0]
+        top_items = list(extract_root.iterdir())
+        if len(top_items) == 1 and top_items[0].is_dir():
+            extract_root = top_items[0]
 
-            collection_files = sorted(
-                str(path.relative_to(extract_root).as_posix())
-                for path in extract_root.rglob("*")
-                if path.is_file()
-            )
-            workspace_dir = store.workspace_dir(settings.data_dir)
-            preprocessed_markdown: dict[str, bytes] = {}
-            collection_stems: set[str] = set()
-            companion_originals: set[str] = set()
+        collection_files = sorted(
+            str(path.relative_to(extract_root).as_posix())
+            for path in extract_root.rglob("*")
+            if path.is_file()
+        )
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        preprocessed_markdown: dict[str, bytes] = {}
+        collection_stems: set[str] = set()
+        companion_originals: set[str] = set()
 
-            for relative_path in collection_files:
-                safe = sanitize_document_path(relative_path)
-                suffix = PurePosixPath(safe).suffix.lower()
-                if suffix == DOCUMENT_EXTENSION:
-                    try:
-                        text = (extract_root / relative_path).read_text(
-                            encoding="utf-8"
-                        )
-                    except Exception as exc:
-                        logger.warning("Failed to read %s: %s", relative_path, exc)
-                        failed.append(relative_path)
-                        continue
-                    normalized_md = preprocess_markdown(
-                        text, safe, frozenset(collection_files)
-                    )
-                    preprocessed_markdown[safe] = normalized_md.content.encode("utf-8")
-
-                stem = stem_path_from_reference(safe)
-                if entry_exists(workspace_dir, safe):
+        for relative_path in collection_files:
+            safe = sanitize_document_path(relative_path)
+            suffix = PurePosixPath(safe).suffix.lower()
+            if suffix == DOCUMENT_EXTENSION:
+                try:
+                    text = (extract_root / relative_path).read_text(encoding="utf-8")
+                except Exception as exc:
+                    logger.warning("Failed to read %s: %s", relative_path, exc)
                     failed.append(relative_path)
                     continue
-                if stem in collection_stems:
-                    if suffix != DOCUMENT_EXTENSION:
-                        companion_originals.add(relative_path)
-                    else:
-                        failed.append(relative_path)
-                    continue
-                collection_stems.add(stem)
+                normalized_md = preprocess_markdown(
+                    text, safe, frozenset(collection_files)
+                )
+                preprocessed_markdown[safe] = normalized_md.content.encode("utf-8")
 
-            total = len(collection_files)
-            for relative_path in collection_files:
-                safe = sanitize_document_path(relative_path)
-                if relative_path in failed:
-                    current += 1
-                    yield CollectionProgressEvent(
-                        file=relative_path,
-                        current=current,
-                        total=total,
-                        status="failed",
-                    )
-                    continue
+            stem = stem_path_from_reference(safe)
+            if entry_exists(workspace_dir, safe):
+                failed.append(relative_path)
+                continue
+            if stem in collection_stems:
+                if suffix != DOCUMENT_EXTENSION:
+                    companion_originals.add(relative_path)
+                else:
+                    failed.append(relative_path)
+                continue
+            collection_stems.add(stem)
 
-                if relative_path in companion_originals:
-                    try:
+        total = len(collection_files)
+        for relative_path in collection_files:
+            safe = sanitize_document_path(relative_path)
+            if relative_path in failed:
+                current += 1
+                yield CollectionProgressEvent(
+                    file=relative_path,
+                    current=current,
+                    total=total,
+                    status="failed",
+                )
+                continue
+
+            if relative_path in companion_originals:
+                try:
+                    async with store_lock(store):
                         async with _rollback_on_failure(store, (safe,)):
                             original_bytes = (extract_root / relative_path).read_bytes()
                             original_path = workspace_dir / safe
@@ -2089,50 +2362,15 @@ async def process_collection(
                             # the just-written original into its SQL row so delete,
                             # move, and reconvert see it without waiting for a boot.
                             await _sync_entry_from_disk_locked(store, safe)
-                        status = "ok"
-                    except Exception as exc:
-                        logger.warning(
-                            "Failed to write original %s: %s",
-                            relative_path,
-                            exc,
-                        )
-                        failed.append(relative_path)
-                        status = "failed"
-                    current += 1
-                    yield CollectionProgressEvent(
-                        file=relative_path,
-                        current=current,
-                        total=total,
-                        status=status,
-                    )
-                    continue
-
-                try:
-                    if safe in preprocessed_markdown:
-                        content_bytes = preprocessed_markdown[safe]
-                        markdown_count += 1
-                    else:
-                        content_bytes = (extract_root / relative_path).read_bytes()
-                        converted_count += 1
-                    async with _rollback_on_failure(store, (safe,)):
-                        await _upload_locked(
-                            store,
-                            safe,
-                            content_bytes,
-                            spec,
-                            llm,
-                            origin="collection",
-                        )
                     status = "ok"
                 except Exception as exc:
-                    logger.warning("Failed to process %s: %s", relative_path, exc)
-                    if safe in preprocessed_markdown:
-                        markdown_count -= 1
-                    else:
-                        converted_count -= 1
+                    logger.warning(
+                        "Failed to write original %s: %s",
+                        relative_path,
+                        exc,
+                    )
                     failed.append(relative_path)
                     status = "failed"
-
                 current += 1
                 yield CollectionProgressEvent(
                     file=relative_path,
@@ -2140,6 +2378,33 @@ async def process_collection(
                     total=total,
                     status=status,
                 )
+                continue
+
+            try:
+                if safe in preprocessed_markdown:
+                    content_bytes = preprocessed_markdown[safe]
+                    markdown_count += 1
+                else:
+                    content_bytes = (extract_root / relative_path).read_bytes()
+                    converted_count += 1
+                await upload(store, safe, content_bytes, spec=spec, llm=llm, origin="collection")
+                status = "ok"
+            except Exception as exc:
+                logger.warning("Failed to process %s: %s", relative_path, exc)
+                if safe in preprocessed_markdown:
+                    markdown_count -= 1
+                else:
+                    converted_count -= 1
+                failed.append(relative_path)
+                status = "failed"
+
+            current += 1
+            yield CollectionProgressEvent(
+                file=relative_path,
+                current=current,
+                total=total,
+                status=status,
+            )
 
     total_ok = markdown_count + converted_count
     yield CollectionCompleteEvent(

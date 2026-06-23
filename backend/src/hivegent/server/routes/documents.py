@@ -12,39 +12,37 @@ group membership (reads) or write access.
 import asyncio
 import logging
 import mimetypes
-from collections.abc import AsyncIterable
+import os
+import tempfile
+from collections.abc import Awaitable, Callable
+from enum import StrEnum
+from pathlib import Path, PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
-from fastapi.sse import EventSourceResponse
 from starlette.responses import FileResponse, Response
 
 from ... import workspace
 from ...auth import User, get_current_user
 from ...chunkers.base import DocumentMetadata
+from ...concurrency import shield_to_completion
+from ...config import settings
 from ...db.documents import get_document
 from ...store import Casebase
+from ..jobs import JobContext, JobView, JobWork, manager
 from ...types import (
     AssetEntry,
     AssetListResponse,
     BulkDeleteDocumentsResponse,
-    BulkOperationCompleteEvent,
-    BulkOperationProgressEvent,
     CollectionCompleteEvent,
     CollectionProgressEvent,
-    CollectionUploadResponse,
     DeleteDocumentResponse,
     GenerateAssetDescriptionRequest,
     LlmConfig,
     MoveDocumentRequest,
     MoveDocumentResponse,
-    OperationErrorEvent,
-    OperationStageEvent,
     PipelineSpec,
-    RechunkCompleteEvent,
     UpdateAssetDescriptionRequest,
-    UploadCompleteEvent,
-    UploadDocumentResponse,
     WriteDocumentRequest,
     WriteDocumentResponse,
 )
@@ -61,17 +59,13 @@ from ..models import (
     ReconvertRequest,
 )
 from ..operations import (
-    PreparedCollection,
     attachment_disposition,
+    enforce_upload_size,
     find_original,
     get_document_response,
     list_assets,
-    prepare_collection_upload,
-    process_bulk_operation,
-    read_collection_zip,
-    read_upload_file,
-    reconvert_single_stream,
-    upload_file_stream,
+    run_bulk_document_job,
+    spool_dir,
     validate_collection_upload,
 )
 
@@ -79,6 +73,129 @@ __all__ = ["router"]
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Read buffer for streaming an upload to its spool file.
+_SPOOL_CHUNK_SIZE = 1024 * 1024
+
+
+async def _spool_payload(file: UploadFile, *, limit: int, label: str) -> Path:
+    """Persist an upload to a temp file so a queued job needn't pin it in RAM.
+
+    Starlette has already spooled the upload to ``file.file`` (rolling it to
+    disk past its in-memory threshold); this copies it to a file we own so it
+    survives past the request, which closes Starlette's temp file.  The job
+    reads it back when it runs and its ``on_settled`` finalizer unlinks it, so a
+    job waiting behind the concurrency limit holds only a path — not the whole
+    payload — which bounds memory when many uploads are enqueued.  Spool files
+    live in a managed directory swept at startup (:func:`cleanup_spool_dir`), so
+    a restart that cuts a job short cannot leak them.
+    """
+    enforce_upload_size(file, limit=limit, label=label)
+
+    def _write() -> Path:
+        fd, name = tempfile.mkstemp(prefix="upload-", dir=spool_dir())
+        written = 0
+        try:
+            file.file.seek(0)
+            with os.fdopen(fd, "wb") as handle:
+                # Bound the copy as it streams so an upload whose parsed size was
+                # absent (``enforce_upload_size`` could not pre-reject it) still
+                # cannot spool an unbounded payload to disk.
+                while chunk := file.file.read(_SPOOL_CHUNK_SIZE):
+                    written += len(chunk)
+                    if written > limit:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{label} too large. Maximum size: {limit} bytes",
+                        )
+                    handle.write(chunk)
+        except BaseException:
+            Path(name).unlink(missing_ok=True)
+            raise
+
+        return Path(name)
+
+    return await asyncio.to_thread(_write)
+
+
+class DocumentJobKind(StrEnum):
+    """Kinds of document background jobs — the closed set the routes submit.
+
+    Every value is prefixed ``document.``: the client keys its scope refresh on
+    that prefix, so this enum is the single source of truth for the contract and
+    keeps the ``kind`` strings out of the route bodies.
+    """
+
+    UPLOAD = "document.upload"
+    REPLACE_ORIGINAL = "document.replace_original"
+    COLLECTION = "document.collection"
+    RECONVERT = "document.reconvert"
+    RECHUNK = "document.rechunk"
+    RECHUNK_BULK = "document.rechunk_bulk"
+    RECONVERT_BULK = "document.reconvert_bulk"
+    MOVE_BULK = "document.move_bulk"
+    DELETE_BULK = "document.delete_bulk"
+
+
+def _plural(count: int, noun: str) -> str:
+    """Render ``count`` with a naively pluralised ``noun`` for a job title."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def _submit_document_job(
+    *,
+    user: User,
+    store: Casebase,
+    safe: str,
+    kind: DocumentJobKind,
+    work: JobWork,
+    on_settled: Callable[[], None] | None = None,
+) -> JobView:
+    """Submit a single-document job, deriving the standard title/owner/scope.
+
+    The title is the document's filename and the scope its workspace, so the
+    client attributes the job and refreshes the right view when it settles.
+    """
+    return manager.submit(
+        kind=kind,
+        title=PurePosixPath(safe).name,
+        owner=user.id,
+        scope=store.scope.prefix,
+        work=work,
+        on_settled=on_settled,
+    )
+
+
+def _bulk_scope(user: User, paths: list[str]) -> str | None:
+    """Resolve the common scope of a bulk selection for job attribution.
+
+    A selection always comes from one scope's view, so the first entry names it
+    and resolving it doubles as an early access check; an empty list has no scope.
+    """
+    if not paths:
+        return None
+    store, _ = resolve_workspace_path(user, paths[0], write=True)
+    return store.scope.prefix
+
+
+def _submit_bulk_job(
+    *,
+    user: User,
+    kind: DocumentJobKind,
+    title: str,
+    files: list[str],
+    process_one: Callable[[str], Awaitable[None]],
+    verb: str,
+) -> JobView:
+    """Submit a bulk per-file mutation as a single background job."""
+    scope = _bulk_scope(user, files)
+
+    async def work(ctx: JobContext) -> None:
+        await run_bulk_document_job(files, process_one, verb=verb, ctx=ctx)
+
+    return manager.submit(
+        kind=kind, title=title, owner=user.id, scope=scope, work=work
+    )
 
 
 @router.get("/documents/original/{filepath:path}")
@@ -104,46 +221,34 @@ async def replace_original(
     user: Annotated[User, Depends(get_current_user)],
     pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
-) -> UploadDocumentResponse:
-    """Replace the original binary file and reconvert the document."""
+) -> JobView:
+    """Replace the original binary file and reconvert the document as a job.
+
+    Like :func:`upload`, the bytes are spooled and the reconversion runs off
+    the request, observable and cancellable through the ``/jobs`` endpoints.
+    """
     store, safe = resolve_workspace_path(user, filepath, write=True)
-    content = await read_upload_file(file)
     spec = parse_pipeline_spec(pipeline_spec)
     llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
-    return await workspace.replace_original(
-        store,
-        safe,
-        content,
-        new_filename=file.filename,
-        spec=spec,
-        llm=llm,
+    new_filename = file.filename
+    spool = await _spool_payload(
+        file, limit=settings.limits.max_file_size_bytes, label="File"
     )
 
+    async def work(ctx: JobContext) -> None:
+        content = await asyncio.to_thread(spool.read_bytes)
+        await workspace.replace_original(
+            store, safe, content, new_filename=new_filename, spec=spec, llm=llm, ctx=ctx
+        )
 
-@router.put("/documents/stream/{filepath:path}", response_class=EventSourceResponse)
-async def upload_document_stream(
-    filepath: str,
-    file: UploadFile,
-    user: Annotated[User, Depends(get_current_user)],
-    pipeline_spec: str = Form(default="{}"),
-    llm_config: str = Form(default="{}"),
-    overwrite: bool = Form(default=False),
-) -> AsyncIterable[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent]:
-    """Upload or replace a document with streaming progress events."""
-    store, safe = resolve_workspace_path(user, filepath, write=True)
-    spec = parse_pipeline_spec(pipeline_spec)
-    llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
-
-    content = await read_upload_file(file)
-    async for event in upload_file_stream(
+    return _submit_document_job(
+        user=user,
         store=store,
-        filepath=safe,
-        content=content,
-        spec=spec,
-        llm_config=llm,
-        overwrite=overwrite,
-    ):
-        yield event
+        safe=safe,
+        kind=DocumentJobKind.REPLACE_ORIGINAL,
+        work=work,
+        on_settled=lambda: spool.unlink(missing_ok=True),
+    )
 
 
 @router.put("/documents/{filepath:path}")
@@ -154,60 +259,35 @@ async def upload_document(
     pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
     overwrite: bool = Form(default=False),
-) -> UploadDocumentResponse:
-    """Upload or replace a document."""
+) -> JobView:
+    """Accept a document upload and process it as a background job.
+
+    Returns the job's initial snapshot as soon as the bytes are received;
+    conversion and indexing then run off the request, observable and
+    cancellable through the ``/jobs`` endpoints, so the UI stays usable and
+    closing the tab no longer aborts the work.
+    """
     store, safe = resolve_workspace_path(user, filepath, write=True)
     spec = parse_pipeline_spec(pipeline_spec)
     llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
-
-    content = await read_upload_file(file)
-    return await workspace.upload(
-        store,
-        safe,
-        content,
-        spec=spec,
-        llm=llm,
-        overwrite=overwrite,
+    spool = await _spool_payload(
+        file, limit=settings.limits.max_file_size_bytes, label="File"
     )
 
-
-@router.post(
-    "/documents/reconvert/stream/{filepath:path}", response_class=EventSourceResponse
-)
-async def reconvert_document_stream(
-    filepath: str,
-    request: ReconvertRequest,
-    user: Annotated[User, Depends(get_current_user)],
-) -> AsyncIterable[OperationStageEvent | UploadCompleteEvent | OperationErrorEvent]:
-    """Re-convert a document with streaming progress events."""
-    store, safe = resolve_workspace_path(user, filepath, write=True)
-    resolved = await prepare_llm_config(request.llm)
-    async for event in reconvert_single_stream(store, safe, request.pipeline, resolved):
-        yield event
-
-
-@router.post(
-    "/documents/rechunk/stream/{filepath:path}", response_class=EventSourceResponse
-)
-async def rechunk_document_stream(
-    filepath: str,
-    request: PipelineSpec,
-    user: Annotated[User, Depends(get_current_user)],
-) -> AsyncIterable[OperationStageEvent | RechunkCompleteEvent | OperationErrorEvent]:
-    """Re-chunk a document with streaming progress events."""
-    store, safe = resolve_workspace_path(user, filepath, write=True)
-    yield OperationStageEvent(stage="Chunking document")
-    try:
-        result = await workspace.rechunk(store, safe, spec=request)
-        yield RechunkCompleteEvent(
-            pipeline=result.pipeline,
-            chunk_count=len(result.chunks),
+    async def work(ctx: JobContext) -> None:
+        content = await asyncio.to_thread(spool.read_bytes)
+        await workspace.upload(
+            store, safe, content, spec=spec, llm=llm, overwrite=overwrite, ctx=ctx
         )
-    except HTTPException as exc:
-        yield OperationErrorEvent(detail=str(exc.detail))
-    except Exception:
-        logger.exception("Chunking failed for %s", safe)
-        yield OperationErrorEvent(detail="Chunking failed")
+
+    return _submit_document_job(
+        user=user,
+        store=store,
+        safe=safe,
+        kind=DocumentJobKind.UPLOAD,
+        work=work,
+        on_settled=lambda: spool.unlink(missing_ok=True),
+    )
 
 
 @router.post("/documents/collections/{scope}")
@@ -217,35 +297,35 @@ async def upload_collection(
     user: Annotated[User, Depends(get_current_user)],
     pipeline_spec: str = Form(default="{}"),
     llm_config: str = Form(default="{}"),
-) -> CollectionUploadResponse:
-    """Upload a markdown collection as a ZIP archive."""
+) -> JobView:
+    """Accept a ZIP collection and process it as a background job.
+
+    Each file flows through the phased upload, so the job reports per-file
+    progress and the workspace stays usable while a large archive processes.
+    """
     spec, resolved = await validate_collection_upload(pipeline_spec, llm_config)
     store, _ = resolve_workspace_path(user, scope, write=True)
-    raw = await read_collection_zip(file)
+    spool = await _spool_payload(
+        file, limit=settings.limits.max_collection_size_bytes, label="Collection"
+    )
 
-    result: CollectionCompleteEvent | None = None
-    async for event in workspace.process_collection(store, raw, spec, resolved):
-        if isinstance(event, CollectionCompleteEvent):
-            result = event
+    async def work(ctx: JobContext) -> None:
+        # The ZIP is read straight from the spool file, so a large archive is
+        # never loaded into memory whole.
+        async for event in workspace.process_collection(store, spool, spec, resolved):
+            if isinstance(event, CollectionProgressEvent):
+                ctx.set_progress(event.current, event.total)
+            elif isinstance(event, CollectionCompleteEvent):
+                ctx.set_stage(event.message)
 
-    assert result is not None
-    return result
-
-
-@router.post(
-    "/documents/collections/stream/{scope}", response_class=EventSourceResponse
-)
-async def upload_collection_stream(
-    scope: str,
-    user: Annotated[User, Depends(get_current_user)],
-    prepared: Annotated[PreparedCollection, Depends(prepare_collection_upload)],
-) -> AsyncIterable[CollectionProgressEvent | CollectionCompleteEvent]:
-    """Upload a collection with streaming progress events."""
-    store, _ = resolve_workspace_path(user, scope, write=True)
-    async for event in workspace.process_collection(
-        store, prepared.raw, prepared.spec, prepared.resolved
-    ):
-        yield event
+    return manager.submit(
+        kind=DocumentJobKind.COLLECTION,
+        title=file.filename or "collection.zip",
+        owner=user.id,
+        scope=scope,
+        work=work,
+        on_settled=lambda: spool.unlink(missing_ok=True),
+    )
 
 
 @router.delete("/documents/{scope}")
@@ -261,28 +341,34 @@ async def delete_all_documents(
     )
 
 
-@router.post("/documents/rechunk/bulk/stream", response_class=EventSourceResponse)
-async def bulk_rechunk_stream(
+@router.post("/documents/rechunk/bulk")
+async def bulk_rechunk(
     request: BulkRechunkRequest,
     user: Annotated[User, Depends(get_current_user)],
-) -> AsyncIterable[BulkOperationProgressEvent | BulkOperationCompleteEvent]:
-    """Bulk rechunk multiple documents with streaming progress."""
+) -> JobView:
+    """Rechunk multiple documents as a single background job."""
     spec = request.pipeline
 
     async def _rechunk_one(filepath: str) -> None:
         store, safe = resolve_workspace_path(user, filepath, write=True)
         await workspace.rechunk(store, safe, spec=spec)
 
-    async for event in process_bulk_operation(request.files, _rechunk_one, "Rechunked"):
-        yield event
+    return _submit_bulk_job(
+        user=user,
+        kind=DocumentJobKind.RECHUNK_BULK,
+        title=f"Rechunk {_plural(len(request.files), 'document')}",
+        files=request.files,
+        process_one=_rechunk_one,
+        verb="Rechunked",
+    )
 
 
-@router.post("/documents/reconvert/bulk/stream", response_class=EventSourceResponse)
-async def bulk_reconvert_stream(
+@router.post("/documents/reconvert/bulk")
+async def bulk_reconvert(
     request: BulkReconvertRequest,
     user: Annotated[User, Depends(get_current_user)],
-) -> AsyncIterable[BulkOperationProgressEvent | BulkOperationCompleteEvent]:
-    """Bulk reconvert multiple documents with streaming progress."""
+) -> JobView:
+    """Reconvert multiple documents as a single background job."""
     spec = request.pipeline
     resolved = await prepare_llm_config(request.llm)
 
@@ -290,19 +376,24 @@ async def bulk_reconvert_stream(
         store, safe = resolve_workspace_path(user, filepath, write=True)
         await workspace.reconvert(store, safe, spec=spec, llm=resolved)
 
-    async for event in process_bulk_operation(
-        request.files, _reconvert_one, "Reconverted"
-    ):
-        yield event
+    return _submit_bulk_job(
+        user=user,
+        kind=DocumentJobKind.RECONVERT_BULK,
+        title=f"Reconvert {_plural(len(request.files), 'document')}",
+        files=request.files,
+        process_one=_reconvert_one,
+        verb="Reconverted",
+    )
 
 
-@router.post("/documents/move/bulk/stream", response_class=EventSourceResponse)
-async def bulk_move_stream(
+@router.post("/documents/move/bulk")
+async def bulk_move(
     request: BulkMoveRequest,
     user: Annotated[User, Depends(get_current_user)],
-) -> AsyncIterable[BulkOperationProgressEvent | BulkOperationCompleteEvent]:
-    """Bulk move multiple documents with streaming progress."""
+) -> JobView:
+    """Move multiple documents as a single background job."""
     destinations = {m.source: m.destination for m in request.moves}
+    sources = list(destinations)
     moved: dict[str, tuple[Casebase, list[str]]] = {}
 
     async def _move_one(filepath: str) -> None:
@@ -317,29 +408,47 @@ async def bulk_move_stream(
         await workspace.move_document(src_store, src, dst)
         moved.setdefault(src_store.store_key, (src_store, []))[1].append(src)
 
-    async for event in process_bulk_operation(list(destinations), _move_one, "Moved"):
-        if isinstance(event, BulkOperationCompleteEvent):
-            # Per-entry moves leave their emptied source directories behind;
-            # prune them before completion so the client's refresh already
-            # sees the final state.
-            for store, sources in moved.values():
-                await workspace.prune_empty_dirs(store, sources)
-        yield event
+    scope = _bulk_scope(user, sources)
+
+    async def work(ctx: JobContext) -> None:
+        try:
+            await run_bulk_document_job(sources, _move_one, verb="Moved", ctx=ctx)
+        finally:
+            # Per-entry moves leave their emptied source directories behind.
+            # Prune them even when the batch failed or was cancelled — so the
+            # client's refresh sees final state — and shield the prune so a
+            # cancel cannot interrupt it midway.
+            for store, srcs in moved.values():
+                await shield_to_completion(workspace.prune_empty_dirs(store, srcs))
+
+    return manager.submit(
+        kind=DocumentJobKind.MOVE_BULK,
+        title=f"Move {_plural(len(sources), 'document')}",
+        owner=user.id,
+        scope=scope,
+        work=work,
+    )
 
 
-@router.post("/documents/delete/bulk/stream", response_class=EventSourceResponse)
-async def bulk_delete_stream(
+@router.post("/documents/delete/bulk")
+async def bulk_delete(
     request: BulkDeleteRequest,
     user: Annotated[User, Depends(get_current_user)],
-) -> AsyncIterable[BulkOperationProgressEvent | BulkOperationCompleteEvent]:
-    """Bulk delete multiple documents with streaming progress."""
+) -> JobView:
+    """Delete multiple documents as a single background job."""
 
     async def _delete_one(filepath: str) -> None:
         store, safe = resolve_workspace_path(user, filepath, write=True)
         await workspace.delete_document(store, safe)
 
-    async for event in process_bulk_operation(request.files, _delete_one, "Deleted"):
-        yield event
+    return _submit_bulk_job(
+        user=user,
+        kind=DocumentJobKind.DELETE_BULK,
+        title=f"Delete {_plural(len(request.files), 'document')}",
+        files=request.files,
+        process_one=_delete_one,
+        verb="Deleted",
+    )
 
 
 @router.get("/documents/chunks/{filepath:path}")
@@ -360,10 +469,17 @@ async def rechunk_document(
     filepath: str,
     request: PipelineSpec,
     user: Annotated[User, Depends(get_current_user)],
-) -> DocumentMetadata:
-    """Re-chunk a document with different settings."""
+) -> JobView:
+    """Re-chunk a document with different settings as a background job."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
-    return await workspace.rechunk(store, safe, spec=request)
+
+    async def work(ctx: JobContext) -> None:
+        ctx.set_stage("Chunking document")
+        await workspace.rechunk(store, safe, spec=request)
+
+    return _submit_document_job(
+        user=user, store=store, safe=safe, kind=DocumentJobKind.RECHUNK, work=work
+    )
 
 
 @router.post("/documents/reconvert/{filepath:path}")
@@ -371,11 +487,19 @@ async def reconvert_document(
     filepath: str,
     request: ReconvertRequest,
     user: Annotated[User, Depends(get_current_user)],
-) -> UploadDocumentResponse:
-    """Re-convert a document from its original binary file."""
+) -> JobView:
+    """Re-convert a document from its original binary file as a background job."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
     resolved = await prepare_llm_config(request.llm)
-    return await workspace.reconvert(store, safe, spec=request.pipeline, llm=resolved)
+
+    async def work(ctx: JobContext) -> None:
+        await workspace.reconvert(
+            store, safe, spec=request.pipeline, llm=resolved, ctx=ctx
+        )
+
+    return _submit_document_job(
+        user=user, store=store, safe=safe, kind=DocumentJobKind.RECONVERT, work=work
+    )
 
 
 @router.post("/documents/move/{filepath:path}")
@@ -457,7 +581,7 @@ async def write_document(
     """
     store, safe = resolve_workspace_path(user, filepath, write=True)
     message = await workspace.write_document_text(
-        store, safe, request.content, chunking=request.chunking
+        store, safe, request.content, mode=request.mode, chunking=request.chunking
     )
     return WriteDocumentResponse(filename=safe, message=message)
 

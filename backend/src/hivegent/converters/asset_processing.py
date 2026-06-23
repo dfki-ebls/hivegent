@@ -274,7 +274,6 @@ async def caption_image(
         A concise description, or a faithful transcription for data figures.
 
     Raises:
-        ValueError: If the PNG payload is structurally invalid.
         asyncio.TimeoutError: If the vision model does not respond within
             :data:`_VISION_TIMEOUT_S` seconds.
     """

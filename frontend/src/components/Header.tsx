@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Bug, LogOut, User, UserCog } from "lucide-react";
 import { useOidc } from "../oidc";
+import { JobTray } from "./JobTray";
 import { Logo } from "./Logo";
 import { VersionBadge } from "./VersionBadge";
 import { selectIsAdmin, useSettingsStore } from "../stores/settings-store";
@@ -89,7 +90,10 @@ export function Header() {
         <VersionBadge />
       </Link>
 
-      <UserMenu />
+      <div className="flex items-center gap-1">
+        <JobTray />
+        <UserMenu />
+      </div>
     </header>
   );
 }

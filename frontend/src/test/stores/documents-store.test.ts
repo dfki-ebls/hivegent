@@ -5,9 +5,11 @@ import type { getDirectories as getDirectoriesFn } from "@/lib/api";
 // Only the refresh read is exercised; the remaining store imports just
 // need to exist for the module to load (the factory is hoisted, so no helpers).
 vi.mock("@/lib/api", () => ({
-  bulkDeleteStream: vi.fn<() => void>(),
-  bulkRechunkStream: vi.fn<() => void>(),
-  bulkReconvertStream: vi.fn<() => void>(),
+  bulkDelete: vi.fn<() => void>(),
+  bulkMove: vi.fn<() => void>(),
+  bulkRechunk: vi.fn<() => void>(),
+  bulkReconvert: vi.fn<() => void>(),
+  cancelJob: vi.fn<() => void>(),
   canonicalPath: (scope: string, local: string) => `${scope}/${local}`,
   createDirectory: vi.fn<() => void>(),
   deleteDirectory: vi.fn<() => void>(),
@@ -15,10 +17,11 @@ vi.mock("@/lib/api", () => ({
   getDirectories: vi.fn<typeof getDirectoriesFn>(),
   moveDirectory: vi.fn<() => void>(),
   moveDocument: vi.fn<() => void>(),
-  rechunkDocumentStream: vi.fn<() => void>(),
-  reconvertDocumentStream: vi.fn<() => void>(),
-  uploadCollectionStream: vi.fn<() => void>(),
-  uploadDocumentStream: vi.fn<() => void>(),
+  rechunkDocument: vi.fn<() => void>(),
+  reconvertDocument: vi.fn<() => void>(),
+  subscribeJobs: vi.fn<() => void>(),
+  uploadCollection: vi.fn<() => void>(),
+  uploadDocument: vi.fn<() => void>(),
 }));
 
 import { getDirectories } from "@/lib/api";
