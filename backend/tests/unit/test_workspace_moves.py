@@ -20,6 +20,7 @@ from fastapi import HTTPException
 from hivegent import workspace
 from hivegent.chunkers.base import DocumentMetadata
 from hivegent.config import settings
+from hivegent.db import documents as db_documents
 from hivegent.entries import original_path_for_stem, stem_path_from_reference
 from hivegent.store import Casebase
 
@@ -80,12 +81,12 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> FakeRepository:
         "move_subtree",
         "delete_subtree",
     ):
-        monkeypatch.setattr(workspace.db_documents, name, getattr(fake, name))
+        monkeypatch.setattr(db_documents, name, getattr(fake, name))
 
     async def _delete_chunked(store: Casebase, reference: str) -> bool:
         return await fake.delete_document(store, reference)
 
-    monkeypatch.setattr(workspace, "_delete_chunked_document", _delete_chunked)
+    monkeypatch.setattr(workspace.indexing, "delete_chunked_document", _delete_chunked)
     return fake
 
 

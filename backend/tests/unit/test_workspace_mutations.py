@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from hivegent import workspace
 from hivegent.chunkers.base import EntryMetadata
 from hivegent.config import content_digest, content_hash, settings
+from hivegent.db import documents as db_documents
 from hivegent.db.documents import EntryState
 from hivegent.entries import ContentStat
 from hivegent.store import Casebase
@@ -28,7 +29,7 @@ def workspace_dir(
     async def _noop(*_args: object, **_kwargs: object) -> None:
         return None
 
-    monkeypatch.setattr(workspace, "chunk_and_index_document", _noop)
+    monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", _noop)
     path = user_store.workspace_dir(settings.data_dir)
     path.mkdir(parents=True, exist_ok=True)
     yield path
@@ -238,10 +239,10 @@ class TestSyncEntryFromDisk:
         async def chunk_and_index_document(*_args: object, **_kwargs: object) -> None:
             raise AssertionError("unchanged markdown should not be indexed")
 
-        monkeypatch.setattr(workspace.db_documents, "get_entry_state", get_entry_state)
-        monkeypatch.setattr(workspace.db_documents, "update_entry", update_entry)
+        monkeypatch.setattr(db_documents, "get_entry_state", get_entry_state)
+        monkeypatch.setattr(db_documents, "update_entry", update_entry)
         monkeypatch.setattr(
-            workspace, "chunk_and_index_document", chunk_and_index_document
+            workspace.indexing, "chunk_and_index_document", chunk_and_index_document
         )
 
         changed = await workspace.sync_entry_from_disk(user_store, "doc.md")
@@ -272,9 +273,9 @@ class TestSyncEntryFromDisk:
         async def fail(*_args: object, **_kwargs: object) -> None:
             raise AssertionError("matching stat must skip read, index, and write")
 
-        monkeypatch.setattr(workspace.db_documents, "get_entry_state", get_entry_state)
-        monkeypatch.setattr(workspace.db_documents, "update_entry", fail)
-        monkeypatch.setattr(workspace, "chunk_and_index_document", fail)
+        monkeypatch.setattr(db_documents, "get_entry_state", get_entry_state)
+        monkeypatch.setattr(db_documents, "update_entry", fail)
+        monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", fail)
 
         changed = await workspace.sync_entry_from_disk(user_store, "doc.md")
 
@@ -295,7 +296,7 @@ class TestDeleteAssetDescription:
             deleted.append(reference)
             return True
 
-        monkeypatch.setattr(workspace, "_delete_chunked_document", fake_delete)
+        monkeypatch.setattr(workspace.indexing, "delete_chunked_document", fake_delete)
         assets = workspace_dir / "doc.assets"
         assets.mkdir()
         (assets / "img.png").write_bytes(b"binary")
@@ -320,7 +321,7 @@ class TestDeleteAssetDescription:
         async def fail(*_args: object, **_kwargs: object) -> bool:
             raise AssertionError("must not touch the index when the asset is absent")
 
-        monkeypatch.setattr(workspace, "_delete_chunked_document", fail)
+        monkeypatch.setattr(workspace.indexing, "delete_chunked_document", fail)
         (workspace_dir / "doc.assets").mkdir()
 
         with pytest.raises(HTTPException) as exc:

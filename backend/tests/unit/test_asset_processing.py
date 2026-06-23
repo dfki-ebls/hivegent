@@ -51,7 +51,7 @@ async def test_prepare_conversion_assets_captions_duplicates_once(
         captioned.append((filepath, list(contexts)))
         return "caption\n"
 
-    monkeypatch.setattr(workspace, "_build_image_description", fake_describe)
+    monkeypatch.setattr(workspace.describe, "_build_image_description", fake_describe)
 
     dup = _png(Image.radial_gradient("L").convert("RGB"))
     images = {
@@ -66,7 +66,7 @@ async def test_prepare_conversion_assets_captions_duplicates_once(
     }
     contexts = {"fig_a.png": ["near A"], "fig_b.png": ["near B"]}
 
-    ref_mapping, assets, asset_entries = await workspace._prepare_conversion_assets(
+    ref_mapping, assets, asset_entries = await workspace.prepare._prepare_conversion_assets(
         "doc.assets",
         images,
         contexts,

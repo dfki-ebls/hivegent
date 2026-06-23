@@ -12,6 +12,7 @@ import pytest
 
 from hivegent import reconcile, workspace
 from hivegent.config import settings
+from hivegent.db import documents as db_documents
 from hivegent.store import Casebase
 
 
@@ -29,8 +30,8 @@ def workspace_dir(user_store: Casebase, monkeypatch: pytest.MonkeyPatch) -> Path
     ) -> None:
         indexed.append(filename)
 
-    monkeypatch.setattr(workspace.db_documents, "get_entry_state", get_entry_state)
-    monkeypatch.setattr(workspace, "chunk_and_index_document", chunk_and_index)
+    monkeypatch.setattr(db_documents, "get_entry_state", get_entry_state)
+    monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", chunk_and_index)
     path = user_store.workspace_dir(settings.data_dir)
     path.mkdir(parents=True, exist_ok=True)
     return path

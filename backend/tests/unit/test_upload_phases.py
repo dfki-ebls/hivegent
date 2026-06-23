@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 from hivegent import workspace
 from hivegent.config import settings
+from hivegent.db import documents as db_documents
 from hivegent.store import Casebase
 
 
@@ -66,8 +67,8 @@ async def test_image_upload_reports_stage_and_stores_sidecar(
     async def fake_chunk(*_args: object, **_kwargs: object) -> _Chunked:
         return _Chunked()
 
-    monkeypatch.setattr(workspace, "_build_image_description", fake_describe)
-    monkeypatch.setattr(workspace, "chunk_and_index_document", fake_chunk)
+    monkeypatch.setattr(workspace.describe, "_build_image_description", fake_describe)
+    monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", fake_chunk)
 
     recorder = _Recorder()
     await workspace.upload(user_store, "photo.png", _png(), ctx=recorder)
@@ -93,12 +94,12 @@ async def test_failed_commit_leaves_no_orphan(
     async def noop_delete(*_args: object, **_kwargs: object) -> bool:
         return False
 
-    monkeypatch.setattr(workspace, "_build_image_description", fake_describe)
-    monkeypatch.setattr(workspace, "chunk_and_index_document", boom)
+    monkeypatch.setattr(workspace.describe, "_build_image_description", fake_describe)
+    monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", boom)
     # The rollback resolves the entry from disk and drops its index rows; stub
     # the SQL touches so the test stays off any live database.
-    monkeypatch.setattr(workspace.db_documents, "get_document", no_metadata)
-    monkeypatch.setattr(workspace, "_delete_chunked_document", noop_delete)
+    monkeypatch.setattr(db_documents, "get_document", no_metadata)
+    monkeypatch.setattr(workspace.indexing, "delete_chunked_document", noop_delete)
 
     with pytest.raises(RuntimeError):
         await workspace.upload(user_store, "photo.png", _png())
@@ -119,8 +120,8 @@ async def test_image_upload_stores_original_verbatim(
     async def fake_chunk(*_args: object, **_kwargs: object) -> _Chunked:
         return _Chunked()
 
-    monkeypatch.setattr(workspace, "_build_image_description", fake_describe)
-    monkeypatch.setattr(workspace, "chunk_and_index_document", fake_chunk)
+    monkeypatch.setattr(workspace.describe, "_build_image_description", fake_describe)
+    monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", fake_chunk)
 
     raw = _png_with_metadata()
     await workspace.upload(user_store, "photo.png", raw)
@@ -133,8 +134,8 @@ async def test_upload_rejects_stem_already_in_flight(
     monkeypatch: pytest.MonkeyPatch, user_store: Casebase
 ) -> None:
     """A second upload of an in-flight stem is rejected, never raced to commit."""
-    monkeypatch.setattr(workspace, "_inflight_stems", {})
-    workspace._add_inflight(user_store, "note.md")
+    monkeypatch.setattr(workspace.locks, "_inflight_stems", {})
+    workspace.locks._add_inflight(user_store, "note.md")
 
     with pytest.raises(HTTPException) as exc:
         await workspace.upload(user_store, "note.md", b"# hi\n")
@@ -151,8 +152,8 @@ async def test_destructive_ops_reject_while_stem_in_flight(
     all route through the same locked-mutation gateway, so none can mutate or
     strip an entry whose upload has reserved but not committed it.
     """
-    monkeypatch.setattr(workspace, "_inflight_stems", {})
-    workspace._add_inflight(user_store, "docs/note.md")
+    monkeypatch.setattr(workspace.locks, "_inflight_stems", {})
+    workspace.locks._add_inflight(user_store, "docs/note.md")
 
     for op in (
         workspace.delete_document(user_store, "docs/note.md"),
@@ -187,8 +188,8 @@ async def test_reprocess_failure_preserves_existing_entry(
     async def fake_chunk(*_args: object, **_kwargs: object) -> _Chunked:
         return _Chunked()
 
-    monkeypatch.setattr(workspace, "_build_image_description", fake_describe)
-    monkeypatch.setattr(workspace, "chunk_and_index_document", fake_chunk)
+    monkeypatch.setattr(workspace.describe, "_build_image_description", fake_describe)
+    monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", fake_chunk)
     await workspace.upload(user_store, "photo.png", _png())
 
     workspace_dir = user_store.workspace_dir(settings.data_dir)
@@ -201,8 +202,8 @@ async def test_reprocess_failure_preserves_existing_entry(
     async def boom_prepare(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("conversion failed")
 
-    monkeypatch.setattr(workspace.db_documents, "get_document", no_metadata)
-    monkeypatch.setattr(workspace, "_prepare_upload", boom_prepare)
+    monkeypatch.setattr(db_documents, "get_document", no_metadata)
+    monkeypatch.setattr(workspace.prepare, "_prepare_upload", boom_prepare)
 
     with pytest.raises(RuntimeError):
         await workspace.replace_original(
