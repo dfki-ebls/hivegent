@@ -1,6 +1,7 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { buildLlmConfig, compactConversation } from "@/lib/api";
 import { canCompact, getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
@@ -34,11 +35,36 @@ export function useAutoCompact({
   messagesRef.current = messages;
   const onRetryRef = useRef(onRetry);
   onRetryRef.current = onRetry;
+  // Compaction is slow and the trigger (a greyed-out icon) resets quietly, so
+  // before applying the result we check the user is still looking at the chat
+  // we compacted, else it would navigate over wherever they moved on to.
+  //
+  // BOTH refs are required — they catch DISTINCT cases, so don't collapse them:
+  //  - currentIdRef: opening another conversation reuses this hook instance and
+  //    only changes the id prop, so the live ref diverges from the captured id.
+  //  - mountedRef: opening a new draft unmounts this subtree with the id prop
+  //    still equal to the captured id (no re-render in between), so currentIdRef
+  //    alone would miss it — only the unmount cleanup reveals the user left.
+  const currentIdRef = useRef(id);
+  currentIdRef.current = id;
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const compact = useCallback(
     async (retryMessageText?: string) => {
       setIsCompacting(true);
       setError(null);
+      // A single toast keyed by the conversation evolves in place from loading
+      // to its terminal state, giving feedback that survives the icon resetting.
+      const toastId = `compaction:${id}`;
+      toast.loading("Compacting conversation", {
+        id: toastId,
+        description: "Summarizing earlier messages to fit the context window.",
+      });
       try {
         // Summarization spans the whole (overflowing) conversation, so it
         // needs the regular model's context window — the aux model is
@@ -48,6 +74,24 @@ export function useAutoCompact({
           buildLlmConfig(overrides),
           messagesRef.current,
         );
+        // The user opened another chat while we were summarizing: leave their
+        // view untouched and offer the compacted conversation behind an action
+        // instead of yanking them to it.
+        if (!mountedRef.current || currentIdRef.current !== id) {
+          toast.success("Conversation compacted", {
+            id: toastId,
+            description: "Open it to continue where this chat left off.",
+            action: {
+              label: "Open",
+              onClick: () =>
+                void navigate({
+                  to: "/conversations/$id",
+                  params: { id: result.new_conversation_id },
+                }),
+            },
+          });
+          return;
+        }
         clearAll();
         if (retryMessageText) {
           pendingRetryRef.current = retryMessageText;
@@ -56,9 +100,15 @@ export function useAutoCompact({
           to: "/conversations/$id",
           params: { id: result.new_conversation_id },
         });
+        toast.success("Conversation compacted", { id: toastId });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        setError(new Error(`Couldn't compact the conversation: ${message}`));
+        toast.error("Couldn't compact the conversation", { id: toastId, description: message });
+        // Only surface the inline retry banner if this chat is still on screen,
+        // otherwise it would attach to whatever conversation the user moved to.
+        if (mountedRef.current && currentIdRef.current === id) {
+          setError(new Error(`Couldn't compact the conversation: ${message}`));
+        }
       } finally {
         setIsCompacting(false);
       }

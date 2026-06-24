@@ -17,7 +17,6 @@ interface MessageListProps {
   chatError: Error | undefined;
   compactionError: Error | null;
   isLoadingHistory: boolean;
-  isCompacting: boolean;
   compactedFrom: string | null;
   editingId: string | null;
   showChatError: boolean;
@@ -39,7 +38,6 @@ export function MessageList({
   chatError,
   compactionError,
   isLoadingHistory,
-  isCompacting,
   compactedFrom,
   editingId,
   showChatError,
@@ -62,11 +60,7 @@ export function MessageList({
   return (
     <Conversation className="min-h-0 flex-1">
       <ConversationContent className="gap-4">
-        <CompactionBanner
-          compactedFrom={compactedFrom}
-          isCompacting={isCompacting}
-          onNavigatePrevious={onNavigatePrevious}
-        />
+        <CompactionBanner compactedFrom={compactedFrom} onNavigatePrevious={onNavigatePrevious} />
         {isLoadingHistory && <Loader />}
         {!isLoadingHistory && messages.length === 0 && !chatError && (
           <ConversationEmptyState

@@ -1,47 +1,34 @@
-import { HistoryIcon, Minimize2 } from "lucide-react";
+import { HistoryIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface CompactionBannerProps {
   compactedFrom: string | null;
-  isCompacting: boolean;
   onNavigatePrevious: (previousId: string) => void;
 }
 
-export function CompactionBanner({
-  compactedFrom,
-  isCompacting,
-  onNavigatePrevious,
-}: CompactionBannerProps) {
+// In-progress feedback lives in a toast (see use-auto-compact): it stays
+// visible regardless of scroll position and is scoped to the conversation
+// being compacted, unlike an inline banner driven by hook-instance state.
+export function CompactionBanner({ compactedFrom, onNavigatePrevious }: CompactionBannerProps) {
+  if (!compactedFrom) return null;
+
   return (
-    <>
-      {compactedFrom && (
-        <Alert>
-          <HistoryIcon className="h-4 w-4" />
-          <AlertTitle>Continued conversation</AlertTitle>
-          <AlertDescription>
-            <p>
-              This conversation was compacted from a{" "}
-              <button
-                type="button"
-                onClick={() => onNavigatePrevious(compactedFrom)}
-                className="underline hover:text-primary"
-              >
-                previous chat
-              </button>
-              .
-            </p>
-          </AlertDescription>
-        </Alert>
-      )}
-      {isCompacting && (
-        <Alert>
-          <Minimize2 className="h-4 w-4" />
-          <AlertTitle>Compacting conversation</AlertTitle>
-          <AlertDescription>
-            Summarizing the conversation to fit within context limits...
-          </AlertDescription>
-        </Alert>
-      )}
-    </>
+    <Alert>
+      <HistoryIcon className="h-4 w-4" />
+      <AlertTitle>Continued conversation</AlertTitle>
+      <AlertDescription>
+        <p>
+          This conversation was compacted from a{" "}
+          <button
+            type="button"
+            onClick={() => onNavigatePrevious(compactedFrom)}
+            className="underline hover:text-primary"
+          >
+            previous chat
+          </button>
+          .
+        </p>
+      </AlertDescription>
+    </Alert>
   );
 }

@@ -295,7 +295,6 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
             chatError={error}
             compactionError={compactionError}
             isLoadingHistory={isLoadingHistory}
-            isCompacting={isCompacting}
             compactedFrom={compactedFrom}
             editingId={editingId}
             showChatError={!!error && !isContextLengthError(error)}
