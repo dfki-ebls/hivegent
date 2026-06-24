@@ -10,9 +10,10 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 interface ChatLayoutProps {
   id: string;
   draft?: boolean;
+  onNewDraft?: () => void;
 }
 
-export function ChatLayout({ id, draft = false }: ChatLayoutProps) {
+export function ChatLayout({ id, draft = false, onNewDraft }: ChatLayoutProps) {
   const [mobileDocumentsOpen, setMobileDocumentsOpen] = useState(false);
   const openChat = useDocumentCanvasStore((state) => state.openChat);
 
@@ -53,7 +54,7 @@ export function ChatLayout({ id, draft = false }: ChatLayoutProps) {
           </Button>
         </div>
         <div className="flex-1 overflow-hidden">
-          <ChatSidebar id={id} draft={draft} />
+          <ChatSidebar id={id} draft={draft} onNewDraft={onNewDraft} />
         </div>
       </div>
     </div>

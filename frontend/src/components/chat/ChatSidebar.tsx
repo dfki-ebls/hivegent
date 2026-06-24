@@ -33,9 +33,10 @@ import { useSettingsStore } from "@/stores/settings-store";
 interface ChatSidebarProps {
   id: string;
   draft?: boolean;
+  onNewDraft?: () => void;
 }
 
-export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
+export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps) {
   const navigate = useNavigate();
   const addChunk = useFetchedDocumentsStore((state) => state.addChunk);
   const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
@@ -185,9 +186,18 @@ export function ChatSidebar({ id, draft = false }: ChatSidebarProps) {
   const handleNewChat = useCallback(async () => {
     clearFilter();
     setActiveTab("chat");
+    // On a draft we are already at "/", so navigating there is a no-op that
+    // would leave a dirty chat (e.g. one stuck on an error) untouched. Mint a
+    // fresh draft id instead: that remounts the chat with clean SDK state and
+    // adoption refs. An empty, error-free draft is already new, so leave it
+    // (and any text the user is typing) alone.
+    if (draft && onNewDraft && (messages.length > 0 || error)) {
+      onNewDraft();
+      return;
+    }
     // The new chat is a draft until its first message mints a server ID.
     await navigate({ to: "/" });
-  }, [clearFilter, navigate]);
+  }, [draft, onNewDraft, messages.length, error, clearFilter, navigate]);
 
   const handleExport = useCallback(async () => {
     try {

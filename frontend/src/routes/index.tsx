@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { LogIn } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { BackendReadyGate } from "../components/BackendReadyGate";
 import { Logo } from "../components/Logo";
@@ -58,6 +58,11 @@ function DraftConversation() {
   // A new chat has no server ID until its first message; key the chat on a
   // throwaway client ID purely so the SDK state survives until the server
   // mints the real one. It is never sent to or stored by the backend.
-  const [draftId] = useState(() => crypto.randomUUID());
-  return <ChatLayout id={draftId} draft />;
+  // Minting a fresh ID remounts the chat (via the `key`) with clean SDK state,
+  // which is how "New chat" starts over while already on this route: a plain
+  // navigate to "/" is a no-op here and would leave a stuck error in place.
+  const [draftId, setDraftId] = useState(() => crypto.randomUUID());
+  const newDraft = useCallback(() => setDraftId(crypto.randomUUID()), []);
+
+  return <ChatLayout key={draftId} id={draftId} draft onNewDraft={newDraft} />;
 }
