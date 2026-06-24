@@ -2,7 +2,7 @@
 
 Every workspace mutation acquires the per-store async lock through
 :func:`_locked_for`, which also rejects an op that would race a phased
-upload or a bulk import still in flight.  The in-flight sets are consulted
+upload or a bulk import still in flight.  The in-flight state is consulted
 by lock-free inventory reads to hide half-written entries.
 """
 
@@ -10,6 +10,7 @@ import asyncio
 import threading
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass, field
 
 from fastapi import HTTPException
 
@@ -22,52 +23,72 @@ __all__ = [
 ]
 
 
-# Per-store async locks.  Created lazily; never removed because they are
-# tiny and reusing the same Lock instance across the lifetime of a store
-# is a feature.  ``threading.Lock`` guards the dict because asyncio.Lock
-# instances bind to the event loop on first acquisition and the dict is
-# also touched from synchronous teardown paths.
-_locks: dict[str, asyncio.Lock] = {}
-_locks_guard = threading.Lock()
+@dataclass(slots=True)
+class _StoreState:
+    """All cross-task coordination state for one store, created on first use.
+
+    Co-locating the lock with the two in-flight trackers keeps them addressed by
+    a single registry entry, so they can never drift apart, and gives the
+    per-store coordination state one obvious home.
+    """
+
+    # Mutations on the store serialise on this lock; it binds to the running
+    # event loop on first acquisition.
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    # Stems with an upload currently in flight.  Inventory reads walk the
+    # workspace without the lock, so they consult this set to hide half-written
+    # entries — both during processing and during the rollback after a failed or
+    # cancelled upload — instead of surfacing them as ghost documents.  It also
+    # rejects a second op on a stem a phased upload already holds.
+    stems: set[str] = field(default_factory=set)
+
+    # Store-wide claims held by bulk imports (collections) in flight, by
+    # reference count.  A collection commits its files one at a time with the
+    # lock released in between, so a claim here blocks store-wide destructive ops
+    # (delete-all, directory delete/move) for its whole duration without blocking
+    # its own per-file uploads.
+    store_claims: int = 0
+
+
+# Per-store coordination state, created lazily and never removed (each entry is
+# tiny and reusing it across a store's lifetime is a feature).  ``threading.Lock``
+# guards the registry because ``asyncio.Lock`` binds to the event loop only on
+# first acquisition, while the dict itself may be reached from more than one
+# loop or thread over the process lifetime.
+_states: dict[str, _StoreState] = {}
+_states_guard = threading.Lock()
+
+
+def _state_for(store: Casebase) -> _StoreState:
+    """Return *store*'s coordination state, creating it on first use."""
+    key = store.store_key
+    with _states_guard:
+        state = _states.get(key)
+        if state is None:
+            state = _StoreState()
+            _states[key] = state
+    return state
 
 
 def store_lock(store: Casebase) -> asyncio.Lock:
     """Return the asyncio lock guarding mutations on *store*."""
-    key = store.store_key
-    with _locks_guard:
-        lock = _locks.get(key)
-        if lock is None:
-            lock = asyncio.Lock()
-            _locks[key] = lock
-    return lock
+    return _state_for(store).lock
 
 
-# Stems with an upload currently in flight, per store key.  Inventory reads
-# walk the workspace without the casebase lock, so they consult this set to
-# hide half-written entries — both during processing and during the rollback
-# after a failed or cancelled upload — instead of surfacing them as ghost
-# documents.
-_inflight_stems: dict[str, set[str]] = {}
-
-# Stores with a bulk import (a collection) in flight, by reference count.  A
-# collection commits its files one at a time with the lock released in between,
-# so a claim here blocks store-wide destructive ops (delete-all, directory
-# delete/move) for its whole duration without blocking its own per-file uploads.
-_inflight_store_claims: dict[str, int] = {}
+def inflight_stems(store: Casebase) -> frozenset[str]:
+    """Stems with an upload in flight, to be hidden from lock-free reads."""
+    return frozenset(_state_for(store).stems)
 
 
 def _add_inflight(store: Casebase, reference: str) -> None:
     """Mark *reference*'s stem as in flight (hidden from lock-free reads)."""
-    _inflight_stems.setdefault(store.store_key, set()).add(
-        stem_path_from_reference(reference)
-    )
+    _state_for(store).stems.add(stem_path_from_reference(reference))
 
 
 def _discard_inflight(store: Casebase, reference: str) -> None:
     """Clear an in-flight mark set by :func:`_add_inflight`."""
-    stems = _inflight_stems.get(store.store_key)
-    if stems is not None:
-        stems.discard(stem_path_from_reference(reference))
+    _state_for(store).stems.discard(stem_path_from_reference(reference))
 
 
 @contextmanager
@@ -77,21 +98,12 @@ def _store_claim(store: Casebase) -> Iterator[None]:
     Re-entrant (reference counted) so two concurrent collections on one store
     each keep the claim alive until both finish.
     """
-    key = store.store_key
-    _inflight_store_claims[key] = _inflight_store_claims.get(key, 0) + 1
+    state = _state_for(store)
+    state.store_claims += 1
     try:
         yield
     finally:
-        remaining = _inflight_store_claims.get(key, 0) - 1
-        if remaining > 0:
-            _inflight_store_claims[key] = remaining
-        else:
-            _inflight_store_claims.pop(key, None)
-
-
-def inflight_stems(store: Casebase) -> frozenset[str]:
-    """Stems with an upload in flight, to be hidden from lock-free reads."""
-    return frozenset(_inflight_stems.get(store.store_key, ()))
+        state.store_claims -= 1
 
 
 def _reject_if_inflight(store: Casebase, reference: str) -> None:
@@ -118,14 +130,16 @@ def _reject_if_scope_inflight(store: Casebase, prefix: str | None) -> None:
     out from under a pending commit (orphaning an entry, or resurrecting one
     after a wipe).  The 409 defers the op until the in-flight work settles.
     """
-    if _inflight_store_claims.get(store.store_key, 0) > 0:
+    state = _state_for(store)
+    if state.store_claims > 0:
         raise HTTPException(
             status_code=409, detail="A document in this scope is still being processed"
         )
 
-    stems = inflight_stems(store)
     blocked = (
-        stems if prefix is None else {s for s in stems if s.startswith(f"{prefix}/")}
+        state.stems
+        if prefix is None
+        else {s for s in state.stems if s.startswith(f"{prefix}/")}
     )
     if blocked:
         raise HTTPException(

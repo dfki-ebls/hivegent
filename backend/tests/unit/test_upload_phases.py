@@ -134,7 +134,7 @@ async def test_upload_rejects_stem_already_in_flight(
     monkeypatch: pytest.MonkeyPatch, user_store: Casebase
 ) -> None:
     """A second upload of an in-flight stem is rejected, never raced to commit."""
-    monkeypatch.setattr(workspace.locks, "_inflight_stems", {})
+    monkeypatch.setattr(workspace.locks, "_states", {})
     workspace.locks._add_inflight(user_store, "note.md")
 
     with pytest.raises(HTTPException) as exc:
@@ -152,7 +152,7 @@ async def test_destructive_ops_reject_while_stem_in_flight(
     all route through the same locked-mutation gateway, so none can mutate or
     strip an entry whose upload has reserved but not committed it.
     """
-    monkeypatch.setattr(workspace.locks, "_inflight_stems", {})
+    monkeypatch.setattr(workspace.locks, "_states", {})
     workspace.locks._add_inflight(user_store, "docs/note.md")
 
     for op in (
