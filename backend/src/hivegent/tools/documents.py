@@ -463,9 +463,7 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
         """
         if include_ignored:
             return 0
-        return len(
-            _scan_entries(paths, self.glob, subdir, max_depth, max_results, ())
-        )
+        return len(_scan_entries(paths, self.glob, subdir, max_depth, max_results, ()))
 
 
 @dataclass(slots=True, frozen=True)
@@ -506,7 +504,9 @@ class GlobDocumentsTool(SyncPathTool[list[str]]):
             if include_ignored
             else len(_glob_entries(paths, self.glob, pattern, subdir, max_results, ()))
         )
-        return ToolOutput(data=results, formatted=f"(no matches{_ignored_hint(hidden)})")
+        return ToolOutput(
+            data=results, formatted=f"(no matches{_ignored_hint(hidden)})"
+        )
 
 
 @dataclass(slots=True, frozen=True)

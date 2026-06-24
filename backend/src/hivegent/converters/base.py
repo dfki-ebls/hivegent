@@ -48,6 +48,7 @@ class BinaryContentMode(StrEnum):
     IMAGES = "images"
     NATIVE = "native"
 
+
 # URL schemes whose references resolve to a valid, fetchable resource; any
 # other scheme (``file:``, a Windows drive letter like ``T:``, ...) points off
 # the workspace.

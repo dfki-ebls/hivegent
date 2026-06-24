@@ -262,7 +262,11 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
             except ValueError as exc:
                 raise ToolRetry(f"invalid pages: {exc}") from exc
 
-        page_text = f" pages {','.join(str(p) for p in selected_pages)}" if selected_pages else ""
+        page_text = (
+            f" pages {','.join(str(p) for p in selected_pages)}"
+            if selected_pages
+            else ""
+        )
         return ToolOutput(
             data=BinaryReadResult(
                 file_path=canonical,

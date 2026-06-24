@@ -68,8 +68,10 @@ def render_pdf_pages(
     try:
         with pdfium.PdfDocument(pdf_bytes) as doc:
             total = len(doc)
-            pages = parse_pages(spec, total) if spec is not None else tuple(
-                range(1, total + 1)
+            pages = (
+                parse_pages(spec, total)
+                if spec is not None
+                else tuple(range(1, total + 1))
             )
             if len(pages) > max_pages:
                 raise ValueError(
@@ -82,7 +84,9 @@ def render_pdf_pages(
                 page = doc[p - 1]
                 width, height = page.get_size()
                 scale = max_dimension / max(width, height)
-                images.append(pil_to_still_png(page.render(scale=scale).to_pil(), max_dimension))
+                images.append(
+                    pil_to_still_png(page.render(scale=scale).to_pil(), max_dimension)
+                )
 
             return tuple(images), pages
 
