@@ -213,6 +213,19 @@ class TestListDocumentsTool:
         assert result.data.children == ()
         assert result.formatted == "(empty)"
 
+    def test_empty_result_hint_counts_hidden_entries(self, tmp_path: Path) -> None:
+        cache = tmp_path / "__pycache__"
+        cache.mkdir()
+        (cache / "a.pyc").write_bytes(b"x")
+        (cache / "b.pyc").write_bytes(b"x")
+        tool = ListDocumentsTool(paths=tmp_path)
+        result = tool(max_depth=None)
+        assert result.data == []
+        assert result.formatted is not None
+        assert "3 hidden entries" in result.formatted
+        assert "include_ignored=True" in result.formatted
+        assert tool(max_depth=None, include_ignored=True).formatted != result.formatted
+
     def test_tree_single_level(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("hello")
         (tmp_path / "b.md").write_text("world")

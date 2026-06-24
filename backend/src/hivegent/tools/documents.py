@@ -61,6 +61,29 @@ def _humanize_size(n: int) -> str:
     return f"{value:.1f}{_SIZE_UNITS[-1]}"
 
 
+def _pluralize(count: int, singular: str, plural: str) -> str:
+    """Return *singular* when *count* is 1, else *plural*."""
+    return singular if count == 1 else plural
+
+
+def _ignored_hint(hidden_count: int) -> str:
+    """Nudge toward ``include_ignored`` when hidden entries exist.
+
+    Appended to empty-result messages so a caller who sees nothing knows
+    whether the scope is genuinely empty or just filtered.  *hidden_count*
+    is how many entries (``.assets`` contents and build/vendor directories)
+    the ``include_ignored`` flag would expose; the hint is suppressed when
+    nothing is hidden.
+    """
+    if hidden_count <= 0:
+        return ""
+    noun = _pluralize(hidden_count, "entry", "entries")
+    return (
+        f" — {hidden_count} hidden {noun} (`.assets` contents and common "
+        f"build/vendor directories); pass include_ignored=True to reveal them"
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class DocumentSummary:
     """Summary of a document or directory."""
@@ -380,7 +403,12 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
                 exclude,
             )
             if not results:
-                return ToolOutput(data=results, formatted="(no documents)")
+                hint = _ignored_hint(
+                    self._hidden_count(
+                        paths, subdir, max_depth, max_results, include_ignored
+                    )
+                )
+                return ToolOutput(data=results, formatted=f"(no documents{hint})")
             lines: list[str] = []
             for d in results:
                 date = (
@@ -403,16 +431,41 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
         root = _build_document_tree(entries)
         tree_lines = _format_document_tree(root)
         if not tree_lines:
-            return ToolOutput(data=root, formatted="(empty)")
+            hint = _ignored_hint(
+                self._hidden_count(
+                    paths, subdir, max_depth, max_results, include_ignored
+                )
+            )
+            return ToolOutput(data=root, formatted=f"(empty{hint})")
 
         dir_count = sum(1 for e in entries if e.is_directory)
         file_count = sum(1 for e in entries if not e.is_directory)
         tree_lines.append("")
         tree_lines.append(
-            f"{dir_count} {'directory' if dir_count == 1 else 'directories'}, "
-            f"{file_count} {'file' if file_count == 1 else 'files'}"
+            f"{dir_count} {_pluralize(dir_count, 'directory', 'directories')}, "
+            f"{file_count} {_pluralize(file_count, 'file', 'files')}"
         )
         return ToolOutput(data=root, formatted="\n".join(tree_lines))
+
+    def _hidden_count(
+        self,
+        paths: tuple[SearchPath, ...],
+        subdir: str | None,
+        max_depth: DocumentMaxDepthArg,
+        max_results: int,
+        include_ignored: bool,
+    ) -> int:
+        """Count entries an unfiltered scan would expose, for the empty hint.
+
+        Only meaningful when the filtered scan came back empty: every entry
+        an exclusion-free scan finds is one the default filter hid.  Returns
+        0 when *include_ignored* is set, since nothing is being hidden.
+        """
+        if include_ignored:
+            return 0
+        return len(
+            _scan_entries(paths, self.glob, subdir, max_depth, max_results, ())
+        )
 
 
 @dataclass(slots=True, frozen=True)
@@ -433,7 +486,9 @@ class GlobDocumentsTool(SyncPathTool[list[str]]):
 
         Returns a flat list of relative filenames.  Use ``list_documents``
         for directory listings with sizes, dates, or tree output.  Common
-        build and vendor directories are skipped by default.
+        build and vendor directories and the contents of ``.assets``
+        payload directories are skipped by default; pass
+        ``include_ignored=True`` to include them.
         """
         paths, subdir = self.scoped(path)
         results = _glob_entries(
@@ -444,10 +499,14 @@ class GlobDocumentsTool(SyncPathTool[list[str]]):
             max_results,
             excluded_dirs(include_ignored),
         )
-        return ToolOutput(
-            data=results,
-            formatted="\n".join(results) if results else "(no matches)",
+        if results:
+            return ToolOutput(data=results, formatted="\n".join(results))
+        hidden = (
+            0
+            if include_ignored
+            else len(_glob_entries(paths, self.glob, pattern, subdir, max_results, ()))
         )
+        return ToolOutput(data=results, formatted=f"(no matches{_ignored_hint(hidden)})")
 
 
 @dataclass(slots=True, frozen=True)
