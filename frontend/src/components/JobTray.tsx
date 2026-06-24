@@ -1,8 +1,9 @@
 import { AlertCircle, CheckCircle2, Loader2, X } from "lucide-react";
 import { useEffect, useMemo } from "react";
+import { toast } from "sonner";
 
 import { ACTIVE_JOB_STATUSES, type JobView } from "../lib/types";
-import { useJobsStore } from "../stores/jobs-store";
+import { onJobSettled, onJobStarted, useJobsStore } from "../stores/jobs-store";
 import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Progress } from "./ui/progress";
@@ -19,6 +20,29 @@ function statusLabel(job: JobView): string {
       return job.stage ?? "Queued";
     default:
       return job.stage ?? "Processing";
+  }
+}
+
+// Surface a job's lifecycle as a toast keyed by its id, so a single toast
+// evolves in place from "loading" to its terminal state instead of stacking.
+// This makes a state change obvious even when the originating control resets
+// quickly, e.g. the upload area flashing back to its idle prompt while the
+// conversion job actually runs in the background.
+function notifyJob(job: JobView): void {
+  const opts = { id: job.id, description: statusLabel(job) };
+
+  switch (job.status) {
+    case "succeeded":
+      toast.success(job.title, opts);
+      break;
+    case "failed":
+      toast.error(job.title, opts);
+      break;
+    case "cancelled":
+      toast.info(job.title, opts);
+      break;
+    default:
+      toast.loading(job.title, opts);
   }
 }
 
@@ -105,6 +129,12 @@ export function JobTray() {
 
   useEffect(() => {
     start();
+    const offStarted = onJobStarted(notifyJob);
+    const offSettled = onJobSettled(notifyJob);
+    return () => {
+      offStarted();
+      offSettled();
+    };
   }, [start]);
 
   const jobs = useMemo(

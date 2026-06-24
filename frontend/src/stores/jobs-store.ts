@@ -20,6 +20,7 @@ const SETTLED_IDS_CAP = 500;
 type JobListener = (job: JobView) => void;
 
 const settledListeners = new Set<JobListener>();
+const startedListeners = new Set<JobListener>();
 
 /**
  * Register a callback fired once when any job reaches a terminal state. Keeps
@@ -30,6 +31,19 @@ export function onJobSettled(listener: JobListener): () => void {
   settledListeners.add(listener);
   return () => {
     settledListeners.delete(listener);
+  };
+}
+
+/**
+ * Register a callback fired once when a job first appears in an active
+ * (non-terminal) state — i.e. its work just began. Mirrors {@link onJobSettled}
+ * so a feature can surface both ends of a job's lifecycle (e.g. a toast).
+ * Returns an unsubscribe function.
+ */
+export function onJobStarted(listener: JobListener): () => void {
+  startedListeners.add(listener);
+  return () => {
+    startedListeners.delete(listener);
   };
 }
 
@@ -137,8 +151,9 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
   // Snapshots arrive from the submit response and the feed, which also re-seeds
   // retained terminal jobs on every reconnect, so upsert is idempotent and
   // order-independent: drop a stale snapshot, never resurrect a dismissed job,
-  // and fire settle listeners only on the first transition into a terminal
-  // state. A clean finish then lingers briefly; a failure stays until dismissed.
+  // and fire start/settle listeners only on the first transition into the
+  // matching state. A clean finish then lingers briefly; a failure stays until
+  // dismissed.
   upsert: (job) => {
     const prev = get().jobs[job.id];
 
@@ -154,6 +169,12 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
     if (terminal && handled && !prev) return;
 
     set((s) => ({ jobs: { ...s.jobs, [job.id]: job } }));
+
+    // First snapshot of a job that is still running (not a re-seed, not a fast
+    // job whose terminal snapshot arrived first): announce that work began.
+    if (!prev && !terminal) {
+      startedListeners.forEach((listener) => listener(job));
+    }
 
     if (!terminal || handled) return;
 
