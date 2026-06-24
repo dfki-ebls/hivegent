@@ -79,7 +79,7 @@ A failed migration aborts startup with a non-zero exit code, which trips the uni
 
 The database is the source of truth for chat history, not the browser.
 A conversation's messages form a tree: every `Message` row has a global `id` and a nullable `parent_id`.
-The active branch is simply the newest one, so no branch pointer is stored: the linear history the frontend sees is the *active path* — the conversation's most recently created message walked up to the root via `parent_id` (`_load_active_path` in `db/conversations.py`).
+The active branch is simply the newest one, so no branch pointer is stored: the linear history the frontend sees is the _active path_ — the conversation's most recently created message walked up to the root via `parent_id` (`_load_active_path` in `db/conversations.py`).
 Because references then flow only `messages -> conversations`, there is no FK cycle to break with a deferrable pointer, and no write path to trust with keeping a pointer valid; the `(conversation_id, created_at)` index serves both the newest-leaf lookup and the cheap `EXISTS` check that drops empty conversations from the sidebar list.
 No per-conversation message count is stored or shown: the active-path count is a path aggregate (a plain `COUNT(*)` would wrongly include sibling branches), so materializing it would mean either an immutable per-node counter or a per-row tree walk — neither worth carrying for a sidebar label, so the list view shows only titles and timestamps.
 

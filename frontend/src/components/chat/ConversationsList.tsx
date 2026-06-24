@@ -245,9 +245,7 @@ function ConversationItem({
           ) : (
             <p className="truncate text-sm font-medium">{title || "Untitled"}</p>
           )}
-          <p className="mt-1 text-xs text-muted-foreground">
-            {formatRelativeTime(updatedAt)}
-          </p>
+          <p className="mt-1 text-xs text-muted-foreground">{formatRelativeTime(updatedAt)}</p>
         </div>
       </div>
 

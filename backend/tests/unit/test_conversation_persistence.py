@@ -44,7 +44,8 @@ def _texts(messages: Sequence[ModelMessage]) -> list[str]:
         part.content
         for message in messages
         for part in message.parts
-        if isinstance(part, (UserPromptPart, TextPart)) and isinstance(part.content, str)
+        if isinstance(part, (UserPromptPart, TextPart))
+        and isinstance(part.content, str)
     ]
 
 
@@ -54,7 +55,9 @@ def _adapter(
     model: Model | None = None,
     tool_raises: bool = False,
 ) -> ChatAdapter[None, str]:
-    agent = Agent(model=model or TestModel(custom_output_text="ANSWER"), output_type=str)
+    agent = Agent(
+        model=model or TestModel(custom_output_text="ANSWER"), output_type=str
+    )
 
     if tool_raises:
 
@@ -209,9 +212,7 @@ def test_remapped_nodes_rewires_ids_and_tolerates_missing_parents() -> None:
             payload={"kind": "request", "parts": []},
         )
 
-    nodes = _remapped_nodes(
-        [_msg("a", None), _msg("b", "a"), _msg("c", "missing")]
-    )
+    nodes = _remapped_nodes([_msg("a", None), _msg("b", "a"), _msg("c", "missing")])
 
     new_ids = [node.id for node in nodes]
     assert len(set(new_ids)) == 3  # all fresh and unique

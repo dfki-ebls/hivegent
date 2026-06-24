@@ -3,6 +3,20 @@ import { create } from "zustand";
 import { cancelJob, subscribeJobs } from "../lib/api";
 import { TERMINAL_JOB_STATUSES, type JobView } from "../lib/types";
 
+// Reconnect backoff for the SSE feed: start fast, ramp toward the cap only while
+// reconnects keep failing (a sustained outage); a connection that stays open at
+// least RECONNECT_HEALTHY_MS counts as healthy and resets the backoff to base.
+const RECONNECT_BASE_MS = 1_000;
+const RECONNECT_MAX_MS = 30_000;
+const RECONNECT_HEALTHY_MS = 5_000;
+// How long a cleanly finished job lingers in the tray before it self-clears.
+const AUTO_DISMISS_MS = 4_000;
+// awaitJobSettled safety net: resolve anyway if the feed never delivers a
+// terminal snapshot (a sustained outage); a healthy feed resolves far sooner.
+const SETTLE_TIMEOUT_MS = 120_000;
+// Remembered terminal-id cap (oldest-first eviction) bounding the dedup set.
+const SETTLED_IDS_CAP = 500;
+
 type JobListener = (job: JobView) => void;
 
 const settledListeners = new Set<JobListener>();
@@ -18,11 +32,6 @@ export function onJobSettled(listener: JobListener): () => void {
     settledListeners.delete(listener);
   };
 }
-
-// Safety net for awaitJobSettled: if the feed never delivers a job's terminal
-// snapshot (a sustained outage), resolve anyway so an awaiting caller (the
-// rechunk dialog) is never wedged. A healthy feed resolves in well under this.
-const SETTLE_TIMEOUT_MS = 120_000;
 
 /**
  * Resolve once the job with `id` reaches a terminal state. Lets a caller that
@@ -63,12 +72,8 @@ const isTerminal = (job: JobView) => TERMINAL_JOB_STATUSES.has(job.status);
 // IDs whose terminal transition the store has already handled (settle handlers
 // fired). The feed re-seeds retained terminal jobs on every reconnect, so this
 // makes terminal handling idempotent: a re-sent snapshot updates state without
-// re-firing handlers or resurrecting a job the user already dismissed. Bounded
-// (oldest-first eviction) so a long-lived session cannot grow it without bound;
-// the server prunes retained jobs long before this many settle, so an evicted
-// id is effectively never re-seeded.
+// re-firing handlers or resurrecting a job the user already dismissed.
 const settledJobIds = new Set<string>();
-const SETTLED_IDS_CAP = 500;
 
 function markSettled(id: string): void {
   settledJobIds.add(id);
@@ -90,16 +95,6 @@ interface JobsStore {
   /** Drop a job from the tray (client-only). */
   dismiss: (id: string) => void;
 }
-
-// Reconnect backoff bounds for the SSE feed: start fast, ramp toward the cap
-// only while reconnects keep failing (a sustained outage), never below the base.
-const RECONNECT_BASE_MS = 1000;
-const RECONNECT_MAX_MS = 30000;
-// A connection that stayed open at least this long counts as healthy, so its
-// drop resets the backoff instead of ramping it (a normal restart, not an outage).
-const RECONNECT_HEALTHY_MS = 5000;
-// How long a cleanly finished job lingers in the tray before it clears itself.
-const AUTO_DISMISS_MS = 4000;
 
 export const useJobsStore = create<JobsStore>((set, get) => ({
   jobs: {},

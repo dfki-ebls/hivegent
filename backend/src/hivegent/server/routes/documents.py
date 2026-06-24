@@ -193,9 +193,7 @@ def _submit_bulk_job(
     async def work(ctx: JobContext) -> None:
         await run_bulk_document_job(files, process_one, verb=verb, ctx=ctx)
 
-    return manager.submit(
-        kind=kind, title=title, owner=user.id, scope=scope, work=work
-    )
+    return manager.submit(kind=kind, title=title, owner=user.id, scope=scope, work=work)
 
 
 @router.get("/documents/original/{filepath:path}")

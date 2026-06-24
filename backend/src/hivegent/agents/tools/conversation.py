@@ -34,8 +34,7 @@ async def list_conversations(
         formatted = "(no conversations)"
     else:
         formatted = "\n".join(
-            f"{c.id[:8]}  {c.updated_at:%Y-%m-%d}  {c.title}"
-            for c in conversations
+            f"{c.id[:8]}  {c.updated_at:%Y-%m-%d}  {c.title}" for c in conversations
         )
     return wrap_tool_output(
         ToolOutput(data=conversations, formatted=formatted),

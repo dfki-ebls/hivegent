@@ -84,8 +84,7 @@ async def run_bulk_document_job(
     if failed:
         succeeded = total - len(failed)
         raise RuntimeError(
-            f"{verb} {succeeded} of {total}; "
-            f"{len(failed)} failed: {', '.join(failed)}"
+            f"{verb} {succeeded} of {total}; {len(failed)} failed: {', '.join(failed)}"
         )
 
 

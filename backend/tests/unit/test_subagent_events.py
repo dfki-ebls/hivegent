@@ -27,7 +27,9 @@ def test_builder_appends_coarse_steps() -> None:
     )
     updates = [builder.on_event(event) for event in events]
 
-    assert all(update is not None and update.tool_call_id == "parent" for update in updates)
+    assert all(
+        update is not None and update.tool_call_id == "parent" for update in updates
+    )
     assert builder.transcript.steps == (
         SubagentStep(kind="reasoning"),
         SubagentStep(kind="tool", tool_name="search"),

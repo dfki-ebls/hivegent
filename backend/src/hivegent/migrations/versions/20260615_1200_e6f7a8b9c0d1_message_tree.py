@@ -76,9 +76,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index(op.f("ix_messages_parent_id"), table_name="messages")
-    op.drop_index(
-        op.f("ix_messages_conversation_id_created_at"), table_name="messages"
-    )
+    op.drop_index(op.f("ix_messages_conversation_id_created_at"), table_name="messages")
     op.drop_table("messages")
     _MESSAGE_KIND.create(op.get_bind())
     op.create_table(

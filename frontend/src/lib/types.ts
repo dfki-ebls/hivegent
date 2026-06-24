@@ -414,13 +414,7 @@ export const UploadDocumentResponseSchema = z.object({
 export type UploadDocumentResponse = z.infer<typeof UploadDocumentResponseSchema>;
 
 /** Lifecycle status of a background job. */
-export const JobStatusSchema = z.enum([
-  "queued",
-  "running",
-  "succeeded",
-  "failed",
-  "cancelled",
-]);
+export const JobStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "cancelled"]);
 export type JobStatus = z.infer<typeof JobStatusSchema>;
 
 /** Discrete progress of a job (e.g. files processed in a collection). */

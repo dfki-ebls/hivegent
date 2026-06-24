@@ -104,4 +104,6 @@ class SubagentTranscriptBuilder:
                 return None
 
         self._steps.append(step)
-        return SubagentUpdate(tool_call_id=self._tool_call_id, transcript=self.transcript)
+        return SubagentUpdate(
+            tool_call_id=self._tool_call_id, transcript=self.transcript
+        )

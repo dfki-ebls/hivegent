@@ -185,9 +185,7 @@ async def write_document_text(
             message = f"Wrote {len(content)} characters to '{safe}'."
         elif mode == "create":
             if current is not None:
-                raise HTTPException(
-                    status_code=409, detail=f"'{safe}' already exists"
-                )
+                raise HTTPException(status_code=409, detail=f"'{safe}' already exists")
             new_content = content
             message = f"Created '{safe}' with {len(content)} characters."
         elif current is None:

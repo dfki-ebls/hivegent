@@ -264,8 +264,7 @@ async def _load_active_path(
     ).all()
     messages = _load_messages([row[2] for row in rows])
     return [
-        ActiveNode(row[0], row[1], msg)
-        for row, msg in zip(rows, messages, strict=True)
+        ActiveNode(row[0], row[1], msg) for row, msg in zip(rows, messages, strict=True)
     ]
 
 
@@ -315,11 +314,7 @@ def _has_messages() -> ColumnElement[bool]:
     Served by the ``(conversation_id, created_at)`` index, so it is a cheap
     existence check with no row scan.
     """
-    return (
-        select(literal(1))
-        .where(Message.conversation_id == Conversation.id)
-        .exists()
-    )
+    return select(literal(1)).where(Message.conversation_id == Conversation.id).exists()
 
 
 def _to_summary(conv: Conversation) -> ConversationSummary:

@@ -108,9 +108,7 @@ function ToolMessagePart({
   // Any subagent tool (explore today, others later) renders its delegated run's
   // transcript: the persisted one once it arrives and after reload, the live
   // stream while it is still running.
-  const subagentSteps = isSubagentTranscript(info.metadata)
-    ? info.metadata.steps
-    : liveSubagent;
+  const subagentSteps = isSubagentTranscript(info.metadata) ? info.metadata.steps : liveSubagent;
   if (subagentSteps) {
     return <SubagentTool toolName={info.toolName} part={part as ToolPart} steps={subagentSteps} />;
   }

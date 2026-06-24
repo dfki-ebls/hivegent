@@ -50,16 +50,8 @@ export function useHivegentChat(
         // (none for a regenerate) plus the operation. The backend loads the
         // active-path prefix from its store and forks/appends under the node
         // addressed by `messageId`, ignoring the rest of the client array.
-        prepareSendMessagesRequest: ({
-          api,
-          body,
-          id: chatId,
-          messages,
-          trigger,
-          messageId,
-        }) => {
-          const lastMessage =
-            trigger === "regenerate-message" ? undefined : messages.at(-1);
+        prepareSendMessagesRequest: ({ api, body, id: chatId, messages, trigger, messageId }) => {
+          const lastMessage = trigger === "regenerate-message" ? undefined : messages.at(-1);
           return {
             api:
               draft && adoptedIdRef.current

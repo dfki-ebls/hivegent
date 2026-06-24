@@ -112,7 +112,9 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
         )
 
 
-async def _persist_safely(persist: PersistTurn, messages: Sequence[ModelMessage]) -> None:
+async def _persist_safely(
+    persist: PersistTurn, messages: Sequence[ModelMessage]
+) -> None:
     """Run *persist*, logging instead of raising on failure.
 
     It fires after the response has already streamed — and possibly during

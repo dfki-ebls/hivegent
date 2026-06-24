@@ -66,7 +66,11 @@ async def test_prepare_conversion_assets_captions_duplicates_once(
     }
     contexts = {"fig_a.png": ["near A"], "fig_b.png": ["near B"]}
 
-    ref_mapping, assets, asset_entries = await workspace.prepare._prepare_conversion_assets(
+    (
+        ref_mapping,
+        assets,
+        asset_entries,
+    ) = await workspace.prepare._prepare_conversion_assets(
         "doc.assets",
         images,
         contexts,
