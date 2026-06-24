@@ -18,6 +18,9 @@ const schema = z.object({
 
 export type RuntimeConfig = z.infer<typeof schema>;
 
+// Deliberately on plain fetch, not the readiness-gated authFetch: this is the
+// pre-render OIDC bootstrap, so a missing backend must fail fast to the dev
+// mock fallback rather than block rendering on a backend that may never come.
 export async function fetchRuntimeConfig(): Promise<RuntimeConfig> {
   const res = await fetch(`${API_BASE_URL}/api/config`);
   if (!res.ok) {
