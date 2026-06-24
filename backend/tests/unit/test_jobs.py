@@ -1,6 +1,7 @@
 """Unit tests for the generic background-job manager."""
 
 import asyncio
+from contextlib import aclosing
 
 import pytest
 
@@ -12,9 +13,9 @@ async def _run_to_terminal(
     manager: JobManager, owner: str, job_id: str, timeout: float = 1.0
 ) -> JobView:
     """Drive the event loop until *job_id* reports a terminal status."""
-    async with manager.subscribe(owner) as feed:
+    async with aclosing(manager.subscribe(owner)) as feed:
         while True:
-            snap = await asyncio.wait_for(feed.__anext__(), timeout)
+            snap = await asyncio.wait_for(anext(feed), timeout)
             if snap.id == job_id and snap.status in {
                 "succeeded",
                 "failed",

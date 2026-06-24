@@ -8,6 +8,7 @@ from the generic :class:`~hivegent.server.jobs.JobView` shape.
 
 import logging
 from collections.abc import AsyncIterable
+from contextlib import aclosing
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -48,7 +49,7 @@ async def job_events(
     per state change.  Closing the stream only ends the subscription —
     the jobs themselves run independently and are unaffected.
     """
-    async with manager.subscribe(user.id) as feed:
+    async with aclosing(manager.subscribe(user.id)) as feed:
         async for snapshot in feed:
             yield snapshot
 

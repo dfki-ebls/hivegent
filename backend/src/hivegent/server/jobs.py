@@ -18,9 +18,9 @@ can reuse it.
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Literal, Self
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
@@ -32,7 +32,6 @@ __all__ = [
     "JobManager",
     "JobProgress",
     "JobStatus",
-    "JobSubscription",
     "JobView",
     "JobWork",
     "manager",
@@ -172,31 +171,6 @@ type JobWork = Callable[[JobContext], Awaitable[None]]
 
 
 @dataclass(slots=True)
-class JobSubscription:
-    """Async iterator of job snapshots for one owner, closed on exit.
-
-    Yields the current snapshot of every existing job first, then one
-    snapshot per subsequent state change, so a (re)connecting client
-    always converges on the live state.
-    """
-
-    _queue: asyncio.Queue[JobView]
-    _close: Callable[[], None]
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *_exc: object) -> None:
-        self._close()
-
-    def __aiter__(self) -> Self:
-        return self
-
-    async def __anext__(self) -> JobView:
-        return await self._queue.get()
-
-
-@dataclass(slots=True)
 class JobManager:
     """In-memory registry that runs, tracks, and broadcasts jobs.
 
@@ -293,8 +267,8 @@ class JobManager:
         """Return every known job for *owner*, oldest first."""
         return [job.view() for job in self._owner_jobs(owner)]
 
-    def subscribe(self, owner: str) -> JobSubscription:
-        """Open a snapshot feed for *owner*, seeded with every retained job.
+    async def subscribe(self, owner: str) -> AsyncGenerator[JobView]:
+        """Yield *owner*'s snapshots: every retained job first, then each change.
 
         Both active and recently-settled jobs are replayed on connect: a client
         that dropped while a job finished would otherwise never receive the
@@ -303,12 +277,20 @@ class JobManager:
         so re-sending them lets a (re)connecting client converge on the true
         state; the client treats a terminal snapshot it already handled as a
         no-op, firing its settle handlers only on the first transition.
+
+        The subscriber is registered and seeded synchronously before the first
+        suspension; the ``finally`` unsubscribes when the consumer closes the
+        generator (e.g. via :func:`contextlib.aclosing`).
         """
         queue: asyncio.Queue[JobView] = asyncio.Queue(maxsize=self.queue_maxsize)
         self._subscribers.setdefault(owner, set()).add(queue)
         for job in self._owner_jobs(owner):
             _enqueue(queue, job.view())
-        return JobSubscription(queue, lambda: self._unsubscribe(owner, queue))
+        try:
+            while True:
+                yield await queue.get()
+        finally:
+            self._unsubscribe(owner, queue)
 
     def _owner_jobs(self, owner: str) -> list[_Job]:
         return sorted(
