@@ -25,12 +25,30 @@
                 --project backend \
                 run hivegent serve --host 127.0.0.1 --reload
             '';
+            # FastAPI only serves once lifespan startup (migrations, reconcile)
+            # finishes, so a healthy probe means the backend is ready for traffic.
+            readiness_probe = {
+              http_get = {
+                host = "127.0.0.1";
+                port = 8000;
+                path = "/api/health";
+              };
+              initial_delay_seconds = 1;
+              period_seconds = 1;
+              timeout_seconds = 3;
+              failure_threshold = 60;
+            };
           };
-          frontend.command = ''
-            exec ${lib.getExe' pkgs.nodejs "npm"} \
-              --prefix frontend \
-              run dev
-          '';
+          # Gate the dev server on a ready backend so the SPA's startup fetches
+          # never hit a booting backend and flood the proxy with ECONNREFUSED.
+          frontend = {
+            depends_on.backend.condition = "process_healthy";
+            command = ''
+              exec ${lib.getExe' pkgs.nodejs "npm"} \
+                --prefix frontend \
+                run dev
+            '';
+          };
         };
       };
     };
