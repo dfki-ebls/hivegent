@@ -471,6 +471,20 @@ class SecuritySettings(BaseModel):
         return self.web_urls.to_policy(allow_private=self.allow_private_urls)
 
 
+class ToolsSettings(BaseModel):
+    """Feature flags toggling the agent's built-in tools.
+
+    Each flag is an operator master switch for one tool family, letting a
+    deployment narrow what the model can do.  ``enable_web`` gates the
+    ``web_search`` and ``web_fetch`` tools (which also need a
+    ``security.web_urls`` policy to take effect); it is off by default, so
+    the model answers from the indexed documents alone.  Add further
+    flags here as more tool families gain a toggle.
+    """
+
+    enable_web: bool = False
+
+
 class ConversionSettings(BaseModel):
     """Document conversion (OCR) tunables.
 
@@ -605,6 +619,7 @@ class Settings(BaseSettings):
     claims: ClaimSettings = ClaimSettings()
     auth: AuthSettings = AuthSettings()
     security: SecuritySettings = SecuritySettings()
+    tools: ToolsSettings = ToolsSettings()
     conversion: ConversionSettings = ConversionSettings()
     limits: LimitsSettings = LimitsSettings()
     network: NetworkSettings = NetworkSettings()

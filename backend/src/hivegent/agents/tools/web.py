@@ -2,12 +2,14 @@
 
 The tool classes are settings-free; this module is where the application
 settings are applied to their instance fields.  The web tools are only
-registered while a web host policy is configured
-(``HIVEGENT_SECURITY__WEB_URLS__ALLOW_HOSTS`` / ``__DENY_HOSTS``, which
-default to the Wikimedia projects): without one, letting the model
-dereference arbitrary websites is unsafe, and a search whose results
-could never be opened is pointless — so both tools are hidden
-altogether.
+registered while ``HIVEGENT_TOOLS__ENABLE_WEB`` is set (the
+operator master switch, off by default) and a web host policy is
+configured (``HIVEGENT_SECURITY__WEB_URLS__ALLOW_HOSTS`` / ``__DENY_HOSTS``,
+which default to the Wikimedia projects): without the switch the model
+answers from the indexed documents alone, and without a policy letting
+it dereference arbitrary websites is unsafe and a search whose results
+could never be opened is pointless — so in either case both tools are
+hidden altogether.
 """
 
 from pydantic_ai import FunctionToolset
@@ -45,7 +47,7 @@ def _web_fetch(_deps: UserDeps) -> WebFetch:
 
 web_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=False)
 
-if _policy.restricts_hosts:
+if settings.tools.enable_web and _policy.restricts_hosts:
     register_agent_tools(
         web_toolset,
         UserDeps,
