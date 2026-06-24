@@ -43,7 +43,10 @@ def _read_document(deps: UserDeps) -> ReadDocumentTool:
 
 
 def _read_binary_document(deps: UserDeps) -> ReadBinaryDocumentTool:
-    return ReadBinaryDocumentTool(paths=_workspace_paths(deps))
+    return ReadBinaryDocumentTool(
+        paths=_workspace_paths(deps),
+        binary_content_mode=settings.multimodal.binary_content,
+    )
 
 
 def _grep(deps: UserDeps) -> GrepTool:

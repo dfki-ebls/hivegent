@@ -14,7 +14,7 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
-from .converters.base import DOCUMENT_EXTENSION
+from .converters.base import DOCUMENT_EXTENSION, BinaryContentMode
 from .security import UrlPolicy
 
 CONFIG_FILE_ENV_VAR = "HIVEGENT_CONFIG_FILE"
@@ -36,6 +36,7 @@ __all__ = [
     "LlmSettings",
     "LogfireSettings",
     "McpSettings",
+    "MultimodalSettings",
     "NetworkSettings",
     "RerankSettings",
     "SecuritySettings",
@@ -219,6 +220,23 @@ class SummarizationSettings(BaseModel):
 
     include_reasoning: bool = True
     """Whether transcripts carry the assistant's reasoning parts."""
+
+
+class MultimodalSettings(BaseModel):
+    """How binary content reaches the chat model.
+
+    ``binary_content`` governs both the agent's binary reader
+    (``read_binary_document``) and ad-hoc chat attachments.  ``images``
+    (the default) rasterises PDFs to page images, the only multimodal
+    content OpenAI-compatible vision servers (vLLM, SGLang, ...) accept;
+    ``native`` forwards them as ``application/pdf`` for providers with
+    first-class document understanding (OpenAI, Anthropic).  Set it to
+    match the configured ``llm.model``'s capabilities.
+
+    Configurable via ``HIVEGENT_MULTIMODAL__BINARY_CONTENT``.
+    """
+
+    binary_content: BinaryContentMode = BinaryContentMode.IMAGES
 
 
 class LogfireSettings(BaseModel):
@@ -579,6 +597,7 @@ class Settings(BaseSettings):
 
     llm: LlmSettings = LlmSettings()
     summarization: SummarizationSettings = SummarizationSettings()
+    multimodal: MultimodalSettings = MultimodalSettings()
     embedding: EmbeddingSettings = EmbeddingSettings()
     rerank: RerankSettings = RerankSettings()
     logfire: LogfireSettings = LogfireSettings()

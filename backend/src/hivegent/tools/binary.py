@@ -1,22 +1,30 @@
 """Binary document reader for images, PDFs, and videos.
 
-Surfaces raw image and PDF bytes to vision-capable models as multimodal
-tool output, so the agent can inspect a chart, diagram, or page layout
-that the textual conversion failed to capture.  Animated images and
-videos are represented as a bounded set of frames sampled evenly across
-their timeline, because vision chat models only accept still images.
+Surfaces visual content to multimodal models as tool output, so the
+agent can inspect a chart, diagram, or page layout that the textual
+conversion failed to capture.  Images pass through as images and
+time-based media (video, animations) is always sampled to still frames,
+because no chat model ingests those containers natively.  PDFs follow
+:class:`BinaryContentMode`: rasterised to one image per page for vision
+servers that only accept ``image_url`` parts (vLLM, SGLang, ...), or
+forwarded as ``application/pdf`` for providers that ingest ``file``
+parts directly (OpenAI, Anthropic).
 """
 
 import asyncio
-import io
-import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Annotated, override
 
 from pydantic import Field
 
+from ..converters.base import BinaryContentMode
 from ..converters.images import sanitize_image_bytes
+from ..converters.pdf_raster import (
+    DEFAULT_MAX_PAGES,
+    extract_pdf_pages,
+    render_pdf_pages,
+)
 from ..converters.video import (
     FRAME_MAX_DIMENSION,
     MAX_FRAMES,
@@ -78,10 +86,6 @@ PagesArg = Annotated[
     ),
 ]
 
-# Bounded digit count keeps a malicious `pages='9'*1e9` from forcing CPython
-# to allocate a multi-megabyte int before the range check rejects it.
-_PAGE_TOKEN_RE = re.compile(r"^(\d{1,9})(?:-(\d{1,9}))?$")
-
 
 @dataclass(slots=True, frozen=True)
 class BinaryReadResult:
@@ -93,42 +97,6 @@ class BinaryReadResult:
     pages: tuple[int, ...] = ()
     frames: int = 0
     duration: float | None = None
-
-
-def _parse_pages(spec: str, total: int) -> tuple[int, ...]:
-    """Parse a page spec like ``1,3,5-7`` into a tuple of 1-based pages."""
-    seen: dict[int, None] = {}
-    for raw in spec.split(","):
-        match = _PAGE_TOKEN_RE.match(raw.strip())
-        if not match:
-            raise ValueError(f"Invalid page token: {raw.strip()!r}")
-        start = int(match.group(1))
-        end = int(match.group(2)) if match.group(2) else start
-        if start < 1 or end < start:
-            raise ValueError(f"Invalid page range: {raw.strip()!r}")
-        if end > total:
-            raise ValueError(f"Page {end} exceeds document length {total}")
-        for p in range(start, end + 1):
-            seen.setdefault(p, None)
-    return tuple(seen)
-
-
-def _extract_pdf_pages(pdf_bytes: bytes, spec: str) -> tuple[bytes, tuple[int, ...]]:
-    """Return a new PDF containing only the requested pages."""
-    import pypdfium2 as pdfium
-
-    try:
-        with (
-            pdfium.PdfDocument(pdf_bytes) as src,
-            pdfium.PdfDocument.new() as dst,
-        ):
-            pages = _parse_pages(spec, len(src))
-            dst.import_pages(src, pages=[p - 1 for p in pages])
-            buf = io.BytesIO()
-            dst.save(buf)
-            return buf.getvalue(), pages
-    except pdfium.PdfiumError as exc:
-        raise ValueError(f"PDF could not be opened: {exc}") from exc
 
 
 def _frame_attachments(
@@ -149,8 +117,14 @@ def _frame_attachments(
 class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
     """Read an image, PDF, or video as binary content for vision models."""
 
+    binary_content_mode: BinaryContentMode = BinaryContentMode.IMAGES
+    """Whether PDFs are rasterised to images or forwarded as ``file`` parts."""
+
     max_bytes: int = _MAX_BYTES
-    """Size cap for media sent to the model verbatim (images, PDFs)."""
+    """Size cap for the source file read off disk (images, PDFs)."""
+
+    max_pages: int = DEFAULT_MAX_PAGES
+    """Upper bound of PDF pages rasterised into image attachments."""
 
     max_frames: int = MAX_FRAMES
     """Upper bound of frames sampled from a video or animation."""
@@ -168,16 +142,15 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
 
         Use this when the textual conversion of a document is missing
         information that only the original visual (chart, diagram,
-        layout, photo, animation) can convey.  The bytes are attached
-        as multimodal content sent inline with the tool return.
+        layout, photo, animation) can convey.  The visuals are attached
+        inline with the tool return for the model to inspect.
 
-        Supported types: PDF, PNG, JPEG, GIF, WebP, MP4, WebM, MOV,
-        MKV.  Videos and animated images are represented by a bounded
-        set of still frames sampled evenly across their timeline, each
-        labeled with its timestamp.  For PDFs, pass ``pages`` to
-        extract a subset (e.g. ``"3"``, ``"2-5"``, ``"1,3,5-7"``);
-        omit it to send the whole document.  ``pages`` is rejected for
-        non-PDF inputs.
+        Supported types: PDF, PNG, JPEG, GIF, WebP, MP4, WebM, MOV, MKV.
+        Videos and animated images are represented by a bounded set of
+        still frames sampled evenly across their timeline, each labeled
+        with its timestamp.  For PDFs, pass ``pages`` to select a subset
+        (e.g. ``"3"``, ``"2-5"``, ``"1,3,5-7"``); omit it to read the
+        whole document.  ``pages`` is rejected for non-PDF inputs.
         """
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None or not resolved[2].is_file():
@@ -214,34 +187,94 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
                 "narrow with pages= for PDFs."
             )
 
-        selected_pages: tuple[int, ...] = ()
-        if media_type == "application/pdf" and pages is not None:
-            try:
-                raw, selected_pages = _extract_pdf_pages(raw, pages)
-            except ValueError as exc:
-                raise ToolRetry(f"invalid pages: {exc}") from exc
-        elif media_type.startswith("image/"):
-            # Best-effort metadata strip; a quirky-but-storable image is returned
-            # verbatim rather than raising, so a read never fails on sanitisation.
-            raw = sanitize_image_bytes(raw, media_type)
+        if media_type == "application/pdf":
+            return await self._read_pdf(canonical, raw, pages)
 
-        page_text = (
-            f" pages {','.join(str(p) for p in selected_pages)}"
-            if selected_pages
-            else ""
+        # Best-effort metadata strip; a quirky-but-storable image is returned
+        # verbatim rather than raising, so a read never fails on sanitisation.
+        raw = sanitize_image_bytes(raw, media_type)
+        return ToolOutput(
+            data=BinaryReadResult(
+                file_path=canonical, media_type=media_type, size=len(raw)
+            ),
+            formatted=f"attached {canonical} ({media_type}, {len(raw)} bytes)",
+            attachments=(
+                BinaryAttachment(data=raw, media_type=media_type, identifier=canonical),
+            ),
         )
+
+    async def _read_pdf(
+        self, canonical: str, raw: bytes, pages: str | None
+    ) -> ToolOutput[BinaryReadResult]:
+        """Surface a PDF as page images or a native ``file``, per the mode."""
+        if self.binary_content_mode is BinaryContentMode.NATIVE:
+            return await self._read_pdf_native(canonical, raw, pages)
+
+        return await self._read_pdf_rendered(canonical, raw, pages)
+
+    async def _read_pdf_rendered(
+        self, canonical: str, raw: bytes, pages: str | None
+    ) -> ToolOutput[BinaryReadResult]:
+        """Rasterise the requested PDF pages into one image attachment each."""
+        try:
+            page_images, selected_pages = await asyncio.to_thread(
+                render_pdf_pages,
+                raw,
+                pages,
+                self.frame_max_dimension,
+                self.max_pages,
+            )
+        except ValueError as exc:
+            raise ToolRetry(f"PDF could not be read: {exc}") from exc
+
+        attachments = tuple(
+            BinaryAttachment(
+                data=png, media_type="image/png", identifier=f"{canonical}#page={p}"
+            )
+            for p, png in zip(selected_pages, page_images, strict=True)
+        )
+        size = sum(len(a.data) for a in attachments)
+        page_list = ",".join(str(p) for p in selected_pages)
         return ToolOutput(
             data=BinaryReadResult(
                 file_path=canonical,
-                media_type=media_type,
-                size=len(raw),
+                media_type="application/pdf",
+                size=size,
                 pages=selected_pages,
             ),
             formatted=(
-                f"attached {canonical}{page_text} ({media_type}, {len(raw)} bytes)"
+                f"rendered {len(attachments)} page(s) ({page_list}) from {canonical} "
+                f"as images ({size} bytes)"
             ),
+            attachments=attachments,
+        )
+
+    async def _read_pdf_native(
+        self, canonical: str, raw: bytes, pages: str | None
+    ) -> ToolOutput[BinaryReadResult]:
+        """Forward a PDF (optionally a page subset) as a native ``file`` part."""
+        selected_pages: tuple[int, ...] = ()
+        if pages is not None:
+            try:
+                raw, selected_pages = await asyncio.to_thread(
+                    extract_pdf_pages, raw, pages
+                )
+            except ValueError as exc:
+                raise ToolRetry(f"invalid pages: {exc}") from exc
+
+        page_text = f" pages {','.join(str(p) for p in selected_pages)}" if selected_pages else ""
+        return ToolOutput(
+            data=BinaryReadResult(
+                file_path=canonical,
+                media_type="application/pdf",
+                size=len(raw),
+                pages=selected_pages,
+            ),
+            formatted=f"attached {canonical}{page_text} (application/pdf, {len(raw)} bytes)",
             attachments=(
-                BinaryAttachment(data=raw, media_type=media_type, identifier=canonical),
+                BinaryAttachment(
+                    data=raw, media_type="application/pdf", identifier=canonical
+                ),
             ),
         )
 

@@ -3,7 +3,7 @@
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 from io import BytesIO
 from pathlib import Path
 from typing import ClassVar, Protocol
@@ -14,6 +14,7 @@ __all__ = [
     "IMAGE_EXTENSIONS",
     "AssetBBox",
     "AssetRole",
+    "BinaryContentMode",
     "ConversionResult",
     "DocumentConverter",
     "ExtractedImage",
@@ -24,6 +25,28 @@ __all__ = [
     "is_markdown_suffix",
     "pil_to_png_bytes",
 ]
+
+
+class BinaryContentMode(StrEnum):
+    """How binary content reaches the chat model.
+
+    The agent's binary reader and ad-hoc chat attachments can carry
+    images, PDFs, and video.  This policy selects the representation:
+
+    - :attr:`IMAGES` rasterises PDFs to one image per page, the only
+      multimodal content type OpenAI-compatible vision servers (vLLM,
+      SGLang, ...) accept — they reject the native ``file`` part outright.
+    - :attr:`NATIVE` forwards PDF bytes with their ``application/pdf``
+      media type, for providers with first-class document understanding
+      (OpenAI, Anthropic) that ingest ``file`` parts directly.
+
+    Images are always sent as images and time-based media (video,
+    animations) is always sampled to frames either way, because no chat
+    model ingests those containers natively.
+    """
+
+    IMAGES = "images"
+    NATIVE = "native"
 
 # URL schemes whose references resolve to a valid, fetchable resource; any
 # other scheme (``file:``, a Windows drive letter like ``T:``, ...) points off

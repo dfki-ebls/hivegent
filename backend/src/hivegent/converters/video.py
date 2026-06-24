@@ -25,6 +25,7 @@ __all__ = [
     "SampledFrame",
     "animation_frame_count",
     "is_video_suffix",
+    "pil_to_still_png",
     "sample_animated_image",
     "sample_video",
 ]
@@ -91,14 +92,17 @@ def _sample_indices(count: int, max_frames: int) -> frozenset[int]:
     return frozenset(int((i + 0.5) * count / max_frames) for i in range(max_frames))
 
 
-def _frame_to_png(frame: PIL.Image.Image, max_dimension: int) -> bytes:
-    """Flatten, downscale, and PNG-encode one animation frame.
+def pil_to_still_png(image: PIL.Image.Image, max_dimension: int) -> bytes:
+    """Flatten, downscale, and PNG-encode a PIL image as a still.
 
-    Transparent pixels are composited onto white — vision models receive
-    no alpha channel semantics, and black-flattened transparency makes
-    light-on-transparent content unreadable.
+    Bounds the longer side to *max_dimension*. Transparent pixels are
+    composited onto white — vision models receive no alpha channel
+    semantics, and black-flattened transparency makes light-on-transparent
+    content unreadable. Shared by the video/animation frame samplers and
+    the PDF page renderer so every still sent to a vision model is encoded
+    identically.
     """
-    rgba = frame.convert("RGBA")
+    rgba = image.convert("RGBA")
     background = PIL.Image.new("RGBA", rgba.size, (255, 255, 255, 255))
     still = PIL.Image.alpha_composite(background, rgba).convert("RGB")
     still.thumbnail((max_dimension, max_dimension))
@@ -154,7 +158,7 @@ def sample_animated_image(
                     frames.append(
                         SampledFrame(
                             timestamp=elapsed_ms / 1000,
-                            data=_frame_to_png(frame, max_dimension),
+                            data=pil_to_still_png(frame, max_dimension),
                         )
                     )
                 elapsed_ms += frame.info.get("duration") or _DEFAULT_FRAME_MS

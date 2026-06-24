@@ -50,7 +50,8 @@ def _read_binary_document(
     group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
 ) -> ReadBinaryDocumentTool:
     return ReadBinaryDocumentTool(
-        paths=build_search_paths(store, group_stores, settings.data_dir)
+        paths=build_search_paths(store, group_stores, settings.data_dir),
+        binary_content_mode=settings.multimodal.binary_content,
     )
 
 

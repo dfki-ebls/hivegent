@@ -7,9 +7,15 @@ from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
-from pydantic_ai import DeferredToolRequests
+from pydantic_ai import BinaryContent, DeferredToolRequests
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    TextPart,
+    UserContent,
+    UserPromptPart,
+)
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import Response
@@ -24,6 +30,10 @@ from ...agents import (
 from ...agents.subagent_events import SubagentUpdate
 from ...auth import User, get_current_user
 from ...compaction import CompactionResult, compact_conversation
+from ...config import settings
+from ...converters.base import BinaryContentMode
+from ...converters.pdf_raster import DEFAULT_MAX_PAGES, render_pdf_pages
+from ...converters.video import FRAME_MAX_DIMENSION
 from ...llm import model_from_config, thinking_model_settings
 from ...mcp import build_mcp_server, validate_mcp_servers
 from ...db._common import new_id
@@ -370,6 +380,36 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     )
 
 
+def _expand_pdf(item: UserContent) -> list[UserContent]:
+    """Rasterise a PDF attachment to page images; pass anything else through."""
+    if not (isinstance(item, BinaryContent) and item.media_type == "application/pdf"):
+        return [item]
+
+    pages, _ = render_pdf_pages(item.data, None, FRAME_MAX_DIMENSION, DEFAULT_MAX_PAGES)
+    return [BinaryContent(data=png, media_type="image/png") for png in pages]
+
+
+def _rasterize_pdf_attachments(messages: Sequence[ModelMessage]) -> None:
+    """Replace ``application/pdf`` attachments with rendered page images.
+
+    Ad-hoc chat attachments arrive inline as ``BinaryContent``; a PDF
+    blob would reach the model as a ``file`` part that vision servers
+    reject.  Under :attr:`BinaryContentMode.IMAGES` the new user message
+    is rewritten in place *before* the run, so the persisted history
+    already carries images and never re-renders on later turns.  Raises
+    :class:`ValueError` for an unreadable or oversized PDF.
+    """
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+
+        for part in message.parts:
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                part.content = [
+                    out for item in part.content for out in _expand_pdf(item)
+                ]
+
+
 async def _run_chat(conversation_id: str, request: Request, user: User) -> Response:
     """Stream a chat turn for *conversation_id* via the Vercel AI protocol."""
     config = await _parse_chat_config(request)
@@ -445,6 +485,17 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail="Invalid chat request") from exc
+
+    # Rasterise any PDF attachment on the new user message in place (the
+    # adapter caches `messages`, so `run_stream` and persistence both see the
+    # images) when the model cannot ingest native `file` parts.
+    if settings.multimodal.binary_content is BinaryContentMode.IMAGES:
+        try:
+            await asyncio.to_thread(_rasterize_pdf_attachments, adapter.messages)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Could not process a PDF attachment: {exc}"
+            ) from exc
 
     # Live subagent transcript snapshots flow through this sink; the streaming
     # response drains it concurrently with the run (see `run_and_persist`).
