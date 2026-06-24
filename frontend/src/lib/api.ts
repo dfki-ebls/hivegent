@@ -67,6 +67,12 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
  * Make an authenticated fetch request.
  */
 async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  // Gate every authenticated request on backend readiness so startup fetches
+  // (settings, the job feed, ...) never race a backend that is still booting
+  // and spam the dev proxy with connection-refused errors. The probe runs once
+  // per app lifetime (see waitForBackendReady), so this is a no-op once ready.
+  await waitForBackendReady();
+
   const headers = new Headers(options.headers);
 
   for (const [key, value] of Object.entries(await getAuthHeaders())) {

@@ -12,7 +12,7 @@ import { z } from "zod";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { getSettings, MaintenanceError, waitForBackendReady } from "../lib/api";
+import { getSettings, MaintenanceError } from "../lib/api";
 import { featureFlags } from "../lib/feature-flags";
 import {
   AssetProcessingMode,
@@ -175,11 +175,10 @@ export const useSettingsStore = create<SettingsState>()(
       reset: () => set({ overrides: EMPTY_OVERRIDES }),
 
       initFromBackend: async () => {
-        // Wait until the backend reports healthy so we never hit the
-        // authenticated endpoint before it can serve, then keep retrying on
-        // failure; during maintenance this doubles as the recovery poll, so
-        // the app loads by itself once an admin turns the mode back off.
-        await waitForBackendReady();
+        // getSettings goes through authFetch, which already gates on backend
+        // readiness, so the first attempt never races a booting backend. Keep
+        // retrying on failure; during maintenance this doubles as the recovery
+        // poll, so the app loads by itself once an admin turns the mode back off.
         while (true) {
           try {
             const defaults = await getSettings();

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { getOidc as getOidcFn } from "@/oidc";
 
@@ -22,7 +22,20 @@ vi.mock("@/lib/feature-flags", () => ({
   },
 }));
 
-import { buildLlmConfig, getDirectories, getSettings, requiresConversion } from "@/lib/api";
+import {
+  buildLlmConfig,
+  getDirectories,
+  getSettings,
+  requiresConversion,
+  waitForBackendReady,
+} from "@/lib/api";
+
+// authFetch gates every request on backend readiness; resolve the cached probe
+// once so each test's mocked fetch serves the endpoint, not the health poll.
+beforeAll(async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+  await waitForBackendReady();
+});
 
 describe("requiresConversion", () => {
   it("returns false for .md files", () => {
