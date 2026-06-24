@@ -41,6 +41,7 @@ import {
   MoveDirectoryResponseSchema,
   type GenerateTitleResponse,
   GenerateTitleResponseSchema,
+  FeedEventSchema,
   type JobView,
   JobViewSchema,
   type LlmConfig,
@@ -892,12 +893,15 @@ export async function cancelJob(id: string): Promise<void> {
 }
 
 /**
- * Subscribe to the caller's job feed, invoking `onJob` for every snapshot
- * until the connection ends or `signal` aborts. The feed seeds the current
- * jobs on connect, so a reconnect re-converges on live state.
+ * Subscribe to the caller's job feed, invoking `onJob` for every snapshot and
+ * `onReady` once the initial replay of current jobs is complete, until the
+ * connection ends or `signal` aborts. The feed seeds the current jobs on
+ * connect (ended by the ready marker), so a reconnect re-converges on live
+ * state while letting the caller tell the seed apart from later transitions.
  */
 export async function subscribeJobs(
   onJob: (job: JobView) => void,
+  onReady: () => void,
   signal?: AbortSignal,
 ): Promise<void> {
   const res = await authFetch(`${API_BASE_URL}/api/jobs/events`, { signal });
@@ -908,8 +912,9 @@ export async function subscribeJobs(
   // The feed never terminates with a completion event, so `readSseEvents`
   // throws "Stream ended..." when the connection drops — the caller's
   // reconnect loop handles that as a normal reconnect signal.
-  await readSseEvents(res, JobViewSchema, (job) => {
-    onJob(job);
+  await readSseEvents(res, FeedEventSchema, (event) => {
+    if ("type" in event) onReady();
+    else onJob(event);
     return undefined;
   });
 }

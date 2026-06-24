@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { create } from "zustand";
 import type {
   ReconvertDocumentOptions,
@@ -30,7 +31,35 @@ import type {
   PipelineSpec,
 } from "../lib/types";
 import { isAbortError, treeDocuments } from "../lib/utils";
-import { awaitJobSettled, onJobSettled, useJobsStore } from "./jobs-store";
+import { awaitJobSettled, onJobSettled, suppressJobToasts, useJobsStore } from "./jobs-store";
+
+// The kind the upload route tags single-document jobs with; mirrors the backend
+// `DocumentJobKind.UPLOAD` enum value, the cross-process contract for the feed.
+const DOCUMENT_UPLOAD_KIND = "document.upload";
+
+// Resolve a batch upload's single toast once its per-file jobs settle, mirroring
+// their combined outcome, then lift the suppression that hid the per-file cues.
+async function finalizeUploadToast(
+  toastId: string,
+  total: number,
+  settlements: Promise<JobView | undefined>[],
+  release: () => void,
+): Promise<void> {
+  try {
+    const views = await Promise.all(settlements);
+    const succeeded = views.filter((v) => v?.status === "succeeded").length;
+
+    if (succeeded === total) {
+      toast.success(`${total} documents added`, { id: toastId });
+    } else if (succeeded === 0) {
+      toast.error(`Failed to add ${total} documents`, { id: toastId });
+    } else {
+      toast.warning(`${succeeded} of ${total} documents added`, { id: toastId });
+    }
+  } finally {
+    release();
+  }
+}
 
 type Signalled<T> = T & { signal?: AbortSignal };
 
@@ -193,9 +222,20 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
     // Submit each file sequentially as its own tray job; the tray shows the
     // per-file conversion, so the store only flags the brief send and reports
     // any submits that never became a job. Aborting stops the remaining sends.
+    // One consolidated toast stands in for the per-file jobs: its toasts are
+    // suppressed up front (so the suppression cannot race their first feed
+    // snapshot) and this toast resolves once they all settle.
     uploadMultiple: async (scope, files, options) => {
       const signal = options?.signal;
       patch(scope, { isUploading: true, error: null });
+
+      const toastId = crypto.randomUUID();
+      const release = suppressJobToasts(
+        (job) => job.scope === scope && job.kind === DOCUMENT_UPLOAD_KIND,
+      );
+      toast.loading(`Processing ${files.length} documents`, { id: toastId });
+
+      const settlements: Promise<JobView | undefined>[] = [];
       const failed: string[] = [];
       try {
         await files.reduce(
@@ -204,6 +244,7 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
               if (signal?.aborted) return;
               try {
                 const job = await uploadDocument(canonicalPath(scope, file.name), file, options);
+                settlements.push(awaitJobSettled(job.id));
                 useJobsStore.getState().upsert(job);
               } catch (err) {
                 if (!isAbortError(err)) failed.push(file.name);
@@ -219,6 +260,8 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
           }),
         });
       }
+
+      void finalizeUploadToast(toastId, files.length, settlements, release);
     },
 
     uploadCol: async (scope, file, options) => {

@@ -5,7 +5,7 @@ from contextlib import aclosing
 
 import pytest
 
-from hivegent.server.jobs import JobContext, JobManager, JobView
+from hivegent.server.jobs import FeedReady, JobContext, JobManager, JobView
 from hivegent.server.operations.processing import run_bulk_document_job
 
 
@@ -16,6 +16,8 @@ async def _run_to_terminal(
     async with aclosing(manager.subscribe(owner)) as feed:
         while True:
             snap = await asyncio.wait_for(anext(feed), timeout)
+            if isinstance(snap, FeedReady):
+                continue
             if snap.id == job_id and snap.status in {
                 "succeeded",
                 "failed",
@@ -75,6 +77,27 @@ async def test_job_failure_carries_message_and_owner_isolation() -> None:
 
     # Jobs are scoped to their owner.
     assert manager.list_jobs("other") == []
+
+
+async def test_subscribe_seeds_retained_jobs_then_ready_marker() -> None:
+    """A new subscriber replays current jobs, then a FeedReady ends the seed.
+
+    The marker lets a client tell the replay of current state apart from later
+    live transitions, so it can ignore jobs that finished before it connected.
+    """
+    manager = JobManager()
+
+    async def work(_ctx: JobContext) -> None:
+        return None
+
+    view = manager.submit(kind="x", title="done", owner="u1", scope=None, work=work)
+    await _run_to_terminal(manager, "u1", view.id)
+
+    async with aclosing(manager.subscribe("u1")) as feed:
+        seed = await asyncio.wait_for(anext(feed), 1.0)
+        assert isinstance(seed, JobView) and seed.id == view.id
+        marker = await asyncio.wait_for(anext(feed), 1.0)
+        assert isinstance(marker, FeedReady)
 
 
 class _Progress:

@@ -3,7 +3,12 @@ import { useEffect, useMemo } from "react";
 import { toast } from "sonner";
 
 import { ACTIVE_JOB_STATUSES, type JobView } from "../lib/types";
-import { onJobSettled, onJobStarted, useJobsStore } from "../stores/jobs-store";
+import {
+  isJobToastSuppressed,
+  onJobSettled,
+  onJobStarted,
+  useJobsStore,
+} from "../stores/jobs-store";
 import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Progress } from "./ui/progress";
@@ -30,6 +35,10 @@ function statusLabel(job: JobView): string {
 // tray. Keyed by job id so a fast job's start and finish evolve one toast in
 // place instead of stacking two.
 function notifyJob(job: JobView): void {
+  // A feature may own an aggregate cue for this job (e.g. one toast for a whole
+  // batch upload); skip the per-job toast so the two do not both fire.
+  if (isJobToastSuppressed(job)) return;
+
   const opts = { id: job.id };
 
   switch (job.status) {

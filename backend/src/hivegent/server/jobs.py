@@ -28,6 +28,8 @@ from pydantic import BaseModel, ConfigDict
 from ..config import settings
 
 __all__ = [
+    "FeedEvent",
+    "FeedReady",
     "JobContext",
     "JobManager",
     "JobProgress",
@@ -93,6 +95,22 @@ class JobView(BaseModel):
     error: str | None = None
 
 
+class FeedReady(BaseModel):
+    """Sentinel marking the end of a subscription's initial replay.
+
+    Emitted once, after every retained job has been replayed on connect and
+    before any live change, so a (re)connecting client can tell the seed of
+    current state apart from later transitions: it can show jobs that were
+    already running without re-announcing them, and ignore jobs that finished
+    before it connected instead of flashing a stale completion.
+    """
+
+    type: Literal["ready"] = "ready"
+
+
+type FeedEvent = JobView | FeedReady
+
+
 class _Job(JobView):
     """Mutable runtime record: a wire snapshot plus its control fields.
 
@@ -115,7 +133,7 @@ class _Job(JobView):
         return JobView(**{name: getattr(self, name) for name in JobView.model_fields})
 
 
-def _enqueue(queue: asyncio.Queue[JobView], view: JobView) -> None:
+def _enqueue(queue: asyncio.Queue[FeedEvent], view: FeedEvent) -> None:
     """Enqueue *view*, dropping the oldest snapshot when a slow consumer is full.
 
     Every snapshot is full state, so a lagging feed still converges on the
@@ -182,7 +200,7 @@ class JobManager:
     retain_seconds: float = 3600.0
     queue_maxsize: int = 1024
     _jobs: dict[str, _Job] = field(default_factory=dict, init=False)
-    _subscribers: dict[str, set[asyncio.Queue[JobView]]] = field(
+    _subscribers: dict[str, set[asyncio.Queue[FeedEvent]]] = field(
         default_factory=dict, init=False
     )
     _semaphore: asyncio.Semaphore = field(init=False)
@@ -267,8 +285,9 @@ class JobManager:
         """Return every known job for *owner*, oldest first."""
         return [job.view() for job in self._owner_jobs(owner)]
 
-    async def subscribe(self, owner: str) -> AsyncGenerator[JobView]:
-        """Yield *owner*'s snapshots: every retained job first, then each change.
+    async def subscribe(self, owner: str) -> AsyncGenerator[FeedEvent]:
+        """Yield *owner*'s snapshots: every retained job, a :class:`FeedReady`
+        marker, then each change.
 
         Both active and recently-settled jobs are replayed on connect: a client
         that dropped while a job finished would otherwise never receive the
@@ -278,14 +297,20 @@ class JobManager:
         state; the client treats a terminal snapshot it already handled as a
         no-op, firing its settle handlers only on the first transition.
 
+        The :class:`FeedReady` sentinel terminates the seed so the client can
+        tell the replay of current state apart from later live transitions —
+        e.g. to show already-running jobs without re-announcing them and to
+        ignore jobs that finished before it connected.
+
         The subscriber is registered and seeded synchronously before the first
         suspension; the ``finally`` unsubscribes when the consumer closes the
         generator (e.g. via :func:`contextlib.aclosing`).
         """
-        queue: asyncio.Queue[JobView] = asyncio.Queue(maxsize=self.queue_maxsize)
+        queue: asyncio.Queue[FeedEvent] = asyncio.Queue(maxsize=self.queue_maxsize)
         self._subscribers.setdefault(owner, set()).add(queue)
         for job in self._owner_jobs(owner):
             _enqueue(queue, job.view())
+        _enqueue(queue, FeedReady())
         try:
             while True:
                 yield await queue.get()
@@ -307,7 +332,7 @@ class JobManager:
         for queue in self._subscribers.get(job.owner, ()):
             _enqueue(queue, view)
 
-    def _unsubscribe(self, owner: str, queue: asyncio.Queue[JobView]) -> None:
+    def _unsubscribe(self, owner: str, queue: asyncio.Queue[FeedEvent]) -> None:
         subscribers = self._subscribers.get(owner)
         if subscribers is None:
             return

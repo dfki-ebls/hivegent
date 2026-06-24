@@ -16,7 +16,7 @@ from fastapi.sse import EventSourceResponse
 from pydantic import BaseModel
 
 from ...auth import User, get_current_user
-from ..jobs import JobView, manager
+from ..jobs import FeedEvent, JobView, manager
 
 __all__ = ["router"]
 
@@ -42,12 +42,13 @@ async def list_jobs(
 @router.get("/jobs/events", response_class=EventSourceResponse)
 async def job_events(
     user: Annotated[User, Depends(get_current_user)],
-) -> AsyncIterable[JobView]:
+) -> AsyncIterable[FeedEvent]:
     """Stream the caller's job snapshots as Server-Sent Events.
 
-    Emits the current snapshot of every job on connect, then one snapshot
-    per state change.  Closing the stream only ends the subscription —
-    the jobs themselves run independently and are unaffected.
+    Emits the current snapshot of every job on connect, then a ``FeedReady``
+    marker that ends the seed, then one snapshot per state change.  Closing
+    the stream only ends the subscription — the jobs themselves run
+    independently and are unaffected.
     """
     async with aclosing(manager.subscribe(user.id)) as feed:
         async for snapshot in feed:

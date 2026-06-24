@@ -22,6 +22,32 @@ type JobListener = (job: JobView) => void;
 const settledListeners = new Set<JobListener>();
 const startedListeners = new Set<JobListener>();
 
+type ToastFilter = (job: JobView) => boolean;
+
+const toastFilters = new Set<ToastFilter>();
+
+/**
+ * Suppress the generic per-job toast for jobs matching `filter`, e.g. while a
+ * feature surfaces its own aggregate cue for them (a batch upload shows one
+ * toast for many files). Registered before the jobs exist so it cannot race
+ * their first snapshot. Returns a function that lifts the suppression.
+ */
+export function suppressJobToasts(filter: ToastFilter): () => void {
+  toastFilters.add(filter);
+  return () => {
+    toastFilters.delete(filter);
+  };
+}
+
+/** Whether a job's per-job toast is currently suppressed by any filter. */
+export function isJobToastSuppressed(job: JobView): boolean {
+  for (const filter of toastFilters) {
+    if (filter(job)) return true;
+  }
+
+  return false;
+}
+
 /**
  * Register a callback fired once when any job reaches a terminal state. Keeps
  * the job store generic: a feature (e.g. documents) reacts only to its own job
@@ -102,8 +128,13 @@ interface JobsStore {
   started: boolean;
   /** Open the job feed once; idempotent and self-reconnecting. */
   start: () => void;
-  /** Upsert a snapshot (from the feed or an immediate submit response). */
-  upsert: (job: JobView) => void;
+  /**
+   * Upsert a snapshot (from the feed or an immediate submit response). During
+   * the feed's initial replay (`seeding`), the snapshot reflects current state
+   * rather than a transition, so started/settled handlers are not fired for
+   * jobs that were already running or had already finished when we connected.
+   */
+  upsert: (job: JobView, opts?: { seeding?: boolean }) => void;
   /** Request cancellation; the feed reflects the resulting state. */
   cancel: (id: string) => Promise<void>;
   /** Drop a job from the tray (client-only). */
@@ -125,8 +156,18 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
     // promptly instead of waiting out the cap.
     const attempt = async (delay: number): Promise<void> => {
       const openedAt = Date.now();
+      // Each connect replays current state before live changes; treat that
+      // seed as non-transitional until the ready marker arrives, so reloading
+      // a page with finished jobs neither re-toasts nor flashes them, and
+      // already-running jobs reappear in the tray without a "started" cue.
+      let seeding = true;
       try {
-        await subscribeJobs(get().upsert);
+        await subscribeJobs(
+          (job) => get().upsert(job, { seeding }),
+          () => {
+            seeding = false;
+          },
+        );
       } catch {
         // A failed connect counts as a drop; the backoff below handles it.
       }
@@ -149,12 +190,13 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
   },
 
   // Snapshots arrive from the submit response and the feed, which also re-seeds
-  // retained terminal jobs on every reconnect, so upsert is idempotent and
+  // every retained job on each (re)connect, so upsert is idempotent and
   // order-independent: drop a stale snapshot, never resurrect a dismissed job,
   // and fire start/settle listeners only on the first transition into the
   // matching state. A clean finish then lingers briefly; a failure stays until
   // dismissed.
-  upsert: (job) => {
+  upsert: (job, opts) => {
+    const seeding = opts?.seeding ?? false;
     const prev = get().jobs[job.id];
 
     // A fast job's terminal snapshot (from the feed) can beat its queued
@@ -162,26 +204,40 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
     if (prev && job.updated_at < prev.updated_at) return;
 
     const terminal = isTerminal(job);
-    const handled = settledJobIds.has(job.id);
 
-    // Re-seeded after dismissal (terminal, handled, no longer shown): ignore it
-    // so the tray does not flicker the job back in on a reconnect.
-    if (terminal && handled && !prev) return;
+    // Already handled this job's terminal transition: a re-seed or a stale late
+    // snapshot must neither re-fire handlers nor resurrect a dismissed job.
+    if (settledJobIds.has(job.id)) return;
+
+    if (terminal) {
+      // A terminal job we were not already tracking is not a transition we
+      // witnessed: on the initial replay it is history (a job that finished
+      // before we connected), so record it as handled but keep it off the tray
+      // — no stale completion flash, no toast, no refresh. A terminal snapshot
+      // for a job we held as active (prev) is a real transition (e.g. one we
+      // missed while briefly disconnected), so it falls through and settles.
+      if (seeding && !prev) {
+        markSettled(job.id);
+        return;
+      }
+
+      set((s) => ({ jobs: { ...s.jobs, [job.id]: job } }));
+      markSettled(job.id);
+      settledListeners.forEach((listener) => listener(job));
+      if (job.status !== "failed") {
+        setTimeout(() => get().dismiss(job.id), AUTO_DISMISS_MS);
+      }
+
+      return;
+    }
 
     set((s) => ({ jobs: { ...s.jobs, [job.id]: job } }));
 
-    // First snapshot of a job that is still running (not a re-seed, not a fast
-    // job whose terminal snapshot arrived first): announce that work began.
-    if (!prev && !terminal) {
+    // First snapshot of a job that is starting now — not one already running
+    // when we connected (a seed) and not a re-seed of one we already track:
+    // announce that work began.
+    if (!prev && !seeding) {
       startedListeners.forEach((listener) => listener(job));
-    }
-
-    if (!terminal || handled) return;
-
-    markSettled(job.id);
-    settledListeners.forEach((listener) => listener(job));
-    if (job.status !== "failed") {
-      setTimeout(() => get().dismiss(job.id), AUTO_DISMISS_MS);
     }
   },
 

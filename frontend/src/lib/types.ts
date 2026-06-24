@@ -442,6 +442,13 @@ export const JobViewSchema = z.object({
 });
 export type JobView = z.infer<typeof JobViewSchema>;
 
+/** Marks the end of the job feed's initial replay (see backend `FeedReady`). */
+export const FeedReadySchema = z.object({ type: z.literal("ready") });
+
+/** A job feed event: either a job snapshot or the seed-complete marker. */
+export const FeedEventSchema = z.union([JobViewSchema, FeedReadySchema]);
+export type FeedEvent = z.infer<typeof FeedEventSchema>;
+
 /** Terminal job statuses — no further updates will arrive. */
 export const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
   "succeeded",
