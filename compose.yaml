@@ -1,18 +1,14 @@
 # Full example deployment of Hivegent with an OIDC provider (Rauthy).
 #
-# The backend and proxy images come from this repo's Nix flake; the database is
-# the upstream pgvector image and the IdP is the upstream Rauthy image. Build
-# and push the two flake images (per platform) with:
+# The all-in-one app image (backend + Caddy proxy/SPA) comes from this repo's Nix
+# flake; the database is the upstream pgvector image and the IdP is the upstream
+# Rauthy image. Build and push the flake image (per platform) with:
 #
-#   nix build .#packages.x86_64-linux.docker-backend
+#   nix build .#packages.x86_64-linux.docker
 #   ./result | gzip --fast | skopeo copy docker-archive:/dev/stdin \
-#       docker://ghcr.io/dfki-ebls/hivegent-backend:latest
+#       docker://ghcr.io/dfki-ebls/hivegent:latest
 #
-#   nix build .#packages.x86_64-linux.docker-proxy
-#   ./result | gzip --fast | skopeo copy docker-archive:/dev/stdin \
-#       docker://ghcr.io/dfki-ebls/hivegent-proxy:latest
-#
-# `./result | docker load` works too. Both images are provider-agnostic: the SPA
+# `./result | docker load` works too. The image is provider-agnostic: the SPA
 # reads its OIDC issuer/client at runtime from the backend's `/api/config`, which
 # the backend derives from HIVEGENT_AUTH__ISSUER (and HIVEGENT_AUTH__FRONTEND_CLIENT_ID,
 # default "hivegent-spa"). Point those at whichever provider you run — Rauthy,
@@ -27,18 +23,23 @@
 name: hivegent
 
 services:
-  db:
+  postgresql:
     image: pgvector/pgvector:pg18
     environment:
-      # POSTGRES_USER becomes a superuser, so the backend's Alembic migration
-      # can run `CREATE EXTENSION vector` on first start — no init script.
-      POSTGRES_USER: hivegent
-      POSTGRES_PASSWORD: hivegent
+      # Bootstrap as the `postgres` superuser so the init config below can install
+      # the (untrusted) `vector` extension; the backend connects as the
+      # unprivileged `hivegent` role that same script creates.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
       POSTGRES_DB: hivegent
+    configs:
+      # Runs once on first init, as `postgres` against the `hivegent` database.
+      - source: postgresql-init
+        target: /docker-entrypoint-initdb.d/init.sql
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - postgresql-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hivegent -d hivegent"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hivegent"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -47,7 +48,7 @@ services:
   rauthy:
     image: ghcr.io/sebadob/rauthy:0.35.2
     depends_on:
-      db:
+      postgresql:
         condition: service_healthy
     environment:
       # Networking. A *.localhost public URL resolves to loopback in the
@@ -78,10 +79,10 @@ services:
     # via its restart policy, and the proxy waits on the backend instead.
     restart: unless-stopped
 
-  backend:
-    image: ghcr.io/dfki-ebls/hivegent-backend:latest
+  hivegent:
+    image: ghcr.io/dfki-ebls/hivegent:latest
     depends_on:
-      db:
+      postgresql:
         condition: service_healthy
       rauthy:
         condition: service_started
@@ -90,16 +91,17 @@ services:
       # OIDC discovery/JWKS from the same URL the browser uses.
       - "auth.localhost:host-gateway"
     environment:
-      HIVEGENT_DB__URL: postgresql+psycopg://hivegent:hivegent@db:5432/hivegent
-      # Point at an OpenAI-compatible inference server on the Docker host.
-      HIVEGENT_LLM__MODEL: qwen3.6-27b
-      HIVEGENT_LLM__AUX_MODEL: qwen3.5-0.8b
-      HIVEGENT_LLM__BASE_URL: http://host.docker.internal:18000/v1
-      # Validate tokens Rauthy issues for the hivegent-* clients.
-      HIVEGENT_AUTH__ISSUER: http://auth.localhost:8081/auth/v1
-      HIVEGENT_AUTH__AUDIENCE: '["hivegent-*"]'
+      # Caddy's listen address — read by the proxy, not the backend's TOML.
+      HIVEGENT_SITE_ADDRESS: ":8080"
+    configs:
+      # The backend reads its TOML config from here (HIVEGENT_CONFIG_FILE);
+      # `HIVEGENT_*` env vars still override individual keys.
+      - source: hivegent-config
+        target: /data/config.toml
+    ports:
+      - "8080:8080"
     volumes:
-      - backend-data:/data
+      - hivegent-data:/data
     restart: unless-stopped
     # CUDA document/OCR models need the host GPU; uncomment for nvidia runtime.
     # deploy:
@@ -110,24 +112,35 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
-  proxy:
-    image: ghcr.io/dfki-ebls/hivegent-proxy:latest
-    depends_on:
-      backend:
-        condition: service_healthy
-    environment:
-      HIVEGENT_SITE_ADDRESS: ":8080"
-      HIVEGENT_BACKEND_UPSTREAM: "backend:8000"
-    ports:
-      - "8080:8080"
-    volumes:
-      - proxy-data:/data
-      - proxy-config:/config
-    restart: unless-stopped
-
 volumes:
-  db-data:
+  postgresql-data:
   rauthy-data:
-  backend-data:
-  proxy-data:
-  proxy-config:
+  hivegent-data:
+
+configs:
+  postgresql-init:
+    content: |
+      -- Unprivileged role the backend connects as.
+      CREATE ROLE hivegent LOGIN PASSWORD 'hivegent';
+      -- Hand it the database so Alembic can create the schema.
+      ALTER DATABASE hivegent OWNER TO hivegent;
+      -- pgvector is untrusted (superuser-only to install), so create it here; the
+      -- backend's `CREATE EXTENSION IF NOT EXISTS vector` then short-circuits
+      -- before its own privilege check.
+      CREATE EXTENSION IF NOT EXISTS vector;
+
+  hivegent-config:
+    content: |
+      [db]
+      url = "postgresql+psycopg://hivegent:hivegent@postgresql:5432/hivegent"
+
+      # Point at an OpenAI-compatible inference server on the Docker host.
+      [llm]
+      model = "qwen3.6-27b"
+      aux_model = "qwen3.5-0.8b"
+      base_url = "http://host.docker.internal:18000/v1"
+
+      # Validate tokens Rauthy issues for the hivegent-* clients.
+      [auth]
+      issuer = "http://auth.localhost:8081/auth/v1"
+      audience = ["hivegent-*"]

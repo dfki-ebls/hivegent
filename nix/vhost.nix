@@ -13,9 +13,9 @@
   # serve the API only and answer every other path with 404.
   frontend ? null,
   # Whether to expose the `/mcp` endpoint or answer it with 404.
-  mcp ? false,
+  enableMcp ? false,
   # Whether to emit HSTS (only meaningful when the vhost is served over TLS).
-  hsts ? false,
+  enableHsts ? false,
   # Operator snippet placed before the route handlers — geoblocking, IP
   # allow-lists, honeypots.  A blocked `handle` here wins over the API/SPA
   # handlers below because Caddy evaluates mutually-exclusive `handle` groups
@@ -31,7 +31,7 @@
     Referrer-Policy strict-origin-when-cross-origin
     Content-Security-Policy "frame-ancestors 'self'"
     -Server
-    ${lib.optionalString hsts ''
+    ${lib.optionalString enableHsts ''
       Strict-Transport-Security "max-age=31536000; includeSubDomains"
     ''}
   }
@@ -67,7 +67,7 @@
   }
 
   ${
-    if mcp then
+    if enableMcp then
       ''
         handle /mcp* {
           reverse_proxy ${upstream} {

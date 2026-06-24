@@ -5,7 +5,6 @@
   imports = [
     ./processes.nix
     ./treefmt.nix
-    ./docker.nix
   ];
 
   # Native deployment: a self-contained NixOS module whose `package` and
@@ -24,6 +23,7 @@
 
   perSystem =
     {
+      lib,
       pkgs,
       config,
       ...
@@ -44,6 +44,16 @@
         };
         frontend = pkgs.callPackage ../frontend { };
         tessdata = pkgs.callPackage ./tessdata.nix { };
+      }
+      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        # All-in-one container (backend + Caddy proxy/SPA under s6); see
+        # `docker.nix`. The database stays external (the upstream `pgvector`
+        # image, wired up in `compose.yaml`). Linux-only: the image embeds a
+        # Linux closure, so build it on a Linux host or remote builder
+        # (`nix build .#packages.x86_64-linux.docker`).
+        docker = pkgs.callPackage ./docker.nix {
+          inherit (config.packages) backend frontend;
+        };
       };
     };
 }

@@ -68,9 +68,10 @@ in
         hostName = caddyCfg.hostName;
         extraConfig = import ../vhost.nix {
           inherit lib;
-          inherit (caddyCfg) frontend hsts extraConfig;
+          inherit (caddyCfg) frontend extraConfig;
+          enableHsts = caddyCfg.hsts;
           upstream = "${cfg.host}:${toString cfg.port}";
-          mcp = cfg.settings.mcp.enable or false;
+          enableMcp = cfg.settings.mcp.enable or false;
         };
       };
     };
