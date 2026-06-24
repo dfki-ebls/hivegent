@@ -23,13 +23,14 @@ function statusLabel(job: JobView): string {
   }
 }
 
-// Surface a job's lifecycle as a toast keyed by its id, so a single toast
-// evolves in place from "loading" to its terminal state instead of stacking.
-// This makes a state change obvious even when the originating control resets
-// quickly, e.g. the upload area flashing back to its idle prompt while the
-// conversion job actually runs in the background.
+// Flash a brief, self-dismissing cue at the edges of a job's lifecycle — just
+// enough to notice that work started or finished. The live state (stage,
+// progress, error detail) lives in the job tray, so the toast carries no
+// description and never lingers as a spinner; that would only duplicate the
+// tray. Keyed by job id so a fast job's start and finish evolve one toast in
+// place instead of stacking two.
 function notifyJob(job: JobView): void {
-  const opts = { id: job.id, description: statusLabel(job) };
+  const opts = { id: job.id };
 
   switch (job.status) {
     case "succeeded":
@@ -42,7 +43,7 @@ function notifyJob(job: JobView): void {
       toast.info(job.title, opts);
       break;
     default:
-      toast.loading(job.title, opts);
+      toast(job.title, opts);
   }
 }
 

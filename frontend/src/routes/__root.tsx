@@ -35,7 +35,7 @@ function RootComponent() {
   return (
     <ThemeProvider>
       <AppErrorBoundary>
-        <Toaster />
+        <Toaster position="top-center" />
         <div className="flex h-screen flex-col">
           <ImpersonationBanner />
           <Header />
