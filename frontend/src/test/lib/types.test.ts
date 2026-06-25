@@ -53,7 +53,7 @@ describe("sortChunks", () => {
     id,
     filename: "f.md",
     content: "",
-    tool: "search",
+    origin: "search",
     position,
   });
 

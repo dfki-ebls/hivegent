@@ -11,7 +11,7 @@ export const syncWebSearchOutput: SyncOutput = (input, _text, metadata, addChunk
     addChunk({
       filename: r.href,
       content: r.body || r.title,
-      tool: "web",
+      origin: "web",
       detail: query || undefined,
       position: { type: "web_result", url: r.href },
     });

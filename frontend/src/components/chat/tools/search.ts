@@ -17,7 +17,7 @@ export const syncSearchOutput: SyncOutput = (input, _text, metadata, addChunk) =
     addChunk({
       filename: chunk.filename,
       content: chunk.text,
-      tool: "search",
+      origin: "search",
       detail: query || undefined,
       position,
       startIndex: chunk.start_index,

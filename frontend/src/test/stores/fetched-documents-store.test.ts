@@ -12,7 +12,7 @@ describe("useFetchedDocumentsStore", () => {
       useFetchedDocumentsStore.getState().addChunk({
         filename: "report.md",
         content: "hello",
-        tool: "search",
+        origin: "search",
         position: { type: "line", line: 1 },
       });
 
@@ -30,7 +30,7 @@ describe("useFetchedDocumentsStore", () => {
       const chunk = {
         filename: "report.md",
         content: "hello",
-        tool: "search" as const,
+        origin: "search" as const,
         position: { type: "line" as const, line: 1 },
       };
 
@@ -45,13 +45,13 @@ describe("useFetchedDocumentsStore", () => {
       useFetchedDocumentsStore.getState().addChunk({
         filename: "report.md",
         content: "a",
-        tool: "search",
+        origin: "search",
         position: { type: "line", line: 1 },
       });
       useFetchedDocumentsStore.getState().addChunk({
         filename: "report.md",
         content: "b",
-        tool: "search",
+        origin: "search",
         position: { type: "line", line: 2 },
       });
 
@@ -76,7 +76,7 @@ describe("useFetchedDocumentsStore", () => {
       useFetchedDocumentsStore.getState().addChunk({
         filename: "report.md",
         content: "chunk",
-        tool: "search",
+        origin: "search",
         position: { type: "line", line: 1 },
       });
       useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "read");
@@ -103,7 +103,7 @@ describe("useFetchedDocumentsStore", () => {
       useFetchedDocumentsStore.getState().addChunk({
         filename: "f.md",
         content: "c",
-        tool: "read",
+        origin: "read",
         position: { type: "line", line: 1 },
       });
       useFetchedDocumentsStore.getState().clearAll();

@@ -21,7 +21,7 @@ export const syncGrepOutput: SyncOutput = (input, _text, metadata, addChunk) => 
     addChunk({
       filename: match.filename,
       content: match.lines.map((l) => l.text).join("\n"),
-      tool: "grep",
+      origin: "grep",
       detail: pattern,
       position,
     });

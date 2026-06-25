@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import {
+  type ChunkOrigin,
   type ChunkPosition,
-  type ChunkTool,
   type FetchedChunk,
   type FetchedDocument,
   type FetchedImage,
@@ -16,7 +16,7 @@ interface FetchedDocumentsStore {
   addChunk: (chunk: Omit<FetchedChunk, "id">) => void;
 
   /** Mark a document as fully fetched, storing its full content. */
-  markFullDocument: (filename: string, content: string, tool: ChunkTool) => void;
+  markFullDocument: (filename: string, content: string, origin: ChunkOrigin) => void;
 
   /** Attach an image to the document at *filename* (its description path). */
   addImage: (filename: string, image: FetchedImage) => void;
@@ -31,7 +31,7 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
 
   addChunk: (chunk) =>
     set((state) => {
-      const id = makeChunkId(chunk.filename, chunk.tool, chunk.detail, chunk.position);
+      const id = makeChunkId(chunk.filename, chunk.origin, chunk.detail, chunk.position);
 
       // Deduplicate: skip if we already have this exact chunk
       if (state.chunks.has(id)) return state;
@@ -58,10 +58,10 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       return { chunks: newChunks, documents: newDocs };
     }),
 
-  markFullDocument: (filename, content, tool) =>
+  markFullDocument: (filename, content, origin) =>
     set((state) => {
       const position: ChunkPosition = { type: "full_document" };
-      const id = makeChunkId(filename, tool, undefined, position);
+      const id = makeChunkId(filename, origin, undefined, position);
 
       const existingChunk = state.chunks.get(id);
       const existingDoc = state.documents.get(filename);
@@ -75,7 +75,7 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
 
       const newChunks = chunkUpToDate ? state.chunks : new Map(state.chunks);
       if (!chunkUpToDate) {
-        newChunks.set(id, { id, filename, content, tool, position });
+        newChunks.set(id, { id, filename, content, origin, position });
       }
 
       const newDocs = docUpToDate ? state.documents : new Map(state.documents);

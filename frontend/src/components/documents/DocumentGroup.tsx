@@ -40,7 +40,7 @@ export function DocumentGroup({
   // Model-fetched full documents appear as regular chunk cards (sorted first).
   const contentChunks = useMemo(() => {
     const visible = chunks.filter(
-      (c) => !(c.position.type === "full_document" && c.tool === "preview"),
+      (c) => !(c.position.type === "full_document" && c.origin === "preview"),
     );
     return sortChunks(visible);
   }, [chunks]);

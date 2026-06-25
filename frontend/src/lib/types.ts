@@ -545,18 +545,18 @@ export type ChunkPosition =
   | { type: "text" };
 
 /**
- * What produced a fetched chunk. The model tools (read/grep/search/web) plus
+ * Where a fetched chunk came from: the model tools (read/grep/search/web) plus
  * the UI-only origins (preview fetch, citation marker).
  */
-export type ChunkTool = "read" | "grep" | "search" | "web" | "preview" | "citation";
+export type ChunkOrigin = "read" | "grep" | "search" | "web" | "preview" | "citation";
 
 /** A single fetched chunk (search result, grep match, line range, etc.). */
 export interface FetchedChunk {
   id: string;
   filename: string;
   content: string;
-  /** The tool that produced the chunk; drives the source badge. */
-  tool: ChunkTool;
+  /** Where the chunk came from; drives the origin badge. */
+  origin: ChunkOrigin;
   /** Optional query/pattern for display (grep pattern, search/web query). */
   detail?: string;
   position: ChunkPosition;
@@ -593,7 +593,7 @@ export interface FetchedDocument {
 /** Build a deterministic chunk ID from its attributes. */
 export function makeChunkId(
   filename: string,
-  tool: ChunkTool,
+  origin: ChunkOrigin,
   detail: string | undefined,
   position: ChunkPosition,
 ): string {
@@ -616,9 +616,9 @@ export function makeChunkId(
       break;
   }
 
-  const toolKey = detail ? `${tool}:${detail}` : tool;
+  const originKey = detail ? `${origin}:${detail}` : origin;
 
-  return `${filename}::${toolKey}::${positionKey}`;
+  return `${filename}::${originKey}::${positionKey}`;
 }
 
 /**
@@ -662,8 +662,8 @@ export function chunkPositionLabel(position: ChunkPosition): string {
 }
 
 /** Human-readable label for a chunk's origin ("grep: foo", "read"). */
-export function chunkSourceLabel({ tool, detail }: Pick<FetchedChunk, "tool" | "detail">): string {
-  return detail ? `${tool}: ${detail}` : tool;
+export function chunkOriginLabel({ origin, detail }: Pick<FetchedChunk, "origin" | "detail">): string {
+  return detail ? `${origin}: ${detail}` : origin;
 }
 
 /** The line-based `ChunkPosition` variants a citation `line` attribute yields. */

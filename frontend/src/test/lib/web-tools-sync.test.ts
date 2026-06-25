@@ -60,7 +60,7 @@ describe("syncWebSearchOutput", () => {
     expect(addChunk).toHaveBeenCalledWith({
       filename: "https://example.com/manual",
       content: "snippet",
-      tool: "web",
+      origin: "web",
       detail: "jura e7",
       position: { type: "web_result", url: "https://example.com/manual" },
     });

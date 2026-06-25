@@ -30,8 +30,8 @@ import {
   type ChunkedDocumentResponse,
   type FetchedChunk,
   type FetchedImage,
+  chunkOriginLabel,
   chunkPositionLabel,
-  chunkSourceLabel,
   sortChunks,
 } from "@/lib/types";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
@@ -537,7 +537,7 @@ export function DocumentDialog({
                   <div key={sibling.id} className="space-y-1">
                     <div className="flex items-center gap-2">
                       <Badge variant="outline" className="text-xs">
-                        {chunkSourceLabel(sibling)}
+                        {chunkOriginLabel(sibling)}
                       </Badge>
                       <Badge variant="secondary" className="text-xs">
                         {chunkPositionLabel(sibling.position)}
@@ -989,7 +989,7 @@ export function DocumentDialog({
             {!isManagedMode && viewMode === "chunk" && activeChunk && (
               <div className="flex items-center gap-2 px-4 py-2 border-b">
                 <Badge variant="outline" className="text-xs">
-                  {chunkSourceLabel(activeChunk)}
+                  {chunkOriginLabel(activeChunk)}
                 </Badge>
                 <Badge variant="secondary" className="text-xs">
                   {chunkPositionLabel(activeChunk.position)}

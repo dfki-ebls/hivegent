@@ -43,7 +43,7 @@ export function Citation({ src, line }: CitationProps) {
     id: makeChunkId(src, "citation", undefined, position),
     filename: src,
     content: "",
-    tool: "citation",
+    origin: "citation",
     position,
   });
 
