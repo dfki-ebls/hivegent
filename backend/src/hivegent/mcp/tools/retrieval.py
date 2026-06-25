@@ -3,7 +3,7 @@
 from fastmcp import Context
 from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAccessIssue]
 
-from ...agents import UserDeps, explore_subagent_capability, user_agent
+from ...agents import SUBAGENT_CAPABILITIES, UserDeps, user_agent
 from ...chunkers.base import RetrievedChunk
 from ...config import settings
 from ...llm import create_openai_chat_model
@@ -71,7 +71,7 @@ async def explore_documents(
                 store=store,
                 group_stores=group_stores,
             ),
-            capabilities=[explore_subagent_capability],
+            capabilities=[SUBAGENT_CAPABILITIES["documents"]],
         )
         return result.output
 

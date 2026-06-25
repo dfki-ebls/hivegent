@@ -8,8 +8,9 @@ from .capabilities import (
 )
 from .common import ExploreTaskArg, MemoryContentArg, UserDeps
 from .tools import (
+    SUBAGENT_CAPABILITIES,
+    SubagentName,
     conversation_toolset,
-    explore_subagent_capability,
     explore_toolset,
     memory_toolset,
     plan_toolset,
@@ -19,14 +20,15 @@ from .tools import (
 )
 
 __all__ = [
+    "SUBAGENT_CAPABILITIES",
     "ExploreTaskArg",
     "MemoryContentArg",
+    "SubagentName",
     "UserDeps",
     "base_agent",
     "build_capabilities",
     "collect_tool_schemas",
     "conversation_toolset",
-    "explore_subagent_capability",
     "explore_toolset",
     "invoke_agent_tool",
     "memory_toolset",

@@ -16,8 +16,8 @@ stays as agent-level ``instructions`` because it is not bound to any one feature
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
-from typing import Any, Literal
+from dataclasses import dataclass
+from typing import Any, Literal, Self
 
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.agent import AgentInstructions
@@ -76,33 +76,36 @@ class Feature:
 
     The ``capability`` bundles the feature's toolset, instructions, and (later)
     hooks; ``modes`` is the only selection metadata pydantic-ai has no concept
-    of.  Its ``id`` is the capability's ``id``, named once via :func:`_feature`.
-    ``tool_names`` is its set of tool names, resolved once so the per-request
-    disabled-tool check needs no toolset walk.
+    of.  Its ``id`` is the capability's ``id``, named once via :meth:`build`.
+    ``tool_names`` is its set of tool names, resolved once by :meth:`build` so the
+    per-request disabled-tool check needs no toolset walk.
     """
 
     id: str
     capability: Capability[UserDeps]
+    tool_names: frozenset[str]
     modes: frozenset[Mode] = _ALL_MODES
-    tool_names: frozenset[str] = field(init=False)
 
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "tool_names", frozenset(capability_tools(self.capability))
+    @classmethod
+    def build(
+        cls,
+        id: str,
+        toolset: FunctionToolset[UserDeps],
+        *,
+        instructions: AgentInstructions[UserDeps] | None = None,
+        modes: frozenset[Mode] = _ALL_MODES,
+    ) -> Self:
+        """Name a feature once, bundling its toolset and instructions into a capability."""
+        capability: Capability[UserDeps] = Capability(
+            id=id, toolsets=[toolset], instructions=instructions
         )
 
-
-def _feature(
-    id: str,
-    toolset: FunctionToolset[UserDeps],
-    *,
-    instructions: AgentInstructions[UserDeps] | None = None,
-    modes: frozenset[Mode] = _ALL_MODES,
-) -> Feature:
-    """Name a feature once, bundling its toolset and instructions into a capability."""
-    return Feature(
-        id, Capability(id=id, toolsets=[toolset], instructions=instructions), modes
-    )
+        return cls(
+            id=id,
+            capability=capability,
+            tool_names=frozenset(capability_tools(capability)),
+            modes=modes,
+        )
 
 
 # The single source of truth for the agent's features.  ``plan`` and ``memory``
@@ -110,18 +113,18 @@ def _feature(
 # lazily, so its guidance only loads when active); the rest are bare toolset
 # bundles.  Adding a feature here exposes it to the agent and the debug surface.
 FEATURES: tuple[Feature, ...] = (
-    _feature("explore", explore_toolset),
-    _feature("subagent", subagent_toolset),
-    _feature("write", write_toolset, modes=_EXECUTE),
-    _feature(
+    Feature.build("explore", explore_toolset),
+    Feature.build("subagent", subagent_toolset),
+    Feature.build("write", write_toolset, modes=_EXECUTE),
+    Feature.build(
         "memory",
         memory_toolset,
         instructions=_memory_instructions,
         modes=_EXECUTE,
     ),
-    _feature("web", web_toolset),
-    _feature("conversation", conversation_toolset),
-    _feature("plan", plan_toolset, instructions=PLAN_INSTRUCTIONS, modes=_PLAN),
+    Feature.build("web", web_toolset),
+    Feature.build("conversation", conversation_toolset),
+    Feature.build("plan", plan_toolset, instructions=PLAN_INSTRUCTIONS, modes=_PLAN),
 )
 
 

@@ -22,16 +22,37 @@ from .explore import explore_toolset
 from .web import web_toolset
 
 __all__ = [
+    "SUBAGENT_CAPABILITIES",
+    "SubagentName",
     "explore",
-    "explore_subagent_capability",
     "run_subagent",
     "subagent_toolset",
 ]
 
 subagent_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
+type SubagentName = Literal["documents", "conversations", "web"]
+
+# The shared registry mapping each subagent name to the capability that defines
+# it.  Public so every module that delegates to a subagent composes from the same
+# capabilities: the ``explore`` tool selects one by name, and the MCP exploration
+# endpoint reuses the ``documents`` subagent directly.  Each value is a
+# self-contained capability a delegated run is composed from; the ``documents``
+# subagent *is* a document-exploration agent, so the explore toolset and its
+# system-prompt persona ride together, distinct from the main agent's bare
+# ``explore`` bundle.
+SUBAGENT_CAPABILITIES: dict[SubagentName, AbstractCapability[UserDeps]] = {
+    "documents": Capability(
+        id="explore-subagent",
+        toolsets=[explore_toolset],
+        instructions=EXPLORE_INSTRUCTIONS,
+    ),
+    "conversations": Capability(id="conversation", toolsets=[conversation_toolset]),
+    "web": Capability(id="web", toolsets=[web_toolset]),
+}
+
 ExploreScopeArg = Annotated[
-    Literal["documents", "conversations", "web"],
+    SubagentName,
     Field(
         description=(
             "What to explore: `documents` for the document collection, "
@@ -39,23 +60,6 @@ ExploreScopeArg = Annotated[
         ),
     ),
 ]
-
-# A subagent (and the MCP exploration tool) *is* a document-exploration agent,
-# so the explore toolset and its system-prompt persona ride together as one
-# capability, distinct from the main agent's bare ``explore`` toolset bundle.
-explore_subagent_capability: AbstractCapability[UserDeps] = Capability(
-    id="explore-subagent",
-    toolsets=[explore_toolset],
-    instructions=EXPLORE_INSTRUCTIONS,
-)
-
-# Scope chosen by the ``explore`` tool; each is a self-contained capability the
-# delegated run is composed from.
-_SUBAGENT_SCOPES: dict[str, AbstractCapability[UserDeps]] = {
-    "documents": explore_subagent_capability,
-    "conversations": Capability(id="conversation", toolsets=[conversation_toolset]),
-    "web": Capability(id="web", toolsets=[web_toolset]),
-}
 
 
 def _subagent_model(deps: UserDeps) -> OpenAIChatModel:
@@ -190,4 +194,4 @@ async def explore(
     like surveying available documents, finding patterns across files,
     reviewing past conversations, or researching topics on the web.
     """
-    return await run_subagent(ctx, task, capability=_SUBAGENT_SCOPES[scope])
+    return await run_subagent(ctx, task, capability=SUBAGENT_CAPABILITIES[scope])
