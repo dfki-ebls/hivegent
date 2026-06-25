@@ -39,6 +39,7 @@ The implementation is split into focused submodules:
   :mod:`~hivegent.workspace.collections` — the public mutation API.
 """
 
+from . import describe, prepare
 from .assets import (
     delete_asset_description,
     generate_asset_description,
@@ -71,11 +72,13 @@ __all__ = [
     "delete_directory",
     "delete_document",
     "delete_workspace_root",
+    "describe",
     "edit_document_text",
     "generate_asset_description",
     "inflight_stems",
     "move_directory",
     "move_document",
+    "prepare",
     "process_collection",
     "prune_empty_dirs",
     "rechunk",
