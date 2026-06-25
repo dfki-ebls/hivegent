@@ -6,17 +6,26 @@ import { formatWebUrl, isWebUrl } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+import { AssetImage } from "./AssetImage";
 import { ChunkCard } from "./ChunkCard";
-import { ImageThumb } from "./ImageThumb";
+import { DocumentMap } from "./DocumentMap";
+import { documentReadMap } from "./utils";
 
 interface DocumentGroupProps {
   doc: FetchedDocument;
   chunks: FetchedChunk[];
   onChunkClick: (chunk: FetchedChunk) => void;
   onFilenameClick: (filename: string) => void;
+  onImageClick: (doc: FetchedDocument) => void;
 }
 
-export function DocumentGroup({ doc, chunks, onChunkClick, onFilenameClick }: DocumentGroupProps) {
+export function DocumentGroup({
+  doc,
+  chunks,
+  onChunkClick,
+  onFilenameClick,
+  onImageClick,
+}: DocumentGroupProps) {
   const [open, setOpen] = useState(true);
   const isWeb = isWebUrl(doc.filename);
   // Image docs are keyed by their description path; show the image's own name.
@@ -31,10 +40,17 @@ export function DocumentGroup({ doc, chunks, onChunkClick, onFilenameClick }: Do
   // Model-fetched full documents appear as regular chunk cards (sorted first).
   const contentChunks = useMemo(() => {
     const visible = chunks.filter(
-      (c) => !(c.position.type === "full_document" && c.source === "preview"),
+      (c) => !(c.position.type === "full_document" && c.tool === "preview"),
     );
     return sortChunks(visible);
   }, [chunks]);
+
+  // A preview-fetched full document supplies the denominator without being
+  // counted as a read span, so the map stays accurate once the dialog opens.
+  const mapSegments = useMemo(
+    () => documentReadMap(contentChunks, doc.fullContent),
+    [contentChunks, doc.fullContent],
+  );
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -67,10 +83,24 @@ export function DocumentGroup({ doc, chunks, onChunkClick, onFilenameClick }: Do
             {contentChunks.length !== 1 ? "s" : ""}
           </Badge>
         )}
+        <DocumentMap segments={mapSegments} />
       </div>
       <CollapsibleContent>
-        <div className="space-y-2 pb-2">
-          {doc.image && <ImageThumb image={doc.image} />}
+        <div className="ml-4 grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] items-start gap-2 pb-2">
+          {doc.image && (
+            <button
+              type="button"
+              onClick={() => onImageClick(doc)}
+              title={doc.image.filePath}
+              className="overflow-hidden rounded-md border cursor-pointer transition-colors hover:bg-muted/50"
+            >
+              <AssetImage
+                filePath={doc.image.filePath}
+                wrapperClassName="aspect-square w-full"
+                className="h-full w-full object-cover"
+              />
+            </button>
+          )}
           {contentChunks.map((chunk) => (
             <ChunkCard key={chunk.id} chunk={chunk} onClick={() => onChunkClick(chunk)} />
           ))}

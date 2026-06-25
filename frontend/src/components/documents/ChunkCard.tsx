@@ -1,4 +1,4 @@
-import { type FetchedChunk, chunkPositionLabel } from "../../lib/types";
+import { type FetchedChunk, chunkPositionLabel, chunkSourceLabel } from "../../lib/types";
 import { Badge } from "../ui/badge";
 
 interface ChunkCardProps {
@@ -7,19 +7,19 @@ interface ChunkCardProps {
 }
 
 export function ChunkCard({ chunk, onClick }: ChunkCardProps) {
+  const label = chunkPositionLabel(chunk.position);
+
   return (
     <button
       type="button"
-      className="ml-4 w-[calc(100%-1rem)] rounded-md border bg-card p-3 cursor-pointer transition-colors hover:bg-muted/50 text-left"
       onClick={onClick}
+      title={`${chunkSourceLabel(chunk)} — ${label}`}
+      className="flex min-w-0 items-center gap-1.5 rounded-md border bg-card px-2 py-1.5 text-left cursor-pointer transition-colors hover:bg-muted/50"
     >
-      <div className="flex items-center gap-2 mb-1">
-        <Badge variant="outline" className="text-xs">
-          {chunk.source}
-        </Badge>
-        <span className="text-xs text-muted-foreground">{chunkPositionLabel(chunk.position)}</span>
-      </div>
-      <p className="line-clamp-4 text-xs text-muted-foreground">{chunk.content.trim()}</p>
+      <Badge variant="outline" className="shrink-0 text-[10px] capitalize">
+        {chunk.tool}
+      </Badge>
+      <span className="truncate text-[11px] text-muted-foreground">{label}</span>
     </button>
   );
 }

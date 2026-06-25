@@ -22,13 +22,16 @@ import {
 } from "@/lib/api";
 import { MARKDOWN_BASE_OPTIONS, workspaceMarkdownOptions } from "@/components/chat/markdown/config";
 import { useSettingsStore } from "@/stores/settings-store";
+import { AssetImage } from "./documents/AssetImage";
 import { WorkspaceImage } from "./WorkspaceImage";
 import {
   type AssetEntry,
   type AssetListResponse,
   type ChunkedDocumentResponse,
   type FetchedChunk,
+  type FetchedImage,
   chunkPositionLabel,
+  chunkSourceLabel,
   sortChunks,
 } from "@/lib/types";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
@@ -57,6 +60,8 @@ interface DocumentDialogProps {
   chunk?: FetchedChunk | null;
   /** Fallback filename when no chunk is available (opens in full-doc mode). */
   fallbackFilename?: string;
+  /** Image to show full-size in the full-document view (context-panel image docs). */
+  image?: FetchedImage | null;
   /** When true the dialog opens directly into the full-document markdown view. */
   initialFullDoc?: boolean;
   /** Citation view: hide the sidebar, showing the document with the cited span highlighted. */
@@ -132,6 +137,7 @@ export function DocumentDialog({
   filename: filenameProp,
   chunk,
   fallbackFilename,
+  image,
   initialFullDoc = false,
   citationView = false,
   showMetadata = false,
@@ -498,6 +504,28 @@ export function DocumentDialog({
 
     // Full-doc markdown view
     if (viewMode === "full-doc") {
+      // Image docs: show the full-size image, with its description below if read.
+      if (image) {
+        return (
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="space-y-4 p-4">
+              <div className="flex justify-center">
+                <AssetImage
+                  filePath={image.filePath}
+                  alt={filename}
+                  wrapperClassName="min-h-32 rounded-md border"
+                  className="max-h-[70vh] w-auto max-w-full object-contain"
+                />
+              </div>
+              {fullContent && (
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <Markdown options={markdownOptions}>{fullContent}</Markdown>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        );
+      }
       if (!fullContent) {
         // No full content fetched — show the excerpts the model actually
         // read (search snippets, grep hits) instead of a dead end.
@@ -509,7 +537,7 @@ export function DocumentDialog({
                   <div key={sibling.id} className="space-y-1">
                     <div className="flex items-center gap-2">
                       <Badge variant="outline" className="text-xs">
-                        {sibling.source}
+                        {chunkSourceLabel(sibling)}
                       </Badge>
                       <Badge variant="secondary" className="text-xs">
                         {chunkPositionLabel(sibling.position)}
@@ -961,7 +989,7 @@ export function DocumentDialog({
             {!isManagedMode && viewMode === "chunk" && activeChunk && (
               <div className="flex items-center gap-2 px-4 py-2 border-b">
                 <Badge variant="outline" className="text-xs">
-                  {activeChunk.source}
+                  {chunkSourceLabel(activeChunk)}
                 </Badge>
                 <Badge variant="secondary" className="text-xs">
                   {chunkPositionLabel(activeChunk.position)}

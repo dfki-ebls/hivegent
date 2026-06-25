@@ -18,6 +18,11 @@ export function ContextDocuments() {
   const [initialFullDoc, setInitialFullDoc] = useState(false);
   const dialogOpen = selectedChunk !== null || dialogFilename !== undefined;
 
+  // The dialog's image is just the open document's image, so derive it rather
+  // than tracking a parallel piece of state.
+  const dialogImage =
+    documents.get(selectedChunk?.filename ?? dialogFilename ?? "")?.image ?? null;
+
   // Order documents lexically by filename; chunks within each group stay
   // line-ordered via sortChunks in DocumentGroup.
   const sortedDocs = useMemo(
@@ -57,6 +62,13 @@ export function ContextDocuments() {
     [documents, chunks],
   );
 
+  // Open the dialog showing an image full-size (thumbnail click in the grid)
+  const handleImageClick = useCallback((doc: FetchedDocument) => {
+    setInitialFullDoc(true);
+    setSelectedChunk(null);
+    setDialogFilename(doc.filename);
+  }, []);
+
   const closeDialog = useCallback(() => {
     setSelectedChunk(null);
     setDialogFilename(undefined);
@@ -83,6 +95,7 @@ export function ContextDocuments() {
               chunks={getChunksForDoc(doc)}
               onChunkClick={handleChunkClick}
               onFilenameClick={handleFilenameClick}
+              onImageClick={handleImageClick}
             />
           ))}
         </div>
@@ -94,6 +107,7 @@ export function ContextDocuments() {
         filename={selectedChunk?.filename ?? dialogFilename ?? ""}
         chunk={selectedChunk}
         fallbackFilename={dialogFilename}
+        image={dialogImage}
         initialFullDoc={initialFullDoc}
       />
     </>

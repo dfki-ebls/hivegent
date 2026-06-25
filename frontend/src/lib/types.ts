@@ -544,12 +544,21 @@ export type ChunkPosition =
   /** Unlocated span — resolve by searching `FetchedChunk.content` in the document. */
   | { type: "text" };
 
+/**
+ * What produced a fetched chunk. The model tools (read/grep/search/web) plus
+ * the UI-only origins (preview fetch, citation marker).
+ */
+export type ChunkTool = "read" | "grep" | "search" | "web" | "preview" | "citation";
+
 /** A single fetched chunk (search result, grep match, line range, etc.). */
 export interface FetchedChunk {
   id: string;
   filename: string;
   content: string;
-  source: string;
+  /** The tool that produced the chunk; drives the source badge. */
+  tool: ChunkTool;
+  /** Optional query/pattern for display (grep pattern, search/web query). */
+  detail?: string;
   position: ChunkPosition;
   /**
    * Exact character offsets of the chunk in the original document.
@@ -582,7 +591,12 @@ export interface FetchedDocument {
 }
 
 /** Build a deterministic chunk ID from its attributes. */
-export function makeChunkId(filename: string, source: string, position: ChunkPosition): string {
+export function makeChunkId(
+  filename: string,
+  tool: ChunkTool,
+  detail: string | undefined,
+  position: ChunkPosition,
+): string {
   let positionKey: string;
   switch (position.type) {
     case "line":
@@ -601,7 +615,10 @@ export function makeChunkId(filename: string, source: string, position: ChunkPos
       positionKey = "text";
       break;
   }
-  return `${filename}::${source}::${positionKey}`;
+
+  const toolKey = detail ? `${tool}:${detail}` : tool;
+
+  return `${filename}::${toolKey}::${positionKey}`;
 }
 
 /**
@@ -642,6 +659,11 @@ export function chunkPositionLabel(position: ChunkPosition): string {
     case "text":
       return "Cited text";
   }
+}
+
+/** Human-readable label for a chunk's origin ("grep: foo", "read"). */
+export function chunkSourceLabel({ tool, detail }: Pick<FetchedChunk, "tool" | "detail">): string {
+  return detail ? `${tool}: ${detail}` : tool;
 }
 
 /** The line-based `ChunkPosition` variants a citation `line` attribute yields. */

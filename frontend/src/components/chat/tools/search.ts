@@ -8,7 +8,6 @@ export const syncSearchOutput: SyncOutput = (input, _text, metadata, addChunk) =
   if (!chunks.length) return;
 
   const query = input.query as string;
-  const source = `search${query ? `: ${query}` : ""}`;
   for (const chunk of chunks) {
     const position: ChunkPosition = {
       type: "line_range",
@@ -18,7 +17,8 @@ export const syncSearchOutput: SyncOutput = (input, _text, metadata, addChunk) =
     addChunk({
       filename: chunk.filename,
       content: chunk.text,
-      source,
+      tool: "search",
+      detail: query || undefined,
       position,
       startIndex: chunk.start_index,
       endIndex: chunk.end_index,

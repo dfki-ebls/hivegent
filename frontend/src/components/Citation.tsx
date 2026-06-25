@@ -39,10 +39,13 @@ export function Citation({ src, line }: CitationProps) {
   const displayName = src.split("/").pop() ?? src;
   const positions = parseLinePositions(line);
 
-  const chunkFor = (position: LinePosition): FetchedChunk => {
-    const source = "citation";
-    return { id: makeChunkId(src, source, position), filename: src, content: "", source, position };
-  };
+  const chunkFor = (position: LinePosition): FetchedChunk => ({
+    id: makeChunkId(src, "citation", undefined, position),
+    filename: src,
+    content: "",
+    tool: "citation",
+    position,
+  });
 
   return (
     <Badge

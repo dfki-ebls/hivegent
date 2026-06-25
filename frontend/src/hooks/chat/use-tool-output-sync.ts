@@ -2,12 +2,12 @@ import type { UIMessage } from "@ai-sdk/react";
 import { useEffect } from "react";
 import { getToolHandler } from "@/components/chat/tools/registry";
 import { getToolPartInfo, indexToolData } from "@/lib/chat/tool-part";
-import type { FetchedChunk, FetchedImage } from "@/lib/types";
+import type { ChunkTool, FetchedChunk, FetchedImage } from "@/lib/types";
 
 export function useToolOutputSync(
   messages: UIMessage[],
   addChunk: (chunk: Omit<FetchedChunk, "id">) => void,
-  markFullDocument: (filename: string, content: string, source: string) => void,
+  markFullDocument: (filename: string, content: string, tool: ChunkTool) => void,
   addImage: (filename: string, image: FetchedImage) => void,
 ) {
   useEffect(() => {

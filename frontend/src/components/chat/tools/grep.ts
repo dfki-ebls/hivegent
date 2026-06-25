@@ -8,7 +8,6 @@ export const syncGrepOutput: SyncOutput = (input, _text, metadata, addChunk) => 
   const pattern = input.pattern as string;
   if (!matches.length || !pattern) return;
 
-  const source = `grep: ${pattern}`;
   for (const match of matches) {
     if (match.lines.length === 0) continue;
     const startLine = match.lines[0].line_number;
@@ -22,7 +21,8 @@ export const syncGrepOutput: SyncOutput = (input, _text, metadata, addChunk) => 
     addChunk({
       filename: match.filename,
       content: match.lines.map((l) => l.text).join("\n"),
-      source,
+      tool: "grep",
+      detail: pattern,
       position,
     });
   }

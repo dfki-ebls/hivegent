@@ -19,7 +19,7 @@ export const syncReadDocumentOutput: SyncOutput = (
 
   const isFullFile = result.start_line === 1 && result.end_line === result.total_lines;
   if (isFullFile) {
-    markFullDocument(filename, result.content, "read_document");
+    markFullDocument(filename, result.content, "read");
     return;
   }
 
@@ -28,5 +28,5 @@ export const syncReadDocumentOutput: SyncOutput = (
     startLine: result.start_line,
     endLine: result.end_line,
   };
-  addChunk({ filename, content: result.content, source: "read", position });
+  addChunk({ filename, content: result.content, tool: "read", position });
 };

@@ -12,7 +12,7 @@ describe("useFetchedDocumentsStore", () => {
       useFetchedDocumentsStore.getState().addChunk({
         filename: "report.md",
         content: "hello",
-        source: "search",
+        tool: "search",
         position: { type: "line", line: 1 },
       });
 
@@ -30,7 +30,7 @@ describe("useFetchedDocumentsStore", () => {
       const chunk = {
         filename: "report.md",
         content: "hello",
-        source: "search",
+        tool: "search" as const,
         position: { type: "line" as const, line: 1 },
       };
 
@@ -45,13 +45,13 @@ describe("useFetchedDocumentsStore", () => {
       useFetchedDocumentsStore.getState().addChunk({
         filename: "report.md",
         content: "a",
-        source: "search",
+        tool: "search",
         position: { type: "line", line: 1 },
       });
       useFetchedDocumentsStore.getState().addChunk({
         filename: "report.md",
         content: "b",
-        source: "search",
+        tool: "search",
         position: { type: "line", line: 2 },
       });
 
@@ -63,7 +63,7 @@ describe("useFetchedDocumentsStore", () => {
 
   describe("markFullDocument", () => {
     it("creates a document marked as fully fetched", () => {
-      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full content", "fetch");
+      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full content", "read");
 
       const state = useFetchedDocumentsStore.getState();
       const doc = state.documents.get("report.md");
@@ -76,10 +76,10 @@ describe("useFetchedDocumentsStore", () => {
       useFetchedDocumentsStore.getState().addChunk({
         filename: "report.md",
         content: "chunk",
-        source: "search",
+        tool: "search",
         position: { type: "line", line: 1 },
       });
-      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "fetch");
+      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "read");
 
       const doc = useFetchedDocumentsStore.getState().documents.get("report.md");
       expect(doc!.fullContentFetched).toBe(true);
@@ -87,10 +87,10 @@ describe("useFetchedDocumentsStore", () => {
     });
 
     it("returns identical state references when called with unchanged args", () => {
-      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "fetch");
+      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "read");
       const before = useFetchedDocumentsStore.getState();
 
-      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "fetch");
+      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "read");
       const after = useFetchedDocumentsStore.getState();
 
       expect(after.documents).toBe(before.documents);
@@ -103,7 +103,7 @@ describe("useFetchedDocumentsStore", () => {
       useFetchedDocumentsStore.getState().addChunk({
         filename: "f.md",
         content: "c",
-        source: "s",
+        tool: "read",
         position: { type: "line", line: 1 },
       });
       useFetchedDocumentsStore.getState().clearAll();

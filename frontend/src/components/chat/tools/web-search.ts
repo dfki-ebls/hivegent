@@ -6,13 +6,13 @@ export const syncWebSearchOutput: SyncOutput = (input, _text, metadata, addChunk
   const results = metadata as { title: string; href: string; body: string }[];
   if (!results.length) return;
   const query = input.query as string;
-  const source = `web: ${query ?? "search"}`;
   for (const r of results) {
     if (!r.href) continue;
     addChunk({
       filename: r.href,
       content: r.body || r.title,
-      source,
+      tool: "web",
+      detail: query || undefined,
       position: { type: "web_result", url: r.href },
     });
   }

@@ -23,16 +23,8 @@ describe("syncWebFetchOutput", () => {
       markFullDocument,
       noop,
     );
-    expect(markFullDocument).toHaveBeenCalledWith(
-      "https://example.com/final",
-      "# Hello",
-      "web_fetch",
-    );
-    expect(markFullDocument).toHaveBeenCalledWith(
-      "https://example.com/start",
-      "# Hello",
-      "web_fetch",
-    );
+    expect(markFullDocument).toHaveBeenCalledWith("https://example.com/final", "# Hello", "web");
+    expect(markFullDocument).toHaveBeenCalledWith("https://example.com/start", "# Hello", "web");
   });
 
   it("ignores missing or empty structured payloads", () => {
@@ -68,7 +60,8 @@ describe("syncWebSearchOutput", () => {
     expect(addChunk).toHaveBeenCalledWith({
       filename: "https://example.com/manual",
       content: "snippet",
-      source: "web: jura e7",
+      tool: "web",
+      detail: "jura e7",
       position: { type: "web_result", url: "https://example.com/manual" },
     });
   });

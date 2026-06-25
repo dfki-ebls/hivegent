@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   type ChunkPosition,
+  type ChunkTool,
   type FetchedChunk,
   type FetchedDocument,
   type FetchedImage,
@@ -15,7 +16,7 @@ interface FetchedDocumentsStore {
   addChunk: (chunk: Omit<FetchedChunk, "id">) => void;
 
   /** Mark a document as fully fetched, storing its full content. */
-  markFullDocument: (filename: string, content: string, source: string) => void;
+  markFullDocument: (filename: string, content: string, tool: ChunkTool) => void;
 
   /** Attach an image to the document at *filename* (its description path). */
   addImage: (filename: string, image: FetchedImage) => void;
@@ -30,7 +31,7 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
 
   addChunk: (chunk) =>
     set((state) => {
-      const id = makeChunkId(chunk.filename, chunk.source, chunk.position);
+      const id = makeChunkId(chunk.filename, chunk.tool, chunk.detail, chunk.position);
 
       // Deduplicate: skip if we already have this exact chunk
       if (state.chunks.has(id)) return state;
@@ -57,10 +58,10 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       return { chunks: newChunks, documents: newDocs };
     }),
 
-  markFullDocument: (filename, content, source) =>
+  markFullDocument: (filename, content, tool) =>
     set((state) => {
       const position: ChunkPosition = { type: "full_document" };
-      const id = makeChunkId(filename, source, position);
+      const id = makeChunkId(filename, tool, undefined, position);
 
       const existingChunk = state.chunks.get(id);
       const existingDoc = state.documents.get(filename);
@@ -74,7 +75,7 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
 
       const newChunks = chunkUpToDate ? state.chunks : new Map(state.chunks);
       if (!chunkUpToDate) {
-        newChunks.set(id, { id, filename, content, source, position });
+        newChunks.set(id, { id, filename, content, tool, position });
       }
 
       const newDocs = docUpToDate ? state.documents : new Map(state.documents);
