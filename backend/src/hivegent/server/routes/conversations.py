@@ -21,10 +21,9 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from ...agents import (
-    TOOLSET_GROUPS,
     UserDeps,
     base_agent,
-    build_toolsets,
+    build_capabilities,
     user_agent,
 )
 from ...agents.subagent_events import SubagentUpdate
@@ -53,16 +52,12 @@ from ...db.conversations import (
     resolve_fork,
     set_conversation_title,
 )
-from ...db.memory import load_memory
 from ...prompts import (
     CITATION_INSTRUCTIONS,
     IMAGE_INSTRUCTIONS,
     LANGUAGE_INSTRUCTIONS,
     MATH_INSTRUCTIONS,
-    MEMORY_INSTRUCTIONS,
-    MEMORY_INSTRUCTIONS_EMPTY,
     PERSONALITY_TEMPLATES,
-    PLAN_INSTRUCTIONS,
     Personality,
     join_instructions,
 )
@@ -446,17 +441,9 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         ]
     )
 
-    if config.mode == "plan":
-        parts.append(PLAN_INSTRUCTIONS)
-
-    memory_enabled = "save_memory" not in (config.tools.disabled_tools or [])
-    if memory_enabled:
-        memory_content = await load_memory(user.id)
-        if memory_content:
-            parts.append(MEMORY_INSTRUCTIONS.format(memory_content=memory_content))
-        else:
-            parts.append(MEMORY_INSTRUCTIONS_EMPTY)
-
+    # These are the cross-cutting persona instructions only; the plan- and
+    # memory-mode guidance now rides on the plan/memory capabilities, composed
+    # by mode and tool enablement in `build_capabilities`.
     instructions = join_instructions(parts)
 
     store = user_store(user)
@@ -509,13 +496,9 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         llm=config.llm,
         subagent_sink=subagent_sink,
     )
-    toolsets = build_toolsets(
-        TOOLSET_GROUPS,
+    capabilities = build_capabilities(
         config.tools,
-        extra=[
-            build_mcp_server(server)  # .defer_loading()
-            for server in config.tools.mcp_servers
-        ],
+        extra=[build_mcp_server(server) for server in config.tools.mcp_servers],
         mode=config.mode,
     )
 
@@ -533,7 +516,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         deps=deps,
         output_type=[str, DeferredToolRequests],
         model=model_from_config(config.llm),
-        toolsets=toolsets,
+        capabilities=capabilities,
         instructions=instructions,
         model_settings=model_settings,
         message_history=prefix,

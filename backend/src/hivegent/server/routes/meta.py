@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ...agents import TOOLSET_GROUPS, collect_tool_schemas
+from ...agents import collect_tool_schemas
 from ...auth import User, get_current_user
 from ...chunkers import ChunkingPipelineInfo, get_chunking_pipelines_info
 from ...config import settings
@@ -50,7 +50,7 @@ async def list_tools(
     :func:`collect_tool_schemas` also gathers; the debug console fetches
     those separately.
     """
-    return collect_tool_schemas(TOOLSET_GROUPS)
+    return collect_tool_schemas()
 
 
 @router.post("/mcp/test")

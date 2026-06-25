@@ -156,12 +156,12 @@ async def test_errored_turn_keeps_the_prompt() -> None:
     assert "ANSWER" not in _texts(recorded[0])
 
 
-async def test_interrupted_stream_drops_the_partial_answer() -> None:
-    """An interrupted turn keeps its prompt but not the in-flight partial.
+async def test_interrupted_stream_persists_the_partial_answer() -> None:
+    """An interrupted turn persists its prompt and the in-flight partial.
 
-    pydantic-ai 1.x leaves a partial response out of ``capture_run_messages``
-    and we no longer reconstruct it; v2 captures partials upstream, at which
-    point the same path persists them with no change here.
+    pydantic-ai v2 captures a partial response into ``capture_run_messages``
+    before the error propagates, so this path persists the partial answer the
+    user already saw rather than dropping it.
     """
 
     async def stream_partial(
@@ -177,7 +177,7 @@ async def test_interrupted_stream_drops_the_partial_answer() -> None:
     )
 
     assert "q1" in _texts(recorded[0])
-    assert "The answer is 42" not in _texts(recorded[0])
+    assert "The answer is 42" in _texts(recorded[0])
 
 
 async def test_persist_failure_hard_fails_with_an_error_chunk() -> None:

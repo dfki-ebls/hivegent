@@ -238,10 +238,9 @@ async def run_and_persist[DepsT, OutputT](
     list, so whatever exists when the stream ends is persisted: the full turn on
     a clean finish, or the prompt plus completed messages on an error (the
     Vercel adapter turns run errors into an in-band error chunk, so the stream
-    still ends normally).  An answer cut off mid-stream is not reconstructed:
-    pydantic-ai 1.x leaves its partial out of ``capture_run_messages`` and we
-    persist exactly what it holds (pydantic-ai v2 captures partials upstream, so
-    the same path picks them up with no change).
+    still ends normally).  An answer cut off mid-stream is captured by
+    pydantic-ai upstream into ``capture_run_messages``, so this path persists
+    whatever it holds with no special handling.
 
     When *subagent_sink* is given, live subagent transcript snapshots queued on
     it are interleaved into the response as transient ``data-subagent`` parts.

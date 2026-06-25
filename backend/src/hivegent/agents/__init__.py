@@ -1,15 +1,15 @@
 """Pydantic AI agent definitions, toolsets, and UserDeps."""
 
 from .app import base_agent, user_agent
-from .common import ExploreTaskArg, MemoryContentArg, UserDeps
-from .registry import (
-    TOOLSET_GROUPS,
-    build_toolsets,
+from .capabilities import (
+    build_capabilities,
     collect_tool_schemas,
     invoke_agent_tool,
 )
+from .common import ExploreTaskArg, MemoryContentArg, UserDeps
 from .tools import (
     conversation_toolset,
+    explore_subagent_capability,
     explore_toolset,
     memory_toolset,
     plan_toolset,
@@ -19,14 +19,14 @@ from .tools import (
 )
 
 __all__ = [
-    "TOOLSET_GROUPS",
     "ExploreTaskArg",
     "MemoryContentArg",
     "UserDeps",
     "base_agent",
-    "build_toolsets",
+    "build_capabilities",
     "collect_tool_schemas",
     "conversation_toolset",
+    "explore_subagent_capability",
     "explore_toolset",
     "invoke_agent_tool",
     "memory_toolset",

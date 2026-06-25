@@ -6,9 +6,13 @@ from typing import Annotated, Any, cast
 
 from pydantic import BeforeValidator
 from pydantic_ai import BinaryContent, FunctionToolset, RunContext
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturn
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import Tool as PydanticTool
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
+from pydantic_ai.usage import RunUsage
 
 from .base import (
     BinaryAttachment,
@@ -20,7 +24,9 @@ from .base import (
 )
 
 __all__ = [
+    "capability_tools",
     "for_pydantic_ai",
+    "invoke_tool",
     "register_agent_tools",
     "unwrap_tool_output",
     "wrap_tool_output",
@@ -208,3 +214,47 @@ def register_agent_tools[D](
             description=fn.__doc__,
             requires_approval=requires_approval,
         )
+
+
+def capability_tools[D](capability: Capability[D]) -> dict[str, PydanticTool[D]]:
+    """Map every function-tool name in a capability's toolsets to its tool.
+
+    The mechanical inverse of composing a capability: walk its function
+    toolsets so callers (e.g. the debug/meta REST surface) can list or invoke
+    individual tools straight from the same capability the agent is built from.
+    """
+    return {
+        name: tool
+        for toolset in capability.toolsets
+        if isinstance(toolset, FunctionToolset)
+        for name, tool in toolset.tools.items()
+    }
+
+
+async def invoke_tool[D](
+    tool: PydanticTool[D], args: dict[str, Any], deps: D
+) -> tuple[str | None, Any]:
+    """Validate ``args`` against ``tool``'s schema, run it, and unwrap the result.
+
+    Runs the exact code path the agent uses, so stateful behaviour (e.g.
+    pgvector retrieval) is exercised identically.  The placeholder model on the
+    run context is never invoked: every tool that talks to an LLM builds its own
+    model from ``deps`` or settings.
+
+    Args:
+        tool: The pydantic-ai tool to run.
+        args: Raw argument mapping, validated against the tool's schema.
+        deps: The dependencies passed to the tool (e.g. ``UserDeps``).
+
+    Returns:
+        A ``(text, structured_data)`` pair.
+
+    Raises:
+        pydantic.ValidationError: If ``args`` fail the tool's schema.
+    """
+    schema = tool.function_schema
+    validated = schema.validator.validate_python(args)
+    ctx = RunContext(
+        deps=deps, model=TestModel(), usage=RunUsage(), tool_name=tool.name
+    )
+    return unwrap_tool_output(await schema.call(validated, ctx))

@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 
 from ...agents import (
-    TOOLSET_GROUPS,
     UserDeps,
     collect_tool_schemas,
     invoke_agent_tool,
@@ -33,7 +32,7 @@ async def list_tool_schemas(
     _user: Annotated[User, Depends(require_admin)],
 ) -> list[ToolSchema]:
     """Return every agent tool with the JSON Schema of its parameters."""
-    return collect_tool_schemas(TOOLSET_GROUPS)
+    return collect_tool_schemas()
 
 
 @router.post("/tools/{tool_name}")
@@ -59,7 +58,7 @@ async def run_tool(
     ok = False
     start = time.perf_counter()
     try:
-        text, data = await invoke_agent_tool(TOOLSET_GROUPS, tool_name, args, deps)
+        text, data = await invoke_agent_tool(tool_name, args, deps)
         ok = True
     except KeyError as exc:
         raise HTTPException(

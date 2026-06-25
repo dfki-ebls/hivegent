@@ -1,16 +1,16 @@
 """Subagent-oriented agent tool registrations."""
 
-from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from pydantic import Field
 from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.models.openai import OpenAIChatModel
 
 from ...config import settings
 from ...llm import create_openai_chat_model, is_context_overflow
-from ...prompts import EXPLORE_INSTRUCTIONS, join_instructions
+from ...prompts import EXPLORE_INSTRUCTIONS
 from ...tools.base import ToolOutput
 from ...tools.pydantic_ai import wrap_tool_output
 from ..app import user_agent
@@ -23,6 +23,7 @@ from .web import web_toolset
 
 __all__ = [
     "explore",
+    "explore_subagent_capability",
     "run_subagent",
     "subagent_toolset",
 ]
@@ -38,6 +39,23 @@ ExploreScopeArg = Annotated[
         ),
     ),
 ]
+
+# A subagent (and the MCP exploration tool) *is* a document-exploration agent,
+# so the explore toolset and its system-prompt persona ride together as one
+# capability, distinct from the main agent's bare ``explore`` toolset bundle.
+explore_subagent_capability: AbstractCapability[UserDeps] = Capability(
+    id="explore-subagent",
+    toolsets=[explore_toolset],
+    instructions=EXPLORE_INSTRUCTIONS,
+)
+
+# Scope chosen by the ``explore`` tool; each is a self-contained capability the
+# delegated run is composed from.
+_SUBAGENT_SCOPES: dict[str, AbstractCapability[UserDeps]] = {
+    "documents": explore_subagent_capability,
+    "conversations": Capability(id="conversation", toolsets=[conversation_toolset]),
+    "web": Capability(id="web", toolsets=[web_toolset]),
+}
 
 
 def _subagent_model(deps: UserDeps) -> OpenAIChatModel:
@@ -67,21 +85,6 @@ def _subagent_model(deps: UserDeps) -> OpenAIChatModel:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class _ScopeConfig:
-    toolset: FunctionToolset[UserDeps]
-    instructions: str | None = None
-
-
-_SCOPES: dict[str, _ScopeConfig] = {
-    "documents": _ScopeConfig(
-        explore_toolset, join_instructions([EXPLORE_INSTRUCTIONS])
-    ),
-    "conversations": _ScopeConfig(conversation_toolset),
-    "web": _ScopeConfig(web_toolset),
-}
-
-
 def _subagent_result(
     tool_call_id: str, builder: SubagentTranscriptBuilder, text: str
 ) -> ToolReturn:
@@ -101,10 +104,9 @@ async def run_subagent(
     ctx: RunContext[UserDeps],
     task: str,
     *,
-    toolset: FunctionToolset[UserDeps],
-    instructions: str | None = None,
+    capability: AbstractCapability[UserDeps],
 ) -> ToolReturn:
-    """Run ``user_agent`` as a subagent over a restricted *toolset*.
+    """Run ``user_agent`` as a subagent composed from a single *capability*.
 
     The reusable core behind every subagent tool: drive a delegated run and
     surface its reasoning, tool calls, and messages to the frontend.  Drives the
@@ -134,8 +136,7 @@ async def run_subagent(
         task,
         model=model,
         deps=ctx.deps,
-        toolsets=[toolset],
-        instructions=instructions,
+        capabilities=[capability],
         usage=ctx.usage,
     ) as run:
         try:
@@ -189,7 +190,4 @@ async def explore(
     like surveying available documents, finding patterns across files,
     reviewing past conversations, or researching topics on the web.
     """
-    config = _SCOPES[scope]
-    return await run_subagent(
-        ctx, task, toolset=config.toolset, instructions=config.instructions
-    )
+    return await run_subagent(ctx, task, capability=_SUBAGENT_SCOPES[scope])

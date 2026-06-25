@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from openai import AsyncOpenAI
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
@@ -115,12 +116,15 @@ def create_openai_chat_model(
     # ``supports_thinking=False`` — which silently strips the unified
     # ``thinking`` setting from every request.  Declare support ourselves
     # (on top of the provider's name-based inference) so the configured
-    # effort reaches the server as ``reasoning_effort``.
+    # effort reaches the server as ``reasoning_effort``.  The profile
+    # callback receives the provider's already-resolved default profile;
+    # ``merge_profile`` layers our override on top (profiles are now
+    # ``TypedDict``, so the old ``.update()`` method is gone).
     return OpenAIChatModel(
         model,
         provider=provider,
-        profile=lambda name: OpenAIModelProfile(supports_thinking=True).update(
-            provider.model_profile(name)
+        profile=lambda profile: merge_profile(
+            profile, OpenAIModelProfile(supports_thinking=True)
         ),
     )
 
