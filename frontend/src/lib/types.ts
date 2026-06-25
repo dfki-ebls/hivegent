@@ -582,6 +582,13 @@ export interface FetchedDocument {
   filename: string;
   fullContentFetched: boolean;
   fullContent?: string;
+  /**
+   * Total line count of the document, recorded once from whichever source
+   * learns it first: a partial read's `total_lines` or the fetched full
+   * content.  The single denominator for the coverage map, so a partial read
+   * doesn't render as full coverage.
+   */
+  totalLines?: number;
   chunkIds: string[];
   /**
    * Set when the model read an image whose description lives at this

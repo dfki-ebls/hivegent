@@ -12,8 +12,12 @@ interface FetchedDocumentsStore {
   chunks: Map<string, FetchedChunk>;
   documents: Map<string, FetchedDocument>;
 
-  /** Insert a chunk, creating/updating its parent document entry. */
-  addChunk: (chunk: Omit<FetchedChunk, "id">) => void;
+  /**
+   * Insert a chunk, creating/updating its parent document entry.  Pass
+   * *totalLines* when the source knows the document's length (a partial read)
+   * so the coverage map has a denominator before full content is fetched.
+   */
+  addChunk: (chunk: Omit<FetchedChunk, "id">, totalLines?: number) => void;
 
   /** Mark a document as fully fetched, storing its full content. */
   markFullDocument: (filename: string, content: string, origin: ChunkOrigin) => void;
@@ -29,7 +33,7 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
   chunks: new Map(),
   documents: new Map(),
 
-  addChunk: (chunk) =>
+  addChunk: (chunk, totalLines) =>
     set((state) => {
       const id = makeChunkId(chunk.filename, chunk.origin, chunk.detail, chunk.position);
 
@@ -45,12 +49,14 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       if (existing) {
         newDocs.set(chunk.filename, {
           ...existing,
+          totalLines: totalLines ?? existing.totalLines,
           chunkIds: [...existing.chunkIds, id],
         });
       } else {
         newDocs.set(chunk.filename, {
           filename: chunk.filename,
           fullContentFetched: false,
+          totalLines,
           chunkIds: [id],
         });
       }
@@ -80,6 +86,7 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
 
       const newDocs = docUpToDate ? state.documents : new Map(state.documents);
       if (!docUpToDate) {
+        const totalLines = content.split("\n").length;
         if (existingDoc) {
           const chunkIds = existingDoc.chunkIds.includes(id)
             ? existingDoc.chunkIds
@@ -88,6 +95,7 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
             ...existingDoc,
             fullContentFetched: true,
             fullContent: content,
+            totalLines,
             chunkIds,
           });
         } else {
@@ -95,6 +103,7 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
             filename,
             fullContentFetched: true,
             fullContent: content,
+            totalLines,
             chunkIds: [id],
           });
         }

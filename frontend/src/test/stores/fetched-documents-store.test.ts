@@ -41,6 +41,20 @@ describe("useFetchedDocumentsStore", () => {
       expect(state.chunks.size).toBe(1);
     });
 
+    it("records the document length from a partial read's total_lines", () => {
+      useFetchedDocumentsStore.getState().addChunk(
+        {
+          filename: "report.md",
+          content: "head",
+          origin: "read",
+          position: { type: "line_range", startLine: 1, endLine: 40 },
+        },
+        200,
+      );
+
+      expect(useFetchedDocumentsStore.getState().documents.get("report.md")!.totalLines).toBe(200);
+    });
+
     it("appends a second chunk to the same document", () => {
       useFetchedDocumentsStore.getState().addChunk({
         filename: "report.md",
@@ -70,6 +84,12 @@ describe("useFetchedDocumentsStore", () => {
       expect(doc).toBeDefined();
       expect(doc!.fullContentFetched).toBe(true);
       expect(doc!.fullContent).toBe("full content");
+    });
+
+    it("records the line count from the fetched full content", () => {
+      useFetchedDocumentsStore.getState().markFullDocument("report.md", "a\nb\nc", "read");
+
+      expect(useFetchedDocumentsStore.getState().documents.get("report.md")!.totalLines).toBe(3);
     });
 
     it("marks an existing document as fully fetched", () => {

@@ -9,11 +9,12 @@ export interface MapSegment {
 /**
  * Normalized spans marking where a document's chunks sit within it, used to
  * render the coverage bar.  Line numbers are the common unit (every located
- * chunk carries them); the denominator is the document's known length, falling
- * back to the furthest read line when the full content has not been fetched.
- * Returns an empty array for documents with no locatable chunks (web/text).
+ * chunk carries them); the denominator is the document's known line count
+ * (*totalLines*, recorded once from a partial read or the fetched full
+ * content), falling back to the furthest read line while the length is still
+ * unknown.  Returns an empty array for documents with no locatable chunks.
  */
-export function documentReadMap(chunks: FetchedChunk[], fullContent?: string): MapSegment[] {
+export function documentReadMap(chunks: FetchedChunk[], totalLines?: number): MapSegment[] {
   const ranges: Array<[number, number]> = [];
 
   for (const { position } of chunks) {
@@ -25,8 +26,7 @@ export function documentReadMap(chunks: FetchedChunk[], fullContent?: string): M
 
   if (ranges.length === 0) return [];
 
-  const knownLines = fullContent ? fullContent.split("\n").length : 0;
-  const total = Math.max(knownLines, ...ranges.map(([, end]) => end));
+  const total = Math.max(totalLines ?? 0, ...ranges.map(([, end]) => end));
 
   if (total <= 0) return [];
 

@@ -28,5 +28,5 @@ export const syncReadDocumentOutput: SyncOutput = (
     startLine: result.start_line,
     endLine: result.end_line,
   };
-  addChunk({ filename, content: result.content, origin: "read", position });
+  addChunk({ filename, content: result.content, origin: "read", position }, result.total_lines);
 };

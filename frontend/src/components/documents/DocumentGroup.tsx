@@ -45,11 +45,12 @@ export function DocumentGroup({
     return sortChunks(visible);
   }, [chunks]);
 
-  // A preview-fetched full document supplies the denominator without being
-  // counted as a read span, so the map stays accurate once the dialog opens.
+  // A preview-fetched full document records the line count (doc.totalLines)
+  // without being counted as a read span, so the map stays accurate once the
+  // dialog opens.
   const mapSegments = useMemo(
-    () => documentReadMap(contentChunks, doc.fullContent),
-    [contentChunks, doc.fullContent],
+    () => documentReadMap(contentChunks, doc.totalLines),
+    [contentChunks, doc.totalLines],
   );
 
   return (

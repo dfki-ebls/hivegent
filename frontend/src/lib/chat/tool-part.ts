@@ -8,7 +8,7 @@ export type SyncOutput = (
   input: Record<string, unknown> | undefined,
   text: string | null,
   metadata: unknown,
-  addChunk: (chunk: Omit<FetchedChunk, "id">) => void,
+  addChunk: (chunk: Omit<FetchedChunk, "id">, totalLines?: number) => void,
   markFullDocument: (filename: string, content: string, origin: ChunkOrigin) => void,
   addImage: (filename: string, image: FetchedImage) => void,
 ) => void;
