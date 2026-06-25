@@ -20,8 +20,7 @@ export function ContextDocuments() {
 
   // The dialog's image is just the open document's image, so derive it rather
   // than tracking a parallel piece of state.
-  const dialogImage =
-    documents.get(selectedChunk?.filename ?? dialogFilename ?? "")?.image ?? null;
+  const dialogImage = documents.get(selectedChunk?.filename ?? dialogFilename ?? "")?.image ?? null;
 
   // Order documents lexically by filename; chunks within each group stay
   // line-ordered via sortChunks in DocumentGroup.

@@ -662,7 +662,10 @@ export function chunkPositionLabel(position: ChunkPosition): string {
 }
 
 /** Human-readable label for a chunk's origin ("grep: foo", "read"). */
-export function chunkOriginLabel({ origin, detail }: Pick<FetchedChunk, "origin" | "detail">): string {
+export function chunkOriginLabel({
+  origin,
+  detail,
+}: Pick<FetchedChunk, "origin" | "detail">): string {
   return detail ? `${origin}: ${detail}` : origin;
 }
 
