@@ -1,11 +1,6 @@
-import { type ClassValue, clsx } from "clsx";
-import { twMerge } from "tailwind-merge";
-
 import type { DirectoryEntry, DocumentInfo } from "./types";
 
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+export { cn, type ClassValue } from "cnfast";
 
 /** Format a byte count as a human-readable file size. */
 export function formatFileSize(bytes: number): string {
