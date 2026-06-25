@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { BackendReadyGate } from "../components/BackendReadyGate";
 import { Button } from "../components/ui/button";
 import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
@@ -58,11 +57,7 @@ import { useDocumentsStore } from "../stores/documents-store";
 
 export const Route = createFileRoute("/settings/account")({
   beforeLoad: enforceLogin,
-  component: () => (
-    <BackendReadyGate>
-      <AccountPage />
-    </BackendReadyGate>
-  ),
+  component: AccountPage,
 });
 
 // --- Generic confirm-action dialog ---

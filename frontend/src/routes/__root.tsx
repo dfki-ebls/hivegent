@@ -8,7 +8,6 @@ import { Header } from "../components/Header";
 import { ImpersonationBanner } from "../components/ImpersonationBanner";
 import { MaintenanceScreen } from "../components/MaintenanceScreen";
 import { NotFound } from "../components/NotFound";
-import { ThemeProvider } from "../components/ThemeProvider";
 import { Toaster } from "../components/ui/sonner";
 import { useOidc } from "../oidc";
 import { useSettingsStore } from "../stores/settings-store";
@@ -25,35 +24,29 @@ function RootComponent() {
   }, [isUserLoggedIn, initFromBackend]);
 
   if (maintenance) {
-    return (
-      <ThemeProvider>
-        <MaintenanceScreen />
-      </ThemeProvider>
-    );
+    return <MaintenanceScreen />;
   }
 
   return (
-    <ThemeProvider>
-      <AppErrorBoundary>
-        <Toaster position="top-center" visibleToasts={5} />
-        <div className="flex h-screen flex-col">
-          <ImpersonationBanner />
-          <Header />
-          <main className="flex-1 overflow-y-auto">
-            <Outlet />
-          </main>
-          <TanStackDevtools
-            config={{ position: "bottom-left" }}
-            plugins={[
-              {
-                name: "Tanstack Router",
-                render: <TanStackRouterDevtoolsPanel />,
-              },
-            ]}
-          />
-        </div>
-      </AppErrorBoundary>
-    </ThemeProvider>
+    <AppErrorBoundary>
+      <Toaster position="top-center" visibleToasts={5} />
+      <div className="flex h-screen flex-col">
+        <ImpersonationBanner />
+        <Header />
+        <main className="flex-1 overflow-y-auto">
+          <Outlet />
+        </main>
+        <TanStackDevtools
+          config={{ position: "bottom-left" }}
+          plugins={[
+            {
+              name: "Tanstack Router",
+              render: <TanStackRouterDevtoolsPanel />,
+            },
+          ]}
+        />
+      </div>
+    </AppErrorBoundary>
   );
 }
 

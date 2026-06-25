@@ -2,17 +2,19 @@
  * OIDC configuration using oidc-spa.
  *
  * The issuer and client id come from the backend at runtime via
- * {@link fetchRuntimeConfig} (`GET /api/config`) — the single source of truth.
- * Mock mode is used in dev builds when no issuer is configured (or the backend
- * is unreachable); production builds fail loudly on a missing issuer rather than
- * shipping a "logged in as Localhost User" page to real users.
+ * {@link fetchRuntimeConfig} (`GET /api/config`) — the single source of truth,
+ * in dev and prod alike. The backend serves an issuer only when auth is enabled
+ * (it refuses to start enabled without one) and an empty issuer only in its
+ * loopback-only auth-disabled dev mode, so the issuer alone decides real vs mock
+ * with no frontend-side environment branch to drift out of sync.
  *
- * Call {@link initOidc} once before rendering (see `main.tsx`).
+ * {@link initOidc} runs the whole sequence once, driven by BootstrapGate.
  */
 
 import { oidcSpa } from "oidc-spa/react-spa";
 import { z } from "zod";
 
+import { waitForBackendReady } from "@/lib/health";
 import { fetchRuntimeConfig } from "@/runtime-config";
 
 export const { bootstrapOidc, useOidc, getOidc, enforceLogin, OidcInitializationGate } = oidcSpa
@@ -34,40 +36,41 @@ export const { bootstrapOidc, useOidc, getOidc, enforceLogin, OidcInitialization
   })
   .createUtils();
 
-export async function initOidc(): Promise<void> {
-  let issuerUri = "";
-  let clientId = "";
+let bootstrapPromise: Promise<void> | null = null;
 
-  try {
-    const config = await fetchRuntimeConfig();
-    issuerUri = config.oidc.issuer_uri;
-    clientId = config.oidc.client_id;
-  } catch (error) {
-    // An unreachable backend is a dev convenience (mock); in production it is a
-    // hard failure rather than a silent fallback.
-    if (!import.meta.env.DEV) throw error;
-    console.warn("[oidc] could not load /api/config; falling back to mock mode (dev only).", error);
-  }
+/**
+ * Wait for the backend, load its runtime config, and bootstrap OIDC — the full
+ * startup sequence the app gates on (see the BootstrapGate component). The
+ * promise is cached so React's StrictMode double-mount, and any other caller,
+ * reuses the one in-flight bootstrap rather than starting a second.
+ */
+export function initOidc(): Promise<void> {
+  bootstrapPromise ??= runBootstrap();
 
-  if (!issuerUri && !import.meta.env.DEV) {
-    throw new Error(
-      "OIDC misconfigured: the backend returned no issuer. Set HIVEGENT_AUTH__ISSUER.",
-    );
-  }
+  return bootstrapPromise;
+}
 
-  // No issuer in a dev build → mock; production has already thrown above.
-  const useMock = import.meta.env.DEV && !issuerUri;
+async function runBootstrap(): Promise<void> {
+  // The backend (every route, including /api/config) answers 503 while it boots
+  // behind the reverse proxy, so wait for readiness before fetching the config
+  // rather than letting it throw; BootstrapGate keeps the connection spinner on
+  // screen for the whole wait.
+  await waitForBackendReady();
+  const { oidc } = await fetchRuntimeConfig();
 
+  // A non-empty issuer means auth is enabled → real OIDC; an empty one is the
+  // backend's auth-disabled dev mode → mock. The backend guarantees this split,
+  // so the same path serves dev and prod.
   await bootstrapOidc(
-    useMock
+    oidc.issuer_uri
       ? {
-          implementation: "mock",
-          isUserInitiallyLoggedIn: true,
+          implementation: "real",
+          issuerUri: oidc.issuer_uri,
+          clientId: oidc.client_id,
         }
       : {
-          implementation: "real",
-          issuerUri,
-          clientId,
+          implementation: "mock",
+          isUserInitiallyLoggedIn: true,
         },
   );
 }

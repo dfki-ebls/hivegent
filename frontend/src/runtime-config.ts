@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { API_BASE_URL } from "@/lib/api";
+import { API_BASE_URL } from "@/lib/health";
 
 /**
  * Runtime configuration the SPA fetches from the backend (`GET /api/config`) at

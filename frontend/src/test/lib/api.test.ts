@@ -22,13 +22,8 @@ vi.mock("@/lib/feature-flags", () => ({
   },
 }));
 
-import {
-  buildLlmConfig,
-  getDirectories,
-  getSettings,
-  requiresConversion,
-  waitForBackendReady,
-} from "@/lib/api";
+import { buildLlmConfig, getDirectories, getSettings, requiresConversion } from "@/lib/api";
+import { waitForBackendReady } from "@/lib/health";
 
 // authFetch gates every request on backend readiness; resolve the cached probe
 // once so each test's mocked fetch serves the endpoint, not the health poll.

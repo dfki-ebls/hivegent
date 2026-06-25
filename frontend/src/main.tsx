@@ -2,7 +2,9 @@ import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
 
-import { initOidc, OidcInitializationGate } from "./oidc";
+import { BootstrapGate } from "./components/BootstrapGate";
+import { ThemeProvider } from "./components/ThemeProvider";
+import { OidcInitializationGate } from "./oidc";
 import { routeTree } from "./routeTree.gen";
 
 import "./styles.css";
@@ -32,22 +34,24 @@ declare module "@tanstack/react-router" {
   }
 }
 
-// Load the backend-served runtime config and bootstrap OIDC before rendering,
-// so the SPA has its issuer/client before the initialization gate mounts.
-async function main() {
-  await initOidc();
-
-  const rootElement = document.getElementById("app");
-  if (rootElement && !rootElement.innerHTML) {
-    const root = ReactDOM.createRoot(rootElement);
-    root.render(
-      <StrictMode>
-        <OidcInitializationGate>
-          <RouterProvider router={router} />
-        </OidcInitializationGate>
-      </StrictMode>,
-    );
-  }
+// Render immediately and let BootstrapGate drive startup from inside React: it
+// waits for the backend, fetches the runtime config, and bootstraps OIDC while
+// showing the connection spinner, then mounts the initialization gate. The SPA
+// no longer blocks rendering on /api/config, so a booting backend shows the
+// spinner instead of a blank page. ThemeProvider sits on top so even the
+// connection screen honors dark mode.
+const rootElement = document.getElementById("app");
+if (rootElement && !rootElement.innerHTML) {
+  const root = ReactDOM.createRoot(rootElement);
+  root.render(
+    <StrictMode>
+      <ThemeProvider>
+        <BootstrapGate>
+          <OidcInitializationGate>
+            <RouterProvider router={router} />
+          </OidcInitializationGate>
+        </BootstrapGate>
+      </ThemeProvider>
+    </StrictMode>,
+  );
 }
-
-void main();

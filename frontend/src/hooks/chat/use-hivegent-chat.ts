@@ -5,7 +5,8 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
 } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
+import { getAuthHeaders } from "@/lib/api";
+import { API_BASE_URL } from "@/lib/health";
 import type { SubagentSteps, SubagentUpdate } from "@/lib/chat/subagent";
 
 export interface SendUserMessageInput {

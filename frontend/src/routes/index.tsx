@@ -2,7 +2,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { LogIn } from "lucide-react";
 import { useCallback, useState } from "react";
 
-import { BackendReadyGate } from "../components/BackendReadyGate";
 import { Logo } from "../components/Logo";
 import { VersionBadge } from "../components/VersionBadge";
 import { ChatLayout } from "../components/ChatLayout";
@@ -19,11 +18,7 @@ function IndexPage() {
   const [isSigningIn, setIsSigningIn] = useState(false);
 
   if (isUserLoggedIn) {
-    return (
-      <BackendReadyGate>
-        <DraftConversation />
-      </BackendReadyGate>
-    );
+    return <DraftConversation />;
   }
 
   return (
