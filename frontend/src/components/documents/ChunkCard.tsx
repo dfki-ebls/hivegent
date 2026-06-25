@@ -14,12 +14,17 @@ export function ChunkCard({ chunk, onClick }: ChunkCardProps) {
       type="button"
       onClick={onClick}
       title={`${chunkOriginLabel(chunk)} — ${label}`}
-      className="flex min-w-0 items-center gap-1.5 rounded-md border bg-card px-2 py-1.5 text-left cursor-pointer transition-colors hover:bg-muted/50"
+      className="flex aspect-square min-w-0 flex-col gap-1 overflow-hidden rounded-md border bg-card p-2 text-left cursor-pointer transition-colors hover:bg-muted/50"
     >
-      <Badge variant="outline" className="shrink-0 text-[10px] capitalize">
-        {chunk.origin}
-      </Badge>
-      <span className="truncate text-[11px] text-muted-foreground">{label}</span>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Badge variant="outline" className="shrink-0 text-[10px] capitalize">
+          {chunk.origin}
+        </Badge>
+        <span className="truncate text-[10px] text-muted-foreground">{label}</span>
+      </div>
+      <p className="min-h-0 flex-1 overflow-hidden break-words text-[11px] leading-snug text-muted-foreground">
+        {chunk.content.trim()}
+      </p>
     </button>
   );
 }

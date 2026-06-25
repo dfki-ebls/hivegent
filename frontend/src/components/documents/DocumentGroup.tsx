@@ -26,7 +26,7 @@ export function DocumentGroup({
   onFilenameClick,
   onImageClick,
 }: DocumentGroupProps) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const isWeb = isWebUrl(doc.filename);
   // Image docs are keyed by their description path; show the image's own name.
   const displayName = doc.image
@@ -86,24 +86,26 @@ export function DocumentGroup({
         <DocumentMap segments={mapSegments} />
       </div>
       <CollapsibleContent>
-        <div className="ml-4 grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] items-start gap-2 pb-2">
-          {doc.image && (
-            <button
-              type="button"
-              onClick={() => onImageClick(doc)}
-              title={doc.image.filePath}
-              className="overflow-hidden rounded-md border cursor-pointer transition-colors hover:bg-muted/50"
-            >
-              <AssetImage
-                filePath={doc.image.filePath}
-                wrapperClassName="aspect-square w-full"
-                className="h-full w-full object-cover"
-              />
-            </button>
-          )}
-          {contentChunks.map((chunk) => (
-            <ChunkCard key={chunk.id} chunk={chunk} onClick={() => onChunkClick(chunk)} />
-          ))}
+        <div className="@container ml-4 pb-2">
+          <div className="grid grid-cols-2 gap-2 @sm:grid-cols-3 @lg:grid-cols-4">
+            {doc.image && (
+              <button
+                type="button"
+                onClick={() => onImageClick(doc)}
+                title={doc.image.filePath}
+                className="overflow-hidden rounded-md border cursor-pointer transition-colors hover:bg-muted/50"
+              >
+                <AssetImage
+                  filePath={doc.image.filePath}
+                  wrapperClassName="aspect-square w-full"
+                  className="h-full w-full object-cover"
+                />
+              </button>
+            )}
+            {contentChunks.map((chunk) => (
+              <ChunkCard key={chunk.id} chunk={chunk} onClick={() => onChunkClick(chunk)} />
+            ))}
+          </div>
         </div>
       </CollapsibleContent>
     </Collapsible>
