@@ -289,7 +289,7 @@ wheels = [
 
 [[package]]
 name = "cbrkit"
-version = "1.5.2"
+version = "1.5.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "frozendict" },
@@ -302,9 +302,9 @@ dependencies = [
     { name = "scipy" },
     { name = "xmltodict" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/13/30/179aea8d0ba03615686d22293faeb5e37f4d61762d7e67cef6ebae7fb381/cbrkit-1.5.2.tar.gz", hash = "sha256:e512c7fe0cc3ed14be65314b513ffba397a7e539d08e4dc00edb3d9e9802aaae", size = 174187, upload-time = "2026-06-11T09:45:35.471Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/e7/02264cfa5548b122150557a29f649373e2d6afe9395cb63f986676a213f2/cbrkit-1.5.3.tar.gz", hash = "sha256:8953f29add4b054ced8393c886a1a81e7071533df3354f78466bdfe27408ce54", size = 175193, upload-time = "2026-06-25T09:51:40.356Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/6b/d569dc30a21dd465a3195feae1f3e015a85bde646816daf72c1059db96a1/cbrkit-1.5.2-py3-none-any.whl", hash = "sha256:b9485b27e7976d0854009f5a3ca467053f47b991de6dcb4f06ac3592685412c1", size = 223266, upload-time = "2026-06-11T09:45:33.492Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/22/297f85c7a37371af3aedcf6fc3ed0a09c6e0d8093ebf499ec5cfb85a4932/cbrkit-1.5.3-py3-none-any.whl", hash = "sha256:ea80ea2e78bbe2111780f7b0e13e015ff5b2653b6b7e4d26c001a41a51e99ce9", size = 224361, upload-time = "2026-06-25T09:51:38.345Z" },
 ]
 
 [package.optional-dependencies]
@@ -731,14 +731,14 @@ wheels = [
 
 [[package]]
 name = "docling"
-version = "2.104.0"
+version = "2.105.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "docling-slim", extra = ["standard"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/a1/5f02d87de3d9886270ffe3a0526a358d91d04a84bfbf088d438bbcae964e/docling-2.104.0.tar.gz", hash = "sha256:042636aac519f6f4f92f929f655db6b191c6558bd10f998cdf396a664048ada7", size = 8839, upload-time = "2026-06-19T04:53:29.661Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8a/fb/db8377446f8c4c18ae8d460f0359106d80cd314f5f6b1970abe3257e5599/docling-2.105.0.tar.gz", hash = "sha256:1c878b3e7a41d05bf95081bfd9eb84b5d5829f3f4ae7d47cf061bcc239265a67", size = 8843, upload-time = "2026-06-22T10:10:22.472Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4f/4d/e51e60887d185c9fcbd46b85a5e0e0db5d96003b354eabc55f1a5854b42b/docling-2.104.0-py3-none-any.whl", hash = "sha256:fb2b04fd021fee53d70543820983b89380b77481a40a8c9e57c2ee6c3af61b23", size = 5013, upload-time = "2026-06-19T04:53:28.383Z" },
+    { url = "https://files.pythonhosted.org/packages/23/0f/e19d583638c79b1f54aab7415d55905809178f403d8a25d3f68eff5a90ef/docling-2.105.0-py3-none-any.whl", hash = "sha256:f3e4597bd7f0d5010babd13c4a0c75be88cdbc0bff094432e651f9b7977e380b", size = 5013, upload-time = "2026-06-22T10:10:21.257Z" },
 ]
 
 [[package]]
@@ -826,7 +826,7 @@ wheels = [
 
 [[package]]
 name = "docling-slim"
-version = "2.104.0"
+version = "2.105.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -838,9 +838,9 @@ dependencies = [
     { name = "requests" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/75/217803d56063d559c7565c59f3dc27c898eeec857cd4ba890c4a3c8681a7/docling_slim-2.104.0.tar.gz", hash = "sha256:a426ba5802fe0b6102da9a8f19079036dcf4eac33791a8967df9887bb7449b53", size = 442998, upload-time = "2026-06-19T04:52:06.9Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/69/5a13cc8eed677e03bff9f0c23e23ffd8f44dc15d5e70aa3ad14d07042b06/docling_slim-2.105.0.tar.gz", hash = "sha256:3f4354ceacc8c27ed82dbf70ea54b94d2314fb78c3acb6ce79f7f73d19beb5bb", size = 448399, upload-time = "2026-06-22T10:08:55.206Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/ea/113dc379562b1c1911e658bbd92800d3a35c0146a7cfc58d16e71a8e5a92/docling_slim-2.104.0-py3-none-any.whl", hash = "sha256:952df3510c596bab561cd9bba6758a3eb4ea3b142ded52b0c2ffe839e026f8ce", size = 568758, upload-time = "2026-06-19T04:52:04.977Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/83/797078f69a0e5422deab8663f41f7be3af83b1b1ceb222fa2a8cba3a64b5/docling_slim-2.105.0-py3-none-any.whl", hash = "sha256:6c0f07b5382ab3e4af2ccbb40ad492b72dbc6ca5b748dc8bc28488527837c845", size = 575430, upload-time = "2026-06-22T10:08:53.289Z" },
 ]
 
 [package.optional-dependencies]
@@ -1368,7 +1368,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1,<2" },
-    { name = "cbrkit", extras = ["sql", "pgvector"], specifier = ">=1.5.2,<2" },
+    { name = "cbrkit", extras = ["sql", "pgvector"], specifier = ">=1.5.3,<2" },
     { name = "chonkie", specifier = ">=1,<2" },
     { name = "chonkie", extras = ["semantic"], marker = "extra == 'semantic'", specifier = ">=1,<2" },
     { name = "docling", marker = "extra == 'docling'", specifier = ">=2,<3" },
