@@ -27,7 +27,7 @@ from ...auth import User, get_current_user
 from ...chunkers.base import DocumentMetadata
 from ...concurrency import shield_to_completion
 from ...config import settings
-from ...db.documents import get_document
+from ...db.documents import get_document, get_line_counts
 from ...store import Casebase
 from ..jobs import JobContext, JobView, JobWork, manager
 from ...types import (
@@ -37,6 +37,7 @@ from ...types import (
     CollectionCompleteEvent,
     CollectionProgressEvent,
     DeleteDocumentResponse,
+    DocumentLineCountsResponse,
     GenerateAssetDescriptionRequest,
     LlmConfig,
     MoveDocumentRequest,
@@ -56,6 +57,7 @@ from ..models import (
     BulkMoveRequest,
     BulkRechunkRequest,
     BulkReconvertRequest,
+    DocumentLineCountsRequest,
     ReconvertRequest,
 )
 from ..operations import (
@@ -447,6 +449,36 @@ async def bulk_delete(
         process_one=_delete_one,
         verb="Deleted",
     )
+
+
+@router.post("/documents/line-counts")
+async def get_document_line_counts(
+    request: DocumentLineCountsRequest,
+    user: Annotated[User, Depends(get_current_user)],
+) -> DocumentLineCountsResponse:
+    """Batch-resolve document line counts for the context-panel coverage map.
+
+    Each requested path is resolved to its store (skipping web URLs and any the
+    caller cannot reach), grouped per store, and looked up in one query each.
+    Unknown or not-yet-indexed paths are simply omitted from the response.
+    """
+    grouped: dict[Casebase, dict[str, str]] = {}
+    for original in request.files:
+        try:
+            store, safe = resolve_workspace_path(user, original)
+        except HTTPException:
+            continue
+        if not safe:
+            continue
+        grouped.setdefault(store, {})[safe] = original
+
+    line_counts: dict[str, int] = {}
+    for store, safe_to_original in grouped.items():
+        counts = await get_line_counts(store, list(safe_to_original))
+        for safe, count in counts.items():
+            line_counts[safe_to_original[safe]] = count
+
+    return DocumentLineCountsResponse(line_counts=line_counts)
 
 
 @router.get("/documents/chunks/{filepath:path}")

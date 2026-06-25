@@ -10,6 +10,7 @@ __all__ = [
     "BulkMoveRequest",
     "BulkRechunkRequest",
     "BulkReconvertRequest",
+    "DocumentLineCountsRequest",
     "ReconvertRequest",
 ]
 
@@ -40,6 +41,12 @@ class BulkDeleteRequest(BaseModel):
     """Request to bulk delete multiple documents."""
 
     files: list[str] = Field(description="List of file paths to delete")
+
+
+class DocumentLineCountsRequest(BaseModel):
+    """Request a batch of document line counts by workspace path."""
+
+    files: list[str] = Field(description="Workspace paths to look up line counts for")
 
 
 class BulkMoveEntry(BaseModel):

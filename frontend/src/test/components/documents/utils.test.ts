@@ -18,9 +18,9 @@ describe("documentReadMap", () => {
     expect(segments).toEqual([{ start: 0, end: 0.2 }]);
   });
 
-  it("falls back to the furthest read line when the length is unknown", () => {
+  it("hides the bar (no segments) when the document length is unknown", () => {
     const segments = documentReadMap([readChunk(1, 40)]);
 
-    expect(segments).toEqual([{ start: 0, end: 1 }]);
+    expect(segments).toEqual([]);
   });
 });

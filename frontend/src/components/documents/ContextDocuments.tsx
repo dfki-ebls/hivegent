@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
+import { useDocumentLineCounts } from "../../hooks/use-document-line-counts";
 import type { FetchedChunk, FetchedDocument } from "../../lib/types";
 import { useFetchedDocumentsStore } from "../../stores/fetched-documents-store";
 import { DocumentDialog } from "../DocumentDialog";
@@ -11,6 +12,9 @@ import { EmptyState } from "./EmptyState";
 export function ContextDocuments() {
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
+
+  // Lazily backfill line counts for search/grep docs so their map renders.
+  useDocumentLineCounts();
 
   // Dialog state
   const [selectedChunk, setSelectedChunk] = useState<FetchedChunk | null>(null);

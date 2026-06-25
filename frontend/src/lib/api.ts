@@ -27,6 +27,7 @@ import {
   type CompactConversationResponse,
   CompactConversationResponseSchema,
   ConversationListResponseSchema,
+  DocumentLineCountsResponseSchema,
   type ConversationSummary,
   ConversationSummarySchema,
   type ConversionPipelineInfo,
@@ -766,6 +767,24 @@ export async function getDocumentChunks(filename: string): Promise<ChunkedDocume
 
   const data: unknown = await res.json();
   return ChunkedDocumentResponseSchema.parse(data);
+}
+
+/** Batch-resolve document line counts; unknown paths are omitted from the map. */
+export async function getDocumentLineCounts(files: string[]): Promise<Record<string, number>> {
+  if (files.length === 0) return {};
+
+  const res = await authFetch(`${API_BASE_URL}/api/documents/line-counts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ files }),
+  });
+
+  if (!res.ok) {
+    throw await responseError(res, "Failed to fetch line counts");
+  }
+
+  const data: unknown = await res.json();
+  return DocumentLineCountsResponseSchema.parse(data).line_counts;
 }
 
 // Asset API functions

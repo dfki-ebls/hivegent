@@ -51,6 +51,7 @@ __all__ = [
     "DirectoryTreeResponse",
     "DocumentFilter",
     "DocumentInfo",
+    "DocumentLineCountsResponse",
     "GenerateTitleRequest",
     "GenerateTitleResponse",
     "GroupInfo",
@@ -499,6 +500,14 @@ class DeleteDocumentResponse(BaseModel):
 
     filename: str = Field(description="The deleted filename")
     message: str = Field(description="Status message")
+
+
+class DocumentLineCountsResponse(BaseModel):
+    """Batch document line counts, keyed by the requested workspace path."""
+
+    line_counts: dict[str, int] = Field(
+        description="Requested path → line count; unknown paths are omitted"
+    )
 
 
 class WriteDocumentRequest(BaseModel):

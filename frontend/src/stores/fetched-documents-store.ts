@@ -22,6 +22,9 @@ interface FetchedDocumentsStore {
   /** Mark a document as fully fetched, storing its full content. */
   markFullDocument: (filename: string, content: string, origin: ChunkOrigin) => void;
 
+  /** Record fetched document line counts (the coverage-map denominator). */
+  setLineCounts: (counts: Record<string, number>) => void;
+
   /** Attach an image to the document at *filename* (its description path). */
   addImage: (filename: string, image: FetchedImage) => void;
 
@@ -110,6 +113,22 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       }
 
       return { chunks: newChunks, documents: newDocs };
+    }),
+
+  setLineCounts: (counts) =>
+    set((state) => {
+      let changed = false;
+      const newDocs = new Map(state.documents);
+
+      for (const [filename, lineCount] of Object.entries(counts)) {
+        const doc = newDocs.get(filename);
+        if (doc && doc.totalLines !== lineCount) {
+          newDocs.set(filename, { ...doc, totalLines: lineCount });
+          changed = true;
+        }
+      }
+
+      return changed ? { documents: newDocs } : state;
     }),
 
   addImage: (filename, image) =>

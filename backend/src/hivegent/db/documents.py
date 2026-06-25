@@ -54,6 +54,7 @@ __all__ = [
     "delete_subtree",
     "get_document",
     "get_entry_state",
+    "get_line_counts",
     "list_document_paths",
     "list_known_stores",
     "move_document",
@@ -289,6 +290,28 @@ async def list_document_paths(store: Casebase) -> dict[str, int]:
     return {description_path_for_stem(stem): int(count) for stem, count in rows}
 
 
+async def get_line_counts(store: Casebase, references: Sequence[str]) -> dict[str, int]:
+    """Return ``{reference: line_count}`` for the given workspace references.
+
+    A reference with no row, or a not-yet-indexed ``0`` placeholder, is simply
+    absent so the caller treats it as "length unknown" and hides the map.
+    """
+    stem_to_ref = {stem_path_from_reference(r): r for r in references}
+    if not stem_to_ref:
+        return {}
+    async with session() as s:
+        rows = (
+            await s.execute(
+                select(Document.stem_path, Document.line_count).where(
+                    _owner_filter(store),
+                    Document.stem_path.in_(stem_to_ref),
+                    Document.line_count > 0,
+                )
+            )
+        ).all()
+    return {stem_to_ref[stem]: int(count) for stem, count in rows}
+
+
 async def _distinct_owner_ids(s: AsyncSession, column) -> list[str]:
     result = await s.execute(select(column).where(column.is_not(None)).distinct())
     return [oid for oid in result.scalars().all() if oid]
@@ -374,6 +397,7 @@ async def upsert_document(
     store: Casebase,
     entry: EntryMetadata,
     pipeline: str,
+    line_count: int,
 ) -> DocumentMetadata:
     """Insert or replace the SQL row for a document before indexing chunks.
 
@@ -386,7 +410,9 @@ async def upsert_document(
     The row's ``content_digest`` and stat columns are cleared here because the
     replacement chunks are not durable yet.  :func:`set_content_state` stamps
     them only after indexing succeeds, so a null digest always means "needs
-    re-indexing".
+    re-indexing".  ``line_count`` is written eagerly instead — it is a pure
+    function of the content this row represents, so it is correct regardless of
+    whether the chunks land.
 
     Concurrency-safe ``INSERT ... ON CONFLICT DO UPDATE`` keyed on the
     ``(owner, stem_path)`` unique constraint: two requests racing to
@@ -397,6 +423,7 @@ async def upsert_document(
         **_EntryColumns.from_entry(entry).as_values(),
         "pipeline": pipeline,
         "content_digest": None,
+        "line_count": line_count,
         **_stat_columns(None),
     }
     owner_col = (

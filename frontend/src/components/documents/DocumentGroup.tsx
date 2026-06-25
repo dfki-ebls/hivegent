@@ -1,6 +1,7 @@
 import { ChevronRight, Globe } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { featureFlags } from "../../lib/feature-flags";
 import { type FetchedChunk, type FetchedDocument, sortChunks } from "../../lib/types";
 import { formatWebUrl, isWebUrl } from "../../lib/utils";
 import { Badge } from "../ui/badge";
@@ -84,7 +85,7 @@ export function DocumentGroup({
             {contentChunks.length !== 1 ? "s" : ""}
           </Badge>
         )}
-        <DocumentMap segments={mapSegments} />
+        {featureFlags.documentMap && <DocumentMap segments={mapSegments} />}
       </div>
       <CollapsibleContent>
         <div className="@container ml-4 pb-2">

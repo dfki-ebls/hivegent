@@ -257,6 +257,12 @@ export const DocumentStatsSchema = z.object({
 });
 export type DocumentStats = z.infer<typeof DocumentStatsSchema>;
 
+/** Batch document line counts, keyed by the requested workspace path. */
+export const DocumentLineCountsResponseSchema = z.object({
+  line_counts: z.record(z.string(), z.number()),
+});
+export type DocumentLineCountsResponse = z.infer<typeof DocumentLineCountsResponseSchema>;
+
 export const DocumentRangeSchema = z.object({
   start_line: z.number(),
   end_line: z.number(),
@@ -678,6 +684,16 @@ export function chunkOriginLabel({
 
 /** The line-based `ChunkPosition` variants a citation `line` attribute yields. */
 export type LinePosition = Extract<ChunkPosition, { type: "line" | "line_range" }>;
+
+/**
+ * Whether a position carries concrete line numbers, the single unit the
+ * coverage map can place.  The one definition of "mappable", shared by the map
+ * builder and the line-count backfill so they never disagree about which
+ * documents get a map.
+ */
+export function isLinePosition(position: ChunkPosition): position is LinePosition {
+  return position.type === "line" || position.type === "line_range";
+}
 
 /**
  * Parse a citation `line` attribute ("42", "42,46", "50-55", "42,50-55,90")

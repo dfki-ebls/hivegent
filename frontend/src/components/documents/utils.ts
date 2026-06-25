@@ -1,4 +1,4 @@
-import type { FetchedChunk } from "../../lib/types";
+import { type FetchedChunk, isLinePosition } from "../../lib/types";
 
 /** A normalized read span (fractions in 0..1) within a document. */
 export interface MapSegment {
@@ -9,10 +9,10 @@ export interface MapSegment {
 /**
  * Normalized spans marking where a document's chunks sit within it, used to
  * render the coverage bar.  Line numbers are the common unit (every located
- * chunk carries them); the denominator is the document's known line count
- * (*totalLines*, recorded once from a partial read or the fetched full
- * content), falling back to the furthest read line while the length is still
- * unknown.  Returns an empty array for documents with no locatable chunks.
+ * chunk carries them) and *totalLines* (recorded once from a partial read or
+ * the fetched full content) is the denominator.  Returns an empty array, so
+ * the bar is hidden rather than guessed, whenever there are no locatable
+ * chunks or the document length is still unknown.
  */
 export function documentReadMap(chunks: FetchedChunk[], totalLines?: number): MapSegment[] {
   const ranges: Array<[number, number]> = [];
@@ -20,13 +20,18 @@ export function documentReadMap(chunks: FetchedChunk[], totalLines?: number): Ma
   for (const { position } of chunks) {
     if (position.type === "full_document") return [{ start: 0, end: 1 }];
 
-    if (position.type === "line") ranges.push([position.line, position.line]);
-    else if (position.type === "line_range") ranges.push([position.startLine, position.endLine]);
+    if (isLinePosition(position)) {
+      ranges.push(
+        position.type === "line"
+          ? [position.line, position.line]
+          : [position.startLine, position.endLine],
+      );
+    }
   }
 
-  if (ranges.length === 0) return [];
+  if (ranges.length === 0 || totalLines === undefined) return [];
 
-  const total = Math.max(totalLines ?? 0, ...ranges.map(([, end]) => end));
+  const total = Math.max(totalLines, ...ranges.map(([, end]) => end));
 
   if (total <= 0) return [];
 

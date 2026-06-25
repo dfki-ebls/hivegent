@@ -41,9 +41,9 @@ async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
     stamped = False
 
     async def upsert_document(
-        store: Casebase, entry: EntryMetadata, pipeline: str
+        store: Casebase, entry: EntryMetadata, pipeline: str, line_count: int
     ) -> DocumentMetadata:
-        _ = store, entry
+        _ = store, entry, line_count
         return _document_metadata(pipeline)
 
     async def index_document(document_id: str, raw_chunks: object) -> None:

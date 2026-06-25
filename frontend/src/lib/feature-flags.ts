@@ -73,6 +73,15 @@ export interface FeatureFlags {
    * instructions and the "Execute the plan" follow-up never appears.
    */
   planning: boolean;
+
+  /**
+   * Show the coverage map in the context panel — the bar marking where a
+   * document's read chunks sit within the whole.  Unlike the opt-in flags
+   * above this is a kill-switch for an on-by-default feature, so it defaults
+   * to `true`; disabling it hides the bar and skips the line-count fetch that
+   * supplies its denominator.
+   */
+  documentMap: boolean;
 }
 
 const FEATURE_DEFAULTS: FeatureFlags = {
@@ -81,6 +90,7 @@ const FEATURE_DEFAULTS: FeatureFlags = {
   assetSpec: false,
   toolsSpec: false,
   planning: false,
+  documentMap: true,
 };
 
 /**
@@ -95,6 +105,7 @@ const FEATURE_ENV: Record<keyof FeatureFlags, string | undefined> = {
   assetSpec: import.meta.env.VITE_FEATURE_ASSET_SPEC,
   toolsSpec: import.meta.env.VITE_FEATURE_TOOLS_SPEC,
   planning: import.meta.env.VITE_FEATURE_PLANNING,
+  documentMap: import.meta.env.VITE_FEATURE_DOCUMENT_MAP,
 };
 
 function parseBool(raw: string | undefined, key: string): boolean | undefined {

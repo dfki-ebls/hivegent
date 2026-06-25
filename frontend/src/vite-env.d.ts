@@ -15,6 +15,7 @@ interface ImportMetaEnv {
   readonly VITE_FEATURE_ASSET_SPEC?: string;
   readonly VITE_FEATURE_TOOLS_SPEC?: string;
   readonly VITE_FEATURE_PLANNING?: string;
+  readonly VITE_FEATURE_DOCUMENT_MAP?: string;
 }
 
 interface ImportMeta {

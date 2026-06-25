@@ -317,6 +317,10 @@ class Document(Timestamped, Base):
 
     pipeline: Mapped[str]
     content_digest: Mapped[str | None]
+    # Line count of the markdown, written eagerly at row insert (a pure function
+    # of the content) and surfaced to the frontend so a coverage map can place
+    # partial reads without re-reading the file.
+    line_count: Mapped[int]
     # ``(mtime_ns, size)`` of the indexed markdown: a stat fast-path that lets
     # the reconciler skip re-reading a description whose stat is unchanged.
     content_mtime_ns: Mapped[int | None] = mapped_column(sa.BigInteger())

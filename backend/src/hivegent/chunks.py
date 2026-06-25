@@ -120,6 +120,7 @@ async def chunk_and_index_document(
             store,
             entry_metadata,
             pipeline=chunker.name,
+            line_count=len(content.splitlines()),
         )
         await index_document(doc.id, raw_chunks)
         await db_documents.set_content_state(doc.id, digest, stat)
