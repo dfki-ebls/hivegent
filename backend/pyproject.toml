@@ -35,7 +35,7 @@ dependencies = [
 hivegent = "hivegent.cli:app"
 
 [project.optional-dependencies]
-all = ["hivegent[docling,markitdown,kreuzberg,pdf-oxide,semantic]"]
+all = ["hivegent[docling,pdf-oxide,semantic]"]
 # code = ["chonkie[code]>=1,<2"]
 # marker = ["marker-pdf[full]>=1,<2"]
 # mineru = ["mineru[all]>=3,<4"]

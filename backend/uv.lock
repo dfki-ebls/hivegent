@@ -1334,8 +1334,6 @@ dependencies = [
 all = [
     { name = "chonkie", extra = ["semantic"] },
     { name = "docling" },
-    { name = "kreuzberg" },
-    { name = "markitdown", extra = ["all"] },
     { name = "pdf-oxide" },
     { name = "tesserocr" },
 ]
@@ -1375,7 +1373,7 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.120,<1" },
     { name = "fastmcp", specifier = ">=3,<4" },
     { name = "frozendict", specifier = ">=2.4.7" },
-    { name = "hivegent", extras = ["docling", "markitdown", "kreuzberg", "pdf-oxide", "semantic"], marker = "extra == 'all'" },
+    { name = "hivegent", extras = ["docling", "pdf-oxide", "semantic"], marker = "extra == 'all'" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "joserfc", specifier = ">=1,<2" },
     { name = "kreuzberg", marker = "extra == 'kreuzberg'", specifier = ">=4,<5" },
