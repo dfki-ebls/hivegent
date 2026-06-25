@@ -44,16 +44,15 @@ export function MessageBubble({
   const canEdit = isUser && (status === "ready" || status === "error") && editingId !== message.id;
   const parts = message.parts ?? [];
   const toolData = indexToolData(parts);
+  // The final answer's actions hang off the last text part of an assistant turn.
+  const lastTextIndex = parts.findLastIndex((p) => p.type === "text");
 
   return (
     <Message from={message.role}>
-      <MessageContent>
+      {/* Assistant content spans full width so tool cards don't shrink to a short line. */}
+      <MessageContent className={isAssistant ? "w-full gap-1.5" : "gap-1.5"}>
         {parts.map((part, partIndex) => {
-          const isLastTextPart =
-            part.type === "text" &&
-            isAssistant &&
-            isLastMessage &&
-            !parts.slice(partIndex + 1).some((p) => p.type === "text");
+          const isLastTextPart = isAssistant && isLastMessage && partIndex === lastTextIndex;
 
           return (
             <MessagePart

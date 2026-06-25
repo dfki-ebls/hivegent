@@ -59,7 +59,7 @@ export function MessageList({
 
   return (
     <Conversation className="min-h-0 flex-1">
-      <ConversationContent className="gap-4">
+      <ConversationContent className="gap-3">
         <CompactionBanner compactedFrom={compactedFrom} onNavigatePrevious={onNavigatePrevious} />
         {isLoadingHistory && <Loader />}
         {!isLoadingHistory && messages.length === 0 && !chatError && (

@@ -12,7 +12,7 @@ export function ReasoningPart({ part }: ReasoningPartProps) {
   if (!part.text && part.state !== "streaming") return null;
 
   return (
-    <Reasoning isStreaming={part.state === "streaming"}>
+    <Reasoning className="mb-0" isStreaming={part.state === "streaming"}>
       <ReasoningTrigger />
       <ReasoningMarkdown>{part.text}</ReasoningMarkdown>
     </Reasoning>

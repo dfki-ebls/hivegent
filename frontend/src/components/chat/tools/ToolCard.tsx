@@ -42,7 +42,7 @@ export function ToolCard({
   };
 
   return (
-    <Tool {...openProps} onOpenChange={handleOpenChange}>
+    <Tool {...openProps} className="mb-0" onOpenChange={handleOpenChange}>
       <ToolHeader
         title={title ?? snakeCaseToTitleCase(toolName)}
         type={`tool-${toolName}`}
