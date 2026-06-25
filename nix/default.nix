@@ -46,7 +46,7 @@
         tessdata = pkgs.callPackage ./tessdata.nix { };
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-        # All-in-one container (backend + Caddy proxy/SPA under s6); see
+        # All-in-one container (backend + Caddy proxy/SPA under dinit); see
         # `docker.nix`. The database stays external (the upstream `pgvector`
         # image, wired up in `compose.yaml`). Linux-only: the image embeds a
         # Linux closure, so build it on a Linux host or remote builder
