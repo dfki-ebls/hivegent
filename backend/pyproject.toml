@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13,<4"
 authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
 dependencies = [
-  "alembic>=1.13,<2",
+  "alembic>=1,<2",
   "cbrkit[sql,pgvector]>=1.5.2,<2",
   "chonkie>=1,<2",
   "fastapi[standard]>=0.120,<1",
@@ -18,16 +18,16 @@ dependencies = [
   "lxml>=6,<7",
   "markdownify>=1,<2",
   "nanoid>=2,<3",
-  "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1,<2",
   "opentelemetry-instrumentation-fastapi>=0.60b1",
-  "psycopg[binary]>=3.2,<4",
-  "pydantic-ai-harness>=0.1,<1",
-  "pydantic-ai-slim[ui,openai,mcp]>=1,<2",
+  "psycopg[binary]>=3,<4",
+  "pydantic-ai-harness>=0.4,<1",
+  "pydantic-ai-slim[ui,openai,mcp]>=2,<3",
   "pydantic-settings>=2,<3",
   "pypdfium2>=5,<6",
   "sentence_transformers>=5,<6",
   "sqlalchemy[asyncio]>=2,<3",
-  "typer>=0.21,<1",
+  "typer>=0.20,<1",
   "uvicorn[standard]>=0.40,<1",
 ]
 
@@ -39,7 +39,7 @@ all = ["hivegent[docling,markitdown,kreuzberg,pdf-oxide,semantic]"]
 # code = ["chonkie[code]>=1,<2"]
 # marker = ["marker-pdf[full]>=1,<2"]
 # mineru = ["mineru[all]>=3,<4"]
-docling = ["docling>=2,<3", "tesserocr>=2.10,<3"]
+docling = ["docling>=2,<3", "tesserocr>=2,<3"]
 kreuzberg = ["kreuzberg>=4,<5"]
 markitdown = ["markitdown[all]>=0.1,<1"]
 pdf-oxide = ["pdf_oxide>=0.3,<1"]
@@ -47,15 +47,15 @@ semantic = ["chonkie[semantic]>=1,<2"]
 
 [dependency-groups]
 dev = [
-  "dirty-equals>=0.8,<1",
-  "inline-snapshot>=0.19,<1",
-  "pydantic-evals>=1,<2",
+  "dirty-equals>=0.10,<1",
+  "inline-snapshot>=0.30,<1",
+  "pydantic-evals>=2,<3",
   "pytest>=9,<10",
   "pytest-asyncio>=1,<2",
 ]
 
 [build-system]
-requires = ["uv-build>=0.9,<1"]
+requires = ["uv-build>=0.11,<1"]
 build-backend = "uv_build"
 
 [tool.alembic]
@@ -83,6 +83,9 @@ asyncio_mode = "auto"
 
 [tool.uv.exclude-newer-package]
 cbrkit = false
+pydantic-ai-slim = "1 day"
+pydantic-graph = "1 day"
+pydantic-evals = "1 day"
 
 [tool.uv.extra-build-dependencies]
 antlr4-python3-runtime = ["setuptools"]
