@@ -1,10 +1,5 @@
-import { toast } from "sonner";
 import { create } from "zustand";
-import type {
-  ReconvertDocumentOptions,
-  UploadCollectionOptions,
-  UploadDocumentOptions,
-} from "../lib/api";
+import type { ReconvertDocumentOptions } from "../lib/api";
 import {
   type BulkMoveEntry,
   bulkDelete as apiBulkDelete,
@@ -20,8 +15,6 @@ import {
   moveDocument,
   rechunkDocument,
   reconvertDocument,
-  uploadCollection,
-  uploadDocument,
 } from "../lib/api";
 import type {
   DirectoryTreeResponse,
@@ -30,45 +23,14 @@ import type {
   LlmConfig,
   PipelineSpec,
 } from "../lib/types";
-import { isAbortError, treeDocuments } from "../lib/utils";
-import { awaitJobSettled, onJobSettled, suppressJobToasts, useJobsStore } from "./jobs-store";
-
-// The kind the upload route tags single-document jobs with; mirrors the backend
-// `DocumentJobKind.UPLOAD` enum value, the cross-process contract for the feed.
-const DOCUMENT_UPLOAD_KIND = "document.upload";
-
-// Resolve a batch upload's single toast once its per-file jobs settle, mirroring
-// their combined outcome, then lift the suppression that hid the per-file cues.
-async function finalizeUploadToast(
-  toastId: string,
-  total: number,
-  settlements: Promise<JobView | undefined>[],
-  release: () => void,
-): Promise<void> {
-  try {
-    const views = await Promise.all(settlements);
-    const succeeded = views.filter((v) => v?.status === "succeeded").length;
-
-    if (succeeded === total) {
-      toast.success(`${total} documents added`, { id: toastId });
-    } else if (succeeded === 0) {
-      toast.error(`Failed to add ${total} documents`, { id: toastId });
-    } else {
-      toast.warning(`${succeeded} of ${total} documents added`, { id: toastId });
-    }
-  } finally {
-    release();
-  }
-}
-
-type Signalled<T> = T & { signal?: AbortSignal };
+import { treeDocuments } from "../lib/utils";
+import { awaitJobSettled, onJobSettled, useJobsStore } from "./jobs-store";
 
 /** Per-scope document-management state. A scope is `~` (personal) or `@<group>`. */
 export interface ScopeState {
   documents: DocumentInfo[];
   directoryTree: DirectoryTreeResponse | null;
   mutatingPaths: Set<string>;
-  isUploading: boolean;
   hasFetched: boolean;
   error: string | null;
 }
@@ -77,7 +39,6 @@ export const DEFAULT_SCOPE_STATE: ScopeState = {
   documents: [],
   directoryTree: null,
   mutatingPaths: new Set(),
-  isUploading: false,
   hasFetched: false,
   error: null,
 };
@@ -85,17 +46,6 @@ export const DEFAULT_SCOPE_STATE: ScopeState = {
 interface DocumentsStore {
   byScope: Record<string, ScopeState>;
   refresh: (scope: string) => Promise<void>;
-  upload: (scope: string, file: File, options?: Signalled<UploadDocumentOptions>) => Promise<void>;
-  uploadMultiple: (
-    scope: string,
-    files: File[],
-    options?: Signalled<UploadDocumentOptions>,
-  ) => Promise<void>;
-  uploadCol: (
-    scope: string,
-    file: File,
-    options?: Signalled<UploadCollectionOptions>,
-  ) => Promise<void>;
   remove: (scope: string, filename: string) => Promise<void>;
   rechunk: (scope: string, filename: string, spec?: PipelineSpec) => Promise<void>;
   reconvert: (scope: string, filename: string, options?: ReconvertDocumentOptions) => Promise<void>;
@@ -199,83 +149,6 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
           error: err instanceof Error ? err.message : "Failed to load documents",
           hasFetched: true,
         });
-      }
-    },
-
-    // Uploads are connection-bound only while the bytes transfer; the PUT
-    // returns a job that converts and indexes server-side, so `isUploading`
-    // covers the brief send and the job tray shows the rest.
-    upload: async (scope, file, options) => {
-      patch(scope, { isUploading: true, error: null });
-      try {
-        const job = await uploadDocument(canonicalPath(scope, file.name), file, options);
-        useJobsStore.getState().upsert(job);
-      } catch (err) {
-        if (!isAbortError(err)) {
-          patch(scope, { error: err instanceof Error ? err.message : "Upload failed" });
-        }
-      } finally {
-        patch(scope, { isUploading: false });
-      }
-    },
-
-    // Submit each file sequentially as its own tray job; the tray shows the
-    // per-file conversion, so the store only flags the brief send and reports
-    // any submits that never became a job. Aborting stops the remaining sends.
-    // One consolidated toast stands in for the per-file jobs: its toasts are
-    // suppressed up front (so the suppression cannot race their first feed
-    // snapshot) and this toast resolves once they all settle.
-    uploadMultiple: async (scope, files, options) => {
-      const signal = options?.signal;
-      patch(scope, { isUploading: true, error: null });
-
-      const toastId = crypto.randomUUID();
-      const release = suppressJobToasts(
-        (job) => job.scope === scope && job.kind === DOCUMENT_UPLOAD_KIND,
-      );
-      toast.loading(`Processing ${files.length} documents`, { id: toastId });
-
-      const settlements: Promise<JobView | undefined>[] = [];
-      const failed: string[] = [];
-      try {
-        await files.reduce(
-          (chain, file) =>
-            chain.then(async () => {
-              if (signal?.aborted) return;
-              try {
-                const job = await uploadDocument(canonicalPath(scope, file.name), file, options);
-                settlements.push(awaitJobSettled(job.id));
-                useJobsStore.getState().upsert(job);
-              } catch (err) {
-                if (!isAbortError(err)) failed.push(file.name);
-              }
-            }),
-          Promise.resolve(),
-        );
-      } finally {
-        patch(scope, {
-          isUploading: false,
-          ...(failed.length > 0 && {
-            error: `Failed to upload ${failed.length} file${failed.length > 1 ? "s" : ""}: ${failed.join(", ")}`,
-          }),
-        });
-      }
-
-      void finalizeUploadToast(toastId, files.length, settlements, release);
-    },
-
-    uploadCol: async (scope, file, options) => {
-      patch(scope, { isUploading: true, error: null });
-      try {
-        const job = await uploadCollection(scope, file, options);
-        useJobsStore.getState().upsert(job);
-      } catch (err) {
-        if (!isAbortError(err)) {
-          patch(scope, { error: err instanceof Error ? err.message : "Collection upload failed" });
-        }
-        throw err;
-      } finally {
-        patch(scope, { isUploading: false });
       }
     },
 

@@ -1,11 +1,9 @@
-import { Archive, FolderOpen, FolderPlus, Loader2, Paperclip, Plus, Upload, X } from "lucide-react";
+import { Archive, FolderOpen, FolderPlus, Paperclip, Plus, Upload } from "lucide-react";
 
 import { Button } from "../ui/button";
 
 interface UploadAreaProps {
   isDragging: boolean;
-  isUploading: boolean;
-  isPreparing: boolean;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   directoryInputRef: React.RefObject<HTMLInputElement | null>;
   zipInputRef: React.RefObject<HTMLInputElement | null>;
@@ -20,13 +18,13 @@ interface UploadAreaProps {
   onSelectZip: () => void;
   onNewDocument: () => void;
   onNewFolder: () => void;
-  onCancel: () => void;
 }
 
+// The drop zone stays interactive while uploads are in flight: dropping more
+// files appends them to the upload queue (surfaced in the background-task tray)
+// rather than replacing or cancelling the work already running.
 export function UploadArea({
   isDragging,
-  isUploading,
-  isPreparing,
   fileInputRef,
   directoryInputRef,
   zipInputRef,
@@ -41,10 +39,7 @@ export function UploadArea({
   onSelectZip,
   onNewDocument,
   onNewFolder,
-  onCancel,
 }: UploadAreaProps) {
-  const busy = isPreparing || isUploading;
-  const busyLabel = isPreparing ? "Preparing files..." : "Uploading...";
   return (
     <div className="border-b p-4">
       <div
@@ -57,24 +52,11 @@ export function UploadArea({
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
-        {busy ? (
-          <div className="flex w-full flex-col items-center gap-2">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-sm font-medium">{busyLabel}</p>
-            <Button variant="outline" size="sm" onClick={onCancel}>
-              <X className="h-4 w-4 mr-1" />
-              Cancel
-            </Button>
-          </div>
-        ) : (
-          <>
-            <Upload className="h-10 w-10 text-muted-foreground" />
-            <div className="text-center">
-              <p className="font-medium">Drop files here to upload</p>
-              <p className="text-sm text-muted-foreground">or click to browse</p>
-            </div>
-          </>
-        )}
+        <Upload className="h-10 w-10 text-muted-foreground" />
+        <div className="text-center">
+          <p className="font-medium">Drop files here to upload</p>
+          <p className="text-sm text-muted-foreground">or click to browse</p>
+        </div>
         <input
           ref={fileInputRef}
           type="file"
@@ -102,15 +84,15 @@ export function UploadArea({
           onChange={onZipInputChange}
         />
         <div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={onSelectFiles} disabled={busy}>
+          <Button variant="secondary" size="sm" onClick={onSelectFiles}>
             <Paperclip className="h-4 w-4 mr-1" />
             Select Files
           </Button>
-          <Button variant="secondary" size="sm" onClick={onSelectDirectory} disabled={busy}>
+          <Button variant="secondary" size="sm" onClick={onSelectDirectory}>
             <FolderOpen className="h-4 w-4 mr-1" />
             Upload Folder
           </Button>
-          <Button variant="secondary" size="sm" onClick={onSelectZip} disabled={busy}>
+          <Button variant="secondary" size="sm" onClick={onSelectZip}>
             <Archive className="h-4 w-4 mr-1" />
             Upload ZIP
           </Button>
@@ -120,11 +102,11 @@ export function UploadArea({
             Or create and edit documents directly in the browser
           </p>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={onNewDocument} disabled={busy}>
+            <Button variant="outline" size="sm" onClick={onNewDocument}>
               <Plus className="h-4 w-4 mr-1" />
               New Document
             </Button>
-            <Button variant="outline" size="sm" onClick={onNewFolder} disabled={busy}>
+            <Button variant="outline" size="sm" onClick={onNewFolder}>
               <FolderPlus className="h-4 w-4 mr-1" />
               New Folder
             </Button>

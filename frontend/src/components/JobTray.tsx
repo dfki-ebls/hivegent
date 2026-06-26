@@ -1,19 +1,53 @@
-import { AlertCircle, CheckCircle2, Loader2, X } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { AlertCircle, CheckCircle2, Loader2, RotateCw, X } from "lucide-react";
+import { type ReactNode, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 
 import { ACTIVE_JOB_STATUSES, type JobView } from "../lib/types";
-import {
-  isJobToastSuppressed,
-  onJobSettled,
-  onJobStarted,
-  useJobsStore,
-} from "../stores/jobs-store";
+import { isJobToastSuppressed, onJobSettled, onJobStarted, useJobsStore } from "../stores/jobs-store";
+import { type UploadItem, type UploadItemStatus, useUploadQueue } from "../stores/upload-queue-store";
 import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Progress } from "./ui/progress";
 
-function statusLabel(job: JobView): string {
+// A row's visual tone, decoupled from whether it came from a job or an upload.
+type Tone = "active" | "success" | "error" | "muted";
+
+// Status-line color per tone; only failures deviate from muted.
+const TONE_TEXT_CLASS: Record<Tone, string> = {
+  active: "text-muted-foreground",
+  success: "text-muted-foreground",
+  error: "text-destructive",
+  muted: "text-muted-foreground",
+};
+
+interface TaskAction {
+  key: string;
+  label?: string; // a text button; an icon-only button when absent
+  icon?: ReactNode;
+  ariaLabel: string;
+  run: () => void;
+}
+
+// The unified shape the tray renders, mapped from either source so a job and a
+// still-uploading file share one list, one badge, and one row layout.
+interface TaskRow {
+  id: string;
+  order: number;
+  title: string;
+  statusText: string;
+  tone: Tone;
+  progress: { current: number; total: number } | null;
+  actions: TaskAction[];
+}
+
+const UPLOAD_STATUS_LABEL: Record<UploadItemStatus, string> = {
+  preparing: "Preparing...",
+  queued: "Queued",
+  uploading: "Uploading...",
+  failed: "Failed",
+};
+
+function jobStatusLabel(job: JobView): string {
   switch (job.status) {
     case "failed":
       return job.error ?? "Failed";
@@ -28,15 +62,83 @@ function statusLabel(job: JobView): string {
   }
 }
 
-// Flash a brief, self-dismissing cue at the edges of a job's lifecycle — just
-// enough to notice that work started or finished. The live state (stage,
-// progress, error detail) lives in the job tray, so the toast carries no
-// description and never lingers as a spinner; that would only duplicate the
-// tray. Keyed by job id so a fast job's start and finish evolve one toast in
-// place instead of stacking two.
+const closeIcon = <X className="h-4 w-4" />;
+
+// An icon-only X button, the shared shape of every cancel/dismiss action.
+const xAction = (key: string, ariaLabel: string, run: () => void): TaskAction => ({
+  key,
+  icon: closeIcon,
+  ariaLabel,
+  run,
+});
+
+interface JobActions {
+  cancel: (id: string) => void;
+  dismiss: (id: string) => void;
+}
+
+function jobRow(job: JobView, { cancel, dismiss }: JobActions): TaskRow {
+  const active = ACTIVE_JOB_STATUSES.has(job.status);
+  const actions: TaskAction[] = active
+    ? [xAction("cancel", "Cancel task", () => cancel(job.id))]
+    : job.status === "failed"
+      ? [xAction("dismiss", "Dismiss task", () => dismiss(job.id))]
+      : [];
+
+  return {
+    id: job.id,
+    order: job.created_at,
+    title: job.title,
+    statusText: jobStatusLabel(job),
+    tone: active
+      ? "active"
+      : job.status === "succeeded"
+        ? "success"
+        : job.status === "failed"
+          ? "error"
+          : "muted",
+    progress: active && job.progress && job.progress.total > 0 ? job.progress : null,
+    actions,
+  };
+}
+
+interface UploadActions {
+  retry: (id: string) => void;
+  cancel: (id: string) => void;
+  dismiss: (id: string) => void;
+}
+
+function uploadRow(item: UploadItem, a: UploadActions): TaskRow {
+  const failed = item.status === "failed";
+  const actions: TaskAction[] = failed
+    ? [
+        {
+          key: "retry",
+          label: "Retry",
+          icon: <RotateCw className="h-3.5 w-3.5 mr-1" />,
+          ariaLabel: "Retry",
+          run: () => a.retry(item.id),
+        },
+        xAction("dismiss", "Dismiss upload", () => a.dismiss(item.id)),
+      ]
+    : [xAction("cancel", "Cancel upload", () => a.cancel(item.id))];
+
+  return {
+    id: item.id,
+    order: item.createdAt,
+    title: item.name,
+    statusText: item.error ?? UPLOAD_STATUS_LABEL[item.status],
+    tone: failed ? "error" : "active",
+    progress: null,
+    actions,
+  };
+}
+
+// Flash a brief, self-dismissing cue at the edges of a job's lifecycle. The live
+// state lives in the tray, so the toast carries no description and never lingers
+// as a spinner. Upload jobs are suppressed by the queue, which surfaces them in
+// the tray itself, so this fires only for jobs without their own visual cue.
 function notifyJob(job: JobView): void {
-  // A feature may own an aggregate cue for this job (e.g. one toast for a whole
-  // batch upload); skip the per-job toast so the two do not both fire.
   if (isJobToastSuppressed(job)) return;
 
   const opts = { id: job.id };
@@ -56,86 +158,87 @@ function notifyJob(job: JobView): void {
   }
 }
 
-function JobIcon({ status }: { status: JobView["status"] }) {
-  if (ACTIVE_JOB_STATUSES.has(status)) {
-    return <Loader2 className="h-4 w-4 animate-spin text-primary" />;
+function ToneIcon({ tone }: { tone: Tone }) {
+  switch (tone) {
+    case "active":
+      return <Loader2 className="h-4 w-4 animate-spin text-primary" />;
+    case "success":
+      return <CheckCircle2 className="h-4 w-4 text-green-600" />;
+    case "error":
+      return <AlertCircle className="h-4 w-4 text-destructive" />;
+    default:
+      return <X className="h-4 w-4 text-muted-foreground" />;
   }
-  if (status === "succeeded") {
-    return <CheckCircle2 className="h-4 w-4 text-green-600" />;
-  }
-  if (status === "failed") {
-    return <AlertCircle className="h-4 w-4 text-destructive" />;
-  }
-  return <X className="h-4 w-4 text-muted-foreground" />;
 }
 
-function JobRow({ job }: { job: JobView }) {
-  const cancel = useJobsStore((s) => s.cancel);
-  const dismiss = useJobsStore((s) => s.dismiss);
-  const active = ACTIVE_JOB_STATUSES.has(job.status);
-  const showProgress = active && job.progress !== null && job.progress.total > 0;
-
+function TaskRowView({ row }: { row: TaskRow }) {
   return (
     <div className="flex items-start gap-2 px-3 py-2">
       <span className="mt-0.5 shrink-0">
-        <JobIcon status={job.status} />
+        <ToneIcon tone={row.tone} />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{job.title}</p>
-        <p
-          className={`truncate text-xs ${
-            job.status === "failed" ? "text-destructive" : "text-muted-foreground"
-          }`}
-        >
-          {statusLabel(job)}
-        </p>
-        {showProgress && job.progress && (
+        <p className="truncate text-sm font-medium">{row.title}</p>
+        <p className={`truncate text-xs ${TONE_TEXT_CLASS[row.tone]}`}>{row.statusText}</p>
+        {row.progress && (
           <div className="mt-1 flex items-center gap-2">
-            <Progress
-              value={(job.progress.current / job.progress.total) * 100}
-              className="h-1 flex-1"
-            />
+            <Progress value={(row.progress.current / row.progress.total) * 100} className="h-1 flex-1" />
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-              {job.progress.current}/{job.progress.total}
+              {row.progress.current}/{row.progress.total}
             </span>
           </div>
         )}
       </div>
-      {active ? (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 shrink-0"
-          onClick={() => void cancel(job.id)}
-          aria-label="Cancel task"
-        >
-          <X className="h-4 w-4" />
-        </Button>
-      ) : (
-        job.status === "failed" && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 shrink-0"
-            onClick={() => dismiss(job.id)}
-            aria-label="Dismiss task"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        )
+      {row.actions.length > 0 && (
+        <div className="flex shrink-0 items-center gap-1">
+          {row.actions.map((action) =>
+            action.label ? (
+              <Button
+                key={action.key}
+                variant="outline"
+                size="sm"
+                onClick={action.run}
+                aria-label={action.ariaLabel}
+              >
+                {action.icon}
+                {action.label}
+              </Button>
+            ) : (
+              <Button
+                key={action.key}
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                onClick={action.run}
+                aria-label={action.ariaLabel}
+              >
+                {action.icon}
+              </Button>
+            ),
+          )}
+        </div>
       )}
     </div>
   );
 }
 
 /**
- * Header indicator and popover for background jobs. Generic over job kind:
- * it renders whatever the `/jobs` feed reports (document processing today),
- * lets the user cancel active work, and stays out of the way when idle.
+ * Header indicator and popover for background work. Renders one list over two
+ * sources: uploads still being prepared or transferred from the upload queue,
+ * and the server-side jobs they hand off to from the `/jobs` feed. An upload
+ * item leaves the queue the moment its job is created, so the job row takes over
+ * its row without ever showing both.
  */
 export function JobTray() {
   const start = useJobsStore((s) => s.start);
   const jobsMap = useJobsStore((s) => s.jobs);
+  const jobCancel = useJobsStore((s) => s.cancel);
+  const jobDismiss = useJobsStore((s) => s.dismiss);
+
+  const uploadMap = useUploadQueue((s) => s.items);
+  const retry = useUploadQueue((s) => s.retry);
+  const uploadCancel = useUploadQueue((s) => s.cancel);
+  const uploadDismiss = useUploadQueue((s) => s.dismiss);
 
   useEffect(() => {
     start();
@@ -147,15 +250,21 @@ export function JobTray() {
     };
   }, [start]);
 
-  const jobs = useMemo(
-    () => Object.values(jobsMap).sort((a, b) => a.created_at - b.created_at),
-    [jobsMap],
-  );
+  const rows = useMemo(() => {
+    const uploadRows = Object.values(uploadMap).map((item) =>
+      uploadRow(item, { retry, cancel: uploadCancel, dismiss: uploadDismiss }),
+    );
+    const jobRows = Object.values(jobsMap).map((job) =>
+      jobRow(job, { cancel: (id) => void jobCancel(id), dismiss: jobDismiss }),
+    );
 
-  if (jobs.length === 0) return null;
+    return [...uploadRows, ...jobRows].sort((a, b) => a.order - b.order);
+  }, [uploadMap, jobsMap, retry, uploadCancel, uploadDismiss, jobCancel, jobDismiss]);
 
-  const activeCount = jobs.filter((j) => ACTIVE_JOB_STATUSES.has(j.status)).length;
-  const failedCount = jobs.filter((j) => j.status === "failed").length;
+  if (rows.length === 0) return null;
+
+  const activeCount = rows.filter((r) => r.tone === "active").length;
+  const attentionCount = rows.filter((r) => r.tone === "error").length;
 
   return (
     <Popover>
@@ -163,7 +272,7 @@ export function JobTray() {
         <Button variant="ghost" size="sm" className="gap-2">
           {activeCount > 0 ? (
             <Loader2 className="h-4 w-4 animate-spin" />
-          ) : failedCount > 0 ? (
+          ) : attentionCount > 0 ? (
             <AlertCircle className="h-4 w-4 text-destructive" />
           ) : (
             <CheckCircle2 className="h-4 w-4 text-green-600" />
@@ -171,8 +280,8 @@ export function JobTray() {
           <span className="hidden sm:inline">
             {activeCount > 0
               ? `Processing ${activeCount}`
-              : failedCount > 0
-                ? `${failedCount} failed`
+              : attentionCount > 0
+                ? `${attentionCount} need attention`
                 : "Done"}
           </span>
         </Button>
@@ -180,8 +289,8 @@ export function JobTray() {
       <PopoverContent align="end" className="w-80 p-0">
         <div className="border-b px-3 py-2 text-sm font-medium">Background tasks</div>
         <div className="max-h-80 divide-y overflow-y-auto">
-          {jobs.map((job) => (
-            <JobRow key={job.id} job={job} />
+          {rows.map((row) => (
+            <TaskRowView key={row.id} row={row} />
           ))}
         </div>
       </PopoverContent>

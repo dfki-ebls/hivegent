@@ -1,9 +1,9 @@
 import { Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import {
   PERSONAL_SCOPE,
-  type UploadDocumentOptions,
   buildAuxLlmConfig,
   canonicalPath,
   groupScope,
@@ -16,23 +16,17 @@ import {
 } from "../../lib/collection-upload";
 import { featureFlags } from "../../lib/feature-flags";
 import type { PipelineSpec } from "../../lib/types";
-import { fileStem, isAbortError } from "../../lib/utils";
-import { DEFAULT_SCOPE_STATE, useDocumentsStore } from "../../stores/documents-store";
+import { errorMessage } from "../../lib/utils";
+import { useDocumentsStore } from "../../stores/documents-store";
 import { canWriteGroup, getAllGroups, useSettingsStore } from "../../stores/settings-store";
+import {
+  type UploadOptions,
+  selectHasPendingUploads,
+  useUploadQueue,
+} from "../../stores/upload-queue-store";
 import { CreateDirectoryDialog } from "../CreateDirectoryDialog";
 import { DocumentDialog } from "../DocumentDialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "../ui/alert-dialog";
 import { Input } from "../ui/input";
-import { ErrorBanner } from "./ErrorBanner";
 import { PipelineSettingsBar } from "./PipelineSettingsBar";
 import { ScopeSection } from "./ScopeSection";
 import { UploadArea } from "./UploadArea";
@@ -48,40 +42,24 @@ export function DocumentManager() {
   const assetMode = useSettingsStore((s) => s.assetMode);
   const setAssetMode = useSettingsStore((s) => s.setAssetMode);
 
-  const upload = useDocumentsStore((s) => s.upload);
-  const uploadMultiple = useDocumentsStore((s) => s.uploadMultiple);
-  const uploadCol = useDocumentsStore((s) => s.uploadCol);
   const createDir = useDocumentsStore((s) => s.createDir);
   const refresh = useDocumentsStore((s) => s.refresh);
+  const enqueueFiles = useUploadQueue((s) => s.enqueueFiles);
+  const enqueueCollection = useUploadQueue((s) => s.enqueueCollection);
+  const hasPendingUploads = useUploadQueue(selectHasPendingUploads);
 
   const groups = useMemo(() => getAllGroups(), []);
   const writableGroups = useMemo(() => groups.filter((g) => canWriteGroup(g)), [groups]);
 
   const [uploadScope, setUploadScope] = useState(PERSONAL_SCOPE);
-  const target = useDocumentsStore((s) => s.byScope[uploadScope] ?? DEFAULT_SCOPE_STATE);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const directoryInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [isPreparing, setIsPreparing] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [newDocOpen, setNewDocOpen] = useState(false);
   const [showCreateDir, setShowCreateDir] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [pendingOverwrite, setPendingOverwrite] = useState<{
-    files: File[];
-    conflicting: string[];
-  } | null>(null);
-
-  const beginOp = useCallback((): AbortSignal => {
-    abortRef.current?.abort();
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    return ctrl.signal;
-  }, []);
-  const handleCancel = useCallback(() => abortRef.current?.abort(), []);
 
   const pipelineSpec: PipelineSpec = useMemo(() => {
     const spec: PipelineSpec = {};
@@ -98,51 +76,23 @@ export function DocumentManager() {
     return spec;
   }, [conversionPipeline, chunkingPipeline, conversionConfigs, chunkingConfigs, assetMode]);
 
-  const uploadOptions = useMemo<UploadDocumentOptions>(
+  const uploadOptions = useMemo<UploadOptions>(
     () => ({ spec: pipelineSpec, llm: buildAuxLlmConfig(overrides) }),
     [pipelineSpec, overrides],
   );
 
-  const uploadInFlight = isPreparing || target.isUploading;
+  // Warn before leaving only while bytes are still local: once an upload hands
+  // off to a job it is server-side work that survives a reload (the feed
+  // re-seeds it).
   useEffect(() => {
-    if (!uploadInFlight) return;
+    if (!hasPendingUploads) return;
     const handler = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [uploadInFlight]);
-
-  const handleFiles = useCallback(
-    async (files: FileList | null) => {
-      if (!files || files.length === 0) return;
-      const fileArray = Array.from(files);
-      setUploadError(null);
-
-      const stems = fileArray.map((f) => fileStem(f.name));
-      const duplicateStem = stems.find((stem, i) => stems.indexOf(stem) !== i);
-      if (duplicateStem) {
-        setUploadError(`Batch contains files with the same stem "${duplicateStem}"`);
-        return;
-      }
-
-      const existingStems = new Set(target.documents.map((d) => fileStem(d.filename)));
-      const conflicting = stems.filter((s) => existingStems.has(s));
-      if (conflicting.length > 0) {
-        setPendingOverwrite({ files: fileArray, conflicting });
-        return;
-      }
-
-      const signal = beginOp();
-      if (fileArray.length === 1) {
-        await upload(uploadScope, fileArray[0], { ...uploadOptions, signal });
-      } else {
-        await uploadMultiple(uploadScope, fileArray, { ...uploadOptions, signal });
-      }
-    },
-    [beginOp, upload, uploadMultiple, uploadOptions, uploadScope, target.documents],
-  );
+  }, [hasPendingUploads]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -159,86 +109,63 @@ export function DocumentManager() {
       setIsDragging(false);
       const { items, files } = e.dataTransfer;
       if (files.length === 0 && items.length === 0) return;
-      const signal = beginOp();
-      setIsPreparing(true);
       try {
-        const classification = await classifyDropItems(items, files, signal);
+        const classification = await classifyDropItems(items, files);
         const hasCollection =
           classification.directories.length > 0 || classification.zipFiles.length > 0;
-        if (!hasCollection) {
-          void handleFiles(files);
-          return;
+        if (hasCollection) {
+          enqueueCollection(
+            uploadScope,
+            "collection.zip",
+            (signal) => buildCollectionZip(classification, signal),
+            uploadOptions,
+          );
+        } else {
+          enqueueFiles(uploadScope, classification.looseFiles, uploadOptions);
         }
-        const collection = await buildCollectionZip(classification, signal);
-        setIsPreparing(false);
-        await uploadCol(uploadScope, collection, { ...uploadOptions, signal });
       } catch (err) {
-        if (!isAbortError(err)) throw err;
-      } finally {
-        setIsPreparing(false);
+        toast.error(errorMessage(err));
       }
     },
-    [beginOp, handleFiles, uploadCol, uploadOptions, uploadScope],
+    [enqueueCollection, enqueueFiles, uploadOptions, uploadScope],
   );
 
   const handleFileInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      void handleFiles(e.target.files);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (e.target.files) enqueueFiles(uploadScope, Array.from(e.target.files), uploadOptions);
+      e.target.value = "";
     },
-    [handleFiles],
+    [enqueueFiles, uploadOptions, uploadScope],
   );
 
   const handleDirectoryInputChange = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      if (!files || files.length === 0) return;
-      const signal = beginOp();
-      setIsPreparing(true);
-      try {
-        const collection = await buildCollectionZipFromDirectoryInput(files);
-        setIsPreparing(false);
-        await uploadCol(uploadScope, collection, { ...uploadOptions, signal });
-      } catch (err) {
-        if (!isAbortError(err)) throw err;
-      } finally {
-        setIsPreparing(false);
-        if (directoryInputRef.current) directoryInputRef.current.value = "";
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      // Snapshot the files before resetting the input clears its FileList; the
+      // archive then builds inside the queue from the held File objects.
+      const captured = e.target.files ? Array.from(e.target.files) : [];
+      e.target.value = "";
+      if (captured.length > 0) {
+        enqueueCollection(
+          uploadScope,
+          "collection.zip",
+          () => buildCollectionZipFromDirectoryInput(captured),
+          uploadOptions,
+        );
       }
     },
-    [beginOp, uploadCol, uploadOptions, uploadScope],
+    [enqueueCollection, uploadOptions, uploadScope],
   );
 
   const handleZipInputChange = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      if (!files || files.length === 0) return;
-      const file = files[0];
-      if (!file.name.toLowerCase().endsWith(".zip")) return;
-      const signal = beginOp();
-      try {
-        await uploadCol(uploadScope, file, { ...uploadOptions, signal });
-      } catch (err) {
-        if (!isAbortError(err)) throw err;
-      } finally {
-        if (zipInputRef.current) zipInputRef.current.value = "";
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (file && file.name.toLowerCase().endsWith(".zip")) {
+        enqueueCollection(uploadScope, file.name, () => Promise.resolve(file), uploadOptions);
       }
     },
-    [beginOp, uploadCol, uploadOptions, uploadScope],
+    [enqueueCollection, uploadOptions, uploadScope],
   );
-
-  const confirmOverwrite = useCallback(async () => {
-    if (!pendingOverwrite) return;
-    const { files } = pendingOverwrite;
-    setPendingOverwrite(null);
-    const signal = beginOp();
-    const opts = { ...uploadOptions, overwrite: true, signal };
-    if (files.length === 1) {
-      await upload(uploadScope, files[0], opts);
-    } else {
-      await uploadMultiple(uploadScope, files, opts);
-    }
-  }, [beginOp, pendingOverwrite, upload, uploadMultiple, uploadOptions, uploadScope]);
 
   // New in-browser markdown is written synchronously (not as a background job)
   // in "create" mode, so a name collision rejects with a 409 that propagates to
@@ -263,12 +190,8 @@ export function DocumentManager() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
-      {uploadError && <ErrorBanner message={uploadError} onDismiss={() => setUploadError(null)} />}
-
       <UploadArea
         isDragging={isDragging}
-        isUploading={target.isUploading}
-        isPreparing={isPreparing}
         fileInputRef={fileInputRef}
         directoryInputRef={directoryInputRef}
         zipInputRef={zipInputRef}
@@ -283,7 +206,6 @@ export function DocumentManager() {
         onSelectZip={() => zipInputRef.current?.click()}
         onNewDocument={() => setNewDocOpen(true)}
         onNewFolder={() => setShowCreateDir(true)}
-        onCancel={handleCancel}
       />
 
       <PipelineSettingsBar
@@ -346,27 +268,6 @@ export function DocumentManager() {
         onOpenChange={setShowCreateDir}
         onCreate={(path) => createDir(uploadScope, path)}
       />
-
-      <AlertDialog
-        open={pendingOverwrite !== null}
-        onOpenChange={(open) => !open && setPendingOverwrite(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Overwrite existing documents?</AlertDialogTitle>
-            <AlertDialogDescription>
-              The following documents already exist and will be overwritten:{" "}
-              {pendingOverwrite?.conflicting.join(", ")}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void confirmOverwrite()}>
-              Overwrite
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

@@ -132,10 +132,10 @@ export const buildCollectionZip = async (
   return finalizeZip(zip);
 };
 
-export const buildCollectionZipFromDirectoryInput = async (files: FileList): Promise<File> => {
+export const buildCollectionZipFromDirectoryInput = async (files: File[]): Promise<File> => {
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
-  for (const file of Array.from(files)) {
+  for (const file of files) {
     zip.file(file.webkitRelativePath || file.name, file);
   }
   return finalizeZip(zip);
