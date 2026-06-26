@@ -14,7 +14,7 @@ from ...prompts import EXPLORE_INSTRUCTIONS
 from ...tools.base import ToolOutput
 from ...tools.pydantic_ai import wrap_tool_output
 from ..app import user_agent
-from ..common import ExploreTaskArg, UserDeps
+from ..common import ExploreTaskArg, UserDeps, scope_instructions
 from ..subagent_events import SubagentTranscriptBuilder, SubagentUpdate
 from ..summarize import summarize_messages
 from .conversation import conversation_toolset
@@ -45,7 +45,7 @@ SUBAGENT_CAPABILITIES: dict[SubagentName, AbstractCapability[UserDeps]] = {
     "documents": Capability(
         id="explore-subagent",
         toolsets=[explore_toolset],
-        instructions=EXPLORE_INSTRUCTIONS,
+        instructions=[EXPLORE_INSTRUCTIONS, scope_instructions],
     ),
     "conversations": Capability(id="conversation", toolsets=[conversation_toolset]),
     "web": Capability(id="web", toolsets=[web_toolset]),

@@ -33,7 +33,7 @@ from ..prompts import (
 )
 from ..tools.pydantic_ai import capability_tools, invoke_tool
 from ..types import ToolSchema, ToolsSpec
-from .common import UserDeps
+from .common import UserDeps, scope_instructions
 from .tools import (
     conversation_toolset,
     explore_toolset,
@@ -108,12 +108,14 @@ class Feature:
         )
 
 
-# The single source of truth for the agent's features.  ``plan`` and ``memory``
-# carry their own instructions (``memory`` resolves the user's stored memory
-# lazily, so its guidance only loads when active); the rest are bare toolset
-# bundles.  Adding a feature here exposes it to the agent and the debug surface.
+# The single source of truth for the agent's features.  ``explore``, ``plan``,
+# and ``memory`` carry their own instructions: ``explore`` describes the live
+# document scope (so the model knows which documents the user selected), and
+# ``memory`` resolves the user's stored memory lazily so its guidance only loads
+# when active.  The rest are bare toolset bundles.  Adding a feature here
+# exposes it to the agent and the debug surface.
 FEATURES: tuple[Feature, ...] = (
-    Feature.build("explore", explore_toolset),
+    Feature.build("explore", explore_toolset, instructions=scope_instructions),
     Feature.build("subagent", subagent_toolset),
     Feature.build("write", write_toolset, modes=_EXECUTE),
     Feature.build(

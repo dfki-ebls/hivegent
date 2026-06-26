@@ -1,6 +1,9 @@
 """Unit tests for DocumentFilter and its request-level parsing."""
 
+from hivegent.agents.common import UserDeps
+from hivegent.prompts import format_document_scope
 from hivegent.server.common import parse_document_filters
+from hivegent.store import Casebase
 from hivegent.types import DocumentFilter
 
 
@@ -135,3 +138,82 @@ class TestParseDocumentFilters:
         assert user_filter is not None
         assert not user_filter("docs/report.md")
         assert not group_filters["team"]("docs/report.md")
+
+
+class TestFormatDocumentScope:
+    """Tests for the prompt-block renderer."""
+
+    def test_unrestricted_returns_empty(self) -> None:
+        assert format_document_scope(None, frozenset()) == ""
+
+    def test_whitelist_lists_included_paths(self) -> None:
+        text = format_document_scope(frozenset({"~/a.md", "~/b.md"}), frozenset())
+        assert "In scope:" in text
+        assert "- ~/a.md" in text
+        assert "- ~/b.md" in text
+        assert "Hidden from this conversation:" not in text
+
+    def test_whitelist_with_carveout_lists_both(self) -> None:
+        text = format_document_scope(
+            frozenset({"~/docs/"}), frozenset({"~/docs/secret.md"})
+        )
+        assert "In scope:" in text
+        assert "Carved out of the documents above:" in text
+        assert "- ~/docs/secret.md" in text
+
+    def test_exclude_only_lists_hidden_paths(self) -> None:
+        text = format_document_scope(None, frozenset({"~/secret.md"}))
+        assert "Hidden from this conversation:" in text
+        assert "- ~/secret.md" in text
+        assert "In scope:" not in text
+
+    def test_empty_whitelist_states_nothing_in_scope(self) -> None:
+        text = format_document_scope(frozenset(), frozenset())
+        assert "No documents are currently in scope." in text
+
+
+class TestDescribeDocumentScope:
+    """Tests for UserDeps rendering its live filters to canonical paths."""
+
+    @staticmethod
+    def _deps(
+        document_filter: DocumentFilter | None = None,
+        group_filters: dict[str, DocumentFilter] | None = None,
+    ) -> UserDeps:
+        return UserDeps(
+            user_id="u",
+            store=Casebase.for_user("u"),
+            group_stores=(Casebase.for_group("team"),),
+            document_filter=document_filter,
+            group_filters=group_filters or {},
+        )
+
+    def test_no_filter_is_empty(self) -> None:
+        assert self._deps().describe_document_scope() == ""
+
+    def test_user_includes_render_as_canonical_paths(self) -> None:
+        text = self._deps(
+            document_filter=DocumentFilter(included=frozenset({"docs/", "a/r.md"}))
+        ).describe_document_scope()
+        assert "- ~/a/r.md" in text
+        assert "- ~/docs/" in text
+
+    def test_group_excludes_render_with_group_prefix(self) -> None:
+        text = self._deps(
+            group_filters={"team": DocumentFilter(excluded=frozenset({"old/"}))}
+        ).describe_document_scope()
+        assert "- @team/old/" in text
+
+    def test_root_entry_renders_as_workspace_root(self) -> None:
+        text = self._deps(
+            document_filter=DocumentFilter(included=frozenset({"/"}))
+        ).describe_document_scope()
+        assert "- ~/" in text
+
+    def test_rendering_is_deterministic_across_calls(self) -> None:
+        # Sorted output keeps the cached prompt prefix byte-identical between
+        # turns when the selection is unchanged.
+        deps = self._deps(
+            document_filter=DocumentFilter(included=frozenset({"b.md", "a.md", "c.md"}))
+        )
+        assert deps.describe_document_scope() == deps.describe_document_scope()

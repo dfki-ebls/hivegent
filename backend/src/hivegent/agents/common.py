@@ -5,12 +5,19 @@ from dataclasses import dataclass, field
 from typing import Annotated
 
 from pydantic import Field
+from pydantic_ai import RunContext
 
+from ..prompts import format_document_scope
 from ..store import Casebase
 from ..types import DocumentFilter, LlmConfig
 from .subagent_events import SubagentUpdate
 
-__all__ = ["ExploreTaskArg", "MemoryContentArg", "UserDeps"]
+__all__ = [
+    "ExploreTaskArg",
+    "MemoryContentArg",
+    "UserDeps",
+    "scope_instructions",
+]
 
 ExploreTaskArg = Annotated[
     str,
@@ -50,3 +57,48 @@ class UserDeps:
         if store.kind == "user":
             return self.document_filter
         return self.group_filters.get(store.id)
+
+    def describe_document_scope(self) -> str:
+        """Render the active document scope as prompt text (``''`` if none).
+
+        Walks every accessible store and renders its filter back to canonical
+        workspace paths, so the description is derived from the very same
+        :class:`DocumentFilter` objects the document tools enforce and cannot
+        drift from what the model can actually reach.
+        """
+        included: set[str] = set()
+        excluded: set[str] = set()
+        whitelisting = False
+
+        for store in self.all_stores:
+            document_filter = self.filter_for_store(store)
+            if document_filter is None:
+                continue
+
+            scope = store.scope
+
+            if document_filter.included is not None:
+                whitelisting = True
+                included.update(
+                    scope.render_filter_entry(entry)
+                    for entry in document_filter.included
+                )
+
+            excluded.update(
+                scope.render_filter_entry(entry)
+                for entry in document_filter.excluded
+            )
+
+        return format_document_scope(
+            frozenset(included) if whitelisting else None, frozenset(excluded)
+        )
+
+
+def scope_instructions(ctx: RunContext[UserDeps]) -> str | None:
+    """Dynamic instruction describing the live document scope to the agent.
+
+    Attached to the document-exploration capability so it rides with the tools
+    it explains, on both the main agent and the documents subagent. Returns
+    ``None`` when no scope is active so pydantic-ai omits the block.
+    """
+    return ctx.deps.describe_document_scope() or None

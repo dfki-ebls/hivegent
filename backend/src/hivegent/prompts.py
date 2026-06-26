@@ -14,6 +14,7 @@ __all__ = [
     "PERSONALITY_TEMPLATES",
     "PLAN_INSTRUCTIONS",
     "Personality",
+    "format_document_scope",
     "join_instructions",
 ]
 
@@ -31,6 +32,73 @@ class Personality(StrEnum):
 def join_instructions(parts: Iterable[str]) -> str:
     """Join instruction parts into a single prompt, separated by blank lines."""
     return "\n\n".join(part.strip() for part in parts)
+
+
+def format_document_scope(
+    included: frozenset[str] | None, excluded: frozenset[str]
+) -> str:
+    """Render the active document scope as a prompt block for the agent.
+
+    *included* and *excluded* are canonical workspace paths (``~/...`` for the
+    personal workspace, ``@<group>/...`` for a shared group). Mirroring
+    :class:`~hivegent.types.DocumentFilter`, ``included=None`` means no
+    whitelist is in force (every document is available), while an empty set is
+    a whitelist that currently matches nothing (every document is hidden).
+    Returns an empty string when nothing is scoped so the caller can drop it
+    entirely. Entries are sorted so the rendered block stays byte-identical
+    between turns when the selection is unchanged, keeping the prompt cacheable.
+
+    >>> format_document_scope(None, frozenset())
+    ''
+    >>> "~/a.md" in format_document_scope(frozenset({"~/a.md"}), frozenset())
+    True
+    """
+    if included is None and not excluded:
+        return ""
+
+    lines = ["<document_scope>"]
+
+    if included is not None:
+        lines.append(
+            "The user has scoped this conversation to a specific set of "
+            "documents. Your document tools (list_documents, glob_documents, "
+            "grep, read_document, search) only see what is listed here, and "
+            "everything else in the workspace is hidden. Treat this selection "
+            "as the documents the user is referring to with phrases like "
+            '"these documents" or "the two files".'
+        )
+        lines.append("")
+
+        if included:
+            lines.append("In scope:")
+            lines.extend(f"- {path}" for path in sorted(included))
+        else:
+            lines.append("No documents are currently in scope.")
+
+        if excluded:
+            lines.append("")
+            lines.append("Carved out of the documents above:")
+            lines.extend(f"- {path}" for path in sorted(excluded))
+    else:
+        lines.append(
+            "The user has hidden some documents from this conversation. Every "
+            "document in the workspace is available to your tools except the "
+            "ones listed here, which your tools will not return."
+        )
+        lines.append("")
+        lines.append("Hidden from this conversation:")
+        lines.extend(f"- {path}" for path in sorted(excluded))
+
+    lines.append("")
+    lines.append(
+        "The user controls this scope live and may change it between turns, so "
+        "it can differ from what was visible earlier in the conversation. Rely "
+        "on the current scope above rather than on documents seen in earlier "
+        "turns, and if something you accessed before is now out of scope, tell "
+        "the user it is no longer selected instead of guessing."
+    )
+    lines.append("</document_scope>")
+    return "\n".join(lines)
 
 
 EXPLORE_INSTRUCTIONS = """

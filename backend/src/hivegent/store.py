@@ -56,6 +56,15 @@ class WorkspaceScope:
         """Render *local* as a canonical path under this scope (empty = root)."""
         return f"{self.prefix}/{local}" if local else self.prefix
 
+    def render_filter_entry(self, local: str) -> str:
+        """Render a :class:`DocumentFilter` local entry as a canonical path.
+
+        Filters use ``/`` for the whole store, which renders as the bare scope
+        root with a trailing slash (``~/`` or ``@<group>/``); every other entry
+        renders like any local path.
+        """
+        return f"{self.prefix}/" if local == "/" else self.render(local)
+
     def strip(self, raw: str) -> str | None:
         """Return *raw*'s local part if it addresses this scope, else ``None``."""
         if raw == self.prefix:
