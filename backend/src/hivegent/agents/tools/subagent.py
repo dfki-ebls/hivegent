@@ -160,10 +160,10 @@ async def run_subagent(
             # summary instead of failing the tool call, so the main thread
             # keeps the findings and continues.  Transcript fidelity follows
             # `settings.summarization`, the same config every summarization
-            # consumer uses; with tool parts included the summary request can
-            # overflow again (it reuses the model that just overflowed on
-            # those payloads), in which case the error surfaces like any
-            # other tool error.
+            # consumer uses; the summary request reuses the model that just
+            # overflowed on those payloads, so `summarize_messages` sheds tool
+            # results and reasoning and retries on its own context overflow,
+            # surfacing an error only if even that reduced transcript fails.
             if not is_context_overflow(exc):
                 raise
             summary = await summarize_messages(run.all_messages(), model)

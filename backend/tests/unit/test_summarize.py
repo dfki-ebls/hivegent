@@ -57,12 +57,23 @@ def test_format_includes_everything_by_default() -> None:
 
 def test_format_toggles_drop_tool_and_reasoning_parts() -> None:
     formatted = _format_messages_for_summary(
-        _MESSAGES, include_tools=False, include_reasoning=False
+        _MESSAGES,
+        include_tool_calls=False,
+        include_tool_results=False,
+        include_reasoning=False,
     )
     assert "User: What does the manual say?" in formatted
     assert "Assistant: It covers safety procedures." in formatted
     assert "Reasoning" not in formatted
     assert "Tool" not in formatted
+
+
+def test_format_keeps_tool_calls_while_dropping_results() -> None:
+    formatted = _format_messages_for_summary(
+        _MESSAGES, include_tool_results=False, include_reasoning=False
+    )
+    assert 'Tool call (read_document): {"file_path":"manual.md"}' in formatted
+    assert "Tool result" not in formatted
 
 
 def test_format_omits_binary_user_content() -> None:
@@ -98,3 +109,29 @@ async def test_summarize_propagates_model_errors() -> None:
 
     with pytest.raises(ModelHTTPError):
         await summarize_messages(_MESSAGES, FunctionModel(reject))
+
+
+async def test_summarize_retries_without_heavy_parts_on_overflow() -> None:
+    prompts: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        part = messages[-1].parts[-1]
+        assert isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        prompts.append(part.content)
+        # The full transcript still carries the bulky tool result; reject it
+        # as a context overflow so the fallback (heavy parts shed) kicks in.
+        if "Chapter 1 covers safety procedures." in part.content:
+            raise ModelHTTPError(
+                status_code=400,
+                model_name="m",
+                body={"code": "context_length_exceeded"},
+            )
+        return ModelResponse(parts=[TextPart(content="summary")])
+
+    summary = await summarize_messages(_MESSAGES, FunctionModel(respond))
+
+    assert summary == "summary"
+    assert len(prompts) == 2
+    # The retry keeps tool calls (filenames) but drops the heavy tool result.
+    assert "manual.md" in prompts[1]
+    assert "Chapter 1 covers safety procedures." not in prompts[1]
