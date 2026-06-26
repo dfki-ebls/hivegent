@@ -246,8 +246,12 @@ export function DocumentManager() {
   // overwriting the existing document; the entry appears the moment we refresh.
   const handleSaveNew = useCallback(
     async (filename: string, content: string) => {
+      // New documents are markdown: the backend always chunks the content as the
+      // `<stem>.md` description, so the on-disk name must carry the `.md` suffix
+      // or the entry and its chunk count drift apart.
+      const markdownName = filename.replace(/\.md$/i, "") + ".md";
       await writeDocument(
-        canonicalPath(uploadScope, filename),
+        canonicalPath(uploadScope, markdownName),
         content,
         pipelineSpec.chunking,
         "create",

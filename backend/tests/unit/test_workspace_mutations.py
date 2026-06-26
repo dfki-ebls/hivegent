@@ -185,6 +185,19 @@ class TestWriteDocumentText:
             )
         assert exc.value.status_code == 409
 
+    async def test_non_markdown_path_is_rejected(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        """Content is chunked as ``<stem>.md``; a non-markdown target is a 400.
+
+        Writing it would divorce the on-disk file from the indexed description
+        and orphan its chunk count in the listing.
+        """
+        with pytest.raises(HTTPException) as exc:
+            await workspace.write_document_text(user_store, "notes", "body")
+        assert exc.value.status_code == 400
+        assert not (workspace_dir / "notes").exists()
+
 
 def _entry_metadata(
     *,

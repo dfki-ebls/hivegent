@@ -16,11 +16,13 @@ from ..chunkers.base import DocumentMetadata
 from ..concurrency import shield_to_completion
 from ..config import content_hash, sanitize_document_path, settings
 from ..db import documents as db_documents
+from ..converters.base import DOCUMENT_EXTENSION
 from ..entries import (
     ContentStat,
     assets_dir_for_stem,
     description_path_for_stem,
     entry_exists,
+    is_description_file,
     stem_path_from_reference,
 )
 from ..store import Casebase
@@ -89,6 +91,16 @@ async def _replace_text_locked(
     content: str,
     chunking: ChunkingSpec | None = None,
 ) -> None:
+    # The content is always chunked as the markdown description at
+    # ``<stem>.md``; writing it to a non-markdown path would leave the on-disk
+    # file and the indexed description divergent, so the chunk count could never
+    # be matched back to the entry.  Reject up front to keep disk and SQL in sync.
+    if not is_description_file(safe):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only markdown documents can be written: '{safe}' must end in '{DOCUMENT_EXTENSION}'.",
+        )
+
     _enforce_file_size(content.encode("utf-8"))
     if full_path.is_dir():
         raise HTTPException(status_code=400, detail=f"'{safe}' is a directory")
