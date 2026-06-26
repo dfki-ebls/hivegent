@@ -1,7 +1,12 @@
 import { toast } from "sonner";
 import { create } from "zustand";
 
-import { type UploadCollectionOptions, canonicalPath, uploadCollection, uploadDocument } from "../lib/api";
+import {
+  type UploadCollectionOptions,
+  canonicalPath,
+  uploadCollection,
+  uploadDocument,
+} from "../lib/api";
 import { errorMessage, fileStem, isAbortError } from "../lib/utils";
 import { suppressJobToasts, useJobsStore } from "./jobs-store";
 

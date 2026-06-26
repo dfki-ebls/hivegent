@@ -1,11 +1,7 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { describe, expect, it } from "vitest";
 
-import {
-  canCompact,
-  isContextLengthError,
-  showThinkingLoader,
-} from "@/lib/chat/chat-utils";
+import { canCompact, isContextLengthError, showThinkingLoader } from "@/lib/chat/chat-utils";
 
 const msg = (role: UIMessage["role"], text: string): UIMessage => ({
   id: `${role}-${text}`,
@@ -42,7 +38,14 @@ describe("showThinkingLoader", () => {
 
   it("keeps the loader visible in the gap after a tool call", () => {
     const parts: UIMessage["parts"] = [
-      { type: "dynamic-tool", toolName: "search", toolCallId: "1", state: "output-available", input: {}, output: {} },
+      {
+        type: "dynamic-tool",
+        toolName: "search",
+        toolCallId: "1",
+        state: "output-available",
+        input: {},
+        output: {},
+      },
     ];
     expect(showThinkingLoader(assistant(parts), "streaming")).toBe(true);
   });

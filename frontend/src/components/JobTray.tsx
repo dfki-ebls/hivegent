@@ -3,8 +3,17 @@ import { type ReactNode, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 
 import { ACTIVE_JOB_STATUSES, type JobView } from "../lib/types";
-import { isJobToastSuppressed, onJobSettled, onJobStarted, useJobsStore } from "../stores/jobs-store";
-import { type UploadItem, type UploadItemStatus, useUploadQueue } from "../stores/upload-queue-store";
+import {
+  isJobToastSuppressed,
+  onJobSettled,
+  onJobStarted,
+  useJobsStore,
+} from "../stores/jobs-store";
+import {
+  type UploadItem,
+  type UploadItemStatus,
+  useUploadQueue,
+} from "../stores/upload-queue-store";
 import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Progress } from "./ui/progress";
@@ -182,7 +191,10 @@ function TaskRowView({ row }: { row: TaskRow }) {
         <p className={`truncate text-xs ${TONE_TEXT_CLASS[row.tone]}`}>{row.statusText}</p>
         {row.progress && (
           <div className="mt-1 flex items-center gap-2">
-            <Progress value={(row.progress.current / row.progress.total) * 100} className="h-1 flex-1" />
+            <Progress
+              value={(row.progress.current / row.progress.total) * 100}
+              className="h-1 flex-1"
+            />
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
               {row.progress.current}/{row.progress.total}
             </span>
