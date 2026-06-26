@@ -10,6 +10,7 @@ import { Loader } from "@/components/ai-elements/loader";
 import { ChatError } from "@/components/chat/ChatError";
 import { CompactionBanner } from "@/components/chat/CompactionBanner";
 import { MessageBubble } from "@/components/chat/MessageBubble";
+import { showThinkingLoader } from "@/lib/chat/chat-utils";
 
 interface MessageListProps {
   messages: UIMessage[];
@@ -84,7 +85,7 @@ export function MessageList({
             onExecutePlan={index === messages.length - 1 ? onExecutePlan : undefined}
           />
         ))}
-        {status === "submitted" && <Loader />}
+        {showThinkingLoader(messages, status) && <Loader />}
         {(showChatError || compactionError) && (
           <ChatError message={errorMessage} onRetry={onRetry} onDismiss={onDismissError} />
         )}

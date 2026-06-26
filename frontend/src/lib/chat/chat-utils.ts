@@ -1,4 +1,23 @@
 import type { UIMessage } from "@ai-sdk/react";
+import type { ChatStatus } from "ai";
+
+/**
+ * Whether to show the standalone "thinking" loader below the conversation.
+ *
+ * The model is busy while the request is `submitted` (no output yet) or
+ * `streaming`. A separate loader is redundant while text or reasoning streams,
+ * since that content visibly grows on screen, so it is suppressed then. This
+ * keeps the loader visible during the gap after a tool call, where the stream
+ * stays open with no visible output until the model starts its next block.
+ */
+export function showThinkingLoader(messages: UIMessage[], status: ChatStatus): boolean {
+  const busy = status === "submitted" || status === "streaming";
+  const last = messages.at(-1)?.parts.at(-1);
+  const streamingOutput =
+    (last?.type === "text" || last?.type === "reasoning") && last.state === "streaming";
+
+  return busy && !streamingOutput;
+}
 
 /** Concatenate text from all text parts of a message (or part list). */
 export function joinTextParts(parts: UIMessage["parts"] | undefined): string | undefined {
