@@ -90,7 +90,7 @@ const FEATURE_DEFAULTS: FeatureFlags = {
   assetSpec: false,
   toolsSpec: false,
   planning: false,
-  documentMap: true,
+  documentMap: false,
 };
 
 /**
