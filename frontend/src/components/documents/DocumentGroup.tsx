@@ -89,7 +89,7 @@ export function DocumentGroup({
       </div>
       <CollapsibleContent>
         <div className="@container ml-4 pb-2">
-          <div className="grid grid-cols-2 gap-2 @sm:grid-cols-3 @lg:grid-cols-4">
+          <div className="grid auto-rows-fr grid-cols-2 gap-2 @sm:grid-cols-3 @lg:grid-cols-4">
             {doc.image && (
               <button
                 type="button"
@@ -99,7 +99,7 @@ export function DocumentGroup({
               >
                 <AssetImage
                   filePath={doc.image.filePath}
-                  wrapperClassName="aspect-square w-full"
+                  wrapperClassName={contentChunks.length > 0 ? "h-full w-full" : "aspect-square w-full"}
                   className="h-full w-full object-cover"
                 />
               </button>
