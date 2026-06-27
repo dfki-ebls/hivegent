@@ -5,7 +5,7 @@ active-path prefix from SQL, runs the agent on it, and appends the turn's
 new messages as a chain under a fork point (:func:`append_branch`).  Editing
 or regenerating forks a sibling chain instead of overwriting, so prior
 branches are preserved; the linear history the frontend sees is the *active
-path* — the conversation's newest message walked up to the root via
+path* — the conversation's newest leaf walked up to the root via
 ``Message.parent_id`` (:func:`_load_active_path`).  The active branch is just
 the most recently appended one, so no branch pointer is stored.
 
@@ -199,11 +199,23 @@ def extract_title(messages: Sequence[ModelMessage]) -> str | None:
 
 
 def _newest_leaf_id(conversation_id: str) -> ColumnElement[str]:
-    """Scalar subquery of a conversation's newest message id (its active leaf)."""
+    """Scalar subquery of a conversation's active leaf: its newest childless node.
+
+    A turn appends its messages as one chain in a single transaction, so they
+    routinely share a ``created_at`` to the microsecond — ordering by timestamp
+    alone could then pick a mid-chain node (e.g. the tool-return request) over
+    the turn's final response and silently truncate the active path.  Restricting
+    to a *leaf* (a node nothing forks from) removes that ambiguity: within a chain
+    only the tip is childless, and distinct branches' tips are created far enough
+    apart that the newest leaf is unambiguously the active one; ``id`` breaks the
+    otherwise-impossible exact-timestamp tie so the pick stays stable.
+    """
+    child = aliased(Message)
+    is_leaf = ~select(literal(1)).where(child.parent_id == Message.id).exists()
     return (
         select(Message.id)
-        .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.desc())
+        .where(Message.conversation_id == conversation_id, is_leaf)
+        .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(1)
         .scalar_subquery()
     )
@@ -213,7 +225,7 @@ def _active_path_cte(conversation_id: str, leaf_id: str | ColumnElement[str]) ->
     """Recursive CTE of the nodes from *leaf_id* up to the root.
 
     *leaf_id* is the active leaf — either an explicit node id or the scalar
-    subquery selecting the conversation's newest message.  The anchor is a plain
+    subquery selecting the conversation's newest leaf.  The anchor is a plain
     equality (no ordering or limit inside the recursive term), and walking *up*
     the unique ``parent_id`` is provably terminating: ``parent_id`` only ever
     points at an already-created node, so the chain strictly recedes in time and
@@ -250,8 +262,8 @@ async def _load_active_path(
 ) -> list[ActiveNode]:
     """Walk a leaf up to the root via ``parent_id``, returned root->leaf.
 
-    *leaf_id* defaults to the conversation's newest message (the active leaf);
-    an explicit id anchors at another branch's tip.  An absent or unmatched leaf
+    *leaf_id* defaults to the conversation's newest leaf (the active tip); an
+    explicit id anchors at another branch's tip.  An absent or unmatched leaf
     yields an empty path.
     """
     cte = _active_path_cte(conversation_id, leaf_id or _newest_leaf_id(conversation_id))

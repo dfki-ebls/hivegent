@@ -249,10 +249,11 @@ class Message(Base):
     ``append_branch``); editing or regenerating forks a sibling chain rather
     than overwriting, so prior branches are preserved.  The active branch is
     simply the newest one: the active path is the conversation's most recently
-    created message walked up to the root via ``parent_id``.  Rows are never
-    updated in place, so each carries only ``created_at`` (with a
-    ``server_default``); the ``(conversation_id, created_at)`` index serves both
-    that newest-leaf lookup and the per-conversation ordering.
+    created leaf (a node nothing forks from) walked up to the root via
+    ``parent_id``.  Rows are never updated in place, so each carries only
+    ``created_at`` (with a ``server_default``); the ``(conversation_id,
+    created_at)`` index orders that newest-leaf lookup and the per-conversation
+    walks, while the ``parent_id`` index backs its childless test.
     """
 
     __tablename__ = "messages"
