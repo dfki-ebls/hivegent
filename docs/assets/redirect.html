@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hivegent</title>
+    <meta http-equiv="refresh" content="0; url=en/" />
+    <script>
+      // Prefer the visitor's browser language, English otherwise. The meta
+      // refresh above is the no-JS fallback and always lands on English.
+      var lang = (navigator.language || "en").toLowerCase().startsWith("de") ? "de" : "en";
+      window.location.replace(lang + "/");
+    </script>
+  </head>
+  <body>
+    <a href="en/">Continue to the documentation</a>
+  </body>
+</html>

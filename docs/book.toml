@@ -1,0 +1,14 @@
+[book]
+title = "Hivegent"
+description = "Agentic system for non-expert users to interact with LLMs guided by experience"
+authors = ["Mirko Lenz"]
+language = "en"
+src = "src/en"
+
+[output.html]
+default-theme = "light"
+git-repository-icon = "fab-github"
+git-repository-url = "https://github.com/dfki-ebls/hivegent"
+no-section-label = true
+smart-punctuation = true
+additional-js = ["assets/language-toggle.js"]

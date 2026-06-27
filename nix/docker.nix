@@ -20,6 +20,12 @@
   dinit,
   backend,
   frontend,
+  # Overridable mdbook handbook package bundled into the image, or `null` to
+  # keep its path private (404). Rebuilt below with `site-url` matching
+  # `docsPath`, so the package's own `sitePath` is irrelevant.
+  docs ? null,
+  # URL prefix the handbook is mounted at (a trailing slash is tolerated).
+  docsPath ? "/docs",
   name ? "hivegent",
   tag ? "latest",
   # Plain-HTTP placeholder; front with a TLS terminator for public deployments.
@@ -34,6 +40,12 @@
   dataDir ? "/data",
 }:
 let
+  # The handbook's `site-url` must match its mount point, so derive both from
+  # the normalised `docsPath` here. This makes `docsPath` the single source of
+  # truth and tolerates a stray trailing slash that would otherwise double up.
+  docsPrefix = lib.removeSuffix "/" docsPath;
+  handbook = if docs == null then null else docs.override { sitePath = "${docsPrefix}/"; };
+
   # Docker healthcheck durations are nanoseconds.
   seconds = n: n * 1000000000;
 
@@ -64,6 +76,8 @@ let
     {$HIVEGENT_SITE_ADDRESS:${defaultSiteAddress}} {
       ${import ./vhost.nix {
         inherit lib frontend enableMcp;
+        docs = handbook;
+        docsPath = docsPrefix;
         upstream = "127.0.0.1:${toString backendPort}";
       }}
     }

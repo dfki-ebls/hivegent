@@ -6,6 +6,7 @@
   nodejs,
   python3,
   postgresql_18,
+  mdbook,
   uv,
   git,
   lib,
@@ -44,6 +45,7 @@ mkShell {
     uv
     hivegent
     postgresql_18
+    mdbook
   ]
   # CLI tools used by backend subprocess wrappers + docling deps; sourced
   # from the backend derivation so the dev shell and the wrapped binary

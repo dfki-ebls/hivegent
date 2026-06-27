@@ -13,11 +13,18 @@
   # system, so a consumer only needs to import the module and set options.
   flake.nixosModules.default = moduleWithSystem (
     perSystem@{ config }:
-    { lib, ... }:
+    { lib, config, ... }:
     {
       imports = [ ./nixos ];
       services.hivegent.package = lib.mkDefault perSystem.config.packages.backend;
       services.hivegent.caddy.frontend = lib.mkDefault perSystem.config.packages.frontend;
+      # Build the handbook with `site-url` tracking the mount point so links
+      # keep working when the operator relocates it via `caddy.docsPath`.
+      services.hivegent.caddy.docs = lib.mkDefault (
+        perSystem.config.packages.docs.override {
+          sitePath = "${config.services.hivegent.caddy.docsPath}/";
+        }
+      );
     }
   );
 
@@ -43,6 +50,7 @@
           inherit (config.packages) tessdata;
         };
         frontend = pkgs.callPackage ../frontend { };
+        docs = pkgs.callPackage ../docs { };
         tessdata = pkgs.callPackage ./tessdata.nix { };
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
@@ -52,7 +60,7 @@
         # Linux closure, so build it on a Linux host or remote builder
         # (`nix build .#packages.x86_64-linux.docker`).
         docker = pkgs.callPackage ./docker.nix {
-          inherit (config.packages) backend frontend;
+          inherit (config.packages) backend frontend docs;
         };
       };
     };

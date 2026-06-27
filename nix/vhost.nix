@@ -12,6 +12,12 @@
   # Directory holding the built SPA (`index.html`, `assets/`), or `null` to
   # serve the API only and answer every other path with 404.
   frontend ? null,
+  # Directory holding the built mdbook handbook, served as static files under
+  # `docsPath`, or `null` to keep that path private (404). The book must be
+  # built with `site-url` matching `docsPath` so its absolute links resolve.
+  docs ? null,
+  # URL prefix the handbook is mounted at, without a trailing slash.
+  docsPath ? "/docs",
   # Whether to expose the `/mcp` endpoint or answer it with 404.
   enableMcp ? false,
   # Whether to emit HSTS (only meaningful when the vhost is served over TLS).
@@ -48,9 +54,33 @@
     max_size 1MB
   }
 
-  @docs path /docs* /redoc* /openapi.json
-  handle @docs {
+  # FastAPI's interactive API surfaces stay private regardless of the handbook.
+  @apidocs path /redoc* /openapi.json
+  handle @apidocs {
     respond 404
+  }
+
+  ${
+    if docs == null then
+      ''
+        # No handbook bundled: keep its path private too.
+        @docs path ${docsPath} ${docsPath}/*
+        handle @docs {
+          respond 404
+        }
+      ''
+    else
+      ''
+        # Static mdbook handbook. Bare `${docsPath}` redirects to the
+        # trailing-slash root where the language redirect lives; `strip_prefix`
+        # maps the remaining request onto the book's own layout.
+        redir ${docsPath} ${docsPath}/
+        handle ${docsPath}/* {
+          uri strip_prefix ${docsPath}
+          root * ${docs}
+          file_server
+        }
+      ''
   }
 
   handle /api/* {

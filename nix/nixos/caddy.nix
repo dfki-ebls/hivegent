@@ -38,6 +38,30 @@ in
       '';
     };
 
+    docs = lib.mkPackageOption pkgs "docs" {
+      nullable = true;
+      default = null;
+      extraDescription = ''
+        Built mdbook handbook served as static files under `docsPath`. The
+        flake's default module wires this to the bundled `docs` package built
+        with `site-url` matching `docsPath`, so links resolve on the subpath.
+
+        Set to `null` to keep `''${docsPath}` private (404), exposing only
+        the API and SPA.
+      '';
+    };
+
+    docsPath = lib.mkOption {
+      type = lib.types.str;
+      default = "/docs";
+      apply = lib.removeSuffix "/";
+      description = ''
+        URL prefix the handbook is mounted at; a trailing slash is tolerated.
+        The bundled `docs` default is rebuilt with a matching `site-url`, so
+        relocating the handbook only takes setting this option.
+      '';
+    };
+
     hsts = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -68,7 +92,12 @@ in
         hostName = caddyCfg.hostName;
         extraConfig = import ../vhost.nix {
           inherit lib;
-          inherit (caddyCfg) frontend extraConfig;
+          inherit (caddyCfg)
+            frontend
+            docs
+            docsPath
+            extraConfig
+            ;
           enableHsts = caddyCfg.hsts;
           upstream = "${cfg.host}:${toString cfg.port}";
           enableMcp = cfg.settings.mcp.enable or false;
