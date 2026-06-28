@@ -10,20 +10,27 @@ from hivegent.tools.retrieval import VectorSearchTool
 
 def test_build_reranker_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings.rerank, "provider", None)
-    assert retrieval._build_reranker() is None
+    assert retrieval._build_reranker("auto") is None
 
 
 def test_build_reranker_sentence_transformers(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
+    built: dict[str, object] = {}
     monkeypatch.setattr(settings.rerank, "provider", "sentence-transformers")
     monkeypatch.setattr(settings.rerank, "model", "cross-x")
+    monkeypatch.setattr(
+        "sentence_transformers.CrossEncoder",
+        lambda model, device=None: built.update(model=model, device=device) or "CE_MODEL",
+    )
     monkeypatch.setattr(
         retrieval.cbrkit.retrieval.rerank,
         "cross_encoder",
         lambda **kw: seen.update(kw) or "CE",
     )
-    assert retrieval._build_reranker() == "CE"
-    assert seen == {"model": "cross-x"}
+    # A concrete device flows through to the CrossEncoder ("auto" maps to None).
+    assert retrieval._build_reranker("cpu") == "CE"
+    assert built == {"model": "cross-x", "device": "cpu"}
+    assert seen == {"model": "CE_MODEL"}
 
 
 def test_build_reranker_http(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -39,7 +46,7 @@ def test_build_reranker_http(monkeypatch: pytest.MonkeyPatch) -> None:
         "http",
         lambda **kw: seen.update(kw) or "HTTP",
     )
-    assert retrieval._build_reranker() == "HTTP"
+    assert retrieval._build_reranker("auto") == "HTTP"
     assert seen == {
         "model": "rerank-x",
         "url": "https://reranker.test/v1/rerank",

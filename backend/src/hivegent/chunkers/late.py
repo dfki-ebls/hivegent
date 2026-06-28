@@ -32,12 +32,15 @@ class LateChunkerConfig(BaseChonkieConfig):
 
 
 @lru_cache(maxsize=2)
-def _build_chunker(config_json: str) -> LateChunker:
+def _build_chunker(config_json: str, device: str) -> LateChunker:
     config = LateChunkerConfig.model_validate_json(config_json)
+    # ``device`` forwards through LateChunker's kwargs to the underlying
+    # SentenceTransformer (``None`` lets it self-detect via the process env).
     return LateChunker(
         embedding_model=_DEFAULT_EMBEDDING_MODEL,
         chunk_size=config.chunk_size,
         min_characters_per_chunk=config.min_characters_per_chunk,
+        device=None if device == "auto" else device,
     )
 
 
@@ -53,9 +56,11 @@ class LateDocumentChunker(DocumentChunker):
     label = "Late"
     description = "Late-interaction embedding-aware chunk boundaries"
     config: LateChunkerConfig = field(default_factory=LateChunkerConfig)
+    device: str = field(default="auto", kw_only=True)
+    """Compute device for the model (``"auto"`` self-detects); code-level, not a setting."""
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
+        chunks = _build_chunker(self.config.model_dump_json(), self.device).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
     async def _split(

@@ -26,13 +26,13 @@ class NeuralChunkerConfig(BaseChonkieConfig):
 
 
 @lru_cache(maxsize=2)
-def _build_chunker(config_json: str) -> NeuralChunker:
+def _build_chunker(config_json: str, device: str) -> NeuralChunker:
     config = NeuralChunkerConfig.model_validate_json(config_json)
-    # ``device_map="auto"`` defers placement to the process environment
-    # (``CUDA_VISIBLE_DEVICES``); the bounded cache caps resident VRAM.
+    # ``device`` maps onto chonkie's ``device_map`` (``"auto"`` defers to the
+    # process environment); the bounded cache caps resident VRAM.
     return NeuralChunker(
         model=_DEFAULT_MODEL,
-        device_map="auto",
+        device_map=device,
         min_characters_per_chunk=config.min_characters_per_chunk,
     )
 
@@ -49,9 +49,11 @@ class NeuralDocumentChunker(DocumentChunker):
     label = "Neural"
     description = "Neural model-based chunk boundary detection"
     config: NeuralChunkerConfig = field(default_factory=NeuralChunkerConfig)
+    device: str = field(default="auto", kw_only=True)
+    """Compute device for the model (``"auto"`` self-detects); code-level, not a setting."""
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
+        chunks = _build_chunker(self.config.model_dump_json(), self.device).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
     async def _split(

@@ -19,17 +19,18 @@ class MarkerConverterConfig(BaseModel):
 
 
 @lru_cache(maxsize=1)
-def _build_converter() -> PdfConverter:
+def _build_converter(device: str) -> PdfConverter:
     """Build a Marker PDF converter; cached because model loading is expensive.
 
-    Marker auto-detects the compute device via ``TORCH_DEVICE``/CUDA, which
-    is governed centrally by ``CUDA_VISIBLE_DEVICES``, so no device is passed.
+    ``device`` places the surya models; ``"auto"`` passes ``None`` so Marker
+    self-detects via ``TORCH_DEVICE``/CUDA (governed by the process env).
     Marker's other shared-setting analogues do not map cleanly: page batch
     sizes are governed by surya's own env vars and its OCR model is
     multilingual, so ``compute.batch_size`` and ``ocr.languages`` are
     intentionally ignored.
     """
-    return PdfConverter(artifact_dict=create_model_dict())
+    artifacts = create_model_dict(device=None if device == "auto" else device)
+    return PdfConverter(artifact_dict=artifacts)
 
 
 # Marker only converts PDFs. The provider registry lives in
@@ -48,9 +49,11 @@ class MarkerConverter(DocumentConverter):
     description = "Best for PDF documents"
     extensions = frozenset({".pdf"})
     config: MarkerConverterConfig = field(default_factory=MarkerConverterConfig)
+    device: str = field(default="auto", kw_only=True)
+    """Compute device for the models (``"auto"`` self-detects); code-level, not a setting."""
 
     def _convert_sync(self, path: Path) -> ConversionResult:
-        result = _build_converter()(str(path))
+        result = _build_converter(self.device)(str(path))
         image_data = {
             p: ExtractedImage(data=pil_to_png_bytes(img))
             for p, img in result.images.items()

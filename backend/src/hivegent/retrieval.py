@@ -86,17 +86,21 @@ class _AsyncLazy[T]:
         return cast(T, self._value)
 
 
-def _build_reranker() -> AsyncRetrieverFunc[str, str, float] | None:
+def _build_reranker(device: str) -> AsyncRetrieverFunc[str, str, float] | None:
     """Construct the configured cbrkit reranker, or ``None`` when disabled.
 
     Loading a local cross-encoder pulls model weights, so callers build this
-    off the event loop (see :class:`_AsyncLazy`).
+    off the event loop (see :class:`_AsyncLazy`).  ``device`` pins the
+    cross-encoder; ``"auto"`` maps to ``None`` so it self-detects.
     """
     cfg = settings.rerank
     if not cfg.enabled:
         return None
     if cfg.provider == "sentence-transformers":
-        return cbrkit.retrieval.rerank.cross_encoder(model=cfg.model)
+        from sentence_transformers import CrossEncoder
+
+        model = CrossEncoder(cfg.model, device=None if device == "auto" else device)
+        return cbrkit.retrieval.rerank.cross_encoder(model=model)
     if not cfg.base_url:
         msg = "HTTP reranking requires HIVEGENT_RERANK__BASE_URL."
         raise ValueError(msg)
@@ -109,13 +113,15 @@ def _build_reranker() -> AsyncRetrieverFunc[str, str, float] | None:
     )
 
 
-def _build_embedding_func() -> cbrkit.typing.BatchConversionFunc[
-    str, cbrkit.typing.NumpyArray
-]:
+def _build_embedding_func(
+    device: str,
+) -> cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray]:
     """Construct the configured embedding function.
 
     Loading a local sentence-transformers model pulls weights, so callers build
-    this off the event loop (see :class:`_AsyncLazy`).
+    this off the event loop (see :class:`_AsyncLazy`).  ``device`` pins the
+    local model; ``"auto"`` maps to ``None`` so it self-detects (the remote
+    OpenAI provider ignores it).
     """
     cfg = settings.embedding
     if cfg.provider == "openai":
@@ -128,7 +134,10 @@ def _build_embedding_func() -> cbrkit.typing.BatchConversionFunc[
             ),
         )
     else:
-        raw_func = cbrkit.sim.embed.sentence_transformers(model=cfg.model)
+        from sentence_transformers import SentenceTransformer
+
+        model = SentenceTransformer(cfg.model, device=None if device == "auto" else device)
+        raw_func = cbrkit.sim.embed.sentence_transformers(model=model)
 
     def instrumented(batches: Sequence[str]) -> Sequence[cbrkit.typing.NumpyArray]:
         with logfire.span("embed", batch_size=len(batches)):
@@ -139,16 +148,26 @@ def _build_embedding_func() -> cbrkit.typing.BatchConversionFunc[
 
 @dataclass(slots=True)
 class _RetrievalState:
-    """Caches the global embedding function, storage handle, and reranker."""
+    """Caches the global embedding function, storage handle, and reranker.
 
+    ``device`` pins the local embedding/reranker models; it defaults to
+    ``"auto"`` and is a code-level knob (see :data:`_state`) rather than a
+    settings field, mirroring the model-based converters and chunkers.
+    """
+
+    device: str = "auto"
     _storage: PgvectorAsync[str, Chunk] | None = None
     _embedding: _AsyncLazy[
         cbrkit.typing.BatchConversionFunc[str, cbrkit.typing.NumpyArray]
-    ] = field(default_factory=lambda: _AsyncLazy(_build_embedding_func))
+    ] = field(init=False)
     _reranker: _AsyncLazy[AsyncRetrieverFunc[str, str, float] | None] = field(
-        default_factory=lambda: _AsyncLazy(_build_reranker)
+        init=False
     )
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    def __post_init__(self) -> None:
+        self._embedding = _AsyncLazy(lambda: _build_embedding_func(self.device))
+        self._reranker = _AsyncLazy(lambda: _build_reranker(self.device))
 
     async def get_reranker(self) -> AsyncRetrieverFunc[str, str, float] | None:
         """Return the cached reranker, building it once off the event loop."""

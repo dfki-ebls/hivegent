@@ -4,10 +4,11 @@ import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import PIL.Image
 import PIL.ImageFile
-from docling.datamodel.accelerator_options import AcceleratorOptions
+from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
 from docling.datamodel.pipeline_options import (
     ConvertPipelineOptions,
@@ -156,10 +157,12 @@ class DoclingConverter(DocumentConverter):
         f".{ext}" for exts in FormatToExtensions.values() for ext in exts
     )
     config: DoclingConverterConfig = field(default_factory=DoclingConverterConfig)
+    device: str = field(default="auto", kw_only=True)
+    """Compute device for the models (``"auto"`` self-detects); code-level, not a setting."""
 
     def _convert_sync(self, path: Path) -> ConversionResult:
         config = self.config
-        pdf_overrides: dict[str, bool] = {}
+        pdf_overrides: dict[str, Any] = {}
 
         if not self.detect_asset_roles and config.pdf_options.do_picture_classification:
             # The classifier's labels only feed asset triage, which runs in
@@ -175,6 +178,15 @@ class DoclingConverter(DocumentConverter):
             # Born-digital PDF: the text layer is authoritative, so skip the
             # Tesseract stage entirely (scanned/image-only PDFs keep it).
             pdf_overrides["do_ocr"] = False
+
+        if self.device != "auto":
+            # Pin placement away from docling's AUTO default; folded into the
+            # config so it is part of the build cache key.
+            pdf_overrides["accelerator_options"] = (
+                config.pdf_options.accelerator_options.model_copy(
+                    update={"device": AcceleratorDevice(self.device)}
+                )
+            )
 
         if pdf_overrides:
             config = config.model_copy(

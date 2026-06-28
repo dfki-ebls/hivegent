@@ -23,17 +23,20 @@ __all__ = ["MinerUConverter", "MinerUConverterConfig"]
 _OCR_LANG = "ch"
 
 
-def _apply_compute_env() -> None:
+def _apply_compute_env(device: str) -> None:
     """Translate the shared compute settings onto MinerU's env-var knobs.
 
     MinerU is configured through process env vars read at model-build time.
-    Device placement is left to MinerU's own auto-detection, governed
-    centrally by ``CUDA_VISIBLE_DEVICES``, so only
-    ``MINERU_INTRA_OP_NUM_THREADS`` is set here to cap the CPU-side threads.
-    Its page batching keys off VRAM (``MINERU_VIRTUAL_VRAM_SIZE``) rather
-    than a page count, so ``compute.batch_size`` does not map.
+    ``MINERU_INTRA_OP_NUM_THREADS`` caps the CPU-side threads; ``device`` is
+    forwarded to ``MINERU_DEVICE_MODE`` only when pinned, leaving ``"auto"``
+    to MinerU's own detection.  Its page batching keys off VRAM
+    (``MINERU_VIRTUAL_VRAM_SIZE``) rather than a page count, so
+    ``compute.batch_size`` does not map.
     """
     os.environ["MINERU_INTRA_OP_NUM_THREADS"] = str(settings.compute.num_threads)
+
+    if device != "auto":
+        os.environ["MINERU_DEVICE_MODE"] = device
 
 
 class MinerUConverterConfig(BaseModel):
@@ -64,10 +67,12 @@ class MinerUConverter(DocumentConverter):
         }
     )
     config: MinerUConverterConfig = field(default_factory=MinerUConverterConfig)
+    device: str = field(default="auto", kw_only=True)
+    """Compute device for the models (``"auto"`` self-detects); code-level, not a setting."""
 
     def _convert_sync(self, path: Path) -> ConversionResult:
         """Run the synchronous MinerU conversion."""
-        _apply_compute_env()
+        _apply_compute_env(self.device)
         name = path.stem
         with tempfile.TemporaryDirectory() as temp_dir:
             # ``do_parse`` writes ``<output_dir>/<name>/<parse_method>/<name>.md``
