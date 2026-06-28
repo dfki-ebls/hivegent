@@ -127,6 +127,8 @@ let
         command = "${lib.getExe' backend "hivegent"} serve --host 127.0.0.1 --port ${toString backendPort}";
         env-file = backendEnv;
         start-timeout = 600;
+        # Must exceed uvicorn's `timeout_graceful_shutdown` (30s); dinit's default is 10s.
+        stop-timeout = 45;
       };
       caddy = daemon // {
         command = "${lib.getExe caddy} run --config ${caddyfile} --adapter caddyfile";

@@ -10,7 +10,7 @@ avoid a cycle with :mod:`hivegent.types`, which both depends on this
 package (for ``ConversationSummary``) and is depended on by it.
 """
 
-from .engine import resolve_database_url, session
+from .engine import engine_lifespan, resolve_database_url, session
 from .migrations import apply_migrations, build_alembic_config
 from .models import (
     Base,
@@ -46,6 +46,7 @@ __all__ = [
     "User",
     "apply_migrations",
     "build_alembic_config",
+    "engine_lifespan",
     "resolve_database_url",
     "session",
 ]

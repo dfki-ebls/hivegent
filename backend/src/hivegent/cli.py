@@ -392,6 +392,9 @@ def serve(
         reload=reload,
         reload_dirs=str(Path(__file__).parent) if reload else None,
         timeout_keep_alive=300,
+        # Must stay below the systemd/dinit stop timeout so uvicorn force-closes
+        # and runs lifespan teardown before the supervisor resorts to SIGKILL.
+        timeout_graceful_shutdown=30,
     )
 
 

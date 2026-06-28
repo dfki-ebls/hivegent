@@ -20,7 +20,13 @@ from sqlalchemy.ext.asyncio import (
 
 from ..config import settings
 
-__all__ = ["get_engine", "get_sessionmaker", "resolve_database_url", "session"]
+__all__ = [
+    "engine_lifespan",
+    "get_engine",
+    "get_sessionmaker",
+    "resolve_database_url",
+    "session",
+]
 
 
 def resolve_database_url() -> str:
@@ -50,6 +56,17 @@ def get_engine() -> AsyncEngine:
 def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
     """Return the cached :class:`async_sessionmaker` bound to :func:`get_engine`."""
     return async_sessionmaker(get_engine(), expire_on_commit=False)
+
+
+@asynccontextmanager
+async def engine_lifespan() -> AsyncIterator[None]:
+    """Dispose the engine's connection pool and clear the caches on shutdown."""
+    try:
+        yield
+    finally:
+        await get_engine().dispose()
+        get_engine.cache_clear()
+        get_sessionmaker.cache_clear()
 
 
 @asynccontextmanager

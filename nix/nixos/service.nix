@@ -194,6 +194,8 @@ in
             Restart = "on-failure";
             RestartSec = 5;
             TimeoutStartSec = 600;
+            # Must exceed uvicorn's `timeout_graceful_shutdown` (30s) so teardown finishes before SIGKILL.
+            TimeoutStopSec = 45;
             UMask = "0077";
 
             DynamicUser = true;

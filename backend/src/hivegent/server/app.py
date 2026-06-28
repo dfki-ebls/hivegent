@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from starlette.responses import PlainTextResponse, Response
 
 from ..config import settings
-from ..db import apply_migrations
+from ..db import apply_migrations, engine_lifespan
 from ..http_client import shared_http_client_lifespan
 from ..mcp import mcp_app
 from ..observability import configure_observability
@@ -98,7 +98,7 @@ async def _verify_fts_config() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open shared resources and delegate to MCP."""
-    async with shared_http_client_lifespan():
+    async with shared_http_client_lifespan(), engine_lifespan():
         await apply_migrations()
         await _verify_vector_dim()
         await _verify_fts_config()
