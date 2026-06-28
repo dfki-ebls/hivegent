@@ -136,7 +136,9 @@ def _build_embedding_func(
     else:
         from sentence_transformers import SentenceTransformer
 
-        model = SentenceTransformer(cfg.model, device=None if device == "auto" else device)
+        model = SentenceTransformer(
+            cfg.model, device=None if device == "auto" else device
+        )
         raw_func = cbrkit.sim.embed.sentence_transformers(model=model)
 
     def instrumented(batches: Sequence[str]) -> Sequence[cbrkit.typing.NumpyArray]:

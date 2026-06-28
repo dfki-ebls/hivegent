@@ -249,7 +249,14 @@ export const useUploadQueue = create<UploadQueueStore>((set, get) => {
     // so it cannot be retried and never blocks a stem.
     report: (scope, name, error) => {
       const id = crypto.randomUUID();
-      const base = { id, scope, name, stem: fileStem(name), kind: "file", status: "failed" } as const;
+      const base = {
+        id,
+        scope,
+        name,
+        stem: fileStem(name),
+        kind: "file",
+        status: "failed",
+      } as const;
       addItem(makeItem(base, { error, retryable: false }));
     },
 

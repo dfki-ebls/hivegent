@@ -190,7 +190,9 @@ class DoclingConverter(DocumentConverter):
 
         if pdf_overrides:
             config = config.model_copy(
-                update={"pdf_options": config.pdf_options.model_copy(update=pdf_overrides)}
+                update={
+                    "pdf_options": config.pdf_options.model_copy(update=pdf_overrides)
+                }
             )
 
         converter = _build_converter(config)

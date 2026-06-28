@@ -85,8 +85,7 @@ class UserDeps:
                 )
 
             excluded.update(
-                scope.render_filter_entry(entry)
-                for entry in document_filter.excluded
+                scope.render_filter_entry(entry) for entry in document_filter.excluded
             )
 
         return format_document_scope(

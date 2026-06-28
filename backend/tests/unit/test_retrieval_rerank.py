@@ -20,7 +20,9 @@ def test_build_reranker_sentence_transformers(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(settings.rerank, "model", "cross-x")
     monkeypatch.setattr(
         "sentence_transformers.CrossEncoder",
-        lambda model, device=None: built.update(model=model, device=device) or "CE_MODEL",
+        lambda model, device=None: (
+            built.update(model=model, device=device) or "CE_MODEL"
+        ),
     )
     monkeypatch.setattr(
         retrieval.cbrkit.retrieval.rerank,

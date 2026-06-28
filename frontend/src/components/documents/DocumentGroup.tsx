@@ -99,7 +99,9 @@ export function DocumentGroup({
               >
                 <AssetImage
                   filePath={doc.image.filePath}
-                  wrapperClassName={contentChunks.length > 0 ? "h-full w-full" : "aspect-square w-full"}
+                  wrapperClassName={
+                    contentChunks.length > 0 ? "h-full w-full" : "aspect-square w-full"
+                  }
                   className="h-full w-full object-cover"
                 />
               </button>

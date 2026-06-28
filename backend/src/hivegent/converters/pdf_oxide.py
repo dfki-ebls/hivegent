@@ -37,7 +37,9 @@ def _build_ocr_engine(
     only one engine is ever built — the bound just stops a reconfigured path
     from leaving the old ONNX models resident.
     """
-    return OcrEngine(det_model, rec_model, dict_path, OcrConfig(num_threads=num_threads))
+    return OcrEngine(
+        det_model, rec_model, dict_path, OcrConfig(num_threads=num_threads)
+    )
 
 
 class PdfOxideConverterConfig(BaseModel):
