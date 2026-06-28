@@ -96,7 +96,7 @@ class KreuzbergConverter(DocumentConverter):
             # packs via TESSDATA_PREFIX, same as the docling pipeline.
             ocr=OcrConfig(
                 backend="tesseract",
-                language="+".join(settings.conversion.ocr_languages),
+                language="+".join(settings.conversion.ocr.languages),
             ),
             images=ImageExtractionConfig(
                 inject_placeholders=True,  # type: ignore[call-arg]  # pyright: ignore[reportCallIssue]  # ty: ignore[unknown-argument]

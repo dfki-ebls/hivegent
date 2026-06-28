@@ -7,6 +7,7 @@ from pathlib import Path
 
 import PIL.Image
 import PIL.ImageFile
+from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
 from docling.datamodel.pipeline_options import (
     ConvertPipelineOptions,
@@ -57,9 +58,17 @@ def _default_pdf_options() -> ThreadedPdfPipelineOptions:
     resolves the nixpkgs tessdata via ``TESSDATA_PREFIX``, which the nix
     package and dev shell both set.
     """
+    conv = settings.conversion
     return ThreadedPdfPipelineOptions(
         do_picture_classification=True,
-        ocr_options=TesseractOcrOptions(lang=settings.conversion.ocr_languages),
+        ocr_options=TesseractOcrOptions(lang=conv.ocr.languages),
+        accelerator_options=AcceleratorOptions(
+            device=AcceleratorDevice(conv.compute.device),
+            num_threads=conv.compute.num_threads,
+        ),
+        ocr_batch_size=conv.compute.batch_size,
+        layout_batch_size=conv.compute.batch_size,
+        table_batch_size=conv.compute.batch_size,
     )
 
 
@@ -147,16 +156,28 @@ class DoclingConverter(DocumentConverter):
 
     def _convert_sync(self, path: Path) -> ConversionResult:
         config = self.config
+        pdf_overrides: dict[str, bool] = {}
+
         if not self.detect_asset_roles and config.pdf_options.do_picture_classification:
             # The classifier's labels only feed asset triage, which runs in
             # DESCRIBE mode; skip the model entirely otherwise.
+            pdf_overrides["do_picture_classification"] = False
+
+        if (
+            config.pdf_options.do_ocr
+            and settings.conversion.ocr.skip_native_text
+            and path.suffix.lower() == ".pdf"
+            and _pdf_has_text_layer(path)
+        ):
+            # Born-digital PDF: the text layer is authoritative, so skip the
+            # Tesseract stage entirely (scanned/image-only PDFs keep it).
+            pdf_overrides["do_ocr"] = False
+
+        if pdf_overrides:
             config = config.model_copy(
-                update={
-                    "pdf_options": config.pdf_options.model_copy(
-                        update={"do_picture_classification": False}
-                    )
-                }
+                update={"pdf_options": config.pdf_options.model_copy(update=pdf_overrides)}
             )
+
         converter = _build_converter(config)
         result = converter.convert(str(path))
         doc = result.document
@@ -240,6 +261,34 @@ _DOCLING_ROLE_MAP: dict[str, AssetRole] = {
     **{label.value: AssetRole.DECORATIVE for label in _DECORATIVE_LABELS},
     **{label.value: AssetRole.INFORMATIVE for label in _INFORMATIVE_LABELS},
 }
+
+
+def _pdf_has_text_layer(path: Path, *, sample: int = 5) -> bool:
+    """Return whether *path* already carries an extractable text layer.
+
+    Samples up to ``sample`` pages spread evenly across the document and
+    returns whether at least half of them carry a text layer, using
+    pdf_oxide's purpose-built per-page check (``True`` for born-digital
+    pages, ``False`` for image-only/empty ones).  Falls back to ``False``
+    when the ``pdf-oxide`` extra is absent or the probe fails, so OCR
+    still runs in those cases.
+    """
+    try:
+        from pdf_oxide import PdfDocument
+    except ImportError:
+        return False
+
+    try:
+        doc = PdfDocument(str(path))
+        pages = doc.page_count()
+        if pages == 0:
+            return False
+        indices = range(0, pages, max(1, pages // sample))
+        sampled = [i for _, i in zip(range(sample), indices)]
+        hits = sum(doc.has_text_layer(i) for i in sampled)
+        return hits / len(sampled) >= 0.5
+    except Exception:
+        return False
 
 
 def _picture_role(item: PictureItem) -> AssetRole:

@@ -485,16 +485,56 @@ class ToolsSettings(BaseModel):
     enable_web: bool = False
 
 
-class ConversionSettings(BaseModel):
-    """Document conversion (OCR) tunables.
+class ComputeSettings(BaseModel):
+    """Framework-agnostic compute placement for model-based converters.
 
-    ``ocr_languages`` lists the Tesseract language codes (ISO 639-2,
-    e.g. ``deu``, ``eng``) used by the docling and kreuzberg pipelines.
-    The matching ``*.traineddata`` packs must be resolvable through
-    ``TESSDATA_PREFIX`` (wired up by the nix package and dev shell).
+    Shared by every backend that runs neural models (docling today;
+    marker and mineru once their optional extras are enabled).  Each
+    backend maps these onto its own library and ignores what it cannot
+    honor — CPU-only backends (kreuzberg, pdf_oxide) disregard ``device``
+    and ``batch_size`` entirely.
+
+    ``device`` selects the accelerator: ``"auto"`` picks CUDA/MPS when
+    the torch build can reach one and otherwise falls back to CPU.
+    ``num_threads`` caps the CPU-side intra-op / OpenMP threads; keep it
+    well under the core count, as Tesseract's OpenMP scales sublinearly
+    and the neural stages run on ``device``.  ``batch_size`` is the page
+    batch fed to the layout/table/OCR models; larger batches raise GPU
+    utilization at the cost of VRAM.
     """
 
-    ocr_languages: list[str] = ["deu", "eng"]
+    device: Literal["auto", "cpu", "cuda", "mps", "xpu"] = "auto"
+    num_threads: int = 8
+    batch_size: int = 8
+
+
+class OcrSettings(BaseModel):
+    """Framework-agnostic OCR tunables shared by every OCR-capable backend.
+
+    ``languages`` lists the Tesseract language codes (ISO 639-2, e.g.
+    ``deu``, ``eng``); the matching ``*.traineddata`` packs must resolve
+    through ``TESSDATA_PREFIX`` (wired up by the nix package and dev
+    shell).  ``skip_native_text`` drops OCR for born-digital PDFs that
+    already carry an extractable text layer (detected by sampling pages
+    through the ``pdf-oxide`` extra); image-only/scanned PDFs fall
+    through to OCR unchanged.
+    """
+
+    languages: list[str] = ["deu", "eng"]
+    skip_native_text: bool = True
+
+
+class ConversionSettings(BaseModel):
+    """Framework-agnostic document conversion tunables.
+
+    Grouped by concern so every conversion backend reads the same shared
+    knobs: ``compute`` (device/threads/batch for model-based backends)
+    and ``ocr`` (languages, native-text skip).  A backend maps the
+    relevant group onto its own API and silently ignores the rest.
+    """
+
+    compute: ComputeSettings = ComputeSettings()
+    ocr: OcrSettings = OcrSettings()
 
 
 class LimitsSettings(BaseModel):
