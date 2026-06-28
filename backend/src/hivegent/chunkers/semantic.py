@@ -47,7 +47,7 @@ class SemanticChunkerConfig(BaseChonkieConfig):
     )
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=2)
 def _build_chunker(config_json: str) -> SemanticChunker:
     config = SemanticChunkerConfig.model_validate_json(config_json)
     return SemanticChunker(

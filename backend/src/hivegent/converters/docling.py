@@ -7,7 +7,7 @@ from pathlib import Path
 
 import PIL.Image
 import PIL.ImageFile
-from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
+from docling.datamodel.accelerator_options import AcceleratorOptions
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
 from docling.datamodel.pipeline_options import (
     ConvertPipelineOptions,
@@ -58,17 +58,16 @@ def _default_pdf_options() -> ThreadedPdfPipelineOptions:
     resolves the nixpkgs tessdata via ``TESSDATA_PREFIX``, which the nix
     package and dev shell both set.
     """
-    conv = settings.conversion
+    compute = settings.compute
+    # AcceleratorOptions defaults its device to AUTO; placement is decided
+    # centrally by CUDA_VISIBLE_DEVICES, so only the thread count is set here.
     return ThreadedPdfPipelineOptions(
         do_picture_classification=True,
-        ocr_options=TesseractOcrOptions(lang=conv.ocr.languages),
-        accelerator_options=AcceleratorOptions(
-            device=AcceleratorDevice(conv.compute.device),
-            num_threads=conv.compute.num_threads,
-        ),
-        ocr_batch_size=conv.compute.batch_size,
-        layout_batch_size=conv.compute.batch_size,
-        table_batch_size=conv.compute.batch_size,
+        ocr_options=TesseractOcrOptions(lang=settings.conversion.ocr.languages),
+        accelerator_options=AcceleratorOptions(num_threads=compute.num_threads),
+        ocr_batch_size=compute.batch_size,
+        layout_batch_size=compute.batch_size,
+        table_batch_size=compute.batch_size,
     )
 
 
@@ -113,7 +112,11 @@ class DoclingConverterConfig(BaseModel):
 _PDF_FORMATS = frozenset({InputFormat.PDF, InputFormat.IMAGE, InputFormat.METS_GBS})
 
 
-@lru_cache(maxsize=4)
+# Bounded low: each cached converter holds its own resident layout/table
+# (and optional picture-classifier) torch models, so every extra config
+# variant is another full model set in VRAM.  Two slots cover the common
+# OCR-on / OCR-off split without letting model memory creep upward.
+@lru_cache(maxsize=2)
 def _build_converter(config: DoclingConverterConfig) -> DoclingDocumentConverter:
     """Build and configure a Docling converter, cached by config.
 

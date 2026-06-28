@@ -486,24 +486,29 @@ class ToolsSettings(BaseModel):
 
 
 class ComputeSettings(BaseModel):
-    """Framework-agnostic compute placement for model-based converters.
+    """Framework-agnostic compute tunables shared by every neural backend.
 
-    Shared by every backend that runs neural models (docling today;
-    marker and mineru once their optional extras are enabled).  Each
-    backend maps these onto its own library and ignores what it cannot
-    honor — CPU-only backends (kreuzberg, pdf_oxide) disregard ``device``
-    and ``batch_size`` entirely.
+    Shared by every backend that runs torch/onnxruntime models — dense
+    embeddings, the model-based chunkers, and the docling/marker/mineru
+    converters.  Each backend maps these onto its own library and ignores
+    what it cannot honor — CPU-only backends (kreuzberg, pdf_oxide)
+    disregard ``batch_size`` entirely.
 
-    ``device`` selects the accelerator: ``"auto"`` picks CUDA/MPS when
-    the torch build can reach one and otherwise falls back to CPU.
+    Device *placement* is deliberately not configured here.  It is owned by
+    the process environment (``CUDA_VISIBLE_DEVICES``), which every torch and
+    onnxruntime consumer honors uniformly at the driver level, so each
+    backend stays on its own ``auto`` detection and a single env var decides
+    CPU vs GPU for all of them at once — set ``CUDA_VISIBLE_DEVICES=""`` to
+    force CPU, ``"0"`` to pin a GPU.  This must be set before the process
+    starts (e.g. on the systemd unit), since CUDA reads it once at init.
+
     ``num_threads`` caps the CPU-side intra-op / OpenMP threads; keep it
-    well under the core count, as Tesseract's OpenMP scales sublinearly
-    and the neural stages run on ``device``.  ``batch_size`` is the page
-    batch fed to the layout/table/OCR models; larger batches raise GPU
-    utilization at the cost of VRAM.
+    well under the core count, as Tesseract's OpenMP scales sublinearly and
+    the neural stages run on whatever device the environment exposes.
+    ``batch_size`` is the page batch fed to the layout/table/OCR models;
+    larger batches raise GPU utilization at the cost of VRAM.
     """
 
-    device: Literal["auto", "cpu", "cuda", "mps", "xpu"] = "auto"
     num_threads: int = 8
     batch_size: int = 8
 
@@ -527,13 +532,12 @@ class OcrSettings(BaseModel):
 class ConversionSettings(BaseModel):
     """Framework-agnostic document conversion tunables.
 
-    Grouped by concern so every conversion backend reads the same shared
-    knobs: ``compute`` (device/threads/batch for model-based backends)
-    and ``ocr`` (languages, native-text skip).  A backend maps the
-    relevant group onto its own API and silently ignores the rest.
+    Holds only the conversion-specific ``ocr`` knobs (languages,
+    native-text skip); the threads/batch tunables live in the top-level
+    :class:`ComputeSettings`, shared with embeddings and chunkers, and
+    device placement is owned by the process environment (see there).
     """
 
-    compute: ComputeSettings = ComputeSettings()
     ocr: OcrSettings = OcrSettings()
 
 
@@ -660,6 +664,7 @@ class Settings(BaseSettings):
     auth: AuthSettings = AuthSettings()
     security: SecuritySettings = SecuritySettings()
     tools: ToolsSettings = ToolsSettings()
+    compute: ComputeSettings = ComputeSettings()
     conversion: ConversionSettings = ConversionSettings()
     limits: LimitsSettings = LimitsSettings()
     network: NetworkSettings = NetworkSettings()

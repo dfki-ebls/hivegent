@@ -23,18 +23,16 @@ class NeuralChunkerConfig(BaseChonkieConfig):
         ge=1,
         description="Minimum character count for a chunk.",
     )
-    device_map: str = Field(
-        default="auto",
-        description="Device to run the model on (e.g. 'auto', 'cpu', 'cuda', 'mps').",
-    )
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=2)
 def _build_chunker(config_json: str) -> NeuralChunker:
     config = NeuralChunkerConfig.model_validate_json(config_json)
+    # ``device_map="auto"`` defers placement to the process environment
+    # (``CUDA_VISIBLE_DEVICES``); the bounded cache caps resident VRAM.
     return NeuralChunker(
         model=_DEFAULT_MODEL,
-        device_map=config.device_map,
+        device_map="auto",
         min_characters_per_chunk=config.min_characters_per_chunk,
     )
 

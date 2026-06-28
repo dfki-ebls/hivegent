@@ -26,16 +26,14 @@ _OCR_LANG = "ch"
 def _apply_compute_env() -> None:
     """Translate the shared compute settings onto MinerU's env-var knobs.
 
-    MinerU is configured through process env vars read at model-build time:
-    ``MINERU_DEVICE_MODE`` places the models (``"auto"`` defers to MinerU's
-    own CUDA detection) and ``MINERU_INTRA_OP_NUM_THREADS`` caps the CPU-side
-    threads.  Its page batching keys off VRAM (``MINERU_VIRTUAL_VRAM_SIZE``)
-    rather than a page count, so ``compute.batch_size`` does not map.
+    MinerU is configured through process env vars read at model-build time.
+    Device placement is left to MinerU's own auto-detection, governed
+    centrally by ``CUDA_VISIBLE_DEVICES``, so only
+    ``MINERU_INTRA_OP_NUM_THREADS`` is set here to cap the CPU-side threads.
+    Its page batching keys off VRAM (``MINERU_VIRTUAL_VRAM_SIZE``) rather
+    than a page count, so ``compute.batch_size`` does not map.
     """
-    compute = settings.conversion.compute
-    if compute.device != "auto":
-        os.environ["MINERU_DEVICE_MODE"] = compute.device
-    os.environ["MINERU_INTRA_OP_NUM_THREADS"] = str(compute.num_threads)
+    os.environ["MINERU_INTRA_OP_NUM_THREADS"] = str(settings.compute.num_threads)
 
 
 class MinerUConverterConfig(BaseModel):

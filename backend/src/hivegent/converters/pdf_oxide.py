@@ -27,11 +27,16 @@ class _MarkdownOptions(TypedDict):
     image_output_dir: str
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=1)
 def _build_ocr_engine(
     det_model: str, rec_model: str, dict_path: str, num_threads: int
 ) -> OcrEngine:
-    """Build a pdf_oxide OCR engine; cached because loading the ONNX models is costly."""
+    """Build a pdf_oxide OCR engine; cached because loading the ONNX models is costly.
+
+    Single-slot: the model paths and thread count are fixed per deployment, so
+    only one engine is ever built — the bound just stops a reconfigured path
+    from leaving the old ONNX models resident.
+    """
     return OcrEngine(det_model, rec_model, dict_path, OcrConfig(num_threads=num_threads))
 
 
@@ -49,7 +54,7 @@ class PdfOxideConverterConfig(BaseModel):
     ``classify_document`` reports as image-only are run through
     ``extract_text_ocr`` while text-layer pages keep their richer
     markdown; the OCR thread count comes from the shared
-    ``conversion.compute.num_threads`` setting.
+    ``compute.num_threads`` setting.
     """
 
     preserve_layout: bool = False
@@ -83,7 +88,7 @@ class PdfOxideConverter(DocumentConverter):
             cfg.ocr_det_model,
             cfg.ocr_rec_model,
             cfg.ocr_dict,
-            settings.conversion.compute.num_threads,
+            settings.compute.num_threads,
         )
 
     def _convert_sync(self, path: Path) -> ConversionResult:
