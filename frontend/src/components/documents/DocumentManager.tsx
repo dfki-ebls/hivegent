@@ -1,6 +1,5 @@
 import { Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
 
 import {
   PERSONAL_SCOPE,
@@ -46,6 +45,7 @@ export function DocumentManager() {
   const refresh = useDocumentsStore((s) => s.refresh);
   const enqueueFiles = useUploadQueue((s) => s.enqueueFiles);
   const enqueueCollection = useUploadQueue((s) => s.enqueueCollection);
+  const reportUpload = useUploadQueue((s) => s.report);
   const hasPendingUploads = useUploadQueue(selectHasPendingUploads);
 
   const groups = useMemo(() => getAllGroups(), []);
@@ -124,10 +124,12 @@ export function DocumentManager() {
           enqueueFiles(uploadScope, classification.looseFiles, uploadOptions);
         }
       } catch (err) {
-        toast.error(errorMessage(err));
+        // The drop fails before any queue item exists, so surface it as its own
+        // failed tray row (a collection that fails mid-build already shows as one).
+        reportUpload(uploadScope, "Dropped items", errorMessage(err));
       }
     },
-    [enqueueCollection, enqueueFiles, uploadOptions, uploadScope],
+    [enqueueCollection, enqueueFiles, reportUpload, uploadOptions, uploadScope],
   );
 
   const handleFileInputChange = useCallback(

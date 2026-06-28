@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { JobView } from "@/lib/types";
 import { uploadDocument } from "@/lib/api";
-import { toast } from "sonner";
 import { useUploadQueue } from "@/stores/upload-queue-store";
 
 vi.mock("@/lib/api", () => ({
@@ -12,12 +11,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 vi.mock("@/stores/jobs-store", () => ({
-  suppressJobToasts: vi.fn<() => () => void>(() => () => {}),
   useJobsStore: { getState: () => ({ upsert: vi.fn<() => void>() }) },
-}));
-
-vi.mock("sonner", () => ({
-  toast: { info: vi.fn<() => void>(), error: vi.fn<() => void>() },
 }));
 
 interface PendingUpload {
@@ -82,7 +76,6 @@ describe("useUploadQueue", () => {
 
     expect(items()).toHaveLength(1);
     expect(uploadDocument).toHaveBeenCalledTimes(1);
-    expect(toast.info).toHaveBeenCalledOnce();
   });
 
   it("marks a failed transfer as retryable and re-queues it on retry", async () => {

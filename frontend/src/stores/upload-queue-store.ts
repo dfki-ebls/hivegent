@@ -1,4 +1,3 @@
-import { toast } from "sonner";
 import { create } from "zustand";
 
 import {
@@ -8,7 +7,7 @@ import {
   uploadDocument,
 } from "../lib/api";
 import { errorMessage, fileStem, isAbortError } from "../lib/utils";
-import { suppressJobToasts, useJobsStore } from "./jobs-store";
+import { useJobsStore } from "./jobs-store";
 
 // How many files transfer their bytes at once. Conversion and indexing run
 // server-side behind the backend's own job semaphore, so this caps concurrent
@@ -33,6 +32,9 @@ export interface UploadItem {
   kind: "file" | "collection";
   status: UploadItemStatus;
   error: string | null;
+  // Whether a failed item can be re-run from the tray. False for a pre-queue
+  // failure (e.g. an unreadable drop) that has no retained work to retry.
+  retryable: boolean;
   // Enqueue time, so the unified task list can interleave items with the jobs
   // they hand off to (which are ordered by their own created_at).
   createdAt: number;
@@ -53,12 +55,22 @@ const controllers = new Map<string, AbortController>();
 const work = new Map<string, ItemWork>();
 let active = 0;
 
-// Upload and collection jobs appear in the tray as upload rows that hand off to
-// job rows, so their generic per-job toast would only duplicate that. Suppress
-// it by kind, once for the app's lifetime. Other document jobs (rechunk, bulk
-// ops) keep their toast since the tray is their only edge cue.
-const UPLOAD_JOB_KINDS: ReadonlySet<string> = new Set(["document.upload", "document.collection"]);
-suppressJobToasts((job) => UPLOAD_JOB_KINDS.has(job.kind));
+type UploadListener = (item: UploadItem) => void;
+
+const addedListeners = new Set<UploadListener>();
+
+/**
+ * Register a callback fired once for each item entering the queue — an enqueued
+ * upload or a reported pre-queue failure. Mirrors jobs-store's onJobStarted so
+ * the tray can pop open on any new entry from either source. Returns an
+ * unsubscribe function.
+ */
+export function onUploadAdded(listener: UploadListener): () => void {
+  addedListeners.add(listener);
+  return () => {
+    addedListeners.delete(listener);
+  };
+}
 
 // Statuses an item holds while its work is still local: they occupy a stem (so a
 // re-drop is skipped rather than racing the original into the backend) and mean
@@ -78,6 +90,7 @@ interface UploadQueueStore {
     build: (signal: AbortSignal) => Promise<File>,
     options: UploadOptions,
   ) => void;
+  report: (scope: string, name: string, error: string) => void;
   retry: (id: string) => void;
   cancel: (id: string) => void;
   dismiss: (id: string) => void;
@@ -92,13 +105,22 @@ export const useUploadQueue = create<UploadQueueStore>((set, get) => {
       return { items: { ...s.items, [id]: { ...item, ...delta } } };
     });
 
-  const addItem = (item: UploadItem): void =>
+  const addItem = (item: UploadItem): void => {
     set((s) => ({ items: { ...s.items, [item.id]: item } }));
+    addedListeners.forEach((listener) => listener(item));
+  };
 
-  // A fresh queue item with its constant defaults filled in.
+  // A fresh queue item with its constant defaults filled in. A pre-queue failure
+  // overrides those defaults to drop in already-failed and non-retryable.
   const makeItem = (
     base: Pick<UploadItem, "id" | "scope" | "name" | "stem" | "kind" | "status">,
-  ): UploadItem => ({ ...base, error: null, createdAt: Date.now() });
+    overrides?: Partial<Pick<UploadItem, "error" | "retryable">>,
+  ): UploadItem => ({
+    ...base,
+    error: overrides?.error ?? null,
+    retryable: overrides?.retryable ?? true,
+    createdAt: Date.now(),
+  });
 
   const removeItem = (id: string): void => {
     controllers.delete(id);
@@ -196,26 +218,19 @@ export const useUploadQueue = create<UploadQueueStore>((set, get) => {
 
     // Append each file as its own queue item. A new call never touches items
     // already in flight, so dropping more files while others upload accumulates
-    // work instead of cancelling it.
+    // work instead of cancelling it. A file whose stem is already queued is
+    // skipped silently; its in-flight item already stands in for it in the tray.
     enqueueFiles: (scope, files, options) => {
       const occupied = occupiedStems(scope);
-      let skipped = 0;
       for (const file of files) {
         const stem = fileStem(file.name);
 
-        if (occupied.has(stem)) {
-          skipped += 1;
-          continue;
-        }
+        if (occupied.has(stem)) continue;
 
         occupied.add(stem);
         const id = crypto.randomUUID();
         work.set(id, { scope, kind: "file", options, file, build: null });
         addItem(makeItem({ id, scope, name: file.name, stem, kind: "file", status: "queued" }));
-      }
-
-      if (skipped > 0) {
-        toast.info(`Skipped ${skipped} file${skipped > 1 ? "s" : ""} already in the upload queue`);
       }
 
       pump();
@@ -226,6 +241,16 @@ export const useUploadQueue = create<UploadQueueStore>((set, get) => {
       work.set(id, { scope, kind: "collection", options, file: null, build });
       addItem(makeItem({ id, scope, name, stem: name, kind: "collection", status: "preparing" }));
       void prepareCollection(id);
+    },
+
+    // Surface a failure that occurred before any work could be queued (e.g. a
+    // drop we could not read) as a dismiss-only tray row, so it is as visible as
+    // every other task instead of being lost to the console. It holds no work,
+    // so it cannot be retried and never blocks a stem.
+    report: (scope, name, error) => {
+      const id = crypto.randomUUID();
+      const base = { id, scope, name, stem: fileStem(name), kind: "file", status: "failed" } as const;
+      addItem(makeItem(base, { error, retryable: false }));
     },
 
     retry: (id) => {

@@ -22,32 +22,6 @@ type JobListener = (job: JobView) => void;
 const settledListeners = new Set<JobListener>();
 const startedListeners = new Set<JobListener>();
 
-type ToastFilter = (job: JobView) => boolean;
-
-const toastFilters = new Set<ToastFilter>();
-
-/**
- * Suppress the generic per-job toast for jobs matching `filter`, e.g. while a
- * feature surfaces its own aggregate cue for them (a batch upload shows one
- * toast for many files). Registered before the jobs exist so it cannot race
- * their first snapshot. Returns a function that lifts the suppression.
- */
-export function suppressJobToasts(filter: ToastFilter): () => void {
-  toastFilters.add(filter);
-  return () => {
-    toastFilters.delete(filter);
-  };
-}
-
-/** Whether a job's per-job toast is currently suppressed by any filter. */
-export function isJobToastSuppressed(job: JobView): boolean {
-  for (const filter of toastFilters) {
-    if (filter(job)) return true;
-  }
-
-  return false;
-}
-
 /**
  * Register a callback fired once when any job reaches a terminal state. Keeps
  * the job store generic: a feature (e.g. documents) reacts only to its own job
@@ -63,7 +37,7 @@ export function onJobSettled(listener: JobListener): () => void {
 /**
  * Register a callback fired once when a job first appears in an active
  * (non-terminal) state — i.e. its work just began. Mirrors {@link onJobSettled}
- * so a feature can surface both ends of a job's lifecycle (e.g. a toast).
+ * so a feature can react to a job's arrival (e.g. revealing the task tray).
  * Returns an unsubscribe function.
  */
 export function onJobStarted(listener: JobListener): () => void {

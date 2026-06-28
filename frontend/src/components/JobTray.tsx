@@ -1,17 +1,12 @@
 import { AlertCircle, CheckCircle2, Loader2, RotateCw, X } from "lucide-react";
-import { type ReactNode, useEffect, useMemo } from "react";
-import { toast } from "sonner";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { ACTIVE_JOB_STATUSES, type JobView } from "../lib/types";
-import {
-  isJobToastSuppressed,
-  onJobSettled,
-  onJobStarted,
-  useJobsStore,
-} from "../stores/jobs-store";
+import { onJobStarted, useJobsStore } from "../stores/jobs-store";
 import {
   type UploadItem,
   type UploadItemStatus,
+  onUploadAdded,
   useUploadQueue,
 } from "../stores/upload-queue-store";
 import { Button } from "./ui/button";
@@ -119,17 +114,18 @@ interface UploadActions {
 
 function uploadRow(item: UploadItem, a: UploadActions): TaskRow {
   const failed = item.status === "failed";
+  const retry: TaskAction = {
+    key: "retry",
+    label: "Retry",
+    icon: <RotateCw className="h-3.5 w-3.5 mr-1" />,
+    ariaLabel: "Retry",
+    run: () => a.retry(item.id),
+  };
+  const dismiss = xAction("dismiss", "Dismiss upload", () => a.dismiss(item.id));
   const actions: TaskAction[] = failed
-    ? [
-        {
-          key: "retry",
-          label: "Retry",
-          icon: <RotateCw className="h-3.5 w-3.5 mr-1" />,
-          ariaLabel: "Retry",
-          run: () => a.retry(item.id),
-        },
-        xAction("dismiss", "Dismiss upload", () => a.dismiss(item.id)),
-      ]
+    ? item.retryable
+      ? [retry, dismiss]
+      : [dismiss]
     : [xAction("cancel", "Cancel upload", () => a.cancel(item.id))];
 
   return {
@@ -141,30 +137,6 @@ function uploadRow(item: UploadItem, a: UploadActions): TaskRow {
     progress: null,
     actions,
   };
-}
-
-// Flash a brief, self-dismissing cue at the edges of a job's lifecycle. The live
-// state lives in the tray, so the toast carries no description and never lingers
-// as a spinner. Upload jobs are suppressed by the queue, which surfaces them in
-// the tray itself, so this fires only for jobs without their own visual cue.
-function notifyJob(job: JobView): void {
-  if (isJobToastSuppressed(job)) return;
-
-  const opts = { id: job.id };
-
-  switch (job.status) {
-    case "succeeded":
-      toast.success(job.title, opts);
-      break;
-    case "failed":
-      toast.error(job.title, opts);
-      break;
-    case "cancelled":
-      toast.info(job.title, opts);
-      break;
-    default:
-      toast(job.title, opts);
-  }
 }
 
 function ToneIcon({ tone }: { tone: Tone }) {
@@ -252,13 +224,23 @@ export function JobTray() {
   const uploadCancel = useUploadQueue((s) => s.cancel);
   const uploadDismiss = useUploadQueue((s) => s.dismiss);
 
+  // The tray is the only cue for background work, so it pops open the moment a
+  // new entry is added — an enqueued upload or a starting job — and the user
+  // sees what is happening without hunting for the indicator. Both sources fire
+  // a one-shot "added" event: onUploadAdded for the queue, and onJobStarted,
+  // which already filters out the feed's reconnect re-seed so a page load with
+  // jobs still running does not pop the tray. A manual close while work is still
+  // running stays closed until the next genuinely new entry.
+  const [open, setOpen] = useState(false);
+
   useEffect(() => {
     start();
-    const offStarted = onJobStarted(notifyJob);
-    const offSettled = onJobSettled(notifyJob);
+    const reveal = () => setOpen(true);
+    const offUpload = onUploadAdded(reveal);
+    const offJob = onJobStarted(reveal);
     return () => {
-      offStarted();
-      offSettled();
+      offUpload();
+      offJob();
     };
   }, [start]);
 
@@ -279,7 +261,7 @@ export function JobTray() {
   const attentionCount = rows.filter((r) => r.tone === "error").length;
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button variant="ghost" size="sm" className="gap-2">
           {activeCount > 0 ? (
