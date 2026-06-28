@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
-import { cancelJob, subscribeJobs } from "../lib/api";
-import { TERMINAL_JOB_STATUSES, type JobView } from "../lib/types";
+import { cancelJob, subscribeJobs } from "@/lib/api";
+import { TERMINAL_JOB_STATUSES, type JobView } from "@/lib/types";
 
 // Reconnect backoff for the SSE feed: start fast, ramp toward the cap only while
 // reconnects keep failing (a sustained outage); a connection that stays open at

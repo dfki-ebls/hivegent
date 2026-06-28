@@ -1,6 +1,6 @@
 import { Archive, FolderOpen, FolderPlus, Paperclip, Plus, Upload } from "lucide-react";
 
-import { Button } from "../ui/button";
+import { Button } from "@/components/ui/button";
 
 interface UploadAreaProps {
   isDragging: boolean;

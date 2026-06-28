@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import type { MapSegment } from "./utils";
+import type { MapSegment } from "@/components/documents/utils";
 
 interface DocumentMapProps {
   segments: MapSegment[];

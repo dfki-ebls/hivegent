@@ -2,12 +2,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { LogIn } from "lucide-react";
 import { useCallback, useState } from "react";
 
-import { Logo } from "../components/Logo";
-import { VersionBadge } from "../components/VersionBadge";
-import { ChatLayout } from "../components/ChatLayout";
-import { Button } from "../components/ui/button";
-import { Spinner } from "../components/ui/spinner";
-import { useOidc } from "../oidc";
+import { Logo } from "@/components/Logo";
+import { VersionBadge } from "@/components/VersionBadge";
+import { ChatLayout } from "@/components/ChatLayout";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { useOidc } from "@/oidc";
 
 export const Route = createFileRoute("/")({
   component: IndexPage,

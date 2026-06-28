@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ReconvertDocumentOptions } from "../lib/api";
+import type { ReconvertDocumentOptions } from "@/lib/api";
 import {
   type BulkMoveEntry,
   bulkDelete as apiBulkDelete,
@@ -15,16 +15,16 @@ import {
   moveDocument,
   rechunkDocument,
   reconvertDocument,
-} from "../lib/api";
+} from "@/lib/api";
 import type {
   DirectoryTreeResponse,
   DocumentInfo,
   JobView,
   LlmConfig,
   PipelineSpec,
-} from "../lib/types";
-import { treeDocuments } from "../lib/utils";
-import { awaitJobSettled, onJobSettled, useJobsStore } from "./jobs-store";
+} from "@/lib/types";
+import { treeDocuments } from "@/lib/utils";
+import { awaitJobSettled, onJobSettled, useJobsStore } from "@/stores/jobs-store";
 
 /** Per-scope document-management state. A scope is `~` (personal) or `@<group>`. */
 export interface ScopeState {

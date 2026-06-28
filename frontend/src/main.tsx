@@ -2,12 +2,12 @@ import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
 
-import { BootstrapGate } from "./components/BootstrapGate";
-import { ThemeProvider } from "./components/ThemeProvider";
-import { OidcInitializationGate } from "./oidc";
-import { routeTree } from "./routeTree.gen";
+import { BootstrapGate } from "@/components/BootstrapGate";
+import { ThemeProvider } from "@/components/ThemeProvider";
+import { OidcInitializationGate } from "@/oidc";
+import { routeTree } from "@/routeTree.gen";
 
-import "./styles.css";
+import "@/styles.css";
 
 // A redeploy re-hashes lazily imported chunks, so a tab opened beforehand fails
 // to fetch them; reloading pulls the fresh (no-store) index.html with current

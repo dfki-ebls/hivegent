@@ -12,8 +12,8 @@ import { z } from "zod";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { getSettings, MaintenanceError } from "../lib/api";
-import { featureFlags } from "../lib/feature-flags";
+import { getSettings, MaintenanceError } from "@/lib/api";
+import { featureFlags } from "@/lib/feature-flags";
 import {
   AssetProcessingMode,
   AssetProcessingModeSchema,
@@ -33,7 +33,7 @@ import {
   PipelineConfigsSchema,
   type ToolsSpec,
   type UserOverrides,
-} from "../lib/types";
+} from "@/lib/types";
 
 const EMPTY_OVERRIDES: UserOverrides = {
   model: "",

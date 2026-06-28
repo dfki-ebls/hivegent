@@ -1,13 +1,13 @@
 import { Search } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
-import { useDocumentLineCounts } from "../../hooks/use-document-line-counts";
-import type { FetchedChunk, FetchedDocument } from "../../lib/types";
-import { useFetchedDocumentsStore } from "../../stores/fetched-documents-store";
-import { DocumentDialog } from "../DocumentDialog";
-import { ScrollArea } from "../ui/scroll-area";
-import { DocumentGroup } from "./DocumentGroup";
-import { EmptyState } from "./EmptyState";
+import { useDocumentLineCounts } from "@/hooks/use-document-line-counts";
+import type { FetchedChunk, FetchedDocument } from "@/lib/types";
+import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
+import { DocumentDialog } from "@/components/DocumentDialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { DocumentGroup } from "@/components/documents/DocumentGroup";
+import { EmptyState } from "@/components/documents/EmptyState";
 
 export function ContextDocuments() {
   const chunks = useFetchedDocumentsStore((state) => state.chunks);

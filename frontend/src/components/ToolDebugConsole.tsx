@@ -8,15 +8,15 @@
  */
 
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { listToolSchemas, runTool } from "../lib/api";
-import type { ToolRunResult, ToolSchema } from "../lib/types";
-import { errorMessage } from "../lib/utils";
-import { selectIsAdmin, useSettingsStore } from "../stores/settings-store";
-import { type JsonSchema, SchemaForm } from "./SchemaForm";
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
+import { listToolSchemas, runTool } from "@/lib/api";
+import type { ToolRunResult, ToolSchema } from "@/lib/types";
+import { errorMessage } from "@/lib/utils";
+import { selectIsAdmin, useSettingsStore } from "@/stores/settings-store";
+import { type JsonSchema, SchemaForm } from "@/components/SchemaForm";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import {
   Select,
   SelectContent,
@@ -25,8 +25,8 @@ import {
   SelectLabel,
   SelectTrigger,
   SelectValue,
-} from "./ui/select";
-import { Spinner } from "./ui/spinner";
+} from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 
 const PRE_CLASS =
   "max-h-96 overflow-auto rounded-md bg-muted p-3 font-mono text-xs whitespace-pre-wrap break-words";

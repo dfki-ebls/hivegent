@@ -1,16 +1,16 @@
 import { Images, Upload } from "lucide-react";
 
-import { PERSONAL_SCOPE, groupScope } from "../../lib/api";
-import { featureFlags } from "../../lib/feature-flags";
+import { PERSONAL_SCOPE, groupScope } from "@/lib/api";
+import { featureFlags } from "@/lib/feature-flags";
 import {
   AssetProcessingMode,
   type ChunkingPipeline,
   type ConversionPipeline,
-} from "../../lib/types";
-import { ChunkingPipelineSelector } from "../ChunkingPipelineSelector";
-import { ConversionPipelineSelector } from "../ConversionPipelineSelector";
-import { Label } from "../ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+} from "@/lib/types";
+import { ChunkingPipelineSelector } from "@/components/ChunkingPipelineSelector";
+import { ConversionPipelineSelector } from "@/components/ConversionPipelineSelector";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface PipelineSettingsBarProps {
   conversionPipeline: ConversionPipeline;

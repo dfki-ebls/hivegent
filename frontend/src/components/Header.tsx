@@ -1,11 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import { Bug, LogOut, User, UserCog } from "lucide-react";
-import { useOidc } from "../oidc";
-import { JobTray } from "./JobTray";
-import { Logo } from "./Logo";
-import { VersionBadge } from "./VersionBadge";
-import { selectIsAdmin, useSettingsStore } from "../stores/settings-store";
-import { Button } from "./ui/button";
+import { useOidc } from "@/oidc";
+import { JobTray } from "@/components/JobTray";
+import { Logo } from "@/components/Logo";
+import { VersionBadge } from "@/components/VersionBadge";
+import { selectIsAdmin, useSettingsStore } from "@/stores/settings-store";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,7 +13,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
+} from "@/components/ui/dropdown-menu";
 
 function UserMenu() {
   const oidc = useOidc();

@@ -17,9 +17,9 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "../components/ui/button";
-import { Label } from "../components/ui/label";
-import { Switch } from "../components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,7 +29,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "../components/ui/alert-dialog";
+} from "@/components/ui/alert-dialog";
 import {
   adminDeleteGroupData,
   adminDeleteUserData,
@@ -45,15 +45,15 @@ import {
   deleteAllConversations,
   deleteAllDocuments,
   deleteAllUserData,
-} from "../lib/api";
-import { startImpersonation } from "../lib/impersonation";
-import type { AdminGroupInfo, AdminUserInfo } from "../lib/types";
-import { errorMessage } from "../lib/utils";
-import { enforceLogin } from "../oidc";
-import { useConversationsStore } from "../stores/conversations-store";
-import { selectIsAdmin, selectUserId, useSettingsStore } from "../stores/settings-store";
-import { clearAllStorage } from "../stores/storage";
-import { useDocumentsStore } from "../stores/documents-store";
+} from "@/lib/api";
+import { startImpersonation } from "@/lib/impersonation";
+import type { AdminGroupInfo, AdminUserInfo } from "@/lib/types";
+import { errorMessage } from "@/lib/utils";
+import { enforceLogin } from "@/oidc";
+import { useConversationsStore } from "@/stores/conversations-store";
+import { selectIsAdmin, selectUserId, useSettingsStore } from "@/stores/settings-store";
+import { clearAllStorage } from "@/stores/storage";
+import { useDocumentsStore } from "@/stores/documents-store";
 
 export const Route = createFileRoute("/settings/account")({
   beforeLoad: enforceLogin,

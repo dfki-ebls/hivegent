@@ -6,7 +6,7 @@ import {
   type FetchedDocument,
   type FetchedImage,
   makeChunkId,
-} from "../lib/types";
+} from "@/lib/types";
 
 interface FetchedDocumentsStore {
   chunks: Map<string, FetchedChunk>;

@@ -15,7 +15,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { type DocumentCanvasTab, DocumentCanvasTabSchema } from "../lib/types";
+import { type DocumentCanvasTab, DocumentCanvasTabSchema } from "@/lib/types";
 
 interface DocumentCanvasState {
   activeTab: DocumentCanvasTab;

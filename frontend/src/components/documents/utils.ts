@@ -1,4 +1,4 @@
-import { type FetchedChunk, isLinePosition } from "../../lib/types";
+import { type FetchedChunk, isLinePosition } from "@/lib/types";
 
 /** A normalized read span (fractions in 0..1) within a document. */
 export interface MapSegment {

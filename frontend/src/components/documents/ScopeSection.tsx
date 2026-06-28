@@ -1,24 +1,24 @@
 import { ChevronDown, ChevronRight, FolderOpen, Loader2, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { PERSONAL_SCOPE, buildAuxLlmConfig, canonicalPath, writeDocument } from "../../lib/api";
-import type { PipelineSpec } from "../../lib/types";
-import { downloadBlob } from "../../lib/download";
-import { collectFilePaths } from "../../lib/utils";
-import { useDocumentFilterStore } from "../../stores/document-filter-store";
-import { DEFAULT_SCOPE_STATE, useDocumentsStore } from "../../stores/documents-store";
-import { useSettingsStore } from "../../stores/settings-store";
-import { DirectoryTreeView } from "../DirectoryTreeView";
-import { DocumentDialog } from "../DocumentDialog";
-import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
-import { BulkActionBar } from "./BulkActionBar";
-import { DocumentListItem } from "./DocumentListItem";
-import { ErrorBanner } from "./ErrorBanner";
-import { FilterToggleButtons, type FilterEntryState } from "./FilterToggleButtons";
-import { ScopeDialogs, type ScopeDialogsHandle } from "./ScopeDialogs";
+import { PERSONAL_SCOPE, buildAuxLlmConfig, canonicalPath, writeDocument } from "@/lib/api";
+import type { PipelineSpec } from "@/lib/types";
+import { downloadBlob } from "@/lib/download";
+import { collectFilePaths } from "@/lib/utils";
+import { useDocumentFilterStore } from "@/stores/document-filter-store";
+import { DEFAULT_SCOPE_STATE, useDocumentsStore } from "@/stores/documents-store";
+import { useSettingsStore } from "@/stores/settings-store";
+import { DirectoryTreeView } from "@/components/DirectoryTreeView";
+import { DocumentDialog } from "@/components/DocumentDialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { BulkActionBar } from "@/components/documents/BulkActionBar";
+import { DocumentListItem } from "@/components/documents/DocumentListItem";
+import { ErrorBanner } from "@/components/documents/ErrorBanner";
+import { FilterToggleButtons, type FilterEntryState } from "@/components/documents/FilterToggleButtons";
+import { ScopeDialogs, type ScopeDialogsHandle } from "@/components/documents/ScopeDialogs";
 
 /** Edit/view dialog target within a scope (local path). */
 interface ScopeDialogState {
@@ -164,7 +164,7 @@ export function ScopeSection({
   const handleDownloadOriginal = useCallback(
     async (path: string) => {
       try {
-        const { downloadOriginal } = await import("../../lib/api");
+        const { downloadOriginal } = await import("@/lib/api");
         const blob = await downloadOriginal(toCanonical(path));
         const filename = docsByFilename.get(path)?.original_path?.split("/").pop() ?? "original";
         downloadBlob(blob, filename);

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { Spinner } from "./ui/spinner";
+import { Spinner } from "@/components/ui/spinner";
 
 const STILL_WAITING_MS = 10_000;
 

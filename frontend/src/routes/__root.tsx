@@ -3,14 +3,14 @@ import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { useEffect } from "react";
 
-import { AppErrorBoundary } from "../components/AppErrorBoundary";
-import { Header } from "../components/Header";
-import { ImpersonationBanner } from "../components/ImpersonationBanner";
-import { MaintenanceScreen } from "../components/MaintenanceScreen";
-import { NotFound } from "../components/NotFound";
-import { Toaster } from "../components/ui/sonner";
-import { useOidc } from "../oidc";
-import { useSettingsStore } from "../stores/settings-store";
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
+import { Header } from "@/components/Header";
+import { ImpersonationBanner } from "@/components/ImpersonationBanner";
+import { MaintenanceScreen } from "@/components/MaintenanceScreen";
+import { NotFound } from "@/components/NotFound";
+import { Toaster } from "@/components/ui/sonner";
+import { useOidc } from "@/oidc";
+import { useSettingsStore } from "@/stores/settings-store";
 
 function RootComponent() {
   const { isUserLoggedIn } = useOidc();

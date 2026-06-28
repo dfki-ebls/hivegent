@@ -1,12 +1,12 @@
 import { Scissors } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { listChunkingPipelines } from "../lib/api";
-import { ChunkingPipeline, type ChunkingPipelineInfo, ChunkingPipelineSchema } from "../lib/types";
-import { useSettingsStore } from "../stores/settings-store";
-import { PipelineConfigDialog } from "./PipelineConfigDialog";
-import { Label } from "./ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { listChunkingPipelines } from "@/lib/api";
+import { ChunkingPipeline, type ChunkingPipelineInfo, ChunkingPipelineSchema } from "@/lib/types";
+import { useSettingsStore } from "@/stores/settings-store";
+import { PipelineConfigDialog } from "@/components/PipelineConfigDialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface ChunkingPipelineSelectorProps {
   value: ChunkingPipeline;

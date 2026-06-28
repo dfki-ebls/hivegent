@@ -1,11 +1,11 @@
 import { PanelLeftOpen } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { useDocumentCanvasStore } from "../stores/document-canvas-store";
-import { ChatSidebar } from "./chat/ChatSidebar";
-import { DocumentCanvas } from "./documents/DocumentCanvas";
-import { Button } from "./ui/button";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./ui/sheet";
+import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
+import { ChatSidebar } from "@/components/chat/ChatSidebar";
+import { DocumentCanvas } from "@/components/documents/DocumentCanvas";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
 interface ChatLayoutProps {
   id: string;

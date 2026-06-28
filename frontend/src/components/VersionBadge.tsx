@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { Badge } from "./ui/badge";
+import { Badge } from "@/components/ui/badge";
 
 /** A subtle marker noting the app's release stage; shown beside the wordmark. */
 export function VersionBadge({

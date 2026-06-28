@@ -1,5 +1,5 @@
-import { type FetchedChunk, chunkOriginLabel, chunkPositionLabel } from "../../lib/types";
-import { Badge } from "../ui/badge";
+import { type FetchedChunk, chunkOriginLabel, chunkPositionLabel } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
 
 interface ChunkCardProps {
   chunk: FetchedChunk;

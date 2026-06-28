@@ -1,11 +1,11 @@
 import { Brain, Files, type LucideIcon } from "lucide-react";
 import type { ComponentType } from "react";
 
-import { type DocumentCanvasTab } from "../../lib/types";
-import { useDocumentCanvasStore } from "../../stores/document-canvas-store";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
-import { ContextDocuments } from "./ContextDocuments";
-import { DocumentManager } from "./DocumentManager";
+import { type DocumentCanvasTab } from "@/lib/types";
+import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ContextDocuments } from "@/components/documents/ContextDocuments";
+import { DocumentManager } from "@/components/documents/DocumentManager";
 
 interface TabDef {
   id: DocumentCanvasTab;

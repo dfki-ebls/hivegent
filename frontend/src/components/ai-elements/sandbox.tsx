@@ -16,7 +16,7 @@ import type { ToolUIPart } from "ai";
 import { ChevronDownIcon, Code } from "lucide-react";
 import type { ComponentProps } from "react";
 
-import { getStatusBadge } from "./tool";
+import { getStatusBadge } from "@/components/ai-elements/tool";
 
 export type SandboxRootProps = ComponentProps<typeof Collapsible>;
 

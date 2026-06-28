@@ -7,28 +7,28 @@ import {
   canonicalPath,
   groupScope,
   writeDocument,
-} from "../../lib/api";
+} from "@/lib/api";
 import {
   buildCollectionZip,
   buildCollectionZipFromDirectoryInput,
   classifyDropItems,
-} from "../../lib/collection-upload";
-import { featureFlags } from "../../lib/feature-flags";
-import type { PipelineSpec } from "../../lib/types";
-import { errorMessage } from "../../lib/utils";
-import { useDocumentsStore } from "../../stores/documents-store";
-import { canWriteGroup, getAllGroups, useSettingsStore } from "../../stores/settings-store";
+} from "@/lib/collection-upload";
+import { featureFlags } from "@/lib/feature-flags";
+import type { PipelineSpec } from "@/lib/types";
+import { errorMessage } from "@/lib/utils";
+import { useDocumentsStore } from "@/stores/documents-store";
+import { canWriteGroup, getAllGroups, useSettingsStore } from "@/stores/settings-store";
 import {
   type UploadOptions,
   selectHasPendingUploads,
   useUploadQueue,
-} from "../../stores/upload-queue-store";
-import { CreateDirectoryDialog } from "../CreateDirectoryDialog";
-import { DocumentDialog } from "../DocumentDialog";
-import { Input } from "../ui/input";
-import { PipelineSettingsBar } from "./PipelineSettingsBar";
-import { ScopeSection } from "./ScopeSection";
-import { UploadArea } from "./UploadArea";
+} from "@/stores/upload-queue-store";
+import { CreateDirectoryDialog } from "@/components/CreateDirectoryDialog";
+import { DocumentDialog } from "@/components/DocumentDialog";
+import { Input } from "@/components/ui/input";
+import { PipelineSettingsBar } from "@/components/documents/PipelineSettingsBar";
+import { ScopeSection } from "@/components/documents/ScopeSection";
+import { UploadArea } from "@/components/documents/UploadArea";
 
 export function DocumentManager() {
   const overrides = useSettingsStore((s) => s.overrides);

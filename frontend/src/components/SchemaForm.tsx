@@ -6,10 +6,10 @@
  * Deeply nested or unsupported types are skipped (handled by the Advanced JSON editor).
  */
 
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Switch } from "./ui/switch";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
 /** A single property definition from a JSON Schema. */
 interface SchemaProperty {

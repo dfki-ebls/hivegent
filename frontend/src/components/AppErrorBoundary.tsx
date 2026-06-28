@@ -7,7 +7,7 @@
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
-import { clearAllStorage } from "../stores/storage";
+import { clearAllStorage } from "@/stores/storage";
 
 interface Props {
   children: ReactNode;

@@ -1,9 +1,9 @@
 import { forwardRef, useCallback, useImperativeHandle, useState } from "react";
 
 import { commonParentDir } from "@/lib/utils";
-import { useDocumentsStore } from "../../stores/documents-store";
-import { CreateDirectoryDialog } from "../CreateDirectoryDialog";
-import { MoveDocumentDialog } from "../MoveDocumentDialog";
+import { useDocumentsStore } from "@/stores/documents-store";
+import { CreateDirectoryDialog } from "@/components/CreateDirectoryDialog";
+import { MoveDocumentDialog } from "@/components/MoveDocumentDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,7 +13,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "../ui/alert-dialog";
+} from "@/components/ui/alert-dialog";
 
 type DeleteTarget =
   | { kind: "file"; path: string }

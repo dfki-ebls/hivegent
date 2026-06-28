@@ -22,8 +22,8 @@ import {
 } from "@/lib/api";
 import { MARKDOWN_BASE_OPTIONS, workspaceMarkdownOptions } from "@/components/chat/markdown/config";
 import { useSettingsStore } from "@/stores/settings-store";
-import { AssetImage } from "./documents/AssetImage";
-import { WorkspaceImage } from "./WorkspaceImage";
+import { AssetImage } from "@/components/documents/AssetImage";
+import { WorkspaceImage } from "@/components/WorkspaceImage";
 import {
   type AssetEntry,
   type AssetListResponse,
@@ -35,8 +35,8 @@ import {
   sortChunks,
 } from "@/lib/types";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -44,12 +44,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "./ui/dialog";
-import { Input } from "./ui/input";
-import { ScrollArea } from "./ui/scroll-area";
-import { Spinner } from "./ui/spinner";
-import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
-import { Textarea } from "./ui/textarea";
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 
 interface DocumentDialogProps {
   open: boolean;

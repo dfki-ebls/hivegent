@@ -1,6 +1,6 @@
 import { WrenchIcon } from "lucide-react";
 
-import { FullScreenNotice } from "./FullScreenNotice";
+import { FullScreenNotice } from "@/components/FullScreenNotice";
 
 /**
  * Full-screen notice shown to non-admins while the backend is in

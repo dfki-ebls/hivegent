@@ -1,7 +1,7 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { z } from "zod";
 
-import type { AgentMode, McpServerEntry, ToolsSpec } from "./types";
+import type { AgentMode, McpServerEntry, ToolsSpec } from "@/lib/types";
 import {
   type AdminFactoryResetResponse,
   AdminFactoryResetResponseSchema,
@@ -56,9 +56,9 @@ import {
   TranscriptionResponseSchema,
   MoveDocumentResponseSchema,
   type PipelineSpec,
-} from "./types";
+} from "@/lib/types";
 
-import { featureFlags } from "./feature-flags";
+import { featureFlags } from "@/lib/feature-flags";
 
 import { API_BASE_URL, waitForBackendReady } from "@/lib/health";
 import { getImpersonation, IMPERSONATE_HEADER } from "@/lib/impersonation";

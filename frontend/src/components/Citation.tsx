@@ -11,7 +11,7 @@ import {
   makeChunkId,
   parseLinePositions,
 } from "@/lib/types";
-import { DocumentDialog } from "./DocumentDialog";
+import { DocumentDialog } from "@/components/DocumentDialog";
 
 /**
  * Inline citation rendered by Streamdown for `<cite>` tags.

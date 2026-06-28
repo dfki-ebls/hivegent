@@ -8,8 +8,8 @@
 import { RotateCcwIcon, SettingsIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { Button } from "./ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
+import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -18,9 +18,9 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "./ui/dialog";
-import { Textarea } from "./ui/textarea";
-import { type JsonSchema, SchemaForm } from "./SchemaForm";
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { type JsonSchema, SchemaForm } from "@/components/SchemaForm";
 
 /** Type guard: check that a value looks like a JSON Schema with properties. */
 function isJsonSchema(v: unknown): v is JsonSchema {

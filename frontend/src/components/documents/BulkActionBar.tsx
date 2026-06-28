@@ -1,7 +1,7 @@
 import { X } from "lucide-react";
 
-import { DOCUMENT_ACTIONS } from "../../lib/document-actions";
-import { Button } from "../ui/button";
+import { DOCUMENT_ACTIONS } from "@/lib/document-actions";
+import { Button } from "@/components/ui/button";
 
 interface BulkActionBarProps {
   selectedCount: number;

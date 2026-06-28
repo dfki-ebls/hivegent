@@ -10,16 +10,16 @@ import {
   XIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { clearMemory, listTools, type McpTestResult, testMcpServer } from "../lib/api";
-import { featureFlags } from "../lib/feature-flags";
+import { clearMemory, listTools, type McpTestResult, testMcpServer } from "@/lib/api";
+import { featureFlags } from "@/lib/feature-flags";
 import {
   PERSONALITY_OPTIONS,
   type McpOAuth2Config,
   type McpServerEntry,
   type Personality,
   type ToolInfo,
-} from "../lib/types";
-import { useSettingsStore } from "../stores/settings-store";
+} from "@/lib/types";
+import { useSettingsStore } from "@/stores/settings-store";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,8 +30,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "./ui/alert-dialog";
-import { Button } from "./ui/button";
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -40,12 +40,12 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "./ui/dialog";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Switch } from "./ui/switch";
-import { Textarea } from "./ui/textarea";
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 
 // --- Section components ---
 

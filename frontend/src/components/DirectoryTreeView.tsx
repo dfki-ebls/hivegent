@@ -19,10 +19,10 @@ import { DOCUMENT_ACTIONS, type DocumentActionId } from "@/lib/document-actions"
 import type { DirectoryEntry } from "@/lib/types";
 import { collectFilePaths, formatFileSize } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings-store";
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
-import { Checkbox } from "./ui/checkbox";
-import { Spinner } from "./ui/spinner";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Spinner } from "@/components/ui/spinner";
 
 interface DirectoryTreeViewProps {
   entry: DirectoryEntry;

@@ -5,9 +5,9 @@ import {
   canonicalPath,
   uploadCollection,
   uploadDocument,
-} from "../lib/api";
-import { errorMessage, fileStem, isAbortError } from "../lib/utils";
-import { useJobsStore } from "./jobs-store";
+} from "@/lib/api";
+import { errorMessage, fileStem, isAbortError } from "@/lib/utils";
+import { useJobsStore } from "@/stores/jobs-store";
 
 // How many files transfer their bytes at once. Conversion and indexing run
 // server-side behind the backend's own job semaphore, so this caps concurrent

@@ -1,13 +1,13 @@
 import { FileText, RotateCcw, Scissors, Trash2 } from "lucide-react";
 
-import type { DocumentInfo } from "../../lib/types";
-import { formatFileSize } from "../../lib/utils";
-import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
-import { Spinner } from "../ui/spinner";
-import { FilterToggleButtons, type FilterEntryState } from "./FilterToggleButtons";
-import { formatRelativeDate } from "./utils";
+import type { DocumentInfo } from "@/lib/types";
+import { formatFileSize } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Spinner } from "@/components/ui/spinner";
+import { FilterToggleButtons, type FilterEntryState } from "@/components/documents/FilterToggleButtons";
+import { formatRelativeDate } from "@/components/documents/utils";
 
 interface DocumentListItemProps {
   doc: DocumentInfo;

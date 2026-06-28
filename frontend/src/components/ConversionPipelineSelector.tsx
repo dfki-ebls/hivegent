@@ -1,16 +1,16 @@
 import { FileType } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { listConversionPipelines } from "../lib/api";
+import { listConversionPipelines } from "@/lib/api";
 import {
   ConversionPipeline,
   type ConversionPipelineInfo,
   ConversionPipelineSchema,
-} from "../lib/types";
-import { useSettingsStore } from "../stores/settings-store";
-import { PipelineConfigDialog } from "./PipelineConfigDialog";
-import { Label } from "./ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+} from "@/lib/types";
+import { useSettingsStore } from "@/stores/settings-store";
+import { PipelineConfigDialog } from "@/components/PipelineConfigDialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface ConversionPipelineSelectorProps {
   value: ConversionPipeline;

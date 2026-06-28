@@ -1,4 +1,4 @@
-import type { DirectoryEntry, DocumentInfo } from "./types";
+import type { DirectoryEntry, DocumentInfo } from "@/lib/types";
 
 export { cn, type ClassValue } from "cnfast";
 

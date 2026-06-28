@@ -5,8 +5,8 @@ import { useEffect, useState } from "react";
 import { errorMessage } from "@/lib/utils";
 import { initOidc } from "@/oidc";
 
-import { ConnectingScreen } from "./ConnectingScreen";
-import { FullScreenNotice } from "./FullScreenNotice";
+import { ConnectingScreen } from "@/components/ConnectingScreen";
+import { FullScreenNotice } from "@/components/FullScreenNotice";
 
 type State = { status: "loading" } | { status: "ready" } | { status: "error"; message: string };
 

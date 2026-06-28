@@ -4,8 +4,8 @@ import {
   generateConversationTitle,
   listConversations,
   updateConversationTitle,
-} from "../lib/api";
-import type { ConversationSummary, LlmConfig } from "../lib/types";
+} from "@/lib/api";
+import type { ConversationSummary, LlmConfig } from "@/lib/types";
 
 interface ConversationsState {
   conversations: ConversationSummary[];

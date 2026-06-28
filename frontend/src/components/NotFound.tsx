@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Compass, MoveLeft } from "lucide-react";
 
-import { Button } from "./ui/button";
+import { Button } from "@/components/ui/button";
 
 /**
  * Catch-all screen rendered by the root route whenever no route matches the

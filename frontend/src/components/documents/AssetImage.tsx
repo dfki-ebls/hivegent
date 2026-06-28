@@ -3,7 +3,7 @@ import { useCallback } from "react";
 import { useInView } from "@/hooks/use-in-view";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { cn } from "@/lib/utils";
-import { fetchDocumentAsset } from "../../lib/api";
+import { fetchDocumentAsset } from "@/lib/api";
 
 interface AssetImageProps {
   /** Canonical workspace path of the image. */

@@ -1,16 +1,16 @@
 import { ChevronRight, Globe } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { featureFlags } from "../../lib/feature-flags";
-import { type FetchedChunk, type FetchedDocument, sortChunks } from "../../lib/types";
-import { formatWebUrl, isWebUrl } from "../../lib/utils";
-import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
-import { AssetImage } from "./AssetImage";
-import { ChunkCard } from "./ChunkCard";
-import { DocumentMap } from "./DocumentMap";
-import { documentReadMap } from "./utils";
+import { featureFlags } from "@/lib/feature-flags";
+import { type FetchedChunk, type FetchedDocument, sortChunks } from "@/lib/types";
+import { formatWebUrl, isWebUrl } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { AssetImage } from "@/components/documents/AssetImage";
+import { ChunkCard } from "@/components/documents/ChunkCard";
+import { DocumentMap } from "@/components/documents/DocumentMap";
+import { documentReadMap } from "@/components/documents/utils";
 
 interface DocumentGroupProps {
   doc: FetchedDocument;

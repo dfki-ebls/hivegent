@@ -1,17 +1,17 @@
 import { AlertCircle, CheckCircle2, Loader2, RotateCw, X } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
-import { ACTIVE_JOB_STATUSES, type JobView } from "../lib/types";
-import { onJobStarted, useJobsStore } from "../stores/jobs-store";
+import { ACTIVE_JOB_STATUSES, type JobView } from "@/lib/types";
+import { onJobStarted, useJobsStore } from "@/stores/jobs-store";
 import {
   type UploadItem,
   type UploadItemStatus,
   onUploadAdded,
   useUploadQueue,
-} from "../stores/upload-queue-store";
-import { Button } from "./ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
-import { Progress } from "./ui/progress";
+} from "@/stores/upload-queue-store";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Progress } from "@/components/ui/progress";
 
 // A row's visual tone, decoupled from whether it came from a job or an upload.
 type Tone = "active" | "success" | "error" | "muted";
