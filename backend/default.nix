@@ -8,6 +8,7 @@
   pyproject-nix,
   pyproject-build-systems,
   makeBinaryWrapper,
+  autoAddDriverRunpath,
   writeShellApplication,
   coreutils,
   exiftool,
@@ -42,16 +43,49 @@ let
   patchelfOverlay =
     final: prev:
     let
-      names = lib.filter (lib.hasPrefix "nvidia-") (lib.attrNames prev) ++ [
-        "torch"
-        "torchvision"
-        "kreuzberg"
-      ];
+      names =
+        lib.filter (lib.hasPrefix "nvidia-") (lib.attrNames prev)
+        ++ lib.filter (name: prev ? ${name}) [
+          "torch"
+          "torchvision"
+          "triton"
+        ];
     in
     lib.genAttrs names (
       name:
-      prev.${name}.overrideAttrs (_: {
-        autoPatchelfIgnoreMissingDeps = true;
+      prev.${name}.overrideAttrs (old: {
+        nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ autoAddDriverRunpath ];
+        autoPatchelfIgnoreMissingDeps = [
+          # NVIDIA driver lib, the only one injected at runtime (autoAddDriverRunpath)
+          "libcuda.so.1"
+          # bundled CUDA runtime + torch libs, resolved from the merged virtualenv
+          "libcudart.so.*"
+          "libcublas.so.*"
+          "libcublasLt.so.*"
+          "libcudnn.so.*"
+          "libcufft.so.*"
+          "libcufile.so.*"
+          "libcupti.so.*"
+          "libcurand.so.*"
+          "libcusolver.so.*"
+          "libcusparse.so.*"
+          "libcusparseLt.so.*"
+          "libnvrtc.so.*"
+          "libnvJitLink.so.*"
+          "libnccl.so.*"
+          "libnvshmem_host.so.*"
+          "libc10*.so"
+          "libtorch*.so"
+          # optional NVSHMEM/cuFile transports (RDMA/UCX/libfabric/MPI), not provided
+          "libibverbs.so.*"
+          "libmlx5.so.*"
+          "libucp.so.*"
+          "libucs.so.*"
+          "libfabric.so.*"
+          "libmpi.so.*"
+          "liboshmem.so.*"
+          "libpmix.so.*"
+        ];
       })
     );
   packageOverlay = final: prev: {
