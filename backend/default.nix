@@ -78,6 +78,7 @@ let
           "libtorch*.so"
           # optional NVSHMEM/cuFile transports (RDMA/UCX/libfabric/MPI), not provided
           "libibverbs.so.*"
+          "librdmacm.so.*"
           "libmlx5.so.*"
           "libucp.so.*"
           "libucs.so.*"
