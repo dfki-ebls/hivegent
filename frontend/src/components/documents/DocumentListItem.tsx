@@ -6,7 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Spinner } from "@/components/ui/spinner";
-import { FilterToggleButtons, type FilterEntryState } from "@/components/documents/FilterToggleButtons";
+import {
+  FilterToggleButtons,
+  type FilterEntryState,
+} from "@/components/documents/FilterToggleButtons";
 import { formatRelativeDate } from "@/components/documents/utils";
 
 interface DocumentListItemProps {

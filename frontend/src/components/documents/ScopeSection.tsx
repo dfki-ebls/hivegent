@@ -17,7 +17,10 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { BulkActionBar } from "@/components/documents/BulkActionBar";
 import { DocumentListItem } from "@/components/documents/DocumentListItem";
 import { ErrorBanner } from "@/components/documents/ErrorBanner";
-import { FilterToggleButtons, type FilterEntryState } from "@/components/documents/FilterToggleButtons";
+import {
+  FilterToggleButtons,
+  type FilterEntryState,
+} from "@/components/documents/FilterToggleButtons";
 import { ScopeDialogs, type ScopeDialogsHandle } from "@/components/documents/ScopeDialogs";
 
 /** Edit/view dialog target within a scope (local path). */

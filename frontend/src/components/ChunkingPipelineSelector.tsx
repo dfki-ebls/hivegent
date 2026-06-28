@@ -6,7 +6,13 @@ import { ChunkingPipeline, type ChunkingPipelineInfo, ChunkingPipelineSchema } f
 import { useSettingsStore } from "@/stores/settings-store";
 import { PipelineConfigDialog } from "@/components/PipelineConfigDialog";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface ChunkingPipelineSelectorProps {
   value: ChunkingPipeline;
