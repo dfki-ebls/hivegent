@@ -6,3 +6,8 @@
 # Brand assets: track only the canonical logo, never the large design sources.
 /assets/*
 !/assets/logo.svg
+
+# mdbook-mermaid runtime, generated into the book root by `mdbook-mermaid install`.
+/docs/mermaid.min.js
+/docs/mermaid-init.js
+/docs/book/

@@ -7,6 +7,7 @@
   python3,
   postgresql_18,
   mdbook,
+  mdbook-mermaid,
   uv,
   git,
   lib,
@@ -46,6 +47,7 @@ mkShell {
     hivegent
     postgresql_18
     mdbook
+    mdbook-mermaid
   ]
   # CLI tools used by backend subprocess wrappers + docling deps; sourced
   # from the backend derivation so the dev shell and the wrapped binary
