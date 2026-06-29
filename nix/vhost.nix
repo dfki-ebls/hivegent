@@ -46,7 +46,7 @@
 
   ${extraConfig}
 
-  encode zstd gzip
+  encode
 
   # Keep large uploads limited to API routes.
   @small_body not path /api/*
