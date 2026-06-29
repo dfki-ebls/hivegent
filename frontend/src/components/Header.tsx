@@ -1,10 +1,12 @@
 import { Link } from "@tanstack/react-router";
 import { Bug, LogOut, User, UserCog } from "lucide-react";
 import { useOidc } from "@/oidc";
+import { DocsLink } from "@/components/DocsLink";
 import { JobTray } from "@/components/JobTray";
 import { Logo } from "@/components/Logo";
 import { VersionBadge } from "@/components/VersionBadge";
 import { selectIsAdmin, useSettingsStore } from "@/stores/settings-store";
+import { DOCS_URL } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -57,6 +59,11 @@ function UserMenu() {
             Account
           </Link>
         </DropdownMenuItem>
+        {DOCS_URL && (
+          <DropdownMenuItem asChild>
+            <DocsLink />
+          </DropdownMenuItem>
+        )}
         {isAdmin && (
           <DropdownMenuItem asChild>
             <Link to="/debug" className="flex items-center gap-2">

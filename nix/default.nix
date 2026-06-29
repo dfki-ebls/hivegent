@@ -14,16 +14,23 @@
   flake.nixosModules.default = moduleWithSystem (
     perSystem@{ config }:
     { lib, config, ... }:
+    let
+      caddy = config.services.hivegent.caddy;
+      # Slash-terminated handbook URL feeding both the book's `site-url` and the
+      # SPA's link, tracked from `caddy.docsPath`.
+      docsSite = "${caddy.docsPath}/";
+    in
     {
       imports = [ ./nixos ];
       services.hivegent.package = lib.mkDefault perSystem.config.packages.backend;
-      services.hivegent.caddy.frontend = lib.mkDefault perSystem.config.packages.frontend;
-      # Build the handbook with `site-url` tracking the mount point so links
-      # keep working when the operator relocates it via `caddy.docsPath`.
-      services.hivegent.caddy.docs = lib.mkDefault (
-        perSystem.config.packages.docs.override {
-          sitePath = "${config.services.hivegent.caddy.docsPath}/";
+      # Blank the URL when `caddy.docs` is null so the SPA hides the link.
+      services.hivegent.caddy.frontend = lib.mkDefault (
+        perSystem.config.packages.frontend.override {
+          docsUrl = lib.optionalString (caddy.docs != null) docsSite;
         }
+      );
+      services.hivegent.caddy.docs = lib.mkDefault (
+        perSystem.config.packages.docs.override { sitePath = docsSite; }
       );
     }
   );

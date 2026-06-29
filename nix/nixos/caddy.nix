@@ -27,8 +27,9 @@ in
       default = null;
       extraDescription = ''
         Built SPA served as static files. Defaults to the `frontend` package
-        of the hivegent flake. The SPA reads its OIDC config at runtime from the
-        backend's `/api/config`, so no per-deployment rebuild is needed.
+        of the hivegent flake, rebuilt with its "Documentation" link tracking
+        `docsPath`. The SPA otherwise reads its OIDC config at runtime from the
+        backend's `/api/config`, so changing that needs no rebuild.
 
         Set to `null` to serve the API only, without the SPA — useful when a
         deployment consumes the REST API directly. Non-API paths then return

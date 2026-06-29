@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { LogIn } from "lucide-react";
 import { useCallback, useState } from "react";
 
+import { DocsLink } from "@/components/DocsLink";
 import { Logo } from "@/components/Logo";
 import { VersionBadge } from "@/components/VersionBadge";
 import { ChatLayout } from "@/components/ChatLayout";
@@ -44,6 +45,7 @@ function IndexPage() {
           {isSigningIn ? <Spinner className="mr-2 h-4 w-4" /> : <LogIn className="mr-2 h-4 w-4" />}
           Sign In
         </Button>
+        <DocsLink className="text-sm text-muted-foreground hover:text-foreground transition-colors" />
       </div>
     </div>
   );

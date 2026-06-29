@@ -2,6 +2,10 @@ import type { DirectoryEntry, DocumentInfo } from "@/lib/types";
 
 export { cn, type ClassValue } from "cnfast";
 
+/** Handbook URL from `VITE_DOCS_URL`, or `undefined` when no handbook is served,
+ * which hides the "Documentation" link. */
+export const DOCS_URL = import.meta.env.VITE_DOCS_URL;
+
 /** Format a byte count as a human-readable file size. */
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

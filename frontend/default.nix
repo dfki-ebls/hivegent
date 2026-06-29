@@ -2,11 +2,16 @@
   buildNpmPackage,
   importNpmLock,
   lib,
+  # Slash-terminated URL the handbook is mounted at, or "" to omit the SPA's
+  # "Documentation" link. Mirrors the `docs` package's `sitePath`.
+  docsUrl ? "",
 }:
 buildNpmPackage (finalAttrs: {
   inherit (finalAttrs.npmDeps) pname version;
   inherit (importNpmLock) npmConfigHook;
   npmDeps = importNpmLock { npmRoot = ./.; };
+
+  VITE_DOCS_URL = docsUrl;
 
   # The canonical logo lives at the repo-level `assets/` and is symlinked into
   # `public/`, so the build source must span both directories for the symlink

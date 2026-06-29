@@ -8,6 +8,7 @@
  */
 interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
+  readonly VITE_DOCS_URL?: string;
 
   readonly VITE_FEATURE_ALL?: string;
   readonly VITE_FEATURE_LLM_SPEC?: string;

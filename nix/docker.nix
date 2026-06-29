@@ -40,11 +40,13 @@
   dataDir ? "/data",
 }:
 let
-  # The handbook's `site-url` must match its mount point, so derive both from
-  # the normalised `docsPath` here. This makes `docsPath` the single source of
-  # truth and tolerates a stray trailing slash that would otherwise double up.
+  # `docsPath` is the single source of truth: the vhost routes on the slash-less
+  # `docsPrefix`, while the book's `site-url` and the SPA's link share the
+  # slash-terminated `docsUrl` (blank when no handbook is bundled, hiding the link).
   docsPrefix = lib.removeSuffix "/" docsPath;
-  handbook = if docs == null then null else docs.override { sitePath = "${docsPrefix}/"; };
+  docsUrl = lib.optionalString (docs != null) "${docsPrefix}/";
+  handbook = if docs == null then null else docs.override { sitePath = docsUrl; };
+  spa = frontend.override { inherit docsUrl; };
 
   # Docker healthcheck durations are nanoseconds.
   seconds = n: n * 1000000000;
@@ -75,7 +77,8 @@ let
 
     {$HIVEGENT_SITE_ADDRESS:${defaultSiteAddress}} {
       ${import ./vhost.nix {
-        inherit lib frontend enableMcp;
+        inherit lib enableMcp;
+        frontend = spa;
         docs = handbook;
         docsPath = docsPrefix;
         upstream = "127.0.0.1:${toString backendPort}";
