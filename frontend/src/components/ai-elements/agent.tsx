@@ -13,7 +13,7 @@ import { BotIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 import { memo } from "react";
 
-import { CodeBlock } from "@/components/ai-elements/code-block";
+import { CodeBlock } from "./code-block";
 
 export type AgentProps = ComponentProps<"div">;
 
