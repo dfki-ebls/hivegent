@@ -211,13 +211,20 @@ app.overrideAttrs (oldAttrs: {
   # DOCLING_INFERENCE_COMPILE_TORCH_MODELS tracks `enableTorchCompile`:
   # without the toolchain on PATH, docling's default of compiling its torch
   # models would make every PDF conversion die in the enrichment stage
-  # (TorchInductor cannot codegen).  `--set-default` keeps both env vars
-  # overridable from the unit or shell.
+  # (TorchInductor cannot codegen).
+  #
+  # DBUS_SESSION_BUS_ADDRESS: docling shells out to LibreOffice, whose nixpkgs
+  # wrapper otherwise starts a private D-Bus daemon under `/run/user/$UID` —
+  # unwritable for an unprivileged/DynamicUser service (no logind session), and
+  # fatal to the conversion.  Headless conversion needs no session bus.
+  #
+  # `--set-default` keeps every env var overridable from the unit or shell.
   postFixup = (oldAttrs.postFixup or "") + ''
     wrapProgram "$out/bin/hivegent" \
       --prefix PATH : ${lib.makeBinPath runtimeInputs} \
       --set-default TESSDATA_PREFIX ${tessdata} \
       --set-default DOCLING_INFERENCE_COMPILE_TORCH_MODELS ${if torchCompile then "1" else "0"} \
+      --set-default DBUS_SESSION_BUS_ADDRESS "disabled:" \
       --set-default LOGFIRE_IGNORE_NO_CONFIG 1
   '';
   passthru = (oldAttrs.passthru or { }) // {
