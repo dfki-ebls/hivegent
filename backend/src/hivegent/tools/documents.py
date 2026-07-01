@@ -11,7 +11,12 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..config import content_hash
-from ..entries import is_assets_dir
+from ..entries import (
+    description_path_for_stem,
+    is_assets_dir,
+    is_description_file,
+    stem_path_from_reference,
+)
 from .base import (
     WORKSPACE_PATH_HINT,
     WORKSPACE_SCOPE_HINT,
@@ -509,6 +514,22 @@ class GlobDocumentsTool(SyncPathTool[list[str]]):
         )
 
 
+def _description_companion(sp: SearchPath, local: str, original: Path) -> Path | None:
+    """Absolute path of *original*'s markdown description companion, if readable.
+
+    Every non-markdown upload keeps its original ``<stem>.<ext>`` and an indexed
+    ``<stem>.md`` description; this swaps the already-validated *original* for
+    that sibling (same directory, so no new traversal), reusing the search
+    path's filter.  Returns ``None`` when no companion exists on disk.
+    """
+    desc_local = description_path_for_stem(stem_path_from_reference(local))
+    if not file_allowed(sp.filter_func, desc_local):
+        return None
+
+    companion = original.with_name(Path(desc_local).name)
+    return companion if companion.is_file() else None
+
+
 @dataclass(slots=True, frozen=True)
 class ReadDocumentTool(SyncPathTool[DocumentRange]):
     """Read a document's content as a line range with line numbers."""
@@ -534,7 +555,7 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None or not resolved[2].is_file():
             raise ToolRetry(f"'{file_path}' not found.")
-        _sp, _local, absolute = resolved
+        sp, local, absolute = resolved
 
         media_type = binary_media_type(file_path)
         if media_type is not None:
@@ -543,7 +564,22 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
                 "use read_binary_document to send it to a vision model."
             )
 
-        raw_text = absolute.read_text(encoding="utf-8")
+        # A non-markdown original (report.docx) is inert bytes on disk; its
+        # indexed text lives in the sibling markdown description.  Serve that so
+        # the caller gets extracted text instead of a binary it cannot decode.
+        if not is_description_file(local):
+            companion = _description_companion(sp, local, absolute)
+            if companion is not None:
+                absolute = companion
+
+        try:
+            raw_text = absolute.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ToolRetry(
+                f"'{file_path}' is not readable as text and has no indexed text "
+                "companion; if it is a supported visual format, use "
+                "read_binary_document instead."
+            ) from exc
         file_hash = content_hash(raw_text)
         all_lines = raw_text.splitlines()
         total = len(all_lines)

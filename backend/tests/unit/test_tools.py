@@ -408,6 +408,22 @@ class TestReadDocumentTool:
         assert result.total_lines == 1
         assert result.content_hash  # surfaced for optimistic-concurrency edits
 
+    def test_binary_original_serves_markdown_companion(self, tmp_path: Path) -> None:
+        # A binary original (report.docx) is inert; its indexed text lives in
+        # the sibling report.md, which read_document serves instead of bytes.
+        (tmp_path / "report.docx").write_bytes(b"PK\x03\x04\xec\xec binary")
+        (tmp_path / "report.md").write_text("extracted text")
+        tool = ReadDocumentTool(paths=tmp_path)
+        assert tool("report.docx").data.content == "extracted text"
+
+    def test_binary_without_companion_retries(self, tmp_path: Path) -> None:
+        # Undecodable bytes with no companion become a recoverable ToolRetry,
+        # never a run-aborting UnicodeDecodeError.
+        (tmp_path / "blob.bin").write_bytes(b"\xec\xec\xff\xfe")
+        tool = ReadDocumentTool(paths=tmp_path)
+        with pytest.raises(ToolRetry, match="not readable as text"):
+            tool("blob.bin")
+
     def test_rejects_nonexistent(self, tmp_path: Path) -> None:
         tool = ReadDocumentTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="not found"):
