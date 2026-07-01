@@ -33,11 +33,16 @@ from ..converters.asset_processing import (
     triage_image,
 )
 from ..converters.base import (
+    ConversionResult,
     ExtractedImage,
     decode_text,
     is_external_ref,
     is_image_suffix,
     is_markdown_suffix,
+)
+from ..converters.libreoffice import (
+    OFFICE_FALLBACK_SUFFIXES,
+    recover_office_markdown,
 )
 from ..converters.images import guess_image_media_type
 from ..converters.video import is_video_suffix
@@ -427,6 +432,23 @@ async def _prepare_conversion_assets(
     return ref_mapping, assets, asset_entries
 
 
+async def _office_text_fallback(
+    pipeline: ConversionPipeline, basename: str, source_path: Path
+) -> str | None:
+    """Recover an Office document's text via LibreOffice when docling fails.
+
+    Only AUTO uploads fall back (an explicit pipeline surfaces its own error),
+    and only Office formats LibreOffice can open; anything else yields ``None``
+    so the caller drops to the plain-text/stub path.
+    """
+    if pipeline != ConversionPipeline.AUTO:
+        return None
+    if PurePosixPath(basename).suffix.lower() not in OFFICE_FALLBACK_SUFFIXES:
+        return None
+
+    return await recover_office_markdown(source_path)
+
+
 async def _prepare_convertible(
     filepath: str,
     content: bytes,
@@ -478,7 +500,25 @@ async def _prepare_convertible(
             ) as span,
             _source_on_disk(filepath, content) as source_path,
         ):
-            result = await converter(source_path)
+            try:
+                result = await converter(source_path)
+            except Exception as exc:
+                recovered = await _office_text_fallback(
+                    conversion_pipeline, basename, source_path
+                )
+                if recovered is None:
+                    raise
+
+                logger.warning(
+                    "%s conversion failed for %s; recovered text via LibreOffice: %s",
+                    resolved_conversion.value,
+                    filepath,
+                    exc,
+                    exc_info=exc,
+                )
+                result = ConversionResult(markdown=recovered)
+                resolved_conversion = ConversionPipeline.LIBREOFFICE
+
             span.set_attribute("markdown_length", len(result.markdown))
             span.set_attribute("image_count", len(result.images))
     except Exception as exc:

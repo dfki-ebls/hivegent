@@ -30,6 +30,9 @@ class ConversionPipeline(StrEnum):
     LLM = "llm"
     MARKER = "marker"
     DOCLING = "docling"
+    # Recorded on entries recovered by the LibreOffice text fallback; not a
+    # selectable pipeline (see workspace.prepare), so it has no registry entry.
+    LIBREOFFICE = "libreoffice"
     MINERU = "mineru"
     PANDOC = "pandoc"
     MARKITDOWN = "markitdown"
