@@ -10,6 +10,7 @@
   makeBinaryWrapper,
   autoAddDriverRunpath,
   writeShellApplication,
+  symlinkJoin,
   coreutils,
   exiftool,
   ffmpeg-headless,
@@ -155,21 +156,32 @@ let
     package = pythonSet.hivegent;
   };
 
-  # docling renders embedded VML/EMF/WMF images by shelling out to a bare
-  # `soffice` per image, all sharing one profile under $HOME.  Under the
-  # systemd unit $HOME is a persistent StateDirectory, so a `.~lock` left
-  # by a crashed/killed run survives restarts and makes every later
-  # conversion abort — docling then silently drops the image.  Give each
-  # invocation a private, throwaway profile (cleaned up on exit) so runs
-  # never collide or inherit a stale lock; $HOME is untouched, keeping the
-  # fontconfig cache persistent.
-  libreofficeHeadless = writeShellApplication {
-    name = "soffice";
+  # docling renders embedded VML/EMF/WMF images by shelling out to LibreOffice
+  # per image, all sharing one profile under $HOME.  Under the systemd unit
+  # $HOME is a persistent StateDirectory, so a `.~lock` left by a crashed or
+  # killed run survives restarts and makes every later conversion abort —
+  # docling then silently drops the image.  Give each invocation a private,
+  # throwaway profile (cleaned up on exit) so runs never collide or inherit a
+  # stale lock; $HOME is untouched, keeping the fontconfig cache persistent.
+  #
+  # docling resolves the binary as `which("libreoffice") or which("soffice")`,
+  # so `libreoffice` is the canonical wrapper name (probed first, ahead of any
+  # bare `libreoffice` later on the unit's PATH), with `soffice` a symlinked
+  # alias for callers using that name.
+  libreofficeWrapper = writeShellApplication {
+    name = "libreoffice";
     runtimeInputs = [ coreutils ];
     text = ''
       profile="$(mktemp -d)"
       trap 'rm -rf "$profile"' EXIT
-      ${lib.getExe' libreoffice "soffice"} -env:UserInstallation="file://$profile" "$@"
+      ${lib.getExe libreoffice} -env:UserInstallation="file://$profile" "$@"
+    '';
+  };
+  libreofficeHeadless = symlinkJoin {
+    name = "libreoffice-headless";
+    paths = [ libreofficeWrapper ];
+    postBuild = ''
+      ln -s libreoffice "$out/bin/soffice"
     '';
   };
 
