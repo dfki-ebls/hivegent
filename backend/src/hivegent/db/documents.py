@@ -111,6 +111,18 @@ def _owner_filter(store: Casebase):
     return Document.owner_group_id == store.id
 
 
+def _indexed_filter():
+    """SQL predicate for "this document is indexed".
+
+    :func:`set_content_state` stamps ``content_digest`` only once the chunks are
+    durable, so a null digest is the single, uniform "not indexed" marker — a
+    fresh row whose chunks have not landed, an in-flight re-index that cleared
+    it, or a row a crash tore mid-commit.  Centralised here so a query keys off
+    the digest rather than a proxy like the chunk or line count.
+    """
+    return Document.content_digest.is_not(None)
+
+
 class _OwnerColumns(TypedDict):
     """The mutually exclusive single-owner FK columns."""
 
@@ -293,8 +305,9 @@ async def list_document_paths(store: Casebase) -> dict[str, int]:
 async def get_line_counts(store: Casebase, references: Sequence[str]) -> dict[str, int]:
     """Return ``{reference: line_count}`` for the given workspace references.
 
-    A reference with no row, or a not-yet-indexed ``0`` placeholder, is simply
-    absent so the caller treats it as "length unknown" and hides the map.
+    A reference with no row, or a not-yet-indexed row (null ``content_digest``,
+    see :func:`_indexed_filter`), is simply absent so the caller treats it as
+    "length unknown" and hides the map.
     """
     stem_to_ref = {stem_path_from_reference(r): r for r in references}
     if not stem_to_ref:
@@ -305,7 +318,7 @@ async def get_line_counts(store: Casebase, references: Sequence[str]) -> dict[st
                 select(Document.stem_path, Document.line_count).where(
                     _owner_filter(store),
                     Document.stem_path.in_(stem_to_ref),
-                    Document.line_count > 0,
+                    _indexed_filter(),
                 )
             )
         ).all()
