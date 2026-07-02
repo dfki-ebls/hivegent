@@ -408,17 +408,27 @@ class TestReadDocumentTool:
         assert result.total_lines == 1
         assert result.content_hash  # surfaced for optimistic-concurrency edits
 
-    def test_binary_original_serves_markdown_companion(self, tmp_path: Path) -> None:
-        # A binary original (report.docx) is inert; its indexed text lives in
-        # the sibling report.md, which read_document serves instead of bytes.
+    def test_binary_original_directs_to_markdown_sidecar(self, tmp_path: Path) -> None:
+        # A non-decodable original (report.docx) is never silently swapped; the
+        # retry points the model at its <stem>.md sidecar so the read re-runs the
+        # normal path resolution instead of following a sibling behind the scenes.
         (tmp_path / "report.docx").write_bytes(b"PK\x03\x04\xec\xec binary")
         (tmp_path / "report.md").write_text("extracted text")
         tool = ReadDocumentTool(paths=tmp_path)
-        assert tool("report.docx").data.content == "extracted text"
+        with pytest.raises(ToolRetry, match="report.md"):
+            tool("report.docx")
+
+    def test_supported_binary_directs_to_binary_tool(self, tmp_path: Path) -> None:
+        # A vision-capable binary (PDF/image) is sent to read_binary_document,
+        # with the markdown sidecar offered as the text alternative.
+        (tmp_path / "scan.pdf").write_bytes(b"%PDF-1.4 binary")
+        tool = ReadDocumentTool(paths=tmp_path)
+        with pytest.raises(ToolRetry, match="read_binary_document"):
+            tool("scan.pdf")
 
     def test_binary_without_companion_retries(self, tmp_path: Path) -> None:
-        # Undecodable bytes with no companion become a recoverable ToolRetry,
-        # never a run-aborting UnicodeDecodeError.
+        # Undecodable bytes become a recoverable ToolRetry, never a run-aborting
+        # UnicodeDecodeError.
         (tmp_path / "blob.bin").write_bytes(b"\xec\xec\xff\xfe")
         tool = ReadDocumentTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="not readable as text"):

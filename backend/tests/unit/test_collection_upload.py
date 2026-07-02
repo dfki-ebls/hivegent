@@ -139,3 +139,58 @@ async def test_markdown_adopts_one_original_and_rejects_the_rest(
     # Exactly one original landed for the stem.
     assert (workspace_dir / "B.pdf").exists()
     assert not (workspace_dir / "B.rtf").exists()
+
+
+async def test_markdown_owns_stem_when_original_sorts_before_md(
+    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace_dir = user_store.workspace_dir(settings.data_dir)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    async def ok_upload(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def record_sync(_store: Casebase, _reference: str) -> bool:
+        return True
+
+    monkeypatch.setattr(collections, "upload", ok_upload)
+    monkeypatch.setattr(collections, "_sync_entry_from_disk_locked", record_sync)
+
+    # 'report.docx' sorts lexically before 'report.md', but the markdown must
+    # still own the entry and the docx fold in as its companion original rather
+    # than claiming the stem and getting re-converted from scratch.
+    archive = _make_zip(tmp_path, {"report.docx": b"doc", "report.md": b"# body"})
+    complete = await _run(user_store, archive)
+
+    assert complete.failed_files == []
+    assert complete.markdown_files == 1
+    assert complete.converted_attachments == 1
+    assert (workspace_dir / "report.docx").read_bytes() == b"doc"
+
+
+async def test_companion_write_failure_keeps_committed_owner(
+    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace_dir = user_store.workspace_dir(settings.data_dir)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    async def ok_upload(
+        _store: Casebase, safe: str, content: bytes, **_kwargs: object
+    ) -> None:
+        # Simulate a committed markdown entry landing on disk.
+        (workspace_dir / safe).write_bytes(content)
+
+    async def failing_sync(_store: Casebase, _reference: str) -> bool:
+        raise RuntimeError("db hiccup during fold-in")
+
+    monkeypatch.setattr(collections, "upload", ok_upload)
+    monkeypatch.setattr(collections, "_sync_entry_from_disk_locked", failing_sync)
+
+    archive = _make_zip(tmp_path, {"M.md": b"# body", "M.pdf": b"%PDF-1.4"})
+    complete = await _run(user_store, archive)
+
+    assert complete.failed_files == ["M.pdf"]
+    # The companion failure removes only its own orphan original; the owning
+    # markdown that already committed is never rolled back with it.
+    assert (workspace_dir / "M.md").exists()
+    assert not (workspace_dir / "M.pdf").exists()
