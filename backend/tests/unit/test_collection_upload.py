@@ -25,6 +25,7 @@ def _make_zip(directory: Path, files: dict[str, bytes]) -> Path:
     with zipfile.ZipFile(archive, "w") as zf:
         for name, data in files.items():
             member = source / name
+            member.parent.mkdir(parents=True, exist_ok=True)
             member.write_bytes(data)
             zf.write(member, name)
     return archive
@@ -194,3 +195,33 @@ async def test_companion_write_failure_keeps_committed_owner(
     # markdown that already committed is never rolled back with it.
     assert (workspace_dir / "M.md").exists()
     assert not (workspace_dir / "M.pdf").exists()
+
+
+async def test_os_junk_files_are_skipped_entirely(
+    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uploaded: list[str] = []
+
+    async def record_upload(
+        _store: Casebase, safe: str, _content: bytes, **_kwargs: object
+    ) -> None:
+        uploaded.append(safe)
+
+    monkeypatch.setattr(collections, "upload", record_upload)
+
+    # Finder/Explorer metadata and AppleDouble forks ride along with directory
+    # uploads; they must neither convert nor count as failures.
+    archive = _make_zip(
+        tmp_path,
+        {
+            "doc.md": b"# body",
+            ".DS_Store": b"\x00\x00\x00\x01Bud1",
+            "__MACOSX/._doc.md": b"appledouble",
+            "sub/Thumbs.db": b"thumbs",
+        },
+    )
+    complete = await _run(user_store, archive)
+
+    assert uploaded == ["doc.md"]
+    assert complete.failed_files == []
+    assert complete.markdown_files == 1

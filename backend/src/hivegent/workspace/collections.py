@@ -22,7 +22,12 @@ from fastapi import HTTPException
 
 from ..config import sanitize_document_path, settings
 from ..converters.wikilinks import preprocess_markdown
-from ..entries import entry_exists, is_description_file, stem_path_from_reference
+from ..entries import (
+    entry_exists,
+    is_description_file,
+    is_ignorable_path,
+    stem_path_from_reference,
+)
 from ..store import Casebase
 from ..types import (
     CollectionCompleteEvent,
@@ -137,6 +142,23 @@ class _PlannedFile:
         )
 
 
+def _content_relative_paths(root: Path) -> list[str]:
+    """Return every content file under *root* as a workspace-relative path.
+
+    OS-generated metadata (``.DS_Store``, ``__MACOSX``, AppleDouble forks) rides
+    along with directory uploads but is never user content, so it is dropped
+    here rather than reaching the converter and failing as an unsupported binary.
+    """
+    paths: list[str] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = str(path.relative_to(root).as_posix())
+        if not is_ignorable_path(rel):
+            paths.append(rel)
+    return paths
+
+
 def _read_markdown(
     extract_root: Path, planned: _PlannedFile, collection_set: frozenset[str]
 ) -> bytes | None:
@@ -221,15 +243,15 @@ async def process_collection(
                 status_code=400, detail=f"Failed to extract ZIP: {exc!s}"
             ) from exc
 
-        top_items = list(extract_root.iterdir())
+        # Drop OS junk before the unwrap so a stray metadata file beside the real
+        # content still collapses a single top-level directory.
+        top_items = [
+            item for item in extract_root.iterdir() if not is_ignorable_path(item.name)
+        ]
         if len(top_items) == 1 and top_items[0].is_dir():
             extract_root = top_items[0]
 
-        relative_paths = [
-            str(path.relative_to(extract_root).as_posix())
-            for path in extract_root.rglob("*")
-            if path.is_file()
-        ]
+        relative_paths = _content_relative_paths(extract_root)
         collection_set = frozenset(relative_paths)
         workspace_dir = store.workspace_dir(settings.data_dir)
 

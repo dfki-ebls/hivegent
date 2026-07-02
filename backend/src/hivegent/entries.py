@@ -16,6 +16,7 @@ __all__ = [
     "find_original_for_stem",
     "is_assets_dir",
     "is_description_file",
+    "is_ignorable_path",
     "original_path_for_stem",
     "resolve_entry_paths",
     "stem_display_name",
@@ -69,6 +70,33 @@ def stem_path_from_reference(reference: str) -> str:
 def is_assets_dir(name: str) -> bool:
     """Return whether a directory name is a child-assets directory."""
     return name.endswith(".assets")
+
+
+_JUNK_FILENAMES = frozenset({".DS_Store", "Thumbs.db", "ehthumbs.db", "desktop.ini"})
+_JUNK_DIRECTORIES = frozenset({"__MACOSX"})
+
+
+def is_ignorable_path(rel_path: str) -> bool:
+    """Return whether a path is OS-generated junk that must never be indexed.
+
+    Directory uploads and ZIP archives routinely carry Finder/Explorer metadata
+    (``.DS_Store``, ``Thumbs.db``, ``desktop.ini``), AppleDouble resource forks
+    (``._name``), and the macOS ``__MACOSX`` sidecar folder.  None of these is
+    user content, so they are dropped before planning rather than reaching the
+    converter and failing as an unsupported binary.
+
+    >>> is_ignorable_path("docs/report.pdf")
+    False
+    >>> is_ignorable_path("docs/.DS_Store")
+    True
+    >>> is_ignorable_path("__MACOSX/docs/._report.pdf")
+    True
+    """
+    pure = PurePosixPath(rel_path)
+    if any(part in _JUNK_DIRECTORIES for part in pure.parts):
+        return True
+
+    return pure.name in _JUNK_FILENAMES or pure.name.startswith("._")
 
 
 def is_description_file(rel_path: str) -> bool:
