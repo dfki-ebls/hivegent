@@ -8,7 +8,7 @@ per-file bulk runner that reports its progress to a job context.
 
 import logging
 import shutil
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
@@ -22,10 +22,23 @@ __all__ = [
     "enforce_upload_size",
     "run_bulk_document_job",
     "spool_dir",
+    "summarize_failures",
     "validate_collection_upload",
 ]
 
 logger = logging.getLogger(__name__)
+
+# Cap how many failed filenames a job-failure message lists, so a batch that
+# fails wholesale does not produce an unwieldy error string.
+_MAX_LISTED_FAILURES = 20
+
+
+def summarize_failures(failed: Sequence[str], *, limit: int = _MAX_LISTED_FAILURES) -> str:
+    """Join failed filenames for a job-failure message, capping a long list."""
+    listed = ", ".join(failed[:limit])
+    if len(failed) > limit:
+        listed += f", and {len(failed) - limit} more"
+    return listed
 
 
 def _spool_root() -> Path:
@@ -84,7 +97,8 @@ async def run_bulk_document_job(
     if failed:
         succeeded = total - len(failed)
         raise RuntimeError(
-            f"{verb} {succeeded} of {total}; {len(failed)} failed: {', '.join(failed)}"
+            f"{verb} {succeeded} of {total}; "
+            f"{len(failed)} failed: {summarize_failures(failed)}"
         )
 
 

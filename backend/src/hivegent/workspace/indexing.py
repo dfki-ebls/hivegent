@@ -11,6 +11,7 @@ and :func:`delete_chunked_document`); sibling modules call them through here
 so a test that stubs them at ``workspace.indexing`` covers every write path.
 """
 
+import logging
 from collections.abc import Iterable
 
 from ..chunkers.base import EntryMetadata
@@ -31,6 +32,8 @@ __all__ = [
     "sync_entries_from_disk",
     "sync_entry_from_disk",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 async def write_markdown_projection(
@@ -139,10 +142,25 @@ async def sync_entries_from_disk(store: Casebase, references: Iterable[str]) -> 
     session ends: pass every touched description path and SQL is re-derived
     from the current bytes in a single locked, idempotent pass.  Reused by the
     startup reconciler.  Returns the number of entries whose index changed.
+
+    Each entry is isolated: one file that fails to index (a chunker or embedder
+    error, unreadable bytes) is logged and skipped so the rest of the batch
+    still reconciles.  Entries share the lock but not a transaction — each write
+    commits on its own session — so skipping a failure cannot corrupt the ones
+    that follow, and a single poison file can no longer strand every entry after
+    it with no SQL row.
     """
     async with store_lock(store):
         changed = 0
         for reference in references:
-            if await _sync_entry_from_disk_locked(store, reference):
-                changed += 1
+            try:
+                if await _sync_entry_from_disk_locked(store, reference):
+                    changed += 1
+            except Exception:
+                logger.warning(
+                    "Failed to reconcile %s/%s from disk",
+                    store.store_key,
+                    reference,
+                    exc_info=True,
+                )
         return changed

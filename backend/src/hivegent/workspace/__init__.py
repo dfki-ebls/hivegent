@@ -45,7 +45,7 @@ from .assets import (
     generate_asset_description,
     update_asset_description,
 )
-from .collections import process_collection
+from .collections import process_collection, validate_collection_archive
 from .directories import (
     create_directory,
     delete_all,
@@ -89,5 +89,6 @@ __all__ = [
     "sync_entry_from_disk",
     "update_asset_description",
     "upload",
+    "validate_collection_archive",
     "write_document_text",
 ]

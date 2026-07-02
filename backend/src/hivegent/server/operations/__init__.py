@@ -13,6 +13,7 @@ from .processing import (
     enforce_upload_size,
     run_bulk_document_job,
     spool_dir,
+    summarize_failures,
     validate_collection_upload,
 )
 from .reads import (
@@ -32,5 +33,6 @@ __all__ = [
     "list_assets",
     "run_bulk_document_job",
     "spool_dir",
+    "summarize_failures",
     "validate_collection_upload",
 ]

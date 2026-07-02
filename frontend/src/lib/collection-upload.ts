@@ -108,9 +108,19 @@ export const buildCollectionZip = async (
   signal?: AbortSignal,
 ): Promise<File> => {
   signal?.throwIfAborted();
+
+  // A lone dropped archive is already a collection: forward it untouched rather
+  // than extract and recompress it, which is slower and flattens its layout.
+  const [onlyArchive] = zipFiles;
+  if (onlyArchive && looseFiles.length === 0 && directories.length === 0) {
+    return onlyArchive;
+  }
+
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
 
+  // Same-name files silently overwrite: a user who drops conflicting names owns
+  // that. The backend importer is what guards the DB and workspace.
   for (const file of looseFiles) zip.file(file.name, file);
 
   const collectedPerDir = await Promise.all(directories.map((dir) => walkEntry(dir, "", signal)));

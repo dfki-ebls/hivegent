@@ -68,6 +68,7 @@ from ..operations import (
     list_assets,
     run_bulk_document_job,
     spool_dir,
+    summarize_failures,
     validate_collection_upload,
 )
 
@@ -308,6 +309,14 @@ async def upload_collection(
     spool = await _spool_payload(
         file, limit=settings.limits.max_collection_size_bytes, label="Collection"
     )
+    # Enforce every collection limit here, before the job is queued, so a
+    # too-large, too-many-files, or malformed archive is rejected synchronously
+    # with a clear reason instead of failing the job much later.
+    try:
+        await asyncio.to_thread(workspace.validate_collection_archive, spool)
+    except BaseException:
+        spool.unlink(missing_ok=True)
+        raise
 
     async def work(ctx: JobContext) -> None:
         # The ZIP is read straight from the spool file, so a large archive is
@@ -317,6 +326,15 @@ async def upload_collection(
                 ctx.set_progress(event.current, event.total)
             elif isinstance(event, CollectionCompleteEvent):
                 ctx.set_stage(event.message)
+                # The complete event is terminal, so this ends the loop.  A
+                # per-file failure is not fatal to the batch, but the job must
+                # not settle as a clean success: fail it with the file names so
+                # the failure surfaces, while the succeeded files stay committed.
+                if event.failed_files:
+                    raise RuntimeError(
+                        f"{len(event.failed_files)} file(s) failed to import: "
+                        f"{summarize_failures(event.failed_files)}"
+                    )
 
     return manager.submit(
         kind=DocumentJobKind.COLLECTION,

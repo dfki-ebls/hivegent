@@ -1,9 +1,11 @@
 """ZIP collection import.
 
-Validate a ZIP archive against the configured limits, then feed each file
-through the phased :func:`upload`.  The whole import holds a store claim so a
-concurrent store-wide delete or directory move cannot interleave between files
-and strip entries the collection already committed.
+:func:`validate_collection_archive` enforces every size, count, and safety
+limit up front, synchronously in the request path, so a violation is reported
+to the caller immediately; :func:`process_collection` then trusts the archive
+and feeds each file through the phased :func:`upload`.  The whole import holds a
+store claim so a concurrent store-wide delete or directory move cannot
+interleave between files and strip entries the collection already committed.
 """
 
 import logging
@@ -13,11 +15,12 @@ import zipfile
 import zlib
 from collections.abc import AsyncGenerator
 from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from fastapi import HTTPException
 
 from ..config import sanitize_document_path, settings
-from ..converters.base import DOCUMENT_EXTENSION
+from ..converters.base import is_markdown_suffix
 from ..converters.wikilinks import preprocess_markdown
 from ..entries import entry_exists, stem_path_from_reference
 from ..store import Casebase
@@ -34,16 +37,17 @@ from .uploads import upload
 
 __all__ = [
     "process_collection",
+    "validate_collection_archive",
 ]
 
 logger = logging.getLogger(__name__)
 
 
 def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
-    """Reject unsafe ZIP entries before extraction.
+    """Reject unsafe ZIP entries and limit violations.
 
-    Catches symlinks, special files, traversal paths, and zip bombs
-    (per-entry and cumulative uncompressed size).
+    Catches symlinks, special files, traversal paths, too many files, and zip
+    bombs (per-entry and cumulative uncompressed size).
     """
     file_count = 0
     total_uncompressed = 0
@@ -95,15 +99,33 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
             )
 
 
+def validate_collection_archive(archive_path: Path) -> None:
+    """Reject a collection archive that is unreadable or violates a limit.
+
+    The single place collection limits are enforced.  Called synchronously from
+    the request path before the background job is submitted, so a too-large,
+    too-many-files, or unsafe archive fails the request immediately with a clear
+    reason instead of failing the job much later.
+    """
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            _validate_zip_entries(archive)
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=400, detail="Invalid ZIP file") from exc
+
+
 async def process_collection(
     store: Casebase,
     archive_path: Path,
     spec: PipelineSpec,
     llm: LlmConfig,
 ) -> AsyncGenerator[CollectionProgressEvent | CollectionCompleteEvent]:
-    """Process a ZIP collection and yield progress events for each file.
+    """Process a ZIP collection, yielding per-file progress events.
 
-    Each file flows through the phased :func:`upload`, which holds the casebase
+    Re-validates the archive against the limits before extracting — the same
+    cheap central-directory scan the request path runs up front — so extraction
+    is never reached for an unsafe archive, even when called directly.  Each
+    file then flows through the phased :func:`upload`, which holds the casebase
     lock only for its brief reserve and commit — so the rest of the workspace
     stays responsive while a large collection processes, and a cancel mid-run
     rolls back only the in-flight file while earlier files survive.  The whole
@@ -111,24 +133,26 @@ async def process_collection(
     delete or directory move cannot interleave between files and strip entries
     the collection already committed.
     """
+    validate_collection_archive(archive_path)
+
     failed: list[str] = []
+    failed_set: set[str] = set()
     markdown_count = 0
     converted_count = 0
-    current = 0
+
+    def _fail(path: str) -> None:
+        failed.append(path)
+        failed_set.add(path)
 
     with _store_claim(store), tempfile.TemporaryDirectory() as tmp_dir:
         extract_root = Path(tmp_dir)
 
         try:
             with zipfile.ZipFile(archive_path) as archive:
-                _validate_zip_entries(archive)
                 archive.extractall(extract_root)
-        except zipfile.BadZipFile as exc:
-            raise HTTPException(status_code=400, detail="Invalid ZIP file") from exc
-        except zlib.error as exc:
+        except (zipfile.BadZipFile, zlib.error) as exc:
             raise HTTPException(
-                status_code=400,
-                detail=f"Failed to decompress ZIP: {exc!s}",
+                status_code=400, detail=f"Failed to extract ZIP: {exc!s}"
             ) from exc
 
         top_items = list(extract_root.iterdir())
@@ -140,52 +164,87 @@ async def process_collection(
             for path in extract_root.rglob("*")
             if path.is_file()
         )
+        collection_set = frozenset(collection_files)
         workspace_dir = store.workspace_dir(settings.data_dir)
         preprocessed_markdown: dict[str, bytes] = {}
-        collection_stems: set[str] = set()
         companion_originals: set[str] = set()
+        # Stems an entry in this batch has claimed; the first file for a stem
+        # claims it.
+        claimed_stems: set[str] = set()
+        # Stems that already own an original file, so any further non-markdown
+        # for the stem is a duplicate — this is what keeps a stem from ending up
+        # with two originals.
+        original_taken: set[str] = set()
 
         for relative_path in collection_files:
             safe = sanitize_document_path(relative_path)
-            suffix = PurePosixPath(safe).suffix.lower()
-            if suffix == DOCUMENT_EXTENSION:
+            stem = stem_path_from_reference(safe)
+            is_markdown = is_markdown_suffix(PurePosixPath(safe).suffix.lower())
+
+            # A stem already backed by an on-disk entry is left untouched.
+            if entry_exists(workspace_dir, safe):
+                _fail(relative_path)
+                continue
+
+            if stem not in claimed_stems:
+                # First file for this stem becomes its entry; a non-markdown
+                # entry (an attachment) is its own original.
+                claimed_stems.add(stem)
+                if not is_markdown:
+                    original_taken.add(stem)
+            elif not is_markdown and stem not in original_taken:
+                # The lone source original for a markdown entry in this batch
+                # (a non-markdown claimer already took ``original_taken``).
+                companion_originals.add(relative_path)
+                original_taken.add(stem)
+                continue
+            else:
+                # A duplicate markdown, or a second original for one stem.
+                _fail(relative_path)
+                continue
+
+            if is_markdown:
                 try:
                     text = (extract_root / relative_path).read_text(encoding="utf-8")
                 except Exception as exc:
                     logger.warning("Failed to read %s: %s", relative_path, exc)
-                    failed.append(relative_path)
+                    _fail(relative_path)
+                    # Unclaim the stem so a sibling original can still convert.
+                    claimed_stems.discard(stem)
                     continue
-                normalized_md = preprocess_markdown(
-                    text, safe, frozenset(collection_files)
-                )
-                preprocessed_markdown[safe] = normalized_md.content.encode("utf-8")
+                preprocessed_markdown[safe] = preprocess_markdown(
+                    text, safe, collection_set
+                ).content.encode("utf-8")
 
-            stem = stem_path_from_reference(safe)
-            if entry_exists(workspace_dir, safe):
-                failed.append(relative_path)
-                continue
-            if stem in collection_stems:
-                if suffix != DOCUMENT_EXTENSION:
-                    companion_originals.add(relative_path)
-                else:
-                    failed.append(relative_path)
-                continue
-            collection_stems.add(stem)
-
+        # Stems whose owning entry committed this run; a companion original is
+        # only written once its owner is in here, so a failed owner never leaves
+        # an orphaned original behind.
+        committed_stems: set[str] = set()
         total = len(collection_files)
-        for relative_path in collection_files:
+
+        def _progress(
+            path: str, current: int, status: Literal["ok", "failed"]
+        ) -> CollectionProgressEvent:
+            return CollectionProgressEvent(
+                file=path, current=current, total=total, status=status
+            )
+
+        for current, relative_path in enumerate(collection_files, start=1):
             safe = sanitize_document_path(relative_path)
-            if relative_path in failed:
-                current += 1
-                yield CollectionProgressEvent(
-                    file=relative_path,
-                    current=current,
-                    total=total,
-                    status="failed",
-                )
+            stem = stem_path_from_reference(safe)
+            if relative_path in failed_set:
+                yield _progress(relative_path, current, "failed")
                 continue
 
             if relative_path in companion_originals:
+                # The owning markdown sorts first and has already been processed;
+                # if its import failed there is no entry to fold this original
+                # into, and writing it would strand a file with no SQL row
+                # (reconcile ingests only markdown, never bare originals).
+                if stem not in committed_stems:
+                    _fail(relative_path)
+                    yield _progress(relative_path, current, "failed")
+                    continue
                 try:
                     async with store_lock(store):
                         async with _rollback_on_failure(store, (safe,)):
@@ -205,44 +264,33 @@ async def process_collection(
                         relative_path,
                         exc,
                     )
-                    failed.append(relative_path)
+                    _fail(relative_path)
                     status = "failed"
-                current += 1
-                yield CollectionProgressEvent(
-                    file=relative_path,
-                    current=current,
-                    total=total,
-                    status=status,
-                )
+                yield _progress(relative_path, current, status)
                 continue
 
+            is_markdown = safe in preprocessed_markdown
             try:
-                if safe in preprocessed_markdown:
+                if is_markdown:
                     content_bytes = preprocessed_markdown[safe]
-                    markdown_count += 1
                 else:
                     content_bytes = (extract_root / relative_path).read_bytes()
-                    converted_count += 1
                 await upload(
                     store, safe, content_bytes, spec=spec, llm=llm, origin="collection"
                 )
+                committed_stems.add(stem)
+                # Count only on success, so the totals never overstate the import.
+                if is_markdown:
+                    markdown_count += 1
+                else:
+                    converted_count += 1
                 status = "ok"
             except Exception as exc:
                 logger.warning("Failed to process %s: %s", relative_path, exc)
-                if safe in preprocessed_markdown:
-                    markdown_count -= 1
-                else:
-                    converted_count -= 1
-                failed.append(relative_path)
+                _fail(relative_path)
                 status = "failed"
 
-            current += 1
-            yield CollectionProgressEvent(
-                file=relative_path,
-                current=current,
-                total=total,
-                status=status,
-            )
+            yield _progress(relative_path, current, status)
 
     total_ok = markdown_count + converted_count
     yield CollectionCompleteEvent(
