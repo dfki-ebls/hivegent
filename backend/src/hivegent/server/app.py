@@ -17,6 +17,7 @@ from ..mcp import mcp_app
 from ..observability import configure_observability
 from ..reconcile import reconcile_all
 from ..retrieval import reconcile_index_state
+from .access_log import install_probe_access_filter
 from .maintenance import load_persisted_state
 from .operations import cleanup_spool_dir
 from .routes import api_router
@@ -167,6 +168,7 @@ def create_app() -> FastAPI:
     keeps only domain logic, auth, and observability.
     """
     _validate_auth_settings()
+    install_probe_access_filter()
 
     app = FastAPI(
         lifespan=lifespan,
