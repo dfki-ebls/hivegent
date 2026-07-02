@@ -9,7 +9,6 @@ are dropped (they are exactly what defeated the primary converter); this path
 recovers text only.  It is a fallback, not a registered pipeline.
 """
 
-import re
 import tempfile
 from pathlib import Path
 
@@ -27,20 +26,33 @@ OFFICE_FALLBACK_SUFFIXES = frozenset(
     }
 )
 
-_IMAGE_REF = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+# Drop every image on pandoc's document AST rather than string-matching the
+# rendered markdown: a text regex is fragile against URLs with parentheses,
+# reference-style links, and images nested inside links, while an AST filter
+# removes the node cleanly and leaves the surrounding structure intact.
+_DROP_IMAGES_FILTER = "function Image () return {} end\n"
 
 
 async def recover_office_markdown(source: Path) -> str | None:
     """Recover *source*'s text as markdown via LibreOffice + pandoc.
 
     Returns the markdown, or ``None`` when LibreOffice is unavailable, the
-    export fails, or nothing textual could be recovered.
+    export fails, or nothing textual could be recovered.  Images are stripped by
+    a pandoc filter (they are exactly what defeated the primary converter).
     """
     with tempfile.TemporaryDirectory() as tmp:
-        html = await libreoffice_convert(source, Path(tmp), to="html")
+        tmp_dir = Path(tmp)
+        html = await libreoffice_convert(source, tmp_dir, to="html")
         if html is None:
             return None
 
-        markdown = await pandoc_convert(html, to="gfm", from_format="html")
+        drop_images = tmp_dir / "drop-images.lua"
+        drop_images.write_text(_DROP_IMAGES_FILTER, encoding="utf-8")
+        markdown = await pandoc_convert(
+            html,
+            to="gfm",
+            from_format="html",
+            extra_args=("--lua-filter", str(drop_images)),
+        )
 
-    return _IMAGE_REF.sub("", markdown).strip() or None
+    return markdown.strip() or None
