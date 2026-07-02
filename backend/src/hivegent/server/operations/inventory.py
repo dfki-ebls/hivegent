@@ -180,10 +180,15 @@ async def build_tree_response(store: Casebase) -> DirectoryTreeResponse:
         return files, directories
 
     # The synthetic root itself is excluded: count only its subtrees.
-    child_counts = [_count(child) for child in root.children or []]
+    total_files = 0
+    total_directories = 0
+    for child in root.children or []:
+        child_files, child_directories = _count(child)
+        total_files += child_files
+        total_directories += child_directories
 
     return DirectoryTreeResponse(
         root=root,
-        total_files=sum(files for files, _ in child_counts),
-        total_directories=sum(directories for _, directories in child_counts),
+        total_files=total_files,
+        total_directories=total_directories,
     )
