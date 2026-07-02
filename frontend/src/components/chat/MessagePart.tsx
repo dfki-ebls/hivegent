@@ -12,6 +12,7 @@ import { getToolPartInfo, type ToolPart } from "@/lib/chat/tool-part";
 interface MessagePartProps {
   toolData: ReadonlyMap<string, unknown>;
   part: UIMessage["parts"][number];
+  reasoningDuration?: number;
   isLastTextPart: boolean;
   showActions: boolean;
   isUserMessage: boolean;
@@ -28,6 +29,7 @@ interface MessagePartProps {
 export function MessagePart({
   toolData,
   part,
+  reasoningDuration,
   isLastTextPart,
   showActions,
   isUserMessage,
@@ -63,7 +65,7 @@ export function MessagePart({
   }
 
   if (part.type === "reasoning") {
-    return <ReasoningPart part={part} />;
+    return <ReasoningPart part={part} duration={reasoningDuration} />;
   }
 
   if (part.type === "step-start") {

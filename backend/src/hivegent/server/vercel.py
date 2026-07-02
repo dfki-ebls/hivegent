@@ -18,6 +18,7 @@ the client addresses for edit / regenerate / branch-select.
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -26,10 +27,11 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
+from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
-from pydantic_ai import capture_run_messages
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import AgentRunResultEvent, capture_run_messages
+from pydantic_ai.messages import ModelMessage, ThinkingPart
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk, ErrorChunk
@@ -62,6 +64,10 @@ SDK_VERSION = 6
 # frontend consumes these via `useChat({ onData })` (see `lib/chat/subagent.ts`).
 SUBAGENT_CHUNK_TYPE = "data-subagent"
 
+# Message metadata key carrying per-reasoning-block stream durations in
+# milliseconds, ordered by the reasoning parts in the assistant response.
+REASONING_DURATIONS_KEY = "reasoningDurationsMs"
+
 type PersistTurn = Callable[[Sequence[ModelMessage]], Awaitable[None]]
 
 
@@ -90,13 +96,60 @@ def chat_error_text(error: Exception) -> str:
     return str(error)
 
 
+@dataclass
 class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
-    """Event stream that rewrites error chunks with canonical codes."""
+    """Event stream that rewrites error chunks with canonical codes and records
+    how long each thinking part took to stream.
+
+    Vercel AI and Pydantic AI do not expose a first-class reasoning duration.
+    We persist this as application message metadata instead of provider
+    metadata, so it stays UI-owned and is not sent back to providers as part
+    metadata on follow-up turns.
+    """
+
+    _thinking_started_at: float | None = None
+    _thinking_durations_ms: list[int] = field(default_factory=list[int])
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
         async for chunk in super().on_error(error):
             if isinstance(chunk, ErrorChunk):
                 chunk = ErrorChunk(error_text=chat_error_text(error))
+            yield chunk
+
+    async def handle_thinking_start(
+        self, part: ThinkingPart, follows_thinking: bool = False
+    ) -> AsyncIterator[BaseChunk]:
+        self._thinking_started_at = time.monotonic()
+        async for chunk in super().handle_thinking_start(
+            part, follows_thinking=follows_thinking
+        ):
+            yield chunk
+
+    async def handle_thinking_end(
+        self, part: ThinkingPart, followed_by_thinking: bool = False
+    ) -> AsyncIterator[BaseChunk]:
+        if self._thinking_started_at is not None:
+            self._thinking_durations_ms.append(
+                round((time.monotonic() - self._thinking_started_at) * 1000)
+            )
+            self._thinking_started_at = None
+
+        async for chunk in super().handle_thinking_end(
+            part, followed_by_thinking=followed_by_thinking
+        ):
+            yield chunk
+
+    async def handle_run_result(
+        self, event: AgentRunResultEvent
+    ) -> AsyncIterator[BaseChunk]:
+        if self._thinking_durations_ms:
+            response = event.result.response
+            response.metadata = {
+                **(response.metadata or {}),
+                REASONING_DURATIONS_KEY: self._thinking_durations_ms,
+            }
+
+        async for chunk in super().handle_run_result(event):
             yield chunk
 
 

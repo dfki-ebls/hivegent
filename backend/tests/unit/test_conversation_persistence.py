@@ -12,7 +12,9 @@ interrupted finishes, and the hard-fail error chunk) and
 
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
@@ -24,16 +26,18 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
 from starlette.responses import StreamingResponse
 
+import hivegent.server.vercel as vercel_module
 from hivegent.db.conversations import ExportMessage, _remapped_nodes
 from hivegent.db.models import MessageKind
 from hivegent.server.vercel import (
     ChatAdapter,
     PersistTurn,
+    REASONING_DURATIONS_KEY,
     dump_messages_with_ids,
     run_and_persist,
 )
@@ -178,6 +182,40 @@ async def test_interrupted_stream_persists_the_partial_answer() -> None:
 
     assert "q1" in _texts(recorded[0])
     assert "The answer is 42" in _texts(recorded[0])
+
+
+async def test_reasoning_duration_is_persisted_as_message_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reasoning timing stays UI metadata, not provider metadata."""
+    ticks = iter([10.0, 12.4])
+    monkeypatch.setattr(
+        vercel_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(ticks)),
+    )
+
+    async def stream_reasoning(
+        messages: Sequence[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[dict[int, DeltaThinkingPart] | str]:
+        yield {0: DeltaThinkingPart(content="weighing options")}
+        yield "answer"
+
+    recorded, body = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        model=FunctionModel(stream_function=stream_reasoning),
+    )
+
+    response = next(msg for msg in recorded[0] if isinstance(msg, ModelResponse))
+
+    assert response.metadata == {REASONING_DURATIONS_KEY: [2400]}
+    assert "reasoningDurationsMs" in body
+
+    ui = dump_messages_with_ids([("n1", response)])
+
+    assert isinstance(ui[0].metadata, dict)
+    assert ui[0].metadata[REASONING_DURATIONS_KEY] == [2400]
+    assert "pydantic_ai" in ui[0].metadata
 
 
 async def test_persist_failure_hard_fails_with_an_error_chunk() -> None:

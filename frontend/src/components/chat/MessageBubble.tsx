@@ -11,6 +11,23 @@ import { MessagePart } from "@/components/chat/MessagePart";
 import { joinTextParts } from "@/lib/chat/chat-utils";
 import { indexToolData } from "@/lib/chat/tool-part";
 
+const MS_IN_S = 1000;
+
+interface ReasoningMetadata {
+  reasoningDurationsMs?: number[];
+}
+
+function reasoningDurationSeconds(
+  metadata: UIMessage["metadata"],
+  reasoningIndex: number,
+): number | undefined {
+  const durationMs = (metadata as ReasoningMetadata | undefined)?.reasoningDurationsMs?.[
+    reasoningIndex
+  ];
+
+  return typeof durationMs === "number" ? Math.ceil(durationMs / MS_IN_S) : undefined;
+}
+
 interface MessageBubbleProps {
   message: UIMessage;
   isLastMessage: boolean;
@@ -46,6 +63,7 @@ export function MessageBubble({
   const toolData = indexToolData(parts);
   // The final answer's actions hang off the last text part of an assistant turn.
   const lastTextIndex = parts.findLastIndex((p) => p.type === "text");
+  let reasoningIndex = 0;
 
   return (
     <Message from={message.role}>
@@ -53,12 +71,17 @@ export function MessageBubble({
       <MessageContent className={isAssistant ? "w-full gap-1.5" : "gap-1.5"}>
         {parts.map((part, partIndex) => {
           const isLastTextPart = isAssistant && isLastMessage && partIndex === lastTextIndex;
+          const reasoningDuration =
+            part.type === "reasoning"
+              ? reasoningDurationSeconds(message.metadata, reasoningIndex++)
+              : undefined;
 
           return (
             <MessagePart
               key={partIndex}
               toolData={toolData}
               part={part}
+              reasoningDuration={reasoningDuration}
               isLastTextPart={isLastTextPart}
               showActions={showActions}
               isUserMessage={isUser}
