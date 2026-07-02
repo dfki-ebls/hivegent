@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 _MAX_LISTED_FAILURES = 20
 
 
-def summarize_failures(failed: Sequence[str], *, limit: int = _MAX_LISTED_FAILURES) -> str:
+def summarize_failures(
+    failed: Sequence[str], *, limit: int = _MAX_LISTED_FAILURES
+) -> str:
     """Join failed filenames for a job-failure message, capping a long list."""
     listed = ", ".join(failed[:limit])
     if len(failed) > limit:

@@ -19,10 +19,21 @@ __all__ = ["OFFICE_FALLBACK_SUFFIXES", "recover_office_markdown"]
 # Office formats LibreOffice opens and can export to HTML.
 OFFICE_FALLBACK_SUFFIXES = frozenset(
     {
-        ".doc", ".docx", ".docm", ".dot", ".dotx",
-        ".odt", ".rtf",
-        ".ppt", ".pptx", ".pptm", ".odp",
-        ".xls", ".xlsx", ".xlsm", ".ods",
+        ".doc",
+        ".docx",
+        ".docm",
+        ".dot",
+        ".dotx",
+        ".odt",
+        ".rtf",
+        ".ppt",
+        ".pptx",
+        ".pptm",
+        ".odp",
+        ".xls",
+        ".xlsx",
+        ".xlsm",
+        ".ods",
     }
 )
 

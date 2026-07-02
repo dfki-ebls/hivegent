@@ -26,23 +26,23 @@ flowchart LR
     agent --> answer[Grounded answer]
 ```
 
-|                                | Chat with attached files       | Classical RAG               | Agentic RAG (Hivegent)                      |
-| ------------------------------ | ------------------------------ | --------------------------- | ------------------------------------------- |
-| Document scale                 | A few small files              | Large collections           | Large collections                           |
+|                                | Chat with attached files        | Classical RAG                 | Agentic RAG (Hivegent)                      |
+| ------------------------------ | ------------------------------- | ----------------------------- | ------------------------------------------- |
+| Document scale                 | A few small files               | Large collections             | Large collections                           |
 | Finding information            | Model reads everything attached | One fixed search per question | Agent searches and reads over several steps |
-| Follow-up and refinement       | None                           | None                        | The agent decides to look again             |
-| Source citations               | Sometimes                      | Yes                         | Yes                                         |
-| Shared, persistent collections | No                             | Varies                      | Yes, with access control                    |
+| Follow-up and refinement       | None                            | None                          | The agent decides to look again             |
+| Source citations               | Sometimes                       | Yes                           | Yes                                         |
+| Shared, persistent collections | No                              | Varies                        | Yes, with access control                    |
 
 ## What the assistant can do
 
 The agent works through a set of tools, grouped into toolsets, and chooses which to use for each request.
 
-| Toolset                | What it lets the assistant do                                                              | Availability               |
-| ---------------------- | ----------------------------------------------------------------------------------------- | -------------------------- |
-| Search and read        | Search your documents by meaning or exact text and open whole documents or single passages | Always                     |
-| Delegated exploration  | Spin off focused sub-agents to explore documents, past conversations, or the web and report back | Always                |
-| Conversation history   | Look back over earlier conversations to reuse what was already established                 | Always                     |
-| Memory                 | Save useful facts to recall in later conversations                                        | Always                     |
-| Document editing       | Create or edit documents in your workspace, asking for your approval first                 | Always                     |
-| Web                    | Search the web and fetch pages                                                             | When enabled by the operator |
+| Toolset               | What it lets the assistant do                                                                    | Availability                 |
+| --------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------- |
+| Search and read       | Search your documents by meaning or exact text and open whole documents or single passages       | Always                       |
+| Delegated exploration | Spin off focused sub-agents to explore documents, past conversations, or the web and report back | Always                       |
+| Conversation history  | Look back over earlier conversations to reuse what was already established                       | Always                       |
+| Memory                | Save useful facts to recall in later conversations                                               | Always                       |
+| Document editing      | Create or edit documents in your workspace, asking for your approval first                       | Always                       |
+| Web                   | Search the web and fetch pages                                                                   | When enabled by the operator |

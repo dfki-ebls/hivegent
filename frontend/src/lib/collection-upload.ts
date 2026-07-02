@@ -114,12 +114,7 @@ export const buildCollectionZip = async (
   // Only when it is the sole dropped item — several archives must fall through
   // to the merge path below, or all but the first would be silently dropped.
   const [onlyArchive] = zipFiles;
-  if (
-    zipFiles.length === 1 &&
-    onlyArchive &&
-    looseFiles.length === 0 &&
-    directories.length === 0
-  ) {
+  if (zipFiles.length === 1 && onlyArchive && looseFiles.length === 0 && directories.length === 0) {
     return onlyArchive;
   }
 

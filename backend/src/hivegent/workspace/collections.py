@@ -147,7 +147,9 @@ def _read_markdown(
         logger.warning("Failed to read %s: %s", planned.relative_path, exc)
         return None
 
-    return preprocess_markdown(text, planned.safe, collection_set).content.encode("utf-8")
+    return preprocess_markdown(text, planned.safe, collection_set).content.encode(
+        "utf-8"
+    )
 
 
 async def _write_companion_original(
@@ -254,7 +256,9 @@ async def process_collection(
                 if not p.is_markdown:
                     original_taken.add(p.stem)
                     roles[p.relative_path] = "attachment"
-                elif (md := _read_markdown(extract_root, p, collection_set)) is not None:
+                elif (
+                    md := _read_markdown(extract_root, p, collection_set)
+                ) is not None:
                     preprocessed_markdown[p.safe] = md
                     roles[p.relative_path] = "markdown"
                 else:
@@ -314,7 +318,12 @@ async def process_collection(
                 else:
                     content_bytes = (extract_root / p.relative_path).read_bytes()
                 await upload(
-                    store, p.safe, content_bytes, spec=spec, llm=llm, origin="collection"
+                    store,
+                    p.safe,
+                    content_bytes,
+                    spec=spec,
+                    llm=llm,
+                    origin="collection",
                 )
                 committed_stems.add(p.stem)
                 # Count only on success, so the totals never overstate the import.
