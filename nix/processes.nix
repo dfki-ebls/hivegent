@@ -27,6 +27,11 @@
             '';
             # FastAPI only serves once lifespan startup (migrations, reconcile)
             # finishes, so a healthy probe means the backend is ready for traffic.
+            # Cadence mirrors the NixOS deployment's `/api/health` check (Caddy's
+            # `health_interval 10s` / `health_timeout 3s` in `nix/vhost.nix`), and
+            # the 60 * 10s failure window matches the unit's `TimeoutStartSec = 600`
+            # (`nix/nixos/service.nix`) — keeping dev in line with prod also stops
+            # the probe from flooding the logs with a request every second.
             readiness_probe = {
               http_get = {
                 host = "127.0.0.1";
@@ -34,7 +39,7 @@
                 path = "/api/health";
               };
               initial_delay_seconds = 1;
-              period_seconds = 1;
+              period_seconds = 10;
               timeout_seconds = 3;
               failure_threshold = 60;
             };
