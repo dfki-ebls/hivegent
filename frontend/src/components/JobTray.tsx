@@ -160,7 +160,9 @@ function TaskRowView({ row }: { row: TaskRow }) {
       </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{row.title}</p>
-        <p className={`truncate text-xs ${TONE_TEXT_CLASS[row.tone]}`}>{row.statusText}</p>
+        <p className={`whitespace-pre-line break-words text-xs ${TONE_TEXT_CLASS[row.tone]}`}>
+          {row.statusText}
+        </p>
         {row.progress && (
           <div className="mt-1 flex items-center gap-2">
             <Progress

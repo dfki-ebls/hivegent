@@ -166,7 +166,9 @@ def _read_markdown(
     try:
         text = (extract_root / planned.relative_path).read_text(encoding="utf-8")
     except Exception as exc:
-        logger.warning("Failed to read %s: %s", planned.relative_path, exc)
+        logger.warning(
+            "Failed to read %s: %s", planned.relative_path, exc, exc_info=True
+        )
         return None
 
     return preprocess_markdown(text, planned.safe, collection_set).content.encode(
@@ -194,7 +196,9 @@ async def _write_companion_original(
             # delete, move, and reconvert see it without waiting for a boot.
             await _sync_entry_from_disk_locked(store, planned.safe)
     except Exception as exc:
-        logger.warning("Failed to write original %s: %s", planned.relative_path, exc)
+        logger.warning(
+            "Failed to write original %s: %s", planned.relative_path, exc, exc_info=True
+        )
         original_path.unlink(missing_ok=True)
         return "failed"
 
@@ -355,7 +359,9 @@ async def process_collection(
                     converted_count += 1
                 status = "ok"
             except Exception as exc:
-                logger.warning("Failed to process %s: %s", p.relative_path, exc)
+                logger.warning(
+                    "Failed to process %s: %s", p.relative_path, exc, exc_info=True
+                )
                 failed.append(p.relative_path)
                 status = "failed"
 
