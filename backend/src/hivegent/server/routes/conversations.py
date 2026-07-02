@@ -33,7 +33,7 @@ from ...config import settings
 from ...converters.base import BinaryContentMode
 from ...converters.pdf_raster import DEFAULT_MAX_PAGES, render_pdf_pages
 from ...converters.video import FRAME_MAX_DIMENSION
-from ...llm import model_from_config, thinking_model_settings
+from ...llm import model_from_config, resolve_thinking, thinking_model_settings
 from ...mcp import build_mcp_server, validate_mcp_servers
 from ...db._common import new_id
 from ...db.conversations import (
@@ -449,16 +449,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     store = user_store(user)
     user_group_stores = group_stores(user)
 
-    # "auto" maps to None so thinking_model_settings omits the field and the
-    # server-side default applies; "none" maps to False (disabled), every
-    # other level passes through.  A configured max_tokens applies regardless.
-    thinking = (
-        None
-        if config.reasoning_effort == "auto"
-        else False
-        if config.reasoning_effort == "none"
-        else config.reasoning_effort
-    )
+    thinking = resolve_thinking(config.reasoning_effort)
     model_settings = thinking_model_settings(thinking, config.llm)
 
     try:

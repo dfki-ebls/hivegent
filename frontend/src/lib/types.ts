@@ -816,8 +816,10 @@ export const AGENT_MODE_OPTIONS: AgentModeOption[] = [
 /**
  * Reasoning effort level for the LLM.
  *
- * Mirrors pydantic-ai's native effort levels plus the `auto` (provider
- * default) and `none` (disabled) sentinels.
+ * Mirrors pydantic-ai's native effort levels plus the `auto` (a stable alias
+ * for the deployed default effort) and `none` (disabled) sentinels. `auto` is
+ * the default and resolves server-side to the deployed default effort, so that
+ * default can be retargeted without a client change.
  */
 export type ReasoningEffort = "auto" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
@@ -827,7 +829,7 @@ export interface ReasoningEffortOption {
   label: string;
 }
 
-/** Available reasoning effort options. */
+/** Selectable reasoning effort options: `auto`, `none`, and the 1:1 pydantic-ai levels. */
 export const REASONING_EFFORT_OPTIONS: ReasoningEffortOption[] = [
   { value: "auto", label: "Auto" },
   { value: "none", label: "None" },

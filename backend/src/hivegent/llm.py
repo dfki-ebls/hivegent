@@ -8,17 +8,19 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.settings import ModelSettings, ThinkingLevel
+from pydantic_ai.settings import ModelSettings, ThinkingEffort, ThinkingLevel
 
 from .http_client import get_http_client
-from .types import LlmConfig
+from .types import LlmConfig, ReasoningEffort
 
 __all__ = [
+    "AUTO_REASONING_EFFORT",
     "create_openai_chat_model",
     "create_openai_client",
     "create_openai_provider",
     "is_context_overflow",
     "model_from_config",
+    "resolve_thinking",
     "thinking_model_settings",
 ]
 
@@ -144,6 +146,43 @@ def model_from_config(config: LlmConfig) -> OpenAIChatModel:
     )
 
 
+# ``auto`` is a stable public alias for the deployed default effort — kept in
+# the API enum so the default can be retargeted with a single edit here,
+# without touching clients or the request schema.  It resolves to ``high``.
+AUTO_REASONING_EFFORT: ThinkingEffort = "high"
+
+
+def resolve_thinking(effort: ReasoningEffort) -> ThinkingLevel:
+    """Resolve an API reasoning effort to a pydantic-ai thinking level.
+
+    ``auto`` resolves to :data:`AUTO_REASONING_EFFORT`; ``none`` disables
+    reasoning (``False``); every explicit level (``minimal``…``xhigh``)
+    passes through unchanged.
+    """
+    if effort == "auto":
+        return AUTO_REASONING_EFFORT
+
+    if effort == "none":
+        return False
+
+    return effort
+
+
+# Per-request reasoning caps for self-hosted (llama.cpp/vLLM) endpoints,
+# keyed by pydantic-ai effort level.  llama.cpp closes the reasoning block
+# once ``thinking_budget_tokens`` is reached, bounding a runaway thinking
+# loop without truncating the answer.  ``xhigh`` is intentionally absent so
+# it runs unbounded; the ``False`` (``none``) sentinel never indexes it.
+# The cap is honoured only while the server keeps ``--reasoning-budget`` at
+# its -1 default; a non-default command-line budget overrides the request.
+_THINKING_BUDGET_TOKENS: Mapping[ThinkingEffort, int] = {
+    "minimal": 512,
+    "low": 2048,
+    "medium": 6144,
+    "high": 16384,
+}
+
+
 def thinking_model_settings(
     thinking: ThinkingLevel | None, config: LlmConfig
 ) -> ModelSettings:
@@ -151,13 +190,15 @@ def thinking_model_settings(
 
     Spec-compliant OpenAI servers receive the unified pydantic-ai
     ``thinking`` value (sent as ``reasoning_effort``).  llama.cpp and vLLM
-    ignore that field entirely; their only per-request switch is the
-    ``enable_thinking`` chat-template kwarg, which overrides the
-    server-side default (e.g. llama.cpp's ``--reasoning on``).  The kwarg
-    is only added for self-hosted endpoints (``base_url`` set) — the real
-    OpenAI API rejects unknown body fields.
+    ignore that field entirely; their only per-request switches are the
+    ``enable_thinking`` chat-template kwarg (overriding the server-side
+    default, e.g. llama.cpp's ``--reasoning on``) and, for the numeric
+    effort levels, a ``thinking_budget_tokens`` reasoning cap from
+    :data:`_THINKING_BUDGET_TOKENS`.  Both are only added for self-hosted
+    endpoints (``base_url`` set) — the real OpenAI API rejects unknown body
+    fields.
 
-    *thinking* of ``None`` omits both fields so the server-side default
+    *thinking* of ``None`` omits every field so the server-side default
     decides (the "auto" reasoning level).  ``config.max_tokens`` (resolved
     per tier in :func:`resolve_llm_config`) is forwarded as the completion
     cap whenever set, regardless of the thinking level.
@@ -168,7 +209,15 @@ def thinking_model_settings(
     if thinking is not None:
         settings["thinking"] = thinking
         if config.base_url:
-            settings["extra_body"] = {
+            extra_body: dict[str, object] = {
                 "chat_template_kwargs": {"enable_thinking": thinking is not False}
             }
+            budget = (
+                _THINKING_BUDGET_TOKENS.get(thinking)
+                if isinstance(thinking, str)
+                else None
+            )
+            if budget is not None:
+                extra_body["thinking_budget_tokens"] = budget
+            settings["extra_body"] = extra_body
     return settings

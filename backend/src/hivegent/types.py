@@ -353,8 +353,8 @@ type ReasoningEffort = Literal["auto", "none"] | ThinkingEffort
 """Reasoning effort accepted from the API.
 
 Combines pydantic-ai's native effort levels (``minimal``/``low``/``medium``/
-``high``/``xhigh``) with the ``auto`` (use the provider default) and ``none``
-(disable thinking) sentinels.
+``high``/``xhigh``) with the ``auto`` (a stable alias for the deployed
+default effort) and ``none`` (disable thinking) sentinels.
 """
 
 REASONING_EFFORT_VALUES: frozenset[str] = frozenset(
@@ -374,7 +374,7 @@ class ChatRequestConfig(BaseModel):
     )
     reasoning_effort: ReasoningEffort = Field(
         default="auto",
-        description="Reasoning effort level ('auto' uses the provider default, 'none' disables thinking)",
+        description="Reasoning effort level ('auto' resolves to the deployed default effort, 'none' disables thinking)",
     )
     mode: Literal["plan", "execute"] = Field(
         default="execute",

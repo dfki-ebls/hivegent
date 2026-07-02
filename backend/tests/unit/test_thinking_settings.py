@@ -1,0 +1,64 @@
+"""Reasoning-effort to request-settings mapping for self-hosted endpoints."""
+
+from hivegent.llm import (
+    AUTO_REASONING_EFFORT,
+    _THINKING_BUDGET_TOKENS,
+    resolve_thinking,
+    thinking_model_settings,
+)
+from hivegent.types import LlmConfig
+
+SELF_HOSTED = LlmConfig(model="qwen", base_url="http://127.0.0.1:18101")
+OPENAI = LlmConfig(model="gpt", base_url=None)
+
+
+def test_resolve_thinking_maps_sentinels_and_passes_levels_through() -> None:
+    assert resolve_thinking("auto") == AUTO_REASONING_EFFORT
+    assert resolve_thinking("none") is False
+    assert resolve_thinking("minimal") == "minimal"
+    assert resolve_thinking("xhigh") == "xhigh"
+
+
+def test_auto_default_resolves_to_a_bounded_reasoning_cap() -> None:
+    settings = thinking_model_settings(resolve_thinking("auto"), SELF_HOSTED)
+
+    assert settings.get("extra_body") == {
+        "chat_template_kwargs": {"enable_thinking": True},
+        "thinking_budget_tokens": _THINKING_BUDGET_TOKENS[AUTO_REASONING_EFFORT],
+    }
+
+
+def test_numeric_level_caps_reasoning_on_self_hosted() -> None:
+    settings = thinking_model_settings("medium", SELF_HOSTED)
+
+    assert settings.get("thinking") == "medium"
+    assert settings.get("extra_body") == {
+        "chat_template_kwargs": {"enable_thinking": True},
+        "thinking_budget_tokens": _THINKING_BUDGET_TOKENS["medium"],
+    }
+
+
+def test_xhigh_enables_thinking_without_a_budget() -> None:
+    extra_body = thinking_model_settings("xhigh", SELF_HOSTED).get("extra_body")
+
+    assert extra_body == {"chat_template_kwargs": {"enable_thinking": True}}
+
+
+def test_none_disables_thinking_without_a_budget() -> None:
+    extra_body = thinking_model_settings(False, SELF_HOSTED).get("extra_body")
+
+    assert extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def test_auto_omits_thinking_fields_entirely() -> None:
+    settings = thinking_model_settings(None, SELF_HOSTED)
+
+    assert "thinking" not in settings
+    assert "extra_body" not in settings
+
+
+def test_openai_endpoint_never_receives_self_hosted_fields() -> None:
+    settings = thinking_model_settings("high", OPENAI)
+
+    assert settings.get("thinking") == "high"
+    assert "extra_body" not in settings
