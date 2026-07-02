@@ -14,15 +14,15 @@ import tempfile
 import zipfile
 import zlib
 from collections.abc import AsyncGenerator
-from pathlib import Path, PurePosixPath
-from typing import Literal
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal, Self
 
 from fastapi import HTTPException
 
 from ..config import sanitize_document_path, settings
-from ..converters.base import is_markdown_suffix
 from ..converters.wikilinks import preprocess_markdown
-from ..entries import entry_exists, stem_path_from_reference
+from ..entries import entry_exists, is_description_file, stem_path_from_reference
 from ..store import Casebase
 from ..types import (
     CollectionCompleteEvent,
@@ -30,7 +30,6 @@ from ..types import (
     LlmConfig,
     PipelineSpec,
 )
-from .commit import _rollback_on_failure
 from .indexing import _sync_entry_from_disk_locked
 from .locks import _store_claim, store_lock
 from .uploads import upload
@@ -114,6 +113,70 @@ def validate_collection_archive(archive_path: Path) -> None:
         raise HTTPException(status_code=400, detail="Invalid ZIP file") from exc
 
 
+_Role = Literal["markdown", "attachment", "companion", "failed"]
+
+
+@dataclass(slots=True, frozen=True)
+class _PlannedFile:
+    """One archive member with its workspace identity, all resolved once."""
+
+    relative_path: str
+    safe: str
+    stem: str
+    is_markdown: bool
+
+    @classmethod
+    def from_relative(cls, relative_path: str) -> Self:
+        """Resolve the safe path, logical stem, and kind of an archive member."""
+        safe = sanitize_document_path(relative_path)
+        return cls(
+            relative_path=relative_path,
+            safe=safe,
+            stem=stem_path_from_reference(safe),
+            is_markdown=is_description_file(safe),
+        )
+
+
+def _read_markdown(
+    extract_root: Path, planned: _PlannedFile, collection_set: frozenset[str]
+) -> bytes | None:
+    """Read and wikilink-preprocess a markdown member, or ``None`` if unreadable."""
+    try:
+        text = (extract_root / planned.relative_path).read_text(encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Failed to read %s: %s", planned.relative_path, exc)
+        return None
+
+    return preprocess_markdown(text, planned.safe, collection_set).content.encode("utf-8")
+
+
+async def _write_companion_original(
+    store: Casebase, extract_root: Path, planned: _PlannedFile
+) -> Literal["ok", "failed"]:
+    """Write a companion original to disk and fold it into its owner's SQL row.
+
+    The owning markdown committed earlier in the run; on any failure only the
+    just-written original is removed, so the owner is never rolled back with it
+    (a stem-keyed delete would take the description, its chunks, and assets too).
+    """
+    original_path = store.workspace_dir(settings.data_dir) / planned.safe
+    try:
+        async with store_lock(store):
+            original_bytes = (extract_root / planned.relative_path).read_bytes()
+            original_path.parent.mkdir(parents=True, exist_ok=True)
+            original_path.write_bytes(original_bytes)
+            # The owner sorts before its companion and is already indexed with no
+            # original linked; fold the just-written original into its SQL row so
+            # delete, move, and reconvert see it without waiting for a boot.
+            await _sync_entry_from_disk_locked(store, planned.safe)
+    except Exception as exc:
+        logger.warning("Failed to write original %s: %s", planned.relative_path, exc)
+        original_path.unlink(missing_ok=True)
+        return "failed"
+
+    return "ok"
+
+
 async def process_collection(
     store: Casebase,
     archive_path: Path,
@@ -132,17 +195,18 @@ async def process_collection(
     import holds a store claim (:func:`_store_claim`) so a concurrent store-wide
     delete or directory move cannot interleave between files and strip entries
     the collection already committed.
+
+    A stem's markdown owns the logical entry and one sibling non-markdown folds
+    in as its companion original; a lone non-markdown becomes a standalone
+    attachment.  Planning sorts a stem's markdown ahead of its siblings, so the
+    roles never depend on the archive's own file order (a ``.docx`` original
+    sorts before its ``.md`` description, but must not claim the entry).
     """
     validate_collection_archive(archive_path)
 
-    failed: list[str] = []
-    failed_set: set[str] = set()
     markdown_count = 0
     converted_count = 0
-
-    def _fail(path: str) -> None:
-        failed.append(path)
-        failed_set.add(path)
+    failed: list[str] = []
 
     with _store_claim(store), tempfile.TemporaryDirectory() as tmp_dir:
         extract_root = Path(tmp_dir)
@@ -159,68 +223,58 @@ async def process_collection(
         if len(top_items) == 1 and top_items[0].is_dir():
             extract_root = top_items[0]
 
-        collection_files = sorted(
+        relative_paths = [
             str(path.relative_to(extract_root).as_posix())
             for path in extract_root.rglob("*")
             if path.is_file()
-        )
-        collection_set = frozenset(collection_files)
+        ]
+        collection_set = frozenset(relative_paths)
         workspace_dir = store.workspace_dir(settings.data_dir)
+
+        # Markdown-first within each stem so a description claims its entry ahead
+        # of any sibling original, whatever the archive's raw ordering.
+        planned = sorted(
+            (_PlannedFile.from_relative(rp) for rp in relative_paths),
+            key=lambda p: (p.stem, not p.is_markdown, p.relative_path),
+        )
+
         preprocessed_markdown: dict[str, bytes] = {}
-        companion_originals: set[str] = set()
-        # Stems an entry in this batch has claimed; the first file for a stem
-        # claims it.
         claimed_stems: set[str] = set()
-        # Stems that already own an original file, so any further non-markdown
-        # for the stem is a duplicate — this is what keeps a stem from ending up
-        # with two originals.
         original_taken: set[str] = set()
+        roles: dict[str, _Role] = {}
 
-        for relative_path in collection_files:
-            safe = sanitize_document_path(relative_path)
-            stem = stem_path_from_reference(safe)
-            is_markdown = is_markdown_suffix(PurePosixPath(safe).suffix.lower())
-
-            # A stem already backed by an on-disk entry is left untouched.
-            if entry_exists(workspace_dir, safe):
-                _fail(relative_path)
-                continue
-
-            if stem not in claimed_stems:
-                # First file for this stem becomes its entry; a non-markdown
-                # entry (an attachment) is its own original.
-                claimed_stems.add(stem)
-                if not is_markdown:
-                    original_taken.add(stem)
-            elif not is_markdown and stem not in original_taken:
-                # The lone source original for a markdown entry in this batch
-                # (a non-markdown claimer already took ``original_taken``).
-                companion_originals.add(relative_path)
-                original_taken.add(stem)
-                continue
+        for p in planned:
+            if entry_exists(workspace_dir, p.safe):
+                # A stem already backed by an on-disk entry is left untouched.
+                roles[p.relative_path] = "failed"
+            elif p.stem not in claimed_stems:
+                # First file for the stem becomes its entry: a markdown is the
+                # indexed description, a non-markdown a standalone attachment.
+                claimed_stems.add(p.stem)
+                if not p.is_markdown:
+                    original_taken.add(p.stem)
+                    roles[p.relative_path] = "attachment"
+                elif (md := _read_markdown(extract_root, p, collection_set)) is not None:
+                    preprocessed_markdown[p.safe] = md
+                    roles[p.relative_path] = "markdown"
+                else:
+                    # Unreadable markdown: unclaim so a sibling original can still
+                    # convert as its own attachment.
+                    claimed_stems.discard(p.stem)
+                    roles[p.relative_path] = "failed"
+            elif not p.is_markdown and p.stem not in original_taken:
+                # The lone source original for a markdown entry this batch claimed.
+                original_taken.add(p.stem)
+                roles[p.relative_path] = "companion"
             else:
                 # A duplicate markdown, or a second original for one stem.
-                _fail(relative_path)
-                continue
-
-            if is_markdown:
-                try:
-                    text = (extract_root / relative_path).read_text(encoding="utf-8")
-                except Exception as exc:
-                    logger.warning("Failed to read %s: %s", relative_path, exc)
-                    _fail(relative_path)
-                    # Unclaim the stem so a sibling original can still convert.
-                    claimed_stems.discard(stem)
-                    continue
-                preprocessed_markdown[safe] = preprocess_markdown(
-                    text, safe, collection_set
-                ).content.encode("utf-8")
+                roles[p.relative_path] = "failed"
 
         # Stems whose owning entry committed this run; a companion original is
         # only written once its owner is in here, so a failed owner never leaves
         # an orphaned original behind.
         committed_stems: set[str] = set()
-        total = len(collection_files)
+        total = len(planned)
 
         def _progress(
             path: str, current: int, status: Literal["ok", "failed"]
@@ -229,68 +283,52 @@ async def process_collection(
                 file=path, current=current, total=total, status=status
             )
 
-        for current, relative_path in enumerate(collection_files, start=1):
-            safe = sanitize_document_path(relative_path)
-            stem = stem_path_from_reference(safe)
-            if relative_path in failed_set:
-                yield _progress(relative_path, current, "failed")
+        for current, p in enumerate(planned, start=1):
+            role = roles[p.relative_path]
+
+            if role == "failed":
+                failed.append(p.relative_path)
+                yield _progress(p.relative_path, current, "failed")
                 continue
 
-            if relative_path in companion_originals:
-                # The owning markdown sorts first and has already been processed;
-                # if its import failed there is no entry to fold this original
-                # into, and writing it would strand a file with no SQL row
-                # (reconcile ingests only markdown, never bare originals).
-                if stem not in committed_stems:
-                    _fail(relative_path)
-                    yield _progress(relative_path, current, "failed")
+            if role == "companion":
+                # The owner sorts first and has already been processed; if its
+                # import failed there is no entry to fold this original into, and
+                # writing it would strand a file with no SQL row (reconcile
+                # ingests only markdown, never bare originals).
+                if p.stem not in committed_stems:
+                    failed.append(p.relative_path)
+                    yield _progress(p.relative_path, current, "failed")
                     continue
-                try:
-                    async with store_lock(store):
-                        async with _rollback_on_failure(store, (safe,)):
-                            original_bytes = (extract_root / relative_path).read_bytes()
-                            original_path = workspace_dir / safe
-                            original_path.parent.mkdir(parents=True, exist_ok=True)
-                            original_path.write_bytes(original_bytes)
-                            # The owning markdown sorts before its companion and
-                            # so is already indexed with no original linked; fold
-                            # the just-written original into its SQL row so delete,
-                            # move, and reconvert see it without waiting for a boot.
-                            await _sync_entry_from_disk_locked(store, safe)
-                    status = "ok"
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to write original %s: %s",
-                        relative_path,
-                        exc,
-                    )
-                    _fail(relative_path)
-                    status = "failed"
-                yield _progress(relative_path, current, status)
+                status = await _write_companion_original(store, extract_root, p)
+                if status == "ok":
+                    converted_count += 1
+                else:
+                    failed.append(p.relative_path)
+                yield _progress(p.relative_path, current, status)
                 continue
 
-            is_markdown = safe in preprocessed_markdown
             try:
-                if is_markdown:
-                    content_bytes = preprocessed_markdown[safe]
+                if role == "markdown":
+                    content_bytes = preprocessed_markdown[p.safe]
                 else:
-                    content_bytes = (extract_root / relative_path).read_bytes()
+                    content_bytes = (extract_root / p.relative_path).read_bytes()
                 await upload(
-                    store, safe, content_bytes, spec=spec, llm=llm, origin="collection"
+                    store, p.safe, content_bytes, spec=spec, llm=llm, origin="collection"
                 )
-                committed_stems.add(stem)
+                committed_stems.add(p.stem)
                 # Count only on success, so the totals never overstate the import.
-                if is_markdown:
+                if role == "markdown":
                     markdown_count += 1
                 else:
                     converted_count += 1
                 status = "ok"
             except Exception as exc:
-                logger.warning("Failed to process %s: %s", relative_path, exc)
-                _fail(relative_path)
+                logger.warning("Failed to process %s: %s", p.relative_path, exc)
+                failed.append(p.relative_path)
                 status = "failed"
 
-            yield _progress(relative_path, current, status)
+            yield _progress(p.relative_path, current, status)
 
     total_ok = markdown_count + converted_count
     yield CollectionCompleteEvent(
