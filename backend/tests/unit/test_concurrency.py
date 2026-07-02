@@ -9,12 +9,11 @@ from hivegent.concurrency import shield_to_completion
 
 async def test_runs_to_completion_and_reraises_cancel() -> None:
     """A cancelled caller still lets the protected work finish, then propagates."""
-    done = False
+    done: list[bool] = []
 
     async def work() -> str:
-        nonlocal done
         await asyncio.sleep(0.05)
-        done = True
+        done.append(True)
         return "ok"
 
     async def caller() -> str:
@@ -27,7 +26,7 @@ async def test_runs_to_completion_and_reraises_cancel() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     # The cancellation was honored, but only after the work ran to completion.
-    assert done is True
+    assert done == [True]
 
 
 async def test_returns_result_without_cancellation() -> None:

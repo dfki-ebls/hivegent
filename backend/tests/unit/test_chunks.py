@@ -38,7 +38,7 @@ def _document_metadata(pipeline: str) -> DocumentMetadata:
 async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
     user_store: Casebase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    stamped = False
+    stamped: list[str] = []
 
     async def upsert_document(
         store: Casebase, entry: EntryMetadata, pipeline: str, line_count: int
@@ -51,9 +51,8 @@ async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
         raise RuntimeError("index failed")
 
     async def set_content_state(document_id: str, digest: str, stat: object) -> None:
-        nonlocal stamped
-        _ = document_id, digest, stat
-        stamped = True
+        _ = digest, stat
+        stamped.append(document_id)
 
     monkeypatch.setattr(chunks.db_documents, "upsert_document", upsert_document)
     monkeypatch.setattr(chunks, "index_document", index_document)
@@ -69,4 +68,4 @@ async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
             entry_metadata=_entry_metadata(),
         )
 
-    assert stamped is False
+    assert not stamped

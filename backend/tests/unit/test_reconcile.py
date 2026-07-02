@@ -60,6 +60,32 @@ async def test_reconcile_ingests_markdown_and_keeps_stray_files(
     assert (workspace_dir / "gone.assets/fig.png").exists()
 
 
+async def test_reconcile_skips_a_failing_entry_and_ingests_the_rest(
+    user_store: Casebase, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (workspace_dir / "good.md").write_text("ok")
+    (workspace_dir / "bad.md").write_text("boom")
+
+    async def chunk_and_index(
+        store: Casebase, filename: str, *args: object, **kwargs: object
+    ) -> None:
+        if filename == "bad.md":
+            raise RuntimeError("chunker exploded")
+
+    async def list_document_paths(store: Casebase) -> dict[str, int]:
+        return {}
+
+    monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", chunk_and_index)
+    monkeypatch.setattr(
+        reconcile.db_documents, "list_document_paths", list_document_paths
+    )
+
+    # One poison file must not abort the batch: the healthy entry still ingests.
+    report = await reconcile.reconcile_store(user_store)
+
+    assert report.entries_ingested == 1
+
+
 async def test_reconcile_drops_rows_whose_description_vanished(
     user_store: Casebase, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

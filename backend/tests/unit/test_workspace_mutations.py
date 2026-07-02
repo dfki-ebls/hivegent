@@ -230,7 +230,7 @@ class TestSyncEntryFromDisk:
         (workspace_dir / "doc.md").write_text("body", encoding="utf-8")
         (workspace_dir / "doc.pdf").write_bytes(b"%PDF")
         (workspace_dir / "doc.assets").mkdir()
-        updated: EntryMetadata | None = None
+        updated: list[EntryMetadata] = []
 
         async def get_entry_state(store: Casebase, reference: str) -> EntryState:
             _ = store, reference
@@ -244,9 +244,8 @@ class TestSyncEntryFromDisk:
         async def update_entry(
             store: Casebase, entry: EntryMetadata, stat: ContentStat | None
         ) -> bool:
-            nonlocal updated
             _ = store, stat
-            updated = entry
+            updated.append(entry)
             return True
 
         async def chunk_and_index_document(*_args: object, **_kwargs: object) -> None:
@@ -261,10 +260,10 @@ class TestSyncEntryFromDisk:
         changed = await workspace.sync_entry_from_disk(user_store, "doc.md")
 
         assert changed is True
-        assert updated is not None
-        assert updated.original_path == "doc.pdf"
-        assert updated.assets_dir == "doc.assets"
-        assert updated.origin == "upload"
+        assert len(updated) == 1
+        assert updated[0].original_path == "doc.pdf"
+        assert updated[0].assets_dir == "doc.assets"
+        assert updated[0].origin == "upload"
 
     async def test_fast_path_skips_unchanged_stat(
         self,

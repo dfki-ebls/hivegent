@@ -169,23 +169,21 @@ async def build_tree_response(store: Casebase) -> DirectoryTreeResponse:
         workspace.inflight_stems(store),
     )
 
-    total_files = 0
-    total_directories = 0
+    def _count(entry: DirectoryEntry) -> tuple[int, int]:
+        """Return the (files, directories) totals of the subtree at *entry*."""
+        files = 1 if entry.type == "file" else 0
+        directories = 1 if entry.type == "directory" else 0
+        for child in entry.children or []:
+            child_files, child_directories = _count(child)
+            files += child_files
+            directories += child_directories
+        return files, directories
 
-    def _count(entry: DirectoryEntry) -> None:
-        nonlocal total_files, total_directories
-        if entry.type == "file":
-            total_files += 1
-        elif entry.type == "directory":
-            total_directories += 1
-            for child in entry.children or []:
-                _count(child)
-
-    for child in root.children or []:
-        _count(child)
+    # The synthetic root itself is excluded: count only its subtrees.
+    child_counts = [_count(child) for child in root.children or []]
 
     return DirectoryTreeResponse(
         root=root,
-        total_files=total_files,
-        total_directories=total_directories,
+        total_files=sum(files for files, _ in child_counts),
+        total_directories=sum(directories for _, directories in child_counts),
     )
