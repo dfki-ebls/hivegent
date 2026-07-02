@@ -157,7 +157,9 @@ async def _search_path(
                     )
                 )
     except Exception:
-        logger.warning("Grep failed for pattern %r in %s", pattern, sp.path)
+        logger.warning(
+            "Grep failed for pattern %r in %s", pattern, sp.path, exc_info=True
+        )
     return matches
 
 

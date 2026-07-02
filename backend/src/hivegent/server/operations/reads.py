@@ -6,6 +6,7 @@ the filesystem to resolve URLs to bytes.  Mutations live in
 """
 
 import asyncio
+import logging
 import mimetypes
 from pathlib import Path
 from urllib.parse import quote
@@ -30,6 +31,8 @@ __all__ = [
     "get_document_response",
     "list_assets",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 async def find_original(store: Casebase, safe: str) -> Path:
@@ -121,6 +124,9 @@ def list_assets(store: Casebase, safe: str) -> AssetListResponse:
             try:
                 description = companion.read_text(encoding="utf-8")
             except Exception:
+                logger.warning(
+                    "Failed to read asset description %s", description_path, exc_info=True
+                )
                 description = ""
         entries.append(
             AssetEntry(

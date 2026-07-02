@@ -1,6 +1,7 @@
 """Routes for settings, tool metadata, and pipeline metadata."""
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from typing import Annotated
 
@@ -21,6 +22,8 @@ from ...types import (
 )
 
 __all__ = ["router"]
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -71,7 +74,11 @@ async def test_mcp_server(
                 tools = await mcp_toolset.list_tools()
                 return McpTestResponse(ok=True, tool_count=len(tools))
     except Exception as exc:
-        return McpTestResponse(ok=False, error=str(exc))
+        # A timeout raises a bare TimeoutError whose str() is empty, so fall back
+        # to the type name; log the full traceback so the operator can diagnose
+        # what the user-facing message alone cannot convey.
+        logger.warning("MCP server test failed for %s", config.url, exc_info=True)
+        return McpTestResponse(ok=False, error=str(exc) or type(exc).__name__)
 
 
 @router.get("/pipelines/conversion")
