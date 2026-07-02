@@ -514,22 +514,6 @@ class GlobDocumentsTool(SyncPathTool[list[str]]):
         )
 
 
-def _description_companion(sp: SearchPath, local: str, original: Path) -> Path | None:
-    """Absolute path of *original*'s markdown description companion, if readable.
-
-    Every non-markdown upload keeps its original ``<stem>.<ext>`` and an indexed
-    ``<stem>.md`` description; this swaps the already-validated *original* for
-    that sibling (same directory, so no new traversal), reusing the search
-    path's filter.  Returns ``None`` when no companion exists on disk.
-    """
-    desc_local = description_path_for_stem(stem_path_from_reference(local))
-    if not file_allowed(sp.filter_func, desc_local):
-        return None
-
-    companion = original.with_name(Path(desc_local).name)
-    return companion if companion.is_file() else None
-
-
 @dataclass(slots=True, frozen=True)
 class ReadDocumentTool(SyncPathTool[DocumentRange]):
     """Read a document's content as a line range with line numbers."""
@@ -555,30 +539,32 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None or not resolved[2].is_file():
             raise ToolRetry(f"'{file_path}' not found.")
-        sp, local, absolute = resolved
+        _sp, _local, absolute = resolved
+
+        # Reads are uniform: the requested file is read as text and never
+        # silently swapped for another.  Non-markdown inputs are redirected only
+        # through the error message — a vision-capable binary (image, PDF, video)
+        # goes to read_binary_document (some models ingest those natively, and
+        # PDFs get custom page rendering), while any non-markdown original's
+        # extracted text stays reachable by requesting its ``<stem>.md`` sidecar,
+        # whose read then re-runs the same containment checks.
+        sidecar_hint = ""
+        if not is_description_file(file_path):
+            sidecar = description_path_for_stem(stem_path_from_reference(file_path))
+            sidecar_hint = f" To read its extracted text, request '{sidecar}' instead."
 
         media_type = binary_media_type(file_path)
         if media_type is not None:
             raise ToolRetry(
-                f"'{file_path}' is a {media_type} binary — "
-                "use read_binary_document to send it to a vision model."
+                f"'{file_path}' is a {media_type} binary — use read_binary_document "
+                f"to send it to a vision model.{sidecar_hint}"
             )
-
-        # A non-markdown original (report.docx) is inert bytes on disk; its
-        # indexed text lives in the sibling markdown description.  Serve that so
-        # the caller gets extracted text instead of a binary it cannot decode.
-        if not is_description_file(local):
-            companion = _description_companion(sp, local, absolute)
-            if companion is not None:
-                absolute = companion
 
         try:
             raw_text = absolute.read_text(encoding="utf-8")
         except UnicodeDecodeError as exc:
             raise ToolRetry(
-                f"'{file_path}' is not readable as text and has no indexed text "
-                "companion; if it is a supported visual format, use "
-                "read_binary_document instead."
+                f"'{file_path}' is not readable as text.{sidecar_hint}"
             ) from exc
         file_hash = content_hash(raw_text)
         all_lines = raw_text.splitlines()
