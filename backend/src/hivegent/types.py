@@ -37,7 +37,6 @@ __all__ = [
     "ClearMemoryResponse",
     "CollectionCompleteEvent",
     "CollectionProgressEvent",
-    "CollectionUploadResponse",
     "CompactConversationRequest",
     "CompactConversationResponse",
     "ConversationListResponse",
@@ -800,10 +799,16 @@ class FailedFile(BaseModel):
     reason: str = Field(description="Why the file was not imported")
 
 
-class CollectionUploadResponse(BaseModel):
-    """Response for collection (directory or ZIP) upload."""
+class CollectionProgressEvent(BaseModel):
+    """Progress event yielded per file while a collection job runs."""
 
-    total_files: int = Field(description="Total files processed")
+    current: int = Field(description="Number of files processed so far")
+    total: int = Field(description="Total number of files to process")
+
+
+class CollectionCompleteEvent(BaseModel):
+    """Terminal event summarizing a finished collection import."""
+
     markdown_files: int = Field(description="Number of markdown files uploaded")
     converted_attachments: int = Field(
         description="Number of binary attachments converted",
@@ -813,24 +818,6 @@ class CollectionUploadResponse(BaseModel):
         description="Files that were skipped or failed, each with its reason",
     )
     message: str = Field(description="Status message")
-
-
-class CollectionProgressEvent(BaseModel):
-    """SSE progress event emitted during streaming collection upload."""
-
-    type: Literal["progress"] = "progress"
-    file: str = Field(description="File currently being processed")
-    current: int = Field(description="Number of files processed so far")
-    total: int = Field(description="Total number of files to process")
-    status: Literal["ok", "failed"] = Field(
-        description="Whether this file succeeded or failed",
-    )
-
-
-class CollectionCompleteEvent(CollectionUploadResponse):
-    """SSE completion event emitted at the end of streaming collection upload."""
-
-    type: Literal["complete"] = "complete"
 
 
 class UploadCompleteEvent(UploadDocumentResponse):

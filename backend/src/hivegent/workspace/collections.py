@@ -334,19 +334,21 @@ async def process_collection(
         committed_stems: set[str] = set()
         total = len(planned)
 
-        def _progress(
-            path: str, current: int, status: Literal["ok", "failed"]
-        ) -> CollectionProgressEvent:
-            return CollectionProgressEvent(
-                file=path, current=current, total=total, status=status
-            )
+        def _progress(current: int) -> CollectionProgressEvent:
+            return CollectionProgressEvent(current=current, total=total)
+
+        # Seed 0/total before the first conversion so the tray shows a live
+        # counter from the start; a slow first file (docling can take minutes)
+        # would otherwise leave the job on a bare "Processing" spinner until it
+        # finished, with nothing telling the user work is underway.
+        yield _progress(0)
 
         for current, p in enumerate(planned, start=1):
             role = roles[p.relative_path]
 
             if isinstance(role, _Failed):
                 failed.append(_record_failure(p.relative_path, role.reason))
-                yield _progress(p.relative_path, current, "failed")
+                yield _progress(current)
                 continue
 
             if role == "companion":
@@ -356,16 +358,15 @@ async def process_collection(
                 # ingests only markdown, never bare originals).
                 if p.stem not in committed_stems:
                     failed.append(_record_failure(p.relative_path, _REASON_OWNER_FAILED))
-                    yield _progress(p.relative_path, current, "failed")
+                    yield _progress(current)
                     continue
-                status = await _write_companion_original(store, extract_root, p)
-                if status == "ok":
+                if await _write_companion_original(store, extract_root, p) == "ok":
                     converted_count += 1
                 else:
                     failed.append(
                         _record_failure(p.relative_path, _REASON_WRITE_FAILED)
                     )
-                yield _progress(p.relative_path, current, status)
+                yield _progress(current)
                 continue
 
             try:
@@ -387,18 +388,14 @@ async def process_collection(
                     markdown_count += 1
                 else:
                     converted_count += 1
-                status = "ok"
             except Exception as exc:
                 failed.append(
                     _record_failure(p.relative_path, _REASON_CONVERSION, exc=exc)
                 )
-                status = "failed"
 
-            yield _progress(p.relative_path, current, status)
+            yield _progress(current)
 
-    total_ok = markdown_count + converted_count
     yield CollectionCompleteEvent(
-        total_files=total_ok,
         markdown_files=markdown_count,
         converted_attachments=converted_count,
         failed_files=failed,

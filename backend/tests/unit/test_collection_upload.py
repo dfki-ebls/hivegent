@@ -12,7 +12,12 @@ import pytest
 
 from hivegent.config import settings
 from hivegent.store import Casebase
-from hivegent.types import CollectionCompleteEvent, LlmConfig, PipelineSpec
+from hivegent.types import (
+    CollectionCompleteEvent,
+    CollectionProgressEvent,
+    LlmConfig,
+    PipelineSpec,
+)
 from hivegent.workspace import collections
 
 
@@ -45,6 +50,28 @@ async def _run(store: Casebase, archive: Path) -> CollectionCompleteEvent:
 def _failures(complete: CollectionCompleteEvent) -> dict[str, str]:
     """Map each failed member to its reason for concise assertions."""
     return {f.path: f.reason for f in complete.failed_files}
+
+
+async def test_progress_seeds_zero_before_first_conversion(
+    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def ok_upload(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(collections, "upload", ok_upload)
+
+    archive = _make_zip(tmp_path, {"A.md": b"# a", "B.md": b"# b"})
+    currents = [
+        event.current
+        async for event in collections.process_collection(
+            user_store, archive, PipelineSpec(), LlmConfig()
+        )
+        if isinstance(event, CollectionProgressEvent)
+    ]
+
+    # A 0/total seed leads, so the tray has a live counter before the first
+    # (potentially minutes-long) conversion completes, then one tick per file.
+    assert currents == [0, 1, 2]
 
 
 async def test_companion_original_dropped_when_owning_markdown_fails(
