@@ -13,6 +13,7 @@ from starlette.responses import PlainTextResponse, Response
 from ..config import settings
 from ..db import apply_migrations, engine_lifespan
 from ..http_client import shared_http_client_lifespan
+from ..logging_config import configure_logging
 from ..mcp import mcp_app
 from ..observability import configure_observability
 from ..reconcile import reconcile_all
@@ -167,6 +168,7 @@ def create_app() -> FastAPI:
     caps, compression — live in the reverse proxy (Caddy). The backend
     keeps only domain logic, auth, and observability.
     """
+    configure_logging()
     _validate_auth_settings()
     install_probe_access_filter()
 

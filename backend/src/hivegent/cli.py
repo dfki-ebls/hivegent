@@ -19,6 +19,19 @@ app = typer.Typer(
     # pretty_exceptions_short=True,
 )
 
+@app.callback()
+def _main() -> None:
+    """Configure logging once for every CLI command (the CLI entry point).
+
+    The server worker configures itself in ``create_app`` instead, because
+    uvicorn's ``--reload`` child runs the factory without ever entering this
+    callback.
+    """
+    from .logging_config import configure_logging
+
+    configure_logging()
+
+
 # Default paths
 CONFIG_DIR = Path.home() / ".config" / "hivegent"
 CREDENTIALS_FILE = CONFIG_DIR / "credentials.json"
@@ -391,6 +404,10 @@ def serve(
         port=port,
         reload=reload,
         reload_dirs=str(Path(__file__).parent) if reload else None,
+        # No uvicorn dictConfig: its loggers propagate to the root handler
+        # installed by configure_logging, so access/error lines share the app's
+        # format instead of uvicorn's own.
+        log_config=None,
         timeout_keep_alive=300,
         # Must stay below the systemd/dinit stop timeout so uvicorn force-closes
         # and runs lifespan teardown before the supervisor resorts to SIGKILL.

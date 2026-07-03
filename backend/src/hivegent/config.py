@@ -34,6 +34,7 @@ __all__ = [
     "EmbeddingSettings",
     "LimitsSettings",
     "LlmSettings",
+    "LoggingSettings",
     "LogfireSettings",
     "McpSettings",
     "MultimodalSettings",
@@ -237,6 +238,16 @@ class MultimodalSettings(BaseModel):
     """
 
     binary_content: BinaryContentMode = BinaryContentMode.IMAGES
+
+
+class LoggingSettings(BaseModel):
+    """Standard-library logging settings.
+
+    The root level applied by :func:`hivegent.logging_config.configure_logging`.
+    Configurable via ``HIVEGENT_LOGGING__*`` environment variables.
+    """
+
+    level: str = "INFO"
 
 
 class LogfireSettings(BaseModel):
@@ -658,6 +669,7 @@ class Settings(BaseSettings):
     multimodal: MultimodalSettings = MultimodalSettings()
     embedding: EmbeddingSettings = EmbeddingSettings()
     rerank: RerankSettings = RerankSettings()
+    logging: LoggingSettings = LoggingSettings()
     logfire: LogfireSettings = LogfireSettings()
     mcp: McpSettings = McpSettings()
     claims: ClaimSettings = ClaimSettings()
