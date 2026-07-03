@@ -20,6 +20,7 @@ from typing import Literal, Self
 
 from fastapi import HTTPException
 
+from ..concurrency import shield_to_completion
 from ..config import sanitize_document_path, settings
 from ..converters.wikilinks import preprocess_markdown
 from ..entries import (
@@ -212,6 +213,9 @@ async def _write_companion_original(
     The owning markdown committed earlier in the run; on any failure only the
     just-written original is removed, so the owner is never rolled back with it
     (a stem-keyed delete would take the description, its chunks, and assets too).
+    The SQL sync runs to completion even on a cancel
+    (:func:`shield_to_completion`), so a cancelled collection can never strand the
+    original on disk without its owner's row linking it.
     """
     original_path = store.workspace_dir(settings.data_dir) / planned.safe
     try:
@@ -222,7 +226,9 @@ async def _write_companion_original(
             # The owner sorts before its companion and is already indexed with no
             # original linked; fold the just-written original into its SQL row so
             # delete, move, and reconvert see it without waiting for a boot.
-            await _sync_entry_from_disk_locked(store, planned.safe)
+            await shield_to_completion(
+                _sync_entry_from_disk_locked(store, planned.safe)
+            )
     except Exception as exc:
         logger.warning(
             "Failed to write original %s: %s", planned.relative_path, exc, exc_info=True

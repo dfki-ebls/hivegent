@@ -5,6 +5,7 @@ with ``monkeypatch`` so the importer's file/stem bookkeeping is exercised
 without a live database.
 """
 
+import asyncio
 import zipfile
 from pathlib import Path
 
@@ -72,6 +73,43 @@ async def test_progress_seeds_zero_before_first_conversion(
     # A 0/total seed leads, so the tray has a live counter before the first
     # (potentially minutes-long) conversion completes, then one tick per file.
     assert currents == [0, 1, 2]
+
+
+async def test_companion_write_survives_cancel(
+    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    synced: list[str] = []
+
+    async def gated_sync(_store: Casebase, reference: str) -> bool:
+        started.set()
+        await release.wait()
+        synced.append(reference)
+        return True
+
+    monkeypatch.setattr(collections, "_sync_entry_from_disk_locked", gated_sync)
+
+    extract_root = tmp_path / "extract"
+    extract_root.mkdir()
+    (extract_root / "M.pdf").write_bytes(b"%PDF-1.4")
+    planned = collections._PlannedFile.from_relative("M.pdf")
+
+    task = asyncio.ensure_future(
+        collections._write_companion_original(user_store, extract_root, planned)
+    )
+    await started.wait()
+    # Cancel while the SQL sync is in flight, then let it proceed: the shield
+    # must run the write + sync to completion so the on-disk original is never
+    # stranded without its owner's row linking it.
+    task.cancel()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert synced == ["M.pdf"]
+    assert (user_store.workspace_dir(settings.data_dir) / "M.pdf").exists()
 
 
 async def test_companion_original_dropped_when_owning_markdown_fails(
