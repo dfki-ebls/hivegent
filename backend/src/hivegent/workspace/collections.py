@@ -137,7 +137,16 @@ def validate_collection_archive(archive_path: Path) -> None:
         raise HTTPException(status_code=400, detail="Invalid ZIP file") from exc
 
 
-_Role = Literal["markdown", "attachment", "companion", "failed"]
+@dataclass(slots=True, frozen=True)
+class _Failed:
+    """A planning-phase drop of a member, carrying its reason for the tray."""
+
+    reason: str
+
+
+# A planned member's disposition: one of the three commit kinds, or a drop that
+# carries its own reason, so a failed role can never exist without one.
+_Role = Literal["markdown", "attachment", "companion"] | _Failed
 
 
 @dataclass(slots=True, frozen=True)
@@ -289,15 +298,11 @@ async def process_collection(
         claimed_stems: set[str] = set()
         original_taken: set[str] = set()
         roles: dict[str, _Role] = {}
-        # The reason a planning-phase drop failed, surfaced when the processing
-        # loop records it; roles marked "failed" here always have an entry.
-        fail_reasons: dict[str, str] = {}
 
         for p in planned:
             if entry_exists(workspace_dir, p.safe):
                 # A stem already backed by an on-disk entry is left untouched.
-                roles[p.relative_path] = "failed"
-                fail_reasons[p.relative_path] = _REASON_EXISTS
+                roles[p.relative_path] = _Failed(_REASON_EXISTS)
             elif p.stem not in claimed_stems:
                 # First file for the stem becomes its entry: a markdown is the
                 # indexed description, a non-markdown a standalone attachment.
@@ -314,16 +319,14 @@ async def process_collection(
                     # Unreadable markdown: unclaim so a sibling original can still
                     # convert as its own attachment.
                     claimed_stems.discard(p.stem)
-                    roles[p.relative_path] = "failed"
-                    fail_reasons[p.relative_path] = _REASON_UNREADABLE_MD
+                    roles[p.relative_path] = _Failed(_REASON_UNREADABLE_MD)
             elif not p.is_markdown and p.stem not in original_taken:
                 # The lone source original for a markdown entry this batch claimed.
                 original_taken.add(p.stem)
                 roles[p.relative_path] = "companion"
             else:
                 # A duplicate markdown, or a second original for one stem.
-                roles[p.relative_path] = "failed"
-                fail_reasons[p.relative_path] = _REASON_NAME_CONFLICT
+                roles[p.relative_path] = _Failed(_REASON_NAME_CONFLICT)
 
         # Stems whose owning entry committed this run; a companion original is
         # only written once its owner is in here, so a failed owner never leaves
@@ -341,10 +344,8 @@ async def process_collection(
         for current, p in enumerate(planned, start=1):
             role = roles[p.relative_path]
 
-            if role == "failed":
-                failed.append(
-                    _record_failure(p.relative_path, fail_reasons[p.relative_path])
-                )
+            if isinstance(role, _Failed):
+                failed.append(_record_failure(p.relative_path, role.reason))
                 yield _progress(p.relative_path, current, "failed")
                 continue
 

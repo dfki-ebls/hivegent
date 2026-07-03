@@ -488,6 +488,8 @@ async def _prepare_convertible(
             except Exception as exc:
                 outcome = exc
 
+            failure = outcome if isinstance(outcome, Exception) else None
+
             # Only AUTO consults the fallback registry; an explicit pipeline
             # keeps its own output (or surfaces its own error).
             recovery = (
@@ -501,11 +503,9 @@ async def _prepare_convertible(
                 logger.warning(
                     "primary conversion of %s %s; recovered via %s fallback",
                     filepath,
-                    "failed"
-                    if isinstance(outcome, Exception)
-                    else "produced degraded output",
+                    "failed" if failure is not None else "produced degraded output",
                     recovery.pipeline.value,
-                    exc_info=outcome if isinstance(outcome, Exception) else None,
+                    exc_info=failure,
                 )
                 result = ConversionResult(markdown=recovery.markdown)
                 resolved_conversion = recovery.pipeline
