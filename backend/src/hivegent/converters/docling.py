@@ -3,13 +3,16 @@
 import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 import PIL.Image
 import PIL.ImageFile
+from docling.backend.msword_backend import MsWordDocumentBackend
 from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
+from docling.datamodel.document import InputDocument
 from docling.datamodel.pipeline_options import (
     ConvertPipelineOptions,
     TesseractOcrOptions,
@@ -38,6 +41,16 @@ from .base import (
 )
 
 
+def _accelerator_options() -> AcceleratorOptions:
+    """Accelerator options shared by every docling pipeline.
+
+    AcceleratorOptions defaults its device to AUTO; placement is decided
+    centrally by CUDA_VISIBLE_DEVICES, so only the thread count is pulled
+    from the shared :class:`~hivegent.config.ComputeSettings`.
+    """
+    return AcceleratorOptions(num_threads=settings.compute.num_threads)
+
+
 def _default_pdf_options() -> ThreadedPdfPipelineOptions:
     """PDF/image options with the picture classifier enabled by default.
 
@@ -59,17 +72,20 @@ def _default_pdf_options() -> ThreadedPdfPipelineOptions:
     resolves the nixpkgs tessdata via ``TESSDATA_PREFIX``, which the nix
     package and dev shell both set.
     """
-    compute = settings.compute
-    # AcceleratorOptions defaults its device to AUTO; placement is decided
-    # centrally by CUDA_VISIBLE_DEVICES, so only the thread count is set here.
+    batch_size = settings.compute.batch_size
     return ThreadedPdfPipelineOptions(
         do_picture_classification=True,
         ocr_options=TesseractOcrOptions(lang=settings.conversion.ocr.languages),
-        accelerator_options=AcceleratorOptions(num_threads=compute.num_threads),
-        ocr_batch_size=compute.batch_size,
-        layout_batch_size=compute.batch_size,
-        table_batch_size=compute.batch_size,
+        accelerator_options=_accelerator_options(),
+        ocr_batch_size=batch_size,
+        layout_batch_size=batch_size,
+        table_batch_size=batch_size,
     )
+
+
+def _default_convert_options() -> ConvertPipelineOptions:
+    """Office/text options seeded from the same shared compute settings."""
+    return ConvertPipelineOptions(accelerator_options=_accelerator_options())
 
 
 # Raise Pillow's decompression-bomb limit so that large embedded images/streams
@@ -83,6 +99,31 @@ PIL.Image.MAX_IMAGE_PIXELS = settings.limits.max_image_pixels
 # large embedded metadata (common in Office documents). We are generous
 # while still guarding against decompression bombs.
 PIL.ImageFile.SAFEBLOCK = 32 * 1024 * 1024  # ty: ignore[invalid-assignment]
+
+
+class _MsWordBackend(MsWordDocumentBackend):
+    """Word backend honoring the ``conversion.libreoffice_images`` setting.
+
+    Docling's Word backend rasterizes embedded vector/legacy images it cannot
+    decode with Pillow (DrawingML, VML, EMF, WMF) by cold-starting LibreOffice
+    once per image and rendering the result through a throwaway PDF.  Those
+    ``soffice`` cold-starts run serially and dominate conversion time on
+    image-heavy documents, so they stay off unless the setting enables them.
+    When disabled, marking the DOCX->PDF converter as resolved-but-absent makes
+    docling take its own "no converter available" branch, degrading such images
+    to placeholders instead of spawning a subprocess apiece.
+
+    This is not a docling pipeline option (the Word backend has no options
+    object), so it is applied by the backend itself rather than through
+    :class:`DoclingConverterConfig`.
+    """
+
+    def __init__(self, in_doc: InputDocument, path_or_stream: BytesIO | Path) -> None:
+        super().__init__(in_doc, path_or_stream)
+        if not settings.conversion.libreoffice_images:
+            self.docx_to_pdf_converter_init = True
+            self.display_drawingml_warning = False
+
 
 __all__ = ["DoclingConverter", "DoclingConverterConfig"]
 
@@ -100,7 +141,7 @@ class DoclingConverterConfig(BaseModel):
         description="Options for PDF and image formats (OCR, table structure, layout, etc.)",
     )
     convert_options: ConvertPipelineOptions = Field(
-        default_factory=ConvertPipelineOptions,
+        default_factory=_default_convert_options,
         description="Options for Office and text formats (DOCX, PPTX, HTML, etc.)",
     )
 
@@ -128,15 +169,17 @@ def _build_converter(config: DoclingConverterConfig) -> DoclingDocumentConverter
     """
     converter = DoclingDocumentConverter()
     # Start from default format options (which include the correct backend
-    # and pipeline_cls) and only override pipeline_options.
+    # and pipeline_cls) and only override pipeline_options -- plus, for DOCX,
+    # the backend that honors the LibreOffice image-rendering setting.
     for fmt in converter.format_to_options:
         default = converter.format_to_options[fmt]
         opts = config.pdf_options if fmt in _PDF_FORMATS else config.convert_options
         if fmt in _PDF_FORMATS:
             opts = opts.model_copy(update={"generate_picture_images": True})
-        converter.format_to_options[fmt] = default.model_copy(
-            update={"pipeline_options": opts}
-        )
+        overrides: dict[str, Any] = {"pipeline_options": opts}
+        if fmt is InputFormat.DOCX:
+            overrides["backend"] = _MsWordBackend
+        converter.format_to_options[fmt] = default.model_copy(update=overrides)
     return converter
 
 

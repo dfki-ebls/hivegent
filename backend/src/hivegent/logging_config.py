@@ -23,10 +23,16 @@ __all__ = ["configure_logging"]
 
 # Third-party loggers whose default level is too chatty.  Docling emits a line
 # per pipeline stage per document; keep only its warnings, but let the pipeline
-# logger through at INFO so long conversions still show progress.
+# logger through at INFO so long conversions still show progress.  Its Word
+# backend also nags per undecodable embedded image to install LibreOffice for
+# VML/EMF/WMF support (unconditional, unlike the DrawingML nudge the backend
+# subclass already silences); with LibreOffice rendering off by default those
+# and the sibling per-image "cannot be loaded" warnings are non-actionable
+# noise, so quiet that backend to errors only.
 _LIBRARY_LEVELS: dict[str, int] = {
     "docling": logging.WARNING,
     "docling.pipeline": logging.INFO,
+    "docling.backend.msword_backend": logging.ERROR,
 }
 
 # joserfc warns on every EdDSA verification that RFC 9864 deprecates the generic
