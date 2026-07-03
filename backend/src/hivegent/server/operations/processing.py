@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile
 
 from ...config import settings
-from ...types import LlmConfig, PipelineSpec, ProgressReporter
+from ...types import FailedFile, LlmConfig, PipelineSpec, ProgressReporter
 from ..common import parse_pipeline_spec, prepare_llm_config
 
 __all__ = [
@@ -22,6 +22,7 @@ __all__ = [
     "enforce_upload_size",
     "run_bulk_document_job",
     "spool_dir",
+    "summarize_failed_files",
     "summarize_failures",
     "validate_collection_upload",
 ]
@@ -41,6 +42,25 @@ def summarize_failures(
     if len(failed) > limit:
         listed += f", and {len(failed) - limit} more"
     return listed
+
+
+def summarize_failed_files(
+    failed: Sequence[FailedFile], *, limit: int = _MAX_LISTED_FAILURES
+) -> str:
+    """Group failed files by reason into one compact clause per reason.
+
+    Files sharing a reason are listed together (``reason: a, b``) so a batch
+    that fails the same way stays one short line instead of repeating the
+    reason per file.
+    """
+    by_reason: dict[str, list[str]] = {}
+    for f in failed:
+        by_reason.setdefault(f.reason, []).append(f.path)
+
+    return "; ".join(
+        f"{reason}: {summarize_failures(paths, limit=limit)}"
+        for reason, paths in by_reason.items()
+    )
 
 
 def _spool_root() -> Path:

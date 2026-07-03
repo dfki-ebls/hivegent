@@ -68,7 +68,7 @@ from ..operations import (
     list_assets,
     run_bulk_document_job,
     spool_dir,
-    summarize_failures,
+    summarize_failed_files,
     validate_collection_upload,
 )
 
@@ -328,12 +328,13 @@ async def upload_collection(
                 ctx.set_stage(event.message)
                 # The complete event is terminal, so this ends the loop.  A
                 # per-file failure is not fatal to the batch, but the job must
-                # not settle as a clean success: fail it with the file names so
-                # the failure surfaces, while the succeeded files stay committed.
+                # not settle as a clean success: fail it with the per-reason
+                # breakdown so the tray shows why, while succeeded files stay
+                # committed.
                 if event.failed_files:
                     raise RuntimeError(
-                        f"{len(event.failed_files)} file(s) failed to import: "
-                        f"{summarize_failures(event.failed_files)}"
+                        f"{len(event.failed_files)} file(s) not imported. "
+                        f"{summarize_failed_files(event.failed_files)}"
                     )
 
     return manager.submit(

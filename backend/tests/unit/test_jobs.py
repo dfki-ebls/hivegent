@@ -6,7 +6,11 @@ from contextlib import aclosing
 import pytest
 
 from hivegent.server.jobs import FeedReady, JobContext, JobManager, JobView
-from hivegent.server.operations.processing import run_bulk_document_job
+from hivegent.server.operations.processing import (
+    run_bulk_document_job,
+    summarize_failed_files,
+)
+from hivegent.types import FailedFile
 
 
 async def _run_to_terminal(
@@ -137,3 +141,18 @@ async def test_bulk_runner_raises_so_failures_are_not_a_false_success() -> None:
     assert "1 failed" in str(exc.value)
     assert "b.md" in str(exc.value)
     assert (progress.current, progress.total) == (3, 3)
+
+
+def test_summarize_failed_files_groups_by_reason() -> None:
+    """Files sharing a reason collapse to one clause; distinct reasons split."""
+    summary = summarize_failed_files(
+        [
+            FailedFile(path="a.tex", reason="already in the workspace"),
+            FailedFile(path="a.xlsm", reason="already in the workspace"),
+            FailedFile(path="b.pdf", reason="conversion failed"),
+        ]
+    )
+
+    assert summary == (
+        "already in the workspace: a.tex, a.xlsm; conversion failed: b.pdf"
+    )

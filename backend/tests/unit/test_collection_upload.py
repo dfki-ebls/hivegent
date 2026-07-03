@@ -42,6 +42,11 @@ async def _run(store: Casebase, archive: Path) -> CollectionCompleteEvent:
     return complete
 
 
+def _failures(complete: CollectionCompleteEvent) -> dict[str, str]:
+    """Map each failed member to its reason for concise assertions."""
+    return {f.path: f.reason for f in complete.failed_files}
+
+
 async def test_companion_original_dropped_when_owning_markdown_fails(
     user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -63,7 +68,10 @@ async def test_companion_original_dropped_when_owning_markdown_fails(
     archive = _make_zip(tmp_path, {"M.md": b"# body", "M.pdf": b"%PDF-1.4"})
     complete = await _run(user_store, archive)
 
-    assert set(complete.failed_files) == {"M.md", "M.pdf"}
+    assert _failures(complete) == {
+        "M.md": collections._REASON_CONVERSION,
+        "M.pdf": collections._REASON_OWNER_FAILED,
+    }
     # The companion original is never written, so its owner's failure leaves no
     # orphan file on disk with no SQL row.
     assert not (workspace_dir / "M.pdf").exists()
@@ -110,7 +118,7 @@ async def test_second_non_markdown_for_a_stem_is_rejected(
     archive = _make_zip(tmp_path, {"A.docx": b"doc", "A.pdf": b"%PDF-1.4"})
     complete = await _run(user_store, archive)
 
-    assert complete.failed_files == ["A.pdf"]
+    assert _failures(complete) == {"A.pdf": collections._REASON_NAME_CONFLICT}
     assert complete.converted_attachments == 1
     assert complete.markdown_files == 0
 
@@ -135,7 +143,7 @@ async def test_markdown_adopts_one_original_and_rejects_the_rest(
     )
     complete = await _run(user_store, archive)
 
-    assert complete.failed_files == ["B.rtf"]
+    assert _failures(complete) == {"B.rtf": collections._REASON_NAME_CONFLICT}
     assert complete.markdown_files == 1
     # Exactly one original landed for the stem.
     assert (workspace_dir / "B.pdf").exists()
@@ -190,7 +198,7 @@ async def test_companion_write_failure_keeps_committed_owner(
     archive = _make_zip(tmp_path, {"M.md": b"# body", "M.pdf": b"%PDF-1.4"})
     complete = await _run(user_store, archive)
 
-    assert complete.failed_files == ["M.pdf"]
+    assert _failures(complete) == {"M.pdf": collections._REASON_WRITE_FAILED}
     # The companion failure removes only its own orphan original; the owning
     # markdown that already committed is never rolled back with it.
     assert (workspace_dir / "M.md").exists()

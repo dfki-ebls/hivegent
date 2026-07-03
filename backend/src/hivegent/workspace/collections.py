@@ -32,6 +32,7 @@ from ..store import Casebase
 from ..types import (
     CollectionCompleteEvent,
     CollectionProgressEvent,
+    FailedFile,
     LlmConfig,
     PipelineSpec,
 )
@@ -45,6 +46,24 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+# One short, user-facing reason per failure class, shown in the job tray and
+# grouped there by reason.  Per-file exception detail is logged, not surfaced.
+_REASON_EXISTS = "already in the workspace, delete to re-import"
+_REASON_UNREADABLE_MD = "markdown could not be read"
+_REASON_NAME_CONFLICT = "another file in this collection uses the same name"
+_REASON_OWNER_FAILED = "the document it belongs to failed to import"
+_REASON_WRITE_FAILED = "could not be written to the workspace"
+_REASON_CONVERSION = "conversion failed"
+
+
+def _record_failure(
+    path: str, reason: str, *, exc: BaseException | None = None
+) -> FailedFile:
+    """Log a skipped or failed member and return its record for the tray."""
+    logger.warning("Skipping %s: %s", path, reason, exc_info=exc)
+
+    return FailedFile(path=path, reason=reason)
 
 
 def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
@@ -234,7 +253,7 @@ async def process_collection(
 
     markdown_count = 0
     converted_count = 0
-    failed: list[str] = []
+    failed: list[FailedFile] = []
 
     with _store_claim(store), tempfile.TemporaryDirectory() as tmp_dir:
         extract_root = Path(tmp_dir)
@@ -270,11 +289,15 @@ async def process_collection(
         claimed_stems: set[str] = set()
         original_taken: set[str] = set()
         roles: dict[str, _Role] = {}
+        # The reason a planning-phase drop failed, surfaced when the processing
+        # loop records it; roles marked "failed" here always have an entry.
+        fail_reasons: dict[str, str] = {}
 
         for p in planned:
             if entry_exists(workspace_dir, p.safe):
                 # A stem already backed by an on-disk entry is left untouched.
                 roles[p.relative_path] = "failed"
+                fail_reasons[p.relative_path] = _REASON_EXISTS
             elif p.stem not in claimed_stems:
                 # First file for the stem becomes its entry: a markdown is the
                 # indexed description, a non-markdown a standalone attachment.
@@ -292,6 +315,7 @@ async def process_collection(
                     # convert as its own attachment.
                     claimed_stems.discard(p.stem)
                     roles[p.relative_path] = "failed"
+                    fail_reasons[p.relative_path] = _REASON_UNREADABLE_MD
             elif not p.is_markdown and p.stem not in original_taken:
                 # The lone source original for a markdown entry this batch claimed.
                 original_taken.add(p.stem)
@@ -299,6 +323,7 @@ async def process_collection(
             else:
                 # A duplicate markdown, or a second original for one stem.
                 roles[p.relative_path] = "failed"
+                fail_reasons[p.relative_path] = _REASON_NAME_CONFLICT
 
         # Stems whose owning entry committed this run; a companion original is
         # only written once its owner is in here, so a failed owner never leaves
@@ -317,7 +342,9 @@ async def process_collection(
             role = roles[p.relative_path]
 
             if role == "failed":
-                failed.append(p.relative_path)
+                failed.append(
+                    _record_failure(p.relative_path, fail_reasons[p.relative_path])
+                )
                 yield _progress(p.relative_path, current, "failed")
                 continue
 
@@ -327,14 +354,16 @@ async def process_collection(
                 # writing it would strand a file with no SQL row (reconcile
                 # ingests only markdown, never bare originals).
                 if p.stem not in committed_stems:
-                    failed.append(p.relative_path)
+                    failed.append(_record_failure(p.relative_path, _REASON_OWNER_FAILED))
                     yield _progress(p.relative_path, current, "failed")
                     continue
                 status = await _write_companion_original(store, extract_root, p)
                 if status == "ok":
                     converted_count += 1
                 else:
-                    failed.append(p.relative_path)
+                    failed.append(
+                        _record_failure(p.relative_path, _REASON_WRITE_FAILED)
+                    )
                 yield _progress(p.relative_path, current, status)
                 continue
 
@@ -359,10 +388,9 @@ async def process_collection(
                     converted_count += 1
                 status = "ok"
             except Exception as exc:
-                logger.warning(
-                    "Failed to process %s: %s", p.relative_path, exc, exc_info=True
+                failed.append(
+                    _record_failure(p.relative_path, _REASON_CONVERSION, exc=exc)
                 )
-                failed.append(p.relative_path)
                 status = "failed"
 
             yield _progress(p.relative_path, current, status)

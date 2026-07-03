@@ -52,6 +52,7 @@ __all__ = [
     "DocumentFilter",
     "DocumentInfo",
     "DocumentLineCountsResponse",
+    "FailedFile",
     "GenerateTitleRequest",
     "GenerateTitleResponse",
     "GroupInfo",
@@ -792,6 +793,13 @@ class BulkDeleteUserDataResponse(BaseModel):
     message: str = Field(description="Status message")
 
 
+class FailedFile(BaseModel):
+    """A collection member that was skipped or failed, with a short reason."""
+
+    path: str = Field(description="Workspace-relative path of the file")
+    reason: str = Field(description="Why the file was not imported")
+
+
 class CollectionUploadResponse(BaseModel):
     """Response for collection (directory or ZIP) upload."""
 
@@ -800,9 +808,9 @@ class CollectionUploadResponse(BaseModel):
     converted_attachments: int = Field(
         description="Number of binary attachments converted",
     )
-    failed_files: list[str] = Field(
+    failed_files: list[FailedFile] = Field(
         default_factory=list,
-        description="Files that failed to process",
+        description="Files that were skipped or failed, each with its reason",
     )
     message: str = Field(description="Status message")
 
