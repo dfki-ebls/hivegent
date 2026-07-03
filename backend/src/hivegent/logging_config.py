@@ -14,6 +14,7 @@ access/error — then shares one format.
 """
 
 import logging
+import warnings
 
 from .config import settings
 
@@ -27,6 +28,12 @@ _LIBRARY_LEVELS: dict[str, int] = {
     "docling": logging.WARNING,
     "docling.pipeline": logging.INFO,
 }
+
+# joserfc warns on every EdDSA verification that RFC 9864 deprecates the generic
+# ``EdDSA`` alg in favour of ``Ed25519``.  We only verify tokens, so the signing
+# alg is the IdP's choice, not ours, and the warning is noise.  Installed once at
+# import, before either entry point handles a request.
+warnings.filterwarnings("ignore", message="EdDSA is deprecated via RFC 9864")
 
 
 def configure_logging() -> None:
