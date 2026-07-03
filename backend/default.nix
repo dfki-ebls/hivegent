@@ -17,6 +17,7 @@
   jq,
   libreoffice,
   pandoc,
+  poppler-utils,
   ripgrep,
   tessdata,
   ninja,
@@ -185,7 +186,10 @@ let
     '';
   };
 
-  # - jq, pandoc, ripgrep: used by `hivegent/subprocesses/` wrappers.
+  # - jq, pandoc, poppler-utils, ripgrep: used by `hivegent/subprocesses/` wrappers.
+  # - poppler-utils (pdftotext): PDF text-recovery fallback for legacy PDFs whose
+  #   fonts carry no ToUnicode CMap, which docling's backend dumps as raw glyph
+  #   names — poppler reconstructs the text from the glyph-name convention.
   # - ffmpeg: pydub audio decoding (markitdown audio converter, non-wav).
   # - exiftool: optional audio metadata extraction in markitdown.
   # - libreofficeHeadless: docling docx→pdf conversion; Linux-only in nixpkgs.
@@ -194,6 +198,7 @@ let
     ffmpeg-headless
     jq
     pandoc
+    poppler-utils
     ripgrep
   ]
   ++ lib.optionals stdenv.hostPlatform.isLinux [ libreofficeHeadless ]
