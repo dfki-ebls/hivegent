@@ -217,6 +217,7 @@ export const ChunkedDocumentResponseSchema = z.object({
   assets_dir: z.string().nullable().optional(),
   origin: EntryOriginSchema.optional(),
   generated_by: EntryGeneratedBySchema.optional(),
+  mime: z.string().nullable().optional(),
   files: z.array(z.string()).optional().default([]),
 });
 export type ChunkedDocumentResponse = z.infer<typeof ChunkedDocumentResponseSchema>;

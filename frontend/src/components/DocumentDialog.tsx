@@ -87,6 +87,48 @@ function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleString();
 }
 
+/** Read-only markdown description with an empty-state fallback. */
+function DescriptionBody({ markdown }: { markdown: string | null }) {
+  return (
+    <div className="prose prose-sm dark:prose-invert max-w-none">
+      {markdown ? (
+        <Markdown options={MARKDOWN_BASE_OPTIONS}>{markdown}</Markdown>
+      ) : (
+        <p className="text-muted-foreground italic">No description</p>
+      )}
+    </div>
+  );
+}
+
+/** Outline badges describing a file's name, media type, and size. */
+function FileMetaBadges({
+  name,
+  mediaType,
+  sizeBytes,
+}: {
+  name: string;
+  mediaType?: string | null;
+  sizeBytes?: number | null;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2 pt-2">
+      <Badge variant="outline" className="text-xs">
+        {name}
+      </Badge>
+      {mediaType && (
+        <Badge variant="outline" className="text-xs">
+          {mediaType}
+        </Badge>
+      )}
+      {sizeBytes != null && (
+        <Badge variant="outline" className="text-xs">
+          {formatFileSize(sizeBytes)}
+        </Badge>
+      )}
+    </div>
+  );
+}
+
 /**
  * Resolve a chunk's character range within ``fullContent``.
  *
@@ -422,9 +464,19 @@ export function DocumentDialog({
   if (!isNew && !chunk && !fallbackFilename && !filenameProp) return null;
 
   // --- Determine sidebar visibility ---
+  // An uploaded image is a single image whose whole caption is one chunk, so we
+  // render it like an extracted asset (image + caption + file metadata) and drop
+  // the chunk/asset sidebar entirely.
+  const imageEntry =
+    isManagedMode && managedData?.entry_kind === "image" && managedData.original_path
+      ? {
+          path: managedData.original_path,
+          mime: managedData.mime,
+        }
+      : null;
   const hasAssets = Boolean(managedData?.assets_dir);
   const hasSidebar =
-    isNew || citationView
+    isNew || citationView || imageEntry
       ? false
       : isManagedMode
         ? managedLoading || (managedData?.chunks.length ?? 0) > 0 || hasAssets
@@ -504,6 +556,30 @@ export function DocumentDialog({
 
     // Full-doc markdown view
     if (viewMode === "full-doc") {
+      // Uploaded image entry: mirror the extracted-asset view — the image
+      // itself, its generated caption, and file metadata badges.
+      if (imageEntry) {
+        const name = imageEntry.path.split("/").pop() ?? filename;
+        return (
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="p-4 space-y-4">
+              <div className="flex justify-center">
+                <AssetImage
+                  filePath={imageEntry.path}
+                  alt={filename}
+                  wrapperClassName="min-h-32 rounded-md border"
+                  className="max-h-[70vh] w-auto max-w-full object-contain"
+                />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium">Description</h3>
+                <DescriptionBody markdown={fullContent} />
+                <FileMetaBadges name={name} mediaType={imageEntry.mime} />
+              </div>
+            </div>
+          </ScrollArea>
+        );
+      }
       // Image docs: show the full-size image, with its description below if read.
       if (image) {
         return (
@@ -659,28 +735,14 @@ export function DocumentDialog({
                   </div>
                 </div>
               ) : (
-                <div className="prose prose-sm dark:prose-invert max-w-none">
-                  {asset.description ? (
-                    <Markdown options={MARKDOWN_BASE_OPTIONS}>{asset.description}</Markdown>
-                  ) : (
-                    <p className="text-muted-foreground italic">No description</p>
-                  )}
-                </div>
+                <DescriptionBody markdown={asset.description} />
               )}
 
-              <div className="flex flex-wrap gap-2 pt-2">
-                <Badge variant="outline" className="text-xs">
-                  {asset.name}
-                </Badge>
-                {asset.media_type && (
-                  <Badge variant="outline" className="text-xs">
-                    {asset.media_type}
-                  </Badge>
-                )}
-                <Badge variant="outline" className="text-xs">
-                  {formatFileSize(asset.size_bytes)}
-                </Badge>
-              </div>
+              <FileMetaBadges
+                name={asset.name}
+                mediaType={asset.media_type}
+                sizeBytes={asset.size_bytes}
+              />
             </div>
           </div>
         </ScrollArea>
