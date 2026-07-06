@@ -22,12 +22,7 @@ module.exports = {
       {
         preset: "conventionalcommits",
         parserOpts: {
-          noteKeywords: [
-            "BREAKING CHANGE",
-            "BREAKING-CHANGE",
-            "NOTABLE CHANGE",
-            "NOTABLE-CHANGE",
-          ],
+          noteKeywords: ["BREAKING CHANGE", "BREAKING-CHANGE", "NOTABLE CHANGE", "NOTABLE-CHANGE"],
         },
       },
     ],

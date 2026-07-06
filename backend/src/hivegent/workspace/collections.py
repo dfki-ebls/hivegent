@@ -363,7 +363,9 @@ async def process_collection(
                 # writing it would strand a file with no SQL row (reconcile
                 # ingests only markdown, never bare originals).
                 if p.stem not in committed_stems:
-                    failed.append(_record_failure(p.relative_path, _REASON_OWNER_FAILED))
+                    failed.append(
+                        _record_failure(p.relative_path, _REASON_OWNER_FAILED)
+                    )
                     yield _progress(current)
                     continue
                 if await _write_companion_original(store, extract_root, p) == "ok":

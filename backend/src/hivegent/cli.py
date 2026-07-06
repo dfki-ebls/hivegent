@@ -19,6 +19,7 @@ app = typer.Typer(
     # pretty_exceptions_short=True,
 )
 
+
 @app.callback()
 def _main() -> None:
     """Configure logging once for every CLI command (the CLI entry point).

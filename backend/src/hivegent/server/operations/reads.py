@@ -125,7 +125,9 @@ def list_assets(store: Casebase, safe: str) -> AssetListResponse:
                 description = companion.read_text(encoding="utf-8")
             except Exception:
                 logger.warning(
-                    "Failed to read asset description %s", description_path, exc_info=True
+                    "Failed to read asset description %s",
+                    description_path,
+                    exc_info=True,
                 )
                 description = ""
         entries.append(
