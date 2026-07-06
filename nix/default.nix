@@ -59,6 +59,14 @@
         frontend = pkgs.callPackage ../frontend { };
         docs = pkgs.callPackage ../docs { };
         tessdata = pkgs.callPackage ./tessdata.nix { };
+        release-env = pkgs.buildEnv {
+          name = "release-env";
+          paths = with pkgs; [
+            nodejs
+            python3
+            uv
+          ];
+        };
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         # All-in-one container (backend + Caddy proxy/SPA under dinit); see

@@ -11,17 +11,36 @@ jobs:
     needs: check
     environment:
       name: release
-      url: https://github.com/dfki-ebls/hivegent/releases/tag/${{ steps.semanticrelease.outputs.git-tag }}
+      url: https://github.com/dfki-ebls/hivegent/releases/tag/${{ steps.semanticrelease.outputs.new_release_git_tag }}
     permissions:
       contents: write
     outputs:
-      version: ${{ steps.semanticrelease.outputs.version }}
-      released: ${{ steps.semanticrelease.outputs.released }}
-      git-head: ${{ steps.semanticrelease.outputs.git-head }}
+      version: ${{ steps.semanticrelease.outputs.new_release_version }}
+      released: ${{ steps.semanticrelease.outputs.new_release_published }}
+      git-head: ${{ steps.semanticrelease.outputs.new_release_git_head }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-      - uses: cihelper/action-semanticrelease-generic@979f570eb05d095439749655ef7613dfa78dd2a3 # v1.2.3
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+        with:
+          extra-conf: |
+            accept-flake-config = true
+      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: dfki-ebls
+          authToken: ${{ secrets.CACHIX_TOKEN }}
+      - run: nix profile install .#release-env
+      - uses: cycjimmy/semantic-release-action@b12c8f6015dc215fe37bc154d4ad456dd3833c90 # v6.0.0
         id: semanticrelease
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          semantic_version: 25
+          extra_plugins: |
+            @cihelper/semanticrelease-plugin-uv@1
+            @semantic-release/changelog@6
+            @semantic-release/git@10
+            semantic-release-major-tag@0.3
+            conventional-changelog-conventionalcommits@9
   # Multi-arch container publish to GHCR. Disabled for now: to enable, add a
   # `docker-manifest` output to the flake (flocken's `mkDockerManifest` over the
   # x86_64/aarch64 `docker` image streams) and replace `if: false` with the
