@@ -262,6 +262,29 @@ async def test_admin_is_a_role_not_a_group(
     assert not user.all_groups
 
 
+def test_resolve_claim_path_walks_nested_mappings() -> None:
+    """A dotted path descends into nested mappings; a plain name stays flat."""
+    claims = {"groups": ["a"], "custom": {"groups": ["team-kb:read"]}}
+    assert auth._resolve_claim_path(claims, "groups") == ["a"]
+    assert auth._resolve_claim_path(claims, "custom.groups") == ["team-kb:read"]
+    assert auth._resolve_claim_path(claims, "custom.missing") is None
+    assert auth._resolve_claim_path(claims, "groups.nope") is None
+
+
+def test_default_claim_paths_union_top_level_and_custom() -> None:
+    """By default, groups and roles are read from both the top-level and ``custom``-nested
+    claim and unioned — serving interactive users and client-credentials bots at once."""
+    user = {"groups": ["eng:write"], "roles": ["admin"]}
+    bot = {"custom": {"groups": ["team-kb:read"], "roles": ["auditor"]}}
+    both = {"groups": ["eng:write"], "custom": {"groups": ["team-kb:read"]}}
+
+    assert dict(auth.parse_group_claim(user)) == {"eng": "write"}
+    assert dict(auth.parse_group_claim(bot)) == {"team-kb": "read"}
+    assert dict(auth.parse_group_claim(both)) == {"eng": "write", "team-kb": "read"}
+    assert auth._extract_roles(user) == frozenset({"admin"})
+    assert auth._extract_roles(bot) == frozenset({"auditor"})
+
+
 async def test_validate_jwt_token_does_not_leak_sub_in_error_detail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

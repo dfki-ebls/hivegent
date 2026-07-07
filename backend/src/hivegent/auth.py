@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from typing import Annotated, Any
 
 import httpx
@@ -336,6 +336,42 @@ def _format_invalid_claim_detail(claim: str) -> str:
     return f"Invalid token claim: {claim!r}"
 
 
+def _resolve_claim_path(claims: Mapping[str, Any], path: str) -> Any:
+    """Resolve a dotted claim path, walking nested mappings.
+
+    ``"groups"`` is a flat lookup; ``"custom.groups"`` descends into a
+    nested ``custom`` envelope — the shape an OIDC client-credentials
+    token uses when the IdP (e.g. Rauthy) can only attach static custom
+    claims under ``custom``.  Returns ``None`` if any segment is missing
+    or a non-mapping is encountered mid-path.
+    """
+    value: Any = claims
+    for key in path.split("."):
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(key)
+    return value
+
+
+def _resolve_claim_values(claims: Mapping[str, Any], paths: Sequence[str]) -> list[str]:
+    """Collect the non-empty string entries at the given dotted claim paths.
+
+    Reading several paths lets a single backend serve identities whose
+    groups live at different claim locations — e.g. interactive users with
+    a top-level ``groups`` claim alongside a service bot whose IdP can only
+    nest static claims under ``custom.groups``.  Entries from every path are
+    unioned in order; non-list claims and non-string/empty entries are skipped.
+    """
+    resolved: list[str] = []
+    for path in paths:
+        value = _resolve_claim_path(claims, path)
+        if isinstance(value, list):
+            resolved.extend(
+                entry for entry in value if isinstance(entry, str) and entry
+            )
+    return resolved
+
+
 def parse_group_claim(claims: Mapping[str, Any]) -> Iterator[tuple[str, str | None]]:
     """Yield ``(group_id, permission)`` pairs from the OIDC groups claim.
 
@@ -346,12 +382,7 @@ def parse_group_claim(claims: Mapping[str, Any]) -> Iterator[tuple[str, str | No
 
     Malformed entries (non-strings, empties, suffix-only) are skipped.
     """
-    raw = claims.get(settings.claims.groups, [])
-    if not isinstance(raw, list):
-        return
-    for entry in raw:
-        if not isinstance(entry, str) or not entry:
-            continue
+    for entry in _resolve_claim_values(claims, settings.claims.groups):
         if ":" in entry:
             group_id, _, suffix = entry.rpartition(":")
             if group_id:
@@ -385,10 +416,7 @@ def _extract_roles(claims: Mapping[str, Any]) -> frozenset[str]:
     groups claim that models shared knowledge.  Non-string and empty
     entries are skipped.
     """
-    raw = claims.get(settings.claims.roles, [])
-    if not isinstance(raw, list):
-        return frozenset()
-    return frozenset(role for role in raw if isinstance(role, str) and role)
+    return frozenset(_resolve_claim_values(claims, settings.claims.roles))
 
 
 async def validate_jwt_token(token: str) -> User:

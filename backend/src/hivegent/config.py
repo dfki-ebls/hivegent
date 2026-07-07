@@ -381,10 +381,17 @@ class ClaimSettings(BaseModel):
     carrying global roles (e.g. the fixed :data:`ADMIN_ROLE`).
     ``default_group_permission`` is the permission granted to a bare
     group entry — one without a ``:read``/``:write`` suffix.
+
+    ``groups`` and ``roles`` are each a list of dotted claim paths whose
+    entries are unioned.  Each defaults to reading both the top-level claim
+    and a ``custom``-nested one, so a single backend serves interactive
+    users (top-level ``groups``) and a service bot whose IdP can only nest
+    static claims under ``custom.groups`` without any extra configuration.
+    Override via ``HIVEGENT_CLAIMS__*`` with a JSON/TOML list.
     """
 
-    groups: str = "groups"
-    roles: str = "roles"
+    groups: list[str] = ["groups", "custom.groups"]
+    roles: list[str] = ["roles", "custom.roles"]
     default_group_permission: Literal["read", "write"] = "write"
 
 

@@ -19,6 +19,19 @@
 # from `docker compose logs rauthy`, log in at http://auth.localhost:8081, and
 # create a public `hivegent-spa` client (PKCE/S256) with redirect + allowed
 # origin `http://localhost:8080`. Then open http://localhost:8080.
+#
+# Chat bridge (Teams/Slack/...): the all-in-one image can run the Vercel Chat SDK
+# bridge as a third in-container service behind the same Caddy. Build the variant
+# with `docker.override { enableBridge = true; }` (the `docker` package already
+# threads the `bridge` package in), then on the `hivegent` service below: mount a
+# `bridge-config.json` at `/data/bridge-config.json` (non-secrets: `hivegentUrl`,
+# `oidc.issuer`, `oidc.clientId`, `adapters.teams`) and set the secrets as env
+# (`POSTGRES_URL=postgres://hivegent:hivegent@postgresql:5432/hivegent`,
+# `OIDC_CLIENT_SECRET`, and `TEAMS_APP_ID/PASSWORD/TENANT_ID` for Teams). Caddy then
+# routes `/api/webhooks/*` to the bridge. Create a `hivegent-bot` client-credentials
+# client in Rauthy (`CLIENT_CREDENTIALS_MAP_SUB = true` and a static custom `groups`
+# claim `["team-kb:read"]`); the backend reads `custom.groups` by default, so no
+# extra `[claims]` config is needed for the bot's group to be honoured.
 
 name: hivegent
 
