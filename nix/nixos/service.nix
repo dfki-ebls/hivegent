@@ -11,6 +11,8 @@ let
   tomlFormat = pkgs.formats.toml { };
   configFile = tomlFormat.generate "hivegent-config.toml" cfg.settings;
 
+  hardening = import ./hardening.nix;
+
   # `enableTorchCompile` is an argument of the hivegent backend derivation:
   # it puts the C toolchain TorchInductor needs for runtime codegen on the
   # wrapper's PATH and flips the DOCLING_INFERENCE_COMPILE_TORCH_MODELS
@@ -189,14 +191,13 @@ in
           }
           // cfg.environment;
 
-          serviceConfig = {
+          serviceConfig = hardening // {
             Type = "exec";
             Restart = "on-failure";
             RestartSec = 5;
             TimeoutStartSec = 600;
             # Must exceed uvicorn's `timeout_graceful_shutdown` (30s) so teardown finishes before SIGKILL.
             TimeoutStopSec = 45;
-            UMask = "0077";
 
             DynamicUser = true;
             StateDirectory = "hivegent";
@@ -214,44 +215,9 @@ in
               (toString cfg.port)
             ];
 
-            SocketBindDeny = "any";
             SocketBindAllow = "tcp:${toString cfg.port}";
-            RestrictAddressFamilies = [
-              "AF_INET"
-              "AF_INET6"
-              "AF_UNIX"
-            ];
-
-            CapabilityBoundingSet = "";
-            AmbientCapabilities = "";
-            NoNewPrivileges = true;
             # CUDA-backed document/OCR models need the host NVIDIA character devices.
             PrivateDevices = false;
-            PrivateIPC = true;
-            PrivateMounts = true;
-            PrivateTmp = true;
-            PrivateUsers = true;
-            ProtectClock = true;
-            ProtectControlGroups = true;
-            ProtectHome = true;
-            ProtectHostname = true;
-            ProtectKernelLogs = true;
-            ProtectKernelModules = true;
-            ProtectKernelTunables = true;
-            ProtectProc = "invisible";
-            ProtectSystem = "strict";
-            LockPersonality = true;
-            RemoveIPC = true;
-            RestrictNamespaces = true;
-            RestrictRealtime = true;
-            RestrictSUIDSGID = true;
-            SystemCallArchitectures = "native";
-            SystemCallFilter = [
-              "@system-service"
-              "~@privileged"
-              "~@resources"
-            ];
-            SystemCallErrorNumber = "EPERM";
           };
 
           unitConfig = {

@@ -40,6 +40,13 @@ module.exports = {
       },
     ],
     [
+      "@semantic-release/npm",
+      {
+        npmPublish: false,
+        pkgRoot: "bridge",
+      },
+    ],
+    [
       "@cihelper/semanticrelease-plugin-uv",
       {
         uvPublish: false,
@@ -68,6 +75,8 @@ module.exports = {
           "CHANGELOG.md",
           "frontend/package.json",
           "frontend/package-lock.json",
+          "bridge/package.json",
+          "bridge/package-lock.json",
           "backend/pyproject.toml",
           "backend/uv.lock",
         ],

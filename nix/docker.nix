@@ -36,6 +36,13 @@
   backendPort ? 8000,
   # Whether Caddy proxies `/mcp` (off → 404); the backend must also enable MCP.
   enableMcp ? false,
+  # Run the chat bridge (Vercel Chat SDK) as a third supervised service and route
+  # `/api/webhooks/*` to it. Requires the `bridge` package; its config comes from
+  # a mounted `${dataDir}/bridge-config.json` plus `OIDC_*`/`TEAMS_*` env vars.
+  enableBridge ? false,
+  bridge ? null,
+  bridgeHost ? "127.0.0.1",
+  bridgePort ? 3001,
   # Volume holding the workspace, store, model caches, and Caddy state.
   dataDir ? "/data",
 }:
@@ -82,6 +89,7 @@ let
         docs = handbook;
         docsPath = docsPrefix;
         upstream = "127.0.0.1:${toString backendPort}";
+        bridgeUpstream = if enableBridge then "${bridgeHost}:${toString bridgePort}" else null;
       }}
     }
   '';
@@ -102,6 +110,18 @@ let
     XDG_DATA_HOME = "${dataDir}/caddy";
   };
 
+  # Non-secret bridge env; secrets (POSTGRES_URL, OIDC_*, TEAMS_*) come from the
+  # mounted `${dataDir}/bridge-config.json` or operator-set env vars (env wins).
+  bridgeEnv = toEnvFile "bridge.env" {
+    HOME = dataDir;
+    NODE_ENV = "production";
+    HOST = bridgeHost;
+    PORT = toString bridgePort;
+    HIVEGENT_URL = "http://127.0.0.1:${toString backendPort}";
+    BRIDGE_CONFIG_FILE = "${dataDir}/bridge-config.json";
+    SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
+  };
+
   # Shared config for both supervised daemons. Restart policy and start timeout
   # mirror the systemd unit (RestartSec/StartLimit*/TimeoutStartSec).
   # `shares-console` routes stdout/stderr to dinit's (the Docker log stream);
@@ -116,32 +136,42 @@ let
     options = [ "shares-console" ];
   };
 
+  services = {
+    # Default target dinit brings up: pulls in every daemon.
+    boot = {
+      type = "internal";
+      depends-on = [
+        "backend"
+        "caddy"
+      ]
+      ++ lib.optional enableBridge "bridge";
+    };
+    backend = daemon // {
+      command = "${lib.getExe' backend "hivegent"} serve --host 127.0.0.1 --port ${toString backendPort}";
+      env-file = backendEnv;
+      start-timeout = 600;
+      # Must exceed uvicorn's `timeout_graceful_shutdown` (30s); dinit's default is 10s.
+      stop-timeout = 45;
+    };
+    caddy = daemon // {
+      command = "${lib.getExe caddy} run --config ${caddyfile} --adapter caddyfile";
+      env-file = caddyEnv;
+      # `after` (not `depends-on`) orders Caddy behind the backend without
+      # coupling lifecycles, so a backend restart within its limit does not
+      # bounce Caddy.
+      after = [ "backend" ];
+    };
+  }
+  // lib.optionalAttrs enableBridge {
+    bridge = daemon // {
+      command = lib.getExe bridge;
+      env-file = bridgeEnv;
+      after = [ "backend" ];
+    };
+  };
+
   serviceDir = linkFarm "hivegent-dinit.d" (
-    lib.mapAttrs (svcName: attrs: writeText svcName (toService attrs)) {
-      # Default target dinit brings up: pulls in both daemons.
-      boot = {
-        type = "internal";
-        depends-on = [
-          "backend"
-          "caddy"
-        ];
-      };
-      backend = daemon // {
-        command = "${lib.getExe' backend "hivegent"} serve --host 127.0.0.1 --port ${toString backendPort}";
-        env-file = backendEnv;
-        start-timeout = 600;
-        # Must exceed uvicorn's `timeout_graceful_shutdown` (30s); dinit's default is 10s.
-        stop-timeout = 45;
-      };
-      caddy = daemon // {
-        command = "${lib.getExe caddy} run --config ${caddyfile} --adapter caddyfile";
-        env-file = caddyEnv;
-        # `after` (not `depends-on`) orders Caddy behind the backend without
-        # coupling lifecycles, so a backend restart within its limit does not
-        # bounce Caddy.
-        after = [ "backend" ];
-      };
-    }
+    lib.mapAttrs (svcName: attrs: writeText svcName (toService attrs)) services
   );
 in
 dockerTools.streamLayeredImage {

@@ -1,0 +1,35 @@
+{
+  "name": "hivegent-bridge",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Multi-platform chat bridge exposing the hivegent backend through the Vercel Chat SDK",
+  "bin": {
+    "hivegent-bridge": "dist/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@chat-adapter/state-pg": "^4",
+    "@chat-adapter/teams": "^4",
+    "chat": "^4",
+    "express": "^5"
+  },
+  "devDependencies": {
+    "@chat-adapter/web": "^4",
+    "@types/express": "^5",
+    "@types/node": "^26",
+    "ai": "^6",
+    "tsx": "^4",
+    "typescript": "^6",
+    "vitest": "^4",
+    "zod": "^4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -9,6 +9,9 @@
   lib,
   # Backend upstream as a Caddy dial address (`host:port`).
   upstream,
+  # Chat-bridge upstream (`host:port`) for `/api/webhooks/*`, or `null` to route
+  # that path to the backend like the rest of `/api/*`.
+  bridgeUpstream ? null,
   # Directory holding the built SPA (`index.html`, `assets/`), or `null` to
   # serve the API only and answer every other path with 404.
   frontend ? null,
@@ -82,6 +85,16 @@
         }
       ''
   }
+
+  ${lib.optionalString (bridgeUpstream != null) ''
+    # Chat-platform webhooks are handled by the bridge, not the API backend.
+    # Placed before `/api/*` so its mutually-exclusive `handle` group wins.
+    handle /api/webhooks/* {
+      reverse_proxy ${bridgeUpstream} {
+        flush_interval -1
+      }
+    }
+  ''}
 
   handle /api/* {
     request_body {

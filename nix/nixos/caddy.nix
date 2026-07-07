@@ -101,6 +101,7 @@ in
             ;
           enableHsts = caddyCfg.hsts;
           upstream = "${cfg.host}:${toString cfg.port}";
+          bridgeUpstream = if cfg.bridge.enable then "${cfg.bridge.host}:${toString cfg.bridge.port}" else null;
           enableMcp = cfg.settings.mcp.enable or false;
         };
       };

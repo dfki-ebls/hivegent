@@ -5,5 +5,6 @@
   imports = [
     ./service.nix
     ./caddy.nix
+    ./bridge.nix
   ];
 }
