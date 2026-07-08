@@ -1,4 +1,4 @@
-import { FileText, RotateCcw, Scissors, Trash2 } from "lucide-react";
+import { FileText, Scissors, Trash2 } from "lucide-react";
 
 import type { DocumentInfo } from "@/lib/types";
 import { formatFileSize } from "@/lib/utils";
@@ -19,7 +19,6 @@ interface DocumentListItemProps {
   filterState: FilterEntryState;
   onIncludeDocument: () => void;
   onExcludeDocument: () => void;
-  onReconvert: () => void;
   onRemove: () => void;
   selected?: boolean;
   onToggleSelect?: () => void;
@@ -32,7 +31,6 @@ export function DocumentListItem({
   filterState,
   onIncludeDocument,
   onExcludeDocument,
-  onReconvert,
   onRemove,
   selected,
   onToggleSelect,
@@ -67,20 +65,6 @@ export function DocumentListItem({
           {formatFileSize(doc.size_bytes)} · {formatRelativeDate(doc.modified_at)}
         </p>
       </div>
-      {doc.has_original && (
-        <Button
-          variant="ghost"
-          size="icon"
-          title="Reconvert from original"
-          onClick={(e) => {
-            e.stopPropagation();
-            onReconvert();
-          }}
-          disabled={isMutating}
-        >
-          <RotateCcw className="h-4 w-4" />
-        </Button>
-      )}
       <FilterToggleButtons
         state={filterState}
         onInclude={onIncludeDocument}

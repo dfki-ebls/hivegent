@@ -10,19 +10,18 @@ interface DocumentAction {
   id: DocumentActionId;
   /** Lucide icon component. */
   icon: LucideIcon;
-  /** Human-readable label (used in batch bar with icon). */
+  /** Human-readable label, shown beside the icon in the batch bar. */
   label: string;
-  /** Button variant for the batch bar. Inline buttons always use "ghost". */
+  /** Button variant for the batch bar. */
   variant: "secondary" | "destructive";
-  /** When true, the action only appears for files that have an original binary. */
+  /** When true, the action only appears when a selected file has an original binary. */
   requiresOriginal: boolean;
 }
 
 /**
- * Canonical list of document file-operation actions.
- *
- * Inline file rows render these as icon-only buttons.
- * The batch selection bar renders these as icon + text buttons.
+ * The bulk document actions rendered by the batch selection bar
+ * ({@link BulkActionBar}) as icon + text buttons. Single-document actions live
+ * in the document dialog and the tree row's inline delete button.
  */
 const DOCUMENT_ACTIONS: readonly DocumentAction[] = [
   {

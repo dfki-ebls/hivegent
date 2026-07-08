@@ -177,6 +177,7 @@ def _document_from_row(
         id=doc.id,
         pipeline=doc.pipeline,
         created_at=doc.created_at,
+        size_bytes=doc.content_size,
         chunks=list(chunks_data),
         content_digest=doc.content_digest,
     )

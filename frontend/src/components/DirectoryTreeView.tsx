@@ -23,10 +23,9 @@ import {
   FilterToggleButtons,
   type FilterEntryState,
 } from "@/components/documents/FilterToggleButtons";
-import { DOCUMENT_ACTIONS, type DocumentActionId } from "@/lib/document-actions";
 import { DROP_CLASSES, registerTreeRow, type TreeDropState, type TreeItemDrag } from "@/lib/dnd";
 import type { DirectoryEntry } from "@/lib/types";
-import { cn, collectFilePaths, formatFileSize } from "@/lib/utils";
+import { cn, collectFilePaths } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,8 +42,8 @@ interface DirectoryTreeViewProps {
   onExclude: (path: string) => void;
   /** Current chat-filter state of a path (directories carry a trailing slash). */
   filterState: (path: string) => FilterEntryState;
-  /** Dispatched for file-operation actions (rechunk, reconvert, download, delete). */
-  onFileAction?: (path: string, actionId: DocumentActionId) => void;
+  /** Delete a file. The other file operations live in the document dialog. */
+  onDeleteFile?: (path: string) => void;
   onCreateSubdir?: (parentPath: string) => void;
   onDeleteDir?: (path: string) => void;
   selectedFiles?: Set<string>;
@@ -125,9 +124,10 @@ function useTreeRowDnd(config: TreeRowDnd) {
   return { ref, dragging, dropState };
 }
 
-// The subgrid row shell every entry shares: it owns the drag-and-drop wiring and
-// the drag/drop/armed visual state, so a file and a directory row differ only in
-// the four column cells they pass as children.
+// The row shell every entry shares: it owns the drag-and-drop wiring and the
+// drag/drop/armed visual state. A fixed min-height keeps the row from growing
+// when its hover buttons appear, and per-row flex (not a shared grid) means one
+// row revealing its buttons never truncates another row's name.
 function TreeRow({
   dnd,
   isArmed = false,
@@ -143,7 +143,7 @@ function TreeRow({
     <div
       ref={ref}
       className={cn(
-        "col-span-full grid grid-cols-[subgrid] items-center rounded-md px-2 py-1.5 hover:bg-muted/50 group",
+        "flex min-h-9 items-center gap-3 rounded-md px-2 py-1.5 hover:bg-muted/50 group",
         dragging && "opacity-50",
         isArmed && "bg-accent",
         DROP_CLASSES[dropState],
@@ -154,8 +154,9 @@ function TreeRow({
   );
 }
 
-// The first column: a fixed checkbox slot, the indented label, and a trailing
-// mutating spinner — shared so files and directories agree on that layout.
+// The name column: it grows to fill the row (so an idle row gives its full width
+// to the name and only the hovered row truncates), holding a checkbox slot, the
+// indented label, and a trailing mutating spinner.
 function RowMain({
   checkbox,
   isMutating,
@@ -166,12 +167,18 @@ function RowMain({
   children: ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-2 min-w-0">
+    <div className="flex min-w-0 flex-1 items-center gap-2">
       {checkbox}
       {children}
       {isMutating && <Spinner className="size-3 shrink-0 text-muted-foreground" />}
     </div>
   );
+}
+
+// The right-hand cluster shared by both row kinds: hover actions, then the
+// entry's metadata. `shrink-0` keeps it intact so the name is what truncates.
+function RowAside({ children }: { children: ReactNode }) {
+  return <div className="flex shrink-0 items-center gap-2">{children}</div>;
 }
 
 // A hover-revealed icon action (rechunk, delete, create-subdir, …), identical
@@ -193,7 +200,7 @@ function RowActionButton({
     <Button
       variant="ghost"
       size="icon"
-      className="h-6 w-6 opacity-0 group-hover:opacity-100"
+      className="h-6 w-6 hidden group-hover:inline-flex"
       title={label}
       onClick={onClick}
       disabled={disabled}
@@ -242,7 +249,7 @@ function FileRow({
   onInclude,
   onExclude,
   filterState,
-  onAction,
+  onDelete,
   selected,
   onToggleSelect,
   resolveDrag,
@@ -255,7 +262,7 @@ function FileRow({
   onInclude: () => void;
   onExclude: () => void;
   filterState: FilterEntryState;
-  onAction?: (actionId: DocumentActionId) => void;
+  onDelete?: () => void;
   selected?: boolean;
   onToggleSelect?: () => void;
   resolveDrag: (() => TreeItemDrag) | null;
@@ -285,39 +292,32 @@ function FileRow({
           <span className="min-w-0 truncate text-sm">{entry.name}</span>
         </button>
       </RowMain>
-      <div className="flex gap-0.5">
-        <FilterToggleButtons
-          state={filterState}
-          onInclude={onInclude}
-          onExclude={onExclude}
-          compact
-          revealOnHover
-        />
-        {onAction &&
-          DOCUMENT_ACTIONS.map((action) =>
-            action.requiresOriginal && !entry.has_original ? null : (
-              <RowActionButton
-                key={action.id}
-                icon={action.icon}
-                label={action.label}
-                onClick={() => onAction(action.id)}
-                disabled={isMutating}
-                destructive={action.variant === "destructive"}
-              />
-            ),
+      <RowAside>
+        <div className="flex gap-0.5">
+          <FilterToggleButtons
+            state={filterState}
+            onInclude={onInclude}
+            onExclude={onExclude}
+            compact
+            revealOnHover
+          />
+          {onDelete && (
+            <RowActionButton
+              icon={Trash2}
+              label="Delete"
+              onClick={onDelete}
+              disabled={isMutating}
+              destructive
+            />
           )}
-      </div>
-      <span className="text-right text-xs text-muted-foreground whitespace-nowrap">
-        {entry.size_bytes != null ? formatFileSize(entry.size_bytes) : ""}
-      </span>
-      <div className="flex justify-end">
+        </div>
         {entry.chunk_count != null && (
           <Badge variant="outline" className="text-xs gap-1 whitespace-nowrap">
             <Scissors className="h-3 w-3" />
             {entry.chunk_count}
           </Badge>
         )}
-      </div>
+      </RowAside>
     </TreeRow>
   );
 }
@@ -415,40 +415,39 @@ function DirectoryRow({
           </button>
         </div>
       </RowMain>
-      <div className="flex gap-0.5">
-        <FilterToggleButtons
-          state={filterState}
-          onInclude={onIncludeDir}
-          onExclude={onExcludeDir}
-          compact
-          revealOnHover
-        />
-        {onCreateSubdir && (
-          <RowActionButton
-            icon={FolderPlus}
-            label="Create subdirectory"
-            onClick={onCreateSubdir}
-            disabled={isMutating}
+      <RowAside>
+        <div className="flex gap-0.5">
+          {onCreateSubdir && (
+            <RowActionButton
+              icon={FolderPlus}
+              label="Create subdirectory"
+              onClick={onCreateSubdir}
+              disabled={isMutating}
+            />
+          )}
+          <FilterToggleButtons
+            state={filterState}
+            onInclude={onIncludeDir}
+            onExclude={onExcludeDir}
+            compact
+            revealOnHover
           />
-        )}
-        {onDeleteDir && (
-          <RowActionButton
-            icon={Trash2}
-            label="Delete directory"
-            onClick={onDeleteDir}
-            disabled={isMutating}
-            destructive
-          />
-        )}
-      </div>
-      <span />
-      <div className="flex justify-end">
+          {onDeleteDir && (
+            <RowActionButton
+              icon={Trash2}
+              label="Delete directory"
+              onClick={onDeleteDir}
+              disabled={isMutating}
+              destructive
+            />
+          )}
+        </div>
         {fileCount > 0 && (
           <Badge variant="secondary" className="text-xs whitespace-nowrap">
             {fileCount}
           </Badge>
         )}
-      </div>
+      </RowAside>
     </TreeRow>
   );
 }
@@ -463,7 +462,7 @@ export function DirectoryTreeView({
   onInclude,
   onExclude,
   filterState,
-  onFileAction,
+  onDeleteFile,
   onCreateSubdir,
   onDeleteDir,
   selectedFiles,
@@ -532,7 +531,7 @@ export function DirectoryTreeView({
           onInclude={() => onInclude(row.entry.path)}
           onExclude={() => onExclude(row.entry.path)}
           filterState={filterState(row.entry.path)}
-          onAction={onFileAction ? (actionId) => onFileAction(row.entry.path, actionId) : undefined}
+          onDelete={onDeleteFile ? () => onDeleteFile(row.entry.path) : undefined}
           selected={selectedFiles?.has(row.entry.path)}
           onToggleSelect={onToggleSelectFile ? () => onToggleSelectFile(row.entry.path) : undefined}
           resolveDrag={resolveFileDrag(row.entry.path)}
@@ -587,9 +586,5 @@ export function DirectoryTreeView({
     );
   };
 
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-3 gap-y-0.5">
-      {flatRows.map(renderRow)}
-    </div>
-  );
+  return <div className="flex flex-col gap-y-0.5">{flatRows.map(renderRow)}</div>;
 }

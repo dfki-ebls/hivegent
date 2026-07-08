@@ -314,26 +314,7 @@ export function ScopeSection({
         onInclude={(path) => toggleInclude(toCanonical(path))}
         onExclude={(path) => toggleExclude(toCanonical(path))}
         filterState={(path) => filterStateOf(toCanonical(path))}
-        onFileAction={
-          canWrite
-            ? (path, actionId) => {
-                switch (actionId) {
-                  case "rechunk":
-                    void storeRechunk(scope, path, pipelineSpec);
-                    break;
-                  case "reconvert":
-                    handleReconvert(path);
-                    break;
-                  case "download":
-                    void handleDownloadOriginal(path);
-                    break;
-                  case "delete":
-                    dialogs.current?.deleteFile(path);
-                    break;
-                }
-              }
-            : undefined
-        }
+        onDeleteFile={canWrite ? (path) => dialogs.current?.deleteFile(path) : undefined}
         onCreateSubdir={canWrite ? (path) => dialogs.current?.createSubdir(path) : undefined}
         onDeleteDir={canWrite ? (path) => dialogs.current?.deleteDir(path) : undefined}
         selectedFiles={canWrite ? selectedFiles : undefined}
@@ -368,7 +349,6 @@ export function ScopeSection({
               filterState={filterStateOf(toCanonical(doc.filename))}
               onIncludeDocument={() => toggleInclude(toCanonical(doc.filename))}
               onExcludeDocument={() => toggleExclude(toCanonical(doc.filename))}
-              onReconvert={() => handleReconvert(doc.filename)}
               onRemove={() => dialogs.current?.deleteFile(doc.filename)}
               selected={canWrite ? selectedFiles.has(doc.filename) : undefined}
               onToggleSelect={canWrite ? () => toggleFile(doc.filename) : undefined}
@@ -404,6 +384,10 @@ export function ScopeSection({
       {label}
     </button>
   );
+
+  // The document the dialog is open on, resolved once for its metadata badges
+  // and the write-action gates below.
+  const dialogDoc = dialog ? docsByFilename.get(dialog.path) : undefined;
 
   return (
     <Collapsible open={expanded} onOpenChange={setIsOpen} className="mb-1">
@@ -481,7 +465,9 @@ export function ScopeSection({
         open={dialog !== null}
         onOpenChange={(open) => !open && setDialog(null)}
         filename={dialog ? toCanonical(dialog.path) : ""}
-        showMetadata={dialog?.editable ?? false}
+        // Every workspace document opens in managed mode (metadata + markdown
+        // download); only the write actions below are gated on `canWrite`.
+        showMetadata={dialog !== null}
         editable={dialog?.editable ?? false}
         onSave={handleSave}
         onRechunk={
@@ -489,6 +475,16 @@ export function ScopeSection({
             ? async () => {
                 if (dialog) await storeRechunk(scope, dialog.path, pipelineSpec);
               }
+            : undefined
+        }
+        onReconvert={
+          dialog && dialog.editable && dialogDoc?.has_original
+            ? () => handleReconvert(dialog.path)
+            : undefined
+        }
+        onDownloadOriginal={
+          dialog && dialogDoc?.has_original
+            ? () => void handleDownloadOriginal(dialog.path)
             : undefined
         }
       />

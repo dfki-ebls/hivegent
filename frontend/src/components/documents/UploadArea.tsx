@@ -1,5 +1,6 @@
-import { Archive, FolderOpen, FolderPlus, Paperclip, Plus, Upload } from "lucide-react";
+import { Archive, FolderOpen, FolderPlus, Paperclip, Plus, Upload, X } from "lucide-react";
 
+import { PERSONAL_SCOPE, splitScopePath } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 interface UploadAreaProps {
@@ -7,6 +8,10 @@ interface UploadAreaProps {
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   directoryInputRef: React.RefObject<HTMLInputElement | null>;
   zipInputRef: React.RefObject<HTMLInputElement | null>;
+  /** Canonical directory uploads and new documents land in. */
+  target: string;
+  /** Reset the target back to the personal workspace root. */
+  onResetTarget: () => void;
   onDragOver: (e: React.DragEvent) => void;
   onDragLeave: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -20,6 +25,13 @@ interface UploadAreaProps {
   onNewFolder: () => void;
 }
 
+/** Human-readable breadcrumb for a canonical target directory. */
+function formatTarget(target: string): string {
+  const { scope, local } = splitScopePath(target);
+  const scopeLabel = scope === PERSONAL_SCOPE ? "Personal" : scope.slice(1);
+  return local ? `${scopeLabel} / ${local.replaceAll("/", " / ")}` : scopeLabel;
+}
+
 // The drop zone stays interactive while uploads are in flight: dropping more
 // files appends them to the upload queue (surfaced in the background-task tray)
 // rather than replacing or cancelling the work already running.
@@ -28,6 +40,8 @@ export function UploadArea({
   fileInputRef,
   directoryInputRef,
   zipInputRef,
+  target,
+  onResetTarget,
   onDragOver,
   onDragLeave,
   onDrop,
@@ -40,6 +54,8 @@ export function UploadArea({
   onNewDocument,
   onNewFolder,
 }: UploadAreaProps) {
+  const atPersonalRoot = target === PERSONAL_SCOPE;
+
   return (
     <div className="border-b p-4">
       <div
@@ -56,6 +72,27 @@ export function UploadArea({
         <div className="text-center">
           <p className="font-medium">Drop files here to upload</p>
           <p className="text-sm text-muted-foreground">or click to browse</p>
+        </div>
+        {/* Where drops, uploads, and new documents land — click a folder in the
+            tree to change it. Kept inside the drop zone so it costs no extra row. */}
+        <div
+          className="flex max-w-full items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-sm"
+          title="Uploads, new documents and folders land here. Click a folder in the tree to change it."
+        >
+          <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="shrink-0 text-muted-foreground">Uploading to</span>
+          <span className="min-w-0 truncate font-medium">{formatTarget(target)}</span>
+          {!atPersonalRoot && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-4 w-4 shrink-0"
+              title="Reset to personal root"
+              onClick={onResetTarget}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          )}
         </div>
         <input
           ref={fileInputRef}

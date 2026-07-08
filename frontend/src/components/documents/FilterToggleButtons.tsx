@@ -28,7 +28,9 @@ export function FilterToggleButtons({
   revealOnHover = false,
 }: FilterToggleButtonsProps) {
   const iconSize = compact ? "h-3 w-3" : "h-4 w-4";
-  const hidden = revealOnHover ? "opacity-0 group-hover:opacity-100" : undefined;
+  // Collapse (not just fade) inactive buttons until the row is hovered, so an
+  // idle row gives its full width to the name instead of reserving button space.
+  const hidden = revealOnHover ? "hidden group-hover:inline-flex" : undefined;
   return (
     <>
       <Button

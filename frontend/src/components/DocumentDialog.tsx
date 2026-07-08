@@ -1,12 +1,15 @@
 import {
+  Download,
   ExternalLink,
   FileText,
   ImageIcon,
   Pencil,
   RefreshCw,
+  RotateCcw,
   Sparkles,
   Trash2,
 } from "lucide-react";
+import { downloadBlob } from "@/lib/download";
 import { formatFileSize, isWebUrl } from "@/lib/utils";
 import Markdown from "markdown-to-jsx";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -71,6 +74,10 @@ interface DocumentDialogProps {
   showMetadata?: boolean;
   /** Management mode: show rechunk button and trigger rechunk. */
   onRechunk?: () => Promise<void>;
+  /** Reconvert from the original binary (only for documents that have one). */
+  onReconvert?: () => void;
+  /** Download the original binary (only for documents that have one). */
+  onDownloadOriginal?: () => void;
 
   /** Show edit/preview toggle. */
   editable?: boolean;
@@ -184,6 +191,8 @@ export function DocumentDialog({
   citationView = false,
   showMetadata = false,
   onRechunk,
+  onReconvert,
+  onDownloadOriginal,
   editable = false,
   isNew = false,
   onSave,
@@ -388,6 +397,13 @@ export function DocumentDialog({
       setIsRechunking(false);
     }
   }, [onRechunk, fetchManagedChunks]);
+
+  // Download the markdown description shown in the dialog under its on-disk name.
+  const handleDownloadMarkdown = useCallback(() => {
+    if (fullContent == null) return;
+    const name = filename.slice(filename.lastIndexOf("/") + 1) || "document.md";
+    downloadBlob(new Blob([fullContent], { type: "text/markdown" }), name);
+  }, [fullContent, filename]);
 
   const replaceActiveAsset = useCallback(
     (updated: AssetEntry) => {
@@ -988,7 +1004,7 @@ export function DocumentDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="h-[85vh] w-[90vw] max-w-5xl! flex flex-col overflow-hidden p-0">
-        <DialogHeader className="px-6 pt-6 pb-3 space-y-2">
+        <DialogHeader className="px-6 pt-4 pb-1 space-y-1.5">
           <DialogTitle className="truncate pr-8 flex items-center gap-2">
             {filename}
             {isWeb && (
@@ -1007,36 +1023,77 @@ export function DocumentDialog({
             Document content and chunk context for {filename}
           </DialogDescription>
 
-          {/* Action bar: metadata badges + rechunk + edit */}
+          {/* Metadata badges, then the document actions on their own line below. */}
           {(showMetadata || editable) && (
-            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex flex-col gap-1.5 text-sm text-muted-foreground">
               {showMetadata && managedData && (
-                <>
+                <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="secondary">Chunking: {managedData.pipeline}</Badge>
                   <Badge variant="secondary">{managedData.chunks.length} chunks</Badge>
+                  {managedData.size_bytes != null && (
+                    <Badge variant="outline">{formatFileSize(managedData.size_bytes)}</Badge>
+                  )}
                   <Badge variant="outline">Created: {formatDate(managedData.created_at)}</Badge>
-                </>
+                </div>
               )}
-              {onRechunk && viewMode !== "edit" && (
-                <Button variant="outline" size="sm" onClick={handleRechunk} disabled={isRechunking}>
-                  <RefreshCw className={`h-3 w-3 mr-1 ${isRechunking ? "animate-spin" : ""}`} />
-                  Rechunk
-                </Button>
-              )}
-              {editable && viewMode !== "edit" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setEditContent(fullContent ?? "");
-                    setEditFilename(filename);
-                    setSaveError(null);
-                    setViewMode("edit");
-                  }}
-                >
-                  <Pencil className="h-3 w-3 mr-1" />
-                  Edit
-                </Button>
+              {viewMode !== "edit" && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {editable && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setEditContent(fullContent ?? "");
+                        setEditFilename(filename);
+                        setSaveError(null);
+                        setViewMode("edit");
+                      }}
+                    >
+                      <Pencil className="h-3 w-3 mr-1" />
+                      Edit
+                    </Button>
+                  )}
+                  {onRechunk && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRechunk}
+                      disabled={isRechunking}
+                    >
+                      <RefreshCw className={`h-3 w-3 mr-1 ${isRechunking ? "animate-spin" : ""}`} />
+                      Rechunk
+                    </Button>
+                  )}
+                  {onReconvert && (
+                    <Button variant="outline" size="sm" onClick={onReconvert}>
+                      <RotateCcw className="h-3 w-3 mr-1" />
+                      Reconvert
+                    </Button>
+                  )}
+                  {onDownloadOriginal && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={onDownloadOriginal}
+                      title="Download the original file"
+                    >
+                      <Download className="h-3 w-3 mr-1" />
+                      Original
+                    </Button>
+                  )}
+                  {isManagedMode && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleDownloadMarkdown}
+                      disabled={fullContent == null}
+                      title="Download the markdown description"
+                    >
+                      <Download className="h-3 w-3 mr-1" />
+                      Markdown
+                    </Button>
+                  )}
+                </div>
               )}
             </div>
           )}

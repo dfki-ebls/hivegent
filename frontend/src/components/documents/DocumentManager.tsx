@@ -212,6 +212,8 @@ export function DocumentManager() {
         fileInputRef={fileInputRef}
         directoryInputRef={directoryInputRef}
         zipInputRef={zipInputRef}
+        target={targetDir}
+        onResetTarget={() => setTargetDir(PERSONAL_SCOPE)}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -229,8 +231,6 @@ export function DocumentManager() {
         conversionPipeline={conversionPipeline}
         chunkingPipeline={chunkingPipeline}
         assetMode={assetMode}
-        target={targetDir}
-        onResetTarget={() => setTargetDir(PERSONAL_SCOPE)}
         onConversionPipelineChange={setConversionPipeline}
         onChunkingPipelineChange={setChunkingPipeline}
         onAssetModeChange={setAssetMode}

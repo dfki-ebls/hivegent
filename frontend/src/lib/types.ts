@@ -209,6 +209,7 @@ export type ChunkInfo = z.infer<typeof ChunkInfoSchema>;
 export const ChunkedDocumentResponseSchema = z.object({
   pipeline: z.string(),
   created_at: z.string(),
+  size_bytes: z.number().nullable().optional(),
   chunks: z.array(ChunkInfoSchema),
   entry_kind: EntryKindSchema.optional(),
   stem_path: z.string().nullable().optional(),
