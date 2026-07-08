@@ -291,9 +291,9 @@ async def upload_document(
     )
 
 
-@router.post("/documents/collections/{scope}")
+@router.post("/documents/collections/{target:path}")
 async def upload_collection(
-    scope: str,
+    target: str,
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
     pipeline_spec: str = Form(default="{}"),
@@ -303,9 +303,12 @@ async def upload_collection(
 
     Each file flows through the phased upload, so the job reports per-file
     progress and the workspace stays usable while a large archive processes.
+    ``target`` is a canonical directory — a scope root (``~``, ``@<group>``) or a
+    subdir under it — so a drop can target a folder, not just the workspace root;
+    it resolves to the store and destination subdir like every other item route.
     """
     spec, resolved = await validate_collection_upload(pipeline_spec, llm_config)
-    store, _ = resolve_workspace_path(user, scope, write=True)
+    store, dest = resolve_workspace_path(user, target, write=True)
     spool = await _spool_payload(
         file, limit=settings.limits.max_collection_size_bytes, label="Collection"
     )
@@ -321,7 +324,9 @@ async def upload_collection(
     async def work(ctx: JobContext) -> None:
         # The ZIP is read straight from the spool file, so a large archive is
         # never loaded into memory whole.
-        async for event in workspace.process_collection(store, spool, spec, resolved):
+        async for event in workspace.process_collection(
+            store, spool, spec, resolved, dest_dir=dest
+        ):
             if isinstance(event, CollectionProgressEvent):
                 ctx.set_progress(event.current, event.total)
             elif isinstance(event, CollectionCompleteEvent):
@@ -341,7 +346,7 @@ async def upload_collection(
         kind=DocumentJobKind.COLLECTION,
         title=file.filename or "collection.zip",
         owner=user.id,
-        scope=scope,
+        scope=store.scope.prefix,
         work=work,
         on_settled=lambda: spool.unlink(missing_ok=True),
     )

@@ -26,7 +26,8 @@ export type UploadOptions = UploadCollectionOptions;
 /** One file or collection moving through the upload queue. */
 export interface UploadItem {
   id: string;
-  scope: string;
+  /** Canonical target directory (`~`, `~/projects`, `@group/papers`). */
+  targetDir: string;
   name: string;
   stem: string;
   kind: "file" | "collection";
@@ -44,7 +45,7 @@ export interface UploadItem {
 // re-render: the abort controller for an item's in-flight prepare or upload, and
 // the work needed to (re)run it.
 interface ItemWork {
-  scope: string;
+  targetDir: string;
   kind: "file" | "collection";
   options: UploadOptions;
   file: File | null; // set once a collection finishes preparing
@@ -83,14 +84,14 @@ const ACTIVE_STATUSES: ReadonlySet<UploadItemStatus> = new Set([
 
 interface UploadQueueStore {
   items: Record<string, UploadItem>;
-  enqueueFiles: (scope: string, files: File[], options: UploadOptions) => void;
+  enqueueFiles: (targetDir: string, files: File[], options: UploadOptions) => void;
   enqueueCollection: (
-    scope: string,
+    targetDir: string,
     name: string,
     build: (signal: AbortSignal) => Promise<File>,
     options: UploadOptions,
   ) => void;
-  report: (scope: string, name: string, error: string) => void;
+  report: (targetDir: string, name: string, error: string) => void;
   retry: (id: string) => void;
   cancel: (id: string) => void;
   dismiss: (id: string) => void;
@@ -113,7 +114,7 @@ export const useUploadQueue = create<UploadQueueStore>((set, get) => {
   // A fresh queue item with its constant defaults filled in. A pre-queue failure
   // overrides those defaults to drop in already-failed and non-retryable.
   const makeItem = (
-    base: Pick<UploadItem, "id" | "scope" | "name" | "stem" | "kind" | "status">,
+    base: Pick<UploadItem, "id" | "targetDir" | "name" | "stem" | "kind" | "status">,
     overrides?: Partial<Pick<UploadItem, "error" | "retryable">>,
   ): UploadItem => ({
     ...base,
@@ -133,12 +134,13 @@ export const useUploadQueue = create<UploadQueueStore>((set, get) => {
     });
   };
 
-  // Stems currently held by an active item in `scope`, so a fresh batch can skip
-  // duplicates in one pass instead of rescanning every item per file.
-  const occupiedStems = (scope: string): Set<string> =>
+  // Stems currently held by an active item targeting `targetDir`, so a fresh
+  // batch can skip duplicates in one pass instead of rescanning every item per
+  // file. Keyed by directory, so the same name in two folders never collides.
+  const occupiedStems = (targetDir: string): Set<string> =>
     new Set(
       Object.values(get().items)
-        .filter((i) => i.scope === scope && ACTIVE_STATUSES.has(i.status))
+        .filter((i) => i.targetDir === targetDir && ACTIVE_STATUSES.has(i.status))
         .map((i) => i.stem),
     );
 
@@ -184,10 +186,16 @@ export const useUploadQueue = create<UploadQueueStore>((set, get) => {
     patchItem(id, { status: "uploading", error: null });
 
     await withController(id, async (signal) => {
+      // Both branches address the destination the same way — a canonical
+      // directory for the collection, that directory joined with the filename
+      // for a single document.
       const job =
         w.kind === "collection"
-          ? await uploadCollection(w.scope, file, { ...w.options, signal })
-          : await uploadDocument(canonicalPath(w.scope, file.name), file, { ...w.options, signal });
+          ? await uploadCollection(w.targetDir, file, { ...w.options, signal })
+          : await uploadDocument(canonicalPath(w.targetDir, file.name), file, {
+              ...w.options,
+              signal,
+            });
       useJobsStore.getState().upsert(job);
       removeItem(id);
     });
@@ -220,8 +228,8 @@ export const useUploadQueue = create<UploadQueueStore>((set, get) => {
     // already in flight, so dropping more files while others upload accumulates
     // work instead of cancelling it. A file whose stem is already queued is
     // skipped silently; its in-flight item already stands in for it in the tray.
-    enqueueFiles: (scope, files, options) => {
-      const occupied = occupiedStems(scope);
+    enqueueFiles: (targetDir, files, options) => {
+      const occupied = occupiedStems(targetDir);
       for (const file of files) {
         const stem = fileStem(file.name);
 
@@ -229,17 +237,19 @@ export const useUploadQueue = create<UploadQueueStore>((set, get) => {
 
         occupied.add(stem);
         const id = crypto.randomUUID();
-        work.set(id, { scope, kind: "file", options, file, build: null });
-        addItem(makeItem({ id, scope, name: file.name, stem, kind: "file", status: "queued" }));
+        work.set(id, { targetDir, kind: "file", options, file, build: null });
+        addItem(makeItem({ id, targetDir, name: file.name, stem, kind: "file", status: "queued" }));
       }
 
       pump();
     },
 
-    enqueueCollection: (scope, name, build, options) => {
+    enqueueCollection: (targetDir, name, build, options) => {
       const id = crypto.randomUUID();
-      work.set(id, { scope, kind: "collection", options, file: null, build });
-      addItem(makeItem({ id, scope, name, stem: name, kind: "collection", status: "preparing" }));
+      work.set(id, { targetDir, kind: "collection", options, file: null, build });
+      addItem(
+        makeItem({ id, targetDir, name, stem: name, kind: "collection", status: "preparing" }),
+      );
       void prepareCollection(id);
     },
 
@@ -247,11 +257,11 @@ export const useUploadQueue = create<UploadQueueStore>((set, get) => {
     // drop we could not read) as a dismiss-only tray row, so it is as visible as
     // every other task instead of being lost to the console. It holds no work,
     // so it cannot be retried and never blocks a stem.
-    report: (scope, name, error) => {
+    report: (targetDir, name, error) => {
       const id = crypto.randomUUID();
       const base = {
         id,
-        scope,
+        targetDir,
         name,
         stem: fileStem(name),
         kind: "file",

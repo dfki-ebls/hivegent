@@ -6,6 +6,7 @@ import {
   buildAuxLlmConfig,
   canonicalPath,
   groupScope,
+  splitScopePath,
   writeDocument,
 } from "@/lib/api";
 import {
@@ -49,9 +50,10 @@ export function DocumentManager() {
   const hasPendingUploads = useUploadQueue(selectHasPendingUploads);
 
   const groups = useMemo(() => getAllGroups(), []);
-  const writableGroups = useMemo(() => groups.filter((g) => canWriteGroup(g)), [groups]);
 
-  const [uploadScope, setUploadScope] = useState(PERSONAL_SCOPE);
+  // Canonical directory every upload/create lands in — a workspace root or a
+  // subdir armed by clicking a folder in the tree. Defaults to the personal root.
+  const [targetDir, setTargetDir] = useState(PERSONAL_SCOPE);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const directoryInputRef = useRef<HTMLInputElement>(null);
@@ -103,11 +105,11 @@ export function DocumentManager() {
     setIsDragging(false);
   }, []);
 
-  const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragging(false);
-      const { items, files } = e.dataTransfer;
+  // Classify dropped OS entries and enqueue them into `target` (a canonical
+  // directory). Shared by the top drop zone (which uses the armed target) and
+  // per-folder drops in the tree (which pass their own folder as the target).
+  const uploadTo = useCallback(
+    async (target: string, items: DataTransferItem[], files: File[]) => {
       if (files.length === 0 && items.length === 0) return;
       try {
         const classification = await classifyDropItems(items, files);
@@ -115,29 +117,42 @@ export function DocumentManager() {
           classification.directories.length > 0 || classification.zipFiles.length > 0;
         if (hasCollection) {
           enqueueCollection(
-            uploadScope,
+            target,
             "collection.zip",
             (signal) => buildCollectionZip(classification, signal),
             uploadOptions,
           );
         } else {
-          enqueueFiles(uploadScope, classification.looseFiles, uploadOptions);
+          enqueueFiles(target, classification.looseFiles, uploadOptions);
         }
       } catch (err) {
         // The drop fails before any queue item exists, so surface it as its own
         // failed tray row (a collection that fails mid-build already shows as one).
-        reportUpload(uploadScope, "Dropped items", errorMessage(err));
+        reportUpload(target, "Dropped items", errorMessage(err));
       }
     },
-    [enqueueCollection, enqueueFiles, reportUpload, uploadOptions, uploadScope],
+    [enqueueCollection, enqueueFiles, reportUpload, uploadOptions],
+  );
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+      void uploadTo(
+        targetDir,
+        Array.from(e.dataTransfer.items),
+        Array.from(e.dataTransfer.files),
+      );
+    },
+    [uploadTo, targetDir],
   );
 
   const handleFileInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files) enqueueFiles(uploadScope, Array.from(e.target.files), uploadOptions);
+      if (e.target.files) enqueueFiles(targetDir, Array.from(e.target.files), uploadOptions);
       e.target.value = "";
     },
-    [enqueueFiles, uploadOptions, uploadScope],
+    [enqueueFiles, uploadOptions, targetDir],
   );
 
   const handleDirectoryInputChange = useCallback(
@@ -148,14 +163,14 @@ export function DocumentManager() {
       e.target.value = "";
       if (captured.length > 0) {
         enqueueCollection(
-          uploadScope,
+          targetDir,
           "collection.zip",
           () => buildCollectionZipFromDirectoryInput(captured),
           uploadOptions,
         );
       }
     },
-    [enqueueCollection, uploadOptions, uploadScope],
+    [enqueueCollection, uploadOptions, targetDir],
   );
 
   const handleZipInputChange = useCallback(
@@ -163,10 +178,10 @@ export function DocumentManager() {
       const file = e.target.files?.[0];
       e.target.value = "";
       if (file && file.name.toLowerCase().endsWith(".zip")) {
-        enqueueCollection(uploadScope, file.name, () => Promise.resolve(file), uploadOptions);
+        enqueueCollection(targetDir, file.name, () => Promise.resolve(file), uploadOptions);
       }
     },
-    [enqueueCollection, uploadOptions, uploadScope],
+    [enqueueCollection, uploadOptions, targetDir],
   );
 
   // New in-browser markdown is written synchronously (not as a background job)
@@ -180,14 +195,14 @@ export function DocumentManager() {
       // or the entry and its chunk count drift apart.
       const markdownName = filename.replace(/\.md$/i, "") + ".md";
       await writeDocument(
-        canonicalPath(uploadScope, markdownName),
+        canonicalPath(targetDir, markdownName),
         content,
         pipelineSpec.chunking,
         "create",
       );
-      await refresh(uploadScope);
+      await refresh(splitScopePath(targetDir).scope);
     },
-    [uploadScope, pipelineSpec, refresh],
+    [targetDir, pipelineSpec, refresh],
   );
 
   return (
@@ -214,9 +229,8 @@ export function DocumentManager() {
         conversionPipeline={conversionPipeline}
         chunkingPipeline={chunkingPipeline}
         assetMode={assetMode}
-        uploadScope={uploadScope}
-        writableGroups={writableGroups}
-        onUploadScopeChange={setUploadScope}
+        target={targetDir}
+        onResetTarget={() => setTargetDir(PERSONAL_SCOPE)}
         onConversionPipelineChange={setConversionPipeline}
         onChunkingPipelineChange={setChunkingPipeline}
         onAssetModeChange={setAssetMode}
@@ -242,6 +256,9 @@ export function DocumentManager() {
           defaultOpen
           searchQuery={searchQuery}
           pipelineSpec={pipelineSpec}
+          armedTarget={targetDir}
+          onArmTarget={setTargetDir}
+          onUploadInto={uploadTo}
         />
         {groups.map((groupId) => (
           <ScopeSection
@@ -252,6 +269,9 @@ export function DocumentManager() {
             defaultOpen={false}
             searchQuery={searchQuery}
             pipelineSpec={pipelineSpec}
+            armedTarget={targetDir}
+            onArmTarget={setTargetDir}
+            onUploadInto={uploadTo}
           />
         ))}
       </div>
@@ -268,7 +288,8 @@ export function DocumentManager() {
       <CreateDirectoryDialog
         open={showCreateDir}
         onOpenChange={setShowCreateDir}
-        onCreate={(path) => createDir(uploadScope, path)}
+        parentPath={splitScopePath(targetDir).local || undefined}
+        onCreate={(path) => createDir(splitScopePath(targetDir).scope, path)}
       />
     </div>
   );

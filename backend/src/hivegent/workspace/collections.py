@@ -160,9 +160,17 @@ class _PlannedFile:
     is_markdown: bool
 
     @classmethod
-    def from_relative(cls, relative_path: str) -> Self:
-        """Resolve the safe path, logical stem, and kind of an archive member."""
-        safe = sanitize_document_path(relative_path)
+    def from_relative(cls, relative_path: str, dest_dir: str = "") -> Self:
+        """Resolve the safe destination path, logical stem, and kind of a member.
+
+        ``relative_path`` stays the member's path within the archive (the read
+        coordinate, shared with the wikilink resolver); ``dest_dir`` shifts only
+        where it lands in the workspace, so a collection can drop into a subdir
+        without disturbing its internal link resolution.
+        """
+        safe = sanitize_document_path(
+            f"{dest_dir}/{relative_path}" if dest_dir else relative_path
+        )
         return cls(
             relative_path=relative_path,
             safe=safe,
@@ -200,9 +208,12 @@ def _read_markdown(
         )
         return None
 
-    return preprocess_markdown(text, planned.safe, collection_set).content.encode(
-        "utf-8"
-    )
+    # Resolve wikilinks in the archive's own coordinates (``relative_path``,
+    # matching ``collection_set``), not the workspace destination, so a subdir
+    # drop never shifts a link out from under its target.
+    return preprocess_markdown(
+        text, planned.relative_path, collection_set
+    ).content.encode("utf-8")
 
 
 async def _write_companion_original(
@@ -244,6 +255,7 @@ async def process_collection(
     archive_path: Path,
     spec: PipelineSpec,
     llm: LlmConfig,
+    dest_dir: str = "",
 ) -> AsyncGenerator[CollectionProgressEvent | CollectionCompleteEvent]:
     """Process a ZIP collection, yielding per-file progress events.
 
@@ -296,7 +308,7 @@ async def process_collection(
         # Markdown-first within each stem so a description claims its entry ahead
         # of any sibling original, whatever the archive's raw ordering.
         planned = sorted(
-            (_PlannedFile.from_relative(rp) for rp in relative_paths),
+            (_PlannedFile.from_relative(rp, dest_dir) for rp in relative_paths),
             key=lambda p: (p.stem, not p.is_markdown, p.relative_path),
         )
 

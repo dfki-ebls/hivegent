@@ -1,9 +1,7 @@
 import { forwardRef, useCallback, useImperativeHandle, useState } from "react";
 
-import { commonParentDir } from "@/lib/utils";
 import { useDocumentsStore } from "@/stores/documents-store";
 import { CreateDirectoryDialog } from "@/components/CreateDirectoryDialog";
-import { MoveDocumentDialog } from "@/components/MoveDocumentDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,9 +20,6 @@ type DeleteTarget =
 
 /** Imperative openers exposed to the owning ScopeSection. */
 export interface ScopeDialogsHandle {
-  moveFile: (path: string) => void;
-  moveDir: (path: string) => void;
-  bulkMove: (files: string[]) => void;
   createSubdir: (parent: string) => void;
   deleteFile: (path: string) => void;
   deleteDir: (path: string) => void;
@@ -34,30 +29,25 @@ export interface ScopeDialogsHandle {
 interface ScopeDialogsProps {
   /** Workspace scope: `~` for personal, `@<group>` for a group. */
   scope: string;
-  /** Run after a bulk move/delete starts (e.g. to clear the selection). */
+  /** Run after a bulk delete starts (e.g. to clear the selection). */
   onBulkDone: () => void;
 }
 
 /**
- * The move / delete / create-directory dialogs for one scope. Owns their state
- * and runs the matching store mutations, so ScopeSection only has to call the
- * imperative openers from its tree and bulk actions.
+ * The create-directory and delete confirmation dialogs for one scope. Owns their
+ * state and runs the matching store mutations, so ScopeSection only has to call
+ * the imperative openers from its tree and bulk actions. Moves happen through
+ * native drag-and-drop, not a dialog.
  */
 export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(function ScopeDialogs(
   { scope, onBulkDone },
   ref,
 ) {
-  const storeMove = useDocumentsStore((s) => s.move);
-  const storeBulkMove = useDocumentsStore((s) => s.bulkMove);
-  const storeMoveDir = useDocumentsStore((s) => s.moveDir);
   const createDir = useDocumentsStore((s) => s.createDir);
   const deleteDir = useDocumentsStore((s) => s.deleteDir);
   const removeDoc = useDocumentsStore((s) => s.remove);
   const storeBulkDelete = useDocumentsStore((s) => s.bulkDelete);
 
-  const [moveFilePath, setMoveFilePath] = useState<string | null>(null);
-  const [moveDirPath, setMoveDirPath] = useState<string | null>(null);
-  const [bulkMoveFiles, setBulkMoveFiles] = useState<string[] | null>(null);
   const [createDirParent, setCreateDirParent] = useState<string | undefined>(undefined);
   const [showCreateDir, setShowCreateDir] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
@@ -65,9 +55,6 @@ export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(fu
   useImperativeHandle(
     ref,
     () => ({
-      moveFile: setMoveFilePath,
-      moveDir: setMoveDirPath,
-      bulkMove: setBulkMoveFiles,
       createSubdir: (parent) => {
         setCreateDirParent(parent || undefined);
         setShowCreateDir(true);
@@ -77,29 +64,6 @@ export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(fu
       bulkDelete: (files) => setPendingDelete({ kind: "bulk", files }),
     }),
     [],
-  );
-
-  const handleBulkMove = useCallback(
-    async (destinationDir: string) => {
-      const files = bulkMoveFiles ?? [];
-      setBulkMoveFiles(null);
-      onBulkDone();
-      // Preserve the selection's directory structure: each file keeps its
-      // path relative to the selection's common parent directory.  The bulk
-      // endpoint also prunes source directories the move leaves empty.
-      const commonParent = commonParentDir(files);
-      const moves = files
-        .map((source) => {
-          const relative = source.slice(commonParent.length);
-          return {
-            source,
-            destination: destinationDir ? `${destinationDir}/${relative}` : relative,
-          };
-        })
-        .filter(({ source, destination }) => destination !== source);
-      if (moves.length > 0) await storeBulkMove(scope, moves);
-    },
-    [bulkMoveFiles, onBulkDone, storeBulkMove, scope],
   );
 
   const confirmDelete = useCallback(async () => {
@@ -121,29 +85,6 @@ export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(fu
 
   return (
     <>
-      <MoveDocumentDialog
-        open={moveFilePath !== null}
-        onOpenChange={(open) => !open && setMoveFilePath(null)}
-        currentPath={moveFilePath ?? ""}
-        onMove={(destination) => {
-          if (moveFilePath) void storeMove(scope, moveFilePath, destination);
-        }}
-      />
-      <MoveDocumentDialog
-        open={moveDirPath !== null}
-        onOpenChange={(open) => !open && setMoveDirPath(null)}
-        currentPath={moveDirPath ?? ""}
-        isDirectory
-        onMove={(destination) => {
-          if (moveDirPath) void storeMoveDir(scope, moveDirPath, destination);
-        }}
-      />
-      <MoveDocumentDialog
-        open={bulkMoveFiles !== null}
-        onOpenChange={(open) => !open && setBulkMoveFiles(null)}
-        bulkFileCount={bulkMoveFiles?.length ?? 0}
-        onMove={(dir) => void handleBulkMove(dir)}
-      />
       <CreateDirectoryDialog
         open={showCreateDir}
         onOpenChange={setShowCreateDir}

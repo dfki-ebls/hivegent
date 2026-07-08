@@ -69,8 +69,8 @@ const finalizeZip = async (zip: JSZip): Promise<File> => {
 };
 
 export const classifyDropItems = async (
-  items: DataTransferItemList,
-  fallbackFiles: FileList,
+  items: readonly DataTransferItem[],
+  fallbackFiles: readonly File[],
   signal?: AbortSignal,
 ): Promise<DropClassification> => {
   const classification: DropClassification = {
@@ -79,12 +79,12 @@ export const classifyDropItems = async (
     zipFiles: [],
   };
 
-  const entries = Array.from(items)
+  const entries = items
     .map((item) => (item.webkitGetAsEntry ? item.webkitGetAsEntry() : null))
     .filter((entry): entry is FileSystemEntry => entry !== null);
 
   if (entries.length === 0) {
-    for (const file of Array.from(fallbackFiles)) classifyFile(file, classification);
+    for (const file of fallbackFiles) classifyFile(file, classification);
     return classification;
   }
 

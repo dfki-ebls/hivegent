@@ -1,10 +1,17 @@
 import { ChevronDown, ChevronRight, FolderOpen, Loader2, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { PERSONAL_SCOPE, buildAuxLlmConfig, canonicalPath, writeDocument } from "@/lib/api";
+import {
+  PERSONAL_SCOPE,
+  buildAuxLlmConfig,
+  canonicalPath,
+  splitScopePath,
+  writeDocument,
+} from "@/lib/api";
+import { DROP_CLASSES, registerTreeRow, type TreeDropState, type TreeItemDrag } from "@/lib/dnd";
 import type { PipelineSpec } from "@/lib/types";
 import { downloadBlob } from "@/lib/download";
-import { collectFilePaths } from "@/lib/utils";
+import { cn, collectFilePaths, commonParentDir } from "@/lib/utils";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { DEFAULT_SCOPE_STATE, useDocumentsStore } from "@/stores/documents-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -38,6 +45,12 @@ interface ScopeSectionProps {
   defaultOpen: boolean;
   searchQuery: string;
   pipelineSpec: PipelineSpec;
+  /** Canonical directory currently armed as the upload/create target. */
+  armedTarget: string;
+  /** Arm a canonical directory as the target. */
+  onArmTarget: (target: string) => void;
+  /** Upload dropped OS entries into a canonical directory. */
+  onUploadInto: (target: string, items: DataTransferItem[], files: File[]) => void;
 }
 
 /**
@@ -53,6 +66,9 @@ export function ScopeSection({
   defaultOpen,
   searchQuery,
   pipelineSpec,
+  armedTarget,
+  onArmTarget,
+  onUploadInto,
 }: ScopeSectionProps) {
   const state = useDocumentsStore((s) => s.byScope[scope] ?? DEFAULT_SCOPE_STATE);
   const refresh = useDocumentsStore((s) => s.refresh);
@@ -60,6 +76,9 @@ export function ScopeSection({
   const storeReconvert = useDocumentsStore((s) => s.reconvert);
   const storeBulkRechunk = useDocumentsStore((s) => s.bulkRechunk);
   const storeBulkReconvert = useDocumentsStore((s) => s.bulkReconvert);
+  const storeMove = useDocumentsStore((s) => s.move);
+  const storeMoveDir = useDocumentsStore((s) => s.moveDir);
+  const storeBulkMove = useDocumentsStore((s) => s.bulkMove);
   const clearError = useDocumentsStore((s) => s.clearError);
   const overrides = useSettingsStore((s) => s.overrides);
   const included = useDocumentFilterStore((s) => s.included);
@@ -203,7 +222,6 @@ export function ScopeSection({
           (chain, p) => chain.then(() => handleDownloadOriginal(p)),
           Promise.resolve(),
         ),
-      move: () => dialogs.current?.bulkMove([...selectedFiles]),
       delete: () => dialogs.current?.bulkDelete([...selectedFiles]),
     }),
     [
@@ -219,6 +237,67 @@ export function ScopeSection({
     ],
   );
 
+  // Resolve a dragged selection into store moves against this scope. Same
+  // workspace is guaranteed upstream (the drop only fires for a valid move):
+  // a single file or directory keeps its name under the destination, while a
+  // multi-file drag preserves its structure relative to the selection's common
+  // parent — the shape the bulk endpoint expects.
+  const handleMoveInto = useCallback(
+    (drag: TreeItemDrag, destDir: string) => {
+      const into = (suffix: string) => (destDir ? `${destDir}/${suffix}` : suffix);
+      const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+
+      if (drag.kind === "directory") {
+        void storeMoveDir(scope, drag.paths[0], into(basename(drag.paths[0])));
+        return;
+      }
+
+      if (drag.paths.length === 1) {
+        void storeMove(scope, drag.paths[0], into(basename(drag.paths[0])));
+        return;
+      }
+
+      const commonParent = commonParentDir(drag.paths);
+      const moves = drag.paths
+        .map((source) => ({ source, destination: into(source.slice(commonParent.length)) }))
+        .filter(({ source, destination }) => destination !== source);
+      clearSelection();
+      if (moves.length > 0) void storeBulkMove(scope, moves);
+    },
+    [scope, storeMove, storeMoveDir, storeBulkMove, clearSelection],
+  );
+
+  const handleArm = useCallback(
+    (localDir: string) => onArmTarget(canonicalPath(scope, localDir)),
+    [onArmTarget, scope],
+  );
+
+  // Local dir armed within this scope, or null when the target is elsewhere.
+  const armed = splitScopePath(armedTarget);
+  const armedHere = armed.scope === scope ? armed.local : null;
+
+  // The section header is the scope-root drop target — a sibling of the tree,
+  // never an ancestor of its rows, so root and per-folder targets never nest.
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [rootDropState, setRootDropState] = useState<TreeDropState>("none");
+
+  useEffect(() => {
+    const element = headerRef.current;
+    if (!element || !canWrite) return;
+
+    return registerTreeRow({
+      element,
+      drag: null,
+      drop: {
+        scope,
+        destDir: "",
+        onMove: (drag) => handleMoveInto(drag, ""),
+        onUpload: (items, files) => onUploadInto(scope, items, files),
+      },
+      onDropState: setRootDropState,
+    });
+  }, [scope, canWrite, handleMoveInto, onUploadInto]);
+
   const treeView = () => {
     if (
       !directoryTree ||
@@ -229,6 +308,7 @@ export function ScopeSection({
     return (
       <DirectoryTreeView
         entry={directoryTree.root}
+        scope={scope}
         mutatingPaths={mutatingPaths}
         onEditFile={(path) => setDialog({ path, editable: canWrite })}
         onInclude={(path) => toggleInclude(toCanonical(path))}
@@ -247,9 +327,6 @@ export function ScopeSection({
                   case "download":
                     void handleDownloadOriginal(path);
                     break;
-                  case "move":
-                    dialogs.current?.moveFile(path);
-                    break;
                   case "delete":
                     dialogs.current?.deleteFile(path);
                     break;
@@ -259,10 +336,17 @@ export function ScopeSection({
         }
         onCreateSubdir={canWrite ? (path) => dialogs.current?.createSubdir(path) : undefined}
         onDeleteDir={canWrite ? (path) => dialogs.current?.deleteDir(path) : undefined}
-        onMoveDir={canWrite ? (path) => dialogs.current?.moveDir(path) : undefined}
         selectedFiles={canWrite ? selectedFiles : undefined}
         onToggleSelectFile={canWrite ? toggleFile : undefined}
         onToggleSelectDir={canWrite ? toggleDirFiles : undefined}
+        armedDir={armedHere}
+        onArm={canWrite ? handleArm : undefined}
+        onMoveInto={canWrite ? handleMoveInto : undefined}
+        onUploadInto={
+          canWrite
+            ? (destDir, items, files) => onUploadInto(canonicalPath(scope, destDir), items, files)
+            : undefined
+        }
       />
     );
   };
@@ -298,9 +382,39 @@ export function ScopeSection({
   const fileCount = directoryTree?.total_files ?? documents.length;
   const showBulkBar = canWrite && selectedFiles.size > 0;
 
+  // Root of this scope is armed when the target points here with no subpath.
+  const isRootArmed = armedHere === "";
+
+  // In a writable scope the header label arms the root (and opens the section);
+  // otherwise it is a plain collapse trigger. Same button either way.
+  const labelButton = (
+    <button
+      type="button"
+      className="min-w-0 flex-1 truncate text-left text-sm font-medium"
+      title={canWrite ? "Set as upload target" : undefined}
+      onClick={
+        canWrite
+          ? () => {
+              onArmTarget(scope);
+              setIsOpen(true);
+            }
+          : undefined
+      }
+    >
+      {label}
+    </button>
+  );
+
   return (
     <Collapsible open={expanded} onOpenChange={setIsOpen} className="mb-1">
-      <div className="flex items-center gap-2 rounded-md px-1 py-1.5 hover:bg-muted/50 group">
+      <div
+        ref={headerRef}
+        className={cn(
+          "flex items-center gap-2 rounded-md px-1 py-1.5 hover:bg-muted/50 group",
+          isRootArmed && "bg-accent",
+          DROP_CLASSES[rootDropState],
+        )}
+      >
         <CollapsibleTrigger asChild>
           <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
             {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -311,11 +425,7 @@ export function ScopeSection({
         ) : (
           <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
         )}
-        <CollapsibleTrigger asChild>
-          <button type="button" className="min-w-0 flex-1 truncate text-left text-sm font-medium">
-            {label}
-          </button>
-        </CollapsibleTrigger>
+        {canWrite ? labelButton : <CollapsibleTrigger asChild>{labelButton}</CollapsibleTrigger>}
         <div className="flex gap-0.5">
           <FilterToggleButtons
             state={filterStateOf(scope)}

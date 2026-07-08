@@ -1,8 +1,8 @@
 import type { LucideIcon } from "lucide-react";
-import { Download, Move, RotateCcw, Scissors, Trash2 } from "lucide-react";
+import { Download, RotateCcw, Scissors, Trash2 } from "lucide-react";
 
 /** Identifiers for document file-operation actions. */
-type DocumentActionId = "rechunk" | "reconvert" | "download" | "move" | "delete";
+type DocumentActionId = "rechunk" | "reconvert" | "download" | "delete";
 
 /** A document file-operation action definition. */
 interface DocumentAction {
@@ -46,7 +46,6 @@ const DOCUMENT_ACTIONS: readonly DocumentAction[] = [
     variant: "secondary",
     requiresOriginal: true,
   },
-  { id: "move", icon: Move, label: "Move", variant: "secondary", requiresOriginal: false },
   { id: "delete", icon: Trash2, label: "Delete", variant: "destructive", requiresOriginal: false },
 ];
 

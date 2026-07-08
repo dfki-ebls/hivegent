@@ -194,10 +194,23 @@ export function groupScope(groupId: string): string {
 
 /**
  * Compose the canonical path of a document from its scope and local path
- * (e.g. `~/notes.md`, `@research/notes.md`).
+ * (e.g. `~/notes.md`, `@research/notes.md`). An empty local yields the bare
+ * scope root, so this is the exact inverse of {@link splitScopePath}.
  */
 export function canonicalPath(scope: string, local: string): string {
-  return `${scope}/${local}`;
+  return local ? `${scope}/${local}` : scope;
+}
+
+/**
+ * Split a canonical directory into its scope and workspace-relative subpath —
+ * the inverse of {@link canonicalPath}. The scope root (`~`, `@group`) yields an
+ * empty local; `~/a/b` yields `{ scope: "~", local: "a/b" }`.
+ */
+export function splitScopePath(canonical: string): { scope: string; local: string } {
+  const slash = canonical.indexOf("/");
+  return slash === -1
+    ? { scope: canonical, local: "" }
+    : { scope: canonical.slice(0, slash), local: canonical.slice(slash + 1) };
 }
 
 /** Check if a file requires conversion (anything that is not already markdown). */
@@ -452,12 +465,13 @@ export interface UploadCollectionOptions {
 }
 
 /**
- * Upload a collection ZIP and start its background job; `scope` is `~`
- * (personal) or `@<group>`. Resolves with the job's initial snapshot; per-file
+ * Upload a collection ZIP and start its background job; `target` is the
+ * canonical directory the archive lands under — a scope root (`~`, `@<group>`)
+ * or a subdir (`~/projects`). Resolves with the job's initial snapshot; per-file
  * progress then arrives through the `/jobs` feed.
  */
 export async function uploadCollection(
-  scope: string,
+  target: string,
   file: File,
   options?: UploadCollectionOptions & { signal?: AbortSignal },
 ): Promise<JobView> {
@@ -471,7 +485,7 @@ export async function uploadCollection(
   }
 
   const res = await authFetch(
-    `${API_BASE_URL}/api/documents/collections/${encodeFilePath(scope)}`,
+    `${API_BASE_URL}/api/documents/collections/${encodeFilePath(target)}`,
     { method: "POST", body: formData, signal: options?.signal },
   );
 
