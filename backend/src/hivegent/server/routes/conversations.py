@@ -24,6 +24,7 @@ from ...agents import (
     UserDeps,
     base_agent,
     build_capabilities,
+    turn_usage_limits,
     user_agent,
 )
 from ...agents.subagent_events import SubagentUpdate
@@ -511,6 +512,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         instructions=instructions,
         model_settings=model_settings,
         message_history=prefix,
+        usage_limits=turn_usage_limits,
     )
 
     # Capture only the prefix length, not the prefix list, so the closure

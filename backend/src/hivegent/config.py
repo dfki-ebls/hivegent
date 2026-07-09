@@ -192,6 +192,24 @@ class LlmSettings(BaseModel):
     ``max_tokens`` (the main chat tier) defaults to ``None`` — open-ended,
     streamed answers should not be truncated — but is exposed so an operator
     can impose a ceiling.
+
+    The remaining knobs bound an agent run.  ``request_timeout_seconds`` is the
+    per-request timeout applied to every model call (as ``ModelSettings.timeout``):
+    for a non-streaming call it caps the whole call, and on a stream it detects a
+    hung server (no bytes for that long) — continuous streaming resets it, so it
+    does not cap total generation time.  ``tool_timeout_seconds`` bounds a single
+    tool execution; on expiry pydantic-ai returns a retry prompt to the model, so
+    a wedged tool (a stuck subprocess, query, or fetch) cannot stall a turn — set
+    it generously so a legitimately slow tool (a subagent, a large-document
+    conversion) still fits, or ``None`` to disable.  ``request_limit`` and
+    ``tool_calls_limit`` bound how many model requests and tool calls a turn may
+    make, shared across the main agent and its subagents (which run on the same
+    usage accumulator), so an agentic loop terminates deterministically rather
+    than only at pydantic-ai's implicit default of 50 requests;
+    ``tool_calls_limit`` of ``None`` leaves tool calls uncapped.  ``retries`` is
+    the per-run budget for re-prompting the model when a tool raises
+    ``ModelRetry`` or output validation fails (applied to both); these retries
+    count against ``request_limit``.
     """
 
     model: str = ""
@@ -201,6 +219,11 @@ class LlmSettings(BaseModel):
     base_url: str = ""
     max_tokens: int | None = None
     aux_max_tokens: int | None = 2048
+    request_timeout_seconds: float = 600.0
+    tool_timeout_seconds: float | None = 300.0
+    request_limit: int = 40
+    tool_calls_limit: int | None = 40
+    retries: int = 1
 
 
 class SummarizationSettings(BaseModel):
@@ -624,13 +647,8 @@ class NetworkSettings(BaseModel):
     de.wikipedia.org).  ``contact_email`` is the operator address put in
     the web tools' ``User-Agent`` (as Wikimedia's policy asks, so traffic
     questions reach a human); it falls back to the package author when
-    unset.  ``llm_request_timeout_seconds`` caps individual non-streaming LLM
-    calls (image description, document conversion, title generation,
-    compaction, sub-agent / retrieval tool runs) so a hung inference
-    server cannot stall a handler indefinitely.  The default leaves
-    enough headroom for long PDFs and long compaction prompts; bump it
-    further if your provider is slow.  Streaming chat is governed by
-    client disconnect, not by this timeout.
+    unset.  The per-model-request timeout lives on ``LlmSettings``
+    (``request_timeout_seconds``), not here.
     """
 
     connect_timeout_seconds: float = 5.0
@@ -640,7 +658,6 @@ class NetworkSettings(BaseModel):
     webfetch_max_redirects: int = 5
     websearch_language: str = "en"
     contact_email: str = ""
-    llm_request_timeout_seconds: float = 600.0
 
 
 class Settings(BaseSettings):

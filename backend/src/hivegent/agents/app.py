@@ -7,17 +7,38 @@ in this file rather than at each call site.
 
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import UsageLimits
 
 from ..config import settings
 from .common import UserDeps
 
-__all__ = ["base_agent", "user_agent"]
+__all__ = ["base_agent", "turn_usage_limits", "user_agent"]
 
 _default_model_settings = ModelSettings(
-    timeout=settings.network.llm_request_timeout_seconds,
+    timeout=settings.llm.request_timeout_seconds,
 )
 
-base_agent: Agent[None, str] = Agent(retries=1, model_settings=_default_model_settings)
+base_agent: Agent[None, str] = Agent(
+    retries=settings.llm.retries,
+    model_settings=_default_model_settings,
+    tool_timeout=settings.llm.tool_timeout_seconds,
+)
 user_agent: Agent[UserDeps, str] = Agent(
-    deps_type=UserDeps, retries=1, model_settings=_default_model_settings
+    deps_type=UserDeps,
+    retries=settings.llm.retries,
+    model_settings=_default_model_settings,
+    tool_timeout=settings.llm.tool_timeout_seconds,
+)
+
+
+# Per-turn request/tool-call bounds shared by the chat agent and its subagents.
+# A subagent runs on the parent turn's ``usage`` accumulator, so applying these
+# there bounds the whole turn (main agent plus every subagent) collectively;
+# without them each run only inherits pydantic-ai's implicit default of 50
+# requests and no tool-call cap.  Built once at import like
+# ``_default_model_settings`` — ``UsageLimits`` is read-only run config
+# (pydantic-ai mutates ``usage``, never ``limits``), so one shared instance is safe.
+turn_usage_limits = UsageLimits(
+    request_limit=settings.llm.request_limit,
+    tool_calls_limit=settings.llm.tool_calls_limit,
 )

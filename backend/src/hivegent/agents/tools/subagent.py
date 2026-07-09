@@ -13,7 +13,7 @@ from ...llm import create_openai_chat_model, is_context_overflow
 from ...prompts import EXPLORE_INSTRUCTIONS
 from ...tools.base import ToolOutput
 from ...tools.pydantic_ai import wrap_tool_output
-from ..app import user_agent
+from ..app import turn_usage_limits, user_agent
 from ..common import ExploreTaskArg, UserDeps, scope_instructions
 from ..subagent_events import SubagentTranscriptBuilder, SubagentUpdate
 from ..summarize import summarize_messages
@@ -142,6 +142,7 @@ async def run_subagent(
         deps=ctx.deps,
         capabilities=[capability],
         usage=ctx.usage,
+        usage_limits=turn_usage_limits,
     ) as run:
         try:
             async for node in run:

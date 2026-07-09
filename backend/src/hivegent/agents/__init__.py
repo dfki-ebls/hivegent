@@ -1,6 +1,6 @@
 """Pydantic AI agent definitions, toolsets, and UserDeps."""
 
-from .app import base_agent, user_agent
+from .app import base_agent, turn_usage_limits, user_agent
 from .capabilities import (
     build_capabilities,
     collect_tool_schemas,
@@ -34,6 +34,7 @@ __all__ = [
     "memory_toolset",
     "plan_toolset",
     "subagent_toolset",
+    "turn_usage_limits",
     "user_agent",
     "web_toolset",
     "write_toolset",

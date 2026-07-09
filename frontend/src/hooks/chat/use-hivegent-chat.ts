@@ -9,6 +9,28 @@ import { getAuthHeaders } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/health";
 import type { SubagentSteps, SubagentUpdate } from "@/lib/chat/subagent";
 
+/**
+ * Abort an in-flight request when the component unmounts, if one is *active*.
+ *
+ * `useChat` does not stop its stream when the hook unmounts, so a teardown that
+ * is not a router navigation (e.g. an error boundary tripping mid-stream) would
+ * orphan the server run. This is the belt-and-suspenders net behind
+ * `StreamingNavGuard`, which already stops the stream on every navigation and
+ * tab-close path. A ref holds the latest values so the cleanup can stay
+ * unmount-only (empty deps) without going stale or re-subscribing each render.
+ */
+function useStopOnUnmount(active: boolean, stop: () => unknown): void {
+  const latest = useRef({ active, stop });
+  latest.current = { active, stop };
+
+  useEffect(
+    () => () => {
+      if (latest.current.active) void latest.current.stop();
+    },
+    [],
+  );
+}
+
 export interface SendUserMessageInput {
   text: string;
   files?: FileUIPart[];
@@ -137,6 +159,10 @@ export function useHivegentChat(
   );
 
   const isStreaming = chat.status === "submitted" || chat.status === "streaming";
+
+  // Belt-and-suspenders behind StreamingNavGuard: abort the run on a teardown
+  // that isn't a navigation (e.g. an error boundary), so it never outlives its UI.
+  useStopOnUnmount(isStreaming, chat.stop);
 
   return { ...chat, sendUserMessage, regenerateWithBody, isStreaming, subagentSteps };
 }

@@ -9,6 +9,7 @@ import { MessageList } from "@/components/chat/MessageList";
 import { SteeringQueue } from "@/components/chat/SteeringQueue";
 import { ChatSuggestions } from "@/components/chat/Suggestions";
 import { ConversationsList } from "@/components/chat/ConversationsList";
+import { StreamingNavGuard } from "@/components/chat/StreamingNavGuard";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { useAutoCompact } from "@/hooks/chat/use-auto-compact";
 import { useBuildRequestBody } from "@/hooks/chat/use-build-request-body";
@@ -268,6 +269,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
       onValueChange={(value) => setActiveTab(value as ChatTab)}
       className="flex h-full flex-col"
     >
+      <StreamingNavGuard isStreaming={isStreaming} onStop={stop} />
       <ChatHeader
         activeTab={activeTab}
         hasMessages={messages.length > 0}
