@@ -57,7 +57,6 @@ export function DocumentManager() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const directoryInputRef = useRef<HTMLInputElement>(null);
-  const zipInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [newDocOpen, setNewDocOpen] = useState(false);
@@ -143,12 +142,16 @@ export function DocumentManager() {
     [uploadTo, targetDir],
   );
 
+  // Picked files run through the same classifier as drops, so a selected ZIP is
+  // extracted into a collection instead of stored as one opaque document. The
+  // picker yields no directory entries, so only loose files and archives arrive.
   const handleFileInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files) enqueueFiles(targetDir, Array.from(e.target.files), uploadOptions);
+      const captured = e.target.files ? Array.from(e.target.files) : [];
       e.target.value = "";
+      void uploadTo(targetDir, [], captured);
     },
-    [enqueueFiles, uploadOptions, targetDir],
+    [uploadTo, targetDir],
   );
 
   const handleDirectoryInputChange = useCallback(
@@ -164,17 +167,6 @@ export function DocumentManager() {
           () => buildCollectionZipFromDirectoryInput(captured),
           uploadOptions,
         );
-      }
-    },
-    [enqueueCollection, uploadOptions, targetDir],
-  );
-
-  const handleZipInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      e.target.value = "";
-      if (file && file.name.toLowerCase().endsWith(".zip")) {
-        enqueueCollection(targetDir, file.name, () => Promise.resolve(file), uploadOptions);
       }
     },
     [enqueueCollection, uploadOptions, targetDir],
@@ -207,7 +199,6 @@ export function DocumentManager() {
         isDragging={isDragging}
         fileInputRef={fileInputRef}
         directoryInputRef={directoryInputRef}
-        zipInputRef={zipInputRef}
         target={targetDir}
         onResetTarget={() => setTargetDir(PERSONAL_SCOPE)}
         onDragOver={handleDragOver}
@@ -215,10 +206,8 @@ export function DocumentManager() {
         onDrop={handleDrop}
         onFileInputChange={handleFileInputChange}
         onDirectoryInputChange={handleDirectoryInputChange}
-        onZipInputChange={handleZipInputChange}
         onSelectFiles={() => fileInputRef.current?.click()}
         onSelectDirectory={() => directoryInputRef.current?.click()}
-        onSelectZip={() => zipInputRef.current?.click()}
         onNewDocument={() => setNewDocOpen(true)}
         onNewFolder={() => setShowCreateDir(true)}
       />
@@ -278,14 +267,18 @@ export function DocumentManager() {
         filename="new-document.md"
         editable
         isNew
+        target={targetDir}
         onSave={handleSaveNew}
       />
 
       <CreateDirectoryDialog
         open={showCreateDir}
         onOpenChange={setShowCreateDir}
-        parentPath={splitScopePath(targetDir).local || undefined}
-        onCreate={(path) => createDir(splitScopePath(targetDir).scope, path)}
+        target={targetDir}
+        onCreate={(name) => {
+          const { scope, local } = splitScopePath(canonicalPath(targetDir, name));
+          void createDir(scope, local);
+        }}
       />
     </div>
   );

@@ -17,6 +17,7 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import {
   buildAuxLlmConfig,
   deleteAssetDescription,
+  formatTarget,
   generateAssetDescription,
   getDocumentChunks,
   getDocumentContent,
@@ -83,6 +84,8 @@ interface DocumentDialogProps {
   editable?: boolean;
   /** New document: editable filename, starts in edit mode. */
   isNew?: boolean;
+  /** Canonical directory a new document lands in, shown as a location hint. */
+  target?: string;
   /** Save handler for edit mode. */
   onSave?: (filename: string, content: string) => Promise<void>;
 }
@@ -195,6 +198,7 @@ export function DocumentDialog({
   onDownloadOriginal,
   editable = false,
   isNew = false,
+  target,
   onSave,
 }: DocumentDialogProps) {
   // --- State ---
@@ -521,13 +525,16 @@ export function DocumentDialog({
       return (
         <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
           {isNew && (
-            <div className="px-4 pt-3">
+            <div className="px-4 pt-3 space-y-1.5">
               <Input
                 value={editFilename}
                 onChange={(e) => setEditFilename(e.target.value)}
                 placeholder="filename.md"
                 className="text-lg font-semibold"
               />
+              {target && (
+                <p className="text-sm text-muted-foreground">Creating in {formatTarget(target)}</p>
+              )}
             </div>
           )}
           <div className="flex-1 min-h-0 px-4 pt-2 pb-0">

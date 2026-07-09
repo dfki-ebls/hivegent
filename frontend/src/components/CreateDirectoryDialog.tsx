@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { formatTarget } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,14 +14,16 @@ import { Input } from "@/components/ui/input";
 interface CreateDirectoryDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  parentPath?: string;
-  onCreate: (path: string) => void;
+  /** Canonical directory the new folder is created in. */
+  target: string;
+  /** Called with the entered folder name (relative to `target`). */
+  onCreate: (name: string) => void;
 }
 
 export function CreateDirectoryDialog({
   open,
   onOpenChange,
-  parentPath,
+  target,
   onCreate,
 }: CreateDirectoryDialogProps) {
   const [dirName, setDirName] = useState("");
@@ -36,8 +39,7 @@ export function CreateDirectoryDialog({
     e.preventDefault();
     const trimmed = dirName.trim();
     if (trimmed) {
-      const fullPath = parentPath ? `${parentPath}/${trimmed}` : trimmed;
-      onCreate(fullPath);
+      onCreate(trimmed);
       onOpenChange(false);
     }
   };
@@ -46,17 +48,13 @@ export function CreateDirectoryDialog({
     <Dialog open={open} onOpenChange={handleOpen}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create Directory</DialogTitle>
-          <DialogDescription>
-            {parentPath
-              ? `Create a new directory inside "${parentPath}".`
-              : "Create a new directory in the documents root."}
-          </DialogDescription>
+          <DialogTitle>Create Folder</DialogTitle>
+          <DialogDescription>Create a new folder in {formatTarget(target)}.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <label htmlFor="directory-name" className="text-sm font-medium">
-              Directory name
+              Folder name
             </label>
             <Input
               id="directory-name"

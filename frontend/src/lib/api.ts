@@ -213,6 +213,17 @@ export function splitScopePath(canonical: string): { scope: string; local: strin
     : { scope: canonical.slice(0, slash), local: canonical.slice(slash + 1) };
 }
 
+/**
+ * Human-readable breadcrumb for a canonical directory, e.g. `~/a/b` becomes
+ * "Personal / a / b" and `@research` becomes "research". Shared by every surface
+ * that names the active target (upload area, create dialogs).
+ */
+export function formatTarget(target: string): string {
+  const { scope, local } = splitScopePath(target);
+  const scopeLabel = scope === PERSONAL_SCOPE ? "Personal" : scope.slice(1);
+  return local ? `${scopeLabel} / ${local.replaceAll("/", " / ")}` : scopeLabel;
+}
+
 /** Check if a file requires conversion (anything that is not already markdown). */
 export function requiresConversion(filename: string): boolean {
   const ext = `.${filename.split(".").pop()?.toLowerCase() ?? ""}`;

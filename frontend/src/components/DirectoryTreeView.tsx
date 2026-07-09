@@ -4,7 +4,6 @@ import {
   FileText,
   Folder,
   FolderOpen,
-  FolderPlus,
   type LucideIcon,
   Scissors,
   Trash2,
@@ -44,7 +43,6 @@ interface DirectoryTreeViewProps {
   filterState: (path: string) => FilterEntryState;
   /** Delete a file. The other file operations live in the document dialog. */
   onDeleteFile?: (path: string) => void;
-  onCreateSubdir?: (parentPath: string) => void;
   onDeleteDir?: (path: string) => void;
   selectedFiles?: Set<string>;
   onToggleSelectFile?: (path: string) => void;
@@ -336,7 +334,6 @@ function DirectoryRow({
   onIncludeDir,
   onExcludeDir,
   filterState,
-  onCreateSubdir,
   onDeleteDir,
   onToggleSelect,
   resolveDrag,
@@ -356,7 +353,6 @@ function DirectoryRow({
   onIncludeDir: () => void;
   onExcludeDir: () => void;
   filterState: FilterEntryState;
-  onCreateSubdir?: () => void;
   onDeleteDir?: () => void;
   onToggleSelect?: () => void;
   resolveDrag: (() => TreeItemDrag) | null;
@@ -417,14 +413,6 @@ function DirectoryRow({
       </RowMain>
       <RowAside>
         <div className="flex gap-0.5">
-          {onCreateSubdir && (
-            <RowActionButton
-              icon={FolderPlus}
-              label="Create subdirectory"
-              onClick={onCreateSubdir}
-              disabled={isMutating}
-            />
-          )}
           <FilterToggleButtons
             state={filterState}
             onInclude={onIncludeDir}
@@ -463,7 +451,6 @@ export function DirectoryTreeView({
   onExclude,
   filterState,
   onDeleteFile,
-  onCreateSubdir,
   onDeleteDir,
   selectedFiles,
   onToggleSelectFile,
@@ -574,7 +561,6 @@ export function DirectoryTreeView({
         onIncludeDir={() => onInclude(dirPath)}
         onExcludeDir={() => onExclude(dirPath)}
         filterState={filterState(dirPath)}
-        onCreateSubdir={onCreateSubdir ? () => onCreateSubdir(row.entry.path) : undefined}
         onDeleteDir={onDeleteDir ? () => onDeleteDir(row.entry.path) : undefined}
         onToggleSelect={onToggleSelectDir ? () => onToggleSelectDir(paths) : undefined}
         resolveDrag={

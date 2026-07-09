@@ -315,7 +315,6 @@ export function ScopeSection({
         onExclude={(path) => toggleExclude(toCanonical(path))}
         filterState={(path) => filterStateOf(toCanonical(path))}
         onDeleteFile={canWrite ? (path) => dialogs.current?.deleteFile(path) : undefined}
-        onCreateSubdir={canWrite ? (path) => dialogs.current?.createSubdir(path) : undefined}
         onDeleteDir={canWrite ? (path) => dialogs.current?.deleteDir(path) : undefined}
         selectedFiles={canWrite ? selectedFiles : undefined}
         onToggleSelectFile={canWrite ? toggleFile : undefined}
