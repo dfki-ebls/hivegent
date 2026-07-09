@@ -2,8 +2,10 @@
 
 from hivegent.llm import (
     AUTO_REASONING_EFFORT,
+    SUMMARY_MAX_TOKENS,
     _THINKING_BUDGET_TOKENS,
     resolve_thinking,
+    summary_model_settings,
     thinking_model_settings,
 )
 from hivegent.types import LlmConfig
@@ -62,3 +64,13 @@ def test_openai_endpoint_never_receives_self_hosted_fields() -> None:
 
     assert settings.get("thinking") == "high"
     assert "extra_body" not in settings
+
+
+def test_summary_settings_disable_reasoning_and_cap_the_completion() -> None:
+    settings = summary_model_settings(SELF_HOSTED)
+
+    assert settings.get("thinking") is False
+    assert settings.get("max_tokens") == SUMMARY_MAX_TOKENS
+    assert settings.get("extra_body") == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }

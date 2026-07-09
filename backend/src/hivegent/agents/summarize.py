@@ -1,28 +1,31 @@
 """Conversation summarization for compaction and subagent recovery.
 
-No token budgeting or truncation is involved.  The conversation being
+The input carries no token budgeting or truncation.  The conversation being
 summarized just (nearly) fit the model's context window — overflow
 happens on the latest turn — and the summarization instructions are
 far shorter than the chat system prompt, so rendering that same
 conversation as a plain transcript usually keeps the request within
 the window even with tool and reasoning parts included.  Transcript
 fidelity for the first attempt is governed by ``settings.summarization``
-for every consumer alike.
+for every consumer alike.  The completion, by contrast, is bounded and
+reasoning is disabled (``summary_model_settings``): the digest is short,
+and an unbounded reasoning model would otherwise spend the whole
+provider-default budget thinking and return a length-truncated empty
+response the server reports as success.
 
-Should that full-fidelity request still overflow — an agentic turn that
-reads several large documents leaves tool results nearly as large as the
-conversation that already overflowed — it is retried once with the heavy
-parts shed: tool results and reasoning go, while tool calls stay so the
-summary keeps the document filenames it references.  Those parts are the
-bulk of an agentic conversation's tokens, so the reduced transcript falls
-well below what the model already served.  A rejection that is not a
-context overflow, or an overflow that persists with nothing left to shed,
-propagates to the caller.
+Should that full-fidelity request still overflow — the server rejects it,
+or leaves too little room for the bounded completion — it is retried once
+with the heavy parts shed: tool results and reasoning go, while tool calls
+stay so the summary keeps the document filenames it references.  Those
+parts are the bulk of an agentic conversation's tokens, so the reduced
+transcript falls well below what the model already served.  A rejection
+that is not a context overflow, or an overflow that persists with nothing
+left to shed, propagates to the caller.
 """
 
 from collections.abc import Sequence
 
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     TextPart,
@@ -32,6 +35,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 
 from ..config import settings
 from ..llm import is_context_overflow
@@ -54,6 +58,7 @@ Return ONLY the summary, no extra commentary."""
 async def summarize_messages(
     messages: Sequence[ModelMessage],
     model: Model,
+    model_settings: ModelSettings,
 ) -> str:
     """Summarize *messages* into a concise digest.
 
@@ -65,13 +70,18 @@ async def summarize_messages(
     Args:
         messages: The conversation messages to summarize.
         model: The model used for summarization.
+        model_settings: Bounded, reasoning-off settings for the request (see
+            :func:`hivegent.llm.summary_model_settings`); an unbounded request
+            lets a reasoning model exhaust the completion budget on thinking
+            and return a length-truncated empty response.
 
     Returns:
         A concise summary of the conversation.
 
     Raises:
-        ModelHTTPError: If the model rejects the request for a reason other
-            than context overflow, or the reduced transcript still overflows.
+        ModelHTTPError | UnexpectedModelBehavior: If the model rejects the
+            request for a reason other than context overflow, or the reduced
+            transcript still overflows.
     """
     include_tools = settings.summarization.include_tools
     include_reasoning = settings.summarization.include_reasoning
@@ -80,20 +90,23 @@ async def summarize_messages(
         return await _run_summary(
             messages,
             model,
+            model_settings,
             include_tool_calls=include_tools,
             include_tool_results=include_tools,
             include_reasoning=include_reasoning,
         )
 
-    except ModelHTTPError as exc:
-        # Only a full transcript overflowing the model's own window is
-        # recoverable here, and only while heavy parts remain to shed.
+    except (ModelHTTPError, UnexpectedModelBehavior) as exc:
+        # A full transcript overflowing the model's own window — whether the
+        # server rejects it outright or leaves too little room to answer — is
+        # recoverable, but only while heavy parts remain to shed.
         if not is_context_overflow(exc) or not (include_tools or include_reasoning):
             raise
 
     return await _run_summary(
         messages,
         model,
+        model_settings,
         include_tool_calls=include_tools,
         include_tool_results=False,
         include_reasoning=False,
@@ -103,6 +116,7 @@ async def summarize_messages(
 async def _run_summary(
     messages: Sequence[ModelMessage],
     model: Model,
+    model_settings: ModelSettings,
     *,
     include_tool_calls: bool,
     include_tool_results: bool,
@@ -118,6 +132,7 @@ async def _run_summary(
     result = await base_agent.run(
         f"Conversation to summarize:\n\n{transcript}",
         model=model,
+        model_settings=model_settings,
         instructions=SUMMARY_INSTRUCTIONS,
     )
     return result.output.strip()
@@ -143,8 +158,9 @@ def _format_messages_for_summary(
     for msg in messages:
         for part in msg.parts:
             match part:
-                case UserPromptPart(content=content):
+                case UserPromptPart():
                     label = "User"
+                    content = part.content
                     text = (
                         content
                         if isinstance(content, str)

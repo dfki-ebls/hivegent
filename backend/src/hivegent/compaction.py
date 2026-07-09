@@ -16,7 +16,7 @@ from .db.conversations import (
     create_compacted_conversation,
     extract_title,
 )
-from .llm import model_from_config
+from .llm import model_from_config, summary_model_settings
 from .types import LlmConfig
 
 __all__ = [
@@ -71,7 +71,11 @@ async def compact_conversation(
     if not messages:
         raise ValueError(f"Conversation {conversation_id} not found or empty")
 
-    summary = await summarize_messages(messages, model_from_config(llm_config))
+    summary = await summarize_messages(
+        messages,
+        model_from_config(llm_config),
+        summary_model_settings(llm_config),
+    )
 
     base_title = extract_title(messages) or "Untitled"
     summary_message = ModelResponse(parts=[TextPart(content=summary)])

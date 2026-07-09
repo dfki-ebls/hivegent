@@ -2,7 +2,7 @@
 
 import pytest
 from pydantic_ai import BinaryContent, models
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -16,8 +16,12 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from hivegent.agents.summarize import _format_messages_for_summary, summarize_messages
+from hivegent.llm import summary_model_settings
+from hivegent.types import LlmConfig
 
 models.ALLOW_MODEL_REQUESTS = False
+
+_SETTINGS = summary_model_settings(LlmConfig())
 
 _MESSAGES = [
     ModelRequest(parts=[UserPromptPart(content="What does the manual say?")]),
@@ -99,7 +103,7 @@ async def test_summarize_returns_model_output() -> None:
         assert "What does the manual say?" in part.content
         return ModelResponse(parts=[TextPart(content="  summary text  ")])
 
-    summary = await summarize_messages(_MESSAGES, FunctionModel(respond))
+    summary = await summarize_messages(_MESSAGES, FunctionModel(respond), _SETTINGS)
     assert summary == "summary text"
 
 
@@ -108,7 +112,7 @@ async def test_summarize_propagates_model_errors() -> None:
         raise ModelHTTPError(status_code=500, model_name="m", body="boom")
 
     with pytest.raises(ModelHTTPError):
-        await summarize_messages(_MESSAGES, FunctionModel(reject))
+        await summarize_messages(_MESSAGES, FunctionModel(reject), _SETTINGS)
 
 
 async def test_summarize_retries_without_heavy_parts_on_overflow() -> None:
@@ -128,10 +132,33 @@ async def test_summarize_retries_without_heavy_parts_on_overflow() -> None:
             )
         return ModelResponse(parts=[TextPart(content="summary")])
 
-    summary = await summarize_messages(_MESSAGES, FunctionModel(respond))
+    summary = await summarize_messages(_MESSAGES, FunctionModel(respond), _SETTINGS)
 
     assert summary == "summary"
     assert len(prompts) == 2
     # The retry keeps tool calls (filenames) but drops the heavy tool result.
     assert "manual.md" in prompts[1]
     assert "Chapter 1 covers safety procedures." not in prompts[1]
+
+
+async def test_summarize_retries_on_length_truncated_empty_response() -> None:
+    # A near-full context leaves no room to answer: the server returns a
+    # length-truncated empty response, which pydantic-ai surfaces as an
+    # `UnexpectedModelBehavior`.  The shed-and-retry must still kick in.
+    prompts: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        part = messages[-1].parts[-1]
+        assert isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        prompts.append(part.content)
+        if "Chapter 1 covers safety procedures." in part.content:
+            raise UnexpectedModelBehavior(
+                "Model token limit (provider default) exceeded before any "
+                "response was generated."
+            )
+        return ModelResponse(parts=[TextPart(content="summary")])
+
+    summary = await summarize_messages(_MESSAGES, FunctionModel(respond), _SETTINGS)
+
+    assert summary == "summary"
+    assert len(prompts) == 2

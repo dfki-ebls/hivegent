@@ -6,13 +6,12 @@ from pydantic import Field
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.messages import ToolReturn
-from pydantic_ai.models.openai import OpenAIChatModel
 
-from ...config import settings
-from ...llm import create_openai_chat_model, is_context_overflow
+from ...llm import is_context_overflow, model_from_config, summary_model_settings
 from ...prompts import EXPLORE_INSTRUCTIONS
 from ...tools.base import ToolOutput
 from ...tools.pydantic_ai import wrap_tool_output
+from ...types import LlmConfig, resolve_llm_config
 from ..app import turn_usage_limits, user_agent
 from ..common import ExploreTaskArg, UserDeps, scope_instructions
 from ..subagent_events import SubagentTranscriptBuilder, SubagentUpdate
@@ -62,31 +61,15 @@ ExploreScopeArg = Annotated[
 ]
 
 
-def _subagent_model(deps: UserDeps) -> OpenAIChatModel:
-    """Build the model used for subagent calls.
+def _subagent_llm_config(deps: UserDeps) -> LlmConfig:
+    """Resolve the LLM config for subagent calls.
 
     Subagents perform agentic exploration with large contexts and tool
     calling, so they reuse the main model rather than ``aux_model`` —
-    tiny aux models tend to fail in these scenarios.
+    tiny aux models tend to fail in these scenarios.  A run without a
+    client override falls back to the server-configured main tier.
     """
-    llm = deps.llm
-    if llm:
-        model = llm.model
-        api_key = llm.api_key
-        base_url = llm.base_url
-        allow_private_base_url = llm.base_url_is_trusted
-    else:
-        model = settings.llm.model
-        api_key = settings.llm.api_key
-        base_url = settings.llm.base_url or None
-        allow_private_base_url = bool(base_url)
-
-    return create_openai_chat_model(
-        model,
-        api_key=api_key,
-        base_url=base_url,
-        allow_private_base_url=allow_private_base_url,
-    )
+    return deps.llm or resolve_llm_config(LlmConfig(), tier="main")
 
 
 def _subagent_result(
@@ -125,7 +108,8 @@ async def run_subagent(
     it persists.  A context-window overflow is summarised and returned instead
     of failing the call, so the parent keeps the partial findings.
     """
-    model = _subagent_model(ctx.deps)
+    llm_config = _subagent_llm_config(ctx.deps)
+    model = model_from_config(llm_config)
     tool_call_id = ctx.tool_call_id or ""
     builder = SubagentTranscriptBuilder(tool_call_id)
     sink = ctx.deps.subagent_sink
@@ -167,7 +151,9 @@ async def run_subagent(
             # surfacing an error only if even that reduced transcript fails.
             if not is_context_overflow(exc):
                 raise
-            summary = await summarize_messages(run.all_messages(), model)
+            summary = await summarize_messages(
+                run.all_messages(), model, summary_model_settings(llm_config)
+            )
             return _subagent_result(
                 tool_call_id,
                 builder,

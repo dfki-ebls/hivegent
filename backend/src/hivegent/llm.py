@@ -15,12 +15,14 @@ from .types import LlmConfig, ReasoningEffort
 
 __all__ = [
     "AUTO_REASONING_EFFORT",
+    "SUMMARY_MAX_TOKENS",
     "create_openai_chat_model",
     "create_openai_client",
     "create_openai_provider",
     "is_context_overflow",
     "model_from_config",
     "resolve_thinking",
+    "summary_model_settings",
     "thinking_model_settings",
 ]
 
@@ -220,4 +222,26 @@ def thinking_model_settings(
             if budget is not None:
                 extra_body["thinking_budget_tokens"] = budget
             settings["extra_body"] = extra_body
+    return settings
+
+
+# Completion cap for a one-shot summary request.  The summary instructions
+# bound the output to a few hundred words, so this generous ceiling only
+# guards against a reasoning model spending the whole (provider-default)
+# budget on thinking and returning a length-truncated empty response.
+SUMMARY_MAX_TOKENS = 2048
+
+
+def summary_model_settings(config: LlmConfig) -> ModelSettings:
+    """Bounded, reasoning-off settings for a one-shot summary request.
+
+    Summarization renders a large (near-overflowing) transcript into a
+    short digest, so reasoning adds little and risks the model emitting
+    only thinking until it hits the completion limit — a length-truncated
+    empty response the server reports as success.  Disabling thinking and
+    capping the completion keeps the whole output budget available for the
+    summary itself.
+    """
+    settings = thinking_model_settings(False, config)
+    settings["max_tokens"] = SUMMARY_MAX_TOKENS
     return settings
