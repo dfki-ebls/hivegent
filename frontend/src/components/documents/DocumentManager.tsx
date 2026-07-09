@@ -195,41 +195,49 @@ export function DocumentManager() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
-      <UploadArea
-        isDragging={isDragging}
-        fileInputRef={fileInputRef}
-        directoryInputRef={directoryInputRef}
-        target={targetDir}
-        onResetTarget={() => setTargetDir(PERSONAL_SCOPE)}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        onFileInputChange={handleFileInputChange}
-        onDirectoryInputChange={handleDirectoryInputChange}
-        onSelectFiles={() => fileInputRef.current?.click()}
-        onSelectDirectory={() => directoryInputRef.current?.click()}
-        onNewDocument={() => setNewDocOpen(true)}
-        onNewFolder={() => setShowCreateDir(true)}
-      />
+      {/* One scroll container with a header that sticks on tall enough windows:
+          the upload area, pipeline bar, and search stay pinned while the
+          document tree scrolls. Keeping the header inside the scroll container
+          (rather than a separate fixed box) means the wheel scrolls the list
+          even while the pointer is over the search box. On short windows the
+          header scrolls away with the list to reclaim vertical space. */}
+      <div className="top-0 z-10 bg-background tall:sticky">
+        <UploadArea
+          isDragging={isDragging}
+          fileInputRef={fileInputRef}
+          directoryInputRef={directoryInputRef}
+          target={targetDir}
+          onResetTarget={() => setTargetDir(PERSONAL_SCOPE)}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onFileInputChange={handleFileInputChange}
+          onDirectoryInputChange={handleDirectoryInputChange}
+          onSelectFiles={() => fileInputRef.current?.click()}
+          onSelectDirectory={() => directoryInputRef.current?.click()}
+          onNewDocument={() => setNewDocOpen(true)}
+          onNewFolder={() => setShowCreateDir(true)}
+        />
 
-      <PipelineSettingsBar
-        conversionPipeline={conversionPipeline}
-        chunkingPipeline={chunkingPipeline}
-        assetMode={assetMode}
-        onConversionPipelineChange={setConversionPipeline}
-        onChunkingPipelineChange={setChunkingPipeline}
-        onAssetModeChange={setAssetMode}
-      />
+        <PipelineSettingsBar
+          conversionPipeline={conversionPipeline}
+          chunkingPipeline={chunkingPipeline}
+          assetMode={assetMode}
+          onConversionPipelineChange={setConversionPipeline}
+          onChunkingPipelineChange={setChunkingPipeline}
+          onAssetModeChange={setAssetMode}
+        />
 
-      <div className="p-4 pb-2">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search documents..."
-            className="pl-9"
-          />
+        <div className="p-4 pb-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search documents..."
+              className="pl-9"
+            />
+          </div>
         </div>
       </div>
 
