@@ -577,7 +577,9 @@ export function DirectoryTreeView({
         onCreateSubdir={onCreateSubdir ? () => onCreateSubdir(row.entry.path) : undefined}
         onDeleteDir={onDeleteDir ? () => onDeleteDir(row.entry.path) : undefined}
         onToggleSelect={onToggleSelectDir ? () => onToggleSelectDir(paths) : undefined}
-        resolveDrag={onMoveInto ? () => ({ scope, kind: "directory", paths: [row.entry.path] }) : null}
+        resolveDrag={
+          onMoveInto ? () => ({ scope, kind: "directory", paths: [row.entry.path] }) : null
+        }
         onMoveInto={onMoveInto ? (drag) => onMoveInto(drag, row.entry.path) : null}
         onUploadInto={
           onUploadInto ? (items, files) => onUploadInto(row.entry.path, items, files) : null

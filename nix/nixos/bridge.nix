@@ -12,7 +12,9 @@ let
   cfg = config.services.hivegent.bridge;
 
   jsonFormat = pkgs.formats.json { };
-  settings = cfg.settings // { inherit (cfg) host port; };
+  settings = cfg.settings // {
+    inherit (cfg) host port;
+  };
   configFile = jsonFormat.generate "hivegent-bridge-config.json" settings;
 
   hardening = import ./hardening.nix;

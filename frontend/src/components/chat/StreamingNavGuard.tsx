@@ -43,8 +43,8 @@ export function StreamingNavGuard({ isStreaming, onStop }: StreamingNavGuardProp
         <AlertDialogHeader>
           <AlertDialogTitle>Stop the current response?</AlertDialogTitle>
           <AlertDialogDescription>
-            This chat is still generating a response. Leaving now stops it. Any partial
-            answer is saved, so you can return and continue this conversation later.
+            This chat is still generating a response. Leaving now stops it. Any partial answer is
+            saved, so you can return and continue this conversation later.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

@@ -22,7 +22,9 @@ export async function createBot(
 
   const handleTurn = createTurnHandler({ cfg, ...deps });
 
-  chat.onDirectMessage((thread, message, _channel, context) => handleTurn(thread, message, context));
+  chat.onDirectMessage((thread, message, _channel, context) =>
+    handleTurn(thread, message, context),
+  );
 
   chat.onNewMention(async (thread, message, context) => {
     await thread.subscribe();

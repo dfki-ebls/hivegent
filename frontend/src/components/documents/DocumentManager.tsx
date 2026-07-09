@@ -138,11 +138,7 @@ export function DocumentManager() {
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
-      void uploadTo(
-        targetDir,
-        Array.from(e.dataTransfer.items),
-        Array.from(e.dataTransfer.files),
-      );
+      void uploadTo(targetDir, Array.from(e.dataTransfer.items), Array.from(e.dataTransfer.files));
     },
     [uploadTo, targetDir],
   );
