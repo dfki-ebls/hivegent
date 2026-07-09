@@ -83,9 +83,6 @@
     "zod": "^4.4.3",
     "zustand": "^5"
   },
-  "overrides": {
-    "linkify-it": "^5.0.1"
-  },
   "devDependencies": {
     "@fortawesome/fontawesome-svg-core": "^7",
     "@fortawesome/free-brands-svg-icons": "^7",
@@ -106,5 +103,8 @@
     "typescript": "^6",
     "vite": "^8",
     "vitest": "^4"
+  },
+  "overrides": {
+    "linkify-it": "^5.0.1"
   }
 }
