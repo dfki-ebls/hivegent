@@ -236,7 +236,7 @@ export function DocumentManager() {
       <div className="space-y-1 px-4 pb-4">
         <ScopeSection
           scope={PERSONAL_SCOPE}
-          label="Your Documents"
+          label="~ (Personal)"
           canWrite
           defaultOpen
           searchQuery={searchQuery}

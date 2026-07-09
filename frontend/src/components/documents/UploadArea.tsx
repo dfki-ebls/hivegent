@@ -157,7 +157,7 @@ export function UploadArea({
               variant="ghost"
               size="icon"
               className="h-4 w-4 shrink-0"
-              title="Reset to personal root"
+              title="Reset to root"
               onClick={onResetTarget}
             >
               <X className="h-3 w-3" />

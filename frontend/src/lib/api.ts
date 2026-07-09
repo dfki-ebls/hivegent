@@ -215,12 +215,12 @@ export function splitScopePath(canonical: string): { scope: string; local: strin
 
 /**
  * Human-readable breadcrumb for a canonical directory, e.g. `~/a/b` becomes
- * "Personal / a / b" and `@research` becomes "research". Shared by every surface
+ * "~ / a / b" and `@research` becomes "research". Shared by every surface
  * that names the active target (upload area, create dialogs).
  */
 export function formatTarget(target: string): string {
   const { scope, local } = splitScopePath(target);
-  const scopeLabel = scope === PERSONAL_SCOPE ? "Personal" : scope.slice(1);
+  const scopeLabel = scope.startsWith("@") ? scope.slice(1) : scope;
   return local ? `${scopeLabel} / ${local.replaceAll("/", " / ")}` : scopeLabel;
 }
 
