@@ -5,7 +5,16 @@ from typing import Any, cast
 import pytest
 from hivegent import retrieval
 from hivegent.config import settings
-from hivegent.tools.retrieval import VectorSearchTool
+from hivegent.tools.retrieval import SearchResult, VectorSearchTool, _format_results
+
+
+def test_format_results_truncates_long_lines() -> None:
+    # A long line in a chunk (e.g. a base64 image) must be clipped so the
+    # formatted block cannot flood the model context.
+    result = SearchResult(key="doc.md", text="A" * 5_000, score=0.5)
+    formatted = _format_results([result], max_line_chars=80)
+    assert "…" in formatted
+    assert len(max(formatted.splitlines(), key=len)) < 200
 
 
 def test_build_reranker_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -203,14 +203,16 @@ class WebFetch(AsyncTool[WebPage]):
     """Fetch a web page and return its readable content.
 
     ``max_response_bytes`` caps how many raw bytes are downloaded per
-    page and ``max_chars`` caps the extracted text.  The safe transport
-    validates the requested URL and every redirect hop against
-    ``policy``.
+    page and ``max_chars`` caps the extracted text.  ``max_line_chars``
+    truncates each numbered line so a data-URI or minified line cannot
+    flood the context.  The safe transport validates the requested URL
+    and every redirect hop against ``policy``.
     """
 
     timeout_seconds: float = 10.0
     max_response_bytes: int = 5_000_000
     max_chars: int = 100_000
+    max_line_chars: int = 2000
     max_redirects: int = 5
     user_agent: str = field(default_factory=build_user_agent)
     policy: UrlPolicy = field(default_factory=UrlPolicy)
@@ -297,5 +299,9 @@ class WebFetch(AsyncTool[WebPage]):
         suffix = "\n\n[truncated]" if truncated else ""
         return ToolOutput(
             data=page,
-            formatted=f"{header}\n{annotate_lines(content.splitlines())}{suffix}",
+            formatted=(
+                f"{header}\n"
+                f"{annotate_lines(content.splitlines(), 1, self.max_line_chars)}"
+                f"{suffix}"
+            ),
         )

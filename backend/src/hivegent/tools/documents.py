@@ -516,10 +516,18 @@ class GlobDocumentsTool(SyncPathTool[list[str]]):
 
 @dataclass(slots=True, frozen=True)
 class ReadDocumentTool(SyncPathTool[DocumentRange]):
-    """Read a document's content as a line range with line numbers."""
+    """Read a document's content as a line range with line numbers.
+
+    ``max_line_chars`` truncates each numbered line in the formatted
+    output so a single very long line — a base64-embedded image, a
+    minified bundle — cannot flood the model context, while ``max_chars``
+    bounds the window as a whole.  The structured ``content`` keeps the
+    untruncated lines for the frontend.
+    """
 
     default_lines: int = 2000
     max_chars: int = 100_000
+    max_line_chars: int = 2000
 
     @override
     def __call__(
@@ -613,7 +621,7 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
             content="\n".join(selected),
             content_hash=file_hash,
         )
-        annotated = annotate_lines(selected, start)
+        annotated = annotate_lines(selected, start, self.max_line_chars)
         remaining = total - end
         suffix = (
             f"\n\n[{remaining} more lines — call again with offset={end + 1}]"

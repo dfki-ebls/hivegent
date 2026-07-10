@@ -19,7 +19,7 @@ from .base import (
     excluded_dirs,
     file_allowed,
 )
-from .formatting import BLOCK_SEP, GROUP_SEP, number_line
+from .formatting import BLOCK_SEP, GROUP_SEP, number_line, truncate_line
 
 __all__ = [
     "GrepCaseSensitiveArg",
@@ -274,11 +274,8 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
                 prefix = head if i == 0 else "\n"
                 mark = ":" if line.is_match else "-"
                 body = number_line(
-                    line.line_number, self._truncate_line(line.text), mark
+                    line.line_number,
+                    truncate_line(line.text, self.max_line_chars),
+                    mark,
                 )
                 yield f"{prefix}{body}"
-
-    def _truncate_line(self, text: str) -> str:
-        if len(text) <= self.max_line_chars:
-            return text
-        return text[: self.max_line_chars - 1] + "…"

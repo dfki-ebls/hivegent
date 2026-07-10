@@ -11,6 +11,7 @@ __all__ = [
     "GROUP_SEP",
     "annotate_lines",
     "number_line",
+    "truncate_line",
 ]
 
 BLOCK_SEP = "\n---\n"
@@ -39,14 +40,44 @@ def number_line(line_number: int, text: str, sep: str = ": ") -> str:
     return f"{line_number}{sep}{text}"
 
 
-def annotate_lines(lines: Iterable[str], start_line: int = 1) -> str:
+def truncate_line(text: str, max_chars: int | None = None) -> str:
+    """Clip *text* to *max_chars* characters, marking any cut with an ellipsis.
+
+    A ``None`` budget, or one at least as long as *text*, returns *text*
+    unchanged.  This guards a single very long line — a base64-embedded
+    image, a minified bundle — from flooding the model's context window when
+    line-oriented output is assembled for it to read.
+
+    >>> truncate_line("hello world", 8)
+    'hello w…'
+    >>> truncate_line("short", 100)
+    'short'
+    >>> truncate_line("untouched")
+    'untouched'
+    """
+    if max_chars is None or len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1] + "…"
+
+
+def annotate_lines(
+    lines: Iterable[str],
+    start_line: int = 1,
+    max_line_chars: int | None = None,
+) -> str:
     """Number *lines* sequentially from *start_line*, joined by newlines.
 
     Without per-line numbers an LLM can only see a chunk's overall line
     range and has to guess which line a sentence is on, producing off-by-one
-    citations.
+    citations.  When *max_line_chars* is set, each line is first clipped by
+    :func:`truncate_line` so one very long line cannot flood the context.
 
     >>> annotate_lines(["a", "b"], start_line=4)
     '4: a\\n5: b'
+    >>> annotate_lines(["abcdef"], max_line_chars=3)
+    '1: ab…'
     """
-    return "\n".join(number_line(start_line + i, line) for i, line in enumerate(lines))
+    return "\n".join(
+        number_line(start_line + i, truncate_line(line, max_line_chars))
+        for i, line in enumerate(lines)
+    )

@@ -18,7 +18,7 @@ from cbrkit.typing import AsyncRetrieverFunc
 from pydantic import Field
 
 from .base import AsyncTool, ToolOutput
-from .formatting import BLOCK_SEP, annotate_lines
+from .formatting import BLOCK_SEP, annotate_lines, truncate_line
 
 __all__ = [
     "SearchMaxResultsArg",
@@ -88,6 +88,9 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
             pool as a second pipeline stage.
         candidate_multiplier: How many times ``max_results`` to fetch as the
             rerank candidate pool.  Only applied when a reranker is active.
+        max_line_chars: Per-line truncation cap for the formatted output,
+            guarding the context against a chunk carrying a base64-embedded
+            image or other very long line.
     """
 
     storage_factory: Callable[[], Awaitable[VectorStorage]] | None = None
@@ -97,6 +100,7 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
         Callable[[], Awaitable[AsyncRetrieverFunc[str, str, float] | None]] | None
     ) = None
     candidate_multiplier: int = 1
+    max_line_chars: int = 2000
 
     @override
     async def __call__(
@@ -118,7 +122,9 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
 
         if not final:
             return ToolOutput(data=final, formatted="(no results)")
-        return ToolOutput(data=final, formatted=_format_results(final))
+        return ToolOutput(
+            data=final, formatted=_format_results(final, self.max_line_chars)
+        )
 
     async def _search(
         self, query: str, max_results: int, search_type: SearchType
@@ -169,11 +175,13 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
             return results
 
 
-def _format_results(results: Sequence[Any]) -> str:
+def _format_results(results: Sequence[Any], max_line_chars: int | None = None) -> str:
     """Render search results as a human/LLM-readable string block.
 
     Accepts both :class:`SearchResult` and ``RetrievedChunk`` via attribute
     lookup; either is a valid downstream of :class:`VectorSearchTool`.
+    *max_line_chars* truncates each line so a long line in a chunk cannot
+    flood the context.
     """
     lines: list[str] = []
     for i, r in enumerate(results, 1):
@@ -185,7 +193,11 @@ def _format_results(results: Sequence[Any]) -> str:
         label = f"{key}#{chunk_idx}" if chunk_idx is not None else key
         if start_line is not None and end_line is not None:
             label += f" L{start_line}-{end_line}"
-            text = annotate_lines(text.splitlines(), start_line)
+            text = annotate_lines(text.splitlines(), start_line, max_line_chars)
+        else:
+            text = "\n".join(
+                truncate_line(line, max_line_chars) for line in text.splitlines()
+            )
         # The leading [i] is the relevance rank (results are sorted best-first).
         # We deliberately omit the score: cbrkit min-max normalizes per query,
         # so it pins the top hit to 100% and the worst to 0% even when every

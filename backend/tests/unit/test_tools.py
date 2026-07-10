@@ -490,6 +490,20 @@ class TestReadDocumentTool:
         # 120-char budget fits ~2 lines (each 50 + newline = 51 chars).
         assert result.end_line < result.total_lines
 
+    def test_long_line_truncated_in_formatted_only(self, tmp_path: Path) -> None:
+        # A base64-image line the window returns whole (it is the first
+        # selected line) must not flood the model context: the formatted
+        # output truncates it, while the structured content keeps it intact.
+        long_line = "data:image/png;base64," + "A" * 500_000
+        (tmp_path / "img.md").write_text(f"{long_line}\ntail")
+        tool = ReadDocumentTool(paths=tmp_path, max_line_chars=80)
+        out = tool("img.md")
+        assert out.formatted is not None
+        assert "…" in out.formatted
+        assert len(max(out.formatted.splitlines(), key=len)) < 200
+        assert isinstance(out.data, DocumentRange)
+        assert long_line in out.data.content
+
     # --- offset / limit tests ---
 
     def test_correct_range(self, tmp_path: Path) -> None:

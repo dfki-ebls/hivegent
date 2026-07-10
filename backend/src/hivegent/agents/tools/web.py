@@ -39,6 +39,7 @@ def _web_fetch(_deps: UserDeps) -> WebFetch:
         timeout_seconds=network.webfetch_timeout_seconds,
         max_response_bytes=network.webfetch_max_response_bytes,
         max_chars=network.webfetch_max_chars,
+        max_line_chars=network.webfetch_max_line_chars,
         max_redirects=network.webfetch_max_redirects,
         user_agent=_user_agent,
         policy=_policy,

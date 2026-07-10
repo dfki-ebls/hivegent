@@ -212,6 +212,25 @@ class TestWebFetch:
         assert out.data.truncated
         assert out.text.endswith("[truncated]")
 
+    async def test_long_line_truncated_in_formatted_only(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A data-URI line must not flood the context: the numbered output
+        # truncates it while the structured content keeps it intact.
+        long_line = "data:image/png;base64," + "A" * 5_000
+        body = f"intro\n{long_line}\ntail".encode()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, content=body, headers={"content-type": "text/plain"}
+            )
+
+        tool = _fetch_tool(monkeypatch, handler, max_line_chars=80)
+        out = await tool("https://example.com/page")
+        assert "…" in out.text
+        assert len(max(out.text.splitlines(), key=len)) < 200
+        assert long_line in out.data.content
+
     async def test_too_many_redirects_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
