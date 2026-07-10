@@ -65,7 +65,7 @@
           name = "release-env";
           paths = with pkgs; [
             nodejs
-            python3
+            python313
             uv
           ];
         };

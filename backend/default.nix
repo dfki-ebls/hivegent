@@ -3,7 +3,7 @@
   stdenv,
   callPackage,
   cacert,
-  python3,
+  python313,
   uv2nix,
   pyproject-nix,
   pyproject-build-systems,
@@ -133,7 +133,7 @@ let
     });
   };
   baseSet = callPackage pyproject-nix.build.packages {
-    python = python3;
+    python = python313;
   };
   pythonSet = baseSet.overrideScope (
     lib.composeManyExtensions [
@@ -147,7 +147,7 @@ let
     name: deps:
     (pythonSet.mkVirtualEnv name deps).overrideAttrs (_: {
       venvIgnoreCollisions = [
-        "${python3.sitePackages}/cv2/*"
+        "${python313.sitePackages}/cv2/*"
       ];
     });
   inherit (callPackage pyproject-nix.build.util { }) mkApplication;

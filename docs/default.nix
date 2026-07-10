@@ -2,7 +2,7 @@
   lib,
   stdenvNoCC,
   writeShellApplication,
-  python3,
+  python313,
   mdbook,
   mdbook-mermaid,
   # Base path the book is hosted under, must start and end with "/". Sets
@@ -59,7 +59,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   passthru.serve = writeShellApplication {
     name = "serve";
-    runtimeInputs = [ python3 ];
+    runtimeInputs = [ python313 ];
     text = ''
       python -m http.server \
         --bind 127.0.0.1 \

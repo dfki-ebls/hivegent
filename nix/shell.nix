@@ -4,7 +4,7 @@
   backend,
   mkShell,
   nodejs,
-  python3,
+  python313,
   postgresql_18,
   mdbook,
   mdbook-mermaid,
@@ -44,7 +44,7 @@ mkShell {
   HIVEGENT_LLM__MODEL = "qwen3.6-35b-a3b";
   HIVEGENT_LLM__AUX_MODEL = "qwen3.5-0.8b";
   HIVEGENT_LLM__BASE_URL = "http://localhost:18000/v1";
-  UV_PYTHON = lib.getExe python3;
+  UV_PYTHON = lib.getExe python313;
   # tesserocr (in-process docling OCR) resolves tessdata from this prefix.
   TESSDATA_PREFIX = backend.tessdata;
   # Keep dev parity with the wrapped binary: torch.compile needs runtime
@@ -62,7 +62,7 @@ mkShell {
 
   packages = [
     nodejs
-    python3
+    python313
     treefmt
     uv
     hivegent
