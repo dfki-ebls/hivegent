@@ -22,6 +22,7 @@ from fastapi import HTTPException
 
 from ..concurrency import shield_to_completion
 from ..config import sanitize_document_path, settings
+from ..humanize import format_bytes
 from ..converters.wikilinks import preprocess_markdown
 from ..entries import (
     entry_exists,
@@ -81,7 +82,7 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
         file_count += 1
         if file_count > settings.limits.max_collection_files:
             raise HTTPException(
-                status_code=400,
+                status_code=413,
                 detail=(
                     f"Collection has too many files ({file_count}). "
                     f"Maximum: {settings.limits.max_collection_files}"
@@ -105,20 +106,20 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
 
         if info.file_size > settings.limits.max_file_size_bytes:
             raise HTTPException(
-                status_code=400,
+                status_code=413,
                 detail=(
                     f"File '{info.filename}' in ZIP is too large "
-                    f"({info.file_size} bytes decompressed). "
-                    f"Maximum: {settings.limits.max_file_size_bytes} bytes"
+                    f"({format_bytes(info.file_size)} decompressed). "
+                    f"Maximum: {format_bytes(settings.limits.max_file_size_bytes)}"
                 ),
             )
         total_uncompressed += info.file_size
         if total_uncompressed > settings.limits.max_collection_size_bytes:
             raise HTTPException(
-                status_code=400,
+                status_code=413,
                 detail=(
                     f"Collection decompresses to more than "
-                    f"{settings.limits.max_collection_size_bytes} bytes"
+                    f"{format_bytes(settings.limits.max_collection_size_bytes)}"
                 ),
             )
 

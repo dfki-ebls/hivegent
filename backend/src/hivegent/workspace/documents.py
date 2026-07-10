@@ -103,7 +103,7 @@ async def _replace_text_locked(
 
     _enforce_file_size(content.encode("utf-8"))
     if full_path.is_dir():
-        raise HTTPException(status_code=400, detail=f"'{safe}' is a directory")
+        raise HTTPException(status_code=409, detail=f"'{safe}' is a directory")
     _check_destination_parents(store.workspace_dir(settings.data_dir), safe)
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
@@ -155,12 +155,12 @@ async def edit_document_text(
         count = content.count(old_string)
         if count == 0:
             raise HTTPException(
-                status_code=400,
+                status_code=422,
                 detail=f"old_string not found in '{safe}'",
             )
         if count > 1 and not replace_all:
             raise HTTPException(
-                status_code=400,
+                status_code=422,
                 detail=(
                     f"old_string appears {count} times in '{safe}'; "
                     "must be unique or call with replace_all=True"

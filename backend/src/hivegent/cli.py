@@ -9,6 +9,8 @@ from typing import Annotated, Any
 import httpx
 import typer
 
+from .humanize import format_bytes
+
 __all__ = ["app"]
 
 app = typer.Typer(
@@ -272,13 +274,7 @@ def list_docs() -> None:
         typer.echo(f"{'Filename':<40} {'Size':>10}")
         typer.echo("-" * 52)
         for doc in documents:
-            size = doc["size_bytes"]
-            if size >= 1024 * 1024:
-                size_str = f"{size / 1024 / 1024:.1f} MB"
-            elif size >= 1024:
-                size_str = f"{size / 1024:.1f} KB"
-            else:
-                size_str = f"{size} B"
+            size_str = format_bytes(doc["size_bytes"])
             typer.echo(f"{doc['filename']:<40} {size_str:>10}")
     else:
         typer.echo(f"Failed to list documents: {response.text}", err=True)

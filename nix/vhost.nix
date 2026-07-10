@@ -97,8 +97,21 @@
   ''}
 
   handle /api/* {
-    request_body {
-      max_size 60MB
+    # Coarse body-size caps at the edge, sized just above the backend's own
+    # limits so oversized uploads are rejected before they spool. Collections
+    # upload a ZIP (backend limit 512MB); every other API call sits near the
+    # 50MB per-file limit. The matchers are mutually exclusive on purpose:
+    # `request_body` stacks MaxBytesReaders, so overlapping matchers would let
+    # the smaller cap shadow the larger — a later directive cannot raise it. The
+    # backend stays the precise enforcer (exact file size, and the collection's
+    # decompressed size, file count, and path safety Caddy cannot see).
+    @collection path /api/documents/collections/*
+    request_body @collection {
+      max_size 550MB
+    }
+    @small not path /api/documents/collections/*
+    request_body @small {
+      max_size 55MB
     }
     header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
     reverse_proxy ${upstream} {

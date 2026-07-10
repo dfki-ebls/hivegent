@@ -12,7 +12,7 @@ group membership (reads) or write access.
 import asyncio
 import logging
 import mimetypes
-import os
+import shutil
 import tempfile
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
@@ -96,27 +96,17 @@ async def _spool_payload(file: UploadFile, *, limit: int, label: str) -> Path:
     enforce_upload_size(file, limit=limit, label=label)
 
     def _write() -> Path:
-        fd, name = tempfile.mkstemp(prefix="upload-", dir=spool_dir())
-        written = 0
-        try:
-            file.file.seek(0)
-            with os.fdopen(fd, "wb") as handle:
-                # Bound the copy as it streams so an upload whose parsed size was
-                # absent (``enforce_upload_size`` could not pre-reject it) still
-                # cannot spool an unbounded payload to disk.
-                while chunk := file.file.read(_SPOOL_CHUNK_SIZE):
-                    written += len(chunk)
-                    if written > limit:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"{label} too large. Maximum size: {limit} bytes",
-                        )
-                    handle.write(chunk)
-        except BaseException:
-            Path(name).unlink(missing_ok=True)
-            raise
+        file.file.seek(0)
+        with tempfile.NamedTemporaryFile(
+            prefix="upload-", dir=spool_dir(), delete=False
+        ) as tmp:
+            try:
+                shutil.copyfileobj(file.file, tmp, _SPOOL_CHUNK_SIZE)
+            except BaseException:
+                Path(tmp.name).unlink(missing_ok=True)
+                raise
 
-        return Path(name)
+        return Path(tmp.name)
 
     return await asyncio.to_thread(_write)
 

@@ -69,7 +69,7 @@ def test_enforce_upload_size_rejects_over_limit() -> None:
     with pytest.raises(HTTPException) as exc_info:
         enforce_upload_size(upload, limit=3, label="File")
 
-    assert exc_info.value.status_code == 400
+    assert exc_info.value.status_code == 413
     assert "File too large" in str(exc_info.value.detail)
 
 

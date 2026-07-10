@@ -84,6 +84,36 @@ async function authFetch(url: string, options: RequestInit = {}): Promise<Respon
 }
 
 /**
+ * Human explanation for the edge statuses that reach the client without a JSON
+ * `detail` body: the reverse proxy (Caddy), not the API, produced them — so the
+ * bare `(HTTP nnn)` fallback leaves the user guessing. Returns null when a status
+ * carries no more meaning than itself, so the caller keeps its own fallback.
+ */
+function statusExplanation(status: number): string | null {
+  switch (status) {
+    case 413:
+      return "This upload is too large. Please choose a smaller file, or split it into several parts.";
+    case 429:
+      return "Too many requests in a short time. Please wait a moment and try again.";
+    case 502:
+    case 503:
+    case 504:
+      return "The server is temporarily unavailable, likely restarting. Please try again in a moment.";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Message for a failure with no usable `detail` body: a friendly explanation for
+ * a known edge status, otherwise `fallback`, always suffixed with `(HTTP nnn)` so
+ * the status stays visible for diagnostics.
+ */
+function fallbackMessage(fallback: string, status: number): string {
+  return `${statusExplanation(status) ?? fallback} (HTTP ${status})`;
+}
+
+/**
  * GET a JSON endpoint, including the HTTP status in the thrown error so a
  * failure report pinpoints the layer (backend status vs proxy 502/503).
  */
@@ -91,7 +121,7 @@ async function getJson(url: string, errorMsg: string): Promise<unknown> {
   const res = await authFetch(url);
   if (!res.ok) {
     await throwIfMaintenance(res);
-    throw new Error(`${errorMsg} (HTTP ${res.status})`);
+    throw new Error(fallbackMessage(errorMsg, res.status));
   }
   return (await res.json()) as unknown;
 }
@@ -116,18 +146,17 @@ async function throwIfMaintenance(res: Response): Promise<void> {
 }
 
 /**
- * Build the error for a failed response: the backend's `detail` when the
- * body carries one, otherwise `fallback` suffixed with the HTTP status.
- * Proxy-level failures (e.g. a 502 for an upload that tripped a gateway
- * timeout) have no JSON body, and a bare fallback would hide the only
- * diagnostic available.
+ * Build the error for a failed response: the backend's `detail` when the body
+ * carries one, otherwise the {@link fallbackMessage} for the status. Proxy-level
+ * failures (a 413 from Caddy's body cap, a 502 for a gateway timeout) have no
+ * JSON body, so the status-based explanation is the only diagnostic available.
  */
 async function responseError(res: Response, fallback: string): Promise<Error> {
   const body = (await res.json().catch(() => null)) as { detail?: unknown } | null;
   return new Error(
     typeof body?.detail === "string" && body.detail
       ? body.detail
-      : `${fallback} (HTTP ${res.status})`,
+      : fallbackMessage(fallback, res.status),
   );
 }
 

@@ -128,8 +128,18 @@ describe("getDirectories", () => {
   });
 
   it("includes the HTTP status in the error message", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 502 }));
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 500 }));
 
-    await expect(getDirectories("~")).rejects.toThrow("Failed to fetch directory tree (HTTP 502)");
+    await expect(getDirectories("~")).rejects.toThrow("Failed to fetch directory tree (HTTP 500)");
+  });
+
+  it("explains opaque edge statuses instead of the bare fallback", async () => {
+    // 413/429/5xx arrive from the proxy without a JSON detail body, so the
+    // fallback maps them to a human explanation while keeping the status.
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 413 }));
+    await expect(getDirectories("~")).rejects.toThrow(/too large.*\(HTTP 413\)/);
+
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 503 }));
+    await expect(getDirectories("~")).rejects.toThrow(/temporarily unavailable.*\(HTTP 503\)/);
   });
 });

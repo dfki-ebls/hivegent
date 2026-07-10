@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from ..config import settings
 from ..entries import is_assets_dir
+from ..humanize import format_bytes
 
 __all__: list[str] = []
 
@@ -98,6 +99,6 @@ def _enforce_file_size(content: bytes) -> None:
     limit = settings.limits.max_file_size_bytes
     if len(content) > limit:
         raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Maximum size: {limit} bytes",
+            status_code=413,
+            detail=f"File too large. Maximum size: {format_bytes(limit)}",
         )

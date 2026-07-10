@@ -14,6 +14,7 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile
 
 from ...config import settings
+from ...humanize import format_bytes
 from ...types import FailedFile, LlmConfig, PipelineSpec, ProgressReporter
 from ..common import parse_pipeline_spec, prepare_llm_config
 
@@ -148,6 +149,6 @@ def enforce_upload_size(file: UploadFile, *, limit: int, label: str) -> None:
     """
     if file.size is not None and file.size > limit:
         raise HTTPException(
-            status_code=400,
-            detail=f"{label} too large. Maximum size: {limit} bytes",
+            status_code=413,
+            detail=f"{label} too large. Maximum size: {format_bytes(limit)}",
         )

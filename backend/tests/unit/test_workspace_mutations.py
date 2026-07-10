@@ -58,7 +58,7 @@ class TestEditDocumentText:
         (workspace_dir / "doc.md").write_text("hello world")
         with pytest.raises(HTTPException) as exc:
             await workspace.edit_document_text(user_store, "doc.md", "absent", "x")
-        assert exc.value.status_code == 400
+        assert exc.value.status_code == 422
 
     async def test_duplicate_without_replace_all_is_rejected(
         self, user_store: Casebase, workspace_dir: Path
