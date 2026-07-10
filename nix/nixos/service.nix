@@ -100,6 +100,31 @@ in
       '';
     };
 
+    limits = {
+      maxFileSizeBytes = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 50 * 1024 * 1024;
+        description = ''
+          Maximum size in bytes of a single uploaded file. Fed to the backend
+          `settings.limits.max_file_size_bytes` and, when the Caddy vhost is
+          enabled, used to size its per-request body cap just above this value.
+          Set it here so the backend enforcer and the edge cap move together;
+          the default mirrors the backend's own.
+        '';
+      };
+
+      maxCollectionSizeBytes = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 512 * 1024 * 1024;
+        description = ''
+          Maximum decompressed size in bytes of an uploaded collection ZIP. Fed
+          to the backend `settings.limits.max_collection_size_bytes` and used to
+          size the Caddy body cap for `/api/documents/collections/*` just above
+          it. The default mirrors the backend's own.
+        '';
+      };
+    };
+
     torchCompile = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -173,6 +198,15 @@ in
         ];
 
         services.hivegent.settings.data_dir = lib.mkDefault "/var/lib/hivegent";
+
+        # The upload limits are the single source of truth: feed them to the
+        # backend enforcer here (mkDefault, so a direct `settings.limits`
+        # override still wins) while `caddy.nix` sizes the edge body caps from
+        # the same `cfg.limits.*`.
+        services.hivegent.settings.limits = {
+          max_file_size_bytes = lib.mkDefault cfg.limits.maxFileSizeBytes;
+          max_collection_size_bytes = lib.mkDefault cfg.limits.maxCollectionSizeBytes;
+        };
 
         systemd.services.hivegent = {
           description = "Hivegent backend";

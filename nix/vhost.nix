@@ -25,12 +25,26 @@
   enableMcp ? false,
   # Whether to emit HSTS (only meaningful when the vhost is served over TLS).
   enableHsts ? false,
+  # Backend upload limits in bytes; the edge body caps are sized just above
+  # them. Mirror the backend `limits.max_file_size_bytes` and
+  # `limits.max_collection_size_bytes` — the NixOS module passes
+  # `services.hivegent.limits.*` so the enforcer and the cap always move
+  # together; the defaults match the backend's own.
+  maxFileSizeBytes ? 50 * 1024 * 1024,
+  maxCollectionSizeBytes ? 512 * 1024 * 1024,
   # Operator snippet placed before the route handlers — geoblocking, IP
   # allow-lists, honeypots.  A blocked `handle` here wins over the API/SPA
   # handlers below because Caddy evaluates mutually-exclusive `handle` groups
   # in source order.
   extraConfig ? "",
 }:
+let
+  # Edge body cap for a backend limit: 10% headroom absorbs multipart/form-data
+  # framing (boundaries, headers, other form fields) so a legitimately sized
+  # upload is never rejected at the edge, while an egregiously oversized one is
+  # still refused before it spools. `request_body` reads a bare integer as bytes.
+  edgeCap = limit: toString (limit + limit / 10);
+in
 ''
   # oidc-spa restores sessions through a hidden same-origin iframe, so this
   # vhost must permit framing by itself for silent session restoration.
@@ -97,21 +111,22 @@
   ''}
 
   handle /api/* {
-    # Coarse body-size caps at the edge, sized just above the backend's own
-    # limits so oversized uploads are rejected before they spool. Collections
-    # upload a ZIP (backend limit 512MB); every other API call sits near the
-    # 50MB per-file limit. The matchers are mutually exclusive on purpose:
-    # `request_body` stacks MaxBytesReaders, so overlapping matchers would let
-    # the smaller cap shadow the larger — a later directive cannot raise it. The
-    # backend stays the precise enforcer (exact file size, and the collection's
-    # decompressed size, file count, and path safety Caddy cannot see).
+    # Coarse body-size caps at the edge, derived from the backend's own limits
+    # (see `edgeCap`) so oversized uploads are rejected before they spool.
+    # Collections upload a ZIP (`maxCollectionSizeBytes`); every other API call
+    # sits near the per-file limit (`maxFileSizeBytes`). The matchers are
+    # mutually exclusive on purpose: `request_body` stacks MaxBytesReaders, so
+    # overlapping matchers would let the smaller cap shadow the larger — a later
+    # directive cannot raise it. The backend stays the precise enforcer (exact
+    # file size, and the collection's decompressed size, file count, and path
+    # safety Caddy cannot see).
     @collection path /api/documents/collections/*
     request_body @collection {
-      max_size 550MB
+      max_size ${edgeCap maxCollectionSizeBytes}
     }
     @small not path /api/documents/collections/*
     request_body @small {
-      max_size 55MB
+      max_size ${edgeCap maxFileSizeBytes}
     }
     header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
     reverse_proxy ${upstream} {

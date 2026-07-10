@@ -11,6 +11,7 @@ __all__ = [
     "GROUP_SEP",
     "annotate_lines",
     "number_line",
+    "truncate_block",
     "truncate_line",
 ]
 
@@ -58,6 +59,25 @@ def truncate_line(text: str, max_chars: int | None = None) -> str:
     if max_chars is None or len(text) <= max_chars:
         return text
     return text[: max_chars - 1] + "…"
+
+
+def truncate_block(text: str, max_line_chars: int | None = None) -> str:
+    """Clip every line of *text* to *max_line_chars*, rejoined by newlines.
+
+    The counterpart to :func:`annotate_lines` for output that is not
+    line-numbered: each line is clipped by :func:`truncate_line` so one very
+    long line — a base64-embedded image, a minified bundle — cannot flood the
+    model's context.  A ``None`` budget, or a *text* already within it, is
+    returned unchanged without splitting.
+
+    >>> truncate_block("ab\\ncdef", max_line_chars=3)
+    'ab\\ncd…'
+    >>> truncate_block("untouched")
+    'untouched'
+    """
+    if max_line_chars is None or len(text) <= max_line_chars:
+        return text
+    return "\n".join(truncate_line(line, max_line_chars) for line in text.splitlines())
 
 
 def annotate_lines(

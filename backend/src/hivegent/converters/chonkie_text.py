@@ -55,4 +55,9 @@ class ChonkieTextConverter(DocumentConverter):
 
     async def _convert(self, path: Path, /) -> ConversionResult:
         doc = await asyncio.to_thread(_build_chef().process, path)
+        # Raw text is not markdown, so project it as a fenced code block: the
+        # frontend then renders it as source instead of misreading ``#``/``*``
+        # as markdown. Contained here so it fires only when text-chef actually
+        # runs — AUTO's default for these formats — and an explicitly chosen
+        # converter keeps its own output untouched.
         return ConversionResult(markdown=fenced_code_block(doc.content, path.suffix))

@@ -300,7 +300,7 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
     body: JSON.stringify(args),
   });
   if (!res.ok) {
-    throw new Error(`Failed to run tool (${res.status})`);
+    throw await responseError(res, "Failed to run tool");
   }
   return ToolRunResultSchema.parse(await res.json());
 }
@@ -939,7 +939,7 @@ export async function subscribeJobs(
 ): Promise<void> {
   const res = await authFetch(`${API_BASE_URL}/api/jobs/events`, { signal });
   if (!res.ok) {
-    throw new Error(`Job feed failed (HTTP ${res.status})`);
+    throw new Error(fallbackMessage("Job feed failed", res.status));
   }
 
   // The feed never terminates with a completion event, so `readSseEvents`

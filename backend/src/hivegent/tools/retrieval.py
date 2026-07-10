@@ -18,7 +18,7 @@ from cbrkit.typing import AsyncRetrieverFunc
 from pydantic import Field
 
 from .base import AsyncTool, ToolOutput
-from .formatting import BLOCK_SEP, annotate_lines, truncate_line
+from .formatting import BLOCK_SEP, annotate_lines, truncate_block
 
 __all__ = [
     "SearchMaxResultsArg",
@@ -175,7 +175,7 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
             return results
 
 
-def _format_results(results: Sequence[Any], max_line_chars: int | None = None) -> str:
+def _format_results(results: Sequence[Any], max_line_chars: int) -> str:
     """Render search results as a human/LLM-readable string block.
 
     Accepts both :class:`SearchResult` and ``RetrievedChunk`` via attribute
@@ -195,9 +195,7 @@ def _format_results(results: Sequence[Any], max_line_chars: int | None = None) -
             label += f" L{start_line}-{end_line}"
             text = annotate_lines(text.splitlines(), start_line, max_line_chars)
         else:
-            text = "\n".join(
-                truncate_line(line, max_line_chars) for line in text.splitlines()
-            )
+            text = truncate_block(text, max_line_chars)
         # The leading [i] is the relevance rank (results are sorted best-first).
         # We deliberately omit the score: cbrkit min-max normalizes per query,
         # so it pins the top hit to 100% and the worst to 0% even when every

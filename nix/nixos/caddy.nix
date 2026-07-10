@@ -104,6 +104,7 @@ in
           bridgeUpstream =
             if cfg.bridge.enable then "${cfg.bridge.host}:${toString cfg.bridge.port}" else null;
           enableMcp = cfg.settings.mcp.enable or false;
+          inherit (cfg.limits) maxFileSizeBytes maxCollectionSizeBytes;
         };
       };
     };
