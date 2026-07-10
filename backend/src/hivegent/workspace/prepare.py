@@ -36,6 +36,7 @@ from ..converters.base import (
     ConversionResult,
     ExtractedImage,
     decode_text,
+    fenced_code_block,
     is_external_ref,
     is_image_suffix,
     is_markdown_suffix,
@@ -342,7 +343,7 @@ def _prepare_unconvertible(
 
     main = _derived_entry(
         filepath,
-        text,
+        fenced_code_block(text, PurePosixPath(filepath).suffix),
         entry_kind="convertible",
         generated_by="converter",
         origin=origin,

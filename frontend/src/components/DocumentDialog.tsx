@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { downloadBlob } from "@/lib/download";
 import { formatFileSize, isWebUrl } from "@/lib/utils";
-import Markdown from "markdown-to-jsx";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -24,10 +23,10 @@ import {
   listDocumentAssets,
   updateAssetDescription,
 } from "@/lib/api";
-import { MARKDOWN_BASE_OPTIONS, workspaceMarkdownOptions } from "@/components/chat/markdown/config";
 import { useSettingsStore } from "@/stores/settings-store";
 import { AssetImage } from "@/components/documents/AssetImage";
 import { WorkspaceImage } from "@/components/WorkspaceImage";
+import { WorkspaceMarkdown } from "@/components/WorkspaceMarkdown";
 import {
   type AssetEntry,
   type AssetListResponse,
@@ -99,14 +98,10 @@ function formatDate(dateString: string): string {
 
 /** Read-only markdown description with an empty-state fallback. */
 function DescriptionBody({ markdown }: { markdown: string | null }) {
-  return (
-    <div className="prose prose-sm dark:prose-invert max-w-none">
-      {markdown ? (
-        <Markdown options={MARKDOWN_BASE_OPTIONS}>{markdown}</Markdown>
-      ) : (
-        <p className="text-muted-foreground italic">No description</p>
-      )}
-    </div>
+  return markdown ? (
+    <WorkspaceMarkdown>{markdown}</WorkspaceMarkdown>
+  ) : (
+    <p className="text-muted-foreground italic text-sm">No description</p>
   );
 }
 
@@ -265,9 +260,6 @@ export function DocumentDialog({
   }, [isManagedMode, filename, documents, chunks]);
 
   const activeChunk = activeChunkId ? (chunks.get(activeChunkId) ?? chunk) : chunk;
-
-  // Stable across renders so the image overrides don't remount (and refetch) every WorkspaceImage.
-  const markdownOptions = useMemo(() => workspaceMarkdownOptions(filename), [filename]);
 
   // --- Reset state on open ---
   useEffect(() => {
@@ -617,9 +609,7 @@ export function DocumentDialog({
                 />
               </div>
               {fullContent && (
-                <div className="prose prose-sm dark:prose-invert max-w-none">
-                  <Markdown options={markdownOptions}>{fullContent}</Markdown>
-                </div>
+                <WorkspaceMarkdown documentPath={filename}>{fullContent}</WorkspaceMarkdown>
               )}
             </div>
           </ScrollArea>
@@ -661,9 +651,9 @@ export function DocumentDialog({
       }
       return (
         <ScrollArea className="flex-1 min-h-0">
-          <div className="prose prose-sm dark:prose-invert max-w-none p-4">
-            <Markdown options={markdownOptions}>{fullContent}</Markdown>
-          </div>
+          <WorkspaceMarkdown className="p-4" documentPath={filename}>
+            {fullContent}
+          </WorkspaceMarkdown>
         </ScrollArea>
       );
     }

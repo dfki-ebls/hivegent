@@ -20,6 +20,7 @@ __all__ = [
     "ExtractedImage",
     "collect_dir_images",
     "decode_text",
+    "fenced_code_block",
     "is_external_ref",
     "is_image_suffix",
     "is_markdown_suffix",
@@ -104,6 +105,26 @@ def decode_text(content: bytes) -> str | None:
         return content.decode("utf-8")
     except UnicodeDecodeError:
         return None
+
+
+_CODE_FENCE = "`" * 6
+
+
+def fenced_code_block(text: str, suffix: str) -> str:
+    """Wrap verbatim *text* as a markdown fenced code block.
+
+    Plain-text and source files are not markdown, so their stored ``.md``
+    projection is a fenced code block rather than the raw bytes: the block keeps
+    the description valid markdown (so the frontend renders every document the
+    same way) and carries the file *suffix* as its language hint for syntax
+    highlighting. The fence is six backticks so ordinary source, which may embed
+    the usual triple-backtick runs, cannot close the block early.
+
+    >>> fenced_code_block("console.log(1)", ".js")
+    '``````js\\nconsole.log(1)\\n``````\\n'
+    """
+    language = suffix.lstrip(".").lower()
+    return f"{_CODE_FENCE}{language}\n{text}\n{_CODE_FENCE}\n"
 
 
 def is_external_ref(ref: str) -> bool:

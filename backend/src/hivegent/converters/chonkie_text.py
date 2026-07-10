@@ -8,7 +8,7 @@ from typing import ClassVar
 
 from chonkie import TextChef
 
-from .base import ConversionResult, DocumentConverter
+from .base import ConversionResult, DocumentConverter, fenced_code_block
 
 __all__ = ["ChonkieTextConverter"]
 
@@ -55,4 +55,4 @@ class ChonkieTextConverter(DocumentConverter):
 
     async def _convert(self, path: Path, /) -> ConversionResult:
         doc = await asyncio.to_thread(_build_chef().process, path)
-        return ConversionResult(markdown=doc.content)
+        return ConversionResult(markdown=fenced_code_block(doc.content, path.suffix))
