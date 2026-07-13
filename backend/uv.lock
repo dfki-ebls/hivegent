@@ -1361,7 +1361,6 @@ dependencies = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-instrumentation-fastapi" },
     { name = "psycopg", extra = ["binary"] },
-    { name = "pydantic-ai-harness" },
     { name = "pydantic-ai-slim", extra = ["mcp", "openai", "ui"] },
     { name = "pydantic-settings" },
     { name = "pypdfium2" },
@@ -1427,7 +1426,6 @@ requires-dist = [
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.60b1" },
     { name = "pdf-oxide", marker = "extra == 'pdf-oxide'", specifier = ">=0.3,<1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3,<4" },
-    { name = "pydantic-ai-harness", specifier = ">=0.4,<1" },
     { name = "pydantic-ai-slim", extras = ["ui", "openai", "mcp"], specifier = ">=2,<3" },
     { name = "pydantic-settings", specifier = ">=2,<3" },
     { name = "pypdfium2", specifier = ">=5,<6" },
@@ -3134,19 +3132,6 @@ wheels = [
 [package.optional-dependencies]
 email = [
     { name = "email-validator" },
-]
-
-[[package]]
-name = "pydantic-ai-harness"
-version = "0.5.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpx" },
-    { name = "pydantic-ai-slim" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/49/38/dfe7450ec63bf82993bb344b8870e3bc44064cb678dfc1200573040c62e7/pydantic_ai_harness-0.5.0.tar.gz", hash = "sha256:f423d3da7e633b3c619903ad89e82f264667c93ebf8751e6f8d1bfc8abfb926f", size = 771399, upload-time = "2026-07-01T01:59:48.68Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/77/c8/d2c637cda69404a8f0a8b8076cdc314bf1ad55511217ad9309c330525718/pydantic_ai_harness-0.5.0-py3-none-any.whl", hash = "sha256:223e09f121172f62d11bd72f2898042b1d58d23cd8322560302e8c45002c3c16", size = 199754, upload-time = "2026-07-01T01:59:47.193Z" },
 ]
 
 [[package]]

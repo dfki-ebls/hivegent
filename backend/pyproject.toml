@@ -21,7 +21,6 @@ dependencies = [
   "opentelemetry-exporter-otlp-proto-http>=1,<2",
   "opentelemetry-instrumentation-fastapi>=0.60b1",
   "psycopg[binary]>=3,<4",
-  "pydantic-ai-harness>=0.4,<1",
   "pydantic-ai-slim[ui,openai,mcp]>=2,<3",
   "pydantic-settings>=2,<3",
   "pypdfium2>=5,<6",
