@@ -11,7 +11,6 @@ interrupted finishes, and the hard-fail error chunk) and
 """
 
 from collections.abc import AsyncIterator, Sequence
-from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -32,8 +31,7 @@ from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UI
 from starlette.responses import StreamingResponse
 
 import hivegent.server.vercel as vercel_module
-from hivegent.db.conversations import ExportMessage, _remapped_nodes
-from hivegent.db.models import MessageKind
+from hivegent.db.conversations import import_conversation
 from hivegent.server.vercel import (
     ChatAdapter,
     PersistTurn,
@@ -232,34 +230,14 @@ async def test_persist_failure_hard_fails_with_an_error_chunk() -> None:
     assert "Failed to save the conversation" in body
 
 
-def test_remapped_nodes_rewires_ids_and_tolerates_missing_parents() -> None:
-    """Import re-keys nodes, remaps parent links, and orphans dangling refs.
+async def test_import_conversation_rejects_empty_export() -> None:
+    """Importing a message-less export fails before any database write.
 
-    A child whose parent is absent from the dump (e.g. exported from a tree the
-    importer never had) becomes a root rather than referencing a missing id, so
-    a foreign cross-collection backup still imports cleanly.
+    The guard runs ahead of persistence, so it is exercised here without a
+    live database; the happy path is DB-backed and covered by smoke tests.
     """
-    now = datetime(2026, 1, 1, tzinfo=UTC)
-
-    def _msg(node_id: str, parent_id: str | None) -> ExportMessage:
-        return ExportMessage(
-            id=node_id,
-            parent_id=parent_id,
-            kind=MessageKind.REQUEST,
-            created_at=now,
-            payload={"kind": "request", "parts": []},
-        )
-
-    nodes = _remapped_nodes([_msg("a", None), _msg("b", "a"), _msg("c", "missing")])
-
-    new_ids = [node.id for node in nodes]
-    assert len(set(new_ids)) == 3  # all fresh and unique
-    assert all(node_id not in {"a", "b", "c"} for node_id in new_ids)
-
-    assert nodes[0].parent_id is None  # root stays a root
-    assert nodes[1].parent_id == nodes[0].id  # child rewired to its parent's new id
-    assert nodes[2].parent_id is None  # dangling parent dropped to a root
-    assert all(node.created_at == now for node in nodes)
+    with pytest.raises(ValueError, match="no messages"):
+        await import_conversation("user-1", [])
 
 
 def test_dump_messages_with_ids_anchors_node_ids() -> None:

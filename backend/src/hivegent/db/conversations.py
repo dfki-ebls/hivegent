@@ -42,18 +42,16 @@ from sqlalchemy.orm import aliased
 
 from ._common import affected_rows, new_id
 from .engine import session
-from .models import Conversation, Message, MessageKind
+from .models import Conversation, Message
 from .users import ensure_user
 
 __all__ = [
     "ConversationData",
-    "ConversationExport",
     "ConversationSummary",
     "append_branch",
     "conversation_exists",
     "create_compacted_conversation",
     "delete_all_conversations",
-    "export_conversation",
     "extract_title",
     "import_conversation",
     "list_conversations",
@@ -111,32 +109,6 @@ class ConversationSummary(BaseModel):
     created_at: datetime
     updated_at: datetime
     compacted_from: str | None = None
-
-
-class ExportMessage(BaseModel):
-    """One stored tree node, dumped verbatim from the database for export."""
-
-    id: str
-    parent_id: str | None
-    kind: MessageKind
-    created_at: datetime
-    payload: dict[str, Any]
-
-
-class ConversationExport(BaseModel):
-    """A whole conversation tree with raw message payloads for debugging.
-
-    Unlike :class:`ConversationData`, every node is exported (not just the
-    active path) with payloads passed through untouched, so the export mirrors
-    exactly what is stored in the ``messages`` table.
-    """
-
-    id: str
-    title: str
-    created_at: datetime
-    updated_at: datetime
-    compacted_from: str | None = None
-    messages: list[ExportMessage] = Field(default_factory=list)
 
 
 # ─── Codecs ────────────────────────────────────────────────────────────
@@ -388,47 +360,6 @@ async def load_active_for_display(
         return await _display(s, conversation_id)
 
 
-async def export_conversation(
-    user_id: str, conversation_id: str
-) -> ConversationExport | None:
-    """Return the whole conversation tree with raw payloads, or ``None``."""
-    async with session() as s:
-        conv = await _get_owned(s, user_id, conversation_id)
-        if conv is None:
-            return None
-        rows = (
-            await s.execute(
-                select(
-                    Message.id,
-                    Message.parent_id,
-                    Message.created_at,
-                    Message.payload,
-                )
-                .where(Message.conversation_id == conversation_id)
-                .order_by(Message.created_at)
-            )
-        ).all()
-    return ConversationExport(
-        id=conv.id,
-        title=conv.title or "",
-        created_at=conv.created_at,
-        updated_at=conv.updated_at,
-        compacted_from=conv.compacted_from_id,
-        messages=[
-            ExportMessage(
-                id=node_id,
-                parent_id=parent_id,
-                # ``kind`` is the request/response discriminator the payload
-                # already carries, derived here rather than stored as a column.
-                kind=MessageKind(payload["kind"]),
-                created_at=created_at,
-                payload=payload,
-            )
-            for node_id, parent_id, created_at, payload in rows
-        ],
-    )
-
-
 async def list_conversations(user_id: str) -> list[ConversationSummary]:
     """List a user's non-empty conversations newest first."""
     async with session() as s:
@@ -530,6 +461,8 @@ async def append_branch(
     conversation_id: str,
     parent_id: str | None,
     messages: Sequence[ModelMessage],
+    *,
+    title: str | None = None,
 ) -> str | None:
     """Append *messages* as a chain under *parent_id* and make it active.
 
@@ -538,8 +471,9 @@ async def append_branch(
     message and therefore the new active leaf, so the turn extends the active
     path (plain submit) or forks a sibling branch (edit / regenerate) without
     touching the preserved prior branches.  Empty delta is a no-op.  The
-    conversation row is created lazily on the first turn.  Raises on failure
-    so the caller can surface a hard error rather than silently lose the turn.
+    conversation row is created lazily on the first turn, titled by *title* or,
+    when omitted, derived from the first user message.  Raises on failure so
+    the caller can surface a hard error rather than silently lose the turn.
     """
     msg_list = list(messages)
     if not msg_list:
@@ -573,7 +507,7 @@ async def append_branch(
             parent = last_id = node_id
 
         if conv.title is None:
-            conv.title = extract_title(msg_list)
+            conv.title = title or extract_title(msg_list)
         conv.updated_at = datetime.now(UTC)
     return last_id
 
@@ -617,83 +551,35 @@ async def delete_all_conversations(user_id: str) -> int:
     return affected_rows(result)
 
 
-@dataclass(frozen=True, slots=True)
-class _ImportNode:
-    """A re-keyed export node ready to insert as a fresh message row."""
-
-    id: str
-    parent_id: str | None
-    payload: dict[str, Any]
-    created_at: datetime
-
-
-def _remapped_nodes(messages: Sequence[ExportMessage]) -> list[_ImportNode]:
-    """Re-key export nodes to fresh ids, remapping ``parent_id`` links.
-
-    Expects the export's parent-before-child order (its ``created_at`` order,
-    which the append-only tree guarantees), so a parent's new id is always
-    known by the time a child references it.  A node whose parent is absent
-    from the export becomes a root, so a dump with a dangling reference still
-    imports cleanly instead of orphaning a subtree onto a missing parent.
-    """
-    id_map: dict[str, str] = {}
-    nodes: list[_ImportNode] = []
-
-    for msg in messages:
-        node_id = new_id()
-        id_map[msg.id] = node_id
-        parent_id = id_map.get(msg.parent_id) if msg.parent_id else None
-        nodes.append(_ImportNode(node_id, parent_id, msg.payload, msg.created_at))
-
-    return nodes
-
-
 async def import_conversation(
-    user_id: str, export: ConversationExport
+    user_id: str,
+    messages: Sequence[ModelMessage],
+    *,
+    title: str | None = None,
 ) -> ConversationSummary:
-    """Persist an exported conversation tree as a fresh conversation for *user_id*.
+    """Persist *messages* as a fresh single-branch conversation for *user_id*.
 
-    Every node and the conversation itself get new ids (``parent_id`` links
-    remapped), so re-importing the same dump never collides, while each node's
-    ``created_at`` is preserved so the active path (newest leaf) and sibling
-    order survive the round-trip.  ``compacted_from`` is dropped on purpose: it
-    points at a conversation that is not part of this user's history, and the
-    foreign key would reject the dangling reference.  Payloads are stored
-    verbatim once validated, so documents that embedded tool outputs reference
-    but that are missing from this user's workspace stay unresolved rather than
-    failing the import.
+    *messages* is a conversation's active path (the Vercel AI UI messages an
+    export carries, already decoded to model messages by the caller). It is
+    stored as one linear chain under fresh ids, so re-importing the same export
+    never collides. Branch structure is not part of a client-side export, so
+    only the visible path is restored. When *title* is omitted it is derived
+    from the first user message.
 
     Raises:
-        ValueError: if any message payload is not a valid stored message.
+        ValueError: if *messages* is empty.
     """
-    try:
-        ModelMessagesTypeAdapter.validate_python(
-            [msg.payload for msg in export.messages]
-        )
-    except ValidationError as exc:
-        raise ValueError("invalid conversation export") from exc
+    if not messages:
+        raise ValueError("conversation export has no messages")
 
     conversation_id = new_id()
-    nodes = _remapped_nodes(export.messages)
+    await append_branch(user_id, conversation_id, None, messages, title=title)
 
-    async with session() as s:
-        await ensure_user(s, user_id)
-        conv = Conversation(
-            id=conversation_id, user_id=user_id, title=export.title or None
-        )
-        s.add(conv)
-        for node in nodes:
-            s.add(
-                Message(
-                    id=node.id,
-                    conversation_id=conversation_id,
-                    parent_id=node.parent_id,
-                    payload=node.payload,
-                    created_at=node.created_at,
-                )
-            )
-        await s.flush()
-        return _to_summary(conv)
+    summary = await load_conversation_summary(user_id, conversation_id)
+    if summary is None:  # unreachable: the conversation was just created
+        raise ValueError("failed to import conversation")
+
+    return summary
 
 
 async def create_compacted_conversation(

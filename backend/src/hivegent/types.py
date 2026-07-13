@@ -39,6 +39,7 @@ __all__ = [
     "CollectionProgressEvent",
     "CompactConversationRequest",
     "CompactConversationResponse",
+    "ConversationExport",
     "ConversationListResponse",
     "CreateDirectoryRequest",
     "CreateDirectoryResponse",
@@ -551,6 +552,22 @@ class CompactConversationRequest(BaseModel):
     """
 
     llm: LlmConfig = Field(default_factory=LlmConfig)
+    messages: list[UIMessage] = Field(default_factory=list)
+
+
+class ConversationExport(BaseModel):
+    """A conversation's active path in Vercel AI UI-message format.
+
+    This is the interchange shape for the ``/export`` and ``/import`` routes,
+    and mirrors exactly what the frontend holds in memory (the visible chat,
+    including turns that never persisted to the database). Third-party
+    integrations can produce or consume it with only the Vercel AI message
+    types. Client-only debug fields (a live error, an export timestamp) are
+    accepted and ignored on import.
+    """
+
+    id: str | None = None
+    title: str | None = None
     messages: list[UIMessage] = Field(default_factory=list)
 
 

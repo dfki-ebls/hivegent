@@ -38,12 +38,10 @@ from ...llm import model_from_config, resolve_thinking, thinking_model_settings
 from ...mcp import build_mcp_server, validate_mcp_servers
 from ...db._common import new_id
 from ...db.conversations import (
-    ConversationExport,
     ConversationSummary,
     append_branch,
     conversation_exists,
     delete_all_conversations,
-    export_conversation,
     import_conversation,
     list_conversations,
     load_active_for_display,
@@ -68,6 +66,7 @@ from ...types import (
     ChatRequestConfig,
     CompactConversationRequest,
     CompactConversationResponse,
+    ConversationExport,
     REASONING_EFFORT_VALUES,
     ConversationListResponse,
     DeleteConversationResponse,
@@ -296,14 +295,23 @@ async def export_conversation_route(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
 ) -> Response:
-    """Export a conversation as a downloadable JSON dump of its raw payloads.
+    """Export a conversation's active path as downloadable Vercel AI messages.
 
-    The counterpart :func:`import_conversation_route` restores such a dump as a
-    new conversation owned by the importing user.
+    The payload is a :class:`ConversationExport` (the same UI-message shape the
+    frontend holds and the ``/messages`` route returns), so a third-party
+    integration can consume it with only the Vercel AI message types, and the
+    counterpart :func:`import_conversation_route` restores it as a new
+    conversation owned by the importing user.
     """
-    export = await export_conversation(user.id, conversation_id)
-    if export is None:
+    summary = await load_conversation_summary(user.id, conversation_id)
+    if summary is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
+
+    result = await load_active_for_display(user.id, conversation_id)
+    messages = dump_messages_with_ids(result[0], siblings=result[1]) if result else []
+    export = ConversationExport(
+        id=summary.id, title=summary.title, messages=messages
+    )
     return Response(
         content=export.model_dump_json(indent=2),
         media_type="application/json",
@@ -322,13 +330,15 @@ async def import_conversation_route(
 ) -> ConversationSummary:
     """Restore an exported conversation as a new conversation owned by the user.
 
-    The dump is stored under fresh ids; a ``compacted_from`` link or documents
-    referenced by embedded tool outputs that do not exist for this user are
-    dropped or left unresolved rather than raising, so a conversation backed up
-    against a different document collection still imports cleanly.
+    The UI messages are decoded to model messages and stored under fresh ids as
+    a single linear branch. Documents referenced by embedded tool outputs that
+    do not exist for this user are left unresolved rather than raising, so a
+    conversation captured against a different document collection still imports
+    cleanly.
     """
     try:
-        return await import_conversation(user.id, export)
+        messages = ChatAdapter.load_messages(export.messages)
+        return await import_conversation(user.id, messages, title=export.title)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

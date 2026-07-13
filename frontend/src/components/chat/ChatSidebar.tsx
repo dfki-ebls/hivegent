@@ -20,8 +20,8 @@ import { SubagentLiveProvider } from "@/hooks/chat/use-subagent-live";
 import { useMessageEditing } from "@/hooks/chat/use-message-editing";
 import { useSteeringQueue } from "@/hooks/chat/use-steering-queue";
 import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
-import { exportConversation, importConversation, transcribeAudio } from "@/lib/api";
-import { downloadBlob } from "@/lib/download";
+import { importConversation, transcribeAudio } from "@/lib/api";
+import { downloadJson } from "@/lib/download";
 import { getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
 import { type AgentMode, type ReasoningEffort } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
@@ -45,6 +45,9 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const clearFilter = useDocumentFilterStore((state) => state.clear);
   const fetchConversations = useConversationsStore((state) => state.fetchConversations);
+  const conversationTitle = useConversationsStore(
+    (state) => state.conversations.find((c) => c.id === id)?.title,
+  );
   const setDocumentTab = useDocumentCanvasStore((state) => state.setActiveTab);
   const stashHandoff = useDraftHandoffStore((state) => state.stash);
   // Server-issued ID of a draft whose first turn finished cleanly; state
@@ -200,14 +203,22 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     await navigate({ to: "/" });
   }, [draft, onNewDraft, messages.length, error, clearFilter, navigate]);
 
-  const handleExport = useCallback(async () => {
-    try {
-      const blob = await exportConversation(id);
-      downloadBlob(blob, `conversation-${id}.json`);
-    } catch {
-      toast.error("Failed to export conversation");
-    }
-  }, [id]);
+  // Export the chat exactly as the sidebar holds it in memory — the visible
+  // active path, including a turn that errored and was never persisted — so a
+  // failing conversation can be sent for debugging. The shape round-trips
+  // through the import route (extra debug fields are ignored on import).
+  const handleExport = useCallback(() => {
+    downloadJson(
+      {
+        id,
+        title: conversationTitle ?? null,
+        exportedAt: new Date().toISOString(),
+        error: error?.message ?? null,
+        messages,
+      },
+      `conversation-${id}.json`,
+    );
+  }, [id, conversationTitle, error, messages]);
 
   const handleConversationSelect = useCallback(
     async (conversationId: string) => {
@@ -278,7 +289,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
         onNewChat={handleNewChat}
         onHistoryClick={() => fetchConversations()}
         onImport={() => importInputRef.current?.click()}
-        onExport={draft ? undefined : handleExport}
+        onExport={messages.length > 0 ? handleExport : undefined}
       />
       <input
         ref={importInputRef}
