@@ -376,16 +376,18 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     )
 
 
-def _expand_pdf(item: UserContent) -> list[UserContent]:
+async def _expand_pdf(item: UserContent) -> list[UserContent]:
     """Rasterise a PDF attachment to page images; pass anything else through."""
     if not (isinstance(item, BinaryContent) and item.media_type == "application/pdf"):
         return [item]
 
-    pages, _ = render_pdf_pages(item.data, None, FRAME_MAX_DIMENSION, DEFAULT_MAX_PAGES)
+    pages, _ = await render_pdf_pages(
+        item.data, None, FRAME_MAX_DIMENSION, DEFAULT_MAX_PAGES
+    )
     return [BinaryContent(data=png, media_type="image/png") for png in pages]
 
 
-def _rasterize_pdf_attachments(messages: Sequence[ModelMessage]) -> None:
+async def _rasterize_pdf_attachments(messages: Sequence[ModelMessage]) -> None:
     """Replace ``application/pdf`` attachments with rendered page images.
 
     Ad-hoc chat attachments arrive inline as ``BinaryContent``; a PDF
@@ -402,7 +404,7 @@ def _rasterize_pdf_attachments(messages: Sequence[ModelMessage]) -> None:
         for part in message.parts:
             if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
                 part.content = [
-                    out for item in part.content for out in _expand_pdf(item)
+                    out for item in part.content for out in await _expand_pdf(item)
                 ]
 
 
@@ -470,7 +472,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     # images) when the model cannot ingest native `file` parts.
     if settings.multimodal.binary_content is BinaryContentMode.IMAGES:
         try:
-            await asyncio.to_thread(_rasterize_pdf_attachments, adapter.messages)
+            await _rasterize_pdf_attachments(adapter.messages)
         except ValueError as exc:
             raise HTTPException(
                 status_code=400, detail=f"Could not process a PDF attachment: {exc}"

@@ -217,8 +217,7 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
     ) -> ToolOutput[BinaryReadResult]:
         """Rasterise the requested PDF pages into one image attachment each."""
         try:
-            page_images, selected_pages = await asyncio.to_thread(
-                render_pdf_pages,
+            page_images, selected_pages = await render_pdf_pages(
                 raw,
                 pages,
                 self.frame_max_dimension,
@@ -256,9 +255,7 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
         selected_pages: tuple[int, ...] = ()
         if pages is not None:
             try:
-                raw, selected_pages = await asyncio.to_thread(
-                    extract_pdf_pages, raw, pages
-                )
+                raw, selected_pages = await extract_pdf_pages(raw, pages)
             except ValueError as exc:
                 raise ToolRetry(f"invalid pages: {exc}") from exc
 

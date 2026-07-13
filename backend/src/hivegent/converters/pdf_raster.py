@@ -5,10 +5,21 @@ rasterises pages to still PNGs (the ``images`` binary-content mode, for
 vision servers that only accept ``image_url`` parts), and
 :func:`extract_pdf_pages` carves a subset into a new PDF (the ``native``
 mode, for providers that ingest ``file`` parts directly).
+
+pdfium is a native library that segfaults on some malformed PDFs and
+fonts, and the input here is untrusted, so both renderers run in a
+throwaway spawned worker process (:func:`_run_isolated`).  A crash kills
+only that worker and surfaces as a :class:`ValueError` like any other
+unreadable PDF, instead of taking the whole server down with it.
 """
 
+import asyncio
 import io
 import re
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
+from multiprocessing import get_context
 
 from .video import pil_to_still_png
 
@@ -52,17 +63,37 @@ def parse_pages(spec: str, total: int) -> tuple[int, ...]:
     return tuple(seen)
 
 
-def render_pdf_pages(
+async def _run_isolated[T](func: Callable[..., T], *args: object) -> T:
+    """Run *func* in a one-shot spawned process and return its result.
+
+    A fresh single-worker pool per call fully isolates pdfium: a native
+    crash kills only the worker, which the executor reports as
+    :class:`BrokenProcessPool`, remapped here to the same
+    :class:`ValueError` an unreadable PDF raises.  Spawn is required over
+    the default fork so the worker does not inherit the server's event
+    loop, threads, or heap.  The blocking pool lifecycle runs on a thread
+    so the event loop stays free.
+    """
+
+    def blocking() -> T:
+        with ProcessPoolExecutor(
+            max_workers=1, mp_context=get_context("spawn")
+        ) as pool:
+            try:
+                return pool.submit(func, *args).result()
+
+            except BrokenProcessPool as exc:
+                raise ValueError(
+                    "PDF rendering crashed on a corrupt document"
+                ) from exc
+
+    return await asyncio.to_thread(blocking)
+
+
+def _render_pdf_pages(
     pdf_bytes: bytes, spec: str | None, max_dimension: int, max_pages: int
 ) -> tuple[tuple[bytes, ...], tuple[int, ...]]:
-    """Rasterise the requested PDF pages to downscaled PNG images.
-
-    *spec* selects 1-based pages (see :func:`parse_pages`); ``None``
-    renders the whole document.  Each page is rendered so its longer side
-    lands near *max_dimension* pixels.  Raises :class:`ValueError` for an
-    invalid page spec, a page count above *max_pages*, or an unreadable
-    PDF.
-    """
+    """Worker body of :func:`render_pdf_pages` (runs in a spawned process)."""
     import pypdfium2 as pdfium
 
     try:
@@ -94,12 +125,8 @@ def render_pdf_pages(
         raise ValueError(f"PDF could not be opened: {exc}") from exc
 
 
-def extract_pdf_pages(pdf_bytes: bytes, spec: str) -> tuple[bytes, tuple[int, ...]]:
-    """Return a new PDF containing only the *spec*-selected pages.
-
-    Raises :class:`ValueError` for an invalid page spec or an unreadable
-    PDF.
-    """
+def _extract_pdf_pages(pdf_bytes: bytes, spec: str) -> tuple[bytes, tuple[int, ...]]:
+    """Worker body of :func:`extract_pdf_pages` (runs in a spawned process)."""
     import pypdfium2 as pdfium
 
     try:
@@ -115,3 +142,30 @@ def extract_pdf_pages(pdf_bytes: bytes, spec: str) -> tuple[bytes, tuple[int, ..
 
     except pdfium.PdfiumError as exc:
         raise ValueError(f"PDF could not be opened: {exc}") from exc
+
+
+async def render_pdf_pages(
+    pdf_bytes: bytes, spec: str | None, max_dimension: int, max_pages: int
+) -> tuple[tuple[bytes, ...], tuple[int, ...]]:
+    """Rasterise the requested PDF pages to downscaled PNG images.
+
+    *spec* selects 1-based pages (see :func:`parse_pages`); ``None``
+    renders the whole document.  Each page is rendered so its longer side
+    lands near *max_dimension* pixels.  Raises :class:`ValueError` for an
+    invalid page spec, a page count above *max_pages*, an unreadable PDF,
+    or a native crash in the render worker.
+    """
+    return await _run_isolated(
+        _render_pdf_pages, pdf_bytes, spec, max_dimension, max_pages
+    )
+
+
+async def extract_pdf_pages(
+    pdf_bytes: bytes, spec: str
+) -> tuple[bytes, tuple[int, ...]]:
+    """Return a new PDF containing only the *spec*-selected pages.
+
+    Raises :class:`ValueError` for an invalid page spec, an unreadable
+    PDF, or a native crash in the render worker.
+    """
+    return await _run_isolated(_extract_pdf_pages, pdf_bytes, spec)

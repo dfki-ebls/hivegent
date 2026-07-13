@@ -43,20 +43,20 @@ def _pdf_tool(tmp_path: Path, mode: BinaryContentMode) -> ReadBinaryDocumentTool
     )
 
 
-def test_parse_pages_and_extract_subset() -> None:
+async def test_parse_pages_and_extract_subset() -> None:
     assert parse_pages("1,3,5-7", 10) == (1, 3, 5, 6, 7)
-    sub, selected = extract_pdf_pages(_pdf(4), "2-3")
+    sub, selected = await extract_pdf_pages(_pdf(4), "2-3")
     assert selected == (2, 3) and sub[:4] == b"%PDF"
 
 
-def test_render_pdf_pages_caps_and_rejects() -> None:
-    images, pages = render_pdf_pages(_pdf(2), None, 1024, 16)
+async def test_render_pdf_pages_caps_and_rejects() -> None:
+    images, pages = await render_pdf_pages(_pdf(2), None, 1024, 16)
     assert pages == (1, 2) and all(png[:4] == b"\x89PNG" for png in images)
 
     with pytest.raises(ValueError, match="exceeds the 1-page limit"):
-        render_pdf_pages(_pdf(2), None, 1024, 1)
+        await render_pdf_pages(_pdf(2), None, 1024, 1)
     with pytest.raises(ValueError, match="could not be opened"):
-        render_pdf_pages(b"not a pdf", None, 1024, 16)
+        await render_pdf_pages(b"not a pdf", None, 1024, 16)
 
 
 async def test_binary_tool_images_mode_renders_pages(tmp_path: Path) -> None:
@@ -71,13 +71,13 @@ async def test_binary_tool_native_mode_forwards_pdf(tmp_path: Path) -> None:
     assert [a.media_type for a in output.attachments] == ["application/pdf"]
 
 
-def test_rasterize_pdf_attachments_rewrites_only_pdfs() -> None:
+async def test_rasterize_pdf_attachments_rewrites_only_pdfs() -> None:
     png = BinaryContent(data=b"\x89PNG", media_type="image/png")
     part = UserPromptPart(
         content=["look", BinaryContent(data=_pdf(2), media_type="application/pdf"), png]
     )
 
-    _rasterize_pdf_attachments([ModelRequest(parts=[part])])
+    await _rasterize_pdf_attachments([ModelRequest(parts=[part])])
 
     content = part.content
     assert isinstance(content, list)
