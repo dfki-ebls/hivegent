@@ -25,6 +25,7 @@ from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTool
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.tools import ToolDefinition
 
+from ..config import settings
 from ..db.memory import load_memory
 from ..prompts import (
     MEMORY_INSTRUCTIONS,
@@ -34,6 +35,7 @@ from ..prompts import (
 from ..tools.pydantic_ai import capability_tools, invoke_tool
 from ..types import ToolSchema, ToolsSpec
 from .common import UserDeps, scope_instructions
+from .guards import IterationLimitWarner, ToolOutputLimit
 from .tools import (
     conversation_toolset,
     explore_toolset,
@@ -175,6 +177,11 @@ def build_capabilities(
         result.append(_filter_disabled(disabled))
 
     result.extend(Capability(toolsets=[toolset]) for toolset in extra)
+
+    # Cross-cutting run-loop safeguards, applied to every run regardless of mode.
+    result.append(ToolOutputLimit(max_chars=settings.llm.tool_output_max_chars))
+    result.append(IterationLimitWarner(max_requests=settings.llm.request_limit))
+
     return result
 
 

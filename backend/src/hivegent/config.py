@@ -210,6 +210,16 @@ class LlmSettings(BaseModel):
     the per-run budget for re-prompting the model when a tool raises
     ``ModelRetry`` or output validation fails (applied to both); these retries
     count against ``request_limit``.
+
+    ``subagent_timeout_seconds`` bounds one subagent delegation
+    (``explore``); on expiry the partial findings are summarized and returned
+    rather than failing the turn, so keep it below ``tool_timeout_seconds`` to
+    fire first, or ``None`` to disable.  ``tool_output_max_chars`` caps the
+    plain-text (LLM-facing) output of *any* tool, head+tail truncating a
+    larger return while leaving its structured data intact; it is a coarse
+    backstop on rendered size (which the built-in tools' own content caps do
+    not bound), set above those caps so a considered read is not re-clamped
+    but a runaway return — foreign or built-in — cannot dominate the context.
     """
 
     model: str = ""
@@ -224,6 +234,7 @@ class LlmSettings(BaseModel):
     request_limit: int = 40
     tool_calls_limit: int | None = 40
     subagent_timeout_seconds: float | None = 180.0
+    tool_output_max_chars: int = 120_000
     retries: int = 1
 
 
