@@ -413,9 +413,10 @@ async def _rasterize_pdf_attachments(messages: Sequence[ModelMessage]) -> None:
 
         for part in message.parts:
             if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                part.content = [
-                    out for item in part.content for out in await _expand_pdf(item)
-                ]
+                expanded = await asyncio.gather(
+                    *(_expand_pdf(item) for item in part.content)
+                )
+                part.content = [out for group in expanded for out in group]
 
 
 async def _run_chat(conversation_id: str, request: Request, user: User) -> Response:

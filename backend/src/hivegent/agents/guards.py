@@ -61,7 +61,7 @@ def _truncate_middle(text: str, max_chars: int) -> str:
     )
 
 
-@dataclass
+@dataclass(slots=True)
 class ToolOutputLimit(AbstractCapability[UserDeps]):
     """Bound the plain text a tool return sends the model, keeping structured data.
 
@@ -107,7 +107,7 @@ class ToolOutputLimit(AbstractCapability[UserDeps]):
         return truncated if isinstance(result, str) else replace(result, return_value=truncated)
 
 
-@dataclass
+@dataclass(slots=True)
 class IterationLimitWarner(AbstractCapability[UserDeps]):
     """Nudge the model to finish as the run nears its request budget.
 
