@@ -223,6 +223,7 @@ class LlmSettings(BaseModel):
     tool_timeout_seconds: float | None = 300.0
     request_limit: int = 40
     tool_calls_limit: int | None = 40
+    subagent_timeout_seconds: float | None = 180.0
     retries: int = 1
 
 

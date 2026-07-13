@@ -1,12 +1,18 @@
 """Subagent-oriented agent tool registrations."""
 
+import asyncio
+import logging
+from collections.abc import Sequence
 from typing import Annotated, Literal
 
 from pydantic import Field
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Capability
-from pydantic_ai.messages import ToolReturn
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.messages import ModelMessage, ToolReturn
+from pydantic_ai.models import Model
 
+from ...config import settings
 from ...llm import is_context_overflow, model_from_config, summary_model_settings
 from ...prompts import EXPLORE_INSTRUCTIONS
 from ...tools.base import ToolOutput
@@ -19,6 +25,8 @@ from ..summarize import summarize_messages
 from .conversation import conversation_toolset
 from .explore import explore_toolset
 from .web import web_toolset
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "SUBAGENT_CAPABILITIES",
@@ -87,6 +95,37 @@ def _subagent_result(
     )
 
 
+def _failure_reason(exc: Exception) -> str:
+    """Describe why a subagent run ended early, for the recovery message."""
+    if is_context_overflow(exc):
+        return "hit the model's context limit"
+
+    if isinstance(exc, TimeoutError):
+        return "ran past its time budget"
+
+    return "failed unexpectedly"
+
+
+async def _safe_summarize(
+    messages: Sequence[ModelMessage], model: Model, llm_config: LlmConfig
+) -> str | None:
+    """Summarize the partial transcript, returning ``None`` if even that fails.
+
+    A subagent crash can stem from the model endpoint itself, so the
+    recovery summary (another call to the same model) may fail too; a bare
+    note then stands in for it rather than escalating the failure.
+    """
+    try:
+        return await summarize_messages(
+            messages, model, summary_model_settings(llm_config)
+        )
+
+    except Exception:
+        logger.warning("Subagent recovery summary failed", exc_info=True)
+
+        return None
+
+
 async def run_subagent(
     ctx: RunContext[UserDeps],
     task: str,
@@ -105,8 +144,10 @@ async def run_subagent(
 
     Each node's events stream live as ``data-subagent`` parts (via the sink on
     ``ctx.deps``), and the full transcript is packed onto the return metadata so
-    it persists.  A context-window overflow is summarised and returned instead
-    of failing the call, so the parent keeps the partial findings.
+    it persists.  The run is bounded by ``settings.llm.subagent_timeout_seconds``
+    and any failure short of a shared usage limit — a context overflow, the
+    timeout, or an unexpected crash — is contained: the partial findings are
+    summarised and returned instead of aborting the whole chat turn.
     """
     llm_config = _subagent_llm_config(ctx.deps)
     model = model_from_config(llm_config)
@@ -129,37 +170,49 @@ async def run_subagent(
         usage_limits=turn_usage_limits,
     ) as run:
         try:
-            async for node in run:
-                # Reasoning/message starts come off the model-request node, tool
-                # calls off the call-tools node; the builder discriminates both.
-                if user_agent.is_model_request_node(
-                    node
-                ) or user_agent.is_call_tools_node(node):
-                    async with node.stream(run.ctx) as stream:
-                        async for event in stream:
-                            emit(builder.on_event(event))
+            # `asyncio.timeout(None)` is a no-op, so a disabled timeout keeps the
+            # plain iteration.  On expiry the surrounding block recovers the
+            # partial findings, the same as any other contained failure.
+            async with asyncio.timeout(settings.llm.subagent_timeout_seconds):
+                async for node in run:
+                    # Reasoning/message starts come off the model-request node,
+                    # tool calls off the call-tools node; the builder
+                    # discriminates both.
+                    if user_agent.is_model_request_node(
+                        node
+                    ) or user_agent.is_call_tools_node(node):
+                        async with node.stream(run.ctx) as stream:
+                            async for event in stream:
+                                emit(builder.on_event(event))
+
+        except UsageLimitExceeded:
+            # A shared usage budget means the whole turn is out of requests, not
+            # just this subagent — let it abort the turn rather than swallowing it.
+            raise
 
         except Exception as exc:
-            # A subagent that overflows its context window has still done
-            # useful work — its transcript is on the run.  Compact it into a
-            # summary instead of failing the tool call, so the main thread
-            # keeps the findings and continues.  Transcript fidelity follows
-            # `settings.summarization`, the same config every summarization
-            # consumer uses; the summary request reuses the model that just
-            # overflowed on those payloads, so `summarize_messages` sheds tool
-            # results and reasoning and retries on its own context overflow,
-            # surfacing an error only if even that reduced transcript fails.
-            if not is_context_overflow(exc):
-                raise
-            summary = await summarize_messages(
-                run.all_messages(), model, summary_model_settings(llm_config)
+            # A subagent that overflows, times out, or crashes has still done
+            # useful work — its transcript is on the run.  Summarise the partial
+            # findings and hand them back instead of failing the tool call, so
+            # the main thread keeps them and continues.  Transcript fidelity
+            # follows `settings.summarization`, the same config every
+            # summarization consumer uses; the summary reuses the model that
+            # just ran, so `_safe_summarize` degrades to a bare note if that
+            # model is itself the cause of the failure.
+            reason = _failure_reason(exc)
+            logger.warning(
+                "Subagent %s; recovering partial findings", reason, exc_info=exc
+            )
+            summary = await _safe_summarize(run.all_messages(), model, llm_config)
+            findings = (
+                f"Summary of the findings so far:\n\n{summary}"
+                if summary is not None
+                else "No partial summary could be produced."
             )
             return _subagent_result(
                 tool_call_id,
                 builder,
-                "The subagent hit the model's context limit before "
-                "finishing. Summary of the findings so far:\n\n"
-                f"{summary}",
+                f"The subagent {reason} before finishing. {findings}",
             )
 
         result = run.result  # a clean iteration always ends at a result
