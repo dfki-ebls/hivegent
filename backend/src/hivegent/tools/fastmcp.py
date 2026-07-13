@@ -45,7 +45,7 @@ def _attachment_to_block(att: BinaryAttachment) -> ContentBlock:
     return EmbeddedResource(
         type="resource",
         resource=BlobResourceContents(
-            uri=uri,  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+            uri=uri,  # pyright: ignore[reportArgumentType]
             mimeType=att.media_type,
             blob=encoded,
         ),
