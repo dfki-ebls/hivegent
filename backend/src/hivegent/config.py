@@ -631,6 +631,20 @@ class JobSettings(BaseModel):
     queue_maxsize: int = 1024
 
 
+class IsolationSettings(BaseModel):
+    """Crash-isolated worker-process tunables (see :mod:`hivegent.workers`).
+
+    ``max_workers`` caps how many spawned isolation processes run at once
+    across the whole server, bounding memory and CPU under a burst of
+    crash-prone native calls (currently pdfium paging).  ``timeout_seconds``
+    is the default wall-clock limit per call before the worker is killed and
+    the call raises ``WorkerTimeoutError``.
+    """
+
+    max_workers: int = 2
+    timeout_seconds: float = 60.0
+
+
 class DatabaseSettings(BaseModel):
     """Database backend configuration.
 
@@ -728,6 +742,7 @@ class Settings(BaseSettings):
     limits: LimitsSettings = LimitsSettings()
     network: NetworkSettings = NetworkSettings()
     jobs: JobSettings = JobSettings()
+    isolation: IsolationSettings = IsolationSettings()
     db: DatabaseSettings = DatabaseSettings()
 
     data_dir: Path = Path("data")

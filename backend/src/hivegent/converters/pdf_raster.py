@@ -13,10 +13,15 @@ A worker crash surfaces as the same :class:`ValueError` an unreadable PDF
 raises, instead of taking the whole server down with it.
 """
 
+import logging
 from collections.abc import Callable
 
 from ..workers import pdf as worker
-from ..workers.isolation import WorkerCrashError, run_isolated
+from ..workers.isolation import (
+    WorkerCrashError,
+    WorkerTimeoutError,
+    run_isolated,
+)
 
 # Re-exported so callers keep a single import surface for PDF paging.
 parse_pages = worker.parse_pages
@@ -31,18 +36,23 @@ __all__ = [
 DEFAULT_MAX_PAGES = 16
 """Default upper bound of pages rasterised from one PDF."""
 
+logger = logging.getLogger(__name__)
+
 
 async def _isolate[T](func: Callable[..., T], *args: object) -> T:
-    """Run a pdfium worker call, mapping a native crash to :class:`ValueError`.
+    """Run a pdfium worker call, mapping isolation failures to ``ValueError``.
 
-    A worker crash on a corrupt document surfaces as the same
-    :class:`ValueError` an unreadable PDF raises, so callers handle one error.
+    Callers handle timeouts and native crashes through the same domain error
+    as other unreadable PDF failures.
     """
     try:
         return await run_isolated(func, *args)
 
+    except WorkerTimeoutError as exc:
+        raise ValueError("PDF processing timed out") from exc
     except WorkerCrashError as exc:
-        raise ValueError("PDF rendering crashed on a corrupt document") from exc
+        logger.exception("PDF worker crashed")
+        raise ValueError("PDF worker crashed while processing the document") from exc
 
 
 async def render_pdf_pages(
