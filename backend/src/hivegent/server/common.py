@@ -18,6 +18,7 @@ __all__ = [
     "prepare_llm_config",
     "require_group_member",
     "require_group_write",
+    "resolve_move",
     "resolve_workspace_path",
     "safe_group_id",
     "safe_path",
@@ -191,3 +192,19 @@ def resolve_workspace_path(
     else:
         store = user_store(user)
     return store, safe_path(local) if local else ""
+
+
+def resolve_move(
+    user: User, source: str, destination: str
+) -> tuple[Casebase, str, Casebase, str]:
+    """Resolve both endpoints of a move, requiring write access to each.
+
+    A move may stay within one workspace or migrate between two (personal ↔
+    group, group ↔ group); either way it writes both ends, so both are resolved
+    with ``write=True``. Centralizing the pair here keeps that invariant in one
+    place instead of duplicating it across the single, bulk, and directory move
+    endpoints.
+    """
+    src_store, src = resolve_workspace_path(user, source, write=True)
+    dst_store, dst = resolve_workspace_path(user, destination, write=True)
+    return src_store, src, dst_store, dst

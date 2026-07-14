@@ -549,45 +549,58 @@ async def delete_all_documents() -> int:
     return affected_rows(result)
 
 
-async def move_document(store: Casebase, src_stem: str, dst_stem: str) -> bool:
-    """Rename a document's ``stem_path``.
+async def move_document(
+    src_store: Casebase, src_stem: str, dst_store: Casebase, dst_stem: str
+) -> bool:
+    """Rename a document's ``stem_path``, re-owning it when the store changes.
 
     Takes raw stem paths, not references: a stem may itself contain dots
     (``a.tar`` from ``a.tar.gz``), so re-deriving it here via
     :func:`stem_path_from_reference` would strip part of the name and
     miss or mis-target the row.  Chunks reference the document by id
     (which never changes) so the vector index needs no reindex after a
-    rename.
+    rename — a cross-store move re-homes the same rows and vectors by
+    flipping the owner columns, again with no re-embed.
     """
-    if src_stem == dst_stem:
+    cross_store = src_store != dst_store
+    if not cross_store and src_stem == dst_stem:
         return False
     async with session() as s:
+        if cross_store:
+            await _ensure_owner(s, dst_store)
         result = await s.execute(
             update(Document)
-            .where(_owner_filter(store), Document.stem_path == src_stem)
-            .values(stem_path=dst_stem)
+            .where(_owner_filter(src_store), Document.stem_path == src_stem)
+            .values(stem_path=dst_stem, **_owner_kwargs(dst_store))
         )
     return affected_rows(result) > 0
 
 
-async def move_subtree(store: Casebase, src_prefix: str, dst_prefix: str) -> None:
-    """Rename every document strictly below ``src_prefix/`` to live under ``dst_prefix/``.
+async def move_subtree(
+    src_store: Casebase, src_prefix: str, dst_store: Casebase, dst_prefix: str
+) -> None:
+    """Move every document strictly below ``src_prefix/`` to ``dst_prefix/``.
 
     A single bulk UPDATE rewrites the ``src_prefix`` portion of each
-    matched ``stem_path`` to ``dst_prefix``.  No vector reindex needed —
+    matched ``stem_path`` to ``dst_prefix`` and, for a cross-store move,
+    flips the owner columns onto *dst_store*.  No vector reindex needed —
     chunks reference the immutable document id.  A same-named sibling
-    document (stem equal to *src_prefix*) is left alone — rename it
+    document (stem equal to *src_prefix*) is left alone — move it
     explicitly via :func:`move_document`.
     """
-    if not src_prefix or src_prefix == dst_prefix:
+    cross_store = src_store != dst_store
+    if not src_prefix or (not cross_store and src_prefix == dst_prefix):
         return
     async with session() as s:
+        if cross_store:
+            await _ensure_owner(s, dst_store)
         await s.execute(
             update(Document)
-            .where(_owner_filter(store), stem_subtree_filter(src_prefix))
+            .where(_owner_filter(src_store), stem_subtree_filter(src_prefix))
             .values(
                 stem_path=func.concat(
                     dst_prefix, func.substr(Document.stem_path, len(src_prefix) + 1)
-                )
+                ),
+                **_owner_kwargs(dst_store),
             )
         )

@@ -492,18 +492,6 @@ export const ToolRunResultSchema = z.object({
 export type ToolRunResult = z.infer<typeof ToolRunResultSchema>;
 
 /** Summary information about a knowledge group. */
-export const GroupInfoSchema = z.object({
-  slug: z.string(),
-  document_count: z.number(),
-});
-export type GroupInfo = z.infer<typeof GroupInfoSchema>;
-
-/** Response for listing knowledge groups. */
-export const GroupListResponseSchema = z.object({
-  groups: z.array(GroupInfoSchema),
-});
-export type GroupListResponse = z.infer<typeof GroupListResponseSchema>;
-
 // ============================================================
 // Tool configuration schemas (persisted in localStorage, sent to backend)
 // ============================================================

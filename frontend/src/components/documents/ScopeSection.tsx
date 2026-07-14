@@ -237,32 +237,37 @@ export function ScopeSection({
     ],
   );
 
-  // Resolve a dragged selection into store moves against this scope. Same
-  // workspace is guaranteed upstream (the drop only fires for a valid move):
-  // a single file or directory keeps its name under the destination, while a
-  // multi-file drag preserves its structure relative to the selection's common
-  // parent — the shape the bulk endpoint expects.
+  // Resolve a dragged selection into store moves. The drag originates in
+  // `drag.scope` and lands in this section's `scope` — the same workspace for an
+  // in-place move, a different one when migrating between the personal and a
+  // shared space (the drop only fires for a valid move). A single file or
+  // directory keeps its name under the destination, while a multi-file drag
+  // preserves its structure relative to the selection's common parent — the
+  // shape the bulk endpoint expects.
   const handleMoveInto = useCallback(
     (drag: TreeItemDrag, destDir: string) => {
       const into = (suffix: string) => (destDir ? `${destDir}/${suffix}` : suffix);
       const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
       if (drag.kind === "directory") {
-        void storeMoveDir(scope, drag.paths[0], into(basename(drag.paths[0])));
+        void storeMoveDir(drag.scope, drag.paths[0], scope, into(basename(drag.paths[0])));
         return;
       }
 
       if (drag.paths.length === 1) {
-        void storeMove(scope, drag.paths[0], into(basename(drag.paths[0])));
+        void storeMove(drag.scope, drag.paths[0], scope, into(basename(drag.paths[0])));
         return;
       }
 
       const commonParent = commonParentDir(drag.paths);
+      const sameScope = drag.scope === scope;
       const moves = drag.paths
         .map((source) => ({ source, destination: into(source.slice(commonParent.length)) }))
-        .filter(({ source, destination }) => destination !== source);
+        // Within one workspace a same-path entry is a no-op; across workspaces
+        // it still re-homes the entry, so keep it.
+        .filter(({ source, destination }) => !sameScope || destination !== source);
       clearSelection();
-      if (moves.length > 0) void storeBulkMove(scope, moves);
+      if (moves.length > 0) void storeBulkMove(drag.scope, scope, moves);
     },
     [scope, storeMove, storeMoveDir, storeBulkMove, clearSelection],
   );

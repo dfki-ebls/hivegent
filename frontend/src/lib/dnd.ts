@@ -35,8 +35,9 @@ export type TreeDropState = "none" | "active" | "blocked";
 
 /**
  * Row background/ring for each drop state: an accepted drag (a valid move or a
- * file upload) invites the drop, a blocked one (cross-workspace or no-op)
- * refuses it. Shared by the tree rows and the scope-root header target.
+ * file upload) invites the drop, a blocked one (a no-op or a directory dropped
+ * into itself) refuses it. Shared by the tree rows and the scope-root header
+ * target.
  */
 export const DROP_CLASSES: Record<TreeDropState, string> = {
   none: "",
@@ -49,11 +50,13 @@ const parentDir = (path: string): string =>
 
 /**
  * Whether moving `drag` into `destDir` (a local dir, `""` for the scope root)
- * would actually change anything: same workspace only, never a directory into
- * itself or a descendant, and never a no-op onto a row's current parent.
+ * would actually change anything. A move into a different workspace always
+ * re-homes the entry, so it is always valid (both ends are write-gated in the
+ * UI and re-checked by the backend); the no-op and into-itself guards only
+ * apply when the source and destination share a scope.
  */
 export function isValidMove(drag: TreeItemDrag, destScope: string, destDir: string): boolean {
-  if (drag.scope !== destScope) return false;
+  if (drag.scope !== destScope) return true;
 
   if (drag.kind === "directory") {
     const src = drag.paths[0];
@@ -88,9 +91,9 @@ interface TreeRowConfig {
 
 /**
  * Wire one tree row (or the scope-root target) as a drag source and/or drop
- * target, returning a combined teardown. A cross-workspace or no-op element
- * drag is still accepted so the row can flash a "blocked" cue, but its drop
- * no-ops — only a valid move runs `onMove`.
+ * target, returning a combined teardown. A no-op element drag (or a directory
+ * dropped into itself) is still accepted so the row can flash a "blocked" cue,
+ * but its drop no-ops — only a valid move runs `onMove`.
  */
 export function registerTreeRow({
   element,

@@ -28,7 +28,7 @@ from ..entries import (
 from ..store import Casebase
 from ..types import MoveDocumentResponse, PipelineSpec
 from .commit import _delete_single_locked
-from .locks import _locked_for
+from .locks import _locked_for, _locked_for_move
 from .paths import (
     _check_destination_parents,
     _check_not_assets_path,
@@ -231,16 +231,26 @@ async def delete_document(store: Casebase, safe: str) -> None:
 
 
 async def _move_document_locked(
-    store: Casebase, src: str, dst: str
+    src_store: Casebase, dst_store: Casebase, src: str, dst: str
 ) -> MoveDocumentResponse:
-    """Move a logical entry's files and SQL rows. Caller holds the lock."""
-    workspace_dir = store.workspace_dir(settings.data_dir)
+    """Move a logical entry's files and SQL rows. Caller holds the lock(s).
 
-    metadata = await db_documents.get_document(store, src)
-    if not metadata or not (workspace_dir / metadata.description_path).exists():
+    Source paths resolve under *src_store*'s workspace and destination paths
+    under *dst_store*'s, so the same machinery relocates an entry within one
+    workspace or migrates it to another (personal ↔ group, group ↔ group).
+    """
+    src_workspace = src_store.workspace_dir(settings.data_dir)
+    # Non-creating: the rename step below makes the destination tree where the
+    # files actually land, so validation never needs the directory to exist and
+    # a rejected move leaves no empty workspace behind.
+    dst_workspace = dst_store.workspace_path(settings.data_dir)
+    cross_store = src_store != dst_store
+
+    metadata = await db_documents.get_document(src_store, src)
+    if not metadata or not (src_workspace / metadata.description_path).exists():
         raise HTTPException(status_code=404, detail="Document not found")
     src_stem = metadata.stem_path
-    src_description_full = workspace_dir / metadata.description_path
+    src_description_full = src_workspace / metadata.description_path
 
     # Move-into resolution appends the description *filename* (a reference),
     # never the bare stem name: ``stem_path_from_reference`` strips the last
@@ -248,14 +258,16 @@ async def _move_document_locked(
     # would collapse to ``report``.
     dst_stem = stem_path_from_reference(
         _resolve_move_destination(
-            workspace_dir,
+            dst_workspace,
             PurePosixPath(metadata.description_path).name,
             dst,
             src_description_full,
         )
     )
     _check_not_assets_path(dst_stem)
-    if dst_stem == src_stem:
+    # Same stem in the same store is a no-op; across stores it is a genuine
+    # re-home of the entry, so only reject the in-place case.
+    if not cross_store and dst_stem == src_stem:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -270,54 +282,56 @@ async def _move_document_locked(
     # the filesystem: a conflict discovered halfway through the renames would
     # tear the entry into two half-moved halves.
     renames: list[tuple[str, str]] = [(metadata.description_path, dst_description)]
-    if metadata.original_path and (workspace_dir / metadata.original_path).exists():
+    if metadata.original_path and (src_workspace / metadata.original_path).exists():
         suffix = PurePosixPath(metadata.original_path).suffix
         renames.append((metadata.original_path, f"{dst_stem}{suffix}"))
     has_assets = (
         metadata.assets_dir is not None
-        and (workspace_dir / metadata.assets_dir).exists()
+        and (src_workspace / metadata.assets_dir).exists()
     )
     if metadata.assets_dir is not None and has_assets:
         renames.append((metadata.assets_dir, assets_dir_for_stem(dst_stem)))
 
-    _check_destination_parents(workspace_dir, dst_stem)
+    _check_destination_parents(dst_workspace, dst_stem)
     # A destination occupied by the entry itself is a case-only rename on a
-    # case-insensitive filesystem, which a plain rename handles fine.
-    same_entry = _is_same_file(workspace_dir / dst_description, src_description_full)
+    # case-insensitive filesystem, which a plain rename handles fine.  A
+    # cross-store destination lives in a different tree and never aliases the
+    # source, so this is only ever true for an in-place rename.
+    same_entry = _is_same_file(dst_workspace / dst_description, src_description_full)
     # entry_exists takes a reference, so hand it the description path: a raw
     # dotted stem would be re-stemmed and the wrong entry checked.
-    if not same_entry and entry_exists(workspace_dir, dst_description):
+    if not same_entry and entry_exists(dst_workspace, dst_description):
         raise HTTPException(status_code=409, detail="Destination already exists")
     for source, target in renames:
-        if _is_blocked_by_other(workspace_dir / target, workspace_dir / source):
+        if _is_blocked_by_other(dst_workspace / target, src_workspace / source):
             raise HTTPException(
                 status_code=409, detail=f"Destination already exists: {target}"
             )
 
     for source, target in renames:
-        target_path = workspace_dir / target
+        target_path = dst_workspace / target
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        (workspace_dir / source).rename(target_path)
+        (src_workspace / source).rename(target_path)
 
     src_name = PurePosixPath(src_stem).name
     dst_name = PurePosixPath(dst_stem).name
     if has_assets and src_name != dst_name:
         # The markdown references its assets as ``<stem>.assets/...``; rewrite
         # those references when the stem's basename changed.
-        description_full = workspace_dir / dst_description
+        description_full = dst_workspace / dst_description
         body = description_full.read_text(encoding="utf-8")
         body = body.replace(f"{src_name}.assets/", f"{dst_name}.assets/")
         description_full.write_text(body, encoding="utf-8")
 
     # Move exactly this entry's row; a same-named sibling directory's rows
     # (stems below ``src_stem/``) belong to other documents and stay put.
-    await db_documents.move_document(store, src_stem, dst_stem)
+    await db_documents.move_document(src_store, src_stem, dst_store, dst_stem)
     # The described/extracted asset children live under the ``.assets`` sibling
     # of ``src_stem`` — move their rows too so nothing stays searchable at a
     # path that no longer exists.
     if metadata.assets_dir:
         await db_documents.move_subtree(
-            store, metadata.assets_dir, assets_dir_for_stem(dst_stem)
+            src_store, metadata.assets_dir, dst_store, assets_dir_for_stem(dst_stem)
         )
 
     return MoveDocumentResponse(
@@ -327,12 +341,18 @@ async def _move_document_locked(
     )
 
 
-async def move_document(store: Casebase, src: str, dst: str) -> MoveDocumentResponse:
+async def move_document(
+    src_store: Casebase, dst_store: Casebase, src: str, dst: str
+) -> MoveDocumentResponse:
     """Move a logical entry, its original, and its child-assets subtree.
 
-    The FS renames + SQL move run to completion under the lock even on a cancel
-    (:func:`shield_to_completion`) so a mid-move cancellation cannot leave the
-    renamed files pointing at stale SQL rows.
+    *src_store* and *dst_store* may be the same casebase (a rename within one
+    workspace) or two different ones (migrating between the personal and a
+    shared workspace).  The FS renames + SQL move run to completion under the
+    lock(s) even on a cancel (:func:`shield_to_completion`) so a mid-move
+    cancellation cannot leave the renamed files pointing at stale SQL rows.
     """
-    async with _locked_for(store, src):
-        return await shield_to_completion(_move_document_locked(store, src, dst))
+    async with _locked_for_move(src_store, dst_store, entry=src):
+        return await shield_to_completion(
+            _move_document_locked(src_store, dst_store, src, dst)
+        )

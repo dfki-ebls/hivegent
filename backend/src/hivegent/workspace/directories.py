@@ -18,7 +18,7 @@ from ..config import settings
 from ..db import documents as db_documents
 from ..store import Casebase
 from ..types import MoveDirectoryResponse
-from .locks import _locked_for, store_lock
+from .locks import _locked_for, _locked_for_move, store_lock
 from .paths import (
     _check_destination_parents,
     _check_not_assets_path,
@@ -52,38 +52,50 @@ async def create_directory(store: Casebase, path: str) -> None:
 
 
 async def _move_directory_locked(
-    store: Casebase, src: str, dst: str
+    src_store: Casebase, dst_store: Casebase, src: str, dst: str
 ) -> MoveDirectoryResponse:
-    """Move a directory's files and SQL rows. Caller holds the lock."""
-    workspace_dir = store.workspace_dir(settings.data_dir)
+    """Move a directory's files and SQL rows. Caller holds the lock(s).
+
+    Source paths resolve under *src_store*'s workspace and destination paths
+    under *dst_store*'s, so this renames a subtree within one workspace or
+    migrates it to another (personal ↔ group, group ↔ group).
+    """
+    src_workspace = src_store.workspace_dir(settings.data_dir)
+    # Non-creating: the rename step below makes the destination tree, so
+    # validation never needs the directory to exist and a rejected move leaves
+    # no empty workspace behind.
+    dst_workspace = dst_store.workspace_path(settings.data_dir)
+    cross_store = src_store != dst_store
 
     if not src:
         raise HTTPException(status_code=400, detail="Directory path required")
     _check_not_assets_path(src)
-    src_dir = workspace_dir / src
+    src_dir = src_workspace / src
     if not src_dir.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
 
     dst = _resolve_move_destination(
-        workspace_dir, PurePosixPath(src).name, dst, src_dir
+        dst_workspace, PurePosixPath(src).name, dst, src_dir
     )
     _check_not_assets_path(dst)
-    if dst == src:
+    if not cross_store and dst == src:
         raise HTTPException(
             status_code=400, detail="Source and destination are the same"
         )
-    dst_dir = workspace_dir / dst
+    dst_dir = dst_workspace / dst
     # Reject moving a directory beneath itself.  Inode comparison against the
     # destination's existing ancestors also catches case-aliased spellings on
-    # a case-insensitive filesystem, where a string prefix check would not.
+    # a case-insensitive filesystem, where a string prefix check would not.  A
+    # cross-store destination is a different tree, so no ancestor can alias the
+    # source and the loop is a no-op there.
     for ancestor in dst_dir.parents:
-        if ancestor == workspace_dir:
+        if ancestor == dst_workspace:
             break
         if _is_same_file(ancestor, src_dir):
             raise HTTPException(
                 status_code=400, detail="Cannot move a directory into itself"
             )
-    _check_destination_parents(workspace_dir, dst)
+    _check_destination_parents(dst_workspace, dst)
     if _is_blocked_by_other(dst_dir, src_dir):
         raise HTTPException(status_code=409, detail="Destination already exists")
 
@@ -93,7 +105,7 @@ async def _move_directory_locked(
 
     # Children-only: a same-named sibling document (stem equal to ``src``)
     # lives outside the directory and keeps its row.
-    await db_documents.move_subtree(store, src, dst)
+    await db_documents.move_subtree(src_store, src, dst_store, dst)
 
     return MoveDirectoryResponse(
         source=src,
@@ -126,15 +138,21 @@ async def prune_empty_dirs(store: Casebase, sources: Iterable[str]) -> None:
                 continue
 
 
-async def move_directory(store: Casebase, src: str, dst: str) -> MoveDirectoryResponse:
+async def move_directory(
+    src_store: Casebase, dst_store: Casebase, src: str, dst: str
+) -> MoveDirectoryResponse:
     """Move or rename a workspace directory; document rows follow via SQL.
 
-    The FS move + SQL move run to completion under the lock even on a cancel
-    (:func:`shield_to_completion`) so the directory and its rows cannot drift
-    apart.
+    *src_store* and *dst_store* may be the same casebase (a rename within one
+    workspace) or two different ones (migrating a folder between the personal
+    and a shared workspace).  The FS move + SQL move run to completion under the
+    lock(s) even on a cancel (:func:`shield_to_completion`) so the directory and
+    its rows cannot drift apart.
     """
-    async with _locked_for(store, scope=src):
-        return await shield_to_completion(_move_directory_locked(store, src, dst))
+    async with _locked_for_move(src_store, dst_store, scope=src):
+        return await shield_to_completion(
+            _move_directory_locked(src_store, dst_store, src, dst)
+        )
 
 
 async def _delete_directory_locked(store: Casebase, path: str) -> int:

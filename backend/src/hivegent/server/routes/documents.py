@@ -50,6 +50,7 @@ from ...types import (
 from ..common import (
     parse_pipeline_spec,
     prepare_llm_config,
+    resolve_move,
     resolve_workspace_path,
 )
 from ..models import (
@@ -411,15 +412,10 @@ async def bulk_move(
     moved: dict[str, tuple[Casebase, list[str]]] = {}
 
     async def _move_one(filepath: str) -> None:
-        src_store, src = resolve_workspace_path(user, filepath, write=True)
-        dst_store, dst = resolve_workspace_path(
-            user, destinations[filepath], write=True
+        src_store, src, dst_store, dst = resolve_move(
+            user, filepath, destinations[filepath]
         )
-        if src_store.store_key != dst_store.store_key:
-            raise HTTPException(
-                status_code=400, detail="Cannot move a document across workspaces"
-            )
-        await workspace.move_document(src_store, src, dst)
+        await workspace.move_document(src_store, dst_store, src, dst)
         moved.setdefault(src_store.store_key, (src_store, []))[1].append(src)
 
     scope = _bulk_scope(user, sources)
@@ -552,14 +548,15 @@ async def move_document(
     request: MoveDocumentRequest,
     user: Annotated[User, Depends(get_current_user)],
 ) -> MoveDocumentResponse:
-    """Move a document to a new location within the same workspace."""
-    src_store, src = resolve_workspace_path(user, filepath, write=True)
-    dst_store, dst = resolve_workspace_path(user, request.destination, write=True)
-    if src_store.store_key != dst_store.store_key:
-        raise HTTPException(
-            status_code=400, detail="Cannot move a document across workspaces"
-        )
-    return await workspace.move_document(src_store, src, dst)
+    """Move a document within a workspace or migrate it to another.
+
+    ``filepath`` and ``destination`` are canonical paths; resolving both with
+    ``write=True`` requires write access to each end, so a cross-workspace move
+    is allowed exactly when the caller may write both the source and the
+    destination.
+    """
+    src_store, src, dst_store, dst = resolve_move(user, filepath, request.destination)
+    return await workspace.move_document(src_store, dst_store, src, dst)
 
 
 @router.get("/documents/assets/{filepath:path}")

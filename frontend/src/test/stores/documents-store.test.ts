@@ -86,3 +86,20 @@ describe("useDocumentsStore refresh", () => {
     expect(state.documents.map((d) => d.filename)).toEqual(["new.md"]);
   });
 });
+
+describe("useDocumentsStore move", () => {
+  beforeEach(() => {
+    useDocumentsStore.setState({ byScope: {} });
+    vi.clearAllMocks();
+  });
+
+  it("refreshes both the source and destination scope on a cross-workspace move", async () => {
+    vi.mocked(getDirectories).mockResolvedValue(treeWith("notes.md"));
+
+    await useDocumentsStore.getState().move("~", "notes.md", "@team", "notes.md");
+
+    const scopes = vi.mocked(getDirectories).mock.calls.map((call) => call[0]);
+    expect(scopes).toContain("~");
+    expect(scopes).toContain("@team");
+  });
+});

@@ -9,7 +9,7 @@ by lock-free inventory reads to hide half-written entries.
 import asyncio
 import threading
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 
 from fastapi import HTTPException
@@ -170,5 +170,38 @@ async def _locked_for(
             _reject_if_scope_inflight(store, None)
         elif scope is not None:
             _reject_if_scope_inflight(store, scope)
+
+        yield
+
+
+@asynccontextmanager
+async def _locked_for_move(
+    src_store: Casebase,
+    dst_store: Casebase,
+    *,
+    entry: str | None = None,
+    scope: str | None = None,
+) -> AsyncIterator[None]:
+    """Acquire the lock(s) for a move that may span two casebases.
+
+    A same-store move takes the single store lock, exactly like
+    :func:`_locked_for`.  A cross-store move takes both store locks in a stable
+    ``store_key`` order, so two moves in opposite directions can never deadlock.
+    In-flight conflicts are rejected on the *source* store — parity with the
+    same-store path, which only guards the source entry or scope — while holding
+    the destination lock serialises the move against concurrent destination
+    mutations.
+    """
+    ordered = sorted(
+        {s.store_key: s for s in (src_store, dst_store)}.values(),
+        key=lambda s: s.store_key,
+    )
+    async with AsyncExitStack() as stack:
+        for store in ordered:
+            await stack.enter_async_context(store_lock(store))
+        if entry is not None:
+            _reject_if_inflight(src_store, entry)
+        if scope is not None:
+            _reject_if_scope_inflight(src_store, scope)
 
         yield

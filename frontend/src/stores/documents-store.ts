@@ -57,11 +57,24 @@ interface DocumentsStore {
     llm?: LlmConfig,
   ) => Promise<void>;
   bulkDelete: (scope: string, files: string[]) => Promise<void>;
-  bulkMove: (scope: string, moves: BulkMoveEntry[]) => Promise<void>;
-  move: (scope: string, filepath: string, destination: string) => Promise<void>;
+  // A move may cross workspaces, so source and destination scopes are distinct
+  // (they coincide for an in-workspace move). Local paths are relative to their
+  // own scope; both scopes refresh once the move settles.
+  bulkMove: (srcScope: string, destScope: string, moves: BulkMoveEntry[]) => Promise<void>;
+  move: (
+    srcScope: string,
+    filepath: string,
+    destScope: string,
+    destination: string,
+  ) => Promise<void>;
   createDir: (scope: string, path: string) => Promise<void>;
   deleteDir: (scope: string, path: string) => Promise<void>;
-  moveDir: (scope: string, source: string, destination: string) => Promise<void>;
+  moveDir: (
+    srcScope: string,
+    source: string,
+    destScope: string,
+    destination: string,
+  ) => Promise<void>;
   clearError: (scope: string) => void;
 }
 
@@ -89,12 +102,18 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
     patch(scope, { documents: treeDocuments(directoryTree.root), directoryTree, hasFetched: true });
   };
 
-  /** Run a single-path mutation with shared mutating-path tracking and refresh. */
+  /** Run a single-path mutation with shared mutating-path tracking and refresh.
+   *
+   * The mutating spinner and any error live on the source scope (where `path`
+   * is shown). `alsoRefresh` names a second scope to reload on completion — the
+   * destination of a cross-workspace move, which gains the entry the source
+   * loses. */
   const withMutating = async (
     scope: string,
     path: string,
     errorMsg: string,
     operation: () => Promise<unknown>,
+    alsoRefresh?: string,
   ): Promise<void> => {
     patch(scope, (s) => ({ mutatingPaths: new Set(s.mutatingPaths).add(path), error: null }));
     try {
@@ -105,6 +124,9 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
       // Refresh even after a failure so a stale view (e.g. an entry the
       // backend no longer knows about) converges with the server state.
       await silentRefresh(scope).catch(() => {});
+      if (alsoRefresh && alsoRefresh !== scope) {
+        await silentRefresh(alsoRefresh).catch(() => {});
+      }
       patch(scope, (s) => {
         const next = new Set(s.mutatingPaths);
         next.delete(path);
@@ -114,16 +136,27 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
   };
 
   // Submit a background job: the tray shows its progress and the job-settle
-  // handler refreshes the scope, so the store only has to record the new job
-  // (or surface a submit failure). Shared by the bulk operations.
+  // handler refreshes the job's scope, so the store only has to record the new
+  // job (or surface a submit failure). Shared by the bulk operations.
+  //
+  // `alsoRefresh` names a second scope to reload once the job settles — the
+  // destination of a cross-workspace bulk move, which the job's own scope (the
+  // source) does not cover.
   const submitJob = async (
     scope: string,
     errorMsg: string,
     submit: () => Promise<JobView>,
+    alsoRefresh?: string,
   ): Promise<void> => {
     patch(scope, { error: null });
     try {
-      useJobsStore.getState().upsert(await submit());
+      const job = await submit();
+      useJobsStore.getState().upsert(job);
+      if (alsoRefresh && alsoRefresh !== scope) {
+        void awaitJobSettled(job.id).then(() => {
+          void useDocumentsStore.getState().refresh(alsoRefresh);
+        });
+      }
     } catch (err) {
       patch(scope, { error: err instanceof Error ? err.message : errorMsg });
     }
@@ -199,19 +232,28 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
         apiBulkDelete(files.map((f) => canonicalPath(scope, f))),
       ),
 
-    bulkMove: (scope, moves) =>
-      submitJob(scope, "Bulk move failed", () =>
-        apiBulkMove(
-          moves.map(({ source, destination }) => ({
-            source: canonicalPath(scope, source),
-            destination: canonicalPath(scope, destination),
-          })),
-        ),
+    bulkMove: (srcScope, destScope, moves) =>
+      submitJob(
+        srcScope,
+        "Bulk move failed",
+        () =>
+          apiBulkMove(
+            moves.map(({ source, destination }) => ({
+              source: canonicalPath(srcScope, source),
+              destination: canonicalPath(destScope, destination),
+            })),
+          ),
+        destScope,
       ),
 
-    move: (scope, filepath, destination) =>
-      withMutating(scope, filepath, "Move failed", () =>
-        moveDocument(canonicalPath(scope, filepath), canonicalPath(scope, destination)),
+    move: (srcScope, filepath, destScope, destination) =>
+      withMutating(
+        srcScope,
+        filepath,
+        "Move failed",
+        () =>
+          moveDocument(canonicalPath(srcScope, filepath), canonicalPath(destScope, destination)),
+        destScope,
       ),
 
     createDir: (scope, path) =>
@@ -224,9 +266,14 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
         deleteDirectory(canonicalPath(scope, path)),
       ),
 
-    moveDir: (scope, source, destination) =>
-      withMutating(scope, source, "Failed to move directory", () =>
-        moveDirectory(canonicalPath(scope, source), canonicalPath(scope, destination)),
+    moveDir: (srcScope, source, destScope, destination) =>
+      withMutating(
+        srcScope,
+        source,
+        "Failed to move directory",
+        () =>
+          moveDirectory(canonicalPath(srcScope, source), canonicalPath(destScope, destination)),
+        destScope,
       ),
 
     clearError: (scope) => patch(scope, { error: null }),

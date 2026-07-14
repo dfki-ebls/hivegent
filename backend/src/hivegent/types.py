@@ -55,8 +55,6 @@ __all__ = [
     "FailedFile",
     "GenerateTitleRequest",
     "GenerateTitleResponse",
-    "GroupInfo",
-    "GroupListResponse",
     "LlmConfig",
     "McpOAuth2Config",
     "McpServerConfig",
@@ -841,19 +839,6 @@ class UploadCompleteEvent(UploadDocumentResponse):
     """Completion payload for upload, reconvert, and replace operations."""
 
     type: Literal["complete"] = "complete"
-
-
-class GroupInfo(BaseModel):
-    """Summary information about a casebase group."""
-
-    slug: str = Field(description="The group identifier")
-    document_count: int = Field(description="Number of documents in the group")
-
-
-class GroupListResponse(BaseModel):
-    """Response for listing casebase groups."""
-
-    groups: list[GroupInfo] = Field(description="List of group summaries")
 
 
 class McpTestResponse(BaseModel):

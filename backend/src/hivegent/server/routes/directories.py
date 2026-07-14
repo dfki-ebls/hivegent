@@ -8,7 +8,7 @@ for a group. The tree endpoint takes the bare scope segment (``~`` or
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from ... import workspace
 from ...auth import User, get_current_user
@@ -21,7 +21,7 @@ from ...types import (
     MoveDirectoryRequest,
     MoveDirectoryResponse,
 )
-from ..common import resolve_workspace_path
+from ..common import resolve_move, resolve_workspace_path
 from ..operations import build_tree_response
 
 __all__ = ["router"]
@@ -58,14 +58,16 @@ async def move_directory(
     request: MoveDirectoryRequest,
     user: Annotated[User, Depends(get_current_user)],
 ) -> MoveDirectoryResponse:
-    """Move/rename a directory within the same workspace."""
-    src_store, safe_src = resolve_workspace_path(user, request.source, write=True)
-    dst_store, safe_dst = resolve_workspace_path(user, request.destination, write=True)
-    if src_store.store_key != dst_store.store_key:
-        raise HTTPException(
-            status_code=400, detail="Cannot move a directory across workspaces"
-        )
-    return await workspace.move_directory(src_store, safe_src, safe_dst)
+    """Move/rename a directory within a workspace or migrate it to another.
+
+    Resolving both ends with ``write=True`` requires write access to each, so a
+    cross-workspace directory move is allowed exactly when the caller may write
+    both the source and the destination.
+    """
+    src_store, safe_src, dst_store, safe_dst = resolve_move(
+        user, request.source, request.destination
+    )
+    return await workspace.move_directory(src_store, dst_store, safe_src, safe_dst)
 
 
 @router.delete("/directories")
