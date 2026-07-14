@@ -57,8 +57,10 @@ logger = logging.getLogger(__name__)
 CONTEXT_LENGTH_EXCEEDED = "context_length_exceeded"
 
 # Vercel AI data-stream protocol version the frontend speaks; request parsing
-# and response dumping must agree on it.
-SDK_VERSION = 6
+# and response dumping must agree on it. The frontend runs AI SDK v7 (`ai@7`,
+# `@ai-sdk/react@4`), whose wire equals v6's, so this only reflects the client's
+# real SDK major and reserves the value for future v7-only chunks.
+SDK_VERSION = 7
 
 # Transient data-part type carrying live subagent transcript snapshots; the
 # frontend consumes these via `useChat({ onData })` (see `lib/chat/subagent.ts`).
