@@ -387,7 +387,12 @@ async def process_collection(
                         (extract_root / p.relative_path).read_bytes
                     )
                 await upload(
-                    store, p.safe, content_bytes, spec=spec, llm=llm, origin="collection"
+                    store,
+                    p.safe,
+                    content_bytes,
+                    spec=spec,
+                    llm=llm,
+                    origin="collection",
                 )
             except Exception as exc:
                 return p, exc
@@ -414,7 +419,9 @@ async def process_collection(
         # active they convert in parallel; otherwise the win is overlapping one
         # file's embed/IO tail with the next file's conversion.
         limit = settings.jobs.collection_concurrency
-        async for p, error in bounded_as_completed(primaries, _run_primary, limit=limit):
+        async for p, error in bounded_as_completed(
+            primaries, _run_primary, limit=limit
+        ):
             if error is None:
                 committed_stems.add(p.stem)
                 # Count only on success, so the totals never overstate the import.

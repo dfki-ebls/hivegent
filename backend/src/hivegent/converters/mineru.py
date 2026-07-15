@@ -32,9 +32,7 @@ def _apply_compute_env(device: str) -> None:
     (``MINERU_VIRTUAL_VRAM_SIZE``) rather than a page count, so
     ``compute.batch_size`` does not map.
     """
-    os.environ["MINERU_INTRA_OP_NUM_THREADS"] = str(
-        settings.compute.threads_per_worker
-    )
+    os.environ["MINERU_INTRA_OP_NUM_THREADS"] = str(settings.compute.threads_per_worker)
 
     if device != "auto":
         os.environ["MINERU_DEVICE_MODE"] = device

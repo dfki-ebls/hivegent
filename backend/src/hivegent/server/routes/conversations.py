@@ -309,9 +309,7 @@ async def export_conversation_route(
 
     result = await load_active_for_display(user.id, conversation_id)
     messages = dump_messages_with_ids(result[0], siblings=result[1]) if result else []
-    export = ConversationExport(
-        id=summary.id, title=summary.title, messages=messages
-    )
+    export = ConversationExport(id=summary.id, title=summary.title, messages=messages)
     return Response(
         content=export.model_dump_json(indent=2),
         media_type="application/json",

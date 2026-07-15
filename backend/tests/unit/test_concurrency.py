@@ -67,9 +67,7 @@ async def test_bounded_as_completed_yields_all_within_limit() -> None:
         in_flight -= 1
         return item * 2
 
-    results = [
-        r async for r in bounded_as_completed(range(10), run, limit=3)
-    ]
+    results = [r async for r in bounded_as_completed(range(10), run, limit=3)]
 
     assert sorted(results) == [i * 2 for i in range(10)]
     assert peak <= 3

@@ -271,8 +271,7 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
         srcScope,
         source,
         "Failed to move directory",
-        () =>
-          moveDirectory(canonicalPath(srcScope, source), canonicalPath(destScope, destination)),
+        () => moveDirectory(canonicalPath(srcScope, source), canonicalPath(destScope, destination)),
         destScope,
       ),
 

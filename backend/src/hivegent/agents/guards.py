@@ -104,7 +104,11 @@ class ToolOutputLimit(AbstractCapability[UserDeps]):
 
         truncated = _truncate_middle(text, self.max_chars)
 
-        return truncated if isinstance(result, str) else replace(result, return_value=truncated)
+        return (
+            truncated
+            if isinstance(result, str)
+            else replace(result, return_value=truncated)
+        )
 
 
 @dataclass(slots=True)

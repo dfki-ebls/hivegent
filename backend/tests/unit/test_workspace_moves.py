@@ -123,7 +123,9 @@ class TestMoveDocument:
         (workspace_dir / "notes/inner.md").write_text("inner")
         repo.docs["notes"] = _doc("notes", original_suffix=".pdf")
 
-        resp = await workspace.move_document(user_store, user_store, "notes.md", "archive/notes.md")
+        resp = await workspace.move_document(
+            user_store, user_store, "notes.md", "archive/notes.md"
+        )
 
         assert resp.destination == "archive/notes.md"
         assert (workspace_dir / "archive/notes.md").is_file()
@@ -141,7 +143,9 @@ class TestMoveDocument:
         (workspace_dir / "archive").mkdir()
         repo.docs["report"] = _doc("report", original_suffix=".pdf")
 
-        resp = await workspace.move_document(user_store, user_store, "report.md", "archive")
+        resp = await workspace.move_document(
+            user_store, user_store, "report.md", "archive"
+        )
 
         assert resp.destination == "archive/report.md"
         assert (workspace_dir / "archive/report.pdf").is_file()
@@ -156,7 +160,9 @@ class TestMoveDocument:
         repo.docs["data"] = _doc("data", original_suffix="")
 
         with pytest.raises(HTTPException) as exc:
-            await workspace.move_document(user_store, user_store, "data.md", "blocked/data.md")
+            await workspace.move_document(
+                user_store, user_store, "data.md", "blocked/data.md"
+            )
 
         assert exc.value.status_code == 409
         assert (workspace_dir / "data.md").is_file()
@@ -172,7 +178,9 @@ class TestMoveDocument:
         (workspace_dir / "a.tar.gz").write_bytes(b"x")
         repo.docs["a.tar"] = _doc("a.tar", original_suffix=".gz")
 
-        resp = await workspace.move_document(user_store, user_store, "a.tar.md", "dir/a.tar.md")
+        resp = await workspace.move_document(
+            user_store, user_store, "a.tar.md", "dir/a.tar.md"
+        )
 
         assert resp.destination == "dir/a.tar.md"
         assert (workspace_dir / "dir/a.tar.gz").is_file()
@@ -187,7 +195,9 @@ class TestMoveDirectory:
         (workspace_dir / "images/x.md").write_text("x")
         (workspace_dir / "archive").mkdir()
 
-        resp = await workspace.move_directory(user_store, user_store, "images", "archive")
+        resp = await workspace.move_directory(
+            user_store, user_store, "images", "archive"
+        )
 
         assert resp.destination == "archive/images"
         assert (workspace_dir / "archive/images/x.md").is_file()
@@ -199,7 +209,9 @@ class TestMoveDirectory:
         (workspace_dir / "images").mkdir()
 
         with pytest.raises(HTTPException) as exc:
-            await workspace.move_directory(user_store, user_store, "images", "images/sub")
+            await workspace.move_directory(
+                user_store, user_store, "images", "images/sub"
+            )
 
         assert exc.value.status_code == 400
         assert (workspace_dir / "images").is_dir()
@@ -243,9 +255,7 @@ class TestCrossStoreMove:
         assert not (workspace_dir / "report.md").exists()
         assert not (workspace_dir / "report.pdf").exists()
         # Same basename → the asset references are untouched.
-        assert (
-            group_dir / "report.md"
-        ).read_text() == "[a](report.assets/a.png)"
+        assert (group_dir / "report.md").read_text() == "[a](report.assets/a.png)"
         assert repo.store_moves == [
             ("move_document", "user:testuser", "group:team"),
             ("move_subtree", "user:testuser", "group:team"),
@@ -293,9 +303,7 @@ class TestCrossStoreMove:
         assert resp.files_moved == 1
         assert (group_dir / "shared/x.md").is_file()
         assert not (workspace_dir / "shared").exists()
-        assert repo.store_moves == [
-            ("move_subtree", "user:testuser", "group:team")
-        ]
+        assert repo.store_moves == [("move_subtree", "user:testuser", "group:team")]
 
 
 class TestPruneEmptyDirs:
@@ -351,7 +359,9 @@ class TestNativeSemanticGuards:
         with pytest.raises(HTTPException) as create_exc:
             await workspace.create_directory(user_store, "x.assets")
         with pytest.raises(HTTPException) as move_exc:
-            await workspace.move_directory(user_store, user_store, "report.assets", "elsewhere")
+            await workspace.move_directory(
+                user_store, user_store, "report.assets", "elsewhere"
+            )
 
         assert create_exc.value.status_code == 400
         assert move_exc.value.status_code == 400
