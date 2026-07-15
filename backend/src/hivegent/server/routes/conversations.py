@@ -31,7 +31,7 @@ from ...agents.subagent_events import SubagentUpdate
 from ...auth import User, get_current_user
 from ...compaction import CompactionResult, compact_conversation
 from ...config import settings
-from ...converters.base import BinaryContentMode
+from ...multimodal import BinaryContentMode
 from ...converters.pdf_raster import DEFAULT_MAX_PAGES, render_pdf_pages
 from ...converters.video import FRAME_MAX_DIMENSION
 from ...llm import model_from_config, resolve_thinking, thinking_model_settings

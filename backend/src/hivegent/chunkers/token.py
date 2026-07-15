@@ -1,6 +1,5 @@
 """Token-based document chunker using chonkie."""
 
-import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -51,16 +50,6 @@ class TokenDocumentChunker(DocumentChunker):
     description = "Fixed token-count chunks for uniform processing"
     config: TokenChunkerConfig = field(default_factory=TokenChunkerConfig)
 
-    def _chunk(self, text: str) -> list[ChunkData]:
+    def _split_sync(self, text: str) -> list[ChunkData]:
         chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
-
-    async def _split(
-        self,
-        text: str,
-        /,
-        *,
-        mime: str | None = None,
-    ) -> list[ChunkData]:
-        """Split text into fixed token-count chunks."""
-        return await asyncio.to_thread(self._chunk, text)

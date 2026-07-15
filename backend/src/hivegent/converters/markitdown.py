@@ -1,6 +1,5 @@
 """MarkItDown-based document converter."""
 
-import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -72,6 +71,3 @@ class MarkItDownConverter(DocumentConverter):
     def _convert_sync(self, path: Path) -> ConversionResult:
         result = _build_converter().convert(str(path))
         return ConversionResult(markdown=str(result.text_content))
-
-    async def _convert(self, path: Path, /) -> ConversionResult:
-        return await asyncio.to_thread(self._convert_sync, path)

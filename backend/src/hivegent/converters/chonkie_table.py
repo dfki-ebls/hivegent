@@ -1,6 +1,5 @@
 """Table document converter using chonkie's TableChef."""
 
-import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -31,6 +30,6 @@ class ChonkieTableConverter(DocumentConverter):
     description: ClassVar[str] = "CSV/Excel to markdown tables via pandas"
     extensions: ClassVar[frozenset[str]] = frozenset({".csv", ".xls", ".xlsx"})
 
-    async def _convert(self, path: Path, /) -> ConversionResult:
-        doc = await asyncio.to_thread(_build_chef().process, path)
+    def _convert_sync(self, path: Path, /) -> ConversionResult:
+        doc = _build_chef().process(path)
         return ConversionResult(markdown=doc.content)

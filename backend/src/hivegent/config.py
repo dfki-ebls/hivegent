@@ -14,7 +14,7 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
-from .converters.base import DOCUMENT_EXTENSION, BinaryContentMode
+from .multimodal import BinaryContentMode
 from .security import UrlPolicy
 
 CONFIG_FILE_ENV_VAR = "HIVEGENT_CONFIG_FILE"
@@ -27,7 +27,6 @@ ADMIN_ROLE = "admin"
 
 __all__ = [
     "ADMIN_ROLE",
-    "DOCUMENT_EXTENSION",
     "AuthSettings",
     "ClaimSettings",
     "DatabaseSettings",
@@ -566,10 +565,44 @@ class ComputeSettings(BaseModel):
     the neural stages run on whatever device the environment exposes.
     ``batch_size`` is the page batch fed to the layout/table/OCR models;
     larger batches raise GPU utilization at the cost of VRAM.
+
+    ``worker_processes`` scales the CPU/model-bound stages (conversion and
+    chunking) across cores the way docling recommends: a value >= 2 activates a
+    persistent worker-process pool (see :mod:`hivegent.workers.pool`) so several
+    documents convert and chunk truly in parallel, each worker holding its own
+    models.  This is a steady *pool size*, distinct from the single-use
+    isolation workers capped by :attr:`IsolationSettings.max_workers` (which
+    supervise crash-prone pdfium calls with a hard timeout); the two process
+    budgets are independent and add up.  Two costs come with it.  Memory scales
+    with the count, since models are not shared across processes.  And
+    ``num_threads`` is the *total* CPU thread budget: the :attr:`threads_per_worker`
+    property splits it across the pool so the processes never oversubscribe the
+    cores, so keep ``worker_processes`` near the core count with ``num_threads``
+    at or above it — e.g. 4 workers with ``num_threads`` 8 gives 2 threads each
+    on an 8-core box.  The default 1 keeps every stage in-process (a single
+    lock-guarded thread), spawning nothing, so it is the right value on one core
+    and in tests.
     """
 
     num_threads: int = 8
     batch_size: int = 8
+    worker_processes: int = 1
+
+    @property
+    def threads_per_worker(self) -> int:
+        """Intra-op thread budget for one CPU/model-bound stage execution.
+
+        ``num_threads`` is the *total* budget; this splits it evenly across the
+        pool's ``worker_processes`` (floored at 1) so several converters or
+        chunkers running in parallel never oversubscribe the cores.  With the
+        pool off (``worker_processes`` 1) it is simply ``num_threads`` — the
+        single in-process stage gets the whole budget.  docling/marker/mineru/
+        pdf-oxide pass this into their accelerator, which sizes the torch and
+        onnxruntime thread pools directly, so a stage reads the same declarative
+        value whether it runs in-process or in a pool worker, with no
+        environment mutation.
+        """
+        return max(1, self.num_threads // max(1, self.worker_processes))
 
 
 class OcrSettings(BaseModel):
@@ -648,13 +681,21 @@ class JobSettings(BaseModel):
 
 
 class IsolationSettings(BaseModel):
-    """Crash-isolated worker-process tunables (see :mod:`hivegent.workers`).
+    """Single-use isolation-worker tunables (see :mod:`hivegent.workers`).
 
-    ``max_workers`` caps how many spawned isolation processes run at once
-    across the whole server, bounding memory and CPU under a burst of
-    crash-prone native calls (currently pdfium paging).  ``timeout_seconds``
-    is the default wall-clock limit per call before the worker is killed and
-    the call raises ``WorkerTimeoutError``.
+    These size the *single-use, timeout-supervised* worker policy
+    (:func:`~hivegent.workers.isolation.run_isolated`), distinct from the
+    *persistent* conversion/chunking pool sized by
+    :attr:`ComputeSettings.worker_processes`; the two process budgets are
+    independent and add up, so account for both when sizing a host.
+
+    ``max_workers`` is a concurrency *cap* — how many fresh isolation processes
+    may run at once across the whole server — bounding memory and CPU under a
+    burst of crash-prone native calls (currently pdfium paging).  Unlike the
+    pool's ``worker_processes``, it is a ceiling, not a steady pool size: a
+    process is spawned per call and torn down when it returns.  ``timeout_seconds``
+    is the default wall-clock limit per call before the worker is killed and the
+    call raises ``WorkerTimeoutError``.
     """
 
     max_workers: int = 2

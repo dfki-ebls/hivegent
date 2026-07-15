@@ -2,11 +2,13 @@
 
 import asyncio
 import bisect
-from abc import ABC, abstractmethod
+from abc import ABC
 from datetime import datetime
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field
+
+from ..workers.pool import run_offloaded
 
 __all__ = [
     "ChunkData",
@@ -169,16 +171,16 @@ class RetrievedChunk(BaseModel):
 class DocumentChunker(ABC):
     """Abstract base class for document chunkers.
 
-    Subclasses implement :meth:`_split` to produce chunks with character
-    offsets.  The base :meth:`__call__` automatically annotates each chunk
-    with 1-based line numbers derived from those offsets.
-
-    The underlying chunker libraries (chonkie chunkers and tokenizers,
-    embedding models) are not documented thread-safe.  A single
-    process-wide :class:`asyncio.Lock` serializes every chunker call so
-    concurrent ``asyncio.to_thread`` workers cannot race on a shared
-    cached engine.  Chunking is fast enough that global serialization
-    is invisible against model-loading time.
+    CPU/model-bound chunkers implement the sync :meth:`_split_sync`; the base
+    :meth:`_split` offloads it through :func:`hivegent.workers.pool.run_offloaded`,
+    which runs it in a persistent worker process when the pool is enabled (each
+    worker owning its own cached chonkie/embedding engine) or, when it is off, in
+    a thread guarded by the process-wide ``_invoke_lock`` — the chonkie chunkers,
+    tokenizers, and embedding models are not documented thread-safe, so that lock
+    keeps concurrent in-process calls off a shared cached engine.  Chunkers that
+    do no offloadable work (the no-op chunker, the LLM-driven slumber chunker)
+    override :meth:`_split` directly.  The base :meth:`__call__` annotates each
+    returned chunk with 1-based line numbers.
     """
 
     name: ClassVar[str]
@@ -186,7 +188,21 @@ class DocumentChunker(ABC):
     description: ClassVar[str]
     _invoke_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
 
-    @abstractmethod
+    def _split_sync(self, text: str, /) -> list[ChunkData]:
+        """CPU-bound chunking core, run in a worker process.
+
+        CPU- and model-bound chunkers implement this; the base :meth:`_split`
+        offloads it to the process pool.  Chunkers that override :meth:`_split`
+        never reach here.  (Mirrors :meth:`DocumentConverter._convert_sync`.)
+
+        Args:
+            text: The document text to chunk.
+
+        Returns:
+            List of ChunkData objects (line numbers may be unset).
+        """
+        raise NotImplementedError
+
     async def _split(
         self,
         text: str,
@@ -196,6 +212,10 @@ class DocumentChunker(ABC):
     ) -> list[ChunkData]:
         """Split text into chunks.
 
+        Defaults to offloading :meth:`_split_sync` off the event loop (a worker
+        process when the pool is on, a lock-guarded thread otherwise).  Chunkers
+        that are trivial or I/O-bound override this to run on the event loop.
+
         Args:
             text: The document text to chunk.
             mime: Detected MIME type of the original file, when available.
@@ -204,7 +224,9 @@ class DocumentChunker(ABC):
         Returns:
             List of ChunkData objects (line numbers may be unset).
         """
-        ...
+        return await run_offloaded(
+            self._split_sync, text, fallback_lock=self._invoke_lock
+        )
 
     async def __call__(
         self,
@@ -222,8 +244,7 @@ class DocumentChunker(ABC):
         Returns:
             List of ChunkData objects with 1-based line numbers set.
         """
-        async with self._invoke_lock:
-            chunks = await self._split(text, mime=mime)
+        chunks = await self._split(text, mime=mime)
         if not chunks:
             return []
         line_starts = [0]

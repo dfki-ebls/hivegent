@@ -1,6 +1,5 @@
 """Late-interaction document chunker using chonkie."""
 
-import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -59,16 +58,6 @@ class LateDocumentChunker(DocumentChunker):
     device: str = field(default="auto", kw_only=True)
     """Compute device for the model (``"auto"`` self-detects); code-level, not a setting."""
 
-    def _chunk(self, text: str) -> list[ChunkData]:
+    def _split_sync(self, text: str) -> list[ChunkData]:
         chunks = _build_chunker(self.config.model_dump_json(), self.device).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
-
-    async def _split(
-        self,
-        text: str,
-        /,
-        *,
-        mime: str | None = None,
-    ) -> list[ChunkData]:
-        """Split text using late-interaction chunking."""
-        return await asyncio.to_thread(self._chunk, text)

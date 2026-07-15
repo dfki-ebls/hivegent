@@ -1,6 +1,5 @@
 """pdf_oxide-based PDF converter."""
 
-import asyncio
 import json
 import tempfile
 from dataclasses import dataclass, field
@@ -56,7 +55,7 @@ class PdfOxideConverterConfig(BaseModel):
     ``classify_document`` reports as image-only are run through
     ``extract_text_ocr`` while text-layer pages keep their richer
     markdown; the OCR thread count comes from the shared
-    ``compute.num_threads`` setting.
+    ``compute.threads_per_worker`` budget.
     """
 
     preserve_layout: bool = False
@@ -90,7 +89,7 @@ class PdfOxideConverter(DocumentConverter):
             cfg.ocr_det_model,
             cfg.ocr_rec_model,
             cfg.ocr_dict,
-            settings.compute.num_threads,
+            settings.compute.threads_per_worker,
         )
 
     def _convert_sync(self, path: Path) -> ConversionResult:
@@ -135,6 +134,3 @@ class PdfOxideConverter(DocumentConverter):
             # filename so refs match the (throwaway-dir-free) image keys.
             markdown = markdown.replace(f"{temp_path}/", "")
             return ConversionResult(markdown=markdown, images=image_data)
-
-    async def _convert(self, path: Path, /) -> ConversionResult:
-        return await asyncio.to_thread(self._convert_sync, path)

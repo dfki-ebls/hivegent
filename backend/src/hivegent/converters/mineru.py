@@ -1,6 +1,5 @@
 """MinerU-based document converter (3.x ``do_parse`` pipeline backend)."""
 
-import asyncio
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -33,7 +32,9 @@ def _apply_compute_env(device: str) -> None:
     (``MINERU_VIRTUAL_VRAM_SIZE``) rather than a page count, so
     ``compute.batch_size`` does not map.
     """
-    os.environ["MINERU_INTRA_OP_NUM_THREADS"] = str(settings.compute.num_threads)
+    os.environ["MINERU_INTRA_OP_NUM_THREADS"] = str(
+        settings.compute.threads_per_worker
+    )
 
     if device != "auto":
         os.environ["MINERU_DEVICE_MODE"] = device
@@ -98,6 +99,3 @@ class MinerUConverter(DocumentConverter):
             # markdown, which matches the keys collect_dir_images produces.
             image_data = collect_dir_images(md_dir / "images", md_dir)
             return ConversionResult(markdown=md_path.read_text(), images=image_data)
-
-    async def _convert(self, path: Path, /) -> ConversionResult:
-        return await asyncio.to_thread(self._convert_sync, path)

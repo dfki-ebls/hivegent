@@ -1,6 +1,5 @@
 """Code-aware document chunker using chonkie."""
 
-import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -56,16 +55,6 @@ class CodeDocumentChunker(DocumentChunker):
     description = "Syntax-aware splitting using tree-sitter"
     config: CodeChunkerConfig = field(default_factory=CodeChunkerConfig)
 
-    def _chunk(self, text: str) -> list[ChunkData]:
+    def _split_sync(self, text: str) -> list[ChunkData]:
         chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
-
-    async def _split(
-        self,
-        text: str,
-        /,
-        *,
-        mime: str | None = None,
-    ) -> list[ChunkData]:
-        """Split code using syntax-aware boundaries."""
-        return await asyncio.to_thread(self._chunk, text)

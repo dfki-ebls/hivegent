@@ -1,6 +1,5 @@
 """Sentence-based document chunker using chonkie."""
 
-import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -63,16 +62,6 @@ class SentenceDocumentChunker(DocumentChunker):
     description = "Respects sentence boundaries, good for prose and plain text"
     config: SentenceChunkerConfig = field(default_factory=SentenceChunkerConfig)
 
-    def _chunk(self, text: str) -> list[ChunkData]:
+    def _split_sync(self, text: str) -> list[ChunkData]:
         chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
-
-    async def _split(
-        self,
-        text: str,
-        /,
-        *,
-        mime: str | None = None,
-    ) -> list[ChunkData]:
-        """Split text into sentence-boundary-respecting chunks."""
-        return await asyncio.to_thread(self._chunk, text)

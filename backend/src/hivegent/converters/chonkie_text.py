@@ -1,6 +1,5 @@
 """Plain text document converter using chonkie's TextChef."""
 
-import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -53,8 +52,8 @@ class ChonkieTextConverter(DocumentConverter):
         }
     )
 
-    async def _convert(self, path: Path, /) -> ConversionResult:
-        doc = await asyncio.to_thread(_build_chef().process, path)
+    def _convert_sync(self, path: Path, /) -> ConversionResult:
+        doc = _build_chef().process(path)
         # Raw text is not markdown, so project it as a fenced code block: the
         # frontend then renders it as source instead of misreading ``#``/``*``
         # as markdown. Contained here so it fires only when text-chef actually

@@ -18,6 +18,7 @@ from ..mcp import mcp_app
 from ..observability import configure_observability
 from ..reconcile import reconcile_all
 from ..retrieval import reconcile_index_state, warm_index
+from ..workers.pool import pipeline_pool
 from .access_log import install_probe_access_filter
 from .maintenance import load_persisted_state
 from .operations import cleanup_spool_dir
@@ -117,11 +118,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         else:
             for key, report in reports.items():
                 logger.info("Reconciled %s: %s", key, report)
-        if mcp_http_app is None:
-            yield
-        else:
-            async with mcp_http_app.lifespan(app):
+        try:
+            if mcp_http_app is None:
                 yield
+            else:
+                async with mcp_http_app.lifespan(app):
+                    yield
+        finally:
+            # Tear down the persistent converter/chunker worker processes (a
+            # no-op if the pool was never activated or used).
+            await pipeline_pool.aclose()
 
 
 async def validation_error_handler(

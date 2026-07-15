@@ -1,6 +1,5 @@
 """Recursive document chunker using chonkie."""
 
-import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -52,16 +51,6 @@ class RecursiveDocumentChunker(DocumentChunker):
     description = "Hierarchical splitting by headings, paragraphs, and sentences"
     config: RecursiveChunkerConfig = field(default_factory=RecursiveChunkerConfig)
 
-    def _chunk(self, text: str) -> list[ChunkData]:
+    def _split_sync(self, text: str) -> list[ChunkData]:
         chunks = _build_chunker(self.config.model_dump_json()).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
-
-    async def _split(
-        self,
-        text: str,
-        /,
-        *,
-        mime: str | None = None,
-    ) -> list[ChunkData]:
-        """Split text using hierarchical recursive splitting."""
-        return await asyncio.to_thread(self._chunk, text)

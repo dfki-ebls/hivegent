@@ -1,6 +1,5 @@
 """Marker-based PDF converter."""
 
-import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -59,6 +58,3 @@ class MarkerConverter(DocumentConverter):
             for p, img in result.images.items()
         }
         return ConversionResult(markdown=str(result.markdown), images=image_data)
-
-    async def _convert(self, path: Path, /) -> ConversionResult:
-        return await asyncio.to_thread(self._convert_sync, path)

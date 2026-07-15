@@ -1,6 +1,5 @@
 """Docling-based document converter."""
 
-import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
 from io import BytesIO
@@ -25,8 +24,9 @@ from pydantic import BaseModel, Field
 
 # Imported eagerly: tesserocr pulls in cysignals, which installs signal
 # handlers at import time and therefore only imports cleanly on the main
-# thread.  Docling's lazy import inside the OCR model would run in the
-# ``asyncio.to_thread`` worker (see ``_convert``) and crash with
+# thread.  Docling's lazy import inside the OCR model would run
+# off the main thread (a worker process, or an ``asyncio.to_thread``
+# fallback; see :meth:`_convert_sync`) and crash with
 # "signal only works in main thread of the main interpreter".
 import tesserocr  # noqa: F401  # isort: skip
 
@@ -46,9 +46,11 @@ def _accelerator_options() -> AcceleratorOptions:
 
     AcceleratorOptions defaults its device to AUTO; placement is decided
     centrally by CUDA_VISIBLE_DEVICES, so only the thread count is pulled
-    from the shared :class:`~hivegent.config.ComputeSettings`.
+    from the shared :class:`~hivegent.config.ComputeSettings` — as the
+    per-worker share, so a pool worker sizes torch/onnxruntime to its slice of
+    the cores rather than the whole machine.
     """
-    return AcceleratorOptions(num_threads=settings.compute.num_threads)
+    return AcceleratorOptions(num_threads=settings.compute.threads_per_worker)
 
 
 def _default_pdf_options() -> ThreadedPdfPipelineOptions:
@@ -265,9 +267,6 @@ class DoclingConverter(DocumentConverter):
             markdown = markdown.replace("<!-- image -->", f"![]({img_name})", 1)
 
         return ConversionResult(markdown=markdown, images=image_data)
-
-    async def _convert(self, path: Path, /) -> ConversionResult:
-        return await asyncio.to_thread(self._convert_sync, path)
 
 
 # Docling's native picture-classifier vocabulary partitioned onto our

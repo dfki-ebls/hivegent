@@ -1,6 +1,5 @@
 """Markdown-aware document chunker using chonkie."""
 
-import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -42,7 +41,7 @@ class MarkdownDocumentChunker(DocumentChunker):
     description = "Parses markdown into semantic elements (text, tables, code)"
     config: MarkdownChunkerConfig = field(default_factory=MarkdownChunkerConfig)
 
-    def _chunk(self, text: str) -> list[ChunkData]:
+    def _split_sync(self, text: str) -> list[ChunkData]:
         doc = _build_chef().parse(text)
         tokenizer = _build_tokenizer()
 
@@ -68,13 +67,3 @@ class MarkdownDocumentChunker(DocumentChunker):
             for start_idx, el_text in elements
         ]
         return apply_chonkie(chunks, self.config.refineries)
-
-    async def _split(
-        self,
-        text: str,
-        /,
-        *,
-        mime: str | None = None,
-    ) -> list[ChunkData]:
-        """Split markdown text into semantic chunks sorted by start_index."""
-        return await asyncio.to_thread(self._chunk, text)

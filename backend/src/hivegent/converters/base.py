@@ -2,20 +2,21 @@
 
 import asyncio
 import re
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass, field
-from enum import Enum, StrEnum
+from enum import Enum
 from io import BytesIO
 from pathlib import Path
 from typing import ClassVar, Protocol
 from urllib.parse import urlsplit
+
+from ..workers.pool import run_offloaded
 
 __all__ = [
     "DOCUMENT_EXTENSION",
     "IMAGE_EXTENSIONS",
     "AssetBBox",
     "AssetRole",
-    "BinaryContentMode",
     "ConversionResult",
     "DocumentConverter",
     "ExtractedImage",
@@ -27,28 +28,6 @@ __all__ = [
     "is_markdown_suffix",
     "pil_to_png_bytes",
 ]
-
-
-class BinaryContentMode(StrEnum):
-    """How binary content reaches the chat model.
-
-    The agent's binary reader and ad-hoc chat attachments can carry
-    images, PDFs, and video.  This policy selects the representation:
-
-    - :attr:`IMAGES` rasterises PDFs to one image per page, the only
-      multimodal content type OpenAI-compatible vision servers (vLLM,
-      SGLang, ...) accept — they reject the native ``file`` part outright.
-    - :attr:`NATIVE` forwards PDF bytes with their ``application/pdf``
-      media type, for providers with first-class document understanding
-      (OpenAI, Anthropic) that ingest ``file`` parts directly.
-
-    Images are always sent as images and time-based media (video,
-    animations) is always sampled to frames either way, because no chat
-    model ingests those containers natively.
-    """
-
-    IMAGES = "images"
-    NATIVE = "native"
 
 
 # URL schemes whose references resolve to a valid, fetchable resource; any
@@ -272,13 +251,15 @@ def collect_dir_images(root: Path, relative_to: Path) -> dict[str, ExtractedImag
 class DocumentConverter(ABC):
     """Abstract base class for document converters.
 
-    Subclasses implement :meth:`_convert`; the base :meth:`__call__`
-    acquires a single process-wide :class:`asyncio.Lock` so concurrent
-    invocations of any converter (docling, marker, markitdown, chonkie
-    chefs, …) cannot race on shared cached instances.  Conversion is
-    bottlenecked by model loading and disk I/O, so global serialization
-    is cheap.  Native-async converters (kreuzberg, llm, pandoc) pay a
-    negligible uncontended lock acquire.
+    CPU/model-bound converters (docling, marker, markitdown, chonkie chefs, …)
+    implement the sync :meth:`_convert_sync`; the base :meth:`_convert` offloads
+    it through :func:`hivegent.workers.pool.run_offloaded`, which runs it in a
+    persistent worker process when the pool is enabled (true multi-core
+    conversion, each worker owning its own cached engine) or, when it is off, in
+    a thread guarded by the process-wide ``_invoke_lock`` so concurrent calls
+    cannot race on the shared in-process engine.  Native-async converters
+    (kreuzberg, llm, pandoc) override :meth:`_convert` to run on the event loop
+    and never touch either path.
     """
 
     name: ClassVar[str]
@@ -295,9 +276,12 @@ class DocumentConverter(ABC):
     producing them (e.g. docling's picture classifier).
     """
 
-    @abstractmethod
-    async def _convert(self, path: Path, /) -> ConversionResult:
-        """Convert a document to markdown.
+    def _convert_sync(self, path: Path, /) -> ConversionResult:
+        """CPU/model-bound conversion core, run in a worker process.
+
+        CPU- and model-bound converters implement this; the base
+        :meth:`_convert` offloads it to the process pool.  Native-async
+        converters override :meth:`_convert` instead and never reach here.
 
         Args:
             path: Path to the document to convert.
@@ -305,9 +289,25 @@ class DocumentConverter(ABC):
         Returns:
             The conversion result with markdown and optional extracted images.
         """
-        ...
+        raise NotImplementedError
+
+    async def _convert(self, path: Path, /) -> ConversionResult:
+        """Convert a document to markdown.
+
+        Defaults to offloading :meth:`_convert_sync` off the event loop (a worker
+        process when the pool is on, a lock-guarded thread otherwise).
+        Native-async converters override this to run on the event loop.
+
+        Args:
+            path: Path to the document to convert.
+
+        Returns:
+            The conversion result with markdown and optional extracted images.
+        """
+        return await run_offloaded(
+            self._convert_sync, path, fallback_lock=self._invoke_lock
+        )
 
     async def __call__(self, path: Path, /) -> ConversionResult:
-        """Acquire the per-type invocation lock and call :meth:`_convert`."""
-        async with self._invoke_lock:
-            return await self._convert(path)
+        """Convert *path*, offloading CPU-bound work off the event loop."""
+        return await self._convert(path)
