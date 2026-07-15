@@ -19,10 +19,15 @@ from ...tools import WebFetch, WebSearch, build_user_agent
 from ...tools.pydantic_ai import register_agent_tools
 from ..common import UserDeps
 
-__all__ = ["web_toolset"]
+__all__ = ["web_enabled", "web_toolset"]
 
 _policy = settings.security.web_policy()
 _user_agent = build_user_agent(settings.network.contact_email)
+
+# The web tools are live only with the operator switch on *and* a host policy to
+# constrain them; the single flag every consumer gates on so the two conditions
+# never drift apart.
+web_enabled = settings.tools.enable_web and _policy.restricts_hosts
 
 
 def _web_search(_deps: UserDeps) -> WebSearch:
@@ -48,7 +53,7 @@ def _web_fetch(_deps: UserDeps) -> WebFetch:
 
 web_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=False)
 
-if settings.tools.enable_web and _policy.restricts_hosts:
+if web_enabled:
     register_agent_tools(
         web_toolset,
         UserDeps,

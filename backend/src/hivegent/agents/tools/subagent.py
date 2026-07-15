@@ -24,7 +24,7 @@ from ..subagent_events import SubagentTranscriptBuilder, SubagentUpdate
 from ..summarize import summarize_messages
 from .conversation import conversation_toolset
 from .explore import explore_toolset
-from .web import web_toolset
+from .web import web_enabled, web_toolset
 
 logger = logging.getLogger(__name__)
 
@@ -55,18 +55,30 @@ SUBAGENT_CAPABILITIES: dict[SubagentName, AbstractCapability[UserDeps]] = {
         instructions=[EXPLORE_INSTRUCTIONS, scope_instructions],
     ),
     "conversations": Capability(id="conversation", toolsets=[conversation_toolset]),
-    "web": Capability(id="web", toolsets=[web_toolset]),
 }
 
-ExploreScopeArg = Annotated[
-    SubagentName,
-    Field(
-        description=(
-            "What to explore: `documents` for the document collection, "
-            "`conversations` for past chat history, `web` for web research."
-        ),
-    ),
-]
+# The web subagent only exists while its toolset is live; otherwise a `web`
+# scope would delegate to an agent with no tools.  The scope argument's type
+# and description drop `web` in lockstep so the model is never offered it.
+if web_enabled:
+    SUBAGENT_CAPABILITIES["web"] = Capability(id="web", toolsets=[web_toolset])
+
+    type ExploreScope = SubagentName
+
+    _scope_description = (
+        "What to explore: `documents` for the document collection, "
+        "`conversations` for past chat history, `web` for web research."
+    )
+
+else:
+    type ExploreScope = Literal["documents", "conversations"]
+
+    _scope_description = (
+        "What to explore: `documents` for the document collection, "
+        "`conversations` for past chat history."
+    )
+
+ExploreScopeArg = Annotated[ExploreScope, Field(description=_scope_description)]
 
 
 def _subagent_llm_config(deps: UserDeps) -> LlmConfig:
