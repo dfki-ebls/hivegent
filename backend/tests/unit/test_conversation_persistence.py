@@ -12,9 +12,10 @@ interrupted finishes, and the hard-fail error chunk) and
 
 from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
-from pydantic_ai import Agent
+from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -28,11 +29,13 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
+from pydantic_ai.output import OutputSpec
 from starlette.responses import StreamingResponse
 
 import hivegent.server.vercel as vercel_module
 from hivegent.db.conversations import import_conversation
 from hivegent.server.vercel import (
+    CHAT_ERROR_KEY,
     ChatAdapter,
     PersistTurn,
     REASONING_DURATIONS_KEY,
@@ -51,14 +54,30 @@ def _texts(messages: Sequence[ModelMessage]) -> list[str]:
     ]
 
 
+def _tool_states(messages: Sequence[ModelMessage]) -> list[str | None]:
+    """Reload states of the tool cards a message list projects to."""
+    ui = dump_messages_with_ids([(f"n{i}", m) for i, m in enumerate(messages)])
+    return [
+        getattr(part, "state", None)
+        for message in ui
+        for part in message.parts
+        if str(getattr(part, "type", "")).startswith("tool-")
+    ]
+
+
 def _adapter(
     ui_messages: list[UIMessage],
     *,
     model: Model | None = None,
     tool_raises: bool = False,
+    tool_needs_approval: bool = False,
 ) -> ChatAdapter[None, str]:
+    output_type: OutputSpec[Any] = str
+    if tool_needs_approval:
+        output_type = [str, DeferredToolRequests]
+
     agent = Agent(
-        model=model or TestModel(custom_output_text="ANSWER"), output_type=str
+        model=model or TestModel(custom_output_text="ANSWER"), output_type=output_type
     )
 
     if tool_raises:
@@ -66,6 +85,12 @@ def _adapter(
         @agent.tool_plain
         def boom() -> str:
             raise RuntimeError("simulated tool failure mid-run")
+
+    if tool_needs_approval:
+
+        @agent.tool_plain(requires_approval=True)
+        def write(value: str) -> str:
+            return "written"
 
     return ChatAdapter[None, str](
         agent=agent,
@@ -81,10 +106,16 @@ async def _run_turn(
     model: Model | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     tool_raises: bool = False,
+    tool_needs_approval: bool = False,
     persist: PersistTurn | None = None,
 ) -> tuple[list[list[ModelMessage]], str]:
     """Run one turn through ``run_and_persist``; return recorded turns + body."""
-    adapter = _adapter(ui_messages, model=model, tool_raises=tool_raises)
+    adapter = _adapter(
+        ui_messages,
+        model=model,
+        tool_raises=tool_raises,
+        tool_needs_approval=tool_needs_approval,
+    )
     recorded: list[list[ModelMessage]] = []
 
     async def _record(messages: Sequence[ModelMessage]) -> None:
@@ -137,25 +168,86 @@ async def test_regenerate_reruns_from_history_without_a_new_message() -> None:
     assert "ANSWER" in _texts(delta)
 
 
-async def test_errored_turn_keeps_the_prompt() -> None:
-    """A turn whose tool fails keeps its prompt and the completed tool call.
+async def test_errored_turn_closes_its_dangling_tool_call() -> None:
+    """A turn whose tool raises persists a failed return closing the orphan call.
 
-    ``capture_run_messages`` holds whatever completed before the failure, which
-    the Vercel adapter turns into an in-band error chunk, so the persist still
-    fires on the clean-drain path.
+    The raised tool aborts the run, leaving a ``ToolCallPart`` with no return in
+    ``capture_run_messages``.  Persisting that verbatim would make the reload
+    projection read it as an approval request and the history invalid to replay,
+    so ``run_and_persist`` closes it with a failed return carrying the error
+    text.  The round-trip then reloads the tool card as an error, not an
+    approval prompt.
     """
     recorded, _ = await _run_turn(
         [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
         tool_raises=True,
     )
+    messages = recorded[0]
 
-    assert "q1" in _texts(recorded[0])
-    assert any(
-        isinstance(part, ToolCallPart)
-        for message in recorded[0]
+    assert "q1" in _texts(messages)
+    call = next(
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    )
+    ret = next(
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_call_id == call.tool_call_id
+    )
+    assert ret.outcome == "failed"
+    assert "simulated tool failure" in str(ret.content)
+    assert _tool_states(messages) == ["output-error"]
+
+
+async def test_approval_pending_turn_keeps_its_dangling_call() -> None:
+    """A clean finish awaiting approval leaves its call open, not error-closed.
+
+    An approval-required tool ends the run cleanly with ``DeferredToolRequests``,
+    leaving a ``ToolCallPart`` with no return — the same shape as an error
+    orphan.  Since no error streamed, the turn is persisted untouched so it
+    reloads as an approval request, not a failed tool.
+    """
+    recorded, _ = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        tool_needs_approval=True,
+    )
+    messages = recorded[0]
+
+    assert not any(
+        isinstance(part, ToolReturnPart)
+        for message in messages
         for part in message.parts
     )
-    assert "ANSWER" not in _texts(recorded[0])
+    assert _tool_states(messages) == ["approval-requested"]
+
+
+async def test_generic_run_error_is_recorded_for_reload() -> None:
+    """A run that fails before responding records the error on the user turn.
+
+    The stream error is transient, so without this the banner is lost on reload.
+    With no assistant response to attach to, the error rides on the last
+    projecting message — the user prompt — under ``CHAT_ERROR_KEY``.
+    """
+
+    async def fail_immediately(
+        messages: Sequence[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str]:
+        raise RuntimeError("provider exploded")
+        yield ""  # unreachable; marks this a stream function
+
+    recorded, body = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        model=FunctionModel(stream_function=fail_immediately),
+    )
+    target = recorded[0][-1]
+
+    assert isinstance(target, ModelRequest)
+    assert target.metadata is not None
+    assert "provider exploded" in target.metadata[CHAT_ERROR_KEY]
+    assert "provider exploded" in body  # the same error streamed live
 
 
 async def test_interrupted_stream_persists_the_partial_answer() -> None:

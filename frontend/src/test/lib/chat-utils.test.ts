@@ -1,7 +1,12 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { describe, expect, it } from "vitest";
 
-import { canCompact, isContextLengthError, showThinkingLoader } from "@/lib/chat/chat-utils";
+import {
+  canCompact,
+  isContextLengthError,
+  persistedChatError,
+  showThinkingLoader,
+} from "@/lib/chat/chat-utils";
 
 const msg = (role: UIMessage["role"], text: string): UIMessage => ({
   id: `${role}-${text}`,
@@ -74,5 +79,23 @@ describe("canCompact", () => {
     expect(
       canCompact([msg("user", "first"), msg("assistant", "reply"), msg("user", "second")]),
     ).toBe(true);
+  });
+});
+
+describe("persistedChatError", () => {
+  const withError = (error: string): UIMessage[] => [
+    { id: "user", role: "user", parts: [{ type: "text", text: "q" }], metadata: { chatError: error } },
+  ];
+
+  it("surfaces a stored run error from the last message", () => {
+    expect(persistedChatError(withError("provider exploded"))).toBe("provider exploded");
+  });
+
+  it("suppresses overflow errors, which auto-compaction owns", () => {
+    expect(persistedChatError(withError("context_length_exceeded: too big"))).toBeUndefined();
+  });
+
+  it("returns undefined when the last message carries no error", () => {
+    expect(persistedChatError([msg("assistant", "all good")])).toBeUndefined();
   });
 });

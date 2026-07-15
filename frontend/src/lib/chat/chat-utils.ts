@@ -55,6 +55,31 @@ export function isContextLengthError(error: Error | null | undefined): boolean {
 }
 
 /**
+ * UI-owned metadata the backend persists on a message and the client reads back
+ * on reload (see the `*_KEY` constants in `backend/src/hivegent/server/vercel.py`).
+ */
+export interface ChatMessageMetadata {
+  reasoningDurationsMs?: number[];
+  chatError?: string;
+}
+
+/**
+ * A persisted run error to surface as a banner on reload, or undefined.
+ *
+ * A stream error is transient live state that reload would otherwise lose, so
+ * the backend stores it on the last turn's message metadata (see
+ * `record_turn_error` in `backend/src/hivegent/server/vercel.py`). Reading the
+ * last message shows the banner only while the latest turn is the failed one, so
+ * a later successful turn clears it. Context-window overflows are suppressed here
+ * just as they are live, since auto-compaction owns that case.
+ */
+export function persistedChatError(messages: UIMessage[]): string | undefined {
+  const error = (messages.at(-1)?.metadata as ChatMessageMetadata | undefined)?.chatError;
+  if (!error || error.startsWith(CONTEXT_LENGTH_ERROR_PREFIX)) return undefined;
+  return error;
+}
+
+/**
  * Whether compacting the conversation could plausibly resolve an overflow.
  *
  * Compaction summarizes everything before the last user message and then

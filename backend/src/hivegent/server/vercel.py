@@ -31,7 +31,16 @@ from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
 from pydantic_ai import AgentRunResultEvent, capture_run_messages
-from pydantic_ai.messages import ModelMessage, ThinkingPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk, ErrorChunk
@@ -48,7 +57,9 @@ __all__ = [
     "BranchInfo",
     "ChatAdapter",
     "chat_error_text",
+    "close_orphan_tool_calls",
     "dump_messages_with_ids",
+    "record_turn_error",
     "run_and_persist",
 ]
 
@@ -69,6 +80,15 @@ SUBAGENT_CHUNK_TYPE = "data-subagent"
 # Message metadata key carrying per-reasoning-block stream durations in
 # milliseconds, ordered by the reasoning parts in the assistant response.
 REASONING_DURATIONS_KEY = "reasoningDurationsMs"
+
+# Content for the synthetic failed return that closes a tool call left dangling
+# by an interrupted run (client disconnect) when no stream error text is known.
+INTERRUPTED_TOOL_ERROR = "The tool call did not complete because the run ended early."
+
+# Message metadata key carrying a run's error text so the frontend can re-render
+# the chat error banner from reloaded history (a stream error is otherwise a
+# transient chunk, not a message part, and is lost on reload).
+CHAT_ERROR_KEY = "chatError"
 
 type PersistTurn = Callable[[Sequence[ModelMessage]], Awaitable[None]]
 
@@ -279,6 +299,81 @@ async def _merge_subagent_events(
             await driver
 
 
+def close_orphan_tool_calls(
+    messages: list[ModelMessage], content: str
+) -> list[ModelMessage]:
+    """Append synthetic failed returns for any tool call left without a result.
+
+    A tool that raises (or a run cut short) leaves a ``ToolCallPart`` with no
+    matching return in ``capture_run_messages``.  Persisted verbatim, the reload
+    projection reads that dangling call as an approval request and the history
+    becomes invalid to replay to the provider (a ``tool_use`` with no
+    ``tool_result``).  Closing each orphan with a ``ToolReturnPart``
+    (``outcome='failed'``) carrying *content* keeps the stored turn a faithful,
+    replayable mirror of the streamed one: the tool card reloads as an error and
+    the next turn sees a well-formed tool result.
+
+    Call this only when the run did not finish cleanly — a clean finish may leave
+    a genuine approval-pending call dangling, which must reload as an approval
+    request, not an error.  Returns *messages* unchanged when nothing dangles.
+    """
+    resolved = {
+        part.tool_call_id
+        for message in messages
+        for part in message.parts
+        if isinstance(part, (ToolReturnPart, RetryPromptPart))
+    }
+    orphans = {
+        part.tool_call_id: part.tool_name
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolCallPart) and part.tool_call_id not in resolved
+    }
+
+    if not orphans:
+        return messages
+
+    returns = [
+        ToolReturnPart(
+            tool_name=tool_name,
+            content=content,
+            tool_call_id=tool_call_id,
+            outcome="failed",
+        )
+        for tool_call_id, tool_name in orphans.items()
+    ]
+
+    return [*messages, ModelRequest(parts=returns)]
+
+
+def record_turn_error(messages: list[ModelMessage], error_text: str) -> None:
+    """Store *error_text* on the turn's last visible message for reload.
+
+    A run error is shown live as a chat-level banner but is a stream event, not
+    a message part, so it is lost on reload.  Recording it under
+    :data:`CHAT_ERROR_KEY` on the metadata of the last message that projects to a
+    ``UIMessage`` (the assistant response, or the user prompt when the run failed
+    before responding) lets the frontend re-render the banner from stored
+    history.  The key is UI-owned metadata, never sent back to the provider (like
+    the reasoning durations alongside it).  Mutates the target message in place.
+    """
+    target = next(
+        (
+            message
+            for message in reversed(messages)
+            if (isinstance(message, ModelResponse) and message.parts)
+            or (
+                isinstance(message, ModelRequest)
+                and any(isinstance(part, UserPromptPart) for part in message.parts)
+            )
+        ),
+        None,
+    )
+
+    if target is not None:
+        target.metadata = {**(target.metadata or {}), CHAT_ERROR_KEY: error_text}
+
+
 async def run_and_persist[DepsT, OutputT](
     adapter: VercelAIAdapter[DepsT, OutputT],
     stream: AsyncIterator[BaseChunk],
@@ -295,7 +390,14 @@ async def run_and_persist[DepsT, OutputT](
     Vercel adapter turns run errors into an in-band error chunk, so the stream
     still ends normally).  An answer cut off mid-stream is captured by
     pydantic-ai upstream into ``capture_run_messages``, so this path persists
-    whatever it holds with no special handling.
+    whatever it holds.
+
+    On a run error (streamed in-band as an ``ErrorChunk``), the turn is
+    normalized before persisting so reload mirrors what streamed:
+    :func:`close_orphan_tool_calls` closes the call the error aborted and
+    :func:`record_turn_error` stores the error text for the reloaded banner.  A
+    clean finish is persisted untouched, so a genuine approval-pending call stays
+    dangling and reloads as an approval request rather than an error.
 
     When *subagent_sink* is given, live subagent transcript snapshots queued on
     it are interleaved into the response as transient ``data-subagent`` parts.
@@ -321,19 +423,38 @@ async def run_and_persist[DepsT, OutputT](
                 yield chunk
 
     async def relay() -> AsyncIterator[BaseChunk]:
+        error_text: str | None = None
         with capture_run_messages() as captured:
             try:
                 async for chunk in drain():
+                    if isinstance(chunk, ErrorChunk):
+                        # A run error is streamed in-band, not raised; keep its
+                        # text to normalize the errored turn below.  The chunk is
+                        # the only surviving signal here: the event stream that
+                        # saw the exception is built and discarded inside
+                        # `adapter.run_stream`, out of this function's reach.
+                        error_text = chunk.error_text
                     yield chunk
             except BaseException:
-                # Client disconnect / cancellation: persist what completed
+                # Client disconnect / cancellation: close any in-flight call so
+                # it does not reload as an approval, persist what completed
                 # (shielded — the client is gone, so a failure can only be
                 # logged) and propagate.
-                await asyncio.shield(_persist_safely(persist, list(captured)))
+                await asyncio.shield(
+                    _persist_safely(
+                        persist,
+                        close_orphan_tool_calls(list(captured), INTERRUPTED_TOOL_ERROR),
+                    )
+                )
                 raise
 
+            messages = list(captured)
+            if error_text is not None:
+                messages = close_orphan_tool_calls(messages, error_text)
+                record_turn_error(messages, error_text)
+
             try:
-                await asyncio.shield(persist(list(captured)))
+                await asyncio.shield(persist(messages))
             except Exception:
                 logger.exception("Failed to persist conversation turn")
                 yield ErrorChunk(error_text="Failed to save the conversation.")

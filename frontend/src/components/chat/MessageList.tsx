@@ -10,7 +10,7 @@ import { Loader } from "@/components/ai-elements/loader";
 import { ChatError } from "@/components/chat/ChatError";
 import { CompactionBanner } from "@/components/chat/CompactionBanner";
 import { MessageBubble } from "@/components/chat/MessageBubble";
-import { showThinkingLoader } from "@/lib/chat/chat-utils";
+import { persistedChatError, showThinkingLoader } from "@/lib/chat/chat-utils";
 
 interface MessageListProps {
   messages: UIMessage[];
@@ -53,9 +53,14 @@ export function MessageList({
   onDeny,
   onExecutePlan,
 }: MessageListProps) {
+  // A live error is transient SDK state; a reloaded conversation carries its
+  // failure on the last message's metadata instead. Surface either through the
+  // same banner.
+  const persistedError = persistedChatError(messages);
   const errorMessage =
     compactionError?.message ||
     chatError?.message ||
+    persistedError ||
     "An error occurred while processing your request.";
 
   return (
@@ -86,7 +91,7 @@ export function MessageList({
           />
         ))}
         {showThinkingLoader(messages, status) && <Loader />}
-        {(showChatError || compactionError) && (
+        {(showChatError || compactionError || persistedError) && (
           <ChatError message={errorMessage} onRetry={onRetry} onDismiss={onDismissError} />
         )}
       </ConversationContent>

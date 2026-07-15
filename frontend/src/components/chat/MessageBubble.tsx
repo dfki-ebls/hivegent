@@ -8,20 +8,16 @@ import {
   MessageContent,
 } from "@/components/ai-elements/message";
 import { MessagePart } from "@/components/chat/MessagePart";
-import { joinTextParts } from "@/lib/chat/chat-utils";
+import { type ChatMessageMetadata, joinTextParts } from "@/lib/chat/chat-utils";
 import { indexToolData } from "@/lib/chat/tool-part";
 
 const MS_IN_S = 1000;
-
-interface ReasoningMetadata {
-  reasoningDurationsMs?: number[];
-}
 
 function reasoningDurationSeconds(
   metadata: UIMessage["metadata"],
   reasoningIndex: number,
 ): number | undefined {
-  const durationMs = (metadata as ReasoningMetadata | undefined)?.reasoningDurationsMs?.[
+  const durationMs = (metadata as ChatMessageMetadata | undefined)?.reasoningDurationsMs?.[
     reasoningIndex
   ];
 
