@@ -1,6 +1,5 @@
 """Base helpers and shared constants for document converters."""
 
-import asyncio
 import re
 from abc import ABC
 from dataclasses import dataclass, field
@@ -253,20 +252,16 @@ class DocumentConverter(ABC):
 
     CPU/model-bound converters (docling, marker, markitdown, chonkie chefs, …)
     implement the sync :meth:`_convert_sync`; the base :meth:`_convert` offloads
-    it through :func:`hivegent.workers.pool.run_offloaded`, which runs it in a
-    persistent worker process when the pool is enabled (true multi-core
-    conversion, each worker owning its own cached engine) or, when it is off, in
-    a thread guarded by the process-wide ``_invoke_lock`` so concurrent calls
-    cannot race on the shared in-process engine.  Native-async converters
-    (kreuzberg, llm, pandoc) override :meth:`_convert` to run on the event loop
-    and never touch either path.
+    it through :func:`hivegent.workers.pool.run_offloaded` (a persistent worker
+    process when the pool is on, a lock-guarded thread otherwise).  Native-async
+    converters (kreuzberg, llm, pandoc) override :meth:`_convert` to run on the
+    event loop and never touch either path.
     """
 
     name: ClassVar[str]
     label: ClassVar[str]
     description: ClassVar[str]
     extensions: ClassVar[frozenset[str]]
-    _invoke_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
 
     detect_asset_roles: bool = field(default=False, kw_only=True)
     """Whether to compute :class:`AssetRole` signals for extracted assets.
@@ -304,9 +299,7 @@ class DocumentConverter(ABC):
         Returns:
             The conversion result with markdown and optional extracted images.
         """
-        return await run_offloaded(
-            self._convert_sync, path, fallback_lock=self._invoke_lock
-        )
+        return await run_offloaded(self._convert_sync, path)
 
     async def __call__(self, path: Path, /) -> ConversionResult:
         """Convert *path*, offloading CPU-bound work off the event loop."""

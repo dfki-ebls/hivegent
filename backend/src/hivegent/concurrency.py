@@ -15,15 +15,12 @@ async def bounded_as_completed[T, R](
 ) -> AsyncIterator[R]:
     """Yield ``run(item)`` results as they finish, at most *limit* in flight.
 
-    A semaphore bounds concurrency so a large batch never spawns unbounded work
-    or holds more than *limit* inputs resident at once; results stream in
-    completion order, not input order.  On cancellation (or an early break by the
-    consumer) every unfinished task is cancelled and awaited to completion, so a
-    task that owns a rollback — e.g. a phased upload unwinding a half-written
-    entry — finishes unwinding before this generator returns, never detached.
-
-    *run* is expected to convert its own failures into a returned value rather
-    than raise, so one bad item does not abort the batch.
+    A semaphore bounds concurrency and results stream in completion order.  On
+    cancellation or an early break, every unfinished task is cancelled and
+    awaited to completion, so a task owning a rollback (a phased upload unwinding
+    a half-written entry) finishes unwinding before this generator returns.
+    *run* should return its failures rather than raise, so one bad item does not
+    abort the batch.
 
     Args:
         items: The inputs to process.

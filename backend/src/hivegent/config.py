@@ -566,22 +566,15 @@ class ComputeSettings(BaseModel):
     ``batch_size`` is the page batch fed to the layout/table/OCR models;
     larger batches raise GPU utilization at the cost of VRAM.
 
-    ``worker_processes`` scales the CPU/model-bound stages (conversion and
-    chunking) across cores the way docling recommends: a value >= 2 activates a
-    persistent worker-process pool (see :mod:`hivegent.workers.pool`) so several
-    documents convert and chunk truly in parallel, each worker holding its own
-    models.  This is a steady *pool size*, distinct from the single-use
-    isolation workers capped by :attr:`IsolationSettings.max_workers` (which
-    supervise crash-prone pdfium calls with a hard timeout); the two process
-    budgets are independent and add up.  Two costs come with it.  Memory scales
-    with the count, since models are not shared across processes.  And
-    ``num_threads`` is the *total* CPU thread budget: the :attr:`threads_per_worker`
-    property splits it across the pool so the processes never oversubscribe the
-    cores, so keep ``worker_processes`` near the core count with ``num_threads``
-    at or above it — e.g. 4 workers with ``num_threads`` 8 gives 2 threads each
-    on an 8-core box.  The default 1 keeps every stage in-process (a single
-    lock-guarded thread), spawning nothing, so it is the right value on one core
-    and in tests.
+    ``worker_processes`` >= 2 activates a persistent worker-process pool (see
+    :mod:`hivegent.workers.pool`) so several documents convert and chunk in
+    parallel, each worker holding its own models — a steady pool size, separate
+    from and additive to the single-use isolation workers
+    (:attr:`IsolationSettings.max_workers`).  Memory scales with the count, and
+    ``num_threads`` is the *total* thread budget that :attr:`threads_per_worker`
+    splits across the pool, so keep ``worker_processes`` near the core count with
+    ``num_threads`` at or above it.  The default 1 keeps every stage in-process
+    on a lock-guarded thread, spawning nothing — right for one core and tests.
     """
 
     num_threads: int = 8
@@ -590,17 +583,11 @@ class ComputeSettings(BaseModel):
 
     @property
     def threads_per_worker(self) -> int:
-        """Intra-op thread budget for one CPU/model-bound stage execution.
+        """Per-worker intra-op thread budget: ``num_threads`` split across the pool.
 
-        ``num_threads`` is the *total* budget; this splits it evenly across the
-        pool's ``worker_processes`` (floored at 1) so several converters or
-        chunkers running in parallel never oversubscribe the cores.  With the
-        pool off (``worker_processes`` 1) it is simply ``num_threads`` — the
-        single in-process stage gets the whole budget.  docling/marker/mineru/
-        pdf-oxide pass this into their accelerator, which sizes the torch and
-        onnxruntime thread pools directly, so a stage reads the same declarative
-        value whether it runs in-process or in a pool worker, with no
-        environment mutation.
+        Floored at 1, and simply ``num_threads`` when the pool is off.  The
+        docling/marker/mineru/pdf-oxide accelerators read this to size their
+        torch/onnxruntime pools, so processes never oversubscribe the cores.
         """
         return max(1, self.num_threads // max(1, self.worker_processes))
 
@@ -660,18 +647,14 @@ class JobSettings(BaseModel):
     """Background-job manager tunables.
 
     ``max_concurrency`` caps how many jobs (uploads, collections, bulk ops)
-    convert and index at once; conversion and chunking are globally serialized
-    inside the process, so raising it mainly overlaps one job's embed/IO tail
-    with another's conversion rather than running conversions in parallel.
-    ``collection_concurrency`` is the separate, inner cap on how many files a
-    single collection import processes at once: a collection is one job, so
-    without it a large ZIP would walk its files one at a time regardless of
-    ``max_concurrency``.  Both stay modest because the machine is CPU-bound and
-    the embedding stage (the one stage not globally locked) already saturates
-    the shared compute threads.  ``retain_seconds`` is how long a finished job
-    stays visible in the feed and listing before it is pruned.  ``queue_maxsize``
-    bounds each subscriber's snapshot queue so a stalled SSE consumer cannot
-    leak memory.
+    convert and index at once; ``collection_concurrency`` is the inner cap on how
+    many files one collection import processes at once, since a collection is a
+    single job that would otherwise walk its files one at a time.  Both stay
+    modest because the actual parallelism is bounded by
+    :attr:`ComputeSettings.worker_processes` (the conversion/chunking pool) and
+    the CPU-bound embedding stage.  ``retain_seconds`` is how long a finished job
+    stays visible before it is pruned; ``queue_maxsize`` bounds each subscriber's
+    snapshot queue so a stalled SSE consumer cannot leak memory.
     """
 
     max_concurrency: int = 3
@@ -683,19 +666,15 @@ class JobSettings(BaseModel):
 class IsolationSettings(BaseModel):
     """Single-use isolation-worker tunables (see :mod:`hivegent.workers`).
 
-    These size the *single-use, timeout-supervised* worker policy
-    (:func:`~hivegent.workers.isolation.run_isolated`), distinct from the
-    *persistent* conversion/chunking pool sized by
-    :attr:`ComputeSettings.worker_processes`; the two process budgets are
-    independent and add up, so account for both when sizing a host.
+    These size the single-use, timeout-supervised policy
+    (:func:`~hivegent.workers.isolation.run_isolated`), separate from and
+    additive to the persistent pool (:attr:`ComputeSettings.worker_processes`).
 
-    ``max_workers`` is a concurrency *cap* — how many fresh isolation processes
-    may run at once across the whole server — bounding memory and CPU under a
-    burst of crash-prone native calls (currently pdfium paging).  Unlike the
-    pool's ``worker_processes``, it is a ceiling, not a steady pool size: a
-    process is spawned per call and torn down when it returns.  ``timeout_seconds``
-    is the default wall-clock limit per call before the worker is killed and the
-    call raises ``WorkerTimeoutError``.
+    ``max_workers`` caps how many fresh isolation processes run at once across
+    the server — a ceiling, not a steady pool size, since a process is spawned
+    per crash-prone native call (currently pdfium paging) and torn down when it
+    returns.  ``timeout_seconds`` is the per-call wall-clock limit before the
+    worker is killed and the call raises ``WorkerTimeoutError``.
     """
 
     max_workers: int = 2

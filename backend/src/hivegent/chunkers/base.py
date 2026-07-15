@@ -1,6 +1,5 @@
 """Base chunking types and interfaces."""
 
-import asyncio
 import bisect
 from abc import ABC
 from datetime import datetime
@@ -172,21 +171,16 @@ class DocumentChunker(ABC):
     """Abstract base class for document chunkers.
 
     CPU/model-bound chunkers implement the sync :meth:`_split_sync`; the base
-    :meth:`_split` offloads it through :func:`hivegent.workers.pool.run_offloaded`,
-    which runs it in a persistent worker process when the pool is enabled (each
-    worker owning its own cached chonkie/embedding engine) or, when it is off, in
-    a thread guarded by the process-wide ``_invoke_lock`` — the chonkie chunkers,
-    tokenizers, and embedding models are not documented thread-safe, so that lock
-    keeps concurrent in-process calls off a shared cached engine.  Chunkers that
-    do no offloadable work (the no-op chunker, the LLM-driven slumber chunker)
-    override :meth:`_split` directly.  The base :meth:`__call__` annotates each
-    returned chunk with 1-based line numbers.
+    :meth:`_split` offloads it through :func:`hivegent.workers.pool.run_offloaded`
+    (a persistent worker process when the pool is on, a lock-guarded thread
+    otherwise).  Chunkers that do no offloadable work (the no-op chunker, the
+    LLM-driven slumber chunker) override :meth:`_split` directly.  The base
+    :meth:`__call__` annotates each returned chunk with 1-based line numbers.
     """
 
     name: ClassVar[str]
     label: ClassVar[str]
     description: ClassVar[str]
-    _invoke_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
 
     def _split_sync(self, text: str, /) -> list[ChunkData]:
         """CPU-bound chunking core, run in a worker process.
@@ -224,9 +218,7 @@ class DocumentChunker(ABC):
         Returns:
             List of ChunkData objects (line numbers may be unset).
         """
-        return await run_offloaded(
-            self._split_sync, text, fallback_lock=self._invoke_lock
-        )
+        return await run_offloaded(self._split_sync, text)
 
     async def __call__(
         self,

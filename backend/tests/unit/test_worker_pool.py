@@ -29,7 +29,7 @@ async def test_run_offloaded_runs_in_process_when_pool_off(
         captured.append(x)
         return x * 2
 
-    result = await run_offloaded(work, 21, fallback_lock=asyncio.Lock())
+    result = await run_offloaded(work, 21)
 
     assert result == 42
     assert captured == [21]
@@ -52,7 +52,7 @@ async def test_run_offloaded_dispatches_to_pool_when_active(
     def work(x: int) -> int:
         return x
 
-    result = await run_offloaded(work, 7, fallback_lock=asyncio.Lock())
+    result = await run_offloaded(work, 7)
 
     assert result == "from-pool"
     assert calls == [(work, (7,))]

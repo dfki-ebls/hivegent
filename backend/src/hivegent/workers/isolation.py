@@ -4,11 +4,8 @@
 crash (segfault/abort) or a runaway hang kills only the worker and surfaces as
 :class:`WorkerCrashError` or :class:`WorkerTimeoutError`, leaving the server up.
 
-This is the **single-use, timeout-supervised** worker policy; its sibling is the
-**persistent, reused** pool in :mod:`hivegent.workers.pool`.  Use isolation for
-untrusted or hang-prone native work with no warm-up to keep (pdfium paging); use
-the pool for expensive-to-load, reusable engines (converters, chunkers).  See
-:mod:`hivegent.workers` for the full decision rule.
+This is the single-use, timeout-supervised sibling of the persistent
+:mod:`hivegent.workers.pool`; see :mod:`hivegent.workers` for which to use.
 
 To adopt it for a new code path: put the crash-prone function in a
 dependency-light leaf module (see :mod:`hivegent.workers`) and call

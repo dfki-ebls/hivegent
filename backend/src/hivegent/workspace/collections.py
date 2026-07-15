@@ -353,24 +353,26 @@ async def process_collection(
         # an orphaned original behind.
         committed_stems: set[str] = set()
         total = len(planned)
-        completed = 0
 
         def _progress(current: int) -> CollectionProgressEvent:
             return CollectionProgressEvent(current=current, total=total)
 
-        # Planning already fixed every member's role, so split them once: primaries
-        # (a markdown description or a standalone attachment) own independent stems
-        # and can convert and index concurrently; companions must wait for their
-        # owner; planning-phase drops carry their reason and need no work.
-        drops = [
-            (p, role.reason)
-            for p in planned
-            if isinstance(role := roles[p.relative_path], _Failed)
-        ]
-        primaries = [
-            p for p in planned if roles[p.relative_path] in ("markdown", "attachment")
-        ]
-        companions = [p for p in planned if roles[p.relative_path] == "companion"]
+        # Planning already fixed every member's role, so split them once:
+        # primaries (a markdown description or a standalone attachment) own
+        # independent stems and convert/index concurrently; companions must wait
+        # for their owner; planning-phase drops need no work and are recorded now.
+        primaries: list[_PlannedFile] = []
+        companions: list[_PlannedFile] = []
+        for p in planned:
+            role = roles[p.relative_path]
+            if isinstance(role, _Failed):
+                failed.append(_record_failure(p.relative_path, role.reason))
+            elif role == "companion":
+                companions.append(p)
+            else:
+                primaries.append(p)
+
+        completed = len(failed)
 
         async def _run_primary(
             p: _PlannedFile,
@@ -402,21 +404,15 @@ async def process_collection(
                 return p, None
             return p, _REASON_WRITE_FAILED
 
-        # Seed 0/total before the first conversion so the tray shows a live
-        # counter from the start; a slow first file (docling can take minutes)
-        # would otherwise leave the job on a bare "Processing" spinner until it
-        # finished, with nothing telling the user work is underway.
-        yield _progress(0)
+        # Seed the counter (drops already included) before the first conversion
+        # so the tray shows a live counter from the start; a slow first file
+        # (docling can take minutes) would otherwise leave the job on a bare
+        # "Processing" spinner with nothing telling the user work is underway.
+        yield _progress(completed)
 
-        for p, reason in drops:
-            failed.append(_record_failure(p.relative_path, reason))
-            completed += 1
-            yield _progress(completed)
-
-        # Primaries run concurrently up to the collection cap.  The phased upload
-        # holds the casebase lock only for its brief reserve and commit and
-        # conversion is globally serialized, so the win is overlapping one file's
-        # embed/IO tail with the next file's conversion, not parallel conversion.
+        # Primaries run concurrently up to the collection cap.  With the pool
+        # active they convert in parallel; otherwise the win is overlapping one
+        # file's embed/IO tail with the next file's conversion.
         limit = settings.jobs.collection_concurrency
         async for p, error in bounded_as_completed(primaries, _run_primary, limit=limit):
             if error is None:

@@ -1,34 +1,18 @@
 """Persistent worker-process pool for CPU- and model-bound pipeline stages.
 
-Docling's own guidance for scaling document conversion across cores is
-process-level parallelism: several worker processes, each holding its own
-converter and models, with documents sharded across them.  Threads give no
-benefit here — the heavy stages are torch/native code behind Python that the
-GIL serializes, and docling flags its thread-based ``doc_batch_concurrency`` as
-experimental with "no benefit expected without free-threaded python".  This
-module generalizes the process approach to *every* CPU/model-bound stage —
-conversion and chunking alike — behind one primitive, :func:`run_offloaded`.
+Conversion and chunking are torch/native code behind the GIL, so processes, not
+threads, scale them across cores.  A persistent :class:`ProcessPoolExecutor`
+reuses its workers, so each pays the converters'/chunkers' ``lru_cache`` model
+load once and reuses the warm engine for every later task.  This is the
+persistent, reused sibling of the single-use
+:func:`hivegent.workers.isolation.run_isolated`; see :mod:`hivegent.workers` for
+which to use.
 
-This is the **persistent, reused** worker policy; its sibling is the
-**single-use, timeout-supervised** :func:`hivegent.workers.isolation.run_isolated`
-(see :mod:`hivegent.workers` for choosing between them).  The pool trades that
-per-call kill for warm engines: a crash-prone or hang-prone untrusted call
-belongs in isolation, not here.
-
-Workers are persistent: a :class:`concurrent.futures.ProcessPoolExecutor`
-reuses its processes across tasks, so each worker runs the converters' and
-chunkers' module-level ``lru_cache`` builders exactly once and reuses the loaded
-engine for every later task.  A large batch therefore pays each model-load cost
-once per worker, not once per document.
-
-Per-worker CPU threads are budgeted declaratively, not here: each stage sizes
-its own accelerator from :attr:`~hivegent.config.ComputeSettings.threads_per_worker`
-(the total ``num_threads`` split across ``worker_processes``), so the pool owns
-only how many processes exist, never how many threads each one runs.
-
-When ``settings.compute.worker_processes`` is 1 the pool stays dormant and work
-runs in-process on a thread guarded by the caller's lock — byte-for-byte the
-pre-pool behavior — so single-core deployments and the test suite spawn nothing.
+Each worker sizes its own threads from
+:attr:`~hivegent.config.ComputeSettings.threads_per_worker`, so the pool owns
+only the process count.  When ``worker_processes`` is 1 the pool stays dormant
+and work runs in-process on a lock-guarded thread, so single-core deployments
+and the test suite spawn nothing.
 """
 
 import asyncio
@@ -41,6 +25,12 @@ from multiprocessing import get_context
 from ..config import settings
 
 __all__ = ["pipeline_pool", "run_offloaded"]
+
+# Guards the in-process fallback (``worker_processes`` 1) so concurrent calls
+# cannot race on a shared cached engine.  One coarse lock across converters and
+# chunkers alike is enough: the fallback path is CPU-bound and GIL-serialized,
+# so nothing is lost by not running the two families in parallel.
+_fallback_lock = asyncio.Lock()
 
 
 @dataclass(slots=True)
@@ -108,17 +98,13 @@ class ProcessPool:
 pipeline_pool = ProcessPool()
 
 
-async def run_offloaded[R](
-    func: Callable[..., R], /, *args: object, fallback_lock: asyncio.Lock
-) -> R:
+async def run_offloaded[R](func: Callable[..., R], /, *args: object) -> R:
     """Run a picklable CPU-bound callable off the event loop.
 
     With the pool active (``worker_processes >= 2``) *func* runs in a persistent
-    worker process for true multi-core parallelism across documents; each worker
-    owns its own cached engine, so no cross-call lock is needed and *fallback_lock*
-    is not taken.  Otherwise *func* runs in a thread guarded by *fallback_lock* —
-    the per-base lock that keeps concurrent in-process calls off a shared cached
-    engine — exactly as before the pool existed.
+    worker process for true multi-core parallelism, each worker owning its own
+    cached engine.  Otherwise it runs in a thread guarded by ``_fallback_lock``,
+    exactly as before the pool existed.
 
     When the pool is active, *func* and *args* must be picklable.  Bound methods
     of the frozen converter/chunker dataclasses qualify: their heavy engine lives
@@ -127,13 +113,11 @@ async def run_offloaded[R](
     Args:
         func: The CPU-bound callable to run.
         *args: Picklable positional arguments for *func*.
-        fallback_lock: Lock guarding the in-process fallback against engine
-            races; ignored (a no-op) while the pool is active.
 
     Returns:
         The callable's return value.
     """
     if pipeline_pool.active:
         return await pipeline_pool.run(func, *args)
-    async with fallback_lock:
+    async with _fallback_lock:
         return await asyncio.to_thread(func, *args)
