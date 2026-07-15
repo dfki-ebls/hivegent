@@ -404,6 +404,10 @@ async def _prepare_conversion_assets(
             ref_mapping[member] = rep_ref
 
     asset_entries: list[_PreparedEntry] = []
+    # Caption unique images concurrently, but capped: a figure-heavy document can
+    # have dozens of distinct images, and one unbounded vision request per image
+    # trips provider rate limits, so retries make it slower rather than faster.
+    caption_slots = asyncio.Semaphore(settings.llm.caption_concurrency)
 
     async def _caption_group(members: list[str]) -> None:
         representative = members[0]
@@ -415,8 +419,8 @@ async def _prepare_conversion_assets(
             if caption := images[member].caption:
                 contexts.append(f"Figure caption: {caption}")
         assets.append(_PreparedAsset(rep_path, images[representative].data))
-        asset_entries.append(
-            await _prepare_image_entry(
+        async with caption_slots:
+            entry = await _prepare_image_entry(
                 rep_path,
                 images[representative].data,
                 media_type,
@@ -424,7 +428,7 @@ async def _prepare_conversion_assets(
                 llm,
                 origin="extracted",
             )
-        )
+        asset_entries.append(entry)
 
     await asyncio.gather(*(_caption_group(members) for members in groups.values()))
     return ref_mapping, assets, asset_entries

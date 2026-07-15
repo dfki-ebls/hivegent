@@ -211,6 +211,11 @@ class LlmSettings(BaseModel):
     ``ModelRetry`` or output validation fails (applied to both); these retries
     count against ``request_limit``.
 
+    ``caption_concurrency`` caps how many image-caption calls to ``aux_model``
+    a single document issues at once; an image-heavy document would otherwise
+    fan out one concurrent vision request per unique image, tripping provider
+    rate limits so retries make it slower, not faster.
+
     ``subagent_timeout_seconds`` bounds one subagent delegation
     (``explore``); on expiry the partial findings are summarized and returned
     rather than failing the turn, so keep it below ``tool_timeout_seconds`` to
@@ -233,6 +238,7 @@ class LlmSettings(BaseModel):
     tool_timeout_seconds: float | None = 300.0
     request_limit: int = 40
     tool_calls_limit: int | None = 40
+    caption_concurrency: int = 4
     subagent_timeout_seconds: float | None = 180.0
     tool_output_max_chars: int = 120_000
     retries: int = 1
@@ -620,13 +626,23 @@ class LimitsSettings(BaseModel):
 class JobSettings(BaseModel):
     """Background-job manager tunables.
 
-    ``max_concurrency`` caps how many uploads convert and index at once;
-    ``retain_seconds`` is how long a finished job stays visible in the feed
-    and listing before it is pruned.  ``queue_maxsize`` bounds each
-    subscriber's snapshot queue so a stalled SSE consumer cannot leak memory.
+    ``max_concurrency`` caps how many jobs (uploads, collections, bulk ops)
+    convert and index at once; conversion and chunking are globally serialized
+    inside the process, so raising it mainly overlaps one job's embed/IO tail
+    with another's conversion rather than running conversions in parallel.
+    ``collection_concurrency`` is the separate, inner cap on how many files a
+    single collection import processes at once: a collection is one job, so
+    without it a large ZIP would walk its files one at a time regardless of
+    ``max_concurrency``.  Both stay modest because the machine is CPU-bound and
+    the embedding stage (the one stage not globally locked) already saturates
+    the shared compute threads.  ``retain_seconds`` is how long a finished job
+    stays visible in the feed and listing before it is pruned.  ``queue_maxsize``
+    bounds each subscriber's snapshot queue so a stalled SSE consumer cannot
+    leak memory.
     """
 
-    max_concurrency: int = 2
+    max_concurrency: int = 3
+    collection_concurrency: int = 4
     retain_seconds: float = 3600.0
     queue_maxsize: int = 1024
 

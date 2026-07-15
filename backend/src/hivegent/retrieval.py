@@ -52,6 +52,7 @@ __all__ = [
     "build_search_tool",
     "index_document",
     "reconcile_index_state",
+    "warm_index",
 ]
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,17 @@ class _RetrievalState:
 
 
 _state = _RetrievalState()
+
+
+async def warm_index() -> None:
+    """Build the embedding model and storage handle ahead of the first upload.
+
+    The embedding model loads lazily on first use and its build (loading the
+    sentence-transformers weights off the event loop) costs seconds; without a
+    warm-up the very first upload after boot silently pays that latency mid-run.
+    Called from the lifespan so the models are resident before any request lands.
+    """
+    await _state.get_storage()
 
 
 async def index_document(document_id: str, chunks: Sequence[ChunkData]) -> None:

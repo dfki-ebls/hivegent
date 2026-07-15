@@ -7,7 +7,7 @@ from multiprocessing import active_children
 
 import pytest
 
-from hivegent.concurrency import shield_to_completion
+from hivegent.concurrency import bounded_as_completed, shield_to_completion
 from hivegent.workers.isolation import (
     WorkerCrashError,
     WorkerTimeoutError,
@@ -52,6 +52,59 @@ async def test_propagates_work_error() -> None:
 
     with pytest.raises(ValueError, match="nope"):
         await shield_to_completion(boom())
+
+
+async def test_bounded_as_completed_yields_all_within_limit() -> None:
+    """Every item is processed, never more than *limit* concurrently in flight."""
+    in_flight = 0
+    peak = 0
+
+    async def run(item: int) -> int:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return item * 2
+
+    results = [
+        r async for r in bounded_as_completed(range(10), run, limit=3)
+    ]
+
+    assert sorted(results) == [i * 2 for i in range(10)]
+    assert peak <= 3
+
+
+async def test_bounded_as_completed_unwinds_in_flight_on_cancel() -> None:
+    """A cancelled consumer cancels and awaits every unfinished task to completion."""
+    started = 0
+    rolled_back = 0
+
+    async def run(item: int) -> int:
+        nonlocal started, rolled_back
+        started += 1
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            # Stand in for a phased upload unwinding its half-written entry.
+            rolled_back += 1
+            raise
+        return item
+
+    async def consume() -> None:
+        async for _ in bounded_as_completed(range(5), run, limit=2):
+            pass
+
+    task = asyncio.ensure_future(consume())
+    await asyncio.sleep(0.02)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Only the two that got a slot ran, and each unwound before the loop returned.
+    assert started == 2
+    assert rolled_back == 2
 
 
 async def test_isolated_worker_crash_does_not_abort_parent() -> None:

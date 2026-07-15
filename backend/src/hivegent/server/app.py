@@ -17,7 +17,7 @@ from ..logging_config import configure_logging
 from ..mcp import mcp_app
 from ..observability import configure_observability
 from ..reconcile import reconcile_all
-from ..retrieval import reconcile_index_state
+from ..retrieval import reconcile_index_state, warm_index
 from .access_log import install_probe_access_filter
 from .maintenance import load_persisted_state
 from .operations import cleanup_spool_dir
@@ -107,6 +107,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         cleanup_spool_dir()
         await load_persisted_state(app)
         await reconcile_index_state()
+        # Load the embedding model now so the first upload after boot does not
+        # pay the sentence-transformers cold-start latency inline.
+        await warm_index()
         try:
             reports = await reconcile_all()
         except Exception:

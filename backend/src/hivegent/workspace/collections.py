@@ -8,6 +8,7 @@ store claim so a concurrent store-wide delete or directory move cannot
 interleave between files and strip entries the collection already committed.
 """
 
+import asyncio
 import logging
 import stat
 import tempfile
@@ -20,7 +21,7 @@ from typing import Literal, Self
 
 from fastapi import HTTPException
 
-from ..concurrency import shield_to_completion
+from ..concurrency import bounded_as_completed, shield_to_completion
 from ..config import sanitize_document_path, settings
 from ..humanize import format_bytes
 from ..converters.wikilinks import preprocess_markdown
@@ -352,9 +353,54 @@ async def process_collection(
         # an orphaned original behind.
         committed_stems: set[str] = set()
         total = len(planned)
+        completed = 0
 
         def _progress(current: int) -> CollectionProgressEvent:
             return CollectionProgressEvent(current=current, total=total)
+
+        # Planning already fixed every member's role, so split them once: primaries
+        # (a markdown description or a standalone attachment) own independent stems
+        # and can convert and index concurrently; companions must wait for their
+        # owner; planning-phase drops carry their reason and need no work.
+        drops = [
+            (p, role.reason)
+            for p in planned
+            if isinstance(role := roles[p.relative_path], _Failed)
+        ]
+        primaries = [
+            p for p in planned if roles[p.relative_path] in ("markdown", "attachment")
+        ]
+        companions = [p for p in planned if roles[p.relative_path] == "companion"]
+
+        async def _run_primary(
+            p: _PlannedFile,
+        ) -> tuple[_PlannedFile, BaseException | None]:
+            # Failures are returned, not raised, so one bad file never aborts the
+            # batch; a cancel still propagates so the phased upload rolls back.
+            try:
+                if p.is_markdown:
+                    content_bytes = preprocessed_markdown[p.safe]
+                else:
+                    content_bytes = await asyncio.to_thread(
+                        (extract_root / p.relative_path).read_bytes
+                    )
+                await upload(
+                    store, p.safe, content_bytes, spec=spec, llm=llm, origin="collection"
+                )
+            except Exception as exc:
+                return p, exc
+            return p, None
+
+        async def _run_companion(p: _PlannedFile) -> tuple[_PlannedFile, str | None]:
+            # The owner sorts first and settled in the primary phase; without its
+            # committed entry there is nothing to fold this original into, and
+            # writing it would strand a file with no SQL row (reconcile ingests
+            # only markdown, never bare originals).
+            if p.stem not in committed_stems:
+                return p, _REASON_OWNER_FAILED
+            if await _write_companion_original(store, extract_root, p) == "ok":
+                return p, None
+            return p, _REASON_WRITE_FAILED
 
         # Seed 0/total before the first conversion so the tray shows a live
         # counter from the start; a slow first file (docling can take minutes)
@@ -362,59 +408,42 @@ async def process_collection(
         # finished, with nothing telling the user work is underway.
         yield _progress(0)
 
-        for current, p in enumerate(planned, start=1):
-            role = roles[p.relative_path]
+        for p, reason in drops:
+            failed.append(_record_failure(p.relative_path, reason))
+            completed += 1
+            yield _progress(completed)
 
-            if isinstance(role, _Failed):
-                failed.append(_record_failure(p.relative_path, role.reason))
-                yield _progress(current)
-                continue
-
-            if role == "companion":
-                # The owner sorts first and has already been processed; if its
-                # import failed there is no entry to fold this original into, and
-                # writing it would strand a file with no SQL row (reconcile
-                # ingests only markdown, never bare originals).
-                if p.stem not in committed_stems:
-                    failed.append(
-                        _record_failure(p.relative_path, _REASON_OWNER_FAILED)
-                    )
-                    yield _progress(current)
-                    continue
-                if await _write_companion_original(store, extract_root, p) == "ok":
-                    converted_count += 1
-                else:
-                    failed.append(
-                        _record_failure(p.relative_path, _REASON_WRITE_FAILED)
-                    )
-                yield _progress(current)
-                continue
-
-            try:
-                if role == "markdown":
-                    content_bytes = preprocessed_markdown[p.safe]
-                else:
-                    content_bytes = (extract_root / p.relative_path).read_bytes()
-                await upload(
-                    store,
-                    p.safe,
-                    content_bytes,
-                    spec=spec,
-                    llm=llm,
-                    origin="collection",
-                )
+        # Primaries run concurrently up to the collection cap.  The phased upload
+        # holds the casebase lock only for its brief reserve and commit and
+        # conversion is globally serialized, so the win is overlapping one file's
+        # embed/IO tail with the next file's conversion, not parallel conversion.
+        limit = settings.jobs.collection_concurrency
+        async for p, error in bounded_as_completed(primaries, _run_primary, limit=limit):
+            if error is None:
                 committed_stems.add(p.stem)
                 # Count only on success, so the totals never overstate the import.
-                if role == "markdown":
+                if p.is_markdown:
                     markdown_count += 1
                 else:
                     converted_count += 1
-            except Exception as exc:
+            else:
                 failed.append(
-                    _record_failure(p.relative_path, _REASON_CONVERSION, exc=exc)
+                    _record_failure(p.relative_path, _REASON_CONVERSION, exc=error)
                 )
+            completed += 1
+            yield _progress(completed)
 
-            yield _progress(current)
+        # Companions only run once every owner has settled, so they follow the
+        # primary phase; each is a quick original write plus SQL fold-in.
+        async for p, reason in bounded_as_completed(
+            companions, _run_companion, limit=limit
+        ):
+            if reason is None:
+                converted_count += 1
+            else:
+                failed.append(_record_failure(p.relative_path, reason))
+            completed += 1
+            yield _progress(completed)
 
     yield CollectionCompleteEvent(
         markdown_files=markdown_count,
