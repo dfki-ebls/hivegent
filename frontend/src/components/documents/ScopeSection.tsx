@@ -11,7 +11,7 @@ import {
 import { DROP_CLASSES, registerTreeRow, type TreeDropState, type TreeItemDrag } from "@/lib/dnd";
 import type { PipelineSpec } from "@/lib/types";
 import { downloadBlob } from "@/lib/download";
-import { cn, collectFilePaths, commonParentDir } from "@/lib/utils";
+import { basename, cn, collectFilePaths, commonParentDir } from "@/lib/utils";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { DEFAULT_SCOPE_STATE, useDocumentsStore } from "@/stores/documents-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -247,7 +247,6 @@ export function ScopeSection({
   const handleMoveInto = useCallback(
     (drag: TreeItemDrag, destDir: string) => {
       const into = (suffix: string) => (destDir ? `${destDir}/${suffix}` : suffix);
-      const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
       if (drag.kind === "directory") {
         void storeMoveDir(drag.scope, drag.paths[0], scope, into(basename(drag.paths[0])));
@@ -321,6 +320,8 @@ export function ScopeSection({
         filterState={(path) => filterStateOf(toCanonical(path))}
         onDeleteFile={canWrite ? (path) => dialogs.current?.deleteFile(path) : undefined}
         onDeleteDir={canWrite ? (path) => dialogs.current?.deleteDir(path) : undefined}
+        onRenameFile={canWrite ? (path) => dialogs.current?.renameFile(path) : undefined}
+        onRenameDir={canWrite ? (path) => dialogs.current?.renameDir(path) : undefined}
         selectedFiles={canWrite ? selectedFiles : undefined}
         onToggleSelectFile={canWrite ? toggleFile : undefined}
         onToggleSelectDir={canWrite ? toggleDirFiles : undefined}

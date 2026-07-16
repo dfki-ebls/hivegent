@@ -19,17 +19,26 @@ export function fileStem(name: string): string {
   return dot > 0 ? name.slice(0, dot) : name;
 }
 
+/** Last segment of a path (the file or directory name). */
+export function basename(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** Parent directory of *path*, as `""` or a `dir/`-style prefix. */
+export function parentDir(path: string): string {
+  return path.slice(0, path.lastIndexOf("/") + 1);
+}
+
 /** Longest common parent directory of *paths*, as `""` or a `dir/`-style prefix. */
 export function commonParentDir(paths: string[]): string {
-  const parentOf = (path: string) => path.slice(0, path.lastIndexOf("/") + 1);
-  return paths.map(parentOf).reduce(
+  return paths.map(parentDir).reduce(
     (prefix, dir) => {
       while (!dir.startsWith(prefix)) {
-        prefix = parentOf(prefix.slice(0, -1));
+        prefix = parentDir(prefix.slice(0, -1));
       }
       return prefix;
     },
-    parentOf(paths[0] ?? ""),
+    parentDir(paths[0] ?? ""),
   );
 }
 

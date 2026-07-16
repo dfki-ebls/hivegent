@@ -5,6 +5,7 @@ import {
   Folder,
   FolderOpen,
   type LucideIcon,
+  Pencil,
   Scissors,
   Trash2,
 } from "lucide-react";
@@ -44,6 +45,9 @@ interface DirectoryTreeViewProps {
   /** Delete a file. The other file operations live in the document dialog. */
   onDeleteFile?: (path: string) => void;
   onDeleteDir?: (path: string) => void;
+  /** Rename a file (same-directory move to a new basename). */
+  onRenameFile?: (path: string) => void;
+  onRenameDir?: (path: string) => void;
   selectedFiles?: Set<string>;
   onToggleSelectFile?: (path: string) => void;
   onToggleSelectDir?: (paths: string[]) => void;
@@ -248,6 +252,7 @@ function FileRow({
   onExclude,
   filterState,
   onDelete,
+  onRename,
   selected,
   onToggleSelect,
   resolveDrag,
@@ -261,6 +266,7 @@ function FileRow({
   onExclude: () => void;
   filterState: FilterEntryState;
   onDelete?: () => void;
+  onRename?: () => void;
   selected?: boolean;
   onToggleSelect?: () => void;
   resolveDrag: (() => TreeItemDrag) | null;
@@ -299,6 +305,14 @@ function FileRow({
             compact
             revealOnHover
           />
+          {onRename && (
+            <RowActionButton
+              icon={Pencil}
+              label="Rename"
+              onClick={onRename}
+              disabled={isMutating}
+            />
+          )}
           {onDelete && (
             <RowActionButton
               icon={Trash2}
@@ -335,6 +349,7 @@ function DirectoryRow({
   onExcludeDir,
   filterState,
   onDeleteDir,
+  onRenameDir,
   onToggleSelect,
   resolveDrag,
   onMoveInto,
@@ -354,6 +369,7 @@ function DirectoryRow({
   onExcludeDir: () => void;
   filterState: FilterEntryState;
   onDeleteDir?: () => void;
+  onRenameDir?: () => void;
   onToggleSelect?: () => void;
   resolveDrag: (() => TreeItemDrag) | null;
   onMoveInto: ((drag: TreeItemDrag) => void) | null;
@@ -420,6 +436,14 @@ function DirectoryRow({
             compact
             revealOnHover
           />
+          {onRenameDir && (
+            <RowActionButton
+              icon={Pencil}
+              label="Rename directory"
+              onClick={onRenameDir}
+              disabled={isMutating}
+            />
+          )}
           {onDeleteDir && (
             <RowActionButton
               icon={Trash2}
@@ -452,6 +476,8 @@ export function DirectoryTreeView({
   filterState,
   onDeleteFile,
   onDeleteDir,
+  onRenameFile,
+  onRenameDir,
   selectedFiles,
   onToggleSelectFile,
   onToggleSelectDir,
@@ -519,6 +545,7 @@ export function DirectoryTreeView({
           onExclude={() => onExclude(row.entry.path)}
           filterState={filterState(row.entry.path)}
           onDelete={onDeleteFile ? () => onDeleteFile(row.entry.path) : undefined}
+          onRename={onRenameFile ? () => onRenameFile(row.entry.path) : undefined}
           selected={selectedFiles?.has(row.entry.path)}
           onToggleSelect={onToggleSelectFile ? () => onToggleSelectFile(row.entry.path) : undefined}
           resolveDrag={resolveFileDrag(row.entry.path)}
@@ -562,6 +589,7 @@ export function DirectoryTreeView({
         onExcludeDir={() => onExclude(dirPath)}
         filterState={filterState(dirPath)}
         onDeleteDir={onDeleteDir ? () => onDeleteDir(row.entry.path) : undefined}
+        onRenameDir={onRenameDir ? () => onRenameDir(row.entry.path) : undefined}
         onToggleSelect={onToggleSelectDir ? () => onToggleSelectDir(paths) : undefined}
         resolveDrag={
           onMoveInto ? () => ({ scope, kind: "directory", paths: [row.entry.path] }) : null
