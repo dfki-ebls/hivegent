@@ -25,7 +25,7 @@ export enum ConversionPipeline {
   KREUZBERG = "kreuzberg",
   PDF_OXIDE = "pdf-oxide",
   TABLE_CHEF = "table-chef",
-  TEXT_CHEF = "text-chef",
+  PLAIN_TEXT = "plain-text",
 }
 
 /** Available chunking pipelines. */

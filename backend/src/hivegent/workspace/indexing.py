@@ -7,23 +7,22 @@ completion under a cancel so the workspace markdown is never left without
 its SQL rows.
 
 This module owns the chunk/index primitives (:func:`chunk_and_index_document`
-and :func:`delete_chunked_document`); sibling modules call them through here
-so a test that stubs them at ``workspace.indexing`` covers every write path.
+and :func:`delete_chunked_document`), which sibling modules import directly.
 """
 
+import asyncio
 import logging
 from collections.abc import Iterable
 
 from ..chunkers.base import EntryMetadata
-from ..chunks import (
-    chunk_and_index_document,
-    delete_document as delete_chunked_document,
-)
+from ..chunks import chunk_and_index_document
+from ..chunks import delete_document as delete_chunked_document
 from ..concurrency import shield_to_completion
 from ..config import content_digest, settings
 from ..db import documents as db_documents
 from ..entries import ContentStat, resolve_entry_paths
 from ..store import Casebase
+from ..text import read_text_file
 from ..types import PipelineSpec
 from .locks import store_lock
 from .metadata import _entry_metadata_from_disk, _refresh_unchanged_entry
@@ -105,7 +104,18 @@ async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
     ):
         return await _refresh_unchanged_entry(store, state, entry_metadata, stat)
 
-    content = description_full.read_text(encoding="utf-8")
+    # Offloaded: reconciliation walks every description in the workspace under
+    # the store lock, and a legacy-encoded one costs a detection pass.
+    decoded = await asyncio.to_thread(read_text_file, description_full)
+    if decoded is None:
+        # A description that is not text at all cannot be chunked; leave any
+        # existing row untouched rather than replacing it with garbage.
+        logger.warning(
+            "Skipping %s: content is not supported text", resolved.description_path
+        )
+        return False
+
+    content = decoded.text
     digest = content_digest(content)
     if state is not None and state.content_digest == digest:
         # Content identical despite a moved stat (touch, checkout, restore):

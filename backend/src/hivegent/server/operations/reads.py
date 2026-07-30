@@ -14,15 +14,16 @@ from urllib.parse import quote
 from fastapi import HTTPException
 from starlette.responses import FileResponse, PlainTextResponse, Response
 
-from ...db.documents import get_document
 from ...config import settings
 from ...converters.base import DOCUMENT_EXTENSION
+from ...db.documents import get_document
 from ...entries import (
     assets_dir_for_stem,
     resolve_entry_paths,
     stem_path_from_reference,
 )
 from ...store import Casebase
+from ...text import read_text_file
 from ...types import AssetEntry, AssetListResponse
 
 __all__ = [
@@ -74,14 +75,14 @@ async def get_document_response(store: Casebase, safe: str) -> Response:
 
     if not media_type or media_type.startswith("text/"):
         try:
-            text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
-            return PlainTextResponse(text)
+            decoded = await asyncio.to_thread(read_text_file, file_path)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Document not found") from exc
         except IsADirectoryError as exc:
             raise HTTPException(status_code=400, detail="Path is not a file") from exc
-        except UnicodeDecodeError:
-            pass
+        # Undecodable content falls through to the attachment response below.
+        if decoded is not None:
+            return PlainTextResponse(decoded.text)
 
     if not file_path.is_file():
         if not file_path.exists():
@@ -122,14 +123,15 @@ def list_assets(store: Casebase, safe: str) -> AssetListResponse:
         if companion is not None:
             description_path = str(companion.relative_to(workspace).as_posix())
             try:
-                description = companion.read_text(encoding="utf-8")
-            except Exception:
+                decoded = read_text_file(companion)
+            except OSError:
                 logger.warning(
                     "Failed to read asset description %s",
                     description_path,
                     exc_info=True,
                 )
-                description = ""
+                decoded = None
+            description = decoded.text if decoded is not None else ""
         entries.append(
             AssetEntry(
                 name=item.name,

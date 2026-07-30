@@ -96,4 +96,6 @@ class MinerUConverter(DocumentConverter):
             # MinerU references images as ``images/<hash>.jpg`` relative to the
             # markdown, which matches the keys collect_dir_images produces.
             image_data = collect_dir_images(md_dir / "images", md_dir)
-            return ConversionResult(markdown=md_path.read_text(), images=image_data)
+            return ConversionResult(
+                markdown=md_path.read_text(encoding="utf-8"), images=image_data
+            )

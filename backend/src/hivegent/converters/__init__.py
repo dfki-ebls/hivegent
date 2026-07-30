@@ -49,7 +49,7 @@ class ConversionPipeline(StrEnum):
     KREUZBERG = "kreuzberg"
     PDF_OXIDE = "pdf-oxide"
     TABLE_CHEF = "table-chef"
-    TEXT_CHEF = "text-chef"
+    PLAIN_TEXT = "plain-text"
 
 
 class ConversionSpec(BaseModel):
@@ -91,17 +91,19 @@ _CONVERTERS: dict[ConversionPipeline, str] = {
     ConversionPipeline.KREUZBERG: "hivegent.converters.kreuzberg:KreuzbergConverter",
     ConversionPipeline.PDF_OXIDE: "hivegent.converters.pdf_oxide:PdfOxideConverter",
     ConversionPipeline.TABLE_CHEF: "hivegent.converters.chonkie_table:ChonkieTableConverter",
-    ConversionPipeline.TEXT_CHEF: "hivegent.converters.chonkie_text:ChonkieTextConverter",
+    ConversionPipeline.PLAIN_TEXT: "hivegent.converters.plain_text:PlainTextConverter",
 }
 
 
-# AUTO routing preference: text-chef claims raw-text formats (read as-is),
-# docling claims every binary/office format it can handle, pandoc covers the
-# rest, and anything none of them supports falls back to the LLM pipeline.
-# Routing is derived from each converter's own ``extensions`` (see
-# ``_auto_mapping``) so it can never drift from what the converters declare.
+# AUTO routing preference: plain-text claims raw-text formats (read as-is),
+# docling claims every binary/office format it can handle, and pandoc covers
+# the rest.  Routing is derived from each converter's own ``extensions`` (see
+# ``_auto_mapping``) so it can never drift from what the converters declare;
+# an extension none of them declares falls back to plain-text as well, which
+# decides from the content instead of the name (see
+# :func:`resolve_auto_pipeline`).
 _AUTO_PRIORITY: tuple[ConversionPipeline, ...] = (
-    ConversionPipeline.TEXT_CHEF,
+    ConversionPipeline.PLAIN_TEXT,
     ConversionPipeline.DOCLING,
     ConversionPipeline.PANDOC,
 )
@@ -156,9 +158,10 @@ def _auto_mapping() -> dict[str, ConversionPipeline]:
 def resolve_auto_pipeline(filename: str) -> ConversionPipeline:
     """Resolve the AUTO pipeline to a concrete pipeline based on file extension.
 
-    Falls back to :attr:`ConversionPipeline.LLM` for extensions supported by
-    neither docling nor pandoc (e.g. unknown binary formats sent to a vision
-    model).
+    Falls back to :attr:`ConversionPipeline.PLAIN_TEXT` for an extension no
+    converter declares, such as a source file, unusual config format, or name
+    with no suffix.  AUTO preparation then decides from the content whether to
+    index it as plain text or create a binary stub.
 
     Args:
         filename: The document filename.
@@ -166,7 +169,9 @@ def resolve_auto_pipeline(filename: str) -> ConversionPipeline:
     Returns:
         The resolved conversion pipeline.
     """
-    return _auto_mapping().get(Path(filename).suffix.lower(), ConversionPipeline.LLM)
+    return _auto_mapping().get(
+        Path(filename).suffix.lower(), ConversionPipeline.PLAIN_TEXT
+    )
 
 
 def get_converter(
@@ -211,7 +216,12 @@ def get_converter(
         ) from exc
 
     suffix = Path(filename).suffix.lower()
-    if suffix and cls.extensions and suffix not in cls.extensions:
+    if (
+        suffix
+        and cls.extensions
+        and not cls.accepts_any_extension
+        and suffix not in cls.extensions
+    ):
         raise ValueError(
             f"Conversion pipeline '{pipeline.value}' does not support "
             f"{suffix}. Supported: {', '.join(sorted(cls.extensions))}"

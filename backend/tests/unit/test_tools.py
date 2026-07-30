@@ -429,10 +429,24 @@ class TestReadDocumentTool:
     def test_binary_without_companion_retries(self, tmp_path: Path) -> None:
         # Undecodable bytes become a recoverable ToolRetry, never a run-aborting
         # UnicodeDecodeError.
-        (tmp_path / "blob.bin").write_bytes(b"\xec\xec\xff\xfe")
+        (tmp_path / "blob.bin").write_bytes(b"\x89PNG\r\n\x1a\n\xec\xec\xff\xfe")
         tool = ReadDocumentTool(paths=tmp_path)
-        with pytest.raises(ToolRetry, match="not readable as text"):
+        with pytest.raises(ToolRetry, match="not text"):
             tool("blob.bin")
+
+    def test_legacy_encoding_is_decoded_and_reported(self, tmp_path: Path) -> None:
+        # A cp1252/UTF-16 original is content, not a binary: it is decoded
+        # rather than refused, and the source encoding is named so a wrong
+        # guess on short input is visible instead of silent.
+        (tmp_path / "settings.ini").write_bytes("Benutzer = Jörg\n".encode("utf-16"))
+        tool = ReadDocumentTool(paths=tmp_path)
+
+        result = tool("settings.ini")
+
+        assert isinstance(result.data, DocumentRange)
+        assert result.data.content == "Benutzer = Jörg"
+        assert result.formatted is not None
+        assert "decoded from utf-16" in result.formatted
 
     def test_rejects_nonexistent(self, tmp_path: Path) -> None:
         tool = ReadDocumentTool(paths=tmp_path)

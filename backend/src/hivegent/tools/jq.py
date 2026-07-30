@@ -7,6 +7,7 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..subprocesses import jq_filter
+from ..text import NOT_TEXT_REASON, read_text_file
 from .base import AsyncPathTool, ToolOutput, ToolRetry, resolve_accessible_file
 from .documents import DocumentFilePathArg
 
@@ -34,7 +35,10 @@ class JqTool(AsyncPathTool[str]):
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None or not resolved[2].is_file():
             raise ToolRetry(f"file '{file_path}' not found.")
-        data = json.loads(resolved[2].read_text(encoding="utf-8"))
+        decoded = read_text_file(resolved[2])
+        if decoded is None:
+            raise ToolRetry(f"'{file_path}' {NOT_TEXT_REASON}.")
+        data = json.loads(decoded.text)
 
         try:
             result = await jq_filter(filter, data)

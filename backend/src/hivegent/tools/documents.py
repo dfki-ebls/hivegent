@@ -17,6 +17,7 @@ from ..entries import (
     is_description_file,
     stem_path_from_reference,
 )
+from ..text import NOT_TEXT_REASON, read_text_file
 from .base import (
     WORKSPACE_PATH_HINT,
     WORKSPACE_SCOPE_HINT,
@@ -542,7 +543,9 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         each prefixed with its line number.  When ``limit`` is omitted the
         tool reads a default window and reports how many lines remain so
         the caller can issue a follow-up with a higher ``offset``.  The
-        output is also clamped by a per-call character budget.
+        output is also clamped by a per-call character budget.  A file
+        stored in a legacy encoding is decoded transparently, with the
+        source encoding named next to the hash.
         """
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None or not resolved[2].is_file():
@@ -568,14 +571,14 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
                 f"to send it to a vision model.{sidecar_hint}"
             )
 
-        try:
-            raw_text = absolute.read_text(encoding="utf-8")
-        except UnicodeDecodeError as exc:
-            raise ToolRetry(
-                f"'{file_path}' is not readable as text.{sidecar_hint}"
-            ) from exc
-        file_hash = content_hash(raw_text)
-        all_lines = raw_text.splitlines()
+        # Legacy encodings are decoded rather than refused, and the encoding is
+        # reported below: the same seam the upload pipeline and the editing
+        # tools use, so a hash taken here still matches on a later edit.
+        decoded = read_text_file(absolute)
+        if decoded is None:
+            raise ToolRetry(f"'{file_path}' {NOT_TEXT_REASON}.{sidecar_hint}")
+        file_hash = content_hash(decoded.text)
+        all_lines = decoded.text.splitlines()
         total = len(all_lines)
         start = max(1, offset)
         if total == 0:
@@ -628,10 +631,13 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
             if remaining > 0
             else ""
         )
+        source = decoded.source_encoding
+        encoding = f", decoded from {source}" if source else ""
         return ToolOutput(
             data=result,
             formatted=(
                 f"lines {result.start_line}-{result.end_line} of "
-                f"{result.total_lines} (hash {file_hash}):\n{annotated}{suffix}"
+                f"{result.total_lines} (hash {file_hash}{encoding}):"
+                f"\n{annotated}{suffix}"
             ),
         )

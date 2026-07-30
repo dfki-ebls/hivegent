@@ -28,17 +28,17 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
 from pydantic_ai.output import OutputSpec
+from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
 from starlette.responses import StreamingResponse
 
 import hivegent.server.vercel as vercel_module
 from hivegent.db.conversations import import_conversation
 from hivegent.server.vercel import (
     CHAT_ERROR_KEY,
+    REASONING_DURATIONS_KEY,
     ChatAdapter,
     PersistTurn,
-    REASONING_DURATIONS_KEY,
     dump_messages_with_ids,
     run_and_persist,
 )
@@ -242,7 +242,14 @@ async def test_generic_run_error_is_recorded_for_reload() -> None:
         [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
         model=FunctionModel(stream_function=fail_immediately),
     )
-    target = recorded[0][-1]
+    # The failed run still appends its own empty, interrupted ModelResponse, so
+    # the error rides on the last message that *projects* to a UIMessage rather
+    # than on the last message outright.
+    target = next(
+        message
+        for message in reversed(recorded[0])
+        if message.metadata and CHAT_ERROR_KEY in message.metadata
+    )
 
     assert isinstance(target, ModelRequest)
     assert target.metadata is not None

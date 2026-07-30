@@ -23,7 +23,6 @@ from fastapi import HTTPException
 
 from ..concurrency import bounded_as_completed, shield_to_completion
 from ..config import sanitize_document_path, settings
-from ..humanize import format_bytes
 from ..converters.wikilinks import preprocess_markdown
 from ..entries import (
     entry_exists,
@@ -31,7 +30,9 @@ from ..entries import (
     is_ignorable_path,
     stem_path_from_reference,
 )
+from ..humanize import format_bytes
 from ..store import Casebase
+from ..text import read_text_file
 from ..types import (
     CollectionCompleteEvent,
     CollectionProgressEvent,
@@ -203,10 +204,16 @@ def _read_markdown(
 ) -> bytes | None:
     """Read and wikilink-preprocess a markdown member, or ``None`` if unreadable."""
     try:
-        text = (extract_root / planned.relative_path).read_text(encoding="utf-8")
-    except Exception as exc:
+        decoded = read_text_file(extract_root / planned.relative_path)
+    except OSError as exc:
         logger.warning(
             "Failed to read %s: %s", planned.relative_path, exc, exc_info=True
+        )
+        return None
+
+    if decoded is None:
+        logger.warning(
+            "Skipping %s: content is not supported text", planned.relative_path
         )
         return None
 
@@ -214,7 +221,7 @@ def _read_markdown(
     # matching ``collection_set``), not the workspace destination, so a subdir
     # drop never shifts a link out from under its target.
     return preprocess_markdown(
-        text, planned.relative_path, collection_set
+        decoded.text, planned.relative_path, collection_set
     ).content.encode("utf-8")
 
 
@@ -331,7 +338,9 @@ async def process_collection(
                     original_taken.add(p.stem)
                     roles[p.relative_path] = "attachment"
                 elif (
-                    md := _read_markdown(extract_root, p, collection_set)
+                    md := await asyncio.to_thread(
+                        _read_markdown, extract_root, p, collection_set
+                    )
                 ) is not None:
                     preprocessed_markdown[p.safe] = md
                     roles[p.relative_path] = "markdown"
@@ -394,7 +403,7 @@ async def process_collection(
                     llm=llm,
                     origin="collection",
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 return p, exc
             return p, None
 

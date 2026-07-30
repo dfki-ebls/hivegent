@@ -110,6 +110,11 @@ A description with no prior row is ingested and stamped `origin = imported`, sin
 `reconcile.reconcile_store` runs this ingest over every on-disk markdown first, then drops SQL rows whose description vanished.
 Reconciliation never deletes workspace files: they are the authoritative content, so a file without an owning entry is inert workspace content rather than an orphan to prune.
 `entries.is_description_file` is the scratch-versus-document policy seam: only markdown files become document entries, every other file is kept on disk but never chunked on its own.
+
+Every read of user-supplied bytes goes through `text.decode_bytes` / `text.read_text_file`, never `Path.read_text`.
+The decoder handles BOM-marked Unicode and strict UTF-8 deterministically, then falls back to CP1252 for legacy Western files and returns `None` for binary-looking content.
+Since the read tools, the upload pipeline, the reconciler, and the HTTP reads share that one seam, a hash taken by `read_document` still matches when the edit tools re-read the same file.
+Writes are always UTF-8, so a legacy-encoded file is normalised the first time it is edited through the API, and a transcode is always reported (in the tool output, the upload message, and the `convert_document` span) rather than applied silently.
 A lone binary without a companion `.md` therefore survives reconciliation, shows up in the document tree, and can be deleted or replaced (upload with overwrite) through the API.
 
 ### Preparing for a read-write shell tool

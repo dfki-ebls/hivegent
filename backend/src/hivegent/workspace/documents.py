@@ -15,8 +15,8 @@ from ..chunkers import ChunkingSpec
 from ..chunkers.base import DocumentMetadata
 from ..concurrency import shield_to_completion
 from ..config import content_hash, sanitize_document_path, settings
-from ..db import documents as db_documents
 from ..converters.base import DOCUMENT_EXTENSION
+from ..db import documents as db_documents
 from ..entries import (
     ContentStat,
     assets_dir_for_stem,
@@ -26,6 +26,7 @@ from ..entries import (
     stem_path_from_reference,
 )
 from ..store import Casebase
+from ..text import NOT_TEXT_REASON, read_text_file
 from ..types import MoveDocumentResponse, PipelineSpec
 from .commit import _delete_single_locked
 from .locks import _locked_for, _locked_for_move
@@ -47,10 +48,26 @@ __all__ = [
 ]
 
 
+def _decode_existing(file_path: Path) -> str:
+    """Decode an existing workspace file, rejecting content that is not text.
+
+    Reads go through the shared decoder so a legacy-encoded file is editable
+    and hashes the same way the read tools hash it; the rewrite is UTF-8, which
+    normalises the file on its first edit.
+    """
+    decoded = read_text_file(file_path)
+    if decoded is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{file_path.name}' {NOT_TEXT_REASON}",
+        )
+    return decoded.text
+
+
 def _read_text_file(file_path: Path) -> str:
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Document not found")
-    return file_path.read_text(encoding="utf-8")
+    return _decode_existing(file_path)
 
 
 def _check_expected_hash(
@@ -190,7 +207,7 @@ async def write_document_text(
     async with _locked_for(store, safe):
         workspace_dir = store.workspace_dir(settings.data_dir)
         file_path = workspace_dir / safe
-        current = file_path.read_text(encoding="utf-8") if file_path.is_file() else None
+        current = _decode_existing(file_path) if file_path.is_file() else None
         _check_expected_hash(safe, current, expected_hash)
         if mode == "replace":
             new_content = content
@@ -319,7 +336,7 @@ async def _move_document_locked(
         # The markdown references its assets as ``<stem>.assets/...``; rewrite
         # those references when the stem's basename changed.
         description_full = dst_workspace / dst_description
-        body = description_full.read_text(encoding="utf-8")
+        body = _decode_existing(description_full)
         body = body.replace(f"{src_name}.assets/", f"{dst_name}.assets/")
         description_full.write_text(body, encoding="utf-8")
 

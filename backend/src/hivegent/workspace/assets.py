@@ -11,8 +11,8 @@ from pathlib import Path, PurePosixPath
 from fastapi import HTTPException
 
 # Module-object imports (absolute path) keep test seams patchable and out of a cycle.
-import hivegent.workspace.describe as describe
-import hivegent.workspace.indexing as indexing
+from hivegent.workspace import describe, indexing
+
 from ..concurrency import shield_to_completion
 from ..config import sanitize_document_path, settings
 from ..converters.asset_processing import image_context_windows
@@ -26,6 +26,7 @@ from ..entries import (
     stem_path_from_reference,
 )
 from ..store import Casebase
+from ..text import read_text_file
 from ..types import AssetEntry, LlmConfig
 from .locks import store_lock
 
@@ -177,9 +178,10 @@ async def generate_asset_description(
         parent_md = workspace / description_path_for_stem(
             stem_path_from_reference(safe)
         )
-        if parent_md.exists():
+        parent = read_text_file(parent_md) if parent_md.is_file() else None
+        if parent is not None:
             assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
-            windows = image_context_windows(parent_md.read_text(encoding="utf-8"))
+            windows = image_context_windows(parent.text)
             contexts.extend(windows.get(asset_ref_for(assets_dir, safe_name), []))
         description = await describe._build_image_description(
             safe_name, content_bytes, media_type, contexts, llm

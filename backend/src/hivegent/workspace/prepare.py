@@ -35,14 +35,13 @@ from ..converters.asset_processing import (
 from ..converters.base import (
     ConversionResult,
     ExtractedImage,
-    decode_text,
-    fenced_code_block,
     is_external_ref,
     is_image_suffix,
     is_markdown_suffix,
 )
 from ..converters.fallbacks import recover_conversion
 from ..converters.images import guess_image_media_type
+from ..converters.plain_text import convert_plain_text
 from ..converters.video import is_video_suffix
 from ..entries import (
     asset_ref_for,
@@ -51,12 +50,22 @@ from ..entries import (
     stem_path_from_reference,
 )
 from ..store import Casebase
+from ..text import NOT_TEXT_REASON, decode_bytes
 from ..types import AssetProcessingMode, LlmConfig, PipelineSpec, ProgressReporter
 from .metadata import _build_entry_metadata
 
 __all__: list[str] = []
 
 logger = logging.getLogger(__name__)
+
+
+def _encoding_note(source_encoding: str | None) -> str:
+    """Render the message suffix reporting a transcode, empty when there was none.
+
+    CP1252 is a fallback for undeclared Western input, so every upload whose
+    bytes were not already UTF-8 reports the source encoding in its response.
+    """
+    return f" (decoded from {source_encoding})" if source_encoding else ""
 
 
 @dataclass(slots=True, frozen=True)
@@ -224,7 +233,13 @@ def _prepare_markdown(
     claims a directory the same commit is about to remove.
     """
     workspace_dir = store.workspace_dir(settings.data_dir)
-    text = content.decode("utf-8")
+    decoded = decode_bytes(content)
+    if decoded is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{filepath}' {NOT_TEXT_REASON}",
+        )
+    text = decoded.text
     stem_path = stem_path_from_reference(filepath)
     assets_dir = assets_dir_for_stem(stem_path)
     has_assets = not clearing_assets and (workspace_dir / assets_dir).exists()
@@ -245,7 +260,9 @@ def _prepare_markdown(
         main=main,
         filename=filepath,
         size_bytes=len(content),
-        message="Document uploaded successfully",
+        message=(
+            f"Document uploaded successfully{_encoding_note(decoded.source_encoding)}"
+        ),
     )
 
 
@@ -316,17 +333,17 @@ async def _prepare_video(
     )
 
 
-def _prepare_unconvertible(
+def _prepare_plain_text_or_stub(
     filepath: str, content: bytes, *, origin: EntryOrigin
 ) -> _PreparedUpload:
-    """AUTO fallback when no converter fits the file.
+    """Prepare AUTO input as plain text or a metadata-only binary stub.
 
-    Bytes that decode as UTF-8 are prepared as a plain-text document so their
-    content stays searchable; genuinely binary bytes get a metadata-only stub.
-    The reserve step has already written the original to the workspace.
+    Supported Unicode and Western text is prepared as a searchable plain-text
+    document, while unsupported or binary-looking bytes get a metadata-only
+    stub.
     """
-    text = decode_text(content)
-    if text is None:
+    result = convert_plain_text(content, PurePosixPath(filepath).suffix)
+    if result is None:
         name = PurePosixPath(filepath).name
         mime = mimetypes.guess_type(filepath)[0] or "application/octet-stream"
         stub = f"File name: {name}.\nMIME type: {mime}.\nSize: {len(content)} bytes.\n"
@@ -343,7 +360,7 @@ def _prepare_unconvertible(
 
     main = _derived_entry(
         filepath,
-        fenced_code_block(text, PurePosixPath(filepath).suffix),
+        result.markdown,
         entry_kind="convertible",
         generated_by="converter",
         origin=origin,
@@ -353,8 +370,10 @@ def _prepare_unconvertible(
         filename=filepath,
         size_bytes=len(content),
         converted_filename=main.description_path,
-        conversion_pipeline_used=ConversionPipeline.TEXT_CHEF.value,
-        message="Document uploaded as plain text",
+        conversion_pipeline_used=ConversionPipeline.PLAIN_TEXT.value,
+        message=(
+            f"Document uploaded as plain text{_encoding_note(result.source_encoding)}"
+        ),
     )
 
 
@@ -382,8 +401,8 @@ async def _prepare_conversion_assets(
     assets: list[_PreparedAsset] = []
     # Group described occurrences by perceptual identity so duplicates collapse
     # to one captioned entry. Images with no stable key (uniform or undecodable)
-    # get a unique sentinel so each stays its own singleton group.
-    groups: dict[object, list[str]] = {}
+    # use their unique relative path so each stays its own singleton group.
+    groups: dict[int | str, list[str]] = {}
 
     for relpath, extracted in sorted(images.items()):
         describe_image = (
@@ -396,7 +415,7 @@ async def _prepare_conversion_assets(
             continue
 
         key = perceptual_key(extracted.data)
-        groups.setdefault(key if key is not None else object(), []).append(relpath)
+        groups.setdefault(key if key is not None else relpath, []).append(relpath)
 
     for members in groups.values():
         rep_ref = asset_ref_for(assets_dir, members[0])
@@ -455,10 +474,21 @@ async def _prepare_convertible(
 
     basename = PurePosixPath(filepath).name
     conversion_pipeline = spec.conversion.pipeline
+    resolved_conversion = (
+        resolve_auto_pipeline(basename)
+        if conversion_pipeline == ConversionPipeline.AUTO
+        else conversion_pipeline
+    )
+
+    if (
+        conversion_pipeline == ConversionPipeline.AUTO
+        and resolved_conversion == ConversionPipeline.PLAIN_TEXT
+    ):
+        return _prepare_plain_text_or_stub(filepath, content, origin=origin)
 
     try:
         converter = get_converter(
-            conversion_pipeline,
+            resolved_conversion,
             filename=basename,
             config=spec.conversion.config,
             llm_options=llm,
@@ -467,13 +497,10 @@ async def _prepare_convertible(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
     except (ImportError, ValueError) as exc:
-        if conversion_pipeline == ConversionPipeline.AUTO:
-            return _prepare_unconvertible(filepath, content, origin=origin)
+        # AUTO reaches this point only for an available richer converter whose
+        # declared extensions produced the mapping.  Only an explicit pipeline
+        # can name one that is uninstalled or wrong for the file.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    resolved_conversion = conversion_pipeline
-    if conversion_pipeline == ConversionPipeline.AUTO:
-        resolved_conversion = resolve_auto_pipeline(basename)
 
     suffix = PurePosixPath(basename).suffix.lower()
 
@@ -521,6 +548,7 @@ async def _prepare_convertible(
 
             span.set_attribute("markdown_length", len(result.markdown))
             span.set_attribute("image_count", len(result.images))
+            span.set_attribute("source_encoding", result.source_encoding)
     except Exception as exc:
         if conversion_pipeline == ConversionPipeline.AUTO:
             # exc_info captures the chained cause: docling re-raises pipeline
@@ -532,7 +560,7 @@ async def _prepare_convertible(
                 exc,
                 exc_info=exc,
             )
-            return _prepare_unconvertible(filepath, content, origin=origin)
+            return _prepare_plain_text_or_stub(filepath, content, origin=origin)
         raise HTTPException(
             status_code=500,
             detail=f"Conversion failed: {exc!s}",
@@ -580,7 +608,10 @@ async def _prepare_convertible(
         conversion_pipeline_used=resolved_conversion.value,
         assets=assets,
         asset_entries=asset_entries,
-        message="Document uploaded and converted successfully",
+        message=(
+            "Document uploaded and converted successfully"
+            f"{_encoding_note(result.source_encoding)}"
+        ),
     )
 
 

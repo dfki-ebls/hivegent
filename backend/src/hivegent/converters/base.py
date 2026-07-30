@@ -20,7 +20,6 @@ __all__ = [
     "DocumentConverter",
     "ExtractedImage",
     "collect_dir_images",
-    "decode_text",
     "fenced_code_block",
     "is_external_ref",
     "is_image_suffix",
@@ -62,28 +61,6 @@ def is_markdown_suffix(suffix: str) -> bool:
 def is_image_suffix(suffix: str) -> bool:
     """Return whether *suffix* matches a known image extension."""
     return suffix.lower() in IMAGE_EXTENSIONS
-
-
-def decode_text(content: bytes) -> str | None:
-    """Return *content* decoded as UTF-8 text, or ``None`` if it looks binary.
-
-    A NUL byte is both the strongest binary signal and illegal in a PostgreSQL
-    ``text`` column, so its presence rejects the content even when the
-    remaining bytes would decode. This is the content-based gate used to index
-    arbitrary plain text (JSON, logs, source, extension-less files) as-is
-    rather than discarding it behind a metadata-only stub.
-
-    >>> decode_text(b'{"a": 1}')
-    '{"a": 1}'
-    >>> decode_text(b"\\x89PNG\\r\\n") is None
-    True
-    """
-    if b"\x00" in content:
-        return None
-    try:
-        return content.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
 
 
 def fenced_code_block(text: str, suffix: str) -> str:
@@ -204,10 +181,14 @@ class ConversionResult:
         markdown: The converted markdown content.
         images: Mapping of relative image paths (as referenced in the
             markdown) to per-asset metadata.
+        source_encoding: Encoding the source was transcoded from, when it
+            was not UTF-8.  Set by converters that decode raw bytes so the
+            upload path can report the transcode instead of hiding it.
     """
 
     markdown: str
     images: dict[str, ExtractedImage] = field(default_factory=dict)
+    source_encoding: str | None = None
 
 
 def pil_to_png_bytes(img: _PngSerializable) -> bytes:
@@ -262,6 +243,15 @@ class DocumentConverter(ABC):
     label: ClassVar[str]
     description: ClassVar[str]
     extensions: ClassVar[frozenset[str]]
+
+    accepts_any_extension: ClassVar[bool] = False
+    """Whether the converter can attempt an input outside :attr:`extensions`.
+
+    For such a converter (today only the plain-text pipeline) ``extensions``
+    expresses AUTO's routing *preference* rather than a hard capability, so
+    :func:`~hivegent.converters.get_converter` skips the extension check and
+    lets the converter itself decide from the content.
+    """
 
     detect_asset_roles: bool = field(default=False, kw_only=True)
     """Whether to compute :class:`AssetRole` signals for extracted assets.
