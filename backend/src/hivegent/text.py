@@ -1,7 +1,7 @@
 """Decode user-supplied workspace bytes at one shared boundary."""
 
 import codecs
-import unicodedata
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,7 +10,9 @@ __all__ = ["NOT_TEXT_REASON", "DecodedText", "decode_bytes", "read_text_file"]
 NOT_TEXT_REASON = "is not text-like content"
 """Shared wording for a rejected read, wrapped in each layer's own exception."""
 
-_ALLOWED_CONTROLS = frozenset("\a\b\t\n\v\f\r\x1b")
+# The C0 and C1 control blocks (Unicode category ``Cc``) minus the whitespace
+# and escape characters that legitimately occur in text: \a \b \t \n \v \f \r \x1b.
+_BINARY_CONTROL = re.compile(r"[\x00-\x06\x0e-\x1a\x1c-\x1f\x7f-\x9f]")
 _BOM_ENCODINGS: tuple[tuple[bytes, str], ...] = (
     (codecs.BOM_UTF32_LE, "utf-32"),
     (codecs.BOM_UTF32_BE, "utf-32"),
@@ -33,10 +35,7 @@ class DecodedText:
 
 def _is_text(text: str) -> bool:
     """Return whether decoded text contains only supported control characters."""
-    return all(
-        char in _ALLOWED_CONTROLS or unicodedata.category(char) != "Cc"
-        for char in text
-    )
+    return _BINARY_CONTROL.search(text) is None
 
 
 def _decode_with(content: bytes, encoding: str) -> DecodedText | None:

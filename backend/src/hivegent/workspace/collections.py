@@ -32,7 +32,7 @@ from ..entries import (
 )
 from ..humanize import format_bytes
 from ..store import Casebase
-from ..text import read_text_file
+from ..text import NOT_TEXT_REASON, read_text_file
 from ..types import (
     CollectionCompleteEvent,
     CollectionProgressEvent,
@@ -213,7 +213,7 @@ def _read_markdown(
 
     if decoded is None:
         logger.warning(
-            "Skipping %s: content is not supported text", planned.relative_path
+            "Skipping %s: content %s", planned.relative_path, NOT_TEXT_REASON
         )
         return None
 

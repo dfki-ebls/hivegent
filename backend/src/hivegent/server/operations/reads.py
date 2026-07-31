@@ -124,14 +124,13 @@ def list_assets(store: Casebase, safe: str) -> AssetListResponse:
             description_path = str(companion.relative_to(workspace).as_posix())
             try:
                 decoded = read_text_file(companion)
+                description = decoded.text if decoded is not None else ""
             except OSError:
                 logger.warning(
                     "Failed to read asset description %s",
                     description_path,
                     exc_info=True,
                 )
-                decoded = None
-            description = decoded.text if decoded is not None else ""
         entries.append(
             AssetEntry(
                 name=item.name,

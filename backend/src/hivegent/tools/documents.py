@@ -17,7 +17,6 @@ from ..entries import (
     is_description_file,
     stem_path_from_reference,
 )
-from ..text import NOT_TEXT_REASON, read_text_file
 from .base import (
     WORKSPACE_PATH_HINT,
     WORKSPACE_SCOPE_HINT,
@@ -29,6 +28,7 @@ from .base import (
     excluded_dirs,
     file_allowed,
     is_in_excluded_dir,
+    read_text_or_retry,
     resolve_accessible_file,
 )
 from .binary import binary_media_type
@@ -574,9 +574,7 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         # Legacy encodings are decoded rather than refused, and the encoding is
         # reported below: the same seam the upload pipeline and the editing
         # tools use, so a hash taken here still matches on a later edit.
-        decoded = read_text_file(absolute)
-        if decoded is None:
-            raise ToolRetry(f"'{file_path}' {NOT_TEXT_REASON}.{sidecar_hint}")
+        decoded = read_text_or_retry(absolute, file_path, sidecar_hint)
         file_hash = content_hash(decoded.text)
         all_lines = decoded.text.splitlines()
         total = len(all_lines)

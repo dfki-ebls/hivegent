@@ -22,7 +22,7 @@ from ..config import content_digest, settings
 from ..db import documents as db_documents
 from ..entries import ContentStat, resolve_entry_paths
 from ..store import Casebase
-from ..text import read_text_file
+from ..text import NOT_TEXT_REASON, read_text_file
 from ..types import PipelineSpec
 from .locks import store_lock
 from .metadata import _entry_metadata_from_disk, _refresh_unchanged_entry
@@ -111,7 +111,7 @@ async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
         # A description that is not text at all cannot be chunked; leave any
         # existing row untouched rather than replacing it with garbage.
         logger.warning(
-            "Skipping %s: content is not supported text", resolved.description_path
+            "Skipping %s: content %s", resolved.description_path, NOT_TEXT_REASON
         )
         return False
 

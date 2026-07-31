@@ -473,17 +473,14 @@ async def _prepare_convertible(
 
     basename = PurePosixPath(filepath).name
     conversion_pipeline = spec.conversion.pipeline
-    resolved_conversion = (
-        resolve_auto_pipeline(basename)
-        if conversion_pipeline == ConversionPipeline.AUTO
-        else conversion_pipeline
-    )
-
-    if (
-        conversion_pipeline == ConversionPipeline.AUTO
-        and resolved_conversion == ConversionPipeline.PLAIN_TEXT
-    ):
-        return _prepare_plain_text_or_stub(filepath, content, origin=origin)
+    if conversion_pipeline == ConversionPipeline.AUTO:
+        resolved_conversion = resolve_auto_pipeline(basename)
+        if resolved_conversion == ConversionPipeline.PLAIN_TEXT:
+            # Skip the converter's temp-file round trip: AUTO already falls back
+            # to the same projection (or a stub) for anything it cannot decode.
+            return _prepare_plain_text_or_stub(filepath, content, origin=origin)
+    else:
+        resolved_conversion = conversion_pipeline
 
     try:
         converter = get_converter(

@@ -13,10 +13,13 @@ from typing import Annotated, Any, Self, get_type_hints, override
 
 from pydantic import BaseModel, Field
 
+from ..text import NOT_TEXT_REASON, DecodedText, read_text_file
 from .scope import Scope
 
 __all__ = [
     "DEFAULT_EXCLUDE_DIRS",
+    "WORKSPACE_PATH_HINT",
+    "WORKSPACE_SCOPE_HINT",
     "AsyncPathTool",
     "AsyncTool",
     "BinaryAttachment",
@@ -30,13 +33,12 @@ __all__ = [
     "Tool",
     "ToolOutput",
     "ToolRetry",
-    "WORKSPACE_PATH_HINT",
-    "WORKSPACE_SCOPE_HINT",
     "coerce_paths",
     "excluded_dirs",
     "factory_tool_name",
     "file_allowed",
     "is_in_excluded_dir",
+    "read_text_or_retry",
     "resolve_accessible_file",
     "resolve_search_path",
     "resolve_tool_cls",
@@ -280,6 +282,19 @@ def resolve_accessible_file(
     if not absolute.is_relative_to(sp.path.resolve()):
         return None
     return sp, local, absolute
+
+
+def read_text_or_retry(path: Path, file_path: str, hint: str = "") -> DecodedText:
+    """Decode a resolved file, or raise :class:`ToolRetry` when it is not text.
+
+    Legacy encodings are decoded rather than refused, so callers can report the
+    source encoding instead of failing on it.
+    """
+    decoded = read_text_file(path)
+    if decoded is None:
+        raise ToolRetry(f"'{file_path}' {NOT_TEXT_REASON}.{hint}")
+
+    return decoded
 
 
 @dataclass(slots=True, frozen=True)

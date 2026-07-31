@@ -10,11 +10,6 @@ from .base import ConversionResult, DocumentConverter, fenced_code_block
 __all__ = ["PlainTextConverter", "convert_plain_text"]
 
 
-# These overlap richer converters and therefore need an explicit AUTO priority.
-# Every other suffix already reaches plain text through AUTO's default.
-_AUTO_EXTENSIONS = frozenset({".json", ".text", ".txt", ".xml"})
-
-
 def convert_plain_text(content: bytes, suffix: str) -> ConversionResult | None:
     """Decode bytes and project plain text into a fenced Markdown block."""
     decoded = decode_bytes(content)
@@ -41,7 +36,12 @@ class PlainTextConverter(DocumentConverter):
     description: ClassVar[str] = (
         "Text, configuration, data-serialization, and source files as-is"
     )
-    extensions: ClassVar[frozenset[str]] = _AUTO_EXTENSIONS
+    # These overlap richer converters and therefore need an explicit AUTO
+    # priority.  Every other suffix already reaches plain text through AUTO's
+    # default.
+    extensions: ClassVar[frozenset[str]] = frozenset(
+        {".json", ".text", ".txt", ".xml"}
+    )
     accepts_any_extension: ClassVar[bool] = True
 
     def _convert_sync(self, path: Path, /) -> ConversionResult:

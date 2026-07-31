@@ -193,15 +193,15 @@ async def run_subagent(
                     # Reasoning/message starts come off the model-request node,
                     # tool calls off the call-tools node; the builder
                     # discriminates both.
-                    if user_agent.is_model_request_node(node):  # noqa: SIM114
-                        async with node.stream(run_ctx) as stream:
-                            async for event in stream:
-                                emit(builder.on_event(event))
+                    if not (
+                        user_agent.is_model_request_node(node)
+                        or user_agent.is_call_tools_node(node)
+                    ):
+                        continue
 
-                    elif user_agent.is_call_tools_node(node):
-                        async with node.stream(run_ctx) as stream:
-                            async for event in stream:
-                                emit(builder.on_event(event))
+                    async with node.stream(run_ctx) as stream:
+                        async for event in stream:
+                            emit(builder.on_event(event))
 
         except UsageLimitExceeded:
             # A shared usage budget means the whole turn is out of requests, not
