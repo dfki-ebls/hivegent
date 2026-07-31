@@ -9,8 +9,6 @@ from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
 
-# Module-object import (absolute path) keeps test seams patchable and out of a cycle.
-import hivegent.workspace.indexing as indexing
 from ..chunkers import ChunkingSpec
 from ..chunkers.base import DocumentMetadata
 from ..concurrency import shield_to_completion
@@ -29,6 +27,7 @@ from ..store import Casebase
 from ..text import NOT_TEXT_REASON, read_text_file
 from ..types import MoveDocumentResponse, PipelineSpec
 from .commit import _delete_single_locked
+from .indexing import chunk_and_index_document
 from .locks import _locked_for, _locked_for_move
 from .paths import (
     _check_destination_parents,
@@ -125,7 +124,7 @@ async def _replace_text_locked(
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
     await shield_to_completion(
-        indexing.chunk_and_index_document(
+        chunk_and_index_document(
             store, safe, content, chunking, stat=ContentStat.from_path(full_path)
         )
     )
@@ -148,7 +147,7 @@ async def rechunk(
         file_path = store.workspace_dir(settings.data_dir) / safe
         text = _read_text_file(file_path)
         return await shield_to_completion(
-            indexing.chunk_and_index_document(
+            chunk_and_index_document(
                 store, safe, text, spec.chunking, stat=ContentStat.from_path(file_path)
             )
         )

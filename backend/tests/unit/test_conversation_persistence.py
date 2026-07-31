@@ -12,7 +12,6 @@ interrupted finishes, and the hard-fail error chunk) and
 
 from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from pydantic_ai import Agent, DeferredToolRequests
@@ -71,13 +70,14 @@ def _adapter(
     model: Model | None = None,
     tool_raises: bool = False,
     tool_needs_approval: bool = False,
-) -> ChatAdapter[None, str]:
-    output_type: OutputSpec[Any] = str
-    if tool_needs_approval:
-        output_type = [str, DeferredToolRequests]
-
-    agent = Agent(
-        model=model or TestModel(custom_output_text="ANSWER"), output_type=output_type
+) -> ChatAdapter[None, str | DeferredToolRequests]:
+    output_type: OutputSpec[str | DeferredToolRequests] = (
+        [str, DeferredToolRequests] if tool_needs_approval else str
+    )
+    agent = Agent[None, str | DeferredToolRequests](
+        model=model or TestModel(custom_output_text="ANSWER"),
+        output_type=output_type,
+        deps_type=type(None),
     )
 
     if tool_raises:
@@ -92,7 +92,7 @@ def _adapter(
         def write(value: str) -> str:
             return "written"
 
-    return ChatAdapter[None, str](
+    return ChatAdapter[None, str | DeferredToolRequests](
         agent=agent,
         run_input=SubmitMessage(
             id="c1", messages=ui_messages, trigger="submit-message"

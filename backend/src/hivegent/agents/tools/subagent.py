@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from collections.abc import Sequence
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field
 from pydantic_ai import FunctionToolset, RunContext
@@ -181,6 +181,9 @@ async def run_subagent(
         usage=ctx.usage,
         usage_limits=turn_usage_limits,
     ) as run:
+        # Pydantic AI exposes the run context with an ``Any`` output parameter,
+        # while node streams retain the concrete output parameter.
+        run_ctx: Any = run.ctx
         try:
             # `asyncio.timeout(None)` is a no-op, so a disabled timeout keeps the
             # plain iteration.  On expiry the surrounding block recovers the
@@ -190,10 +193,13 @@ async def run_subagent(
                     # Reasoning/message starts come off the model-request node,
                     # tool calls off the call-tools node; the builder
                     # discriminates both.
-                    if user_agent.is_model_request_node(
-                        node
-                    ) or user_agent.is_call_tools_node(node):
-                        async with node.stream(run.ctx) as stream:
+                    if user_agent.is_model_request_node(node):  # noqa: SIM114
+                        async with node.stream(run_ctx) as stream:
+                            async for event in stream:
+                                emit(builder.on_event(event))
+
+                    elif user_agent.is_call_tools_node(node):
+                        async with node.stream(run_ctx) as stream:
                             async for event in stream:
                                 emit(builder.on_event(event))
 

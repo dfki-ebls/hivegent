@@ -20,8 +20,6 @@ import logfire
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-# Module-object import (absolute path) keeps test seams patchable and out of a cycle.
-import hivegent.workspace.describe as describe
 from ..chunkers.base import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
 from ..config import settings
 from ..converters import ConversionPipeline, get_converter, resolve_auto_pipeline
@@ -52,6 +50,7 @@ from ..entries import (
 from ..store import Casebase
 from ..text import NOT_TEXT_REASON, decode_bytes
 from ..types import AssetProcessingMode, LlmConfig, PipelineSpec, ProgressReporter
+from .describe import _build_image_description, _build_video_description
 from .metadata import _build_entry_metadata
 
 __all__: list[str] = []
@@ -189,7 +188,7 @@ async def _prepare_image_entry(
     a converted document; *contexts* carries every occurrence's surrounding
     text so the caption is the single source of truth for that image.
     """
-    markdown = await describe._build_image_description(
+    markdown = await _build_image_description(
         filepath, content, media_type, contexts, llm
     )
     return _derived_entry(
@@ -315,7 +314,7 @@ async def _prepare_video(
         ctx.set_stage("Generating video description")
 
     with _source_on_disk(filepath, content) as full_path:
-        markdown = await describe._build_video_description(
+        markdown = await _build_video_description(
             filepath,
             full_path,
             [f"File name: {PurePosixPath(filepath).name}"],
@@ -517,7 +516,7 @@ async def _prepare_convertible(
             outcome: ConversionResult | Exception
             try:
                 outcome = await converter(source_path)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 outcome = exc
 
             failure = outcome if isinstance(outcome, Exception) else None
@@ -548,7 +547,8 @@ async def _prepare_convertible(
 
             span.set_attribute("markdown_length", len(result.markdown))
             span.set_attribute("image_count", len(result.images))
-            span.set_attribute("source_encoding", result.source_encoding)
+            if result.source_encoding is not None:
+                span.set_attribute("source_encoding", result.source_encoding)
     except Exception as exc:
         if conversion_pipeline == ConversionPipeline.AUTO:
             # exc_info captures the chained cause: docling re-raises pipeline

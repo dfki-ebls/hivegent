@@ -18,6 +18,8 @@ from hivegent.db import documents as db_documents
 from hivegent.db.documents import EntryState
 from hivegent.entries import ContentStat
 from hivegent.store import Casebase
+from hivegent.workspace import assets as workspace_assets
+from hivegent.workspace import documents
 
 
 @pytest.fixture()
@@ -29,7 +31,7 @@ def workspace_dir(
     async def _noop(*_args: object, **_kwargs: object) -> None:
         return None
 
-    monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", _noop)
+    monkeypatch.setattr(documents, "chunk_and_index_document", _noop)
     path = user_store.workspace_dir(settings.data_dir)
     path.mkdir(parents=True, exist_ok=True)
     yield path
@@ -308,7 +310,9 @@ class TestDeleteAssetDescription:
             deleted.append(reference)
             return True
 
-        monkeypatch.setattr(workspace.indexing, "delete_chunked_document", fake_delete)
+        monkeypatch.setattr(
+            workspace_assets, "delete_chunked_document", fake_delete
+        )
         assets = workspace_dir / "doc.assets"
         assets.mkdir()
         (assets / "img.png").write_bytes(b"binary")
@@ -333,7 +337,7 @@ class TestDeleteAssetDescription:
         async def fail(*_args: object, **_kwargs: object) -> bool:
             raise AssertionError("must not touch the index when the asset is absent")
 
-        monkeypatch.setattr(workspace.indexing, "delete_chunked_document", fail)
+        monkeypatch.setattr(workspace_assets, "delete_chunked_document", fail)
         (workspace_dir / "doc.assets").mkdir()
 
         with pytest.raises(HTTPException) as exc:

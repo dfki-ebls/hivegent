@@ -51,7 +51,7 @@ async def test_prepare_conversion_assets_captions_duplicates_once(
         captioned.append((filepath, list(contexts)))
         return "caption\n"
 
-    monkeypatch.setattr(workspace.describe, "_build_image_description", fake_describe)
+    monkeypatch.setattr(workspace.prepare, "_build_image_description", fake_describe)
 
     dup = _png(Image.radial_gradient("L").convert("RGB"))
     images = {

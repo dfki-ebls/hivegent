@@ -23,6 +23,7 @@ from hivegent.config import settings
 from hivegent.db import documents as db_documents
 from hivegent.entries import original_path_for_stem, stem_path_from_reference
 from hivegent.store import Casebase
+from hivegent.workspace import commit
 
 
 def _doc(stem: str, original_suffix: str | None = None) -> DocumentMetadata:
@@ -99,7 +100,7 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> FakeRepository:
     async def _delete_chunked(store: Casebase, reference: str) -> bool:
         return await fake.delete_document(store, reference)
 
-    monkeypatch.setattr(workspace.indexing, "delete_chunked_document", _delete_chunked)
+    monkeypatch.setattr(commit, "delete_chunked_document", _delete_chunked)
     return fake
 
 

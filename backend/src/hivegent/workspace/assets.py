@@ -10,9 +10,6 @@ from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
 
-# Module-object imports (absolute path) keep test seams patchable and out of a cycle.
-from hivegent.workspace import describe, indexing
-
 from ..concurrency import shield_to_completion
 from ..config import sanitize_document_path, settings
 from ..converters.asset_processing import image_context_windows
@@ -28,6 +25,8 @@ from ..entries import (
 from ..store import Casebase
 from ..text import read_text_file
 from ..types import AssetEntry, LlmConfig
+from .describe import _build_image_description
+from .indexing import chunk_and_index_document, delete_chunked_document
 from .locks import store_lock
 
 __all__ = [
@@ -107,7 +106,7 @@ async def _persist_asset_description(
     md_path.write_text(content, encoding="utf-8")
 
     description_path = str(md_path.relative_to(workspace).as_posix())
-    await indexing.chunk_and_index_document(
+    await chunk_and_index_document(
         store, description_path, content, stat=ContentStat.from_path(md_path)
     )
     return _asset_entry(
@@ -124,7 +123,7 @@ async def _clear_asset_description_locked(
     clearing an asset that was only stored (never described) is a no-op.
     """
     md_path.unlink(missing_ok=True)
-    await indexing.delete_chunked_document(store, description_path)
+    await delete_chunked_document(store, description_path)
 
 
 async def update_asset_description(
@@ -183,7 +182,7 @@ async def generate_asset_description(
             assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
             windows = image_context_windows(parent.text)
             contexts.extend(windows.get(asset_ref_for(assets_dir, safe_name), []))
-        description = await describe._build_image_description(
+        description = await _build_image_description(
             safe_name, content_bytes, media_type, contexts, llm
         )
         return await _persist_asset_description(

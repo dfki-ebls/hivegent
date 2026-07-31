@@ -13,9 +13,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import HTTPException
 
-# Module-object imports (absolute path) keep test seams patchable and out of a cycle.
-import hivegent.workspace.indexing as indexing
-import hivegent.workspace.prepare as prepare
 from ..concurrency import shield_to_completion
 from ..config import settings
 from ..db import documents as db_documents
@@ -28,8 +25,10 @@ from ..entries import (
 )
 from ..store import Casebase
 from ..types import LlmConfig, PipelineSpec, ProgressReporter, UploadCompleteEvent
+from .indexing import delete_chunked_document, write_markdown_projection
 from .locks import _add_inflight, _discard_inflight, _locked_for, store_lock
 from .paths import _check_destination_parents, _write_original_file
+from .prepare import _prepare_upload, _PreparedUpload, _Reserved
 
 __all__: list[str] = []
 
@@ -53,9 +52,9 @@ async def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
 
 async def _commit_prepared(
     store: Casebase,
-    prepared: prepare._PreparedUpload,
+    prepared: _PreparedUpload,
     spec: PipelineSpec,
-    reserved: prepare._Reserved,
+    reserved: _Reserved,
 ) -> UploadCompleteEvent:
     """Write a prepared upload's files and index its entries. Caller holds the lock.
 
@@ -81,7 +80,7 @@ async def _commit_prepared(
         _write_original_file(workspace_dir, asset.path, asset.data)
 
     for entry in prepared.asset_entries:
-        await indexing.write_markdown_projection(
+        await write_markdown_projection(
             store,
             entry.description_path,
             entry.markdown,
@@ -89,7 +88,7 @@ async def _commit_prepared(
             entry_metadata=entry.entry_metadata,
         )
 
-    chunk_count, chunking_used = await indexing.write_markdown_projection(
+    chunk_count, chunking_used = await write_markdown_projection(
         store,
         prepared.main.description_path,
         prepared.main.markdown,
@@ -151,7 +150,7 @@ async def _delete_single_locked(store: Casebase, safe: str) -> None:
             shutil.rmtree(assets_path)
         await db_documents.delete_subtree(store, assets_rel)
 
-    await indexing.delete_chunked_document(store, safe)
+    await delete_chunked_document(store, safe)
 
 
 async def _safe_delete_locked(store: Casebase, safe: str) -> None:
@@ -219,7 +218,7 @@ def _ensure_upload_slot_locked(
         raise HTTPException(status_code=409, detail="Document already exists")
 
 
-type _Reserve = Callable[[], Awaitable[prepare._Reserved]]
+type _Reserve = Callable[[], Awaitable[_Reserved]]
 
 
 async def _phased_upload(
@@ -242,14 +241,14 @@ async def _phased_upload(
     *stem_reference* is the stem this upload owns for its whole lifecycle.
     """
     claimed = False
-    reserved: prepare._Reserved | None = None
+    reserved: _Reserved | None = None
     try:
         async with _locked_for(store, stem_reference):
             reserved = await reserve()
             _add_inflight(store, stem_reference)
             claimed = True
 
-        prepared = await prepare._prepare_upload(
+        prepared = await _prepare_upload(
             store,
             reserved.reference,
             reserved.content,
