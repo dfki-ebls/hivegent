@@ -14,7 +14,7 @@ between chunk metadata and vectors.
 
 import enum
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 import sqlalchemy as sa
 from cbrkit.indexable import PGVECTOR, TSVECTOR, tsvector_computed
@@ -35,18 +35,18 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship,
 )
-from sqlalchemy.types import DateTime
+from sqlalchemy.types import DateTime, TypeEngine
 
 from ..config import settings
 
 __all__ = [
+    "ApplicationSettings",
     "Base",
     "Chunk",
     "Conversation",
     "Document",
     "EntryKind",
     "GeneratedBy",
-    "ApplicationSettings",
     "Group",
     "IndexState",
     "Memory",
@@ -70,11 +70,15 @@ _NAMING_CONVENTION = {
 }
 
 
+type _TypeEngineArg = type[TypeEngine[Any]] | TypeEngine[Any]
+"""What a ``type_annotation_map`` entry maps to: an engine class or instance."""
+
+
 class Base(DeclarativeBase):
     """Typed declarative base with portable annotation map."""
 
     metadata = MetaData(naming_convention=_NAMING_CONVENTION)
-    type_annotation_map = {
+    type_annotation_map: ClassVar[dict[Any, _TypeEngineArg]] = {
         datetime: DateTime(timezone=True),
         dict[str, Any]: JSONB,
         list[str]: JSONB,

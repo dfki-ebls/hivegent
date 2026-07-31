@@ -22,8 +22,8 @@ from typing import Any, Literal, Self
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.agent import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
-from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
 
 from ..config import settings
 from ..db.memory import load_memory

@@ -272,7 +272,9 @@ async def _merge_subagent_events(
             async for chunk in stream:
                 outbox.put_nowait(("chunk", chunk))
 
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001
+            # Cancellation included: the consumer below is the only place that
+            # decides what a failed stream means, so everything is forwarded.
             outbox.put_nowait(("error", exc))
 
         else:

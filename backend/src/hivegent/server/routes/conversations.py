@@ -31,11 +31,8 @@ from ...agents.subagent_events import SubagentUpdate
 from ...auth import User, get_current_user
 from ...compaction import CompactionResult, compact_conversation
 from ...config import settings
-from ...multimodal import BinaryContentMode
 from ...converters.pdf_raster import DEFAULT_MAX_PAGES, render_pdf_pages
 from ...converters.video import FRAME_MAX_DIMENSION
-from ...llm import model_from_config, resolve_thinking, thinking_model_settings
-from ...mcp import build_mcp_server, validate_mcp_servers
 from ...db._common import new_id
 from ...db.conversations import (
     ConversationSummary,
@@ -51,6 +48,9 @@ from ...db.conversations import (
     resolve_fork,
     set_conversation_title,
 )
+from ...llm import model_from_config, resolve_thinking, thinking_model_settings
+from ...mcp import build_mcp_server, validate_mcp_servers
+from ...multimodal import BinaryContentMode
 from ...prompts import (
     CITATION_INSTRUCTIONS,
     IMAGE_INSTRUCTIONS,
@@ -62,12 +62,12 @@ from ...prompts import (
 )
 from ...tools.formatting import BLOCK_SEP
 from ...types import (
+    REASONING_EFFORT_VALUES,
     BulkDeleteConversationsResponse,
     ChatRequestConfig,
     CompactConversationRequest,
     CompactConversationResponse,
     ConversationExport,
-    REASONING_EFFORT_VALUES,
     ConversationListResponse,
     DeleteConversationResponse,
     GenerateTitleRequest,
@@ -77,7 +77,6 @@ from ...types import (
     UpdateTitleRequest,
 )
 from ..cancellation import run_until_disconnect
-from ..vercel import SDK_VERSION, ChatAdapter, dump_messages_with_ids, run_and_persist
 from ..common import (
     group_stores,
     parse_document_filters,
@@ -85,6 +84,7 @@ from ..common import (
     user_store,
 )
 from ..operations import attachment_disposition
+from ..vercel import SDK_VERSION, ChatAdapter, dump_messages_with_ids, run_and_persist
 
 __all__ = ["router"]
 
@@ -137,11 +137,14 @@ def _extract_message_texts(
     texts: list[str] = []
     for message in messages:
         for part in message.parts:
-            if isinstance(part, (UserPromptPart, TextPart)):
-                if isinstance(part.content, str) and (text := part.content.strip()):
-                    texts.append(text[:500])
-                    if len(texts) >= max_messages:
-                        return texts
+            if (
+                isinstance(part, (UserPromptPart, TextPart))
+                and isinstance(part.content, str)
+                and (text := part.content.strip())
+            ):
+                texts.append(text[:500])
+                if len(texts) >= max_messages:
+                    return texts
     return texts
 
 

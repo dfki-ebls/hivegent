@@ -16,14 +16,14 @@ class Scope(Protocol):
     """Renders local paths under a search root and routes qualified paths back.
 
     Implementations are the inverse of each other: :meth:`render` qualifies a
-    local path, :meth:`strip` recovers the local path from a qualified one.
+    local path, :meth:`strip_prefix` recovers the local path from a qualified one.
     """
 
     def render(self, local: str) -> str:
         """Return *local* rendered as a fully-qualified path under this scope."""
         ...
 
-    def strip(self, raw: str) -> str | None:
+    def strip_prefix(self, raw: str) -> str | None:
         """Return *raw*'s local remainder if it addresses this scope, else ``None``.
 
         An empty string means *raw* names this scope's bare root; ``None`` means

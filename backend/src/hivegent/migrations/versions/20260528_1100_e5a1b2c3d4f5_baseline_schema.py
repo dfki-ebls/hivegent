@@ -12,7 +12,6 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import ENUM, JSONB, TSVECTOR
 
-
 revision: str = "e5a1b2c3d4f5"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None

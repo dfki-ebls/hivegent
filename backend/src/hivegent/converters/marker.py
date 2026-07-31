@@ -4,8 +4,12 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-from marker.converters.pdf import PdfConverter  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # ty: ignore[unresolved-import]
-from marker.models import create_model_dict  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # ty: ignore[unresolved-import]
+from marker.converters.pdf import (  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # ty: ignore[unresolved-import]
+    PdfConverter,
+)
+from marker.models import (  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # ty: ignore[unresolved-import]
+    create_model_dict,
+)
 from pydantic import BaseModel
 
 from .base import ConversionResult, DocumentConverter, ExtractedImage, pil_to_png_bytes

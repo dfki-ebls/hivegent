@@ -14,10 +14,13 @@ error the caller already handles.
 """
 
 import asyncio
+import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from multiprocessing import get_context
-from multiprocessing.connection import _ConnectionBase  # pyright: ignore[reportPrivateUsage]
+from multiprocessing.connection import (
+    _ConnectionBase,  # pyright: ignore[reportPrivateUsage]
+)
 from multiprocessing.process import BaseProcess
 from typing import cast
 
@@ -66,7 +69,9 @@ def _worker_entry[T](
     try:
         try:
             outcome = _Success(func(*args))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
+            # Isolation exists to turn any failure of *func* into a value the
+            # supervisor can re-raise, so nothing may escape this process.
             outcome = _Failure(exc)
 
         connection.send(outcome)
@@ -129,10 +134,8 @@ def _wait[T](
 
 async def _drain[T](task: asyncio.Task[_Outcome[T]]) -> None:
     """Await *task* to completion, discarding its outcome or error."""
-    try:
+    with contextlib.suppress(BaseException):
         await task
-    except BaseException:
-        pass
 
 
 async def run_isolated[T](

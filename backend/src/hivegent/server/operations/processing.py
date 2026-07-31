@@ -111,7 +111,9 @@ async def run_bulk_document_job(
     for index, filepath in enumerate(files):
         try:
             await process_one(filepath)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
+            # One file's failure must not abort the batch; it is collected and
+            # reported as a partial result once every file has been attempted.
             logger.warning("Bulk %s failed for %s: %s", verb.lower(), filepath, exc)
             failed.append(filepath)
 

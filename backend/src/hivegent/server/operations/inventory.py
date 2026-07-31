@@ -7,9 +7,9 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from ... import workspace
-from ...db.documents import list_document_paths
 from ...config import settings
 from ...converters.base import DOCUMENT_EXTENSION
+from ...db.documents import list_document_paths
 from ...entries import is_assets_dir
 from ...store import Casebase
 from ...types import (

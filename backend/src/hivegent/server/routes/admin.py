@@ -24,10 +24,10 @@ from sqlalchemy import delete
 from ... import workspace
 from ...auth import require_admin
 from ...config import settings
+from ...db.application_settings import write_maintenance_enabled
 from ...db.documents import delete_all_documents
 from ...db.engine import session
 from ...db.groups import delete_all_groups, list_groups_with_counts
-from ...db.application_settings import write_maintenance_enabled
 from ...db.models import Group, User
 from ...db.users import delete_all_users, delete_user, list_users_with_counts
 from ...reconcile import reconcile_all

@@ -18,7 +18,6 @@ from typing import Annotated, override
 
 from pydantic import Field
 
-from ..multimodal import BinaryContentMode
 from ..converters.images import sanitize_image_bytes
 from ..converters.pdf_raster import (
     DEFAULT_MAX_PAGES,
@@ -34,6 +33,7 @@ from ..converters.video import (
     sample_animated_image,
     sample_video,
 )
+from ..multimodal import BinaryContentMode
 from .base import (
     WORKSPACE_PATH_HINT,
     AsyncPathTool,

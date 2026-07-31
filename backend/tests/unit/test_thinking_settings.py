@@ -1,9 +1,9 @@
 """Reasoning-effort to request-settings mapping for self-hosted endpoints."""
 
 from hivegent.llm import (
+    _THINKING_BUDGET_TOKENS,
     AUTO_REASONING_EFFORT,
     SUMMARY_MAX_TOKENS,
-    _THINKING_BUDGET_TOKENS,
     resolve_thinking,
     summary_model_settings,
     thinking_model_settings,

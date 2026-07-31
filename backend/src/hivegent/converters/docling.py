@@ -346,7 +346,11 @@ def _pdf_has_text_layer(path: Path, *, sample: int = 5) -> bool:
         sampled = [i for _, i in zip(range(sample), indices)]
         hits = sum(doc.has_text_layer(i) for i in sampled)
         return hits / len(sampled) >= 0.5
-    except Exception:
+    except Exception:  # noqa: BLE001
+        # Deliberately broad: pdf_oxide is an optional Rust-backed extra with no
+        # documented error taxonomy, and this probe only advises whether to OCR.
+        # Answering "no text layer" costs a needless OCR pass; letting an
+        # unexpected error escape would fail the whole conversion instead.
         return False
 
 

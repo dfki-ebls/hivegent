@@ -29,7 +29,6 @@ from ...concurrency import shield_to_completion
 from ...config import settings
 from ...db.documents import get_document, get_line_counts
 from ...store import Casebase
-from ..jobs import JobContext, JobView, JobWork, manager
 from ...types import (
     AssetEntry,
     AssetListResponse,
@@ -53,6 +52,7 @@ from ..common import (
     resolve_move,
     resolve_workspace_path,
 )
+from ..jobs import JobContext, JobView, JobWork, manager
 from ..models import (
     BulkDeleteRequest,
     BulkMoveRequest,

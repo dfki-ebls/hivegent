@@ -13,7 +13,7 @@ import pytest
 
 from hivegent.chunkers.base import EntryMetadata
 from hivegent.db._common import stem_subtree_filter
-from hivegent.db.documents import _EntryColumns, _entry_from_row, _original_suffix
+from hivegent.db.documents import _entry_from_row, _EntryColumns, _original_suffix
 from hivegent.db.models import Document
 from hivegent.entries import (
     description_path_for_stem,

@@ -174,7 +174,7 @@ def _match_scope(
     """
     for sp in paths:
         if sp.scope is not None:
-            local = sp.scope.strip(raw)
+            local = sp.scope.strip_prefix(raw)
             if local is not None:
                 return sp, local
     return None

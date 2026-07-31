@@ -65,7 +65,7 @@ class WorkspaceScope:
         """
         return f"{self.prefix}/" if local == "/" else self.render(local)
 
-    def strip(self, raw: str) -> str | None:
+    def strip_prefix(self, raw: str) -> str | None:
         """Return *raw*'s local part if it addresses this scope, else ``None``."""
         if raw == self.prefix:
             return ""

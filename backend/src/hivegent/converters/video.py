@@ -103,7 +103,10 @@ def animation_frame_count(data: bytes, media_type: str) -> int:
     try:
         with PIL.Image.open(BytesIO(data)) as img:
             return getattr(img, "n_frames", 1)
-    except Exception:
+    except Exception:  # noqa: BLE001
+        # Deliberately broad: *data* is an untrusted upload and PIL raises well
+        # beyond OSError on malformed input (struct.error, ValueError, ...).
+        # The static image path re-decodes and surfaces the real error there.
         return 1
 
 

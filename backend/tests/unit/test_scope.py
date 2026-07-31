@@ -15,10 +15,10 @@ class TestWorkspaceScope:
 
     def test_strip_recovers_local_or_none(self) -> None:
         personal = WorkspaceScope()
-        assert personal.strip("~/reports") == "reports"
-        assert personal.strip("~") == ""
-        assert personal.strip("@team/x") is None
-        assert personal.strip("reports") is None
+        assert personal.strip_prefix("~/reports") == "reports"
+        assert personal.strip_prefix("~") == ""
+        assert personal.strip_prefix("@team/x") is None
+        assert personal.strip_prefix("reports") is None
 
     def test_parse_round_trips_render(self) -> None:
         for raw in ("~", "~/reports/q1.md", "@team", "@team/notes.md"):

@@ -6,7 +6,8 @@ need conversion.
 """
 
 import re
-from collections.abc import Callable, Set
+from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
@@ -43,7 +44,7 @@ class PreprocessedMarkdown:
 def _resolve_target(
     target: str,
     source_dir: PurePosixPath,
-    collection_files: Set[str],
+    collection_files: AbstractSet[str],
 ) -> str | None:
     """Resolve a wikilink target to a file path in the collection.
 
@@ -82,7 +83,7 @@ def _rewrite_link(
     target: str,
     alias: str,
     source_dir: PurePosixPath,
-    collection_files: Set[str],
+    collection_files: AbstractSet[str],
     binary_attachments: set[str],
     image_attachments: set[str],
 ) -> str:
@@ -124,7 +125,7 @@ def _parse_pipe(
 def preprocess_markdown(
     content: str,
     source_path: str,
-    collection_files: Set[str],
+    collection_files: AbstractSet[str],
 ) -> PreprocessedMarkdown:
     """Preprocess markdown by normalizing wikilinks and detecting attachments.
 

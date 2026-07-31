@@ -6,6 +6,8 @@ from pydantic_ai.messages import ToolReturn
 
 from ...db.conversations import (
     list_conversations as _list_conversations,
+)
+from ...db.conversations import (
     load_conversation as _load_conversation,
 )
 from ...tools.base import ToolOutput

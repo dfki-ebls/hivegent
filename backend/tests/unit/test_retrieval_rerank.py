@@ -1,8 +1,9 @@
 """Unit tests for reranker config gating and search over-fetch wiring."""
 
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
+
 from hivegent import retrieval
 from hivegent.config import settings
 from hivegent.tools.retrieval import SearchResult, VectorSearchTool, _format_results
@@ -79,9 +80,9 @@ async def test_search_overfetches_and_appends_reranker(
             return True
 
     class _Step:
-        ranking = ["k1"]
-        similarities = {"k1": 0.9}
-        casebase = {"k1": "candidate text"}
+        ranking: ClassVar[list[str]] = ["k1"]
+        similarities: ClassVar[dict[str, float]] = {"k1": 0.9}
+        casebase: ClassVar[dict[str, str]] = {"k1": "candidate text"}
 
     class _Result:
         final_step = type("F", (), {"queries": {"default": _Step()}})()

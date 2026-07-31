@@ -18,10 +18,6 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ._common import affected_rows, stem_subtree_filter
-from .groups import ensure_group
-from .users import ensure_user
-
 from ..chunkers.base import (
     ChunkData,
     DocumentMetadata,
@@ -36,7 +32,9 @@ from ..entries import (
     stem_path_from_reference,
 )
 from ..store import Casebase
+from ._common import affected_rows, stem_subtree_filter
 from .engine import session
+from .groups import ensure_group
 from .models import (
     Chunk,
     Document,
@@ -44,13 +42,14 @@ from .models import (
     GeneratedBy,
     Origin,
 )
+from .users import ensure_user
 
 __all__ = [
+    "EntryState",
     "delete_all",
     "delete_all_documents",
     "delete_document",
     "delete_documents",
-    "EntryState",
     "delete_subtree",
     "get_document",
     "get_entry_state",

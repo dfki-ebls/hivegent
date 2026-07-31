@@ -99,9 +99,7 @@ def _is_decorative_by_shape(data: bytes) -> bool:
         return True
     if w * h < _MIN_PIXELS:
         return True
-    if max(w, h) / max(min(w, h), 1) > _MAX_ASPECT_RATIO:
-        return True
-    return False
+    return max(w, h) / max(min(w, h), 1) > _MAX_ASPECT_RATIO
 
 
 def triage_image(image: ExtractedImage) -> TriageDecision:
