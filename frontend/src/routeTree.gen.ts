@@ -9,29 +9,29 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as DebugRouteImport } from './routes/debug'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as SettingsAccountRouteImport } from './routes/settings.account'
+import { Route as DebugRouteImport } from './routes/debug'
 import { Route as ConversationsIdRouteImport } from './routes/conversations.$id'
+import { Route as SettingsAccountRouteImport } from './routes/settings.account'
 
-const DebugRoute = DebugRouteImport.update({
-  id: '/debug',
-  path: '/debug',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SettingsAccountRoute = SettingsAccountRouteImport.update({
-  id: '/settings/account',
-  path: '/settings/account',
+const DebugRoute = DebugRouteImport.update({
+  id: '/debug',
+  path: '/debug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConversationsIdRoute = ConversationsIdRouteImport.update({
   id: '/conversations/$id',
   path: '/conversations/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsAccountRoute = SettingsAccountRouteImport.update({
+  id: '/settings/account',
+  path: '/settings/account',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -71,13 +71,6 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/debug': {
-      id: '/debug'
-      path: '/debug'
-      fullPath: '/debug'
-      preLoaderRoute: typeof DebugRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -85,11 +78,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/settings/account': {
-      id: '/settings/account'
-      path: '/settings/account'
-      fullPath: '/settings/account'
-      preLoaderRoute: typeof SettingsAccountRouteImport
+    '/debug': {
+      id: '/debug'
+      path: '/debug'
+      fullPath: '/debug'
+      preLoaderRoute: typeof DebugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/conversations/$id': {
@@ -97,6 +90,13 @@ declare module '@tanstack/react-router' {
       path: '/conversations/$id'
       fullPath: '/conversations/$id'
       preLoaderRoute: typeof ConversationsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/account': {
+      id: '/settings/account'
+      path: '/settings/account'
+      fullPath: '/settings/account'
+      preLoaderRoute: typeof SettingsAccountRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
