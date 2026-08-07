@@ -16,8 +16,8 @@ stays as agent-level ``instructions`` because it is not bound to any one feature
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Any, Literal, Self
+from dataclasses import dataclass, replace
+from typing import Any, Self
 
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.agent import AgentInstructions
@@ -33,7 +33,7 @@ from ..prompts import (
     PLAN_INSTRUCTIONS,
 )
 from ..tools.pydantic_ai import capability_tools, invoke_tool
-from ..types import ToolSchema, ToolsSpec
+from ..types import MODE_VALUES, Mode, ToolSchema, ToolsSpec
 from .common import UserDeps, scope_instructions
 from .guards import IterationLimitWarner, ToolOutputLimit
 from .tools import (
@@ -55,10 +55,9 @@ __all__ = [
 ]
 
 
-type Mode = Literal["plan", "execute"]
+_MUTATING: frozenset[Mode] = frozenset({"interactive", "write"})
+"""Modes that offer the features whose tools change state."""
 
-_ALL_MODES: frozenset[Mode] = frozenset({"plan", "execute"})
-_EXECUTE: frozenset[Mode] = frozenset({"execute"})
 _PLAN: frozenset[Mode] = frozenset({"plan"})
 
 
@@ -86,7 +85,7 @@ class Feature:
     id: str
     capability: Capability[UserDeps]
     tool_names: frozenset[str]
-    modes: frozenset[Mode] = _ALL_MODES
+    modes: frozenset[Mode] = MODE_VALUES
 
     @classmethod
     def build(
@@ -95,7 +94,7 @@ class Feature:
         toolset: FunctionToolset[UserDeps],
         *,
         instructions: AgentInstructions[UserDeps] | None = None,
-        modes: frozenset[Mode] = _ALL_MODES,
+        modes: frozenset[Mode] = MODE_VALUES,
     ) -> Self:
         """Name a feature once, bundling its toolset and instructions into a capability."""
         capability: Capability[UserDeps] = Capability(
@@ -119,12 +118,12 @@ class Feature:
 FEATURES: tuple[Feature, ...] = (
     Feature.build("explore", explore_toolset, instructions=scope_instructions),
     Feature.build("subagent", subagent_toolset),
-    Feature.build("write", write_toolset, modes=_EXECUTE),
+    Feature.build("write", write_toolset, modes=_MUTATING),
     Feature.build(
         "memory",
         memory_toolset,
         instructions=_memory_instructions,
-        modes=_EXECUTE,
+        modes=_MUTATING,
     ),
     Feature.build("web", web_toolset),
     Feature.build("conversation", conversation_toolset),
@@ -143,11 +142,42 @@ def _filter_disabled(disabled: frozenset[str]) -> AbstractCapability[UserDeps]:
     return PrepareTools(prepare, id="disabled-tools")
 
 
+_GATED_TOOLS: frozenset[str] = frozenset(
+    name
+    for feature in FEATURES
+    for name, tool in capability_tools(feature.capability).items()
+    if tool.requires_approval
+)
+"""The agent's own tools that ask for approval, derived from their registration."""
+
+
+def _auto_approve() -> AbstractCapability[UserDeps]:
+    """A capability that lifts the approval gate off the agent's own tools.
+
+    ``requires_approval`` is a registration-time property that surfaces as the
+    ``unapproved`` tool kind, so downgrading the kind to a plain function tool
+    is what turns a human-in-the-loop tool into a directly callable one for a
+    single run.  Scoped to :data:`_GATED_TOOLS` rather than to the kind alone,
+    so a tool that asks for approval on its own account — an MCP server's, say
+    — keeps asking in every mode.
+    """
+
+    def prepare(
+        _ctx: RunContext[UserDeps], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        return [
+            replace(td, kind="function") if td.name in _GATED_TOOLS else td
+            for td in tool_defs
+        ]
+
+    return PrepareTools(prepare, id="auto-approve")
+
+
 def build_capabilities(
     tools_spec: ToolsSpec,
     *,
     extra: Sequence[AbstractToolset[UserDeps]] = (),
-    mode: Mode = "execute",
+    mode: Mode = "interactive",
 ) -> Sequence[AbstractCapability[UserDeps]]:
     """Compose the capabilities for an agent run.
 
@@ -156,6 +186,11 @@ def build_capabilities(
     instructions), hides individually disabled tools via a single
     :class:`PrepareTools` capability, and wraps each extra toolset (e.g. an MCP
     server) as its own capability.
+
+    The mode governs mutating tools twice over: which features are offered at
+    all (``read`` and ``plan`` are handed none of them), and, in ``write``,
+    whether the remaining approval gate is lifted so the run never pauses for
+    the user.
 
     Args:
         tools_spec: Combined tool configuration from the chat request.
@@ -175,6 +210,9 @@ def build_capabilities(
 
     if disabled:
         result.append(_filter_disabled(disabled))
+
+    if mode == "write":
+        result.append(_auto_approve())
 
     result.extend(Capability(toolsets=[toolset]) for toolset in extra)
 

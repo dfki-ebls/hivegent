@@ -15,7 +15,7 @@ interface ImportMetaEnv {
   readonly VITE_FEATURE_PIPELINE_SPEC?: string;
   readonly VITE_FEATURE_ASSET_SPEC?: string;
   readonly VITE_FEATURE_TOOLS_SPEC?: string;
-  readonly VITE_FEATURE_PLANNING?: string;
+  readonly VITE_FEATURE_AGENT_MODES?: string;
   readonly VITE_FEATURE_DOCUMENT_MAP?: string;
 }
 

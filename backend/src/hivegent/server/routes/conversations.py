@@ -63,6 +63,7 @@ from ...prompts import (
 )
 from ...tools.formatting import BLOCK_SEP
 from ...types import (
+    MODE_VALUES,
     REASONING_EFFORT_VALUES,
     BulkDeleteConversationsResponse,
     ChatRequestConfig,
@@ -364,8 +365,8 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     included_documents: list[str] = body.get("included_documents") or []
     excluded_documents: list[str] = body.get("excluded_documents") or []
     tools = ToolsSpec(**(body.get("tools") or {}))
-    raw_mode = body.get("mode", "execute")
-    mode = raw_mode if raw_mode in ("plan", "execute") else "execute"
+    raw_mode = body.get("mode", "interactive")
+    mode = raw_mode if raw_mode in MODE_VALUES else "interactive"
     raw_trigger = body.get("trigger")
     trigger = (
         raw_trigger

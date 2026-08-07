@@ -18,7 +18,7 @@ vi.mock("@/lib/feature-flags", () => ({
     pipelineSpec: false,
     assetSpec: false,
     toolsSpec: false,
-    planning: false,
+    agentModes: false,
   },
 }));
 

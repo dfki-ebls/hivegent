@@ -1,4 +1,10 @@
-import { ListChecksIcon } from "lucide-react";
+import {
+  CircleQuestionMarkIcon,
+  EyeIcon,
+  ListChecksIcon,
+  PencilIcon,
+  type LucideIcon,
+} from "lucide-react";
 import {
   PromptInputSelect,
   PromptInputSelectContent,
@@ -13,19 +19,33 @@ interface ModeSelectorProps {
   onChange: (value: AgentMode) => void;
 }
 
+const MODE_ICONS: Record<AgentMode, LucideIcon> = {
+  interactive: CircleQuestionMarkIcon,
+  read: EyeIcon,
+  write: PencilIcon,
+  plan: ListChecksIcon,
+};
+
 export function ModeSelector({ value, onChange }: ModeSelectorProps) {
+  const ActiveIcon = MODE_ICONS[value];
+
   return (
     <PromptInputSelect value={value} onValueChange={(v) => onChange(v as AgentMode)}>
       <PromptInputSelectTrigger className="h-8 w-auto min-w-20">
-        <ListChecksIcon className="h-4 w-4" />
+        <ActiveIcon className="h-4 w-4" />
         <PromptInputSelectValue placeholder="Mode" />
       </PromptInputSelectTrigger>
       <PromptInputSelectContent>
-        {AGENT_MODE_OPTIONS.map((option) => (
-          <PromptInputSelectItem key={option.value} value={option.value}>
-            {option.label}
-          </PromptInputSelectItem>
-        ))}
+        {AGENT_MODE_OPTIONS.map(({ value: mode, label }) => {
+          const Icon = MODE_ICONS[mode];
+
+          return (
+            <PromptInputSelectItem key={mode} value={mode}>
+              <Icon className="h-4 w-4" />
+              {label}
+            </PromptInputSelectItem>
+          );
+        })}
       </PromptInputSelectContent>
     </PromptInputSelect>
   );

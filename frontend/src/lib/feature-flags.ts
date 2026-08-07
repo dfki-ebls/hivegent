@@ -67,12 +67,14 @@ export interface FeatureFlags {
   toolsSpec: boolean;
 
   /**
-   * Allow users to switch the agent into plan mode from the composer.
-   * When disabled, the Mode selector is hidden and outgoing requests
-   * always send `mode: "execute"`, so the backend never appends the plan
-   * instructions and the "Execute the plan" follow-up never appears.
+   * Allow users to pick the agent mode from the composer — whether writes
+   * are confirmed, withheld, unattended, or planned.  When disabled, the
+   * Mode selector is hidden and outgoing requests always send
+   * `mode: "interactive"`, so writes keep asking for confirmation, the
+   * backend never appends the plan instructions, and the "Execute the plan"
+   * follow-up never appears.
    */
-  planning: boolean;
+  agentModes: boolean;
 
   /**
    * Show the coverage map in the context panel — the bar marking where a
@@ -89,7 +91,7 @@ const FEATURE_DEFAULTS: FeatureFlags = {
   pipelineSpec: false,
   assetSpec: false,
   toolsSpec: false,
-  planning: false,
+  agentModes: false,
   documentMap: false,
 };
 
@@ -104,7 +106,7 @@ const FEATURE_ENV: Record<keyof FeatureFlags, string | undefined> = {
   pipelineSpec: import.meta.env.VITE_FEATURE_PIPELINE_SPEC,
   assetSpec: import.meta.env.VITE_FEATURE_ASSET_SPEC,
   toolsSpec: import.meta.env.VITE_FEATURE_TOOLS_SPEC,
-  planning: import.meta.env.VITE_FEATURE_PLANNING,
+  agentModes: import.meta.env.VITE_FEATURE_AGENT_MODES,
   documentMap: import.meta.env.VITE_FEATURE_DOCUMENT_MAP,
 };
 

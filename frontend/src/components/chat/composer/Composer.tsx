@@ -81,7 +81,7 @@ export function Composer({
           )}
           <SettingsDialog />
           <ReasoningEffortSelector value={reasoningEffort} onChange={onReasoningEffortChange} />
-          {featureFlags.planning && <ModeSelector value={agentMode} onChange={onAgentModeChange} />}
+          {featureFlags.agentModes && <ModeSelector value={agentMode} onChange={onAgentModeChange} />}
         </PromptInputTools>
         <PromptInputSubmit status={status} onStop={onStop} />
       </PromptInputFooter>

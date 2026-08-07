@@ -22,6 +22,8 @@ from .security import (
 )
 
 __all__ = [
+    "MODE_VALUES",
+    "REASONING_EFFORT_VALUES",
     "AdminFactoryResetResponse",
     "AdminGroupInfo",
     "AdminListGroupsResponse",
@@ -61,11 +63,13 @@ __all__ = [
     "McpOAuth2Config",
     "McpServerConfig",
     "McpTestResponse",
+    "Mode",
     "MoveDocumentRequest",
     "MoveDocumentResponse",
     "OidcPublicConfig",
     "PipelineSpec",
     "ProgressReporter",
+    "ReasoningEffort",
     "SettingsResponse",
     "ToolInfo",
     "ToolRunResult",
@@ -362,6 +366,21 @@ REASONING_EFFORT_VALUES: frozenset[str] = frozenset(
 """Valid reasoning effort strings, used to validate untrusted request input."""
 
 
+type Mode = Literal["interactive", "read", "write", "plan"]
+"""Agent mode accepted from the API.
+
+The mode selects which features a run is composed from and how their tools are
+gated: ``interactive`` (the default) offers the mutating features and asks the
+user to confirm every document write, ``write`` runs them unattended, and
+``read`` withholds them entirely.  ``plan`` is ``read`` plus the planning tool
+and its instructions, so the agent drafts a plan for the user to approve
+instead of acting.
+"""
+
+MODE_VALUES: frozenset[Mode] = frozenset(get_args(Mode.__value__))
+"""Valid mode strings, used to validate untrusted request input."""
+
+
 class ChatRequestConfig(BaseModel):
     """Configuration for chat requests, passed via request body."""
 
@@ -375,9 +394,9 @@ class ChatRequestConfig(BaseModel):
         default="auto",
         description="Reasoning effort level ('auto' resolves to the deployed default effort, 'none' disables thinking)",
     )
-    mode: Literal["plan", "execute"] = Field(
-        default="execute",
-        description="Agent mode: 'plan' for planning only, 'execute' for full execution",
+    mode: Mode = Field(
+        default="interactive",
+        description="Agent mode selecting the offered tools and how writes are gated",
     )
     llm: LlmConfig = Field(default_factory=LlmConfig)
     included_documents: list[str] = Field(default_factory=list)

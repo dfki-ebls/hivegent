@@ -56,7 +56,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
 
   const [inputValue, setInputValue] = useState("");
   const [activeTab, setActiveTab] = useState<ChatTab>("chat");
-  const [agentMode, setAgentMode] = useState<AgentMode>("execute");
+  const [agentMode, setAgentMode] = useState<AgentMode>("interactive");
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("auto");
 
   const buildRequestBody = useBuildRequestBody({ agentMode, reasoningEffort });
@@ -182,9 +182,11 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     await sendUserMessage({ text: last.text, messageId: last.id }, buildRequestBody());
   }, [messages, buildRequestBody, sendUserMessage, clearAll]);
 
+  // Leaves plan mode for the default one, so the plan's writes are carried out
+  // but each is still confirmed by the user.
   const handleExecutePlan = useCallback(async () => {
-    setAgentMode("execute");
-    await sendUserMessage({ text: "Execute the plan." }, buildRequestBody("execute"));
+    setAgentMode("interactive");
+    await sendUserMessage({ text: "Execute the plan." }, buildRequestBody("interactive"));
   }, [buildRequestBody, sendUserMessage]);
 
   const handleNewChat = useCallback(async () => {

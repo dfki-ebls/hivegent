@@ -788,8 +788,15 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
   },
 ];
 
-/** Agent mode controlling available tools. */
-export type AgentMode = "plan" | "execute";
+/**
+ * Agent mode controlling which tools are offered and how writes are gated.
+ *
+ * `interactive` (the default) offers the write tools but asks for confirmation
+ * before every call, `read` withholds them entirely, and `write` runs them
+ * unattended. `plan` is `read` plus the planning tool, so the agent drafts a
+ * plan for the user to approve instead of acting.
+ */
+export type AgentMode = "interactive" | "read" | "write" | "plan";
 
 /** Agent mode option for display in UI. */
 export interface AgentModeOption {
@@ -799,7 +806,9 @@ export interface AgentModeOption {
 
 /** Available agent mode options. */
 export const AGENT_MODE_OPTIONS: AgentModeOption[] = [
-  { value: "execute", label: "Execute" },
+  { value: "interactive", label: "Interactive" },
+  { value: "read", label: "Read" },
+  { value: "write", label: "Write" },
   { value: "plan", label: "Plan" },
 ];
 

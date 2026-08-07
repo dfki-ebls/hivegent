@@ -373,6 +373,19 @@ export function buildAuxLlmConfig(overrides: {
 }
 
 /**
+ * Build the agent mode value sent to the backend.
+ *
+ * When the {@link featureFlags.agentModes} flag is disabled, always returns
+ * `"interactive"` — mode selection is a frontend-only feature, so disabling
+ * it implicitly pins the backend to the confirm-before-writing default
+ * without a parallel flag system.
+ */
+export function buildModePayload(mode: AgentMode): AgentMode {
+  if (!featureFlags.agentModes) return "interactive";
+  return mode;
+}
+
+/**
  * Convert a frontend ToolsSpec to the snake_case backend payload.
  *
  * When the {@link featureFlags.toolsSpec} flag is disabled, returns an
@@ -380,19 +393,6 @@ export function buildAuxLlmConfig(overrides: {
  * a frontend-only feature, so disabling it implicitly removes the data
  * from every outgoing request without touching the backend.
  */
-/**
- * Build the agent mode value sent to the backend.
- *
- * When the {@link featureFlags.planning} flag is disabled, always returns
- * `"execute"` — plan mode is a frontend-only feature, so disabling it
- * implicitly prevents the backend from ever appending the plan instructions
- * without a parallel flag system.
- */
-export function buildModePayload(mode: AgentMode): AgentMode {
-  if (!featureFlags.planning) return "execute";
-  return mode;
-}
-
 export function buildToolsPayload(spec: ToolsSpec): Record<string, unknown> {
   if (!featureFlags.toolsSpec) {
     return { disabled_tools: [], mcp_servers: [] };
