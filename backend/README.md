@@ -89,6 +89,11 @@ A plain submit forks at the current leaf (linear continuation); editing a messag
 The newly appended chain is the newest message, so it automatically becomes the active path — forking never has to touch a pointer.
 `GET /conversations/{id}/messages` projects the active path with `dump_messages_with_ids`, which anchors each `UIMessage.id` to its tree-node id (so the client can address a node for edit / regenerate) and annotates forking nodes with branch metadata for the not-yet-built branch-navigation UI (see `frontend/README.md`).
 
+A reload therefore hands the client addressable ids, but a message the client itself just sent carries only the id its SDK minted locally, which names no node.
+So `_run_chat` reserves that node id before the run (`append_branch(head_id=...)` stores the delta's head under it) and returns it in the `X-Message-Id` response header for the client to adopt, exactly as the first turn of a new conversation adopts `X-Conversation-Id`.
+Without it, editing a message sent earlier in the same session would resolve to no fork point and silently continue the conversation instead of forking at it — the client would drop the later messages while the server kept and replayed them.
+Only a request carrying a user prompt reserves an id, and `resolve_fork` treats a `messageId` as an edit only when it names a user turn on the active path: the AI SDK also sends `messageId` when it auto-continues a turn after a tool approval, where it names the assistant message that requested it.
+
 Because history is loaded from SQL, there is no browser round-trip to strip `ToolReturnPart.metadata`, and the client-trust surface shrinks from the whole conversation to one new message.
 Persistence is therefore hard-fail: a failed write surfaces as a trailing error chunk on a clean drain (no echo to recover from), and is only logged on a client disconnect.
 

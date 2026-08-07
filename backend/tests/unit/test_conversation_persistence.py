@@ -32,7 +32,7 @@ from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UI
 from starlette.responses import StreamingResponse
 
 import hivegent.server.vercel as vercel_module
-from hivegent.db.conversations import import_conversation
+from hivegent.db.conversations import ActiveNode, _fork_for_path, import_conversation
 from hivegent.server.vercel import (
     CHAT_ERROR_KEY,
     REASONING_DURATIONS_KEY,
@@ -337,6 +337,55 @@ async def test_import_conversation_rejects_empty_export() -> None:
     """
     with pytest.raises(ValueError, match="no messages"):
         await import_conversation("user-1", [])
+
+
+def _path() -> list[ActiveNode]:
+    """A two-turn active path: user, answer, user, answer."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content="q1")]),
+        ModelResponse(parts=[TextPart(content="a1")]),
+        ModelRequest(parts=[UserPromptPart(content="q2")]),
+        ModelResponse(parts=[TextPart(content="a2")]),
+    ]
+    return [
+        ActiveNode(f"n{i}", f"n{i - 1}" if i else None, msg)
+        for i, msg in enumerate(messages)
+    ]
+
+
+def test_edit_forks_under_the_edited_message() -> None:
+    """An edited user turn is replayed up to (not including) itself."""
+    prefix, fork_id = _fork_for_path(_path(), regenerate=False, message_id="n2")
+
+    assert _texts(prefix) == ["q1", "a1"]
+    assert fork_id == "n1"
+
+
+@pytest.mark.parametrize("message_id", ["local-42", "n3"])
+def test_submit_not_addressing_a_user_turn_continues_the_conversation(
+    message_id: str,
+) -> None:
+    """Only a user turn is editable; anything else continues at the leaf.
+
+    A turn that failed before its first write leaves the client holding an id
+    no node carries, and the AI SDK auto-continues an approved tool call with
+    the *assistant* message's id — forking there would drop the very response
+    holding the approved call.
+    """
+    prefix, fork_id = _fork_for_path(
+        _path(), regenerate=False, message_id=message_id
+    )
+
+    assert _texts(prefix) == ["q1", "a1", "q2", "a2"]
+    assert fork_id == "n3"
+
+
+def test_regenerate_forks_at_the_nearest_user_turn() -> None:
+    """Regenerating an answer replays through the user turn that asked for it."""
+    prefix, fork_id = _fork_for_path(_path(), regenerate=True, message_id="n3")
+
+    assert _texts(prefix) == ["q1", "a1", "q2"]
+    assert fork_id == "n2"
 
 
 def test_dump_messages_with_ids_anchors_node_ids() -> None:

@@ -1,4 +1,4 @@
-import { useChat } from "@ai-sdk/react";
+import { type UIMessage, type UseChatHelpers, useChat } from "@ai-sdk/react";
 import {
   type FileUIPart,
   DefaultChatTransport,
@@ -6,6 +6,7 @@ import {
 } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getAuthHeaders } from "@/lib/api";
+import { adoptMessageNodeId } from "@/lib/chat/chat-utils";
 import { API_BASE_URL } from "@/lib/health";
 import type { SubagentSteps, SubagentUpdate } from "@/lib/chat/subagent";
 
@@ -61,6 +62,13 @@ export function useHivegentChat(
   // instance (steering drain, approval auto-send) must target the adopted
   // conversation: re-posting to the mint endpoint would create a duplicate.
   const adoptedIdRef = useRef<string | null>(null);
+  // Tree-node ID the server reserved for the user message of the in-flight
+  // turn. Read off the response headers rather than the stream so it survives
+  // a turn the user stops or that errors — both persist the message.
+  const messageNodeIdRef = useRef<string | null>(null);
+  // `onFinish` is a `useChat` argument, so it cannot close over the chat it
+  // belongs to; it reaches the one setter it needs through this ref.
+  const setMessagesRef = useRef<UseChatHelpers<UIMessage>["setMessages"] | null>(null);
 
   const transport = useMemo(
     () =>
@@ -89,17 +97,17 @@ export function useHivegentChat(
             },
           };
         },
-        // The server mints the conversation ID on the first turn and returns
-        // it in a response header; capture it so the client can adopt it.
-        // Cross-origin reads require the proxy to expose X-Conversation-Id via
+        // Every turn returns the node ID its user message is stored under, and
+        // the first turn of a draft also returns the minted conversation ID;
+        // capture both so the client can adopt them. Cross-origin reads require
+        // the proxy to expose X-Message-Id and X-Conversation-Id via
         // Access-Control-Expose-Headers; same-origin (the default) needs none.
-        fetch: draft
-          ? async (input, init) => {
-              const res = await fetch(input, init);
-              mintedIdRef.current = res.headers.get("X-Conversation-Id");
-              return res;
-            }
-          : undefined,
+        fetch: async (input, init) => {
+          const res = await fetch(input, init);
+          messageNodeIdRef.current = res.headers.get("X-Message-Id");
+          if (draft) mintedIdRef.current = res.headers.get("X-Conversation-Id");
+          return res;
+        },
       }),
     [id, draft],
   );
@@ -125,6 +133,14 @@ export function useHivegentChat(
       setSubagentSteps((prev) => new Map(prev).set(tool_call_id, transcript.steps));
     },
     onFinish: () => {
+      const nodeId = messageNodeIdRef.current;
+      messageNodeIdRef.current = null;
+      // Swap the SDK's local ID for the node ID, so editing or retrying this
+      // message forks the stored branch at it instead of appending to the end.
+      if (nodeId) {
+        setMessagesRef.current?.((messages) => adoptMessageNodeId(messages, nodeId));
+      }
+
       const mintedId = mintedIdRef.current;
       mintedIdRef.current = null;
       // The server mirrors the turn to storage on every finish (clean,
@@ -136,6 +152,8 @@ export function useHivegentChat(
       }
     },
   });
+
+  setMessagesRef.current = chat.setMessages;
 
   const { sendMessage, regenerate } = chat;
 

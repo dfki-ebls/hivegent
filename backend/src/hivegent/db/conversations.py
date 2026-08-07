@@ -54,6 +54,7 @@ __all__ = [
     "delete_all_conversations",
     "extract_title",
     "import_conversation",
+    "is_user_request",
     "list_conversations",
     "load_active_for_display",
     "load_conversation",
@@ -140,7 +141,7 @@ def _load_messages(payloads: Sequence[dict[str, Any]]) -> list[ModelMessage]:
     return messages
 
 
-def _is_user_request(msg: ModelMessage) -> bool:
+def is_user_request(msg: ModelMessage) -> bool:
     """Whether *msg* is a user turn (a request carrying a user prompt).
 
     Tool-return-only requests in the middle of an agent loop are not user
@@ -416,9 +417,16 @@ def _fork_for_path(
 
     - regenerate: fork at the nearest user request at/above the target node;
       the prefix ends with that user turn and no new client message follows.
-    - edit (submit + a node id): fork at the edited node's parent; the prefix
-      stops before it, so the edited node and its subtree become a sibling.
+    - edit (submit + the node id of a user turn): fork at the edited node's
+      parent; the prefix stops before it, so the edited node and its subtree
+      become a sibling.
     - plain submit: fork at the active leaf, continuing the conversation.
+
+    A submit whose *message_id* does not name a user turn on the active path is
+    a continuation, not an edit: the AI SDK also sends the last message's id
+    when it auto-continues after a tool approval, and a client can address a
+    message this server never persisted (a turn that failed before its first
+    write).  Both fall through to the leaf.
     """
     ids = [node.id for node in path]
     msgs = [node.message for node in path]
@@ -429,13 +437,15 @@ def _fork_for_path(
     if regenerate:
         idx = ids.index(message_id) if message_id in ids else len(ids) - 1
         for i in range(idx, -1, -1):
-            if _is_user_request(msgs[i]):
+            if is_user_request(msgs[i]):
                 return msgs[: i + 1], ids[i]
         return msgs, ids[-1]
 
-    if message_id and message_id in ids:
+    if message_id in ids:
         idx = ids.index(message_id)
-        return (msgs[:idx], ids[idx - 1]) if idx > 0 else ([], None)
+
+        if is_user_request(msgs[idx]):
+            return (msgs[:idx], ids[idx - 1]) if idx > 0 else ([], None)
 
     return msgs, ids[-1]
 
@@ -462,6 +472,7 @@ async def append_branch(
     parent_id: str | None,
     messages: Sequence[ModelMessage],
     *,
+    head_id: str | None = None,
     title: str | None = None,
 ) -> str | None:
     """Append *messages* as a chain under *parent_id* and make it active.
@@ -474,6 +485,10 @@ async def append_branch(
     conversation row is created lazily on the first turn, titled by *title* or,
     when omitted, derived from the first user message.  Raises on failure so
     the caller can surface a hard error rather than silently lose the turn.
+
+    *head_id* forces the id of the first node instead of minting one, so the
+    chat route can announce the new user message's id before the turn is
+    persisted (see ``X-Message-Id`` in ``backend/README.md``).
     """
     msg_list = list(messages)
     if not msg_list:
@@ -494,8 +509,8 @@ async def append_branch(
 
         parent = parent_id
         last_id: str | None = None
-        for payload in _dump_messages(msg_list):
-            node_id = new_id()
+        for index, payload in enumerate(_dump_messages(msg_list)):
+            node_id = head_id if index == 0 and head_id else new_id()
             s.add(
                 Message(
                     id=node_id,

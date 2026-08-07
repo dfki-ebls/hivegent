@@ -39,7 +39,6 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
@@ -48,6 +47,7 @@ from starlette.responses import Response
 
 from ..agents.subagent_events import SubagentUpdate
 from ..db._common import new_id
+from ..db.conversations import is_user_request
 from ..llm import is_context_overflow
 
 __all__ = [
@@ -364,10 +364,7 @@ def record_turn_error(messages: list[ModelMessage], error_text: str) -> None:
             message
             for message in reversed(messages)
             if (isinstance(message, ModelResponse) and message.parts)
-            or (
-                isinstance(message, ModelRequest)
-                and any(isinstance(part, UserPromptPart) for part in message.parts)
-            )
+            or is_user_request(message)
         ),
         None,
     )

@@ -2,6 +2,7 @@ import type { UIMessage } from "@ai-sdk/react";
 import { describe, expect, it } from "vitest";
 
 import {
+  adoptMessageNodeId,
   canCompact,
   isContextLengthError,
   persistedChatError,
@@ -79,6 +80,22 @@ describe("canCompact", () => {
     expect(
       canCompact([msg("user", "first"), msg("assistant", "reply"), msg("user", "second")]),
     ).toBe(true);
+  });
+});
+
+describe("adoptMessageNodeId", () => {
+  it("re-keys the message the finished turn sent, not the answer to it", () => {
+    const messages = [msg("user", "first"), msg("assistant", "reply"), msg("user", "second")];
+    const adopted = adoptMessageNodeId(messages, "node-9");
+
+    expect(adopted.map((m) => m.id)).toEqual(["user-first", "assistant-reply", "node-9"]);
+    expect(adopted[2].parts).toBe(messages[2].parts);
+  });
+
+  it("leaves a turn without a user message alone", () => {
+    const messages = [msg("assistant", "summary")];
+
+    expect(adoptMessageNodeId(messages, "node-9")).toBe(messages);
   });
 });
 

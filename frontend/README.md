@@ -5,6 +5,9 @@
 The backend owns conversation history as a message tree (see `backend/README.md`, "Conversations are a server-authoritative message tree").
 The client no longer echoes the whole conversation: `prepareSendMessagesRequest` in `src/hooks/chat/use-hivegent-chat.ts` sends only the new message (none for a regenerate) plus `trigger` and `messageId`, and the server loads the active-path prefix from its store and forks or appends under the node addressed by `messageId`.
 History is hydrated on load from `GET /conversations/{id}/messages` (in `use-conversation-history.ts`) exactly as before, except each `UIMessage.id` is now the server's tree-node id.
+A message sent in the current session starts out with a local SDK id instead, which addresses nothing server-side, so every turn returns the node id it stored the user message under in `X-Message-Id` and `onFinish` swaps it in (`adoptMessageNodeId`).
+The id is read off the response headers rather than the stream, so a turn the user stops or that errors still leaves an editable message behind.
+Adopting it re-keys that bubble, which remounts it — the alternative, translating ids at send time, would leave in-session ids differing from post-reload ones and is not worth that.
 
 Submit, edit, regenerate, retry, and stop already work end-to-end against this backend.
 Editing a message or regenerating a reply forks a sibling branch server-side and preserves the prior one, but the UI to navigate those branches is not built yet.

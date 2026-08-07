@@ -28,14 +28,34 @@ export function joinTextParts(parts: UIMessage["parts"] | undefined): string | u
   return texts.length > 0 ? texts.join("\n") : undefined;
 }
 
+/**
+ * Index of the message a turn sent, or -1.
+ *
+ * Retry addresses it by id and `adoptMessageNodeId` re-keys it, so both must
+ * agree on which message that is.
+ */
+function lastUserIndex(messages: UIMessage[]): number {
+  return messages.findLastIndex((message) => message.role === "user");
+}
+
 /** Find the last user message and return its id + concatenated text. */
 export function getLastUserMessage(
   messages: UIMessage[],
 ): { id: string; text: string } | undefined {
-  const last = [...messages].reverse().find((m) => m.role === "user");
+  const last = messages[lastUserIndex(messages)];
   if (!last) return undefined;
   const text = joinTextParts(last.parts);
   return text ? { id: last.id, text } : undefined;
+}
+
+/**
+ * Re-key the last user message to the tree-node id the backend stored it under
+ * (returned in `X-Message-Id`), so edit and retry can address it.
+ */
+export function adoptMessageNodeId(messages: UIMessage[], nodeId: string): UIMessage[] {
+  const index = lastUserIndex(messages);
+  if (index === -1) return messages;
+  return messages.with(index, { ...messages[index], id: nodeId });
 }
 
 /**

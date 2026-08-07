@@ -40,6 +40,7 @@ from ...db.conversations import (
     conversation_exists,
     delete_all_conversations,
     import_conversation,
+    is_user_request,
     list_conversations,
     load_active_for_display,
     load_conversation,
@@ -421,7 +422,12 @@ async def _rasterize_pdf_attachments(messages: Sequence[ModelMessage]) -> None:
 
 
 async def _run_chat(conversation_id: str, request: Request, user: User) -> Response:
-    """Stream a chat turn for *conversation_id* via the Vercel AI protocol."""
+    """Stream a chat turn for *conversation_id* via the Vercel AI protocol.
+
+    A turn that carries a new user message returns its tree-node id in the
+    ``X-Message-Id`` response header, under the same CORS constraint as
+    ``X-Conversation-Id``.
+    """
     config = await _parse_chat_config(request)
     config.conversation_id = conversation_id
 
@@ -518,6 +524,15 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         message_id=config.message_id,
     )
 
+    # Reserve the node id the new user message will be persisted under, so the
+    # client can address it for an edit without waiting for a reload.  Only a
+    # request carrying a user prompt reserves one: a regenerate and a
+    # post-approval continuation start their delta with a message the client
+    # never addresses.
+    user_node_id = (
+        new_id() if adapter.messages and is_user_request(adapter.messages[-1]) else None
+    )
+
     stream = adapter.run_stream(
         deps=deps,
         output_type=[str, DeferredToolRequests],
@@ -535,12 +550,22 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
 
     async def persist(messages: Sequence[ModelMessage]) -> None:
         # Append only the turn's new messages (past the replayed prefix) as a
-        # branch under the fork point.
-        await append_branch(user.id, conversation_id, fork_id, messages[prefix_len:])
+        # branch under the fork point.  The delta's head is the user message
+        # whose id was announced, so it lands under exactly that id.
+        await append_branch(
+            user.id,
+            conversation_id,
+            fork_id,
+            messages[prefix_len:],
+            head_id=user_node_id,
+        )
 
-    return await run_and_persist(
+    response = await run_and_persist(
         adapter, stream, persist=persist, subagent_sink=subagent_sink
     )
+    if user_node_id is not None:
+        response.headers["X-Message-Id"] = user_node_id
+    return response
 
 
 @router.post("/conversations/chat")
@@ -558,10 +583,11 @@ async def create_new_conversation_chat(
     of minting a duplicate.  The minted ID is returned in the
     ``X-Conversation-Id`` response header for the client to adopt.
 
-    CORS constraint: the frontend can only read this header same-origin or
-    when the edge proxy lists it under ``Access-Control-Expose-Headers``.
-    Same-origin needs no config; cross-origin deployments must expose it
-    explicitly (custom response headers are hidden from JS otherwise).
+    CORS constraint: the frontend can only read this header (and the
+    ``X-Message-Id`` every turn returns) same-origin or when the edge proxy
+    lists them under ``Access-Control-Expose-Headers``.  Same-origin needs no
+    config; cross-origin deployments must expose them explicitly (custom
+    response headers are hidden from JS otherwise).
     """
     conversation_id = new_id()
     response = await _run_chat(conversation_id, request, user)
