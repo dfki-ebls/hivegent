@@ -54,7 +54,6 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   // (not a ref) so the adoption effect below runs once it is reported.
   const [createdId, setCreatedId] = useState<string | null>(null);
 
-  const [inputValue, setInputValue] = useState("");
   const [activeTab, setActiveTab] = useState<ChatTab>("chat");
   const [agentMode, setAgentMode] = useState<AgentMode>("interactive");
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("auto");
@@ -259,10 +258,6 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     [clearFilter, navigate],
   );
 
-  const handleTranscriptionChange = useCallback((text: string) => {
-    setInputValue((prev) => (prev ? `${prev} ${text}` : text));
-  }, []);
-
   // Server-side transcription backs the recording fallback for browsers
   // without a working Web Speech API; only offered when an STT model is
   // configured on the backend.
@@ -333,10 +328,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
           {messages.length === 0 && <ChatSuggestions onSelect={handleSendMessage} />}
           <SteeringQueue queue={steeringQueue} />
           <Composer
-            value={inputValue}
-            onChange={setInputValue}
             onSubmit={(text, files) => {
-              setInputValue("");
               if (isStreaming) enqueueSteering(text);
               else void handleSendMessage(text, files);
             }}
@@ -347,7 +339,6 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
             onAgentModeChange={setAgentMode}
             reasoningEffort={reasoningEffort}
             onReasoningEffortChange={setReasoningEffort}
-            onTranscriptionChange={handleTranscriptionChange}
             onAudioRecorded={sttModel ? handleAudioRecorded : undefined}
           />
           <AiDisclosure />

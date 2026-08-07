@@ -1,4 +1,5 @@
 import type { ChatStatus, FileUIPart } from "ai";
+import { useState } from "react";
 import {
   PromptInput,
   PromptInputBody,
@@ -18,8 +19,6 @@ import { featureFlags } from "@/lib/feature-flags";
 import type { AgentMode, ReasoningEffort } from "@/lib/types";
 
 interface ComposerProps {
-  value: string;
-  onChange: (value: string) => void;
   onSubmit: (text: string, files?: FileUIPart[]) => void;
   status: ChatStatus;
   onStop: () => void;
@@ -28,13 +27,10 @@ interface ComposerProps {
   onAgentModeChange: (value: AgentMode) => void;
   reasoningEffort: ReasoningEffort;
   onReasoningEffortChange: (value: ReasoningEffort) => void;
-  onTranscriptionChange: (text: string) => void;
   onAudioRecorded?: (audio: Blob) => Promise<string>;
 }
 
 export function Composer({
-  value,
-  onChange,
   onSubmit,
   status,
   onStop,
@@ -43,9 +39,12 @@ export function Composer({
   onAgentModeChange,
   reasoningEffort,
   onReasoningEffortChange,
-  onTranscriptionChange,
   onAudioRecorded,
 }: ComposerProps) {
+  // The draft lives here rather than in ChatSidebar so a keystroke re-renders
+  // the composer alone instead of the message list and the whole sidebar.
+  const [input, setInput] = useState("");
+
   // Hide the mic when SpeechInput could only render disabled: no Web Speech
   // API and no recording fallback (needs MediaRecorder plus a server-side
   // transcriber). Mirrors the mode detection inside SpeechInput.
@@ -55,13 +54,18 @@ export function Composer({
     ("MediaRecorder" in window && "mediaDevices" in navigator && Boolean(onAudioRecorded));
 
   return (
-    <PromptInput onSubmit={(msg) => onSubmit(msg.text, msg.files)}>
+    <PromptInput
+      onSubmit={(msg) => {
+        setInput("");
+        onSubmit(msg.text, msg.files);
+      }}
+    >
       <DocumentFilterBadges />
       <AttachedFiles />
       <PromptInputBody>
         <PromptInputTextarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
           placeholder={isStreaming ? "Steer the conversation..." : "Ask about your documents..."}
         />
       </PromptInputBody>
@@ -75,7 +79,9 @@ export function Composer({
               size="icon"
               className="bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md"
               disabled={status !== "ready"}
-              onTranscriptionChange={onTranscriptionChange}
+              onTranscriptionChange={(text) =>
+                setInput((prev) => (prev ? `${prev} ${text}` : text))
+              }
               onAudioRecorded={onAudioRecorded}
             />
           )}
