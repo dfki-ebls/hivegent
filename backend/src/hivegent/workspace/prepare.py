@@ -3,7 +3,7 @@
 The slow work of an upload — conversion, vision captioning, frame sampling —
 runs here without the casebase lock and without touching the live workspace,
 producing the side-effect-free :class:`_PreparedUpload` that
-:func:`hivegent.workspace.commit._commit_prepared` then applies atomically.
+:func:`hivegent.workspace.commit._apply_prepared` then lands.
 """
 
 import asyncio
@@ -89,9 +89,9 @@ class _PreparedUpload:
     """The side-effect-free result of preparing an upload.
 
     Produced lock-free — the slow work (conversion, vision captioning,
-    frame sampling) happens here — then applied to the workspace and SQL
-    index atomically under the casebase lock by :func:`_commit_prepared`.
-    Holding the lock only for the brief commit, not the whole pipeline, is
+    frame sampling) happens here — then written to the workspace under the
+    casebase lock and indexed without it by :func:`_apply_prepared`.
+    Holding the lock only for the file writes, not the whole pipeline, is
     what keeps the rest of the workspace usable while a long upload runs.
     """
 
@@ -111,8 +111,8 @@ class _Reserved:
 
     Reserve only validates and reads — it never mutates the workspace — so a
     failure during the lock-free prepare leaves any pre-existing entry intact.
-    These fields tell :func:`_commit_prepared` how to apply the new content and
-    supersede a prior entry, all atomically under the lock.  ``preserve`` marks a
+    These fields tell :func:`_write_prepared_files` how to apply the new content
+    and supersede a prior entry, all under the lock.  ``preserve`` marks a
     reprocess of an existing entry (reconvert/replace/overwrite): its stale
     assets are cleared at commit and it survives a prepare-phase failure, whereas
     a fresh upload (``preserve=False``) is rolled back by deletion.

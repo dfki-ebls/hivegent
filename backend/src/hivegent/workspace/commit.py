@@ -1,22 +1,27 @@
-"""Atomic commit, entry deletion, rollback, and the phased-upload lifecycle.
+"""Atomic commit, entry deletion, and the phased-upload lifecycle.
 
-The only phase that mutates the workspace.  :func:`_commit_prepared` applies a
-prepared upload and supersedes any prior entry in one locked, cancel-shielded
-step; :func:`_phased_upload` strings the reserve, lock-free prepare, and commit
-together so the casebase lock is held only for the brief reserve and commit.
+:func:`_write_prepared_files` is the only phase that mutates the workspace, and
+the only one that needs the casebase lock; :func:`_index_prepared` then chunks,
+embeds, and persists the SQL rows for what it wrote, without the lock.
+:func:`_apply_prepared` pairs them, and :func:`_phased_upload` strings the
+reserve, lock-free prepare, and apply together — so of an upload's four phases
+only the reserve and the file writes are serialised against the rest of the
+store.
 """
 
+import asyncio
 import logging
-import shutil
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from fastapi import HTTPException
 
+from ..chunkers.base import DocumentMetadata
 from ..concurrency import shield_to_completion
 from ..config import settings
 from ..db import documents as db_documents
 from ..entries import (
+    ContentStat,
     assets_dir_for_stem,
     description_path_for_stem,
     entry_exists,
@@ -25,10 +30,15 @@ from ..entries import (
 )
 from ..store import Casebase
 from ..types import LlmConfig, PipelineSpec, ProgressReporter, UploadCompleteEvent
-from .indexing import delete_chunked_document, write_markdown_projection
+from .indexing import chunk_and_index_document, delete_chunked_document
 from .locks import _add_inflight, _discard_inflight, _locked_for, store_lock
-from .paths import _check_destination_parents, _write_original_file
-from .prepare import _prepare_upload, _PreparedUpload, _Reserved
+from .paths import (
+    _check_destination_parents,
+    _remove_tree,
+    _write_markdown_file,
+    _write_original_file,
+)
+from .prepare import _prepare_upload, _PreparedEntry, _PreparedUpload, _Reserved
 
 __all__: list[str] = []
 
@@ -44,27 +54,36 @@ async def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
     """
     workspace_dir = store.workspace_dir(settings.data_dir)
     assets_dir = assets_dir_for_stem(stem_path)
-    workspace_assets = workspace_dir / assets_dir
-    if workspace_assets.exists():
-        shutil.rmtree(workspace_assets)
+    await asyncio.to_thread(_remove_tree, workspace_dir / assets_dir)
     await db_documents.delete_subtree(store, assets_dir)
 
 
-async def _commit_prepared(
-    store: Casebase,
-    prepared: _PreparedUpload,
-    spec: PipelineSpec,
-    reserved: _Reserved,
-) -> UploadCompleteEvent:
-    """Write a prepared upload's files and index its entries. Caller holds the lock.
+@dataclass(slots=True, frozen=True)
+class _WrittenEntry:
+    """A markdown projection already on disk, still awaiting its SQL rows.
 
-    This is the only phase that mutates the workspace, so it applies the new
-    content and supersedes any prior entry in one locked, cancel-shielded step.
-    Old assets are cleared and the main description is *overwritten in place*
-    (never deleted first), so even a mid-commit error leaves the entry's
-    description as either the old or the new content — never missing.  Asset
-    files and their description entries land before the main entry, so the
-    markdown that references them is only indexed once its targets exist.
+    Carries the fingerprint captured at write time so the index step stamps the
+    stat of the bytes it actually indexed rather than re-reading it later.
+    """
+
+    entry: _PreparedEntry
+    stat: ContentStat | None
+
+
+async def _write_prepared_files(
+    store: Casebase, prepared: _PreparedUpload, reserved: _Reserved
+) -> tuple[_WrittenEntry, ...]:
+    """Apply a prepared upload's bytes to the workspace. Caller holds the lock.
+
+    This is the only phase that mutates the workspace, so it lands the new
+    content and supersedes any prior entry in one locked step.  Old assets are
+    cleared and the main description is *overwritten in place* (never deleted
+    first), so even a mid-write error leaves the entry's description as either
+    the old or the new content — never missing.
+
+    Returns the written projections in index order (assets first, main last), so
+    the markdown that references the assets is only indexed once their own
+    entries are.
     """
     workspace_dir = store.workspace_dir(settings.data_dir)
 
@@ -79,40 +98,84 @@ async def _commit_prepared(
     for asset in prepared.assets:
         _write_original_file(workspace_dir, asset.path, asset.data)
 
-    for entry in prepared.asset_entries:
-        await write_markdown_projection(
-            store,
-            entry.description_path,
-            entry.markdown,
-            spec,
-            entry_metadata=entry.entry_metadata,
+    written = tuple(
+        _WrittenEntry(
+            entry,
+            _write_markdown_file(workspace_dir, entry.description_path, entry.markdown),
         )
-
-    chunk_count, chunking_used = await write_markdown_projection(
-        store,
-        prepared.main.description_path,
-        prepared.main.markdown,
-        spec,
-        entry_metadata=prepared.main.entry_metadata,
+        for entry in (*prepared.asset_entries, prepared.main)
     )
 
     # A superseded original on a different path than the new one (a replace that
-    # changed the suffix) is unlinked only after the new entry is fully written.
+    # changed the suffix) is unlinked once the new entry's files are all in
+    # place, so the workspace never holds two originals for one stem.
     if (
         reserved.supersede_original is not None
         and reserved.supersede_original != reserved.reference
     ):
         (workspace_dir / reserved.supersede_original).unlink(missing_ok=True)
 
+    return written
+
+
+async def _index_entry(
+    store: Casebase, written: _WrittenEntry, spec: PipelineSpec
+) -> DocumentMetadata:
+    """Chunk, embed, and persist the SQL rows for one on-disk projection."""
+    return await chunk_and_index_document(
+        store,
+        written.entry.description_path,
+        written.entry.markdown,
+        spec.chunking,
+        stat=written.stat,
+        entry_metadata=written.entry.entry_metadata,
+    )
+
+
+async def _index_prepared(
+    store: Casebase,
+    prepared: _PreparedUpload,
+    written: tuple[_WrittenEntry, ...],
+    spec: PipelineSpec,
+) -> UploadCompleteEvent:
+    """Index the projections :func:`_write_prepared_files` put on disk.
+
+    Runs *without* the casebase lock: nothing here touches the workspace, and
+    the upload's in-flight claim already rejects every mutation aimed at this
+    entry or its assets, so the lock buys nothing the claim does not give.
+
+    The window in which the files exist without their rows is the one the design
+    already tolerates everywhere: the entry stays hidden from inventory reads
+    while its stem is in flight, and a null ``content_digest`` is the standing
+    "not indexed" marker the startup reconciler repairs.
+    """
+    *assets, main = written
+    for item in assets:
+        await _index_entry(store, item, spec)
+    chunked = await _index_entry(store, main, spec)
+
     return UploadCompleteEvent(
         filename=prepared.filename,
         converted_filename=prepared.converted_filename,
         size_bytes=prepared.size_bytes,
         conversion_pipeline_used=prepared.conversion_pipeline_used,
-        chunk_count=chunk_count,
-        chunking_pipeline_used=chunking_used,
+        chunk_count=len(chunked.chunks),
+        chunking_pipeline_used=chunked.pipeline,
         message=prepared.message,
     )
+
+
+async def _apply_prepared(
+    store: Casebase,
+    prepared: _PreparedUpload,
+    spec: PipelineSpec,
+    reserved: _Reserved,
+) -> UploadCompleteEvent:
+    """Land a prepared upload: files under the lock, index without it."""
+    async with store_lock(store):
+        written = await _write_prepared_files(store, prepared, reserved)
+
+    return await _index_prepared(store, prepared, written, spec)
 
 
 async def _delete_single_locked(store: Casebase, safe: str) -> None:
@@ -133,21 +196,15 @@ async def _delete_single_locked(store: Casebase, safe: str) -> None:
         if metadata and metadata.description_path
         else resolved.description_path
     )
-    description_path = workspace / description_rel
-    if description_path.exists():
-        description_path.unlink()
+    (workspace / description_rel).unlink(missing_ok=True)
 
     original_rel = metadata.original_path if metadata else resolved.original_path
     if original_rel:
-        original_path = workspace / original_rel
-        if original_path.exists():
-            original_path.unlink()
+        (workspace / original_rel).unlink(missing_ok=True)
 
     assets_rel = metadata.assets_dir if metadata else resolved.assets_dir
     if assets_rel:
-        assets_path = workspace / assets_rel
-        if assets_path.exists():
-            shutil.rmtree(assets_path)
+        await asyncio.to_thread(_remove_tree, workspace / assets_rel)
         await db_documents.delete_subtree(store, assets_rel)
 
     await delete_chunked_document(store, safe)
@@ -169,32 +226,6 @@ async def _safe_delete_locked(store: Casebase, safe: str) -> None:
         )
 
 
-@asynccontextmanager
-async def _rollback_on_failure(
-    store: Casebase, touched: Sequence[str]
-) -> AsyncIterator[None]:
-    """Run a block; on any exception, delete every entry in *touched* and re-raise.
-
-    Caller must hold the casebase lock.  *touched* may be a live list that
-    the body appends to — it is read on exit, so accumulating call sites
-    work as expected.  The rollback runs to completion even when the failure is
-    a cancellation (:func:`shield_to_completion`), so the partial artifacts are
-    gone before the caller's lock is released — a bare ``asyncio.shield`` would
-    detach the rollback and let a subsequent operation acquire the lock and race
-    the still-running deletes.
-    """
-    try:
-        yield
-    except BaseException:
-
-        async def _rollback() -> None:
-            for safe in touched:
-                await _safe_delete_locked(store, safe)
-
-        await shield_to_completion(_rollback())
-        raise
-
-
 def _ensure_upload_slot_locked(
     store: Casebase, reference: str, *, overwrite: bool
 ) -> None:
@@ -203,7 +234,7 @@ def _ensure_upload_slot_locked(
     Rejects a destination whose parent chain is a file, a target occupied by a
     directory, and a non-overwrite write onto an existing entry.  It performs no
     deletion: an overwrite's stale parts are superseded atomically at commit
-    (see :func:`_commit_prepared`), so a failed or cancelled conversion can
+    (see :func:`_write_prepared_files`), so a failed or cancelled conversion can
     never destroy the prior entry.
     """
     workspace_dir = store.workspace_dir(settings.data_dir)
@@ -230,15 +261,20 @@ async def _phased_upload(
     reserve: _Reserve,
     ctx: ProgressReporter | None,
 ) -> UploadCompleteEvent:
-    """Run an upload's reserve → prepare → commit phases.
+    """Run an upload's reserve → prepare → apply phases.
 
     The lock is held only for the brief *reserve* (validate + capture) and the
-    final *commit* (apply); the slow *prepare* (conversion, captioning) runs
-    lock-free in between against a temp copy of the source, so it never touches
-    the live workspace.  Because nothing is written until commit, a failure or
+    file writes inside *apply*; the slow *prepare* (conversion, captioning) and
+    the equally slow index step (chunk, embed, upsert) both run lock-free, the
+    former against a temp copy of the source so it never touches the live
+    workspace.  Because nothing is written until apply, a failure or
     cancellation during prepare leaves a pre-existing entry (``preserve``)
     completely intact; only a genuinely new entry is rolled back by deleting it.
     *stem_reference* is the stem this upload owns for its whole lifecycle.
+
+    Apply is shielded as a single unit even though it releases the lock partway
+    through, so a cancel can never settle between the file writes and the index
+    and leave a reprocessed entry's new markdown wearing its predecessor's rows.
     """
     claimed = False
     reserved: _Reserved | None = None
@@ -258,10 +294,9 @@ async def _phased_upload(
             ctx=ctx,
             clearing_assets=reserved.preserve,
         )
-        async with store_lock(store):
-            return await shield_to_completion(
-                _commit_prepared(store, prepared, spec, reserved)
-            )
+        return await shield_to_completion(
+            _apply_prepared(store, prepared, spec, reserved)
+        )
     except BaseException:
         # A new entry's partial artifacts are rolled back; a pre-existing entry
         # is left untouched (prepare never wrote into the workspace).

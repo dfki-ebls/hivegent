@@ -5,9 +5,10 @@ in :mod:`hivegent.db.models`; cbrkit reads via
 :meth:`pgvector_async(model=Chunk)`.  Writes go through
 cbrkit's :meth:`storage.replace_where` with full row mappings
 (``id -> {text, document_id, idx, ...}``); cbrkit derives the
-``embedding`` from the ``text`` column and Postgres fills ``tsv``, so
-embedding, INSERT, and DELETE happen in one transaction while hivegent
-stays in charge of the schema.
+``embedding`` from the ``text`` column and Postgres fills ``tsv``, while
+hivegent stays in charge of the schema.  cbrkit embeds the batch before it
+opens the write transaction, so DELETE and INSERT are all a pooled connection
+is ever held for.
 
 Public surface:
 
@@ -225,11 +226,10 @@ async def index_document(document_id: str, chunks: Sequence[ChunkData]) -> None:
 
     Each chunk is passed to cbrkit as a :class:`Chunk` instance keyed by
     its auto-generated nanoid; cbrkit derives the ``embedding`` from the
-    row's ``text`` via the storage's ``conversion_func`` and Postgres
-    generates ``tsv``, so embedding, INSERT, and DELETE all run inside
-    ``replace_where``.  The cbrkit PK (``chunks.id``) is the nanoid —
-    the real chunk identity is the UNIQUE ``(document_id, idx)`` pair,
-    kept normalised on its own columns.
+    row's ``text`` via the storage's ``conversion_func`` (off the event loop,
+    and before the write transaction opens) and Postgres generates ``tsv``.
+    The cbrkit PK (``chunks.id``) is the nanoid — the real chunk identity is
+    the UNIQUE ``(document_id, idx)`` pair, kept normalised on its own columns.
 
     Empty *chunks* just deletes any existing rows for the document.
     """
@@ -266,6 +266,14 @@ async def reconcile_index_state() -> None:
     fingerprint is committed only *after* the rebuild completes, so a
     crash mid-rebuild leaves the previous fingerprint and the next
     boot retries.
+
+    ``reembed_all`` commits page by page rather than atomically, so a torn
+    rebuild leaves ``chunks`` holding vectors from two models at once, across
+    which distances are meaningless.  What makes that acceptable is the
+    lifespan awaiting this *before* the server serves: no request can observe
+    the mixed state, and the retry above closes it.  Move this call off the
+    startup path (or into a background task) and it must become
+    ``reembed_all(atomic=True)``, which buffers every new vector in memory.
     """
     current = settings.embedding.fingerprint()
     async with session() as s:

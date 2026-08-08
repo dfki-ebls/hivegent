@@ -1,20 +1,41 @@
-"""Pure path semantics and on-disk guards for workspace mutations.
+"""Path semantics, on-disk guards, and the raw filesystem work of a mutation.
 
-No async and no SQL: this module is just the path arithmetic and the
-HTTP-level validation that every mutation shares — ``mv`` destination
-resolution, case-insensitive inode aliasing, parent-chain checks, and the
-upload size limit.
+No async and no SQL: this module is the path arithmetic, the HTTP-level
+validation every mutation shares — ``mv`` destination resolution,
+case-insensitive inode aliasing, parent-chain checks, the upload size limit —
+and the blocking filesystem primitives the mutations build from.  The latter
+are deliberately synchronous: each is called while the casebase lock is held,
+so callers hand the expensive ones (:func:`_count_files`, :func:`_remove_tree`)
+to :func:`asyncio.to_thread` rather than stalling the event loop for as long as
+the subtree takes.
 """
 
+import shutil
+from contextlib import suppress
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
 
 from ..config import settings
-from ..entries import is_assets_dir
+from ..entries import ContentStat, is_assets_dir
 from ..humanize import format_bytes
 
 __all__: list[str] = []
+
+
+def _count_files(directory: Path) -> int:
+    """Count the regular files anywhere under *directory*."""
+    return sum(1 for path in directory.rglob("*") if path.is_file())
+
+
+def _remove_tree(directory: Path) -> None:
+    """Remove *directory* and everything under it, tolerating its absence.
+
+    Absence is the only tolerated failure, so a subtree that could not be
+    removed still raises rather than leaving stale files behind unreported.
+    """
+    with suppress(FileNotFoundError):
+        shutil.rmtree(directory)
 
 
 def _write_original_file(workspace_dir: Path, filepath: str, content: bytes) -> Path:
@@ -23,6 +44,22 @@ def _write_original_file(workspace_dir: Path, filepath: str, content: bytes) -> 
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_bytes(content)
     return full_path
+
+
+def _write_markdown_file(
+    workspace_dir: Path, filepath: str, content: str
+) -> ContentStat | None:
+    """Write a markdown projection into the workspace, returning its fingerprint.
+
+    Only the bytes: chunking, embedding, and the SQL rows follow separately.  The
+    stat is captured here rather than at index time so it describes exactly the
+    bytes that were written — a later touch then reads as a mismatch and earns a
+    re-index, instead of being stamped over as already-indexed.
+    """
+    full_path = workspace_dir / filepath
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    full_path.write_text(content, encoding="utf-8")
+    return ContentStat.from_path(full_path)
 
 
 def _is_same_file(a: Path, b: Path) -> bool:

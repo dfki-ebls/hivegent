@@ -2,7 +2,7 @@
 
 The high-level pipeline lives here: chunker → SQL upsert of the
 ``Document`` row (``content_digest`` cleared) → cbrkit ``replace_where`` for
-chunks (embedding + INSERT in one cbrkit transaction) → stamp
+chunks (embed, then DELETE + INSERT in one cbrkit transaction) → stamp
 ``content_digest`` last.  These are separate transactions, so stamping the
 digest last makes a null digest the uniform "not indexed" marker for anything
 the sequence never finished.  Deletes flow through
@@ -83,8 +83,9 @@ async def chunk_and_index_document(
 
     Not one transaction but an ordered sequence of them: the ``Document`` row is
     upserted with its ``content_digest`` cleared, the chunk rows are written
-    (embedding + INSERT in cbrkit's own transaction), and the digest is stamped
-    last by :func:`hivegent.db.documents.set_content_state`.  Stamping it last
+    (embedded first, then DELETE + INSERT in cbrkit's own transaction), and the
+    digest is stamped last by
+    :func:`hivegent.db.documents.set_content_state`.  Stamping it last
     makes a null ``content_digest`` the uniform "not indexed" marker: if the
     sequence is torn by a crash, the surviving row is re-indexed on the next
     startup reconcile.

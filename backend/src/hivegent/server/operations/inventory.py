@@ -1,5 +1,6 @@
 """Inventory and tree-building helpers for document stores."""
 
+import asyncio
 import os
 import stat
 from collections.abc import Mapping
@@ -10,7 +11,7 @@ from ... import workspace
 from ...config import settings
 from ...converters.base import DOCUMENT_EXTENSION
 from ...db.documents import list_document_paths
-from ...entries import is_assets_dir
+from ...entries import assets_dir_for_stem, is_assets_dir
 from ...store import Casebase
 from ...types import (
     DirectoryEntry,
@@ -63,8 +64,14 @@ def _entries_from_files(
     root_path: Path,
     chunk_counts: dict[str, int],
     hidden_stems: frozenset[str],
+    subdir_names: frozenset[str],
 ) -> list[DocumentInfo]:
-    """Group already-stat'd sibling files into logical stem entries."""
+    """Group already-stat'd sibling files into logical stem entries.
+
+    *subdir_names* is the sibling directory listing the caller already holds, so
+    an entry's ``.assets`` payload is detected in memory rather than costing one
+    ``exists`` syscall per entry on every tree read.
+    """
     grouped: dict[str, list[Path]] = {}
     for item in file_stats:
         relative = item.relative_to(root_path)
@@ -73,6 +80,7 @@ def _entries_from_files(
 
     entries: list[DocumentInfo] = []
     for stem_path, files in sorted(grouped.items()):
+        display_name = PurePosixPath(stem_path).name
         # An upload in flight (or its rollback) may have written some of the
         # entry's files already; hide it until the mutation settles.
         if stem_path in hidden_stems:
@@ -93,7 +101,7 @@ def _entries_from_files(
         entries.append(
             DocumentInfo(
                 filename=entry_path,
-                display_name=PurePosixPath(stem_path).name,
+                display_name=display_name,
                 size_bytes=size_bytes,
                 modified_at=datetime.fromtimestamp(modified_at, tz=UTC),
                 chunk_count=chunk_counts.get(entry_path),
@@ -104,8 +112,8 @@ def _entries_from_files(
                     else None
                 ),
                 assets_dir=(
-                    f"{stem_path}.assets"
-                    if (root_path / f"{stem_path}.assets").exists()
+                    assets_dir_for_stem(stem_path)
+                    if assets_dir_for_stem(display_name) in subdir_names
                     else None
                 ),
             )
@@ -133,7 +141,11 @@ def _build_directory_tree(
             )
 
     for file_entry in _entries_from_files(
-        file_stats, root_path, chunk_counts, hidden_stems
+        file_stats,
+        root_path,
+        chunk_counts,
+        hidden_stems,
+        frozenset(item.name for item in subdirs),
     ):
         children.append(
             DirectoryEntry(
@@ -157,38 +169,46 @@ def _build_directory_tree(
     )
 
 
-async def build_tree_response(store: Casebase) -> DirectoryTreeResponse:
-    """Build a directory tree response for any casebase."""
-    workspace_dir = store.workspace_dir(settings.data_dir)
-    chunk_counts = await list_document_paths(store)
-
-    root = _build_directory_tree(
-        workspace_dir,
-        workspace_dir,
-        chunk_counts,
-        workspace.inflight_stems(store),
-    )
-
-    def _count(entry: DirectoryEntry) -> tuple[int, int]:
-        """Return the (files, directories) totals of the subtree at *entry*."""
-        files = 1 if entry.type == "file" else 0
-        directories = 1 if entry.type == "directory" else 0
-        for child in entry.children or []:
-            child_files, child_directories = _count(child)
-            files += child_files
-            directories += child_directories
-        return files, directories
-
-    # The synthetic root itself is excluded: count only its subtrees.
-    total_files = 0
-    total_directories = 0
-    for child in root.children or []:
+def _count(entry: DirectoryEntry) -> tuple[int, int]:
+    """Return the (files, directories) totals of the subtree at *entry*."""
+    files = 1 if entry.type == "file" else 0
+    directories = 1 if entry.type == "directory" else 0
+    for child in entry.children or []:
         child_files, child_directories = _count(child)
-        total_files += child_files
-        total_directories += child_directories
+        files += child_files
+        directories += child_directories
+    return files, directories
 
+
+def _build_tree(
+    workspace_dir: Path,
+    chunk_counts: dict[str, int],
+    hidden_stems: frozenset[str],
+) -> DirectoryTreeResponse:
+    """Walk *workspace_dir* into a tree response.  Blocking; runs off the loop."""
+    root = _build_directory_tree(
+        workspace_dir, workspace_dir, chunk_counts, hidden_stems
+    )
+    total_files, total_directories = _count(root)
     return DirectoryTreeResponse(
         root=root,
         total_files=total_files,
-        total_directories=total_directories,
+        # The synthetic root itself is excluded: count only its subtrees.
+        total_directories=total_directories - 1,
+    )
+
+
+async def build_tree_response(store: Casebase) -> DirectoryTreeResponse:
+    """Build a directory tree response for any casebase.
+
+    The walk is one blocking pass of ``iterdir`` + ``stat`` over the entire
+    workspace, so it runs in a worker thread rather than stalling the event loop
+    for its full duration.  Nothing in it is thread-affine: the hidden-stem
+    snapshot is taken up front and the walk is otherwise pure filesystem reads.
+    """
+    return await asyncio.to_thread(
+        _build_tree,
+        store.workspace_dir(settings.data_dir),
+        await list_document_paths(store),
+        workspace.inflight_stems(store),
     )

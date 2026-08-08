@@ -46,9 +46,18 @@ def resolve_database_url() -> str:
 
 @cache
 def get_engine() -> AsyncEngine:
-    """Build (or return the cached) async PostgreSQL engine."""
+    """Build (or return the cached) async PostgreSQL engine.
+
+    ``pool_pre_ping`` costs one round trip per checkout and earns it: the
+    ``services-flake`` PostgreSQL is restarted freely underneath a running dev
+    server, and without it the pool hands out connections the server has
+    already closed, which surface as sporadic 500s rather than a reconnect.
+    """
     return create_async_engine(
-        resolve_database_url(), echo=settings.db.echo, future=True
+        resolve_database_url(),
+        echo=settings.db.echo,
+        future=True,
+        pool_pre_ping=True,
     )
 
 

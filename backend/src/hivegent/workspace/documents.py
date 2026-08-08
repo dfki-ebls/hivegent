@@ -36,6 +36,7 @@ from .paths import (
     _is_blocked_by_other,
     _is_same_file,
     _resolve_move_destination,
+    _write_markdown_file,
 )
 
 __all__ = [
@@ -120,13 +121,11 @@ async def _replace_text_locked(
     _enforce_file_size(content.encode("utf-8"))
     if full_path.is_dir():
         raise HTTPException(status_code=409, detail=f"'{safe}' is a directory")
-    _check_destination_parents(store.workspace_dir(settings.data_dir), safe)
-    full_path.parent.mkdir(parents=True, exist_ok=True)
-    full_path.write_text(content, encoding="utf-8")
+    workspace_dir = store.workspace_dir(settings.data_dir)
+    _check_destination_parents(workspace_dir, safe)
+    stat = _write_markdown_file(workspace_dir, safe, content)
     await shield_to_completion(
-        chunk_and_index_document(
-            store, safe, content, chunking, stat=ContentStat.from_path(full_path)
-        )
+        chunk_and_index_document(store, safe, content, chunking, stat=stat)
     )
 
 

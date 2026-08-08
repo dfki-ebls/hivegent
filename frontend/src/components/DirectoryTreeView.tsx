@@ -217,6 +217,12 @@ function countFiles(entry: DirectoryEntry): number {
   return (entry.children ?? []).reduce((sum, child) => sum + countFiles(child), 0);
 }
 
+/** Subdirectories before files, then by name. Ordering is settled here, at
+ * render time, so nothing that produces a tree — the server walk or an
+ * optimistic graft — has to agree on it. */
+const byKindThenName = (a: DirectoryEntry, b: DirectoryEntry) =>
+  Number(a.type === "file") - Number(b.type === "file") || a.name.localeCompare(b.name);
+
 function flattenEntries(
   entry: DirectoryEntry,
   expandedDirs: Set<string>,
@@ -235,7 +241,7 @@ function flattenEntries(
     if (!isExpanded) return rows;
   }
 
-  for (const child of entry.children ?? []) {
+  for (const child of (entry.children ?? []).toSorted(byKindThenName)) {
     rows.push(...flattenEntries(child, expandedDirs, entry.path ? depth + 1 : depth));
   }
 

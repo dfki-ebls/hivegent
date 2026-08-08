@@ -13,7 +13,7 @@ from .chunkers import ChunkingSpec
 from .config import ADMIN_ROLE, settings
 from .converters import ConversionSpec
 from .db.conversations import ConversationSummary
-from .entries import stem_path_from_reference
+from .entries import entry_owns, stem_path_from_reference
 from .prompts import Personality
 from .security import (
     UnsafeUrlError,
@@ -136,9 +136,8 @@ class DocumentFilter:
             return entry == "/" or path == entry[:-1] or path.startswith(entry)
         if path == entry:
             return True
-        stem = stem_path_from_reference(entry)
-        return stem_path_from_reference(path) == stem or path.startswith(
-            f"{stem}.assets/"
+        return entry_owns(
+            stem_path_from_reference(entry), stem_path_from_reference(path)
         )
 
     def __call__(self, path: str) -> bool:

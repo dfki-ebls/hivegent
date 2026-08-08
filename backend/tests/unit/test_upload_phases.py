@@ -70,7 +70,7 @@ async def test_image_upload_reports_stage_and_stores_sidecar(
         return _Chunked()
 
     monkeypatch.setattr(prepare, "_build_image_description", fake_describe)
-    monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", fake_chunk)
+    monkeypatch.setattr(commit, "chunk_and_index_document", fake_chunk)
 
     recorder = _Recorder()
     await workspace.upload(user_store, "photo.png", _png(), ctx=recorder)
@@ -97,7 +97,7 @@ async def test_failed_commit_leaves_no_orphan(
         return False
 
     monkeypatch.setattr(prepare, "_build_image_description", fake_describe)
-    monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", boom)
+    monkeypatch.setattr(commit, "chunk_and_index_document", boom)
     # The rollback resolves the entry from disk and drops its index rows; stub
     # the SQL touches so the test stays off any live database.
     monkeypatch.setattr(db_documents, "get_document", no_metadata)
@@ -123,7 +123,7 @@ async def test_image_upload_stores_original_verbatim(
         return _Chunked()
 
     monkeypatch.setattr(prepare, "_build_image_description", fake_describe)
-    monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", fake_chunk)
+    monkeypatch.setattr(commit, "chunk_and_index_document", fake_chunk)
 
     raw = _png_with_metadata()
     await workspace.upload(user_store, "photo.png", raw)
@@ -166,6 +166,14 @@ async def test_destructive_ops_reject_while_stem_in_flight(
         workspace.rechunk(user_store, "docs/note.md"),
         workspace.write_document_text(user_store, "docs/note.md", "x"),
         workspace.edit_document_text(user_store, "docs/note.md", "a", "b"),
+        # The upload owns the asset entries under its stem's `.assets` too, and
+        # those are reachable only by their own stems — the claim has to cover
+        # them or the index step could re-create rows for just-deleted files.
+        workspace.delete_directory(user_store, "docs/note.assets"),
+        workspace.delete_document(user_store, "docs/note.assets/img1.md"),
+        workspace.move_directory(
+            user_store, user_store, "docs/note.assets", "elsewhere"
+        ),
     ):
         with pytest.raises(HTTPException) as exc:
             await op
@@ -191,7 +199,7 @@ async def test_reprocess_failure_preserves_existing_entry(
         return _Chunked()
 
     monkeypatch.setattr(prepare, "_build_image_description", fake_describe)
-    monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", fake_chunk)
+    monkeypatch.setattr(commit, "chunk_and_index_document", fake_chunk)
     await workspace.upload(user_store, "photo.png", _png())
 
     workspace_dir = user_store.workspace_dir(settings.data_dir)

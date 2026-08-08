@@ -16,7 +16,6 @@ from ..converters.asset_processing import image_context_windows
 from ..converters.base import DOCUMENT_EXTENSION
 from ..converters.images import guess_image_media_type
 from ..entries import (
-    ContentStat,
     asset_ref_for,
     assets_dir_for_stem,
     description_path_for_stem,
@@ -28,6 +27,7 @@ from ..types import AssetEntry, LlmConfig
 from .describe import _build_image_description
 from .indexing import chunk_and_index_document, delete_chunked_document
 from .locks import store_lock
+from .paths import _write_markdown_file
 
 __all__ = [
     "delete_asset_description",
@@ -103,12 +103,9 @@ async def _persist_asset_description(
     filesystem round-trip here.
     """
     md_path = asset_path.with_suffix(DOCUMENT_EXTENSION)
-    md_path.write_text(content, encoding="utf-8")
-
     description_path = str(md_path.relative_to(workspace).as_posix())
-    await chunk_and_index_document(
-        store, description_path, content, stat=ContentStat.from_path(md_path)
-    )
+    stat = _write_markdown_file(workspace, description_path, content)
+    await chunk_and_index_document(store, description_path, content, stat=stat)
     return _asset_entry(
         workspace, asset_path, safe_name, size_bytes, content, description_path
     )

@@ -303,10 +303,9 @@ export function ScopeSection({
   }, [scope, canWrite, handleMoveInto, onUploadInto]);
 
   const treeView = () => {
-    if (
-      !directoryTree ||
-      (directoryTree.total_files === 0 && directoryTree.total_directories === 0)
-    ) {
+    // Read off the rendered tree rather than the response totals, so an
+    // optimistically grafted directory counts immediately.
+    if (!directoryTree?.root.children?.length) {
       return <p className="py-2 text-xs text-muted-foreground">No documents in this workspace</p>;
     }
     return (

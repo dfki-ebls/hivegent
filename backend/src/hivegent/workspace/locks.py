@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 from fastapi import HTTPException
 
-from ..entries import stem_path_from_reference
+from ..entries import entry_owns, stem_path_from_reference
 from ..store import Casebase
 
 __all__ = [
@@ -110,11 +110,14 @@ def _reject_if_inflight(store: Casebase, reference: str) -> None:
     """Reject a mutation whose stem another phased upload already has in flight.
 
     A phased upload marks its stem the moment it claims the entry, so a second
-    op on that stem 409s instead of racing the pending commit.  A markdown
+    op on that stem — or on one of the asset entries it owns, which are
+    addressable by their own stems and would otherwise slip past an equality
+    check — 409s instead of racing the pending commit and index.  A markdown
     upload writes nothing to disk during reserve, so the in-flight set is the
     only thing that closes the window for it.
     """
-    if stem_path_from_reference(reference) in inflight_stems(store):
+    stem = stem_path_from_reference(reference)
+    if any(entry_owns(inflight, stem) for inflight in inflight_stems(store)):
         raise HTTPException(
             status_code=409, detail="Document is already being processed"
         )
@@ -124,24 +127,22 @@ def _reject_if_scope_inflight(store: Casebase, prefix: str | None) -> None:
     """Reject a directory- or store-wide mutation while work inside it runs.
 
     *prefix* is the directory whose contents the op removes or moves, or
-    ``None`` for the whole store (delete-all).  A phased upload commits lock-free
-    between its reserve and commit, and a bulk import commits its files one at a
-    time; tearing down an enclosing directory in either window would strip files
-    out from under a pending commit (orphaning an entry, or resurrecting one
-    after a wipe).  The 409 defers the op until the in-flight work settles.
+    ``None`` for the whole store (delete-all).  A phased upload prepares and
+    indexes lock-free around its brief locked write, and a bulk import commits
+    its files one at a time; tearing down an enclosing directory in any of those
+    windows would strip files out from under the pending work (orphaning an
+    entry, or resurrecting one after a wipe).  The 409 defers the op until the
+    in-flight work settles.
+
+    A prefix is blocked both when it *contains* an in-flight entry and when it
+    *is* (or is inside) one's assets subtree, which the entry's own stem does
+    not spell out.
     """
     state = _state_for(store)
-    if state.store_claims > 0:
-        raise HTTPException(
-            status_code=409, detail="A document in this scope is still being processed"
-        )
-
-    blocked = (
-        state.stems
-        if prefix is None
-        else {s for s in state.stems if s.startswith(f"{prefix}/")}
-    )
-    if blocked:
+    if state.store_claims > 0 or any(
+        prefix is None or s.startswith(f"{prefix}/") or entry_owns(s, prefix)
+        for s in state.stems
+    ):
         raise HTTPException(
             status_code=409, detail="A document in this scope is still being processed"
         )

@@ -23,7 +23,7 @@ import type {
   LlmConfig,
   PipelineSpec,
 } from "@/lib/types";
-import { treeDocuments } from "@/lib/utils";
+import { treeDocuments, withDirectory } from "@/lib/utils";
 import { awaitJobSettled, onJobSettled, useJobsStore } from "@/stores/jobs-store";
 
 /** Per-scope document-management state. A scope is `~` (personal) or `@<group>`. */
@@ -89,17 +89,38 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
       return { byScope: { ...store.byScope, [scope]: { ...current, ...delta } } };
     });
 
-  // Monotonic per-scope refresh tokens: concurrent refreshes (e.g. a mount
-  // effect racing a post-mutation refresh) may resolve out of order, and an
-  // older response must not overwrite a newer one.
-  const refreshSeq: Record<string, number> = {};
-
-  const silentRefresh = async (scope: string) => {
-    const seq = (refreshSeq[scope] ?? 0) + 1;
-    refreshSeq[scope] = seq;
+  const fetchTree = async (scope: string) => {
     const directoryTree = await getDirectories(scope);
-    if (refreshSeq[scope] !== seq) return;
     patch(scope, { documents: treeDocuments(directoryTree.root), directoryTree, hasFetched: true });
+  };
+
+  // At most one tree read in flight per scope, plus one queued follow-up. The
+  // endpoint walks the entire workspace, so a burst — a batch of settling upload
+  // jobs, a multi-select delete, a mount effect racing a post-mutation refresh —
+  // would otherwise pay for a full walk per event. A caller arriving mid-read
+  // cannot reuse that read (it may predate the caller's own mutation), but all
+  // such callers can share one follow-up, since every read returns the whole
+  // tree. Serialising this way also means two reads can never resolve out of
+  // order and overwrite each other.
+  const active: Record<string, Promise<void> | undefined> = {};
+  const followUp: Record<string, Promise<void> | undefined> = {};
+
+  const silentRefresh = (scope: string): Promise<void> => {
+    const current = active[scope];
+    if (!current) {
+      return (active[scope] = fetchTree(scope).finally(() => {
+        delete active[scope];
+      }));
+    }
+
+    // `current` settles only after its own `finally` has cleared `active`, so
+    // the recursive call always starts a genuinely fresh read.
+    return (followUp[scope] ??= current
+      .catch(() => {})
+      .then(() => {
+        delete followUp[scope];
+        return silentRefresh(scope);
+      }));
   };
 
   /** Run a single-path mutation with shared mutating-path tracking and refresh.
@@ -122,11 +143,10 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
       patch(scope, { error: err instanceof Error ? err.message : errorMsg });
     } finally {
       // Refresh even after a failure so a stale view (e.g. an entry the
-      // backend no longer knows about) converges with the server state.
-      await silentRefresh(scope).catch(() => {});
-      if (alsoRefresh && alsoRefresh !== scope) {
-        await silentRefresh(alsoRefresh).catch(() => {});
-      }
+      // backend no longer knows about) converges with the server state. The two
+      // scopes are separate workspaces, so their walks run concurrently.
+      const scopes = alsoRefresh && alsoRefresh !== scope ? [scope, alsoRefresh] : [scope];
+      await Promise.all(scopes.map((s) => silentRefresh(s).catch(() => {})));
       patch(scope, (s) => {
         const next = new Set(s.mutatingPaths);
         next.delete(path);
@@ -256,10 +276,23 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
         destScope,
       ),
 
+    // Grafted into the local tree the moment the POST returns, so the new
+    // directory appears immediately instead of after the refresh's
+    // full-workspace walk, which then only reconciles whatever else moved.
     createDir: (scope, path) =>
-      withMutating(scope, path, "Failed to create directory", () =>
-        createDirectory(canonicalPath(scope, path)),
-      ),
+      withMutating(scope, path, "Failed to create directory", async () => {
+        await createDirectory(canonicalPath(scope, path));
+        patch(scope, (s) =>
+          s.directoryTree
+            ? {
+                directoryTree: {
+                  ...s.directoryTree,
+                  root: withDirectory(s.directoryTree.root, path),
+                },
+              }
+            : {},
+        );
+      }),
 
     deleteDir: (scope, path) =>
       withMutating(scope, path, "Failed to delete directory", () =>

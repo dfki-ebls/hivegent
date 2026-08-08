@@ -69,21 +69,50 @@ describe("useDocumentsStore refresh", () => {
     expect(state.directoryTree?.total_files).toBe(1);
   });
 
-  it("ignores an older refresh resolving after a newer one", async () => {
-    const older = deferred<DirectoryTreeResponse>();
-    const newer = deferred<DirectoryTreeResponse>();
-    vi.mocked(getDirectories).mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+  it("collapses concurrent refreshes into one read and a shared follow-up", async () => {
+    const inFlight = deferred<DirectoryTreeResponse>();
+    vi.mocked(getDirectories)
+      .mockReturnValueOnce(inFlight.promise)
+      .mockResolvedValue(treeWith("new.md"));
 
     const first = useDocumentsStore.getState().refresh("~");
     const second = useDocumentsStore.getState().refresh("~");
+    const third = useDocumentsStore.getState().refresh("~");
 
-    newer.resolve(treeWith("new.md"));
-    await second;
-    older.resolve(treeWith("old.md"));
-    await first;
+    inFlight.resolve(treeWith("old.md"));
+    await Promise.all([first, second, third]);
 
+    // Three callers, two walks: the one already running plus a single follow-up
+    // that both later callers wait on. Each read is the whole tree, so the last
+    // one wins outright.
+    expect(vi.mocked(getDirectories)).toHaveBeenCalledTimes(2);
     const state = useDocumentsStore.getState().byScope["~"];
     expect(state.documents.map((d) => d.filename)).toEqual(["new.md"]);
+  });
+});
+
+describe("useDocumentsStore createDir", () => {
+  beforeEach(() => {
+    useDocumentsStore.setState({ byScope: {} });
+    vi.clearAllMocks();
+  });
+
+  it("shows the new directory before the tree refresh lands", async () => {
+    vi.mocked(getDirectories).mockResolvedValueOnce(treeWith("notes.md"));
+    await useDocumentsStore.getState().refresh("~");
+
+    const pending = deferred<DirectoryTreeResponse>();
+    vi.mocked(getDirectories).mockReturnValueOnce(pending.promise);
+    const done = useDocumentsStore.getState().createDir("~", "reports");
+
+    // Presence, not position: the tree view sorts children as it renders them.
+    await vi.waitFor(() => {
+      const children = useDocumentsStore.getState().byScope["~"].directoryTree?.root.children;
+      expect(children?.map((c) => c.path)).toContain("reports");
+    });
+
+    pending.resolve(treeWith("notes.md"));
+    await done;
   });
 });
 

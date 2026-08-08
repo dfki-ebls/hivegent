@@ -1,10 +1,8 @@
-"""Markdown projection writes and the disk to SQL entry sync.
+"""The disk to SQL entry sync.
 
-The single place that writes a markdown projection together with its chunk
-and vector rows, and the idempotent ingest that re-derives one entry's SQL
-state from its on-disk bytes.  Both run the chunk + embed + upsert step to
-completion under a cancel so the workspace markdown is never left without
-its SQL rows.
+The idempotent ingest that re-derives one entry's SQL state from its on-disk
+bytes.  It runs its chunk + embed + upsert step to completion under a cancel so
+the workspace markdown is never left without its SQL rows.
 
 This module owns the chunk/index primitives (:func:`chunk_and_index_document`
 and :func:`delete_chunked_document`), which sibling modules import directly.
@@ -14,7 +12,6 @@ import asyncio
 import logging
 from collections.abc import Iterable
 
-from ..chunkers.base import EntryMetadata
 from ..chunks import chunk_and_index_document
 from ..chunks import delete_document as delete_chunked_document
 from ..concurrency import shield_to_completion
@@ -23,7 +20,6 @@ from ..db import documents as db_documents
 from ..entries import ContentStat, resolve_entry_paths
 from ..store import Casebase
 from ..text import NOT_TEXT_REASON, read_text_file
-from ..types import PipelineSpec
 from .locks import store_lock
 from .metadata import _entry_metadata_from_disk, _refresh_unchanged_entry
 
@@ -33,38 +29,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-
-async def write_markdown_projection(
-    store: Casebase,
-    description_path: str,
-    content: str,
-    spec: PipelineSpec,
-    *,
-    entry_metadata: EntryMetadata,
-) -> tuple[int, str]:
-    """Write markdown content and persist chunks (with vectors) in one tx.
-
-    The chunk + embed + SQL upsert step runs to completion even under a cancel
-    (:func:`shield_to_completion`), so it finishes while the casebase lock is
-    still held and cannot leave the workspace markdown without its SQL rows.  A
-    partial markdown file from a hard crash is caught by the startup reconciler.
-    """
-    workspace_dir = store.workspace_dir(settings.data_dir)
-    full_path = workspace_dir / description_path
-    full_path.parent.mkdir(parents=True, exist_ok=True)
-    full_path.write_text(content, encoding="utf-8")
-    chunked = await shield_to_completion(
-        chunk_and_index_document(
-            store,
-            description_path,
-            content,
-            spec.chunking,
-            stat=ContentStat.from_path(full_path),
-            entry_metadata=entry_metadata,
-        )
-    )
-    return len(chunked.chunks), chunked.pipeline
 
 
 async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:

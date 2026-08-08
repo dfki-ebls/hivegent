@@ -13,6 +13,7 @@ __all__ = [
     "assets_dir_for_stem",
     "description_path_for_stem",
     "entry_exists",
+    "entry_owns",
     "find_original_for_stem",
     "is_assets_dir",
     "is_description_file",
@@ -124,6 +125,23 @@ def description_path_for_stem(stem_path: str) -> str:
 def assets_dir_for_stem(stem_path: str) -> str:
     """Return the child-assets directory path for a logical stem."""
     return f"{stem_path}.assets"
+
+
+def entry_owns(stem_path: str, path: str) -> bool:
+    """Whether the logical entry at *stem_path* owns the file or directory *path*.
+
+    An entry owns its own stem plus everything in its ``.assets`` payload,
+    including the directory itself.  *path* must already be a stem or a
+    directory path (see :func:`stem_path_from_reference`), never a raw file
+    reference, since a stem may itself contain dots.
+
+    >>> entry_owns("docs/report", "docs/report.assets/fig1")
+    True
+    >>> entry_owns("docs/report", "docs/reports")
+    False
+    """
+    assets_dir = assets_dir_for_stem(stem_path)
+    return path == stem_path or path == assets_dir or path.startswith(f"{assets_dir}/")
 
 
 def asset_ref_for(assets_dir: str, relpath: str) -> str:

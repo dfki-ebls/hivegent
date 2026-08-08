@@ -13,10 +13,10 @@ Use one of two PostgreSQL-native tools:
   Upserts that overwrite columns use `.on_conflict_do_update(index_elements=[...], set_={...})`, keyed on the relevant primary key or unique constraint; see `db.documents.upsert_document` and `db.memory.save_memory`.
   A core upsert does not fire the ORM `onupdate=_now`, so bump `updated_at` explicitly in `set_` with `func.now()`.
 - A transaction-scoped advisory lock (`pg_advisory_xact_lock`) for multi-row read-then-write sequences that no single constraint can guard, such as mirroring a conversation's messages into rows keyed by `idx`.
-  See `db.conversations.replace_messages`, which serialises concurrent turns on the same conversation; the lock auto-releases on commit/rollback.
+  See `db.conversations._lock`, taken by `append_branch` to serialise concurrent turns on the same conversation; the lock auto-releases on commit/rollback.
 
 The schema's constraints are the safety net, not the obstacle: keep the primary keys, unique constraints, and the `documents.single_owner` check, and make the application cooperate with them atomically rather than racing them.
-The one accepted exception is a best-effort last-write-wins update with no constraint to violate — e.g. the throttled `last_used_at` bump in `tokens.validate_token` — where serialising would add cost for no correctness gain.
+The one accepted exception is a best-effort last-write-wins update with no constraint to violate, such as a throttled activity-timestamp bump, where serialising would add cost for no correctness gain.
 
 ## Database migrations
 
@@ -142,7 +142,7 @@ All animated media is therefore represented as a bounded set of still frames sam
 ```
 upload .mp4/.webm/.mov/.mkv          upload animated .gif/.webp
         │                                     │
- _upload_video_locked                  _upload_image_locked
+ workspace.prepare._prepare_video      workspace.prepare._prepare_image
  (entry_kind = video)                  (entry_kind = image)
         │ ffmpeg/ffprobe                      │ Pillow ImageSequence
  converters.video.sample_video         converters.video.sample_animated_image
@@ -158,7 +158,7 @@ upload .mp4/.webm/.mov/.mkv          upload animated .gif/.webp
 The same sampling backs the `read_binary_document` agent tool: for videos and multi-frame GIF/WebP it attaches the sampled frames (each tagged `<path>#t=<ts>s`) instead of the raw container bytes, which would otherwise reach the model as its first frame only — or blow the serving gateway's request size limit outright.
 Static images keep the verbatim pass-through, and single-image captioning (`caption_image`) is untouched.
 Frame extraction for container formats shells out to `ffmpeg`/`ffprobe` via `subprocesses/ffmpeg.py` (already a runtime dependency); GIF/WebP animations decode in-process with Pillow.
-Reconversion needs no special casing because `workspace.reconvert` re-dispatches the stored original through `_upload_locked`.
+Reconversion needs no special casing because `workspace.reconvert` re-dispatches the stored original through `_phased_upload`.
 
 ### Migrating to native video input
 

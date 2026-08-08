@@ -7,7 +7,6 @@ import that touches the same subtree.
 """
 
 import asyncio
-import shutil
 from collections.abc import Iterable
 from pathlib import PurePosixPath
 
@@ -22,8 +21,10 @@ from .locks import _locked_for, _locked_for_move, store_lock
 from .paths import (
     _check_destination_parents,
     _check_not_assets_path,
+    _count_files,
     _is_blocked_by_other,
     _is_same_file,
+    _remove_tree,
     _resolve_move_destination,
 )
 
@@ -99,7 +100,7 @@ async def _move_directory_locked(
     if _is_blocked_by_other(dst_dir, src_dir):
         raise HTTPException(status_code=409, detail="Destination already exists")
 
-    files_moved = sum(1 for file_path in src_dir.rglob("*") if file_path.is_file())
+    files_moved = await asyncio.to_thread(_count_files, src_dir)
     dst_dir.parent.mkdir(parents=True, exist_ok=True)
     src_dir.rename(dst_dir)
 
@@ -166,10 +167,8 @@ async def _delete_directory_locked(store: Casebase, path: str) -> int:
     directory_path = workspace_dir / path
     if not directory_path.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
-    files_deleted = sum(
-        1 for file_path in directory_path.rglob("*") if file_path.is_file()
-    )
-    shutil.rmtree(directory_path)
+    files_deleted = await asyncio.to_thread(_count_files, directory_path)
+    await asyncio.to_thread(_remove_tree, directory_path)
     # Children-only: a same-named sibling document (stem equal to *path*)
     # lives outside the directory and keeps its row.
     await db_documents.delete_subtree(store, path)
@@ -194,9 +193,7 @@ async def delete_all(store: Casebase) -> None:
     """
     async with _locked_for(store, whole_store=True):
         await db_documents.delete_all(store)
-        workspace_path = store.workspace_path(settings.data_dir)
-        if workspace_path.exists():
-            shutil.rmtree(workspace_path)
+        await asyncio.to_thread(_remove_tree, store.workspace_path(settings.data_dir))
 
 
 async def delete_workspace_root() -> None:
@@ -208,10 +205,5 @@ async def delete_workspace_root() -> None:
     drops the vector rows), since this is a filesystem-only operation.
     """
     workspace_root = Casebase.workspace_root(settings.data_dir)
-
-    def _wipe() -> None:
-        if workspace_root.exists():
-            shutil.rmtree(workspace_root)
-        workspace_root.mkdir(parents=True, exist_ok=True)
-
-    await asyncio.to_thread(_wipe)
+    await asyncio.to_thread(_remove_tree, workspace_root)
+    workspace_root.mkdir(parents=True, exist_ok=True)
