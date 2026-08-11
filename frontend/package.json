@@ -99,7 +99,7 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6",
     "ai-elements": "^1",
-    "jsdom": "^29",
+    "jsdom": "^30.0.0",
     "tw-animate-css": "^1",
     "typescript": "^7",
     "vite": "^8",
