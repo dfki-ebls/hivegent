@@ -39,6 +39,7 @@ from .base import (
     ExtractedImage,
     pil_to_png_bytes,
 )
+from .pdf_classify import pdf_has_text_layer
 
 
 def _accelerator_options() -> AcceleratorOptions:
@@ -218,7 +219,7 @@ class DoclingConverter(DocumentConverter):
             config.pdf_options.do_ocr
             and settings.conversion.ocr.skip_native_text
             and path.suffix.lower() == ".pdf"
-            and _pdf_has_text_layer(path)
+            and pdf_has_text_layer(path)
         ):
             # Born-digital PDF: the text layer is authoritative, so skip the
             # Tesseract stage entirely (scanned/image-only PDFs keep it).
@@ -320,38 +321,6 @@ _DOCLING_ROLE_MAP: dict[str, AssetRole] = {
     **{label.value: AssetRole.DECORATIVE for label in _DECORATIVE_LABELS},
     **{label.value: AssetRole.INFORMATIVE for label in _INFORMATIVE_LABELS},
 }
-
-
-def _pdf_has_text_layer(path: Path, *, sample: int = 5) -> bool:
-    """Return whether *path* already carries an extractable text layer.
-
-    Samples up to ``sample`` pages spread evenly across the document and
-    returns whether at least half of them carry a text layer, using
-    pdf_oxide's purpose-built per-page check (``True`` for born-digital
-    pages, ``False`` for image-only/empty ones).  Falls back to ``False``
-    when the ``pdf-oxide`` extra is absent or the probe fails, so OCR
-    still runs in those cases.
-    """
-    try:
-        from pdf_oxide import PdfDocument
-    except ImportError:
-        return False
-
-    try:
-        doc = PdfDocument(str(path))
-        pages = doc.page_count()
-        if pages == 0:
-            return False
-        indices = range(0, pages, max(1, pages // sample))
-        sampled = [i for _, i in zip(range(sample), indices)]
-        hits = sum(doc.has_text_layer(i) for i in sampled)
-        return hits / len(sampled) >= 0.5
-    except Exception:  # noqa: BLE001
-        # Deliberately broad: pdf_oxide is an optional Rust-backed extra with no
-        # documented error taxonomy, and this probe only advises whether to OCR.
-        # Answering "no text layer" costs a needless OCR pass; letting an
-        # unexpected error escape would fail the whole conversion instead.
-        return False
 
 
 def _picture_role(item: PictureItem) -> AssetRole:

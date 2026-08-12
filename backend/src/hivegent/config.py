@@ -599,9 +599,9 @@ class OcrSettings(BaseModel):
     ``deu``, ``eng``); the matching ``*.traineddata`` packs must resolve
     through ``TESSDATA_PREFIX`` (wired up by the nix package and dev
     shell).  ``skip_native_text`` drops OCR for born-digital PDFs that
-    already carry an extractable text layer (detected by sampling pages
-    through the ``pdf-oxide`` extra); image-only/scanned PDFs fall
-    through to OCR unchanged.
+    already carry an extractable text layer (classified by pdf-inspector,
+    see :func:`~hivegent.converters.pdf_classify.pdf_has_text_layer`);
+    image-only/scanned PDFs fall through to OCR unchanged.
     """
 
     languages: list[str] = ["deu", "eng"]

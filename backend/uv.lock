@@ -16,9 +16,10 @@ exclude-newer-span = "P3D"
 
 [options.exclude-newer-package]
 pydantic-ai-slim = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
-pydantic-graph = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
 cbrkit = false
+pydantic-graph = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
 pydantic-evals = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
+pdf-inspector = false
 
 [[package]]
 name = "accelerate"
@@ -1193,6 +1194,21 @@ wheels = [
 ]
 
 [[package]]
+name = "firecrawl-anydoc"
+version = "0.1.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/1e/b5a9a58da186821b20cd9057861563f9748eeca956e27b1dab23d686e767/firecrawl_anydoc-0.1.7.tar.gz", hash = "sha256:857a97f2878ebbde3e1b4340a354b2ef13f8afbac2f312fd028365600ecb0772", size = 197927, upload-time = "2026-08-07T09:29:20.491Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/02/99/13f2436e70b62a682315c2dbd3ebabb7d3b22827e80816072d32e05c4661/firecrawl_anydoc-0.1.7-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:a0abd5421243ee8229a19f7d83507a0e492d447e301d03b177481a0d400cbe4a", size = 3338531, upload-time = "2026-08-07T09:29:09.948Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/0e/93cd4095b532e81e10b3b7679ffede695c1fc230ea1fa3e937dcd4996f21/firecrawl_anydoc-0.1.7-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:4ab410d12eb7d339e60356eecf2375786acd2d3c6660dcbe1e079eb60addc004", size = 3169866, upload-time = "2026-08-07T09:29:11.582Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/9c/d89ee7316e125b6cde08ea30afbcf26f1476bc25f68ed7adbcc48167333b/firecrawl_anydoc-0.1.7-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:d378ab1d0fc42b4304795a9442d3b2626ce350519143208c631fcc1a3079b82b", size = 3218213, upload-time = "2026-08-07T09:29:12.974Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/8e/07649d0d6c905c45fd6e9c5117914f140160dd670e9d38114d1c279c8da9/firecrawl_anydoc-0.1.7-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7f5fd3a4b0360e75e51b7f951a0b4dcc2a53f158d039b9be3e542bb956194094", size = 3429872, upload-time = "2026-08-07T09:29:14.5Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/44/1a873a3b979903a01d98543626b5b9f18c6902495f9513cbd76e33d1bd3e/firecrawl_anydoc-0.1.7-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:5d613303d9eb7ccb11a61dbb10602e928ecfd4e8672bb5d308393f36b4aca86c", size = 3395677, upload-time = "2026-08-07T09:29:15.927Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/c9/8a79ca80302969d940fa8ef98f2ad17653725bb65a9a51bfee494500f5ef/firecrawl_anydoc-0.1.7-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:561825a24e87ec0d37164a9bddbc9597b0b30c282f9c07c6cfe3e96da0c87e59", size = 3669132, upload-time = "2026-08-07T09:29:17.624Z" },
+    { url = "https://files.pythonhosted.org/packages/12/54/d52ee3d21cdf6b95e2f8f6a3197a329604f4b12be12e89d036bd2b0fbe90/firecrawl_anydoc-0.1.7-cp310-abi3-win_amd64.whl", hash = "sha256:304850c6e416db7b481bcf00b16e9ccff6fb16d1e618e1f0f00eadd9e5b6604d", size = 3501307, upload-time = "2026-08-07T09:29:19.197Z" },
+]
+
+[[package]]
 name = "flatbuffers"
 version = "25.12.19"
 source = { registry = "https://pypi.org/simple" }
@@ -1352,6 +1368,7 @@ dependencies = [
     { name = "chonkie" },
     { name = "fastapi", extra = ["standard"] },
     { name = "fastmcp" },
+    { name = "firecrawl-anydoc" },
     { name = "frozendict" },
     { name = "httpx" },
     { name = "joserfc" },
@@ -1361,6 +1378,7 @@ dependencies = [
     { name = "nanoid" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "pdf-inspector" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-ai-slim", extra = ["mcp", "openai", "ui"] },
     { name = "pydantic-settings" },
@@ -1414,6 +1432,7 @@ requires-dist = [
     { name = "docling", marker = "extra == 'docling'", specifier = ">=2,<3" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.120,<1" },
     { name = "fastmcp", specifier = ">=3,<4" },
+    { name = "firecrawl-anydoc", specifier = ">=0.1,<0.2" },
     { name = "frozendict", specifier = ">=2.4.7" },
     { name = "hivegent", extras = ["docling", "pdf-oxide", "semantic"], marker = "extra == 'all'" },
     { name = "httpx", specifier = ">=0.28,<1" },
@@ -1426,6 +1445,7 @@ requires-dist = [
     { name = "nanoid", specifier = ">=2,<3" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1,<2" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.60b1" },
+    { name = "pdf-inspector", specifier = ">=1,<2" },
     { name = "pdf-oxide", marker = "extra == 'pdf-oxide'", specifier = ">=0.3,<1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3,<4" },
     { name = "pydantic-ai-slim", extras = ["ui", "openai", "mcp"], specifier = ">=2,<3" },
@@ -2788,6 +2808,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/66/f3/5a20387de9bcd0607871bfc2198ee0e15836da7baa4592ccd7f24c27c986/pathable-0.6.0.tar.gz", hash = "sha256:6404b8b82aef5ff0fd478934137128b99b12212ba35afdde5525ca4f8388ea58", size = 18970, upload-time = "2026-05-19T18:15:11.911Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a2/e8/6d75ffd9784bce2e93d1ae4415649427e39a53bb172d4672b2b59c6f0a7b/pathable-0.6.0-py3-none-any.whl", hash = "sha256:82c4ca6c98c502ad12e0d4e9779b6210afee93c38990988c8c5d1b49bdcdf566", size = 18983, upload-time = "2026-05-19T18:15:10.728Z" },
+]
+
+[[package]]
+name = "pdf-inspector"
+version = "1.14.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cc/7d/29ac7865f4c7332d28638d08b73aa6b7bf2f1325c383094bb6717a1a816d/pdf_inspector-1.14.1.tar.gz", hash = "sha256:e9d0fc1669ca77950d28488c8450d1aa28018e839ea260308d87253dfb8bec03", size = 1559937, upload-time = "2026-08-11T21:22:53.948Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/47/7ddacbcac7a04ec60014e2a03b943c4643a8bd794ed67588f5ebadfbeb15/pdf_inspector-1.14.1-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:b2159efa28f132df0442129a9b3eaf70c3f9915eb8202efcaaf759d85a01993f", size = 2855526, upload-time = "2026-08-11T21:22:44.66Z" },
+    { url = "https://files.pythonhosted.org/packages/98/24/00594b8ae250c0b8a87631a86067896416920879c43c8cdcdfeb50586d49/pdf_inspector-1.14.1-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:54cb32691640e5684832d21fbb58d2b30c068cbc055e0157da37774c1e8b9218", size = 2767918, upload-time = "2026-08-11T21:22:46.768Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/36/5b332c80858407fb19b34e6f18f6c99022d04324caf98b8aaf4547044871/pdf_inspector-1.14.1-cp38-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:501b8a6ffcd2c16ea74d71b9d7d70503c945c7d38c81151121790fd278021f0b", size = 2942959, upload-time = "2026-08-11T21:22:48.771Z" },
+    { url = "https://files.pythonhosted.org/packages/37/cc/589c355fed7b50098ddb9d09116c81d966c7b4ff78741183e600c1b4de6f/pdf_inspector-1.14.1-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:62e761a32ffd9c2b0c803dbefa2b0ad6f98bc26a75847571d99c3f7a65a7cea3", size = 3044612, upload-time = "2026-08-11T21:22:50.571Z" },
+    { url = "https://files.pythonhosted.org/packages/24/7c/4c84916a97cfd85d2e72dc3aaf6988cd19aff6e050d6a1b79d20f97e4566/pdf_inspector-1.14.1-cp38-abi3-win_amd64.whl", hash = "sha256:d4a2455c316e15eac745c3836f72b641e1c33207afb84c250abff2843209e527", size = 2690743, upload-time = "2026-08-11T21:22:52.407Z" },
 ]
 
 [[package]]

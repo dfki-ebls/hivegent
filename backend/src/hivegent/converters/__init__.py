@@ -47,6 +47,8 @@ class ConversionPipeline(StrEnum):
     PANDOC = "pandoc"
     MARKITDOWN = "markitdown"
     KREUZBERG = "kreuzberg"
+    ANYDOC = "anydoc"
+    PDF_INSPECTOR = "pdf-inspector"
     PDF_OXIDE = "pdf-oxide"
     TABLE_CHEF = "table-chef"
     PLAIN_TEXT = "plain-text"
@@ -89,6 +91,10 @@ _CONVERTERS: dict[ConversionPipeline, str] = {
     ConversionPipeline.MINERU: "hivegent.converters.mineru:MinerUConverter",
     ConversionPipeline.MARKITDOWN: "hivegent.converters.markitdown:MarkItDownConverter",
     ConversionPipeline.KREUZBERG: "hivegent.converters.kreuzberg:KreuzbergConverter",
+    ConversionPipeline.ANYDOC: "hivegent.converters.anydoc:AnydocConverter",
+    ConversionPipeline.PDF_INSPECTOR: (
+        "hivegent.converters.pdf_inspector:PdfInspectorConverter"
+    ),
     ConversionPipeline.PDF_OXIDE: "hivegent.converters.pdf_oxide:PdfOxideConverter",
     ConversionPipeline.TABLE_CHEF: "hivegent.converters.chonkie_table:ChonkieTableConverter",
     ConversionPipeline.PLAIN_TEXT: "hivegent.converters.plain_text:PlainTextConverter",

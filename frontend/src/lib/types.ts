@@ -23,6 +23,8 @@ export enum ConversionPipeline {
   PANDOC = "pandoc",
   MARKITDOWN = "markitdown",
   KREUZBERG = "kreuzberg",
+  ANYDOC = "anydoc",
+  PDF_INSPECTOR = "pdf-inspector",
   PDF_OXIDE = "pdf-oxide",
   TABLE_CHEF = "table-chef",
   PLAIN_TEXT = "plain-text",

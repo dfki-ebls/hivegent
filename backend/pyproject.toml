@@ -11,6 +11,7 @@ dependencies = [
   "chonkie>=1,<2",
   "fastapi[standard]>=0.120,<1",
   "fastmcp>=3,<4",
+  "firecrawl-anydoc>=0.1,<0.2",
   "frozendict>=2.4.7",
   "httpx>=0.28,<1",
   "joserfc>=1,<2",
@@ -20,6 +21,7 @@ dependencies = [
   "nanoid>=2,<3",
   "opentelemetry-exporter-otlp-proto-http>=1,<2",
   "opentelemetry-instrumentation-fastapi>=0.60b1",
+  "pdf-inspector>=1,<2",
   "psycopg[binary]>=3,<4",
   "pydantic-ai-slim[ui,openai,mcp]>=2,<3",
   "pydantic-settings>=2,<3",
@@ -88,6 +90,9 @@ extend-immutable-calls = ["fastmcp.dependencies.CurrentAccessToken", "fastmcp.de
 
 [tool.uv.exclude-newer-package]
 cbrkit = false
+# pdf-inspector 1.x landed within the global soak window; drop this override
+# once the cutoff has caught up with it.
+pdf-inspector = false
 pydantic-ai-slim = "1 day"
 pydantic-graph = "1 day"
 pydantic-evals = "1 day"
