@@ -23,9 +23,9 @@
     "@chat-adapter/web": "^4",
     "@types/express": "^5",
     "@types/node": "^26",
-    "ai": "^6",
+    "ai": "^7",
     "tsx": "^4",
-    "typescript": "^6",
+    "typescript": "^7",
     "vitest": "^4",
     "zod": "^4"
   },
