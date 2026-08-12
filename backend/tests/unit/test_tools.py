@@ -6,8 +6,10 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
+from hivegent.converters import VISION_MEDIA_TYPES
 from hivegent.store import WorkspaceScope
 from hivegent.tools.base import SearchPath, ToolRetry, scope_paths
+from hivegent.tools.binary import ReadBinaryDocumentTool
 from hivegent.tools.documents import (
     DocumentRange,
     DocumentSummary,
@@ -418,13 +420,42 @@ class TestReadDocumentTool:
         with pytest.raises(ToolRetry, match="report.md"):
             tool("report.docx")
 
-    def test_supported_binary_directs_to_binary_tool(self, tmp_path: Path) -> None:
-        # A vision-capable binary (PDF/image) is sent to read_binary_document,
-        # with the markdown sidecar offered as the text alternative.
-        (tmp_path / "scan.pdf").write_bytes(b"%PDF-1.4 binary")
+    @pytest.mark.parametrize("suffix", sorted(VISION_MEDIA_TYPES))
+    def test_supported_binary_directs_to_binary_tool(
+        self, tmp_path: Path, suffix: str
+    ) -> None:
+        # A vision-capable binary is sent to read_binary_document, on its name
+        # alone. The write gateway refuses the same set from the same table, so
+        # the two tools cannot drift into disagreeing about what counts as text
+        # (see test_workspace_mutations for the other half).
+        (tmp_path / f"scan{suffix}").write_text("text wearing a binary extension")
         tool = ReadDocumentTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="read_binary_document"):
-            tool("scan.pdf")
+            tool(f"scan{suffix}")
+
+    async def test_binary_tool_points_unshowable_input_at_its_sidecar(
+        self, tmp_path: Path
+    ) -> None:
+        # An Office document is neither showable nor readable as text, so the
+        # refusal names the extracted text rather than the tool that would
+        # refuse it in turn.
+        (tmp_path / "report.docx").write_bytes(b"PK\x03\x04\xec\xec binary")
+        tool = ReadBinaryDocumentTool(paths=tmp_path)
+        with pytest.raises(ToolRetry, match="report.md"):
+            await tool("report.docx")
+
+    async def test_binary_tool_preserves_scope_in_sidecar_hint(
+        self, tmp_path: Path
+    ) -> None:
+        group_dir = tmp_path / "team"
+        group_dir.mkdir()
+        (group_dir / "report.docx").write_bytes(b"PK\x03\x04\xec\xec binary")
+        tool = ReadBinaryDocumentTool(
+            paths=SearchPath(path=group_dir, scope=WorkspaceScope("team"))
+        )
+
+        with pytest.raises(ToolRetry, match=r"@team/report\.md"):
+            await tool("@team/report.docx")
 
     def test_binary_without_companion_retries(self, tmp_path: Path) -> None:
         # Undecodable bytes become a recoverable ToolRetry, never a run-aborting

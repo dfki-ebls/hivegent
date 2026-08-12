@@ -17,9 +17,37 @@ from hivegent.db.documents import _entry_from_row, _EntryColumns, _original_suff
 from hivegent.db.models import Document
 from hivegent.entries import (
     description_path_for_stem,
+    is_projectable_original,
     original_path_for_stem,
     stem_path_from_reference,
 )
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "projectable"),
+    [
+        ("docs/settings.ini", True),
+        ("docs/data.xml", True),
+        ("docs/Makefile", True),
+        ("docs/report.md", False),
+        ("docs/report.pdf", False),
+        ("docs/table.csv", False),
+        # Text, and claimed by no converter — but the uploader captions it with
+        # a vision model, so deriving it verbatim would disagree with an upload.
+        ("docs/diagram.svg", False),
+        ("docs/report.assets/notes.txt", False),
+        ("docs/.DS_Store", False),
+    ],
+)
+def test_projectable_originals_are_the_verbatim_formats(
+    rel_path: str, projectable: bool
+) -> None:
+    """Only files whose markdown is a copy of their own text may be derived.
+
+    A converter- or vision-backed format is excluded even though it is text,
+    because deriving it is not free; junk and managed assets are never entries.
+    """
+    assert is_projectable_original(rel_path) is projectable
 
 
 def _project(entry: EntryMetadata) -> EntryMetadata:

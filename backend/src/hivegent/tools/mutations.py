@@ -110,6 +110,13 @@ class EditDocumentTool(AsyncPathTool[str]):
         not exist or appears more than once.  Pass ``replace_all=True`` to
         substitute every occurrence instead.  Pass ``expected_hash`` from a
         prior read to reject the edit if the document changed since.
+
+        Anything ``read_document`` can read, this can edit: a markdown
+        document, and equally a plain-text original such as a config,
+        data, or source file, whose searchable markdown is regenerated
+        from the new content automatically.  A binary (PDF, Office
+        document, image, video) cannot be edited — replace it by
+        uploading a new version instead.
         """
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None:
@@ -148,6 +155,15 @@ class WriteDocumentTool(AsyncPathTool[str]):
 
         Pass ``expected_hash`` from a prior read to reject the write if the
         document changed since.
+
+        Anything ``read_document`` can read, this can rewrite: a markdown
+        document, and equally a plain-text original such as a config,
+        data, or source file, whose searchable markdown is regenerated
+        from the new content automatically.  A binary (PDF, Office
+        document, image, video) cannot be written — replace it by
+        uploading a new version instead.  New documents can be created as
+        markdown or as a plain-text format; any other format has to be
+        uploaded.
         """
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None:

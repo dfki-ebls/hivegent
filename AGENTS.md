@@ -16,7 +16,8 @@
 - FastAPI server for handling requests and responses
 - Pydantic AI for LLMs and agents
 - The filesystem under `data/workspace/` is the source of truth for document content; the `documents` and `chunks` rows are an index derived from it.
-- Workspace mutations should go through the API; markdown dropped or edited by hand is ingested into SQL on startup, other hand-dropped files stay inert on disk (visible, deletable, but never chunked), and reconciliation never deletes workspace files.
+- Workspace mutations should go through the API; markdown and plain-text files dropped or edited by hand are ingested into SQL on startup (a plain-text original has its `<stem>.md` derived for it), files needing a converter stay inert on disk (visible, deletable, but never chunked) until uploaded or reconverted, and reconciliation never deletes workspace files.
+- A document is writable exactly when it is readable as text: the write tools accept markdown descriptions and plain-text originals (regenerating the original's markdown projection through the upload pipeline) and reject binaries, which are replaced by uploading instead.
 - The single supported database backend is PostgreSQL with the `pgvector` extension; dev/test sessions reach it over the Unix socket exposed by `services-flake` under `data/db/`.
 - Chunk metadata, text, and vectors live together in the `chunks` table and cascade with their owning document — there is no separate vector-index layer to reconcile.
 - Never read user-supplied content with `Path.read_text`: every such read goes through `text.read_text_file` / `text.decode_bytes`, which support Unicode and Western Windows text, return `None` for binary-looking content, and report the source encoding so a transcode is never silent. Writes are always UTF-8.

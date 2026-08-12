@@ -9,17 +9,29 @@ from typing import Any, Protocol, get_type_hints
 
 from pydantic import BaseModel
 
-from .base import ConversionResult, DocumentConverter
+from .base import (
+    IMAGE_MEDIA_TYPES,
+    ConversionResult,
+    DocumentConverter,
+    is_image_suffix,
+    is_markdown_suffix,
+)
+from .video import VIDEO_MEDIA_TYPES, is_video_suffix
 
 __all__ = [
+    "VISION_MEDIA_TYPES",
     "ConversionPipeline",
     "ConversionPipelineInfo",
     "ConversionResult",
     "ConversionSpec",
     "DocumentConverter",
+    "EntryProjection",
     "get_conversion_pipelines_info",
     "get_converter",
+    "projection_for",
+    "projects_verbatim",
     "resolve_auto_pipeline",
+    "vision_media_type",
 ]
 
 
@@ -177,6 +189,94 @@ def resolve_auto_pipeline(filename: str) -> ConversionPipeline:
     """
     return _auto_mapping().get(
         Path(filename).suffix.lower(), ConversionPipeline.PLAIN_TEXT
+    )
+
+
+class EntryProjection(StrEnum):
+    """How an entry's markdown is derived from the file it is derived from."""
+
+    MARKDOWN = "markdown"
+    """The file is its own description; nothing is derived."""
+
+    IMAGE = "image"
+    VIDEO = "video"
+    """Derived by a vision model, from the still or from sampled frames."""
+
+    CONVERTIBLE = "convertible"
+    """Derived by a converter, or copied verbatim when that converter is plain text."""
+
+
+def projection_for(filename: str) -> EntryProjection:
+    """Return which projection *filename* gets, by extension.
+
+    The single routing table behind every path that turns a file into an entry:
+    :func:`hivegent.workspace.prepare._prepare_upload` dispatches on it,
+    reconciliation asks it which files it can derive a description for, and the
+    metadata reconstruction asks it what kind of entry a rediscovered file
+    belongs to.  Keeping the three on one table is what stops them from
+    answering differently for the same file.
+    """
+    suffix = Path(filename).suffix.lower()
+    if is_markdown_suffix(suffix):
+        return EntryProjection.MARKDOWN
+    if is_image_suffix(suffix):
+        return EntryProjection.IMAGE
+    if is_video_suffix(suffix):
+        return EntryProjection.VIDEO
+    return EntryProjection.CONVERTIBLE
+
+
+_INGESTIBLE_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+"""Image formats a chat model accepts verbatim, the subset vision APIs agree on."""
+
+VISION_MEDIA_TYPES: dict[str, str] = {
+    ".pdf": "application/pdf",
+    **{ext: IMAGE_MEDIA_TYPES[ext] for ext in _INGESTIBLE_IMAGE_EXTENSIONS},
+    **VIDEO_MEDIA_TYPES,
+}
+"""Extension → media type for the formats a vision model can be shown.
+
+Deliberately *not* ``IMAGE_MEDIA_TYPES | VIDEO_MEDIA_TYPES``, because the two
+halves qualify for different reasons.  Video qualifies whatever the container,
+since it is never sent as one: it is always sampled to PNG frames first, so
+anything decodable is showable.  An image is sent verbatim, so only the formats
+a chat model actually ingests belong — widening this to every format Pillow can
+open would admit SVG, BMP, TIFF, and ICO, which the serving gateway rejects, and
+would additionally make SVG unreadable as the text it is (both readers and the
+write gateway refuse a file on this table alone).
+
+The narrowness would stop being load-bearing if the binary reader rasterised
+non-ingestible images the way it already samples video; that is a feature, not a
+simplification of this table.
+"""
+
+
+def vision_media_type(file_path: str) -> str | None:
+    """Return *file_path*'s media type if a vision model can be shown it.
+
+    The one table behind both halves of the read/write symmetry: a file named
+    for one of these formats is what ``read_binary_document`` accepts and what
+    the text tools refuse, so neither side can start claiming a file is text
+    while the other calls it binary.
+    """
+    return VISION_MEDIA_TYPES.get(Path(file_path).suffix.lower())
+
+
+def projects_verbatim(filename: str) -> bool:
+    """Return whether *filename*'s projection is a copy of its own text.
+
+    True for the files AUTO reads as-is — config, data-serialization, and source
+    formats — for which deriving the projection costs a decode and a fenced
+    block rather than a converter or a vision model.
+
+    >>> projects_verbatim("settings.ini")
+    True
+    >>> projects_verbatim("diagram.svg")
+    False
+    """
+    return (
+        projection_for(filename) is EntryProjection.CONVERTIBLE
+        and resolve_auto_pipeline(filename) is ConversionPipeline.PLAIN_TEXT
     )
 
 

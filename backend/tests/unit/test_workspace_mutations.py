@@ -2,11 +2,14 @@
 
 These exercise the edit/write algorithm (occurrence counting, ``replace_all``,
 write modes, error reporting) without a database by stubbing the re-indexing
-step that ``_replace_text_locked`` shields.
+both persistence paths run: a description is indexed where it lies, while a
+text original's rewrite lands through the phased commit that regenerates its
+markdown projection.
 """
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from fastapi import HTTPException
@@ -14,25 +17,42 @@ from fastapi import HTTPException
 from hivegent import workspace
 from hivegent.chunkers.base import EntryMetadata
 from hivegent.config import content_digest, content_hash, settings
+from hivegent.converters import VISION_MEDIA_TYPES
 from hivegent.db import documents as db_documents
 from hivegent.db.documents import EntryState
 from hivegent.entries import ContentStat
 from hivegent.server.operations import reads
 from hivegent.store import Casebase
 from hivegent.workspace import assets as workspace_assets
-from hivegent.workspace import documents
+from hivegent.workspace import commit, documents
+
+
+class _Chunked:
+    """Stand-in for the indexed document the phased commit reports on."""
+
+    chunks: ClassVar[tuple[()]] = ()
+    pipeline: ClassVar[str] = "none"
 
 
 @pytest.fixture()
 def workspace_dir(
     user_store: Casebase, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[Path]:
-    """Workspace root for *user_store* with re-indexing stubbed out."""
+    """Workspace root for *user_store* with every SQL touch stubbed out."""
 
     async def _noop(*_args: object, **_kwargs: object) -> None:
         return None
 
+    async def _chunked(*_args: object, **_kwargs: object) -> _Chunked:
+        return _Chunked()
+
+    async def _no_rows(*_args: object, **_kwargs: object) -> int:
+        return 0
+
     monkeypatch.setattr(documents, "chunk_and_index_document", _noop)
+    monkeypatch.setattr(commit, "chunk_and_index_document", _chunked)
+    monkeypatch.setattr(db_documents, "get_entry_metadata", _noop)
+    monkeypatch.setattr(db_documents, "delete_subtree", _no_rows)
     path = user_store.workspace_dir(settings.data_dir)
     path.mkdir(parents=True, exist_ok=True)
     yield path
@@ -188,18 +208,115 @@ class TestWriteDocumentText:
             )
         assert exc.value.status_code == 409
 
-    async def test_non_markdown_path_is_rejected(
+
+class TestTextOriginals:
+    """A text original is writable, and its projection follows the write.
+
+    What may be written is decided by the bytes, exactly as on the read side;
+    the name only decides whether the file *is* the indexed description or the
+    original one is derived from.
+    """
+
+    async def test_edit_rewrites_original_and_its_projection(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
-        """Content is chunked as ``<stem>.md``; a non-markdown target is a 400.
+        (workspace_dir / "settings.ini").write_text("[db]\nhost = old\n")
 
-        Writing it would divorce the on-disk file from the indexed description
-        and orphan its chunk count in the listing.
-        """
+        result = await workspace.edit_document_text(
+            user_store, "settings.ini", "old", "new"
+        )
+
+        assert (workspace_dir / "settings.ini").read_text() == "[db]\nhost = new\n"
+        assert "host = new" in (workspace_dir / "settings.md").read_text()
+        assert "'settings.md' was regenerated" in result
+
+    @pytest.mark.parametrize("encoding", ["cp1252", "utf-16"])
+    async def test_edit_reports_legacy_encoding_transcode(
+        self, user_store: Casebase, workspace_dir: Path, encoding: str
+    ) -> None:
+        original = workspace_dir / "settings.ini"
+        original.write_bytes("city = Köln\n".encode(encoding))
+
+        result = await workspace.edit_document_text(
+            user_store, "settings.ini", "Köln", "Berlin"
+        )
+
+        assert original.read_bytes() == b"city = Berlin\n"
+        assert f"transcoded from {encoding} to UTF-8" in result
+
+    async def test_image_original_is_not_editable_as_text(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        """An SVG is text but the uploader captions it, so it is not verbatim."""
         with pytest.raises(HTTPException) as exc:
-            await workspace.write_document_text(user_store, "notes", "body")
+            await workspace.write_document_text(user_store, "diagram.svg", "<svg/>")
+
         assert exc.value.status_code == 400
-        assert not (workspace_dir / "notes").exists()
+        assert not (workspace_dir / "diagram.svg").exists()
+
+    async def test_write_creates_the_entry_and_its_projection(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        await workspace.write_document_text(user_store, "conf/app.xml", "<a/>")
+
+        assert (workspace_dir / "conf/app.xml").read_text() == "<a/>"
+        assert "<a/>" in (workspace_dir / "conf/app.md").read_text()
+
+    async def test_binary_original_is_rejected(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        (workspace_dir / "report.pdf").write_bytes(b"%PDF\x00\x01binary")
+
+        with pytest.raises(HTTPException) as exc:
+            await workspace.write_document_text(user_store, "report.pdf", "text")
+
+        assert exc.value.status_code == 422
+        assert (workspace_dir / "report.pdf").read_bytes().startswith(b"%PDF")
+
+    @pytest.mark.parametrize("filename", sorted(VISION_MEDIA_TYPES))
+    async def test_every_readable_binary_is_refused_by_name(
+        self, user_store: Casebase, workspace_dir: Path, filename: str
+    ) -> None:
+        """The write side refuses exactly what ``read_document`` refuses.
+
+        Both consult ``vision_media_type``, so a file is refused on its name
+        even when its bytes happen to decode — otherwise growing that table
+        would quietly make the two tools disagree, and the tool descriptions
+        promising the model they agree would become false.
+        """
+        path = workspace_dir / f"notes{filename}"
+        path.write_text("plain text wearing a binary extension")
+
+        with pytest.raises(HTTPException) as exc:
+            await workspace.write_document_text(
+                user_store, path.name, "replacement"
+            )
+
+        assert exc.value.status_code == 422
+        assert path.read_text() == "plain text wearing a binary extension"
+
+    async def test_creating_a_converted_format_is_rejected(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        """Only formats projected verbatim can be conjured out of text."""
+        with pytest.raises(HTTPException) as exc:
+            await workspace.write_document_text(user_store, "report.docx", "text")
+
+        assert exc.value.status_code == 400
+        assert not (workspace_dir / "report.docx").exists()
+
+    async def test_creating_an_original_cannot_supersede_an_entry(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        """A new original claims the stem, so an occupied one is refused."""
+        (workspace_dir / "notes.md").write_text("hand written")
+
+        with pytest.raises(HTTPException) as exc:
+            await workspace.write_document_text(user_store, "notes.ini", "x = 1")
+
+        assert exc.value.status_code == 409
+        assert (workspace_dir / "notes.md").read_text() == "hand written"
+        assert not (workspace_dir / "notes.ini").exists()
 
 
 def _entry_metadata(
@@ -267,6 +384,111 @@ class TestSyncEntryFromDisk:
         assert updated[0].original_path == "doc.pdf"
         assert updated[0].assets_dir == "doc.assets"
         assert updated[0].origin == "upload"
+
+    async def test_derives_a_description_for_a_hand_dropped_text_file(
+        self,
+        user_store: Casebase,
+        workspace_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A config file dropped on disk becomes an entry, not invisible content."""
+        (workspace_dir / "settings.ini").write_text("host = local\n", encoding="utf-8")
+        indexed: list[tuple[str, EntryMetadata]] = []
+
+        async def get_entry_state(store: Casebase, reference: str) -> None:
+            _ = store, reference
+
+        async def chunk_and_index_document(
+            store: Casebase, filename: str, content: str, **kwargs: object
+        ) -> None:
+            _ = store, content
+            metadata = kwargs["entry_metadata"]
+            assert isinstance(metadata, EntryMetadata)
+            indexed.append((filename, metadata))
+
+        monkeypatch.setattr(db_documents, "get_entry_state", get_entry_state)
+        monkeypatch.setattr(
+            workspace.indexing, "chunk_and_index_document", chunk_and_index_document
+        )
+
+        changed = await workspace.sync_entry_from_disk(user_store, "settings.ini")
+
+        assert changed is True
+        assert "host = local" in (workspace_dir / "settings.md").read_text()
+        assert indexed[0][0] == "settings.md"
+        assert indexed[0][1].original_path == "settings.ini"
+        assert indexed[0][1].entry_kind == "convertible"
+
+    async def test_refreshes_projection_after_original_is_hand_edited(
+        self,
+        user_store: Casebase,
+        workspace_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        original = workspace_dir / "settings.ini"
+        description = workspace_dir / "settings.md"
+        original.write_text("host = new\n", encoding="utf-8")
+        description.write_text("```ini\nhost = old\n```\n", encoding="utf-8")
+        old_digest = content_digest(description.read_text())
+        old_stat = ContentStat.from_path(description)
+        indexed: list[str] = []
+
+        async def get_entry_state(store: Casebase, reference: str) -> EntryState:
+            _ = store, reference
+            return EntryState(
+                content_digest=old_digest,
+                content_stat=old_stat,
+                metadata=_entry_metadata(original_path="settings.ini"),
+            )
+
+        async def chunk_and_index_document(
+            store: Casebase, filename: str, content: str, **kwargs: object
+        ) -> None:
+            _ = store, filename, kwargs
+            indexed.append(content)
+
+        monkeypatch.setattr(db_documents, "get_entry_state", get_entry_state)
+        monkeypatch.setattr(
+            workspace.indexing, "chunk_and_index_document", chunk_and_index_document
+        )
+
+        changed = await workspace.sync_entry_from_disk(user_store, "settings.md")
+
+        assert changed is True
+        assert "host = new" in description.read_text()
+        assert "host = old" not in description.read_text()
+        assert len(indexed) == 1
+        assert "host = new" in indexed[0]
+
+    async def test_leaves_a_hand_dropped_binary_inert(
+        self,
+        user_store: Casebase,
+        workspace_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Nothing can be projected from bytes that are not text."""
+        (workspace_dir / "blob.bin").write_bytes(b"\x00\x01\x02")
+        dropped: list[str] = []
+
+        async def delete_chunked_document(store: Casebase, reference: str) -> bool:
+            _ = store
+            dropped.append(reference)
+            return False
+
+        async def fail(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("an unprojectable original must not be indexed")
+
+        monkeypatch.setattr(
+            workspace.indexing, "delete_chunked_document", delete_chunked_document
+        )
+        monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", fail)
+
+        changed = await workspace.sync_entry_from_disk(user_store, "blob.bin")
+
+        assert changed is False
+        assert not (workspace_dir / "blob.md").exists()
+        assert (workspace_dir / "blob.bin").exists()
+        assert dropped == ["blob.md"]
 
     async def test_fast_path_skips_unchanged_stat(
         self,

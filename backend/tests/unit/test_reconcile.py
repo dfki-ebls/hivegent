@@ -1,9 +1,10 @@
 """Unit tests pinning the filesystem-as-source-of-truth reconcile policy.
 
 The filesystem is authoritative for content: reconciliation ingests on-disk
-markdown into SQL and drops rows whose description vanished, but it must
-never delete workspace files — a non-markdown file without an owning entry
-is inert content, not an orphan to prune.
+markdown into SQL, derives the missing description of a hand-dropped text
+file, and drops rows whose description vanished — but it must never delete
+workspace files, and a file it cannot project stays inert content rather than
+an orphan to prune.
 """
 
 from pathlib import Path
@@ -30,8 +31,14 @@ def workspace_dir(user_store: Casebase, monkeypatch: pytest.MonkeyPatch) -> Path
     ) -> None:
         indexed.append(filename)
 
+    async def delete_chunked_document(store: Casebase, reference: str) -> bool:
+        return False
+
     monkeypatch.setattr(db_documents, "get_entry_state", get_entry_state)
     monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", chunk_and_index)
+    monkeypatch.setattr(
+        workspace.indexing, "delete_chunked_document", delete_chunked_document
+    )
     path = user_store.workspace_dir(settings.data_dir)
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -58,6 +65,30 @@ async def test_reconcile_ingests_markdown_and_keeps_stray_files(
     # Files the SQL index does not vouch for stay untouched: disk is truth.
     assert (workspace_dir / "loose.bin").exists()
     assert (workspace_dir / "gone.assets/fig.png").exists()
+
+
+async def test_reconcile_derives_descriptions_for_hand_dropped_text_files(
+    user_store: Casebase, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dropped config file is picked up; one needing a converter is not."""
+    (workspace_dir / "settings.ini").write_text("host = local\n")
+    (workspace_dir / "table.csv").write_text("a,b\n1,2\n")
+    (workspace_dir / "loose.bin").write_bytes(b"\x00")
+
+    async def list_document_paths(store: Casebase) -> dict[str, int]:
+        return {}
+
+    monkeypatch.setattr(
+        reconcile.db_documents, "list_document_paths", list_document_paths
+    )
+
+    report = await reconcile.reconcile_store(user_store)
+
+    assert report.entries_ingested == 1
+    assert "host = local" in (workspace_dir / "settings.md").read_text()
+    # A converter run has no place in a sweep that blocks the server's boot.
+    assert not (workspace_dir / "table.md").exists()
+    assert not (workspace_dir / "loose.md").exists()
 
 
 async def test_reconcile_skips_a_failing_entry_and_ingests_the_rest(

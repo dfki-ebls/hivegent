@@ -13,11 +13,12 @@ parts directly (OpenAI, Anthropic).
 
 import asyncio
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Annotated, override
 
 from pydantic import Field
 
+from ..converters import vision_media_type
 from ..converters.images import sanitize_image_bytes
 from ..converters.pdf_raster import (
     DEFAULT_MAX_PAGES,
@@ -27,7 +28,6 @@ from ..converters.pdf_raster import (
 from ..converters.video import (
     FRAME_MAX_DIMENSION,
     MAX_FRAMES,
-    VIDEO_MEDIA_TYPES,
     MediaSample,
     animation_frame_count,
     sample_animated_image,
@@ -41,33 +41,15 @@ from .base import (
     ToolOutput,
     ToolRetry,
     resolve_accessible_file,
+    sidecar_hint,
 )
 
 __all__ = [
-    "BINARY_MEDIA_TYPES",
     "BinaryReadResult",
     "ReadBinaryDocumentTool",
-    "binary_media_type",
 ]
 
 _MAX_BYTES = 20 * 1024 * 1024
-
-BINARY_MEDIA_TYPES: dict[str, str] = {
-    ".pdf": "application/pdf",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".webp": "image/webp",
-    ".gif": "image/gif",
-    **VIDEO_MEDIA_TYPES,
-}
-"""Extension → media type for inputs this tool can surface to vision models."""
-
-
-def binary_media_type(file_path: str) -> str | None:
-    """Return the media type for *file_path* if it is a supported binary."""
-    return BINARY_MEDIA_TYPES.get(PurePosixPath(file_path).suffix.lower())
-
 
 BinaryFilePathArg = Annotated[
     str,
@@ -156,18 +138,21 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
         if resolved is None or not resolved[2].is_file():
             raise ToolRetry(f"'{file_path}' not found.")
         sp, local, absolute = resolved
+        canonical = sp.prefixed(local)
 
-        media_type = binary_media_type(local)
+        media_type = vision_media_type(local)
         if media_type is None:
+            # Not every unsupported input is text: an Office document is neither
+            # showable to a vision model nor readable by read_document, so point
+            # at the entry's extracted text rather than bouncing the caller to a
+            # tool that would refuse it too.
             raise ToolRetry(
-                f"'{file_path}' is not a supported binary type — "
-                "use read_document for text files."
+                f"'{file_path}' is not a format a vision model can be shown — "
+                f"use read_document if it is text.{sidecar_hint(canonical)}"
             )
 
         if pages is not None and media_type != "application/pdf":
             raise ToolRetry(f"pages= is only valid for PDF inputs, got {media_type}.")
-
-        canonical = sp.prefixed(local)
 
         if media_type.startswith("video/"):
             return await self._read_video(canonical, absolute, media_type)

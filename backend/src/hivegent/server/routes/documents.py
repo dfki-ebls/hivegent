@@ -28,6 +28,7 @@ from ...chunkers.base import DocumentMetadata
 from ...concurrency import shield_to_completion
 from ...config import settings
 from ...db.documents import get_document, get_line_counts
+from ...humanize import pluralize
 from ...store import Casebase
 from ...types import (
     AssetEntry,
@@ -129,11 +130,6 @@ class DocumentJobKind(StrEnum):
     RECONVERT_BULK = "document.reconvert_bulk"
     MOVE_BULK = "document.move_bulk"
     DELETE_BULK = "document.delete_bulk"
-
-
-def _plural(count: int, noun: str) -> str:
-    """Render ``count`` with a naively pluralised ``noun`` for a job title."""
-    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 def _submit_document_job(
@@ -371,7 +367,7 @@ async def bulk_rechunk(
     return _submit_bulk_job(
         user=user,
         kind=DocumentJobKind.RECHUNK_BULK,
-        title=f"Rechunk {_plural(len(request.files), 'document')}",
+        title=f"Rechunk {len(request.files)} {pluralize(len(request.files), 'document')}",
         files=request.files,
         process_one=_rechunk_one,
         verb="Rechunked",
@@ -394,7 +390,7 @@ async def bulk_reconvert(
     return _submit_bulk_job(
         user=user,
         kind=DocumentJobKind.RECONVERT_BULK,
-        title=f"Reconvert {_plural(len(request.files), 'document')}",
+        title=f"Reconvert {len(request.files)} {pluralize(len(request.files), 'document')}",
         files=request.files,
         process_one=_reconvert_one,
         verb="Reconverted",
@@ -433,7 +429,7 @@ async def bulk_move(
 
     return manager.submit(
         kind=DocumentJobKind.MOVE_BULK,
-        title=f"Move {_plural(len(sources), 'document')}",
+        title=f"Move {len(sources)} {pluralize(len(sources), 'document')}",
         owner=user.id,
         scope=scope,
         work=work,
@@ -454,7 +450,7 @@ async def bulk_delete(
     return _submit_bulk_job(
         user=user,
         kind=DocumentJobKind.DELETE_BULK,
-        title=f"Delete {_plural(len(request.files), 'document')}",
+        title=f"Delete {len(request.files)} {pluralize(len(request.files), 'document')}",
         files=request.files,
         process_one=_delete_one,
         verb="Deleted",

@@ -5,6 +5,7 @@ the casebase lock through :func:`_locked_for` and runs its file + SQL step to
 completion under a cancel so the workspace and its index never drift apart.
 """
 
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
@@ -13,7 +14,7 @@ from ..chunkers import ChunkingSpec
 from ..chunkers.base import DocumentMetadata
 from ..concurrency import shield_to_completion
 from ..config import content_hash, sanitize_document_path, settings
-from ..converters.base import DOCUMENT_EXTENSION
+from ..converters import vision_media_type
 from ..db import documents as db_documents
 from ..entries import (
     ContentStat,
@@ -21,12 +22,18 @@ from ..entries import (
     description_path_for_stem,
     entry_exists,
     is_description_file,
+    is_projectable_original,
     stem_path_from_reference,
 )
+from ..humanize import pluralize
 from ..store import Casebase
-from ..text import NOT_TEXT_REASON, read_text_file
-from ..types import MoveDocumentResponse, PipelineSpec
-from .commit import _delete_single_locked
+from ..text import NOT_TEXT_REASON, DecodedText, read_text_file
+from ..types import LlmConfig, MoveDocumentResponse, PipelineSpec
+from .commit import (
+    _delete_single_locked,
+    _ensure_upload_slot_locked,
+    _phased_upload,
+)
 from .indexing import chunk_and_index_document
 from .locks import _locked_for, _reject_if_inflight
 from .paths import (
@@ -38,6 +45,7 @@ from .paths import (
     _resolve_move_destination,
     _write_markdown_file,
 )
+from .prepare import _Reserved
 
 __all__ = [
     "delete_document",
@@ -48,7 +56,7 @@ __all__ = [
 ]
 
 
-def _decode_existing(file_path: Path) -> str:
+def _decode_existing(file_path: Path) -> DecodedText:
     """Decode an existing workspace file, rejecting content that is not text.
 
     Reads go through the shared decoder so a legacy-encoded file is editable
@@ -61,14 +69,39 @@ def _decode_existing(file_path: Path) -> str:
             status_code=422,
             detail=f"'{file_path.name}' {NOT_TEXT_REASON}",
         )
-    return decoded.text
+    return decoded
 
 
-def _require_text_file(file_path: Path) -> str:
-    """Decode an existing workspace file, 404-ing when it is not there."""
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Document not found")
-    return _decode_existing(file_path)
+def _editable_text(workspace_dir: Path, safe: str) -> DecodedText | None:
+    """Return a document's decoded text, or ``None`` when it does not exist.
+
+    The gate on every text mutation, not merely a read: it raises for anything
+    that may not be edited at all.  Both halves of that question are the ones
+    ``read_document`` asks, in the same order — the shared vision-media table
+    first, the shared decoder second — so a document is writable exactly when it
+    is readable, rather than merely being described that way in two tool
+    descriptions.
+    """
+    file_path = workspace_dir / safe
+    if file_path.is_dir():
+        raise HTTPException(status_code=409, detail=f"'{safe}' is a directory")
+    if (media_type := vision_media_type(safe)) is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"'{safe}' is a {media_type} binary and cannot be written as "
+                "text; upload a replacement instead"
+            ),
+        )
+    return _decode_existing(file_path) if file_path.is_file() else None
+
+
+def _transcode_note(source_encoding: str | None) -> str:
+    """Report the UTF-8 normalization of legacy-encoded existing content."""
+    if source_encoding is None:
+        return ""
+
+    return f" The file was transcoded from {source_encoding} to UTF-8."
 
 
 def _check_expected_hash(
@@ -102,32 +135,186 @@ def _check_expected_hash(
         )
 
 
-async def _replace_text_locked(
-    store: Casebase,
-    safe: str,
-    full_path: Path,
-    content: str,
-    chunking: ChunkingSpec | None = None,
-) -> None:
-    # The content is always chunked as the markdown description at
-    # ``<stem>.md``; writing it to a non-markdown path would leave the on-disk
-    # file and the indexed description divergent, so the chunk count could never
-    # be matched back to the entry.  Reject up front to keep disk and SQL in sync.
-    if not is_description_file(safe):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Only markdown documents can be written: '{safe}' must end in '{DOCUMENT_EXTENSION}'.",
+type _TextMutation = Callable[[str | None], tuple[str, str]]
+"""Derive a document's new content and its report from its current content.
+
+The current content is ``None`` for a document that does not exist yet.  Being
+a plain function is what lets the same edit and write semantics run at both of
+the persistence paths' quite different moments.
+"""
+
+
+def _edit_mutation(
+    safe: str, old_string: str, new_string: str, replace_all: bool
+) -> _TextMutation:
+    """Build the exact-string replacement behind :func:`edit_document_text`."""
+
+    def mutate(current: str | None) -> tuple[str, str]:
+        if current is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+        count = current.count(old_string)
+        if count == 0:
+            raise HTTPException(
+                status_code=422,
+                detail=f"old_string not found in '{safe}'",
+            )
+        if count > 1 and not replace_all:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"old_string appears {count} times in '{safe}'; "
+                    "must be unique or call with replace_all=True"
+                ),
+            )
+        replaced = count if replace_all else 1
+        return (
+            current.replace(old_string, new_string, -1 if replace_all else 1),
+            f"Replaced {replaced} {pluralize(replaced, 'occurrence')} in '{safe}'.",
         )
 
-    _enforce_file_size(content.encode("utf-8"))
-    if full_path.is_dir():
-        raise HTTPException(status_code=409, detail=f"'{safe}' is a directory")
-    workspace_dir = store.workspace_dir(settings.data_dir)
-    _check_destination_parents(workspace_dir, safe)
-    stat = _write_markdown_file(workspace_dir, safe, content)
-    await shield_to_completion(
-        chunk_and_index_document(store, safe, content, chunking, stat=stat)
+    return mutate
+
+
+def _write_mutation(safe: str, content: str, mode: str) -> _TextMutation:
+    """Build the write-mode composition behind :func:`write_document_text`."""
+    if mode not in ("replace", "create", "append", "prepend"):
+        raise HTTPException(status_code=400, detail=f"Unsupported write mode: {mode}")
+
+    def mutate(current: str | None) -> tuple[str, str]:
+        if mode == "replace":
+            return content, f"Wrote {len(content)} characters to '{safe}'."
+        if mode == "create":
+            if current is not None:
+                raise HTTPException(status_code=409, detail=f"'{safe}' already exists")
+            return content, f"Created '{safe}' with {len(content)} characters."
+        if current is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"'{safe}' does not exist (use mode='replace' to create)",
+            )
+        if mode == "append":
+            return current + content, f"Appended {len(content)} characters to '{safe}'."
+        return content + current, f"Prepended {len(content)} characters to '{safe}'."
+
+    return mutate
+
+
+async def _rewrite_description(
+    store: Casebase,
+    safe: str,
+    mutate: _TextMutation,
+    expected_hash: str | None,
+    chunking: ChunkingSpec | None,
+) -> str:
+    """Rewrite a markdown description and re-index it where it lies.
+
+    A description is the indexed content itself, so there is nothing to derive:
+    the write and the chunk + embed + upsert run back to back under the casebase
+    lock, shielded so a cancel cannot leave the new markdown wearing the rows of
+    the old.
+    """
+    async with _locked_for(store, safe):
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        decoded = _editable_text(workspace_dir, safe)
+        current = decoded.text if decoded is not None else None
+        _check_expected_hash(safe, current, expected_hash)
+        content, message = mutate(current)
+        _enforce_file_size(content.encode("utf-8"))
+        _check_destination_parents(workspace_dir, safe)
+        stat = _write_markdown_file(workspace_dir, safe, content)
+        await shield_to_completion(
+            chunk_and_index_document(store, safe, content, chunking, stat=stat)
+        )
+    return message + _transcode_note(decoded.source_encoding if decoded else None)
+
+
+async def _rewrite_original(
+    store: Casebase,
+    safe: str,
+    mutate: _TextMutation,
+    expected_hash: str | None,
+    chunking: ChunkingSpec | None,
+) -> str:
+    """Rewrite a text original and regenerate the projection derived from it.
+
+    The new bytes run through the same reserve → prepare → commit lifecycle as
+    an upload of the edited file (:func:`_phased_upload`), so the ``<stem>.md``
+    left behind is byte-for-byte the one uploading it would produce, stale
+    assets are cleared with it, and a failed conversion leaves the previous
+    entry untouched.  Read, hash check, and mutation all happen inside the
+    reserve, under the casebase lock, so the optimistic-concurrency guarantee
+    matches the description path's.
+
+    A file with no description yet — dropped into the workspace by hand — is
+    promoted to a full entry by the same commit, since an editable original
+    always has an indexed projection.
+    """
+    spec = PipelineSpec(chunking=chunking) if chunking else PipelineSpec()
+    # The reserve owns the mutation, so its report comes back through this
+    # single-slot cell instead of being recomputed against re-read bytes.
+    report: list[str] = []
+
+    async def reserve() -> _Reserved:
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        decoded = _editable_text(workspace_dir, safe)
+        current = decoded.text if decoded is not None else None
+        _check_expected_hash(safe, current, expected_hash)
+        # Mutating first lets an operation that needs the document to exist say
+        # so, rather than being answered with a rule about creating one.
+        content, message = mutate(current)
+        if current is None and not is_projectable_original(safe):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{safe}' cannot be created by writing text; only markdown "
+                    "and plain-text formats can be, so upload it instead"
+                ),
+            )
+        # Creating an original claims the whole stem: requiring a free one keeps
+        # the write from superseding another entry's description or original.
+        _ensure_upload_slot_locked(store, safe, overwrite=current is not None)
+        data = content.encode("utf-8")
+        _enforce_file_size(data)
+        report.append(
+            message + _transcode_note(decoded.source_encoding if decoded else None)
+        )
+        metadata = await db_documents.get_entry_metadata(store, safe)
+        return _Reserved(
+            reference=safe,
+            content=data,
+            origin=metadata.origin if metadata else "imported",
+            original_path=safe,
+            original_content=data,
+            preserve=current is not None,
+        )
+
+    await _phased_upload(
+        store, spec, LlmConfig(), stem_reference=safe, reserve=reserve, ctx=None
     )
+    description = description_path_for_stem(stem_path_from_reference(safe))
+    return (
+        f"{report[0]} Its searchable markdown '{description}' was regenerated "
+        f"from the new content."
+    )
+
+
+async def _apply_text_mutation(
+    store: Casebase,
+    safe: str,
+    mutate: _TextMutation,
+    expected_hash: str | None,
+    chunking: ChunkingSpec | None = None,
+) -> str:
+    """Persist a text mutation, keeping the entry's projection in step with it.
+
+    The name decides only where the write lands — on the indexed description
+    itself, or on an original whose description has to be re-derived from it.
+    """
+    if is_description_file(safe):
+        return await _rewrite_description(
+            store, safe, mutate, expected_hash, chunking
+        )
+    return await _rewrite_original(store, safe, mutate, expected_hash, chunking)
 
 
 async def rechunk(
@@ -144,11 +331,18 @@ async def rechunk(
     """
     spec = spec or PipelineSpec()
     async with _locked_for(store, safe):
-        file_path = store.workspace_dir(settings.data_dir) / safe
-        text = _require_text_file(file_path)
+        workspace_dir = store.workspace_dir(settings.data_dir)
+        file_path = workspace_dir / safe
+        decoded = _editable_text(workspace_dir, safe)
+        if decoded is None:
+            raise HTTPException(status_code=404, detail="Document not found")
         return await shield_to_completion(
             chunk_and_index_document(
-                store, safe, text, spec.chunking, stat=ContentStat.from_path(file_path)
+                store,
+                safe,
+                decoded.text,
+                spec.chunking,
+                stat=ContentStat.from_path(file_path),
             )
         )
 
@@ -163,34 +357,12 @@ async def edit_document_text(
 ) -> str:
     """Edit a workspace text document through the canonical mutation gateway."""
     safe = sanitize_document_path(safe)
-    async with _locked_for(store, safe):
-        workspace_dir = store.workspace_dir(settings.data_dir)
-        file_path = workspace_dir / safe
-        content = _require_text_file(file_path)
-        _check_expected_hash(safe, content, expected_hash)
-        count = content.count(old_string)
-        if count == 0:
-            raise HTTPException(
-                status_code=422,
-                detail=f"old_string not found in '{safe}'",
-            )
-        if count > 1 and not replace_all:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"old_string appears {count} times in '{safe}'; "
-                    "must be unique or call with replace_all=True"
-                ),
-            )
-        new_content = (
-            content.replace(old_string, new_string)
-            if replace_all
-            else content.replace(old_string, new_string, 1)
-        )
-        await _replace_text_locked(store, safe, file_path, new_content)
-    replaced = count if replace_all else 1
-    noun = "occurrence" if replaced == 1 else "occurrences"
-    return f"Replaced {replaced} {noun} in '{safe}'."
+    return await _apply_text_mutation(
+        store,
+        safe,
+        _edit_mutation(safe, old_string, new_string, replace_all),
+        expected_hash,
+    )
 
 
 async def write_document_text(
@@ -203,36 +375,13 @@ async def write_document_text(
 ) -> str:
     """Write a workspace text document through the canonical mutation gateway."""
     safe = sanitize_document_path(safe)
-    async with _locked_for(store, safe):
-        workspace_dir = store.workspace_dir(settings.data_dir)
-        file_path = workspace_dir / safe
-        current = _decode_existing(file_path) if file_path.is_file() else None
-        _check_expected_hash(safe, current, expected_hash)
-        if mode == "replace":
-            new_content = content
-            message = f"Wrote {len(content)} characters to '{safe}'."
-        elif mode == "create":
-            if current is not None:
-                raise HTTPException(status_code=409, detail=f"'{safe}' already exists")
-            new_content = content
-            message = f"Created '{safe}' with {len(content)} characters."
-        elif current is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"'{safe}' does not exist (use mode='replace' to create)",
-            )
-        elif mode == "append":
-            new_content = current + content
-            message = f"Appended {len(content)} characters to '{safe}'."
-        elif mode == "prepend":
-            new_content = content + current
-            message = f"Prepended {len(content)} characters to '{safe}'."
-        else:
-            raise HTTPException(
-                status_code=400, detail=f"Unsupported write mode: {mode}"
-            )
-        await _replace_text_locked(store, safe, file_path, new_content, chunking)
-    return message
+    return await _apply_text_mutation(
+        store,
+        safe,
+        _write_mutation(safe, content, mode),
+        expected_hash,
+        chunking,
+    )
 
 
 async def delete_document(store: Casebase, safe: str) -> None:
@@ -341,8 +490,8 @@ async def _move_document_locked(
         # those references when the stem's basename changed.
         description_full = dst_workspace / dst_description
         body = _decode_existing(description_full)
-        body = body.replace(f"{src_name}.assets/", f"{dst_name}.assets/")
-        description_full.write_text(body, encoding="utf-8")
+        updated = body.text.replace(f"{src_name}.assets/", f"{dst_name}.assets/")
+        description_full.write_text(updated, encoding="utf-8")
 
     # Move exactly this entry's row; a same-named sibling directory's rows
     # (stems below ``src_stem/``) belong to other documents and stay put.

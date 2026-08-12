@@ -114,13 +114,37 @@ The digest, `mtime`, and `size` are cleared together when `documents.upsert_docu
 A description with no prior row is ingested and stamped `origin = imported`, since its real provenance is not recoverable from disk.
 `reconcile.reconcile_store` runs this ingest over every on-disk markdown first, then drops SQL rows whose description vanished.
 Reconciliation never deletes workspace files: they are the authoritative content, so a file without an owning entry is inert workspace content rather than an orphan to prune.
-`entries.is_description_file` is the scratch-versus-document policy seam: only markdown files become document entries, every other file is kept on disk but never chunked on its own.
+
+`entries.is_description_file` and `entries.is_projectable_original` are the scratch-versus-document policy seam.
+Markdown files are descriptions and become document entries directly.
+A non-markdown file becomes one when its markdown projection is a verbatim copy of its own text (a config, data-serialization, or source file): the ingest pass writes the missing `<stem>.md` for it and indexes it, so a file dropped into the workspace by hand is a real entry rather than content the search index cannot see.
+Everything else stays on disk and is never chunked on its own — a binary because nothing textual can be derived from it at all, and a converter- or vision-backed format (`.csv`, `.html`, `.svg`) because that work has no place in a sweep that blocks the server from accepting traffic.
+Both stay reachable: they are listed in the tree, can be deleted, and become entries as soon as they are uploaded or reconverted explicitly.
+Deriving a description is idempotent and content-addressed like every other ingest, so it costs one decode on the boot that discovers the file and nothing on the ones after.
+
+"Verbatim" is not decided here, and that matters more than it looks: `converters.projection_for` is the one routing table saying which projection a filename gets (markdown, image, video, or convertible), and `workspace.prepare._prepare_upload` dispatches on the very same table.
+Three things have to agree about a file — what an upload makes of it, what the ingest pass may derive for it, and what kind of entry a row rebuilt from disk claims it is (`workspace.metadata._REDISCOVERED_KINDS`) — and asking one table is what stops them from drifting.
+Deriving that answer separately is exactly how `.svg` ends up projected verbatim by one path and captioned by a vision model in another, for the same bytes.
+The corollary is that deleting only an entry's `<stem>.md` by hand does not retire the entry when its original is a text file: the next ingest derives the description again, and deleting the entry means deleting its files (which is what the delete API does).
 
 Every read of user-supplied bytes goes through `text.decode_bytes` / `text.read_text_file`, never `Path.read_text`.
 The decoder handles BOM-marked Unicode and strict UTF-8 deterministically, then falls back to CP1252 for legacy Western files and returns `None` for binary-looking content.
 Since the read tools, the upload pipeline, the reconciler, and the HTTP reads share that one seam, a hash taken by `read_document` still matches when the edit tools re-read the same file.
 Writes are always UTF-8, so a legacy-encoded file is normalised the first time it is edited through the API, and a transcode is always reported (in the tool output, the upload message, and the `convert_document` span) rather than applied silently.
-A lone binary without a companion `.md` therefore survives reconciliation, shows up in the document tree, and can be deleted or replaced (upload with overwrite) through the API.
+
+That decoder is also half of what decides whether a document may be written, which is what keeps the read and write tools telling the model the same story.
+Both sides ask the same two questions in the same order: `converters.vision_media_type` (is this a format a vision model is shown directly?) and then the decoder (do these bytes decode?).
+`read_document` refuses on the first to hand the caller to `read_binary_document`, and `workspace.documents._current_text` refuses on it to say "upload a replacement", but the table is one table — growing it can no longer make one tool accept what the other rejects, and the tool descriptions promising the model they agree stay true.
+A refusal on either reader ends in `tools.base.sidecar_hint`, so a caller turned away is never sent to the other tool to be turned away again: an Office document is neither showable nor decodable, and both refusals name its `<stem>.md` instead.
+So a text file is editable and a binary is not, and the file's *name* only decides how an allowed write lands:
+
+- A markdown description is the indexed content itself, so `_rewrite_description` writes it and re-indexes it in place under the casebase lock.
+- Any other file is an original that `<stem>.md` is derived from, so `_rewrite_original` sends the new bytes through the same reserve → prepare → commit lifecycle an upload of the edited file would use (`commit._phased_upload`).
+  The projection it leaves behind is byte-for-byte the one uploading that file produces, stale assets are cleared with it, and a failed conversion leaves the previous entry intact.
+  The read, the hash check, and the mutation all happen inside the reserve, under the lock, so `expected_hash` guards this path exactly as it guards the other.
+
+Creating a file is the one place the name still constrains the write: a new document may be markdown or a plain-text format (`is_projectable_original`), because those are the ones whose projection can be derived without a converter, and a new original must claim a free stem so a write can never silently supersede another entry's description or original.
+Everything else is uploaded, which is also the way to replace a binary.
 
 ### Preparing for a read-write shell tool
 
@@ -131,7 +155,7 @@ The following pieces still need to be built before that tool ships, and none of 
 - TODO(shell): sandbox arbitrary command execution per casebase (bind-mount only that store's workspace, no or restricted network, resource, time, and output-size limits). `subprocesses.run` is unsandboxed and is safe only for the fixed-argument tools (`rg`, `jq`, `pandoc`), not for agent-driven commands.
 - TODO(shell): run each session against an isolated working copy or overlay of the store so the casebase lock is taken only at fold-back time, never held for an interactive session. overlayfs and `systemd-nspawn` are Linux-only, so dev on macOS needs a copy-based working dir or a Linux VM.
 - TODO(shell): surface the session diff for approval before fold-back, which keeps the "mutations go through a gateway" guarantee and gives free rollback (discard the working copy).
-- TODO(shell): decide whether shell-created originals with no markdown companion should be auto-converted into entries. `is_description_file` currently ingests only markdown, so a lone hand-dropped binary stays inert on disk (listed in the tree, never chunked) until it is re-uploaded through the API.
+- TODO(shell): decide whether shell-created binaries and converter-backed formats should be auto-converted into entries at fold-back. A shell-created text file already becomes one (`is_projectable_original`), but a `.pdf` or `.csv` stays inert on disk until it is uploaded or reconverted, because folding it in means running a converter — affordable in a session's fold-back, unlike in the boot sweep that shares this ingest path.
 - TODO(shell): keep all workspace access behind `Casebase.workspace_dir(data_dir)` so the working-copy root can be injected in one place. Do not hardcode the workspace path elsewhere.
 
 ## Video and animated-media pipeline

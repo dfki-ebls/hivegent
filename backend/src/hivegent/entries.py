@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Self
 
+from .converters import projects_verbatim
 from .converters.base import DOCUMENT_EXTENSION, is_markdown_suffix
 
 __all__ = [
@@ -18,6 +19,8 @@ __all__ = [
     "is_assets_dir",
     "is_description_file",
     "is_ignorable_path",
+    "is_inside_assets_dir",
+    "is_projectable_original",
     "original_path_for_stem",
     "resolve_entry_paths",
     "stem_display_name",
@@ -115,6 +118,45 @@ def is_description_file(rel_path: str) -> bool:
     False
     """
     return is_markdown_suffix(PurePosixPath(rel_path).suffix)
+
+
+def is_inside_assets_dir(rel_path: str) -> bool:
+    """Return whether a path lies within a managed ``.assets`` payload.
+
+    The directory itself is not inside one, so an entry's own assets directory
+    is addressable while everything it holds is owned by that entry.
+
+    >>> is_inside_assets_dir("docs/report.assets/fig1.png")
+    True
+    >>> is_inside_assets_dir("docs/report.assets")
+    False
+    """
+    return any(is_assets_dir(part) for part in PurePosixPath(rel_path).parts[:-1])
+
+
+def is_projectable_original(rel_path: str) -> bool:
+    """Return whether the ingest pass may derive a description for this file.
+
+    The counterpart of :func:`is_description_file`: a file whose projection is
+    a verbatim copy of its own text (:func:`~hivegent.converters.projects_verbatim`)
+    and that is an entry of its own — so neither OS junk nor a managed asset.
+    Everything else waits for an upload or a reconvert, which is where a
+    converter or a vision model can be afforded.
+
+    >>> is_projectable_original("docs/settings.ini")
+    True
+    >>> is_projectable_original("docs/report.md")
+    False
+    >>> is_projectable_original("docs/diagram.svg")
+    False
+    >>> is_projectable_original("docs/report.assets/notes.txt")
+    False
+    """
+    return (
+        not is_ignorable_path(rel_path)
+        and not is_inside_assets_dir(rel_path)
+        and projects_verbatim(PurePosixPath(rel_path).name)
+    )
 
 
 def description_path_for_stem(stem_path: str) -> str:

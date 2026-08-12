@@ -2,6 +2,9 @@
 
 import logging
 import mimetypes
+from pathlib import PurePosixPath
+
+from .base import IMAGE_MEDIA_TYPES
 
 __all__ = ["guess_image_media_type", "sanitize_image_bytes"]
 
@@ -43,10 +46,21 @@ def _strip_png_metadata(image_bytes: bytes) -> bytes:
 
 
 def guess_image_media_type(path: str) -> str | None:
-    """Guess the MIME type for an image path."""
+    """Return the media type for an image path, or ``None`` when it is not one.
+
+    :data:`~hivegent.converters.base.IMAGE_MEDIA_TYPES` answers first so the
+    formats this codebase actually handles resolve identically on every host.
+    Anything outside it falls back to the platform registry, which still knows
+    the exotic formats an extracted asset may occasionally carry.
+    """
+    suffix = PurePosixPath(path).suffix.lower()
+    if (declared := IMAGE_MEDIA_TYPES.get(suffix)) is not None:
+        return declared
+
     media_type = mimetypes.guess_type(path)[0]
     if media_type and media_type.startswith("image/"):
         return media_type
+
     return None
 
 

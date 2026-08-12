@@ -1,6 +1,18 @@
 """Human-readable formatting helpers shared across the CLI and API messages."""
 
-__all__ = ["format_bytes"]
+__all__ = ["format_bytes", "pluralize"]
+
+
+def pluralize(count: int, singular: str, plural: str | None = None) -> str:
+    """Return the noun matching *count*, defaulting to a naive ``-s`` plural.
+
+    Examples:
+        >>> pluralize(1, "chunk")
+        'chunk'
+        >>> pluralize(2, "entry", "entries")
+        'entries'
+    """
+    return singular if count == 1 else plural or f"{singular}s"
 
 
 def format_bytes(size: int) -> str:

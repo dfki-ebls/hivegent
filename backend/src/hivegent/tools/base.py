@@ -13,6 +13,11 @@ from typing import Annotated, Any, Self, get_type_hints, override
 
 from pydantic import BaseModel, Field
 
+from ..entries import (
+    description_path_for_stem,
+    is_description_file,
+    stem_path_from_reference,
+)
 from ..text import NOT_TEXT_REASON, DecodedText, read_text_file
 from .scope import Scope
 
@@ -43,6 +48,7 @@ __all__ = [
     "resolve_search_path",
     "resolve_tool_cls",
     "scope_paths",
+    "sidecar_hint",
     "tool_description",
     "tool_name",
     "translate_tool_retry",
@@ -282,6 +288,21 @@ def resolve_accessible_file(
     if not absolute.is_relative_to(sp.path.resolve()):
         return None
     return sp, local, absolute
+
+
+def sidecar_hint(file_path: str) -> str:
+    """Nudge a refused read toward the entry's extracted text, when it has one.
+
+    Every refusal on either reader ends here, so a caller turned away by one
+    tool is never sent to the other one to be turned away again: whatever the
+    format, a converted entry's text is reachable at its ``<stem>.md``.  Empty
+    for a description, which is that text.
+    """
+    if is_description_file(file_path):
+        return ""
+    sidecar = description_path_for_stem(stem_path_from_reference(file_path))
+
+    return f" To read its extracted text, request '{sidecar}' instead."
 
 
 def read_text_or_retry(path: Path, file_path: str, hint: str = "") -> DecodedText:

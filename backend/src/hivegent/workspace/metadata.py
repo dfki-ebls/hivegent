@@ -10,6 +10,7 @@ import mimetypes
 
 from ..chunkers.base import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
 from ..config import settings
+from ..converters import EntryProjection, projection_for
 from ..db import documents as db_documents
 from ..entries import ContentStat, EntryPaths, resolve_entry_paths
 from ..store import Casebase
@@ -74,18 +75,45 @@ def _build_entry_metadata(
     )
 
 
+_REDISCOVERED_KINDS: dict[EntryProjection, tuple[EntryKind, EntryGeneratedBy]] = {
+    EntryProjection.MARKDOWN: ("user_markdown", "user"),
+    EntryProjection.IMAGE: ("image", "vision"),
+    EntryProjection.VIDEO: ("video", "vision"),
+    EntryProjection.CONVERTIBLE: ("convertible", "converter"),
+}
+"""What a rediscovered entry's original says its description was produced by.
+
+The same routing :func:`~hivegent.workspace.prepare._prepare_upload` dispatches
+on, so a row rebuilt from disk describes the entry the way the uploader would
+have.  Getting this wrong is not cosmetic: retrieval attaches an entry's
+original only when it reads back as ``image``.
+"""
+
+
 def _entry_metadata_from_disk(
     resolved: EntryPaths, existing: EntryMetadata | None
 ) -> EntryMetadata:
-    """Build current disk metadata, preserving SQL-only provenance when present."""
+    """Build current disk metadata, preserving SQL-only provenance when present.
+
+    Without a prior row the provenance is inferred from the files alone: a lone
+    description is user markdown, and one sitting beside an original is that
+    original's projection.  A markdown upload that carried a companion original
+    is the one shape this infers wrongly, and only after its row was lost — the
+    same limitation that already stamps every rediscovered entry ``imported``.
+    """
+    kind, generated_by = (
+        _REDISCOVERED_KINDS[projection_for(resolved.original_path)]
+        if resolved.original_path is not None
+        else _REDISCOVERED_KINDS[EntryProjection.MARKDOWN]
+    )
     return _build_entry_metadata(
         stem_path=resolved.stem_path,
         description_path=resolved.description_path,
         original_path=resolved.original_path,
         assets_dir=resolved.assets_dir,
-        entry_kind=existing.entry_kind if existing else "user_markdown",
+        entry_kind=existing.entry_kind if existing else kind,
         origin=existing.origin if existing else "imported",
-        generated_by=existing.generated_by if existing else "user",
+        generated_by=existing.generated_by if existing else generated_by,
     )
 
 

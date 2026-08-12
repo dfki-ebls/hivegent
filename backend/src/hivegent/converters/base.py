@@ -14,6 +14,7 @@ from ..workers.pool import run_offloaded
 __all__ = [
     "DOCUMENT_EXTENSION",
     "IMAGE_EXTENSIONS",
+    "IMAGE_MEDIA_TYPES",
     "AssetBBox",
     "AssetRole",
     "ConversionResult",
@@ -37,20 +38,29 @@ _SERVABLE_SCHEMES = frozenset({"http", "https", "data"})
 # All converted documents are stored as markdown.
 DOCUMENT_EXTENSION = ".md"
 
-IMAGE_EXTENSIONS = frozenset(
-    {
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".gif",
-        ".webp",
-        ".svg",
-        ".bmp",
-        ".tiff",
-        ".tif",
-        ".ico",
-    }
-)
+IMAGE_MEDIA_TYPES: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".bmp": "image/bmp",
+    ".tiff": "image/tiff",
+    ".tif": "image/tiff",
+    ".ico": "image/vnd.microsoft.icon",
+}
+"""Extension → media type for every image format recognised here.
+
+Declared rather than looked up so the answer cannot vary with whichever
+``mime.types`` registry the host happens to ship, and so the recognised
+extensions and their media types cannot drift apart — the same shape
+:data:`~hivegent.converters.video.VIDEO_MEDIA_TYPES` has.  Which of these a
+chat model can actually be shown is a separate, narrower question; see
+:data:`~hivegent.converters.VISION_MEDIA_TYPES`.
+"""
+
+IMAGE_EXTENSIONS = frozenset(IMAGE_MEDIA_TYPES)
 
 
 def is_markdown_suffix(suffix: str) -> bool:

@@ -22,7 +22,13 @@ from pydantic import ValidationError
 
 from ..chunkers.base import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
 from ..config import settings
-from ..converters import ConversionPipeline, get_converter, resolve_auto_pipeline
+from ..converters import (
+    ConversionPipeline,
+    EntryProjection,
+    get_converter,
+    projection_for,
+    resolve_auto_pipeline,
+)
 from ..converters.asset_processing import (
     MD_IMAGE_RE,
     TriageDecision,
@@ -35,13 +41,10 @@ from ..converters.base import (
     DocumentConverter,
     ExtractedImage,
     is_external_ref,
-    is_image_suffix,
-    is_markdown_suffix,
 )
 from ..converters.fallbacks import recover_conversion
 from ..converters.images import guess_image_media_type
 from ..converters.plain_text import convert_plain_text
-from ..converters.video import is_video_suffix
 from ..entries import (
     asset_ref_for,
     assets_dir_for_stem,
@@ -655,20 +658,21 @@ async def _prepare_upload(
     clearing_assets: bool,
 ) -> _PreparedUpload:
     """Dispatch to the per-kind preparation. No lock held."""
-    suffix = PurePosixPath(filepath).suffix.lower()
-    if is_markdown_suffix(suffix):
-        return _prepare_markdown(
-            store,
-            filepath,
-            content,
-            origin=origin,
-            original_path=original_path,
-            clearing_assets=clearing_assets,
-        )
-    if is_image_suffix(suffix):
-        return await _prepare_image(filepath, content, llm, origin=origin, ctx=ctx)
-    if is_video_suffix(suffix):
-        return await _prepare_video(filepath, content, llm, origin=origin, ctx=ctx)
-    return await _prepare_convertible(
-        filepath, content, spec, llm, origin=origin, ctx=ctx
-    )
+    match projection_for(filepath):
+        case EntryProjection.MARKDOWN:
+            return _prepare_markdown(
+                store,
+                filepath,
+                content,
+                origin=origin,
+                original_path=original_path,
+                clearing_assets=clearing_assets,
+            )
+        case EntryProjection.IMAGE:
+            return await _prepare_image(filepath, content, llm, origin=origin, ctx=ctx)
+        case EntryProjection.VIDEO:
+            return await _prepare_video(filepath, content, llm, origin=origin, ctx=ctx)
+        case EntryProjection.CONVERTIBLE:
+            return await _prepare_convertible(
+                filepath, content, spec, llm, origin=origin, ctx=ctx
+            )

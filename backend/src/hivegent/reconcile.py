@@ -7,10 +7,16 @@ and drops SQL rows whose description file is missing on disk.  Chunks
 live in the same Postgres database as documents and cascade-delete with
 them, so no separate index sweep is needed.
 
+A hand-dropped file that carries no description of its own is picked up too
+when its projection is a verbatim copy of its text (see
+:func:`hivegent.entries.is_projectable_original`), so a config or source file
+dropped into the workspace becomes a real entry rather than invisible content.
+Anything needing a converter or a vision model stays inert until it is uploaded
+or reconverted explicitly: neither belongs in a sweep that blocks the server
+from accepting traffic.
+
 Reconciliation never deletes workspace files: they are the authoritative
-content, and a non-markdown file without an owning entry is inert
-workspace content, not an error (see
-:func:`hivegent.entries.is_description_file`).
+content.
 
 The ingest pass runs through :func:`hivegent.workspace.sync_entries_from_disk`,
 the same idempotent fold-back primitive a future read-write shell tool will
@@ -25,7 +31,12 @@ from dataclasses import dataclass
 from .chunks import delete_documents as _delete_chunked_documents
 from .config import settings
 from .db import documents as db_documents
-from .entries import is_description_file
+from .entries import (
+    description_path_for_stem,
+    is_description_file,
+    is_projectable_original,
+    stem_path_from_reference,
+)
 from .store import Casebase
 from .workspace import sync_entries_from_disk
 from .workspace.locks import store_lock
@@ -63,19 +74,26 @@ async def _sweep_sql_orphans(store: Casebase, sql_paths: Mapping[str, int]) -> i
     return removed
 
 
-def _disk_description_paths(store: Casebase) -> list[str]:
-    """Return every workspace-relative markdown description present on disk."""
+def _disk_entry_references(store: Casebase) -> list[str]:
+    """Return the description path of every logical entry the ingest must see.
+
+    A stem qualifies through any markdown description on disk, or through a file
+    whose description the ingest pass can derive for it.  Stems are what the sync
+    resolves anyway, so yielding them (rather than the file that happened to be
+    walked) leaves the sync as the only side that decides which sibling is the
+    entry's original.
+    """
     workspace = store.workspace_path(settings.data_dir)
     if not workspace.exists():
         return []
-    paths: list[str] = []
+    stems: set[str] = set()
     for file_path in workspace.rglob("*"):
         if not file_path.is_file():
             continue
         rel = str(file_path.relative_to(workspace).as_posix())
-        if is_description_file(rel):
-            paths.append(rel)
-    return paths
+        if is_description_file(rel) or is_projectable_original(rel):
+            stems.add(stem_path_from_reference(rel))
+    return [description_path_for_stem(stem) for stem in sorted(stems)]
 
 
 async def reconcile_store(store: Casebase) -> ReconcileReport:
@@ -86,7 +104,7 @@ async def reconcile_store(store: Casebase) -> ReconcileReport:
     dropped.  Chunks cascade with documents and need no separate sweep, and
     workspace files are never deleted here.
     """
-    ingested = await sync_entries_from_disk(store, _disk_description_paths(store))
+    ingested = await sync_entries_from_disk(store, _disk_entry_references(store))
     async with store_lock(store):
         sql_paths = await db_documents.list_document_paths(store)
         sql_removed = await _sweep_sql_orphans(store, sql_paths)

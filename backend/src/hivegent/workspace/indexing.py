@@ -11,17 +11,25 @@ and :func:`delete_chunked_document`), which sibling modules import directly.
 import asyncio
 import logging
 from collections.abc import Iterable
+from pathlib import Path, PurePosixPath
 
 from ..chunks import chunk_and_index_document
 from ..chunks import delete_document as delete_chunked_document
 from ..concurrency import shield_to_completion
 from ..config import content_digest, settings
+from ..converters.plain_text import convert_plain_text
 from ..db import documents as db_documents
-from ..entries import ContentStat, resolve_entry_paths
+from ..entries import (
+    ContentStat,
+    EntryPaths,
+    is_projectable_original,
+    resolve_entry_paths,
+)
 from ..store import Casebase
 from ..text import NOT_TEXT_REASON, read_text_file
 from .locks import _locked_for
 from .metadata import _entry_metadata_from_disk, _refresh_unchanged_entry
+from .paths import _write_markdown_file
 
 __all__ = [
     "sync_entries_from_disk",
@@ -31,21 +39,76 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
+def _sync_verbatim_description(
+    workspace_dir: Path, original: str, description_path: str
+) -> bool:
+    """Make *description_path* match *original* when its bytes are text."""
+    original_full = workspace_dir / original
+    # A file past the upload limit could not become an entry by any other route
+    # either, so reject it on its stat rather than pulling it all into memory to
+    # find out — this runs over every candidate on every boot.
+    if original_full.stat().st_size > settings.limits.max_file_size_bytes:
+        logger.warning("Skipping %s: too large to project", original)
+        return False
+
+    result = convert_plain_text(
+        original_full.read_bytes(), PurePosixPath(original).suffix
+    )
+    if result is None:
+        return False
+
+    description_full = workspace_dir / description_path
+    if description_full.is_file():
+        current = read_text_file(description_full)
+        if current is not None and current.text == result.markdown:
+            return True
+
+    _write_markdown_file(workspace_dir, description_path, result.markdown)
+    logger.info("Derived %s from %s", description_path, original)
+    return True
+
+
+async def _sync_verbatim_projection(
+    workspace_dir: Path, resolved: EntryPaths
+) -> bool:
+    """Synchronize the markdown projection of a projectable original.
+
+    This derives a missing description and refreshes an existing one before
+    its stat can take the SQL fast path.
+    Anything else, a binary or a format needing a converter or vision model,
+    is left alone.
+
+    The classification stays on the event loop because its first call imports
+    the converter registry, and docling only imports cleanly on the main thread.
+    Only the file work is offloaded.
+    """
+    original = resolved.original_path
+    if original is None or not is_projectable_original(original):
+        return False
+
+    return await asyncio.to_thread(
+        _sync_verbatim_description, workspace_dir, original, resolved.description_path
+    )
+
+
 async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
     """Re-derive one logical entry's SQL + chunk rows from its on-disk markdown.
 
-    The single idempotent ingest path: drop the row if the description is gone;
-    skip an untouched description via a cheap ``(mtime, size)`` stat fast-path;
-    re-stamp metadata/stat when only companion files or the stat moved; chunk,
-    embed, and upsert only when the content digest actually changed.  An entry
-    with no prior SQL row is stamped ``origin="imported"`` since its provenance
-    cannot be recovered from disk, an existing entry keeps its stored
-    provenance.  Returns whether SQL changed.  Caller must hold the casebase
-    lock.
+    The single idempotent ingest path: derive the description of a plain-text
+    original that has none; drop the row if the description is gone and cannot
+    be derived; skip an untouched description via a cheap ``(mtime, size)``
+    stat fast-path; re-stamp metadata/stat when only companion files or the stat
+    moved; chunk, embed, and upsert only when the content digest actually
+    changed.  An entry with no prior SQL row is stamped ``origin="imported"``
+    since its provenance cannot be recovered from disk, an existing entry keeps
+    its stored provenance.  Returns whether SQL changed.  Caller must hold the
+    casebase lock.
     """
     workspace_dir = store.workspace_dir(settings.data_dir)
     resolved = resolve_entry_paths(workspace_dir, reference)
     description_full = workspace_dir / resolved.description_path
+
+    await _sync_verbatim_projection(workspace_dir, resolved)
 
     if not description_full.is_file():
         # Entry gone on disk: drop the row if one exists (chunks cascade).

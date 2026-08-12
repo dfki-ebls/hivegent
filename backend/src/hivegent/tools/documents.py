@@ -11,12 +11,9 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..config import content_hash
-from ..entries import (
-    description_path_for_stem,
-    is_assets_dir,
-    is_description_file,
-    stem_path_from_reference,
-)
+from ..converters import vision_media_type
+from ..entries import is_inside_assets_dir
+from ..humanize import pluralize
 from .base import (
     WORKSPACE_PATH_HINT,
     WORKSPACE_SCOPE_HINT,
@@ -30,8 +27,8 @@ from .base import (
     is_in_excluded_dir,
     read_text_or_retry,
     resolve_accessible_file,
+    sidecar_hint,
 )
-from .binary import binary_media_type
 from .formatting import annotate_lines
 
 __all__ = [
@@ -67,11 +64,6 @@ def _humanize_size(n: int) -> str:
     return f"{value:.1f}{_SIZE_UNITS[-1]}"
 
 
-def _pluralize(count: int, singular: str, plural: str) -> str:
-    """Return *singular* when *count* is 1, else *plural*."""
-    return singular if count == 1 else plural
-
-
 def _ignored_hint(hidden_count: int) -> str:
     """Nudge toward ``include_ignored`` when hidden entries exist.
 
@@ -83,7 +75,7 @@ def _ignored_hint(hidden_count: int) -> str:
     """
     if hidden_count <= 0:
         return ""
-    noun = _pluralize(hidden_count, "entry", "entries")
+    noun = pluralize(hidden_count, "entry", "entries")
     return (
         f" — {hidden_count} hidden {noun} (`.assets` contents and common "
         f"build/vendor directories); pass include_ignored=True to reveal them"
@@ -240,9 +232,7 @@ def _walk_entries(
             # (a single converted document can carry hundreds of extracted
             # images), so only the directory itself is listed; like the
             # build/vendor dirs, ``include_ignored=True`` reveals them.
-            if exclude_dirs and any(
-                is_assets_dir(part) for part in rel.split("/")[:-1]
-            ):
+            if exclude_dirs and is_inside_assets_dir(rel):
                 continue
             if not file_allowed(sp.filter_func, rel):
                 continue
@@ -448,8 +438,8 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
         file_count = sum(1 for e in entries if not e.is_directory)
         tree_lines.append("")
         tree_lines.append(
-            f"{dir_count} {_pluralize(dir_count, 'directory', 'directories')}, "
-            f"{file_count} {_pluralize(file_count, 'file', 'files')}"
+            f"{dir_count} {pluralize(dir_count, 'directory', 'directories')}, "
+            f"{file_count} {pluralize(file_count, 'file', 'files')}"
         )
         return ToolOutput(data=root, formatted="\n".join(tree_lines))
 
@@ -559,22 +549,21 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         # PDFs get custom page rendering), while any non-markdown original's
         # extracted text stays reachable by requesting its ``<stem>.md`` sidecar,
         # whose read then re-runs the same containment checks.
-        sidecar_hint = ""
-        if not is_description_file(file_path):
-            sidecar = description_path_for_stem(stem_path_from_reference(file_path))
-            sidecar_hint = f" To read its extracted text, request '{sidecar}' instead."
+        hint = sidecar_hint(file_path)
 
-        media_type = binary_media_type(file_path)
+        # The same table the write gateway consults, so the two tools cannot end
+        # up disagreeing about which files are text.
+        media_type = vision_media_type(file_path)
         if media_type is not None:
             raise ToolRetry(
                 f"'{file_path}' is a {media_type} binary — use read_binary_document "
-                f"to send it to a vision model.{sidecar_hint}"
+                f"to send it to a vision model.{hint}"
             )
 
         # Legacy encodings are decoded rather than refused, and the encoding is
         # reported below: the same seam the upload pipeline and the editing
         # tools use, so a hash taken here still matches on a later edit.
-        decoded = read_text_or_retry(absolute, file_path, sidecar_hint)
+        decoded = read_text_or_retry(absolute, file_path, hint)
         file_hash = content_hash(decoded.text)
         all_lines = decoded.text.splitlines()
         total = len(all_lines)
