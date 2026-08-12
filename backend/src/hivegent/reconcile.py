@@ -27,7 +27,8 @@ from .config import settings
 from .db import documents as db_documents
 from .entries import is_description_file
 from .store import Casebase
-from .workspace import store_lock, sync_entries_from_disk
+from .workspace import sync_entries_from_disk
+from .workspace.locks import store_lock
 
 __all__ = [
     "ReconcileReport",

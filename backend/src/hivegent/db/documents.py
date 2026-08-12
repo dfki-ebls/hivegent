@@ -52,6 +52,7 @@ __all__ = [
     "delete_documents",
     "delete_subtree",
     "get_document",
+    "get_entry_metadata",
     "get_entry_state",
     "get_line_counts",
     "list_document_paths",
@@ -133,7 +134,7 @@ def _walk_assets(workspace_root: Path, assets_dir: str) -> list[str]:
     if not base.is_dir():
         return []
     return sorted(
-        str(p.relative_to(workspace_root).as_posix())
+        p.relative_to(workspace_root).as_posix()
         for p in base.rglob("*")
         if p.is_file()
     )
@@ -252,6 +253,16 @@ async def get_document(store: Casebase, reference: str) -> DocumentMetadata | No
         chunks_data = await _load_chunks(s, row.id)
         workspace_root = store.workspace_path(settings.data_dir)
         return _document_from_row(row, chunks_data, workspace_root)
+
+
+async def get_entry_metadata(
+    store: Casebase, reference: str
+) -> EntryMetadata | None:
+    """Load an entry's persisted metadata without chunks or filesystem walks."""
+    stem_path = stem_path_from_reference(reference)
+    async with session() as s:
+        row = await _find(s, store, stem_path)
+        return _entry_from_row(row) if row is not None else None
 
 
 async def get_entry_state(store: Casebase, reference: str) -> EntryState | None:

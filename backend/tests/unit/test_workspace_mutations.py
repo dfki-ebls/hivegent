@@ -17,6 +17,7 @@ from hivegent.config import content_digest, content_hash, settings
 from hivegent.db import documents as db_documents
 from hivegent.db.documents import EntryState
 from hivegent.entries import ContentStat
+from hivegent.server.operations import reads
 from hivegent.store import Casebase
 from hivegent.workspace import assets as workspace_assets
 from hivegent.workspace import documents
@@ -297,6 +298,31 @@ class TestSyncEntryFromDisk:
 
 
 class TestDeleteAssetDescription:
+    async def test_nested_asset_can_be_listed_and_updated(
+        self,
+        user_store: Casebase,
+        workspace_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def fake_chunk(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        monkeypatch.setattr(workspace_assets, "chunk_and_index_document", fake_chunk)
+        images = workspace_dir / "doc.assets/images"
+        images.mkdir(parents=True)
+        (images / "img.png").write_bytes(b"binary")
+
+        updated = await workspace.update_asset_description(
+            user_store, "doc.md", "images/img.png", "nested description"
+        )
+        listed = reads.list_assets(user_store, "doc.md")
+
+        assert updated.name == "images/img.png"
+        assert updated.description_path == "doc.assets/images/img.md"
+        assert [(asset.name, asset.description) for asset in listed.assets] == [
+            ("images/img.png", "nested description")
+        ]
+
     async def test_removes_companion_md_and_clears_entry(
         self,
         user_store: Casebase,

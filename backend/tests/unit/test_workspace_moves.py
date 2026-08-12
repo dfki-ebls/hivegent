@@ -24,6 +24,7 @@ from hivegent.db import documents as db_documents
 from hivegent.entries import original_path_for_stem, stem_path_from_reference
 from hivegent.store import Casebase
 from hivegent.workspace import commit
+from hivegent.workspace import locks as workspace_locks
 
 
 def _doc(stem: str, original_suffix: str | None = None) -> DocumentMetadata:
@@ -55,7 +56,7 @@ class FakeRepository:
     # test can assert the owner flip is requested against the right casebases.
     store_moves: list[tuple[str, str, str]] = field(default_factory=list)
 
-    async def get_document(
+    async def get_entry_metadata(
         self, store: Casebase, reference: str
     ) -> DocumentMetadata | None:
         return self.docs.get(stem_path_from_reference(reference))
@@ -90,7 +91,7 @@ class FakeRepository:
 def repo(monkeypatch: pytest.MonkeyPatch) -> FakeRepository:
     fake = FakeRepository()
     for name in (
-        "get_document",
+        "get_entry_metadata",
         "move_document",
         "move_subtree",
         "delete_subtree",
@@ -187,6 +188,27 @@ class TestMoveDocument:
         assert (workspace_dir / "dir/a.tar.gz").is_file()
         assert repo.calls == [("move_document", "a.tar", "dir/a.tar")]
 
+    async def test_rejects_destination_reserved_by_upload(
+        self,
+        user_store: Casebase,
+        workspace_dir: Path,
+        repo: FakeRepository,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(workspace_locks, "_states", {})
+        (workspace_dir / "report.md").write_text("r")
+        repo.docs["report"] = _doc("report")
+        workspace_locks._add_inflight(user_store, "archive/report.md")
+
+        with pytest.raises(HTTPException) as exc:
+            await workspace.move_document(
+                user_store, user_store, "report.md", "archive/report.md"
+            )
+
+        assert exc.value.status_code == 409
+        assert (workspace_dir / "report.md").is_file()
+        assert repo.calls == []
+
 
 class TestMoveDirectory:
     async def test_existing_directory_destination_moves_into_it(
@@ -216,6 +238,26 @@ class TestMoveDirectory:
 
         assert exc.value.status_code == 400
         assert (workspace_dir / "images").is_dir()
+
+    async def test_rejects_destination_containing_reserved_upload(
+        self,
+        user_store: Casebase,
+        workspace_dir: Path,
+        repo: FakeRepository,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(workspace_locks, "_states", {})
+        (workspace_dir / "images").mkdir()
+        workspace_locks._add_inflight(user_store, "archive/images/pending.md")
+
+        with pytest.raises(HTTPException) as exc:
+            await workspace.move_directory(
+                user_store, user_store, "images", "archive/images"
+            )
+
+        assert exc.value.status_code == 409
+        assert (workspace_dir / "images").is_dir()
+        assert repo.calls == []
 
 
 class TestCrossStoreMove:
@@ -391,3 +433,17 @@ class TestDeleteKeepsDirectories:
         await workspace.delete_document(user_store, "loose.bin")
 
         assert not (workspace_dir / "loose.bin").exists()
+
+    async def test_deletes_sibling_original_the_row_has_not_recorded(
+        self, user_store: Casebase, workspace_dir: Path, repo: FakeRepository
+    ) -> None:
+        """The row is an index over the filesystem, so an original it does not
+        name yet is still part of the entry the inventory groups and shows."""
+        (workspace_dir / "notes.md").write_text("body")
+        (workspace_dir / "notes.pdf").write_bytes(b"%PDF")
+        repo.docs["notes"] = _doc("notes")
+
+        await workspace.delete_document(user_store, "notes.md")
+
+        assert not (workspace_dir / "notes.md").exists()
+        assert not (workspace_dir / "notes.pdf").exists()

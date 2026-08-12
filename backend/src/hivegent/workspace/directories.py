@@ -17,7 +17,7 @@ from ..config import settings
 from ..db import documents as db_documents
 from ..store import Casebase
 from ..types import MoveDirectoryResponse
-from .locks import _locked_for, _locked_for_move, store_lock
+from .locks import _locked_for, _reject_if_scope_inflight, store_lock
 from .paths import (
     _check_destination_parents,
     _check_not_assets_path,
@@ -43,7 +43,7 @@ async def create_directory(store: Casebase, path: str) -> None:
     if not path:
         raise HTTPException(status_code=400, detail="Directory path required")
     _check_not_assets_path(path)
-    async with store_lock(store):
+    async with _locked_for(store, path):
         workspace_dir = store.workspace_dir(settings.data_dir)
         directory_path = workspace_dir / path
         if directory_path.exists():
@@ -79,6 +79,7 @@ async def _move_directory_locked(
         dst_workspace, PurePosixPath(src).name, dst, src_dir
     )
     _check_not_assets_path(dst)
+    _reject_if_scope_inflight(dst_store, dst)
     if not cross_store and dst == src:
         raise HTTPException(
             status_code=400, detail="Source and destination are the same"
@@ -150,7 +151,7 @@ async def move_directory(
     lock(s) even on a cancel (:func:`shield_to_completion`) so the directory and
     its rows cannot drift apart.
     """
-    async with _locked_for_move(src_store, dst_store, scope=src):
+    async with _locked_for(src_store, scope=src, dst_store=dst_store):
         return await shield_to_completion(
             _move_directory_locked(src_store, dst_store, src, dst)
         )

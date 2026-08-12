@@ -19,6 +19,7 @@ from ..entries import entry_exists, resolve_entry_paths, stem_path_from_referenc
 from ..store import Casebase
 from ..types import LlmConfig, PipelineSpec, ProgressReporter, UploadCompleteEvent
 from .commit import _ensure_upload_slot_locked, _phased_upload
+from .metadata import _merge_entry_paths, resolve_entry
 from .paths import _enforce_file_size
 from .prepare import _Reserved
 
@@ -37,6 +38,8 @@ async def upload(
     spec: PipelineSpec | None = None,
     llm: LlmConfig | None = None,
     origin: EntryOrigin = "upload",
+    original_path: str | None = None,
+    original_content: bytes | None = None,
     overwrite: bool = False,
     ctx: ProgressReporter | None = None,
 ) -> UploadCompleteEvent:
@@ -44,34 +47,42 @@ async def upload(
 
     See :func:`_phased_upload` for the reserve/prepare/commit lifecycle; here
     reserve only validates the slot and captures the source, and an overwrite
-    supersedes the prior entry atomically at commit, so a failed conversion
-    never destroys it.
+    supersedes the prior entry atomically at commit.  A markdown upload may carry
+    a sibling companion original, which lands in the same commit.
     """
     if not filepath:
         raise HTTPException(status_code=400, detail="Document path required")
+    if (original_path is None) != (original_content is None):
+        raise ValueError("original_path and original_content must be provided together")
     _enforce_file_size(content)
+    if original_content is not None:
+        _enforce_file_size(original_content)
     spec = spec or PipelineSpec()
     llm = llm or LlmConfig()
     is_markdown = is_markdown_suffix(PurePosixPath(filepath).suffix.lower())
+    if not is_markdown and original_path is not None:
+        raise ValueError("A companion original is supported only for markdown")
+    if original_path is not None and (
+        is_markdown_suffix(PurePosixPath(original_path).suffix.lower())
+        or stem_path_from_reference(original_path)
+        != stem_path_from_reference(filepath)
+    ):
+        raise ValueError("A companion original must be a non-markdown sibling")
 
     async def reserve() -> _Reserved:
         _ensure_upload_slot_locked(store, filepath, overwrite=overwrite)
         workspace_dir = store.workspace_dir(settings.data_dir)
         replacing = overwrite and entry_exists(workspace_dir, filepath)
-        supersede = None
-        if replacing:
-            metadata = await db_documents.get_document(store, filepath)
-            supersede = (
-                metadata.original_path
-                if metadata
-                else resolve_entry_paths(workspace_dir, filepath).original_path
-            )
+        supersede = (
+            (await resolve_entry(store, filepath)).original_path if replacing else None
+        )
 
         return _Reserved(
             reference=filepath,
             content=content,
             origin=origin,
-            write_original=not is_markdown,
+            original_path=original_path if is_markdown else filepath,
+            original_content=original_content if is_markdown else content,
             preserve=replacing,
             supersede_original=supersede,
         )
@@ -103,13 +114,10 @@ async def replace_original(
     llm = llm or LlmConfig()
 
     async def reserve() -> _Reserved:
-        metadata = await db_documents.get_document(store, safe)
-        workspace_dir = store.workspace_dir(settings.data_dir)
-        existing_original_rel = (
-            metadata.original_path
-            if metadata
-            else resolve_entry_paths(workspace_dir, safe).original_path
-        )
+        metadata = await db_documents.get_entry_metadata(store, safe)
+        existing_original_rel = _merge_entry_paths(
+            resolve_entry_paths(store.workspace_dir(settings.data_dir), safe), metadata
+        ).original_path
         if not existing_original_rel:
             raise HTTPException(
                 status_code=404,
@@ -126,7 +134,8 @@ async def replace_original(
             reference=new_original_relpath,
             content=new_content,
             origin=metadata.origin if metadata else "upload",
-            write_original=True,
+            original_path=new_original_relpath,
+            original_content=new_content,
             preserve=True,
             supersede_original=existing_original_rel,
         )
@@ -155,7 +164,7 @@ async def reconvert(
     llm = llm or LlmConfig()
 
     async def reserve() -> _Reserved:
-        metadata = await db_documents.get_document(store, safe)
+        metadata = await db_documents.get_entry_metadata(store, safe)
         if not metadata or not metadata.original_path:
             raise HTTPException(
                 status_code=404,
@@ -172,7 +181,7 @@ async def reconvert(
             reference=metadata.original_path,
             content=original_full.read_bytes(),
             origin=metadata.origin,
-            write_original=False,
+            original_path=metadata.original_path,
             preserve=True,
         )
 

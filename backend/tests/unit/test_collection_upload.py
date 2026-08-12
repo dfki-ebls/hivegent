@@ -1,11 +1,9 @@
 """Unit tests for the ZIP collection importer.
 
-Stateless: the DB-touching steps (`upload` and the companion sync) are stubbed
-with ``monkeypatch`` so the importer's file/stem bookkeeping is exercised
-without a live database.
+Stateless: the DB-touching upload is stubbed with ``monkeypatch``.
+This exercises the importer's file and stem bookkeeping without a live database.
 """
 
-import asyncio
 import zipfile
 from pathlib import Path
 
@@ -75,43 +73,6 @@ async def test_progress_seeds_zero_before_first_conversion(
     assert currents == [0, 1, 2]
 
 
-async def test_companion_write_survives_cancel(
-    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    started = asyncio.Event()
-    release = asyncio.Event()
-    synced: list[str] = []
-
-    async def gated_sync(_store: Casebase, reference: str) -> bool:
-        started.set()
-        await release.wait()
-        synced.append(reference)
-        return True
-
-    monkeypatch.setattr(collections, "_sync_entry_from_disk_locked", gated_sync)
-
-    extract_root = tmp_path / "extract"
-    extract_root.mkdir()
-    (extract_root / "M.pdf").write_bytes(b"%PDF-1.4")
-    planned = collections._PlannedFile.from_relative("M.pdf")
-
-    task = asyncio.ensure_future(
-        collections._write_companion_original(user_store, extract_root, planned)
-    )
-    await started.wait()
-    # Cancel while the SQL sync is in flight, then let it proceed: the shield
-    # must run the write + sync to completion so the on-disk original is never
-    # stranded without its owner's row linking it.
-    task.cancel()
-    release.set()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    assert synced == ["M.pdf"]
-    assert (user_store.workspace_dir(settings.data_dir) / "M.pdf").exists()
-
-
 async def test_companion_original_dropped_when_owning_markdown_fails(
     user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -121,14 +82,7 @@ async def test_companion_original_dropped_when_owning_markdown_fails(
     async def failing_upload(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("conversion failed")
 
-    synced: list[str] = []
-
-    async def record_sync(_store: Casebase, reference: str) -> bool:
-        synced.append(reference)
-        return False
-
     monkeypatch.setattr(collections, "upload", failing_upload)
-    monkeypatch.setattr(collections, "_sync_entry_from_disk_locked", record_sync)
 
     archive = _make_zip(tmp_path, {"M.md": b"# body", "M.pdf": b"%PDF-1.4"})
     complete = await _run(user_store, archive)
@@ -140,7 +94,6 @@ async def test_companion_original_dropped_when_owning_markdown_fails(
     # The companion original is never written, so its owner's failure leaves no
     # orphan file on disk with no SQL row.
     assert not (workspace_dir / "M.pdf").exists()
-    assert synced == []
 
 
 async def test_companion_original_written_when_owning_markdown_succeeds(
@@ -149,24 +102,26 @@ async def test_companion_original_written_when_owning_markdown_succeeds(
     workspace_dir = user_store.workspace_dir(settings.data_dir)
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
-    async def ok_upload(*_args: object, **_kwargs: object) -> None:
-        return None
-
-    synced: list[str] = []
-
-    async def record_sync(_store: Casebase, reference: str) -> bool:
-        synced.append(reference)
-        return True
+    async def ok_upload(
+        _store: Casebase,
+        safe: str,
+        content: bytes,
+        **kwargs: object,
+    ) -> None:
+        (workspace_dir / safe).write_bytes(content)
+        original_path = kwargs.get("original_path")
+        original_content = kwargs.get("original_content")
+        assert isinstance(original_path, str)
+        assert isinstance(original_content, bytes)
+        (workspace_dir / original_path).write_bytes(original_content)
 
     monkeypatch.setattr(collections, "upload", ok_upload)
-    monkeypatch.setattr(collections, "_sync_entry_from_disk_locked", record_sync)
 
     archive = _make_zip(tmp_path, {"N.md": b"# body", "N.pdf": b"%PDF-1.4"})
     complete = await _run(user_store, archive)
 
     assert complete.failed_files == []
     assert (workspace_dir / "N.pdf").read_bytes() == b"%PDF-1.4"
-    assert synced == ["N.pdf"]
 
 
 async def test_second_non_markdown_for_a_stem_is_rejected(
@@ -194,14 +149,15 @@ async def test_markdown_adopts_one_original_and_rejects_the_rest(
     workspace_dir = user_store.workspace_dir(settings.data_dir)
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
-    async def ok_upload(*_args: object, **_kwargs: object) -> None:
-        return None
-
-    async def record_sync(_store: Casebase, _reference: str) -> bool:
-        return True
+    async def ok_upload(
+        _store: Casebase, _safe: str, _content: bytes, **kwargs: object
+    ) -> None:
+        original_path = kwargs.get("original_path")
+        original_content = kwargs.get("original_content")
+        if isinstance(original_path, str) and isinstance(original_content, bytes):
+            (workspace_dir / original_path).write_bytes(original_content)
 
     monkeypatch.setattr(collections, "upload", ok_upload)
-    monkeypatch.setattr(collections, "_sync_entry_from_disk_locked", record_sync)
 
     archive = _make_zip(
         tmp_path, {"B.md": b"# body", "B.pdf": b"%PDF-1.4", "B.rtf": b"{\\rtf1}"}
@@ -221,14 +177,16 @@ async def test_markdown_owns_stem_when_original_sorts_before_md(
     workspace_dir = user_store.workspace_dir(settings.data_dir)
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
-    async def ok_upload(*_args: object, **_kwargs: object) -> None:
-        return None
-
-    async def record_sync(_store: Casebase, _reference: str) -> bool:
-        return True
+    async def ok_upload(
+        _store: Casebase, _safe: str, _content: bytes, **kwargs: object
+    ) -> None:
+        original_path = kwargs.get("original_path")
+        original_content = kwargs.get("original_content")
+        assert isinstance(original_path, str)
+        assert isinstance(original_content, bytes)
+        (workspace_dir / original_path).write_bytes(original_content)
 
     monkeypatch.setattr(collections, "upload", ok_upload)
-    monkeypatch.setattr(collections, "_sync_entry_from_disk_locked", record_sync)
 
     # 'report.docx' sorts lexically before 'report.md', but the markdown must
     # still own the entry and the docx fold in as its companion original rather
@@ -240,34 +198,6 @@ async def test_markdown_owns_stem_when_original_sorts_before_md(
     assert complete.markdown_files == 1
     assert complete.converted_attachments == 1
     assert (workspace_dir / "report.docx").read_bytes() == b"doc"
-
-
-async def test_companion_write_failure_keeps_committed_owner(
-    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    workspace_dir = user_store.workspace_dir(settings.data_dir)
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-
-    async def ok_upload(
-        _store: Casebase, safe: str, content: bytes, **_kwargs: object
-    ) -> None:
-        # Simulate a committed markdown entry landing on disk.
-        (workspace_dir / safe).write_bytes(content)
-
-    async def failing_sync(_store: Casebase, _reference: str) -> bool:
-        raise RuntimeError("db hiccup during fold-in")
-
-    monkeypatch.setattr(collections, "upload", ok_upload)
-    monkeypatch.setattr(collections, "_sync_entry_from_disk_locked", failing_sync)
-
-    archive = _make_zip(tmp_path, {"M.md": b"# body", "M.pdf": b"%PDF-1.4"})
-    complete = await _run(user_store, archive)
-
-    assert _failures(complete) == {"M.pdf": collections._REASON_WRITE_FAILED}
-    # The companion failure removes only its own orphan original; the owning
-    # markdown that already committed is never rolled back with it.
-    assert (workspace_dir / "M.md").exists()
-    assert not (workspace_dir / "M.pdf").exists()
 
 
 async def test_os_junk_files_are_skipped_entirely(

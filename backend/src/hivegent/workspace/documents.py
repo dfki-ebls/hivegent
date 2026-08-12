@@ -28,7 +28,7 @@ from ..text import NOT_TEXT_REASON, read_text_file
 from ..types import MoveDocumentResponse, PipelineSpec
 from .commit import _delete_single_locked
 from .indexing import chunk_and_index_document
-from .locks import _locked_for, _locked_for_move
+from .locks import _locked_for, _reject_if_inflight
 from .paths import (
     _check_destination_parents,
     _check_not_assets_path,
@@ -64,7 +64,8 @@ def _decode_existing(file_path: Path) -> str:
     return decoded.text
 
 
-def _read_text_file(file_path: Path) -> str:
+def _require_text_file(file_path: Path) -> str:
+    """Decode an existing workspace file, 404-ing when it is not there."""
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Document not found")
     return _decode_existing(file_path)
@@ -144,7 +145,7 @@ async def rechunk(
     spec = spec or PipelineSpec()
     async with _locked_for(store, safe):
         file_path = store.workspace_dir(settings.data_dir) / safe
-        text = _read_text_file(file_path)
+        text = _require_text_file(file_path)
         return await shield_to_completion(
             chunk_and_index_document(
                 store, safe, text, spec.chunking, stat=ContentStat.from_path(file_path)
@@ -165,7 +166,7 @@ async def edit_document_text(
     async with _locked_for(store, safe):
         workspace_dir = store.workspace_dir(settings.data_dir)
         file_path = workspace_dir / safe
-        content = _read_text_file(file_path)
+        content = _require_text_file(file_path)
         _check_expected_hash(safe, content, expected_hash)
         count = content.count(old_string)
         if count == 0:
@@ -261,7 +262,7 @@ async def _move_document_locked(
     dst_workspace = dst_store.workspace_path(settings.data_dir)
     cross_store = src_store != dst_store
 
-    metadata = await db_documents.get_document(src_store, src)
+    metadata = await db_documents.get_entry_metadata(src_store, src)
     if not metadata or not (src_workspace / metadata.description_path).exists():
         raise HTTPException(status_code=404, detail="Document not found")
     src_stem = metadata.stem_path
@@ -292,6 +293,7 @@ async def _move_document_locked(
         )
 
     dst_description = description_path_for_stem(dst_stem)
+    _reject_if_inflight(dst_store, dst_description)
 
     # Plan every rename up front and validate all destinations before touching
     # the filesystem: a conflict discovered halfway through the renames would
@@ -300,12 +302,16 @@ async def _move_document_locked(
     if metadata.original_path and (src_workspace / metadata.original_path).exists():
         suffix = PurePosixPath(metadata.original_path).suffix
         renames.append((metadata.original_path, f"{dst_stem}{suffix}"))
-    has_assets = (
-        metadata.assets_dir is not None
-        and (src_workspace / metadata.assets_dir).exists()
+    # Only an assets directory that is actually on disk is renamed; its SQL rows
+    # move below either way, since a recorded directory that vanished can still
+    # have child rows pointing at the old path.
+    moved_assets = (
+        metadata.assets_dir
+        if metadata.assets_dir and (src_workspace / metadata.assets_dir).exists()
+        else None
     )
-    if metadata.assets_dir is not None and has_assets:
-        renames.append((metadata.assets_dir, assets_dir_for_stem(dst_stem)))
+    if moved_assets is not None:
+        renames.append((moved_assets, assets_dir_for_stem(dst_stem)))
 
     _check_destination_parents(dst_workspace, dst_stem)
     # A destination occupied by the entry itself is a case-only rename on a
@@ -330,7 +336,7 @@ async def _move_document_locked(
 
     src_name = PurePosixPath(src_stem).name
     dst_name = PurePosixPath(dst_stem).name
-    if has_assets and src_name != dst_name:
+    if moved_assets is not None and src_name != dst_name:
         # The markdown references its assets as ``<stem>.assets/...``; rewrite
         # those references when the stem's basename changed.
         description_full = dst_workspace / dst_description
@@ -367,7 +373,7 @@ async def move_document(
     lock(s) even on a cancel (:func:`shield_to_completion`) so a mid-move
     cancellation cannot leave the renamed files pointing at stale SQL rows.
     """
-    async with _locked_for_move(src_store, dst_store, entry=src):
+    async with _locked_for(src_store, src, dst_store=dst_store):
         return await shield_to_completion(
             _move_document_locked(src_store, dst_store, src, dst)
         )

@@ -117,7 +117,7 @@ def _reject_if_inflight(store: Casebase, reference: str) -> None:
     only thing that closes the window for it.
     """
     stem = stem_path_from_reference(reference)
-    if any(entry_owns(inflight, stem) for inflight in inflight_stems(store)):
+    if any(entry_owns(inflight, stem) for inflight in _state_for(store).stems):
         raise HTTPException(
             status_code=409, detail="Document is already being processed"
         )
@@ -154,8 +154,9 @@ async def _locked_for(
     *entries: str,
     scope: str | None = None,
     whole_store: bool = False,
+    dst_store: Casebase | None = None,
 ) -> AsyncIterator[None]:
-    """Acquire the casebase lock for a mutation, rejecting in-flight conflicts.
+    """Acquire the casebase lock(s) for a mutation, rejecting in-flight conflicts.
 
     Routing every mutation's lock acquisition through here makes the in-flight
     check impossible to forget: pass the entry references a single-document op
@@ -163,46 +164,20 @@ async def _locked_for(
     ``whole_store`` for a store-wide wipe.  A conflicting phased upload (or a
     bulk import claiming the store) is rejected with 409 so the op can never
     strip files out from under a pending commit.
+
+    A move may span two casebases: *dst_store* adds the destination's lock,
+    taken together with the source's in a stable ``store_key`` order so two
+    moves in opposite directions can never deadlock.  Conflicts are always
+    rejected on *store*, the source, since that is the side whose files move;
+    holding the destination lock serialises against its concurrent mutations.
     """
-    async with store_lock(store):
+    targets = {s.store_key: s for s in (store, dst_store) if s is not None}
+    async with AsyncExitStack() as stack:
+        for target in sorted(targets.values(), key=lambda s: s.store_key):
+            await stack.enter_async_context(store_lock(target))
         for entry in entries:
             _reject_if_inflight(store, entry)
-        if whole_store:
-            _reject_if_scope_inflight(store, None)
-        elif scope is not None:
-            _reject_if_scope_inflight(store, scope)
-
-        yield
-
-
-@asynccontextmanager
-async def _locked_for_move(
-    src_store: Casebase,
-    dst_store: Casebase,
-    *,
-    entry: str | None = None,
-    scope: str | None = None,
-) -> AsyncIterator[None]:
-    """Acquire the lock(s) for a move that may span two casebases.
-
-    A same-store move takes the single store lock, exactly like
-    :func:`_locked_for`.  A cross-store move takes both store locks in a stable
-    ``store_key`` order, so two moves in opposite directions can never deadlock.
-    In-flight conflicts are rejected on the *source* store — parity with the
-    same-store path, which only guards the source entry or scope — while holding
-    the destination lock serialises the move against concurrent destination
-    mutations.
-    """
-    ordered = sorted(
-        {s.store_key: s for s in (src_store, dst_store)}.values(),
-        key=lambda s: s.store_key,
-    )
-    async with AsyncExitStack() as stack:
-        for store in ordered:
-            await stack.enter_async_context(store_lock(store))
-        if entry is not None:
-            _reject_if_inflight(src_store, entry)
-        if scope is not None:
-            _reject_if_scope_inflight(src_store, scope)
+        if whole_store or scope is not None:
+            _reject_if_scope_inflight(store, None if whole_store else scope)
 
         yield

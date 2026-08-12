@@ -11,7 +11,9 @@ the subtree takes.
 """
 
 import shutil
-from contextlib import suppress
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
@@ -38,8 +40,8 @@ def _remove_tree(directory: Path) -> None:
         shutil.rmtree(directory)
 
 
-def _write_original_file(workspace_dir: Path, filepath: str, content: bytes) -> Path:
-    """Write a binary original file into the workspace."""
+def _write_workspace_file(workspace_dir: Path, filepath: str, content: bytes) -> Path:
+    """Write a file into the workspace, creating its parent directories."""
     full_path = workspace_dir / filepath
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_bytes(content)
@@ -54,12 +56,65 @@ def _write_markdown_file(
     Only the bytes: chunking, embedding, and the SQL rows follow separately.  The
     stat is captured here rather than at index time so it describes exactly the
     bytes that were written — a later touch then reads as a mismatch and earns a
-    re-index, instead of being stamped over as already-indexed.
+    re-index, instead of being stamped over as already-indexed.  Workspace text
+    is always stored as UTF-8, whatever the source encoding was.
     """
-    full_path = workspace_dir / filepath
-    full_path.parent.mkdir(parents=True, exist_ok=True)
-    full_path.write_text(content, encoding="utf-8")
-    return ContentStat.from_path(full_path)
+    return ContentStat.from_path(
+        _write_workspace_file(workspace_dir, filepath, content.encode("utf-8"))
+    )
+
+
+@dataclass(slots=True, frozen=True)
+class _WorkspaceChange:
+    """One live workspace path and its staged replacement, or removal."""
+
+    relative_path: str
+    staged_path: Path | None
+
+
+def _remove_workspace_path(path: Path) -> None:
+    """Remove one workspace path, whether it is a file or directory."""
+    if path.is_dir():
+        _remove_tree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
+@contextmanager
+def _replace_workspace_paths(
+    workspace: Path,
+    backup_root: Path,
+    changes: Sequence[_WorkspaceChange],
+) -> Iterator[None]:
+    """Install staged paths and restore every prior path if installation fails."""
+    backups: list[tuple[Path, Path]] = []
+    installed: list[Path] = []
+    try:
+        for change in changes:
+            live = workspace / change.relative_path
+            if not live.exists() and not live.is_symlink():
+                continue
+            backup = backup_root / change.relative_path
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            live.replace(backup)
+            backups.append((live, backup))
+
+        for change in changes:
+            if change.staged_path is None:
+                continue
+            live = workspace / change.relative_path
+            live.parent.mkdir(parents=True, exist_ok=True)
+            change.staged_path.replace(live)
+            installed.append(live)
+
+        yield
+    except BaseException:
+        for live in reversed(installed):
+            _remove_workspace_path(live)
+        for live, backup in reversed(backups):
+            live.parent.mkdir(parents=True, exist_ok=True)
+            backup.replace(live)
+        raise
 
 
 def _is_same_file(a: Path, b: Path) -> bool:

@@ -32,6 +32,7 @@ from ..converters.asset_processing import (
 )
 from ..converters.base import (
     ConversionResult,
+    DocumentConverter,
     ExtractedImage,
     is_external_ref,
     is_image_suffix,
@@ -112,16 +113,18 @@ class _Reserved:
     Reserve only validates and reads — it never mutates the workspace — so a
     failure during the lock-free prepare leaves any pre-existing entry intact.
     These fields tell :func:`_write_prepared_files` how to apply the new content
-    and supersede a prior entry, all under the lock.  ``preserve`` marks a
-    reprocess of an existing entry (reconvert/replace/overwrite): its stale
-    assets are cleared at commit and it survives a prepare-phase failure, whereas
-    a fresh upload (``preserve=False``) is rolled back by deletion.
+    and supersede a prior entry, all under the lock.  ``original_path`` is also
+    recorded in the entry metadata, while ``original_content`` is present only
+    when commit must write it.  ``preserve`` marks a reprocess of an existing
+    entry whose old paths are restored if apply fails.  A fresh upload is rolled
+    back by deletion if indexing fails.
     """
 
     reference: str
     content: bytes
     origin: EntryOrigin
-    write_original: bool = False
+    original_path: str | None = None
+    original_content: bytes | None = None
     preserve: bool = False
     supersede_original: str | None = None
 
@@ -223,6 +226,7 @@ def _prepare_markdown(
     content: bytes,
     *,
     origin: EntryOrigin,
+    original_path: str | None,
     clearing_assets: bool,
 ) -> _PreparedUpload:
     """Prepare a user-authored markdown document for commit.
@@ -248,7 +252,7 @@ def _prepare_markdown(
         entry_metadata=_build_entry_metadata(
             stem_path=stem_path,
             description_path=filepath,
-            original_path=None,
+            original_path=original_path,
             assets_dir=assets_dir if has_assets else None,
             entry_kind="user_markdown",
             origin=origin,
@@ -342,26 +346,29 @@ def _prepare_plain_text_or_stub(
     stub.
     """
     result = convert_plain_text(content, PurePosixPath(filepath).suffix)
+    entry_kind: EntryKind = "binary_stub" if result is None else "convertible"
+    generated_by: EntryGeneratedBy = "stub" if result is None else "converter"
+
     if result is None:
-        name = PurePosixPath(filepath).name
         mime = mimetypes.guess_type(filepath)[0] or "application/octet-stream"
-        stub = f"File name: {name}.\nMIME type: {mime}.\nSize: {len(content)} bytes.\n"
-        main = _derived_entry(
-            filepath, stub, entry_kind="binary_stub", generated_by="stub", origin=origin
+        markdown = (
+            f"File name: {PurePosixPath(filepath).name}.\n"
+            f"MIME type: {mime}.\nSize: {len(content)} bytes.\n"
         )
-        return _PreparedUpload(
-            main=main,
-            filename=filepath,
-            size_bytes=len(content),
-            converted_filename=main.description_path,
-            message="Binary file uploaded with searchable stub",
+        pipeline_used = None
+        message = "Binary file uploaded with searchable stub"
+    else:
+        markdown = result.markdown
+        pipeline_used = ConversionPipeline.PLAIN_TEXT.value
+        message = (
+            f"Document uploaded as plain text{_encoding_note(result.source_encoding)}"
         )
 
     main = _derived_entry(
         filepath,
-        result.markdown,
-        entry_kind="convertible",
-        generated_by="converter",
+        markdown,
+        entry_kind=entry_kind,
+        generated_by=generated_by,
         origin=origin,
     )
     return _PreparedUpload(
@@ -369,10 +376,8 @@ def _prepare_plain_text_or_stub(
         filename=filepath,
         size_bytes=len(content),
         converted_filename=main.description_path,
-        conversion_pipeline_used=ConversionPipeline.PLAIN_TEXT.value,
-        message=(
-            f"Document uploaded as plain text{_encoding_note(result.source_encoding)}"
-        ),
+        conversion_pipeline_used=pipeline_used,
+        message=message,
     )
 
 
@@ -452,6 +457,89 @@ async def _prepare_conversion_assets(
     return ref_mapping, assets, asset_entries
 
 
+def _build_converter(
+    pipeline: ConversionPipeline, basename: str, spec: PipelineSpec, llm: LlmConfig
+) -> DocumentConverter:
+    """Instantiate the converter for a resolved pipeline, mapping its errors to HTTP."""
+    try:
+        return get_converter(
+            pipeline,
+            filename=basename,
+            config=spec.conversion.config,
+            llm_options=llm,
+            detect_asset_roles=spec.process_assets is AssetProcessingMode.DESCRIBE,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    except (ImportError, ValueError) as exc:
+        # AUTO reaches this point only for an available richer converter whose
+        # declared extensions produced the mapping.  Only an explicit pipeline
+        # can name one that is uninstalled or wrong for the file.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+async def _convert_source(
+    filepath: str,
+    content: bytes,
+    converter: DocumentConverter,
+    pipeline: ConversionPipeline,
+    *,
+    allow_recovery: bool,
+) -> tuple[ConversionResult, ConversionPipeline]:
+    """Convert a temp copy of the source, returning the result and the pipeline used.
+
+    *allow_recovery* (AUTO only) lets a failed or degraded primary conversion be
+    replaced by a fallback converter's text; an explicit pipeline keeps its own
+    output and surfaces its own error.  Raises the converter's exception when
+    nothing recovered it.
+    """
+    suffix = PurePosixPath(filepath).suffix.lower()
+    with (
+        logfire.span(
+            "convert_document",
+            filepath=filepath,
+            converter=converter.name,
+            pipeline=pipeline.value,
+        ) as span,
+        _source_on_disk(filepath, content) as source_path,
+    ):
+        outcome: ConversionResult | Exception
+        try:
+            outcome = await converter(source_path)
+        except Exception as exc:  # noqa: BLE001
+            outcome = exc
+
+        recovery = (
+            await recover_conversion(source_path, suffix, outcome)
+            if allow_recovery
+            else None
+        )
+        if recovery is not None:
+            failure = outcome if isinstance(outcome, Exception) else None
+            # A recovered result is text only (fallbacks drop images), so asset
+            # processing never captions figures the markdown lost.
+            logger.warning(
+                "primary conversion of %s %s; recovered via %s fallback",
+                filepath,
+                "failed" if failure is not None else "produced degraded output",
+                recovery.pipeline.value,
+                exc_info=failure,
+            )
+            result = ConversionResult(markdown=recovery.markdown)
+            pipeline = recovery.pipeline
+        elif isinstance(outcome, Exception):
+            raise outcome
+        else:
+            result = outcome
+
+        span.set_attribute("markdown_length", len(result.markdown))
+        span.set_attribute("image_count", len(result.images))
+        if result.source_encoding is not None:
+            span.set_attribute("source_encoding", result.source_encoding)
+
+        return result, pipeline
+
+
 async def _prepare_convertible(
     filepath: str,
     content: bytes,
@@ -473,81 +561,23 @@ async def _prepare_convertible(
 
     basename = PurePosixPath(filepath).name
     conversion_pipeline = spec.conversion.pipeline
-    if conversion_pipeline == ConversionPipeline.AUTO:
-        resolved_conversion = resolve_auto_pipeline(basename)
-        if resolved_conversion == ConversionPipeline.PLAIN_TEXT:
-            # Skip the converter's temp-file round trip: AUTO already falls back
-            # to the same projection (or a stub) for anything it cannot decode.
-            return _prepare_plain_text_or_stub(filepath, content, origin=origin)
-    else:
-        resolved_conversion = conversion_pipeline
+    is_auto = conversion_pipeline == ConversionPipeline.AUTO
+    resolved_conversion = (
+        resolve_auto_pipeline(basename) if is_auto else conversion_pipeline
+    )
+    if is_auto and resolved_conversion == ConversionPipeline.PLAIN_TEXT:
+        # Skip the converter's temp-file round trip: AUTO already falls back
+        # to the same projection (or a stub) for anything it cannot decode.
+        return _prepare_plain_text_or_stub(filepath, content, origin=origin)
+
+    converter = _build_converter(resolved_conversion, basename, spec, llm)
 
     try:
-        converter = get_converter(
-            resolved_conversion,
-            filename=basename,
-            config=spec.conversion.config,
-            llm_options=llm,
-            detect_asset_roles=spec.process_assets is AssetProcessingMode.DESCRIBE,
+        result, resolved_conversion = await _convert_source(
+            filepath, content, converter, resolved_conversion, allow_recovery=is_auto
         )
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.errors()) from exc
-    except (ImportError, ValueError) as exc:
-        # AUTO reaches this point only for an available richer converter whose
-        # declared extensions produced the mapping.  Only an explicit pipeline
-        # can name one that is uninstalled or wrong for the file.
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    suffix = PurePosixPath(basename).suffix.lower()
-
-    try:
-        with (
-            logfire.span(
-                "convert_document",
-                filepath=filepath,
-                converter=converter.name,
-                pipeline=resolved_conversion.value,
-            ) as span,
-            _source_on_disk(filepath, content) as source_path,
-        ):
-            outcome: ConversionResult | Exception
-            try:
-                outcome = await converter(source_path)
-            except Exception as exc:  # noqa: BLE001
-                outcome = exc
-
-            failure = outcome if isinstance(outcome, Exception) else None
-
-            # Only AUTO consults the fallback registry; an explicit pipeline
-            # keeps its own output (or surfaces its own error).
-            recovery = (
-                await recover_conversion(source_path, suffix, outcome)
-                if conversion_pipeline == ConversionPipeline.AUTO
-                else None
-            )
-            if recovery is not None:
-                # A recovered result is text only (fallbacks drop images), so
-                # asset processing never captions figures the markdown lost.
-                logger.warning(
-                    "primary conversion of %s %s; recovered via %s fallback",
-                    filepath,
-                    "failed" if failure is not None else "produced degraded output",
-                    recovery.pipeline.value,
-                    exc_info=failure,
-                )
-                result = ConversionResult(markdown=recovery.markdown)
-                resolved_conversion = recovery.pipeline
-            elif isinstance(outcome, Exception):
-                raise outcome
-            else:
-                result = outcome
-
-            span.set_attribute("markdown_length", len(result.markdown))
-            span.set_attribute("image_count", len(result.images))
-            if result.source_encoding is not None:
-                span.set_attribute("source_encoding", result.source_encoding)
     except Exception as exc:
-        if conversion_pipeline == ConversionPipeline.AUTO:
+        if is_auto:
             # exc_info captures the chained cause: docling re-raises pipeline
             # errors as a bare "Pipeline ... failed" with the root cause only
             # attached via `from`.
@@ -620,6 +650,7 @@ async def _prepare_upload(
     llm: LlmConfig,
     *,
     origin: EntryOrigin,
+    original_path: str | None,
     ctx: ProgressReporter | None,
     clearing_assets: bool,
 ) -> _PreparedUpload:
@@ -627,7 +658,12 @@ async def _prepare_upload(
     suffix = PurePosixPath(filepath).suffix.lower()
     if is_markdown_suffix(suffix):
         return _prepare_markdown(
-            store, filepath, content, origin=origin, clearing_assets=clearing_assets
+            store,
+            filepath,
+            content,
+            origin=origin,
+            original_path=original_path,
+            clearing_assets=clearing_assets,
         )
     if is_image_suffix(suffix):
         return await _prepare_image(filepath, content, llm, origin=origin, ctx=ctx)

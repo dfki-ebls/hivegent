@@ -11,8 +11,11 @@ store.
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from fastapi import HTTPException
 
@@ -32,30 +35,20 @@ from ..store import Casebase
 from ..types import LlmConfig, PipelineSpec, ProgressReporter, UploadCompleteEvent
 from .indexing import chunk_and_index_document, delete_chunked_document
 from .locks import _add_inflight, _discard_inflight, _locked_for, store_lock
+from .metadata import _merge_entry_paths
 from .paths import (
     _check_destination_parents,
     _remove_tree,
+    _replace_workspace_paths,
+    _WorkspaceChange,
     _write_markdown_file,
-    _write_original_file,
+    _write_workspace_file,
 )
 from .prepare import _prepare_upload, _PreparedEntry, _PreparedUpload, _Reserved
 
 __all__: list[str] = []
 
 logger = logging.getLogger(__name__)
-
-
-async def _clear_assets_subtree(store: Casebase, stem_path: str) -> None:
-    """Delete a logical entry's child-assets directory from the workspace.
-
-    SQL child-document rows that lived under the parent stem are
-    dropped by :func:`db_documents.delete_subtree`; chunks cascade with
-    them.  This helper handles only the on-disk asset files.
-    """
-    workspace_dir = store.workspace_dir(settings.data_dir)
-    assets_dir = assets_dir_for_stem(stem_path)
-    await asyncio.to_thread(_remove_tree, workspace_dir / assets_dir)
-    await db_documents.delete_subtree(store, assets_dir)
 
 
 @dataclass(slots=True, frozen=True)
@@ -75,47 +68,69 @@ async def _write_prepared_files(
 ) -> tuple[_WrittenEntry, ...]:
     """Apply a prepared upload's bytes to the workspace. Caller holds the lock.
 
-    This is the only phase that mutates the workspace, so it lands the new
-    content and supersedes any prior entry in one locked step.  Old assets are
-    cleared and the main description is *overwritten in place* (never deleted
-    first), so even a mid-write error leaves the entry's description as either
-    the old or the new content — never missing.
+    This is the only phase that mutates the workspace.  It writes everything to
+    workspace-local staging first, then replaces the live paths while retaining
+    backups until the swap and related SQL cleanup succeed.  Any apply failure
+    restores the complete prior entry.
 
     Returns the written projections in index order (assets first, main last), so
     the markdown that references the assets is only indexed once their own
     entries are.
     """
-    workspace_dir = store.workspace_dir(settings.data_dir)
+    workspace = store.workspace_dir(settings.data_dir)
+    stem_path = stem_path_from_reference(reserved.reference)
+    assets_dir = assets_dir_for_stem(stem_path)
 
-    # A reprocess (preserve) supersedes the prior entry: clear its stale assets
-    # before writing the new ones. The stem is the reference's stem by construction.
-    if reserved.preserve:
-        await _clear_assets_subtree(store, stem_path_from_reference(reserved.reference))
+    with TemporaryDirectory(prefix=f".{workspace.name}-stage-", dir=workspace.parent) as tmp:
+        staging = Path(tmp)
+        new_root = staging / "new"
+        backup_root = staging / "backup"
 
-    if reserved.write_original:
-        _write_original_file(workspace_dir, reserved.reference, reserved.content)
+        if reserved.original_path and reserved.original_content is not None:
+            _write_workspace_file(
+                new_root, reserved.original_path, reserved.original_content
+            )
+        for asset in prepared.assets:
+            _write_workspace_file(new_root, asset.path, asset.data)
+        for entry in (*prepared.asset_entries, prepared.main):
+            _write_markdown_file(new_root, entry.description_path, entry.markdown)
 
-    for asset in prepared.assets:
-        _write_original_file(workspace_dir, asset.path, asset.data)
+        has_assets = bool(prepared.assets or prepared.asset_entries)
+        changes = [
+            _WorkspaceChange(
+                prepared.main.description_path,
+                new_root / prepared.main.description_path,
+            )
+        ]
+        if reserved.preserve or has_assets:
+            changes.append(
+                _WorkspaceChange(
+                    assets_dir, new_root / assets_dir if has_assets else None
+                )
+            )
+        if reserved.original_path and reserved.original_content is not None:
+            changes.append(
+                _WorkspaceChange(
+                    reserved.original_path, new_root / reserved.original_path
+                )
+            )
+        if (
+            reserved.supersede_original is not None
+            and reserved.supersede_original != reserved.original_path
+        ):
+            changes.append(_WorkspaceChange(reserved.supersede_original, None))
 
-    written = tuple(
-        _WrittenEntry(
-            entry,
-            _write_markdown_file(workspace_dir, entry.description_path, entry.markdown),
-        )
-        for entry in (*prepared.asset_entries, prepared.main)
-    )
+        with _replace_workspace_paths(workspace, backup_root, changes):
+            if reserved.preserve:
+                await db_documents.delete_subtree(store, assets_dir)
 
-    # A superseded original on a different path than the new one (a replace that
-    # changed the suffix) is unlinked once the new entry's files are all in
-    # place, so the workspace never holds two originals for one stem.
-    if (
-        reserved.supersede_original is not None
-        and reserved.supersede_original != reserved.reference
-    ):
-        (workspace_dir / reserved.supersede_original).unlink(missing_ok=True)
-
-    return written
+            return tuple(
+                _WrittenEntry(
+                    entry,
+                    ContentStat.from_path(workspace / entry.description_path),
+                )
+                for entry in (*prepared.asset_entries, prepared.main)
+            )
 
 
 async def _index_entry(
@@ -186,26 +201,19 @@ async def _delete_single_locked(store: Casebase, safe: str) -> None:
     always be removed through the API.
     """
     workspace = store.workspace_dir(settings.data_dir)
-    metadata = await db_documents.get_document(store, safe)
+    metadata = await db_documents.get_entry_metadata(store, safe)
     if not metadata and not entry_exists(workspace, safe):
         raise HTTPException(status_code=404, detail="Document not found")
 
-    resolved = resolve_entry_paths(workspace, safe)
-    description_rel = (
-        metadata.description_path
-        if metadata and metadata.description_path
-        else resolved.description_path
-    )
-    (workspace / description_rel).unlink(missing_ok=True)
+    resolved = _merge_entry_paths(resolve_entry_paths(workspace, safe), metadata)
+    (workspace / resolved.description_path).unlink(missing_ok=True)
 
-    original_rel = metadata.original_path if metadata else resolved.original_path
-    if original_rel:
-        (workspace / original_rel).unlink(missing_ok=True)
+    if resolved.original_path:
+        (workspace / resolved.original_path).unlink(missing_ok=True)
 
-    assets_rel = metadata.assets_dir if metadata else resolved.assets_dir
-    if assets_rel:
-        await asyncio.to_thread(_remove_tree, workspace / assets_rel)
-        await db_documents.delete_subtree(store, assets_rel)
+    if resolved.assets_dir:
+        await asyncio.to_thread(_remove_tree, workspace / resolved.assets_dir)
+        await db_documents.delete_subtree(store, resolved.assets_dir)
 
     await delete_chunked_document(store, safe)
 
@@ -252,6 +260,20 @@ def _ensure_upload_slot_locked(
 type _Reserve = Callable[[], Awaitable[_Reserved]]
 
 
+@asynccontextmanager
+async def _reserved_upload(
+    store: Casebase, stem_reference: str, reserve: _Reserve
+) -> AsyncIterator[_Reserved]:
+    """Reserve and claim an upload until its prepare and apply phases settle."""
+    async with AsyncExitStack() as claim:
+        async with _locked_for(store, stem_reference):
+            reserved = await reserve()
+            claim.callback(_discard_inflight, store, stem_reference)
+            _add_inflight(store, stem_reference)
+
+        yield reserved
+
+
 async def _phased_upload(
     store: Casebase,
     spec: PipelineSpec,
@@ -276,36 +298,28 @@ async def _phased_upload(
     through, so a cancel can never settle between the file writes and the index
     and leave a reprocessed entry's new markdown wearing its predecessor's rows.
     """
-    claimed = False
-    reserved: _Reserved | None = None
-    try:
-        async with _locked_for(store, stem_reference):
-            reserved = await reserve()
-            _add_inflight(store, stem_reference)
-            claimed = True
-
-        prepared = await _prepare_upload(
-            store,
-            reserved.reference,
-            reserved.content,
-            spec,
-            llm,
-            origin=reserved.origin,
-            ctx=ctx,
-            clearing_assets=reserved.preserve,
-        )
-        return await shield_to_completion(
-            _apply_prepared(store, prepared, spec, reserved)
-        )
-    except BaseException:
-        # A new entry's partial artifacts are rolled back; a pre-existing entry
-        # is left untouched (prepare never wrote into the workspace).
-        if reserved is not None and not reserved.preserve:
-            async with store_lock(store):
-                await shield_to_completion(
-                    _safe_delete_locked(store, reserved.reference)
-                )
-        raise
-    finally:
-        if claimed:
-            _discard_inflight(store, stem_reference)
+    async with _reserved_upload(store, stem_reference, reserve) as reserved:
+        try:
+            prepared = await _prepare_upload(
+                store,
+                reserved.reference,
+                reserved.content,
+                spec,
+                llm,
+                origin=reserved.origin,
+                original_path=reserved.original_path,
+                ctx=ctx,
+                clearing_assets=reserved.preserve,
+            )
+            return await shield_to_completion(
+                _apply_prepared(store, prepared, spec, reserved)
+            )
+        except BaseException:
+            # A new entry's partial artifacts are rolled back; a pre-existing entry
+            # is left untouched (prepare never wrote into the workspace).
+            if not reserved.preserve:
+                async with store_lock(store):
+                    await shield_to_completion(
+                        _safe_delete_locked(store, reserved.reference)
+                    )
+            raise

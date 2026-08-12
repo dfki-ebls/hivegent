@@ -97,12 +97,8 @@ async def chunk_and_index_document(
     spec = chunking or ChunkingSpec()
 
     if entry_metadata is None:
-        existing = await db_documents.get_document(store, filename)
-        if existing is not None:
-            entry_metadata = EntryMetadata.model_validate(
-                existing.model_dump(include=set(EntryMetadata.model_fields))
-            )
-        else:
+        entry_metadata = await db_documents.get_entry_metadata(store, filename)
+        if entry_metadata is None:
             workspace_dir = store.workspace_dir(settings.data_dir)
             resolved = resolve_entry_paths(workspace_dir, filename)
             entry_metadata = _default_entry_metadata(

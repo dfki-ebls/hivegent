@@ -26,8 +26,8 @@ The implementation is split into focused submodules:
 * :mod:`~hivegent.workspace.locks` — per-store serialisation and in-flight
   conflict tracking.
 * :mod:`~hivegent.workspace.paths` — pure path semantics and on-disk guards.
-* :mod:`~hivegent.workspace.metadata` — entry-metadata derivation and the
-  digest-skip reconciliation helper.
+* :mod:`~hivegent.workspace.metadata` — entry path and metadata derivation and
+  the digest-skip reconciliation helper.
 * :mod:`~hivegent.workspace.describe` — vision description envelope.
 * :mod:`~hivegent.workspace.prepare` — lock-free per-kind upload preparation.
 * :mod:`~hivegent.workspace.indexing` — markdown projection writes and the
@@ -62,7 +62,8 @@ from .documents import (
     write_document_text,
 )
 from .indexing import sync_entries_from_disk, sync_entry_from_disk
-from .locks import inflight_stems, store_lock
+from .locks import inflight_stems
+from .metadata import resolve_entry
 from .uploads import reconvert, replace_original, upload
 
 __all__ = [
@@ -84,7 +85,7 @@ __all__ = [
     "rechunk",
     "reconvert",
     "replace_original",
-    "store_lock",
+    "resolve_entry",
     "sync_entries_from_disk",
     "sync_entry_from_disk",
     "update_asset_description",

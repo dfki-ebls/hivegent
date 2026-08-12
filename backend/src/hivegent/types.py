@@ -450,7 +450,7 @@ class DocumentInfo(BaseModel):
 class AssetEntry(BaseModel):
     """Information about a single file in a document's assets directory."""
 
-    name: str = Field(description="Filename within the assets directory")
+    name: str = Field(description="Path relative to the assets directory")
     path: str = Field(description="Workspace-relative path to the asset file")
     description_path: str | None = Field(
         default=None,
@@ -477,14 +477,16 @@ class AssetListResponse(BaseModel):
 class UpdateAssetDescriptionRequest(BaseModel):
     """Request to update an asset's companion .md description."""
 
-    asset_name: str = Field(description="Filename of the asset to update")
+    asset_name: str = Field(description="Path of the asset within its assets directory")
     content: str = Field(description="New content for the .md description file")
 
 
 class GenerateAssetDescriptionRequest(BaseModel):
     """Request to generate an asset's companion .md description with the vision model."""
 
-    asset_name: str = Field(description="Filename of the asset to describe")
+    asset_name: str = Field(
+        description="Path of the asset within its assets directory"
+    )
     llm: LlmConfig = Field(default_factory=LlmConfig)
 
 

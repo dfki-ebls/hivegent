@@ -9,11 +9,42 @@ chunks.
 import mimetypes
 
 from ..chunkers.base import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
+from ..config import settings
 from ..db import documents as db_documents
-from ..entries import ContentStat, EntryPaths
+from ..entries import ContentStat, EntryPaths, resolve_entry_paths
 from ..store import Casebase
 
-__all__: list[str] = []
+__all__ = ["resolve_entry"]
+
+
+def _merge_entry_paths(
+    resolved: EntryPaths, metadata: EntryMetadata | None
+) -> EntryPaths:
+    """Overlay an entry's recorded SQL paths onto the ones discovered on disk.
+
+    The SQL row wins for every companion file it names, since it knows which
+    original and assets directory belong to the entry; disk resolution fills in
+    whatever the row leaves unset, so a stray original beside an indexed
+    description is still treated as part of the entry — exactly as the inventory
+    reads already group it.
+    """
+    if metadata is None:
+        return resolved
+
+    return EntryPaths(
+        stem_path=metadata.stem_path or resolved.stem_path,
+        description_path=metadata.description_path or resolved.description_path,
+        original_path=metadata.original_path or resolved.original_path,
+        assets_dir=metadata.assets_dir or resolved.assets_dir,
+    )
+
+
+async def resolve_entry(store: Casebase, reference: str) -> EntryPaths:
+    """Resolve a logical entry's paths from disk, overlaid with its SQL row."""
+    return _merge_entry_paths(
+        resolve_entry_paths(store.workspace_dir(settings.data_dir), reference),
+        await db_documents.get_entry_metadata(store, reference),
+    )
 
 
 def _build_entry_metadata(

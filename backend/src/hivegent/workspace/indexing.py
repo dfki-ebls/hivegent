@@ -20,7 +20,7 @@ from ..db import documents as db_documents
 from ..entries import ContentStat, resolve_entry_paths
 from ..store import Casebase
 from ..text import NOT_TEXT_REASON, read_text_file
-from .locks import store_lock
+from .locks import _locked_for
 from .metadata import _entry_metadata_from_disk, _refresh_unchanged_entry
 
 __all__ = [
@@ -105,7 +105,7 @@ async def sync_entry_from_disk(store: Casebase, reference: str) -> bool:
     Lock-acquiring form of :func:`_sync_entry_from_disk_locked`.  Returns
     whether SQL changed.
     """
-    async with store_lock(store):
+    async with _locked_for(store, reference):
         return await _sync_entry_from_disk_locked(store, reference)
 
 
@@ -124,9 +124,10 @@ async def sync_entries_from_disk(store: Casebase, references: Iterable[str]) -> 
     that follow, and a single poison file can no longer strand every entry after
     it with no SQL row.
     """
-    async with store_lock(store):
+    pending = tuple(references)
+    async with _locked_for(store, *pending):
         changed = 0
-        for reference in references:
+        for reference in pending:
             try:
                 if await _sync_entry_from_disk_locked(store, reference):
                     changed += 1

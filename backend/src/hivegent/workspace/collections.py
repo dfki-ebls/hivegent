@@ -14,14 +14,15 @@ import stat
 import tempfile
 import zipfile
 import zlib
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
+from itertools import groupby
 from pathlib import Path
-from typing import Literal, Self
+from typing import Self
 
 from fastapi import HTTPException
 
-from ..concurrency import bounded_as_completed, shield_to_completion
+from ..concurrency import bounded_as_completed
 from ..config import sanitize_document_path, settings
 from ..converters.wikilinks import preprocess_markdown
 from ..entries import (
@@ -40,8 +41,7 @@ from ..types import (
     LlmConfig,
     PipelineSpec,
 )
-from .indexing import _sync_entry_from_disk_locked
-from .locks import _store_claim, store_lock
+from .locks import _store_claim
 from .uploads import upload
 
 __all__ = [
@@ -57,7 +57,6 @@ _REASON_EXISTS = "already in the workspace, delete to re-import"
 _REASON_UNREADABLE_MD = "markdown could not be read"
 _REASON_NAME_CONFLICT = "another file in this collection uses the same name"
 _REASON_OWNER_FAILED = "the document it belongs to failed to import"
-_REASON_WRITE_FAILED = "could not be written to the workspace"
 _REASON_CONVERSION = "conversion failed"
 
 
@@ -142,18 +141,6 @@ def validate_collection_archive(archive_path: Path) -> None:
 
 
 @dataclass(slots=True, frozen=True)
-class _Failed:
-    """A planning-phase drop of a member, carrying its reason for the tray."""
-
-    reason: str
-
-
-# A planned member's disposition: one of the three commit kinds, or a drop that
-# carries its own reason, so a failed role can never exist without one.
-_Role = Literal["markdown", "attachment", "companion"] | _Failed
-
-
-@dataclass(slots=True, frozen=True)
 class _PlannedFile:
     """One archive member with its workspace identity, all resolved once."""
 
@@ -193,7 +180,7 @@ def _content_relative_paths(root: Path) -> list[str]:
     for path in root.rglob("*"):
         if not path.is_file():
             continue
-        rel = str(path.relative_to(root).as_posix())
+        rel = path.relative_to(root).as_posix()
         if not is_ignorable_path(rel):
             paths.append(rel)
     return paths
@@ -225,38 +212,109 @@ def _read_markdown(
     ).content.encode("utf-8")
 
 
-async def _write_companion_original(
-    store: Casebase, extract_root: Path, planned: _PlannedFile
-) -> Literal["ok", "failed"]:
-    """Write a companion original to disk and fold it into its owner's SQL row.
+@dataclass(slots=True, frozen=True)
+class _PlannedUpload:
+    """One logical entry and any bytes already prepared during planning."""
 
-    The owning markdown committed earlier in the run; on any failure only the
-    just-written original is removed, so the owner is never rolled back with it
-    (a stem-keyed delete would take the description, its chunks, and assets too).
-    The SQL sync runs to completion even on a cancel
-    (:func:`shield_to_completion`), so a cancelled collection can never strand the
-    original on disk without its owner's row linking it.
+    entry: _PlannedFile
+    content: bytes | None = None
+    original: _PlannedFile | None = None
+
+    @property
+    def member_count(self) -> int:
+        """Return how many archive members this upload accounts for."""
+        return 1 + (self.original is not None)
+
+
+@dataclass(slots=True, frozen=True)
+class _CollectionPlan:
+    """Every archive member sorted into uploads or recorded failures.
+
+    Uploads own independent stems and can commit concurrently.  A markdown and
+    its companion original share one upload so they reserve, land, and index as
+    one logical entry.  Each markdown upload carries its preprocessed bytes so
+    commit never re-reads it.
     """
-    original_path = store.workspace_dir(settings.data_dir) / planned.safe
-    try:
-        async with store_lock(store):
-            original_bytes = (extract_root / planned.relative_path).read_bytes()
-            original_path.parent.mkdir(parents=True, exist_ok=True)
-            original_path.write_bytes(original_bytes)
-            # The owner sorts before its companion and is already indexed with no
-            # original linked; fold the just-written original into its SQL row so
-            # delete, move, and reconvert see it without waiting for a boot.
-            await shield_to_completion(
-                _sync_entry_from_disk_locked(store, planned.safe)
-            )
-    except Exception as exc:
-        logger.warning(
-            "Failed to write original %s: %s", planned.relative_path, exc, exc_info=True
-        )
-        original_path.unlink(missing_ok=True)
-        return "failed"
 
-    return "ok"
+    uploads: tuple[_PlannedUpload, ...]
+    dropped: tuple[FailedFile, ...]
+
+    @property
+    def total(self) -> int:
+        """The number of archive members the plan accounts for."""
+        return sum(upload.member_count for upload in self.uploads) + len(self.dropped)
+
+
+async def _plan_collection(
+    workspace_dir: Path,
+    extract_root: Path,
+    relative_paths: Sequence[str],
+    dest_dir: str,
+) -> _CollectionPlan:
+    """Resolve every archive member's workspace identity and its role.
+
+    A stem's markdown owns the logical entry and one sibling non-markdown folds
+    in as its companion original; a lone non-markdown becomes a standalone
+    attachment.  Members are sorted markdown-first within each stem, so the roles
+    never depend on the archive's own file order (a ``.docx`` original sorts
+    before its ``.md`` description, but must not claim the entry).
+    """
+    collection_set = frozenset(relative_paths)
+    planned = sorted(
+        (_PlannedFile.from_relative(rp, dest_dir) for rp in relative_paths),
+        key=lambda p: (p.stem, not p.is_markdown, p.relative_path),
+    )
+
+    uploads: list[_PlannedUpload] = []
+    dropped: list[FailedFile] = []
+
+    def drop(planned_file: _PlannedFile, reason: str) -> None:
+        dropped.append(_record_failure(planned_file.relative_path, reason))
+
+    for _, grouped in groupby(planned, key=lambda p: p.stem):
+        members = list(grouped)
+        if entry_exists(workspace_dir, members[0].safe):
+            for member in members:
+                drop(member, _REASON_EXISTS)
+            continue
+
+        markdown: tuple[_PlannedFile, bytes] | None = None
+        originals: list[_PlannedFile] = []
+        for member in members:
+            if not member.is_markdown:
+                originals.append(member)
+                continue
+            if markdown is not None:
+                drop(member, _REASON_NAME_CONFLICT)
+                continue
+            content = await asyncio.to_thread(
+                _read_markdown, extract_root, member, collection_set
+            )
+            if content is None:
+                drop(member, _REASON_UNREADABLE_MD)
+                continue
+            markdown = member, content
+
+        if markdown is not None:
+            markdown_file, content = markdown
+            uploads.append(
+                _PlannedUpload(
+                    entry=markdown_file,
+                    content=content,
+                    original=originals[0] if originals else None,
+                )
+            )
+            extras = originals[1:]
+        elif originals:
+            uploads.append(_PlannedUpload(entry=originals[0]))
+            extras = originals[1:]
+        else:
+            extras = []
+
+        for extra in extras:
+            drop(extra, _REASON_NAME_CONFLICT)
+
+    return _CollectionPlan(uploads=tuple(uploads), dropped=tuple(dropped))
 
 
 async def process_collection(
@@ -279,11 +337,9 @@ async def process_collection(
     delete or directory move cannot interleave between files and strip entries
     the collection already committed.
 
-    A stem's markdown owns the logical entry and one sibling non-markdown folds
-    in as its companion original; a lone non-markdown becomes a standalone
-    attachment.  Planning sorts a stem's markdown ahead of its siblings, so the
-    roles never depend on the archive's own file order (a ``.docx`` original
-    sorts before its ``.md`` description, but must not claim the entry).
+    :func:`_plan_collection` fixes every member's role up front.  A markdown and
+    its companion original flow through one upload, so neither can land without
+    the other.
     """
     validate_collection_archive(archive_path)
 
@@ -310,91 +366,38 @@ async def process_collection(
         if len(top_items) == 1 and top_items[0].is_dir():
             extract_root = top_items[0]
 
-        relative_paths = _content_relative_paths(extract_root)
-        collection_set = frozenset(relative_paths)
-        workspace_dir = store.workspace_dir(settings.data_dir)
-
-        # Markdown-first within each stem so a description claims its entry ahead
-        # of any sibling original, whatever the archive's raw ordering.
-        planned = sorted(
-            (_PlannedFile.from_relative(rp, dest_dir) for rp in relative_paths),
-            key=lambda p: (p.stem, not p.is_markdown, p.relative_path),
+        plan = await _plan_collection(
+            store.workspace_dir(settings.data_dir),
+            extract_root,
+            _content_relative_paths(extract_root),
+            dest_dir,
         )
-
-        preprocessed_markdown: dict[str, bytes] = {}
-        claimed_stems: set[str] = set()
-        original_taken: set[str] = set()
-        roles: dict[str, _Role] = {}
-
-        for p in planned:
-            if entry_exists(workspace_dir, p.safe):
-                # A stem already backed by an on-disk entry is left untouched.
-                roles[p.relative_path] = _Failed(_REASON_EXISTS)
-            elif p.stem not in claimed_stems:
-                # First file for the stem becomes its entry: a markdown is the
-                # indexed description, a non-markdown a standalone attachment.
-                claimed_stems.add(p.stem)
-                if not p.is_markdown:
-                    original_taken.add(p.stem)
-                    roles[p.relative_path] = "attachment"
-                elif (
-                    md := await asyncio.to_thread(
-                        _read_markdown, extract_root, p, collection_set
-                    )
-                ) is not None:
-                    preprocessed_markdown[p.safe] = md
-                    roles[p.relative_path] = "markdown"
-                else:
-                    # Unreadable markdown: unclaim so a sibling original can still
-                    # convert as its own attachment.
-                    claimed_stems.discard(p.stem)
-                    roles[p.relative_path] = _Failed(_REASON_UNREADABLE_MD)
-            elif not p.is_markdown and p.stem not in original_taken:
-                # The lone source original for a markdown entry this batch claimed.
-                original_taken.add(p.stem)
-                roles[p.relative_path] = "companion"
-            else:
-                # A duplicate markdown, or a second original for one stem.
-                roles[p.relative_path] = _Failed(_REASON_NAME_CONFLICT)
-
-        # Stems whose owning entry committed this run; a companion original is
-        # only written once its owner is in here, so a failed owner never leaves
-        # an orphaned original behind.
-        committed_stems: set[str] = set()
-        total = len(planned)
+        failed.extend(plan.dropped)
 
         def _progress(current: int) -> CollectionProgressEvent:
-            return CollectionProgressEvent(current=current, total=total)
-
-        # Planning already fixed every member's role, so split them once:
-        # primaries (a markdown description or a standalone attachment) own
-        # independent stems and convert/index concurrently; companions must wait
-        # for their owner; planning-phase drops need no work and are recorded now.
-        primaries: list[_PlannedFile] = []
-        companions: list[_PlannedFile] = []
-        for p in planned:
-            role = roles[p.relative_path]
-            if isinstance(role, _Failed):
-                failed.append(_record_failure(p.relative_path, role.reason))
-            elif role == "companion":
-                companions.append(p)
-            else:
-                primaries.append(p)
+            return CollectionProgressEvent(current=current, total=plan.total)
 
         completed = len(failed)
 
-        async def _run_primary(
-            p: _PlannedFile,
-        ) -> tuple[_PlannedFile, BaseException | None]:
+        async def _run_upload(
+            planned: _PlannedUpload,
+        ) -> tuple[_PlannedUpload, BaseException | None]:
             # Failures are returned, not raised, so one bad file never aborts the
             # batch; a cancel still propagates so the phased upload rolls back.
             try:
-                if p.is_markdown:
-                    content_bytes = preprocessed_markdown[p.safe]
-                else:
+                p = planned.entry
+                content_bytes = planned.content
+                if content_bytes is None:
                     content_bytes = await asyncio.to_thread(
                         (extract_root / p.relative_path).read_bytes
                     )
+                original_content = (
+                    await asyncio.to_thread(
+                        (extract_root / planned.original.relative_path).read_bytes
+                    )
+                    if planned.original is not None
+                    else None
+                )
                 await upload(
                     store,
                     p.safe,
@@ -402,21 +405,14 @@ async def process_collection(
                     spec=spec,
                     llm=llm,
                     origin="collection",
+                    original_path=(
+                        planned.original.safe if planned.original is not None else None
+                    ),
+                    original_content=original_content,
                 )
             except Exception as exc:  # noqa: BLE001
-                return p, exc
-            return p, None
-
-        async def _run_companion(p: _PlannedFile) -> tuple[_PlannedFile, str | None]:
-            # The owner sorts first and settled in the primary phase; without its
-            # committed entry there is nothing to fold this original into, and
-            # writing it would strand a file with no SQL row (reconcile ingests
-            # only markdown, never bare originals).
-            if p.stem not in committed_stems:
-                return p, _REASON_OWNER_FAILED
-            if await _write_companion_original(store, extract_root, p) == "ok":
-                return p, None
-            return p, _REASON_WRITE_FAILED
+                return planned, exc
+            return planned, None
 
         # Seed the counter (drops already included) before the first conversion
         # so the tray shows a live counter from the start; a slow first file
@@ -424,37 +420,31 @@ async def process_collection(
         # "Processing" spinner with nothing telling the user work is underway.
         yield _progress(completed)
 
-        # Primaries run concurrently up to the collection cap.  With the pool
-        # active they convert in parallel; otherwise the win is overlapping one
-        # file's embed/IO tail with the next file's conversion.
+        # Logical entries run concurrently up to the collection cap.  Markdown
+        # companions are already folded into their owner's upload.
         limit = settings.jobs.collection_concurrency
-        async for p, error in bounded_as_completed(
-            primaries, _run_primary, limit=limit
+        async for planned, error in bounded_as_completed(
+            plan.uploads, _run_upload, limit=limit
         ):
+            p = planned.entry
             if error is None:
-                committed_stems.add(p.stem)
-                # Count only on success, so the totals never overstate the import.
                 if p.is_markdown:
                     markdown_count += 1
                 else:
+                    converted_count += 1
+                if planned.original is not None:
                     converted_count += 1
             else:
                 failed.append(
                     _record_failure(p.relative_path, _REASON_CONVERSION, exc=error)
                 )
-            completed += 1
-            yield _progress(completed)
-
-        # Companions only run once every owner has settled, so they follow the
-        # primary phase; each is a quick original write plus SQL fold-in.
-        async for p, reason in bounded_as_completed(
-            companions, _run_companion, limit=limit
-        ):
-            if reason is None:
-                converted_count += 1
-            else:
-                failed.append(_record_failure(p.relative_path, reason))
-            completed += 1
+                if planned.original is not None:
+                    failed.append(
+                        _record_failure(
+                            planned.original.relative_path, _REASON_OWNER_FAILED
+                        )
+                    )
+            completed += planned.member_count
             yield _progress(completed)
 
     yield CollectionCompleteEvent(

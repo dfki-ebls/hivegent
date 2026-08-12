@@ -7,6 +7,7 @@ entry is rolled back wholesale rather than left as an orphan.
 """
 
 import io
+from pathlib import Path
 from typing import ClassVar
 
 import PIL.Image
@@ -15,9 +16,11 @@ import pytest
 from fastapi import HTTPException
 
 from hivegent import workspace
+from hivegent.chunkers.base import EntryMetadata
 from hivegent.config import settings
 from hivegent.db import documents as db_documents
 from hivegent.store import Casebase
+from hivegent.types import LlmConfig
 from hivegent.workspace import commit, prepare
 
 
@@ -100,7 +103,7 @@ async def test_failed_commit_leaves_no_orphan(
     monkeypatch.setattr(commit, "chunk_and_index_document", boom)
     # The rollback resolves the entry from disk and drops its index rows; stub
     # the SQL touches so the test stays off any live database.
-    monkeypatch.setattr(db_documents, "get_document", no_metadata)
+    monkeypatch.setattr(db_documents, "get_entry_metadata", no_metadata)
     monkeypatch.setattr(commit, "delete_chunked_document", noop_delete)
 
     with pytest.raises(RuntimeError):
@@ -130,6 +133,81 @@ async def test_image_upload_stores_original_verbatim(
 
     workspace_dir = user_store.workspace_dir(settings.data_dir)
     assert (workspace_dir / "photo.png").read_bytes() == raw
+
+
+async def test_markdown_and_companion_original_land_as_one_entry(
+    monkeypatch: pytest.MonkeyPatch, user_store: Casebase
+) -> None:
+    indexed_originals: list[str | None] = []
+
+    async def fake_chunk(*_args: object, **kwargs: object) -> _Chunked:
+        metadata = kwargs["entry_metadata"]
+        assert isinstance(metadata, EntryMetadata)
+        indexed_originals.append(metadata.original_path)
+        return _Chunked()
+
+    monkeypatch.setattr(commit, "chunk_and_index_document", fake_chunk)
+
+    await workspace.upload(
+        user_store,
+        "report.md",
+        b"# Report\n",
+        original_path="report.pdf",
+        original_content=b"%PDF",
+    )
+
+    workspace_dir = user_store.workspace_dir(settings.data_dir)
+    assert (workspace_dir / "report.md").read_text() == "# Report\n"
+    assert (workspace_dir / "report.pdf").read_bytes() == b"%PDF"
+    assert indexed_originals == ["report.pdf"]
+
+
+async def test_replace_restores_entry_when_staged_install_fails(
+    monkeypatch: pytest.MonkeyPatch, user_store: Casebase
+) -> None:
+    async def fake_describe(*_args: object, **_kwargs: object) -> str:
+        return "old caption\n"
+
+    async def fake_chunk(*_args: object, **_kwargs: object) -> _Chunked:
+        return _Chunked()
+
+    async def no_metadata(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def noop_delete_subtree(*_args: object, **_kwargs: object) -> int:
+        return 0
+
+    monkeypatch.setattr(prepare, "_build_image_description", fake_describe)
+    monkeypatch.setattr(commit, "chunk_and_index_document", fake_chunk)
+    await workspace.upload(user_store, "photo.png", b"old image")
+
+    workspace_dir = user_store.workspace_dir(settings.data_dir)
+    assets = workspace_dir / "photo.assets"
+    assets.mkdir()
+    (assets / "old.png").write_bytes(b"old asset")
+    monkeypatch.setattr(db_documents, "get_entry_metadata", no_metadata)
+    monkeypatch.setattr(db_documents, "delete_subtree", noop_delete_subtree)
+
+    real_replace = Path.replace
+    failed = False
+
+    def fail_new_original(self: Path, target: Path) -> Path:
+        nonlocal failed
+        if not failed and self.name == "photo.png" and self.parent.name == "new":
+            failed = True
+            raise OSError("simulated replacement failure")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_new_original)
+
+    with pytest.raises(OSError, match="simulated replacement failure"):
+        await workspace.replace_original(
+            user_store, "photo.png", b"new image", new_filename="photo.png"
+        )
+
+    assert (workspace_dir / "photo.png").read_bytes() == b"old image"
+    assert (workspace_dir / "photo.md").read_text() == "old caption\n"
+    assert (assets / "old.png").read_bytes() == b"old asset"
 
 
 async def test_upload_rejects_stem_already_in_flight(
@@ -166,6 +244,17 @@ async def test_destructive_ops_reject_while_stem_in_flight(
         workspace.rechunk(user_store, "docs/note.md"),
         workspace.write_document_text(user_store, "docs/note.md", "x"),
         workspace.edit_document_text(user_store, "docs/note.md", "a", "b"),
+        workspace.create_directory(user_store, "docs/note.md"),
+        workspace.sync_entry_from_disk(user_store, "docs/note.md"),
+        workspace.update_asset_description(
+            user_store, "docs/note.md", "img1.png", "caption"
+        ),
+        workspace.generate_asset_description(
+            user_store, "docs/note.md", "img1.png", LlmConfig()
+        ),
+        workspace.delete_asset_description(
+            user_store, "docs/note.md", "img1.png"
+        ),
         # The upload owns the asset entries under its stem's `.assets` too, and
         # those are reachable only by their own stems — the claim has to cover
         # them or the index step could re-create rows for just-deleted files.
@@ -212,7 +301,7 @@ async def test_reprocess_failure_preserves_existing_entry(
     async def boom_prepare(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("conversion failed")
 
-    monkeypatch.setattr(db_documents, "get_document", no_metadata)
+    monkeypatch.setattr(db_documents, "get_entry_metadata", no_metadata)
     monkeypatch.setattr(commit, "_prepare_upload", boom_prepare)
 
     with pytest.raises(RuntimeError):
