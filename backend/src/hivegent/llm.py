@@ -124,11 +124,22 @@ def create_openai_chat_model(
     # callback receives the provider's already-resolved default profile;
     # ``merge_profile`` layers our override on top (profiles are now
     # ``TypedDict``, so the old ``.update()`` method is gone).
+    #
+    # Per-capability instructions render as one ``system`` message each.  The
+    # real OpenAI API accepts that, but a self-hosted chat template (Qwen under
+    # vLLM) rejects the second one with "System message must be at the
+    # beginning.", so ask pydantic-ai to merge the leading system messages into
+    # one — semantically identical, and harmless for endpoints that would have
+    # accepted the split form.
     return OpenAIChatModel(
         model,
         provider=provider,
         profile=lambda profile: merge_profile(
-            profile, OpenAIModelProfile(supports_thinking=True)
+            profile,
+            OpenAIModelProfile(
+                supports_thinking=True,
+                openai_chat_supports_multiple_system_messages=False,
+            ),
         ),
     )
 
