@@ -130,6 +130,16 @@ class TestWriteDocumentText:
         assert "Wrote" in result
         assert (workspace_dir / "new.md").read_text() == "content"
 
+    async def test_replace_creates_missing_parent_directories(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        """A new document lands wherever its path says, folders and all."""
+        result = await workspace.write_document_text(
+            user_store, "reports/2026/q1.md", "content"
+        )
+        assert "Wrote" in result
+        assert (workspace_dir / "reports" / "2026" / "q1.md").read_text() == "content"
+
     async def test_create_mode_rejects_existing_path(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:

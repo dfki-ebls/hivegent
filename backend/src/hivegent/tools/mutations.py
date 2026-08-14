@@ -8,11 +8,19 @@ from typing import Annotated, Literal, override
 from fastapi import HTTPException
 from pydantic import Field
 
-from .base import AsyncPathTool, ToolOutput, ToolRetry, resolve_accessible_file
-from .documents import DocumentFilePathArg
+from .base import (
+    WORKSPACE_PATH_HINT,
+    AsyncPathTool,
+    SearchPath,
+    ToolOutput,
+    ToolRetry,
+    resolve_accessible_file,
+    workspace_root_hint,
+)
 
 __all__ = [
     "DocumentContentArg",
+    "DocumentTargetPathArg",
     "EditDocumentTool",
     "EditMutation",
     "EditNewStringArg",
@@ -22,6 +30,17 @@ __all__ = [
     "WriteDocumentTool",
     "WriteModeArg",
     "WriteMutation",
+]
+
+DocumentTargetPathArg = Annotated[
+    str,
+    Field(
+        description=(
+            f"Path of the document to mutate. {WORKSPACE_PATH_HINT} A document "
+            "you create needs a full path composed the same way; missing "
+            "subdirectories are created."
+        ),
+    ),
 ]
 
 EditOldStringArg = Annotated[
@@ -73,15 +92,36 @@ WriteModeArg = Annotated[
 ]
 
 EditMutation = Callable[[str, str, str, bool, str | None], Awaitable[str]]
-"""Canonical edit operation for a resolved local document path."""
+"""Canonical edit operation for a resolved document path.
+
+The path is rendered under the search path that claimed it, so a caller
+spanning several roots can route the mutation to the right one.
+"""
 
 WriteMutation = Callable[[str, str, WriteModeArg, str | None], Awaitable[str]]
-"""Canonical write operation for a resolved local document path."""
+"""Canonical write operation for a resolved document path, rendered as for
+:data:`EditMutation`."""
 
 
 def _mutation_detail(exc: HTTPException | ValueError) -> str:
     """Extract the human-readable detail from a failed-mutation exception."""
     return exc.detail if isinstance(exc, HTTPException) else str(exc)
+
+
+def _resolve_target(paths: tuple[SearchPath, ...], file_path: str) -> tuple[str, str]:
+    """Resolve *file_path* for a mutation, or raise a correctable refusal.
+
+    Returns the path rendered under the root that claimed it (what the mutator
+    routes on) and the local path (what a glob is matched against).  Unlike a
+    read, the document need not exist: a mutation may create it.
+    """
+    resolved = resolve_accessible_file(paths, file_path)
+    if resolved is None:
+        hint = workspace_root_hint(paths, file_path)
+        raise ToolRetry(f"'{file_path}' is not accessible.{hint}")
+    sp, local, _absolute = resolved
+
+    return sp.prefixed(local), local
 
 
 @dataclass(slots=True, frozen=True)
@@ -98,7 +138,7 @@ class EditDocumentTool(AsyncPathTool[str]):
     @override
     async def __call__(
         self,
-        file_path: DocumentFilePathArg,
+        file_path: DocumentTargetPathArg,
         old_string: EditOldStringArg,
         new_string: EditNewStringArg,
         replace_all: EditReplaceAllArg = False,
@@ -118,13 +158,10 @@ class EditDocumentTool(AsyncPathTool[str]):
         document, image, video) cannot be edited — replace it by
         uploading a new version instead.
         """
-        resolved = resolve_accessible_file(self.resolved_paths, file_path)
-        if resolved is None:
-            raise ToolRetry(f"'{file_path}' is not accessible.")
-        _sp, local, _absolute = resolved
+        target, _local = _resolve_target(self.resolved_paths, file_path)
         try:
             data = await self.mutator(
-                local, old_string, new_string, replace_all, expected_hash
+                target, old_string, new_string, replace_all, expected_hash
             )
         except (HTTPException, ValueError) as exc:
             raise ToolRetry(_mutation_detail(exc)) from exc
@@ -146,7 +183,7 @@ class WriteDocumentTool(AsyncPathTool[str]):
     @override
     async def __call__(
         self,
-        file_path: DocumentFilePathArg,
+        file_path: DocumentTargetPathArg,
         content: DocumentContentArg,
         mode: WriteModeArg = "replace",
         expected_hash: ExpectedHashArg = None,
@@ -165,14 +202,11 @@ class WriteDocumentTool(AsyncPathTool[str]):
         markdown or as a plain-text format; any other format has to be
         uploaded.
         """
-        resolved = resolve_accessible_file(self.resolved_paths, file_path)
-        if resolved is None:
-            raise ToolRetry(f"'{file_path}' is not accessible.")
-        _sp, local, _absolute = resolved
+        target, local = _resolve_target(self.resolved_paths, file_path)
         if self.glob and not PurePosixPath(local).match(self.glob):
             raise ToolRetry(f"'{file_path}' does not match pattern '{self.glob}'.")
         try:
-            data = await self.mutator(local, content, mode, expected_hash)
+            data = await self.mutator(target, content, mode, expected_hash)
         except (HTTPException, ValueError) as exc:
             raise ToolRetry(_mutation_detail(exc)) from exc
         return ToolOutput(data=data)

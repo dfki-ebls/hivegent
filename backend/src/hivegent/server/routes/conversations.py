@@ -58,6 +58,7 @@ from ...prompts import (
     LANGUAGE_INSTRUCTIONS,
     MATH_INSTRUCTIONS,
     PERSONALITY_TEMPLATES,
+    WORKSPACE_PATH_INSTRUCTIONS,
     Personality,
     join_instructions,
 )
@@ -457,6 +458,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     parts.extend(
         [
             LANGUAGE_INSTRUCTIONS,
+            WORKSPACE_PATH_INSTRUCTIONS,
             CITATION_INSTRUCTIONS,
             IMAGE_INSTRUCTIONS,
             MATH_INSTRUCTIONS,
@@ -470,6 +472,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
 
     store = user_store(user)
     user_group_stores = group_stores(user)
+    writable_group_stores = group_stores(user, writable=True)
 
     thinking = resolve_thinking(config.reasoning_effort)
     model_settings = thinking_model_settings(thinking, config.llm)
@@ -504,6 +507,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         user_id=user.id,
         store=store,
         group_stores=user_group_stores,
+        write_group_stores=writable_group_stores,
         document_filter=document_filter,
         group_filters=group_filters,
         llm=config.llm,

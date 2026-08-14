@@ -94,15 +94,21 @@ So `_run_chat` reserves that node id before the run (`append_branch(head_id=...)
 Without it, editing a message sent earlier in the same session would resolve to no fork point and silently continue the conversation instead of forking at it — the client would drop the later messages while the server kept and replayed them.
 Only a request carrying a user prompt reserves an id, and `resolve_fork` treats a `messageId` as an edit only when it names a user turn on the active path: the AI SDK also sends `messageId` when it auto-continues a turn after a tool approval, where it names the assistant message that requested it.
 
+That auto-continuation is also why `ChatAdapter` keeps only the client's *user* messages (`messages` in `server/vercel.py`).
+The base adapter appends whatever the request carries on top of the caller's `message_history`, and the SDK's approval resend is the assistant message holding the pending tool call — already the last message of the replayed prefix.
+Appending it would put the same `tool_call_id` in the history twice: pydantic-ai closes the stored copy with a synthetic "interrupted" return and gives only the echo the real result, so the model sees its call interrupted and reissues it, which is the approval loop.
+The decision itself is unaffected, since `deferred_tool_results` reads it from the request rather than from the loaded messages.
+The frontend includes an explicit reason with a denial, which pydantic-ai maps to `ToolDenied` and returns to the model instead of its bare default message.
+
 Because history is loaded from SQL, there is no browser round-trip to strip `ToolReturnPart.metadata`, and the client-trust surface shrinks from the whole conversation to one new message.
 Persistence is therefore hard-fail: a failed write surfaces as a trailing error chunk on a clean drain (no echo to recover from), and is only logged on a client disconnect.
 
 ### Interrupted turns and pydantic-ai v2
 
 `run_and_persist` persists exactly what `capture_run_messages()` holds, with no reconstruction.
-On pydantic-ai 1.x a clean or errored turn keeps its prompt and completed messages, but an answer cut off mid-stream leaves no partial in the captured list, so it is not persisted.
-pydantic-ai v2 makes `capture_run_messages()` capture partial messages from interrupted runs directly (a v2.0.0b1 change), so the same `captured[len(prefix):]` tail will then include the partial with no code change here.
-The v2 bump is gated on the whole 2.0 major release (still beta, and needing a v2-compatible `pydantic-ai-harness`); its other breaking changes do not affect this backend, which pins `pydantic-ai-slim[ui,openai,mcp]`, builds models through `OpenAIChatModel`, and ships its own `WebSearch`/`WebFetch` tools rather than the native builtins.
+On pydantic-ai v2 that list also holds the partial messages of an interrupted run, so an answer cut off mid-stream is persisted by the same `captured[len(prefix):]` tail with no code of its own.
+A turn that never finished still has to be normalized before it is stored: `close_orphan_tool_calls` closes the call the error aborted (an unresolved call would otherwise reload as an approval request and make the history invalid to replay), and `record_turn_error` keeps the error text for the reloaded banner.
+A clean finish is stored untouched, so a genuinely approval-pending call stays dangling and reloads as the approval request it is.
 
 ## Filesystem as the source of truth for content
 

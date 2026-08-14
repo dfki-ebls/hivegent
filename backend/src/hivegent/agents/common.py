@@ -7,8 +7,10 @@ from typing import Annotated
 from pydantic import Field
 from pydantic_ai import RunContext
 
+from ..config import settings
 from ..prompts import format_document_scope
-from ..store import Casebase
+from ..store import Casebase, build_search_paths
+from ..tools.base import SearchPath
 from ..types import DocumentFilter, LlmConfig
 from .subagent_events import SubagentUpdate
 
@@ -36,6 +38,10 @@ class UserDeps:
     user_id: str
     store: Casebase
     group_stores: tuple[Casebase, ...] = ()
+    # The subset of `group_stores` the user may write to; the mutating tools
+    # search these instead of every readable one, so a document the user can
+    # only read is never offered as a write target.
+    write_group_stores: tuple[Casebase, ...] = ()
     document_filter: DocumentFilter | None = None
     group_filters: dict[str, DocumentFilter] = field(default_factory=dict)
     llm: LlmConfig | None = None
@@ -47,6 +53,27 @@ class UserDeps:
     def all_stores(self) -> tuple[Casebase, ...]:
         """All stores the user has access to (personal + group)."""
         return (self.store, *self.group_stores)
+
+    @property
+    def writable_stores(self) -> tuple[Casebase, ...]:
+        """The stores the user may mutate (personal + writable groups)."""
+        return (self.store, *self.write_group_stores)
+
+    def search_paths(self, *, writable: bool = False) -> tuple[SearchPath, ...]:
+        """Workspace roots for this run's document tools, filters applied.
+
+        *writable* narrows the groups to those the user may mutate and stops
+        the lookup from creating directories: a mutation creates its own
+        destination downstream, so offering the write tools a root must not
+        materialise an empty workspace for every group the user can write to.
+        """
+        return build_search_paths(
+            self.store,
+            self.write_group_stores if writable else self.group_stores,
+            settings.data_dir,
+            dir_fn=Casebase.workspace_path if writable else Casebase.workspace_dir,
+            filter_for_store=self.filter_for_store,
+        )
 
     def filter_for_store(self, store: Casebase) -> DocumentFilter | None:
         """Get the applicable DocumentFilter for a specific store.

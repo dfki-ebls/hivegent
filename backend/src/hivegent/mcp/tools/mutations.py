@@ -1,7 +1,6 @@
 """Mutation-oriented MCP tool registrations."""
 
 from collections.abc import Awaitable
-from functools import partial
 
 from fastmcp import Context
 from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAccessIssue]
@@ -9,12 +8,12 @@ from fastmcp.exceptions import ToolError
 
 from ... import workspace
 from ...config import settings
-from ...store import Casebase
+from ...store import Casebase, scoped_operation
 from ...tools import EditDocumentTool, WriteDocumentTool
 from ...tools.base import SearchPath, ToolOutput, tool_description, translate_tool_retry
-from ...tools.documents import DocumentFilePathArg
 from ...tools.mutations import (
     DocumentContentArg,
+    DocumentTargetPathArg,
     EditNewStringArg,
     EditOldStringArg,
     EditReplaceAllArg,
@@ -35,7 +34,7 @@ async def _apply(result: Awaitable[ToolOutput[str]]) -> str:
 
 @mcp_app.tool(description=tool_description(EditDocumentTool))
 async def edit_document(
-    file_path: DocumentFilePathArg,
+    file_path: DocumentTargetPathArg,
     old_string: EditOldStringArg,
     new_string: EditNewStringArg,
     ctx: Context,
@@ -57,7 +56,7 @@ async def edit_document(
         paths=SearchPath(
             path=store.workspace_dir(settings.data_dir), scope=store.scope
         ),
-        mutator=partial(workspace.edit_document_text, store),
+        mutator=scoped_operation(workspace.edit_document_text, (store,)),
     )
     return await _apply(
         tool(file_path, old_string, new_string, replace_all, expected_hash)
@@ -66,7 +65,7 @@ async def edit_document(
 
 @mcp_app.tool(description=tool_description(WriteDocumentTool))
 async def write_document(
-    file_path: DocumentFilePathArg,
+    file_path: DocumentTargetPathArg,
     content: DocumentContentArg,
     ctx: Context,
     mode: WriteModeArg = "replace",
@@ -85,6 +84,6 @@ async def write_document(
         paths=SearchPath(
             path=store.workspace_dir(settings.data_dir), scope=store.scope
         ),
-        mutator=partial(workspace.write_document_text, store),
+        mutator=scoped_operation(workspace.write_document_text, (store,)),
     )
     return await _apply(tool(file_path, content, mode, expected_hash))

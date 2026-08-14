@@ -28,7 +28,14 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputSpec
-from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
+from pydantic_ai.ui.vercel_ai.request_types import (
+    SubmitMessage,
+    TextUIPart,
+    ToolApprovalRequestedPart,
+    ToolApprovalResponded,
+    ToolApprovalRespondedPart,
+    UIMessage,
+)
 from starlette.responses import StreamingResponse
 
 import hivegent.server.vercel as vercel_module
@@ -36,11 +43,14 @@ from hivegent.db.conversations import ActiveNode, _fork_for_path, import_convers
 from hivegent.server.vercel import (
     CHAT_ERROR_KEY,
     REASONING_DURATIONS_KEY,
+    SDK_VERSION,
     ChatAdapter,
     PersistTurn,
     dump_messages_with_ids,
     run_and_persist,
 )
+
+_TOOL_DENIED_REASON = "The user rejected this tool call. Do not retry it."
 
 
 def _texts(messages: Sequence[ModelMessage]) -> list[str]:
@@ -53,12 +63,23 @@ def _texts(messages: Sequence[ModelMessage]) -> list[str]:
     ]
 
 
+def _ui_messages(messages: Sequence[ModelMessage]) -> list[UIMessage]:
+    """Project *messages* the way a reload does, with placeholder node ids."""
+    return dump_messages_with_ids([(f"n{i}", m) for i, m in enumerate(messages)])
+
+
+def _parts[T](messages: Sequence[ModelMessage], kind: type[T]) -> list[T]:
+    """Every part of *kind* across *messages*, in order."""
+    return [
+        part for message in messages for part in message.parts if isinstance(part, kind)
+    ]
+
+
 def _tool_states(messages: Sequence[ModelMessage]) -> list[str | None]:
     """Reload states of the tool cards a message list projects to."""
-    ui = dump_messages_with_ids([(f"n{i}", m) for i, m in enumerate(messages)])
     return [
         getattr(part, "state", None)
-        for message in ui
+        for message in _ui_messages(messages)
         for part in message.parts
         if str(getattr(part, "type", "")).startswith("tool-")
     ]
@@ -97,6 +118,7 @@ def _adapter(
         run_input=SubmitMessage(
             id="c1", messages=ui_messages, trigger="submit-message"
         ),
+        sdk_version=SDK_VERSION,
     )
 
 
@@ -185,17 +207,11 @@ async def test_errored_turn_closes_its_dangling_tool_call() -> None:
     messages = recorded[0]
 
     assert "q1" in _texts(messages)
-    call = next(
-        part
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolCallPart)
-    )
+    call = _parts(messages, ToolCallPart)[0]
     ret = next(
         part
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_call_id == call.tool_call_id
+        for part in _parts(messages, ToolReturnPart)
+        if part.tool_call_id == call.tool_call_id
     )
     assert ret.outcome == "failed"
     assert "simulated tool failure" in str(ret.content)
@@ -216,12 +232,63 @@ async def test_approval_pending_turn_keeps_its_dangling_call() -> None:
     )
     messages = recorded[0]
 
-    assert not any(
-        isinstance(part, ToolReturnPart)
-        for message in messages
-        for part in message.parts
-    )
+    assert not _parts(messages, ToolReturnPart)
     assert _tool_states(messages) == ["approval-requested"]
+
+
+def _answer_approval(pending: Sequence[ModelMessage], *, approved: bool) -> UIMessage:
+    """Echo the assistant message holding the pending call, approval answered.
+
+    Exactly what the AI SDK re-sends when it auto-continues: the last message,
+    with its tool part flipped to ``approval-responded``.
+    """
+    message = _ui_messages(pending)[-1]
+    message.parts = [
+        ToolApprovalRespondedPart(
+            type=part.type,
+            tool_call_id=part.tool_call_id,
+            input=part.input,
+            approval=ToolApprovalResponded(
+                id=part.tool_call_id,
+                approved=approved,
+                reason=None if approved else _TOOL_DENIED_REASON,
+            ),
+        )
+        for part in message.parts
+        if isinstance(part, ToolApprovalRequestedPart)
+    ]
+    return message
+
+
+@pytest.mark.parametrize("approved", [True, False])
+async def test_answered_approval_resolves_the_stored_call_once(
+    approved: bool,
+) -> None:
+    """The continuation resolves the stored call instead of replaying it.
+
+    Replaying the client echo on top of the server-side prefix would duplicate
+    the ``tool_call_id`` and loop the run (see ``backend/README.md``).
+    """
+    pending, _ = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        tool_needs_approval=True,
+    )
+    recorded, _ = await _run_turn(
+        [_answer_approval(pending[0], approved=approved)],
+        message_history=pending[0],
+        tool_needs_approval=True,
+    )
+    messages = recorded[0]
+
+    calls = _parts(messages, ToolCallPart)
+    returns = _parts(messages, ToolReturnPart)
+
+    assert len(calls) == 1
+    assert len(returns) == 1
+    assert returns[0].tool_call_id == calls[0].tool_call_id
+    assert str(returns[0].content) == (
+        "written" if approved else _TOOL_DENIED_REASON
+    )
 
 
 async def test_generic_run_error_is_recorded_for_reload() -> None:

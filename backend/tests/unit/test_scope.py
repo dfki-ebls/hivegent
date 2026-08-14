@@ -2,7 +2,7 @@
 
 import pytest
 
-from hivegent.store import WorkspaceScope
+from hivegent.store import Casebase, WorkspaceScope, scoped_operation
 
 
 class TestWorkspaceScope:
@@ -28,3 +28,25 @@ class TestWorkspaceScope:
     def test_parse_requires_a_prefix(self) -> None:
         with pytest.raises(ValueError):
             WorkspaceScope.parse("reports/q1.md")
+
+
+class TestScopedOperation:
+    """Routing a canonical path to the store it names."""
+
+    _stores = (Casebase.for_user("u"), Casebase.for_group("team"))
+
+    @staticmethod
+    async def _op(store: Casebase, local: str, suffix: str) -> str:
+        return f"{store.store_key}:{local}:{suffix}"
+
+    async def test_runs_against_each_addressed_store(self) -> None:
+        run = scoped_operation(self._op, self._stores)
+
+        assert await run("~/notes.md", "x") == "user:u:notes.md:x"
+        assert await run("@team/notes.md", "x") == "group:team:notes.md:x"
+
+    async def test_rejects_a_store_outside_the_given_set(self) -> None:
+        run = scoped_operation(self._op, self._stores)
+
+        with pytest.raises(ValueError, match="No accessible workspace"):
+            await run("@other/notes.md", "x")

@@ -42,6 +42,7 @@ from .base import (
     ToolRetry,
     resolve_accessible_file,
     sidecar_hint,
+    workspace_root_hint,
 )
 
 __all__ = [
@@ -136,7 +137,8 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
         """
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None or not resolved[2].is_file():
-            raise ToolRetry(f"'{file_path}' not found.")
+            roots = workspace_root_hint(self.resolved_paths, file_path)
+            raise ToolRetry(f"'{file_path}' not found.{roots}")
         sp, local, absolute = resolved
         canonical = sp.prefixed(local)
 

@@ -37,6 +37,11 @@ interface ChatSidebarProps {
   onNewDraft?: () => void;
 }
 
+const TOOL_DENIED_REASON =
+  "The user rejected this tool call, so it was not executed. " +
+  "Do not call the same tool again with the same or similar arguments. " +
+  "Stop working on this step, tell the user what you were about to do, and wait for their instructions.";
+
 export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps) {
   const navigate = useNavigate();
   const addChunk = useFetchedDocumentsStore((state) => state.addChunk);
@@ -319,7 +324,13 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
             onSubmitEdit={handleEditMessage}
             onRegenerate={handleRegenerate}
             onApprove={(approvalId) => addToolApprovalResponse({ id: approvalId, approved: true })}
-            onDeny={(approvalId) => addToolApprovalResponse({ id: approvalId, approved: false })}
+            onDeny={(approvalId) =>
+              addToolApprovalResponse({
+                id: approvalId,
+                approved: false,
+                reason: TOOL_DENIED_REASON,
+              })
+            }
             onExecutePlan={agentMode === "plan" ? handleExecutePlan : undefined}
           />
         </SubagentLiveProvider>

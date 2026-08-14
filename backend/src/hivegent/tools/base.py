@@ -52,6 +52,7 @@ __all__ = [
     "tool_description",
     "tool_name",
     "translate_tool_retry",
+    "workspace_root_hint",
 ]
 
 
@@ -288,6 +289,30 @@ def resolve_accessible_file(
     if not absolute.is_relative_to(sp.path.resolve()):
         return None
     return sp, local, absolute
+
+
+def workspace_root_hint(paths: tuple[SearchPath, ...], file_path: str) -> str:
+    """Name the addressable roots when *file_path* leads with none of them.
+
+    Every refusal on a path argument ends here, so a caller that dropped the
+    prefix is told which roots exist rather than left to guess another spelling
+    — the one correction it cannot derive from context, since no root is
+    implied.  Empty when the path does name a known root (the refusal then has
+    another cause — a missing file, a filtered document, a traversal escape —
+    that listing roots would only muddle) and empty for a single unscoped root,
+    which has no prefix to give.
+    """
+    if resolve_search_path(paths, file_path) is not None:
+        return ""
+
+    roots = [root for sp in paths if (root := sp.prefixed(""))]
+    if not roots:
+        return ""
+
+    return (
+        f" This tool addresses {', '.join(roots)}; give the full path, "
+        "leading with one of them."
+    )
 
 
 def sidecar_hint(file_path: str) -> str:

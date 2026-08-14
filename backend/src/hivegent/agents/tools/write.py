@@ -1,13 +1,10 @@
 """Write-oriented agent tool registrations."""
 
-from functools import partial
-
 from pydantic_ai import FunctionToolset
 
 from ... import workspace
-from ...config import settings
+from ...store import scoped_operation
 from ...tools import EditDocumentTool, WriteDocumentTool
-from ...tools.base import SearchPath
 from ...tools.pydantic_ai import register_agent_tools
 from ..common import UserDeps
 
@@ -16,23 +13,15 @@ __all__ = ["write_toolset"]
 
 def _edit_document(deps: UserDeps) -> EditDocumentTool:
     return EditDocumentTool(
-        paths=SearchPath(
-            path=deps.store.workspace_dir(settings.data_dir),
-            scope=deps.store.scope,
-            filter_func=deps.document_filter,
-        ),
-        mutator=partial(workspace.edit_document_text, deps.store),
+        paths=deps.search_paths(writable=True),
+        mutator=scoped_operation(workspace.edit_document_text, deps.writable_stores),
     )
 
 
 def _write_document(deps: UserDeps) -> WriteDocumentTool:
     return WriteDocumentTool(
-        paths=SearchPath(
-            path=deps.store.workspace_dir(settings.data_dir),
-            scope=deps.store.scope,
-            filter_func=deps.document_filter,
-        ),
-        mutator=partial(workspace.write_document_text, deps.store),
+        paths=deps.search_paths(writable=True),
+        mutator=scoped_operation(workspace.write_document_text, deps.writable_stores),
     )
 
 

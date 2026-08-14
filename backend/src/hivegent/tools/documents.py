@@ -28,6 +28,7 @@ from .base import (
     read_text_or_retry,
     resolve_accessible_file,
     sidecar_hint,
+    workspace_root_hint,
 )
 from .formatting import annotate_lines
 
@@ -539,7 +540,8 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         """
         resolved = resolve_accessible_file(self.resolved_paths, file_path)
         if resolved is None or not resolved[2].is_file():
-            raise ToolRetry(f"'{file_path}' not found.")
+            roots = workspace_root_hint(self.resolved_paths, file_path)
+            raise ToolRetry(f"'{file_path}' not found.{roots}")
         _sp, _local, absolute = resolved
 
         # Reads are uniform: the requested file is read as text and never

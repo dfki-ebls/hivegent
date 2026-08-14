@@ -51,6 +51,7 @@ async def run_tool(
         user_id=user.id,
         store=user_store(user),
         group_stores=group_stores(user),
+        write_group_stores=group_stores(user, writable=True),
     )
     text: str | None = None
     data: Any = None

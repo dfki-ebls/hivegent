@@ -9,10 +9,10 @@ derives from the document FK — one identifier keys filesystem and SQL
 end-to-end.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Self, cast, get_args
+from typing import Concatenate, Literal, Self, cast, get_args
 
 from .config import sanitize_group_id, sanitize_user_id
 from .tools.base import SearchPath, SearchPathFilterFunc
@@ -24,6 +24,7 @@ __all__ = [
     "CasebaseKind",
     "WorkspaceScope",
     "build_search_paths",
+    "scoped_operation",
 ]
 
 CasebaseKind = Literal["user", "group"]
@@ -195,3 +196,29 @@ def build_search_paths(
         )
         for s in (store, *group_stores)
     )
+
+
+def scoped_operation[**P, R](
+    operation: Callable[Concatenate[Casebase, str, P], Awaitable[R]],
+    stores: Sequence[Casebase],
+) -> Callable[Concatenate[str, P], Awaitable[R]]:
+    """Front a ``(store, local_path, ...)`` operation with a canonical path.
+
+    Every workspace operation takes the store and the path local to it, while a
+    tool is handed one canonical path (``~/notes.md``, ``@team/notes.md``) that
+    names both.  This routes the one back to the other — the inverse of what
+    :func:`build_search_paths` renders into tool output — so an operation
+    reaches whichever of *stores* the caller addressed instead of a single one
+    bound up front.  A path naming a store outside *stores* raises, since the
+    caller may not reach it.
+    """
+
+    async def run(path: str, *args: P.args, **kwargs: P.kwargs) -> R:
+        scope, local = WorkspaceScope.parse(path)
+        store = next((s for s in stores if s.scope == scope), None)
+        if store is None:
+            raise ValueError(f"No accessible workspace for {path!r}")
+
+        return await operation(store, local, *args, **kwargs)
+
+    return run

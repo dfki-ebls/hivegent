@@ -17,7 +17,7 @@ export function ToolFallback({ toolName, part, formatted, onApprove, onDeny }: T
   const approval = "approval" in part ? (part as ToolUIPart).approval : undefined;
 
   return (
-    <ToolCard toolName={toolName} part={part} defaultOpen={state === "approval-requested"}>
+    <ToolCard toolName={toolName} part={part}>
       {approval && (
         <ApprovalRequest
           toolName={toolName}

@@ -113,9 +113,16 @@ def group_store(group_id: str) -> Casebase:
     return Casebase.for_group(group_id)
 
 
-def group_stores(user: User) -> tuple[Casebase, ...]:
-    """Build group casebases for every group the user belongs to."""
-    return tuple(group_store(group_id) for group_id in user.all_groups)
+def group_stores(user: User, *, writable: bool = False) -> tuple[Casebase, ...]:
+    """Build group casebases for the groups the user belongs to.
+
+    With *writable* only the groups the user may write to are returned, the
+    same permission :func:`resolve_workspace_path` enforces on the HTTP write
+    routes, so the agent's mutating tools reach exactly the workspaces the API
+    would let the user mutate by hand.
+    """
+    groups = user.write_groups if writable else user.all_groups
+    return tuple(group_store(group_id) for group_id in groups)
 
 
 def parse_pipeline_spec(raw: str) -> PipelineSpec:

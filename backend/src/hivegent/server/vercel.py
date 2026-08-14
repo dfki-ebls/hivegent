@@ -28,7 +28,8 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import dataclass, field
-from typing import Any, TypedDict
+from functools import cached_property
+from typing import Any, TypedDict, override
 
 from pydantic_ai import AgentRunResultEvent, capture_run_messages
 from pydantic_ai.messages import (
@@ -176,7 +177,7 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
 
 
 class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
-    """``VercelAIAdapter`` wired to :class:`ChatEventStream`."""
+    """``VercelAIAdapter`` wired to :class:`ChatEventStream`, client echo dropped."""
 
     def build_event_stream(self) -> ChatEventStream[DepsT, OutputT]:
         return ChatEventStream(
@@ -186,6 +187,22 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
             server_message_id=self.server_message_id,
         )
 
+    @cached_property
+    @override
+    def messages(self) -> list[ModelMessage]:
+        """The client's own new prompt only — the server owns the rest.
+
+        The base adapter appends the request's messages to the caller's
+        ``message_history``, and the SDK's approval continuation re-sends the
+        assistant message holding the pending call — already the last message
+        of the replayed prefix, so appending it duplicates the ``tool_call_id``
+        and loops the run (see ``backend/README.md``).  Approval decisions are
+        unaffected: :attr:`deferred_tool_results` reads them from the request
+        itself rather than from these messages.
+        """
+        return self.load_messages(
+            [message for message in self.run_input.messages if message.role == "user"]
+        )
 
 async def _persist_safely(
     persist: PersistTurn, messages: Sequence[ModelMessage]

@@ -13,6 +13,8 @@ __all__ = [
     "MEMORY_INSTRUCTIONS_EMPTY",
     "PERSONALITY_TEMPLATES",
     "PLAN_INSTRUCTIONS",
+    "WORKSPACE_PATH_INSTRUCTIONS",
+    "WRITE_INSTRUCTIONS",
     "Personality",
     "format_document_scope",
     "join_instructions",
@@ -116,6 +118,16 @@ Guidelines:
 - When multiple versions of a document exist (e.g., v1, v2), prefer the latest version. Use list_documents to check modification dates when unsure which is most current.
 """
 
+WORKSPACE_PATH_INSTRUCTIONS = """
+Every document lives in a workspace and is addressed by its full path: `~/...` for your personal workspace, `@<group>/...` for a shared group workspace.
+There is no working directory and no default workspace, so a path without one of these prefixes names nothing — always pass tools the full path, exactly as their results spell it.
+"""
+
+WRITE_INSTRUCTIONS = """
+When you create a document, you decide where it goes and the path is the only thing that says so.
+Choose the workspace and the folder it belongs in, keep it beside related documents unless the user asked for somewhere else, and tell the user the full path you wrote to.
+"""
+
 CITATION_INSTRUCTIONS = """
 When you use information from a document or web source, mark it with a
 self-closing <cite/> tag placed right after the sentence or clause it supports.
@@ -123,8 +135,8 @@ A citation is a standalone marker — it has no inner text and is never wrapped
 around your prose. Cite a given source once per claim instead of repeating it.
 
 The src attribute must be the exact name from your tool results, including its
-workspace scope prefix (`~/` for the personal workspace, `@<group>/` for a
-shared group) or the full URL for a web source — a bare `doc.md` is invalid.
+workspace scope prefix, or the full URL for a web source — a bare `doc.md` is
+invalid.
 The line attribute points at specific lines and accepts a single line, a
 comma-separated list, or a `start-end` range; the frontend turns each into its
 own clickable link. Line numbers come from search, grep, and read_document.
