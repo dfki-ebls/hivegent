@@ -1,10 +1,14 @@
-"""LLM client construction helpers."""
+"""LLM client construction helpers, including the quirk compensation that
+self-hosted OpenAI-compatible endpoints need."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from typing import override
 
 from openai import AsyncOpenAI
+from openai.types.chat import chat_completion_chunk
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.messages import ModelResponseStreamEvent, PartStartEvent
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIStreamedResponse
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -47,6 +51,45 @@ _CONTEXT_OVERFLOW_PHRASES = (
     "the model's context length",
     "exceeds the maximum allowed length",
 )
+
+
+class _SegmentedOpenAIStreamedResponse(OpenAIStreamedResponse):
+    """Start a new text part when content resumes after a tool call.
+
+    vLLM's ``qwen3_xml`` parser returns to content mode after ``</tool_call>``,
+    so prose (or just the trailing newline) streams as ``content`` deltas that
+    follow the ``tool_calls`` ones.  pydantic-ai keys all text at the fixed
+    ``'content'`` vendor id, so that tail is appended to the ``TextPart`` its
+    own stream layer already closed: the run's message list reorders the answer
+    around the tool call, and the Vercel adapter emits a ``text-delta`` for a
+    text part the frontend has ended, which is a hard error there.  Untracking
+    the vendor id is how pydantic-ai itself ends a text run (see
+    ``_handle_embedded_thinking_end``), and it fixes both symptoms at once —
+    a guard in ``ChatEventStream`` would repair only the wire.
+
+    Scoped to tool calls: text resuming after a *separate-field* thinking part
+    would need the same treatment, but no reasoning parser we serve orders a
+    response that way.
+    """
+
+    @override
+    def _map_tool_call_delta(
+        self, choice: chat_completion_chunk.Choice
+    ) -> Iterable[ModelResponseStreamEvent]:
+        for event in super()._map_tool_call_delta(choice):
+            if isinstance(event, PartStartEvent):
+                self._parts_manager._stop_tracking_vendor_id("content")
+
+            yield event
+
+
+class _SegmentedOpenAIChatModel(OpenAIChatModel):
+    """Model that streams through :class:`_SegmentedOpenAIStreamedResponse`."""
+
+    @property
+    @override
+    def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:
+        return _SegmentedOpenAIStreamedResponse
 
 
 def is_context_overflow(error: Exception) -> bool:
@@ -131,7 +174,12 @@ def create_openai_chat_model(
     # beginning.", so ask pydantic-ai to merge the leading system messages into
     # one — semantically identical, and harmless for endpoints that would have
     # accepted the split form.
-    return OpenAIChatModel(
+    #
+    # ``ignore_streamed_leading_whitespace`` is what pydantic-ai's own Qwen
+    # profile sets, but the OpenAI provider only ever resolves the OpenAI
+    # profile, so a self-hosted Qwen never inherits it; it is inert for an
+    # endpoint that does not pad its text with whitespace.
+    return _SegmentedOpenAIChatModel(
         model,
         provider=provider,
         profile=lambda profile: merge_profile(
@@ -139,6 +187,7 @@ def create_openai_chat_model(
             OpenAIModelProfile(
                 supports_thinking=True,
                 openai_chat_supports_multiple_system_messages=False,
+                ignore_streamed_leading_whitespace=True,
             ),
         ),
     )
