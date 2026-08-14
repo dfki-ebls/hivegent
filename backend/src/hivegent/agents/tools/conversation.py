@@ -27,16 +27,17 @@ conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=
 async def list_conversations(
     ctx: RunContext[UserDeps],
 ) -> ToolReturn:
-    """List past conversations with titles and dates.
+    """List past conversations as `id  date  title`, most recent first.
 
-    Returns summaries sorted by most recent first.
+    Metadata only: no message content is returned.  Pass an `id` from this
+    listing verbatim to `get_conversation` to open a conversation.
     """
     conversations = await _list_conversations(ctx.deps.store.id)
     if not conversations:
         formatted = "(no conversations)"
     else:
         formatted = "\n".join(
-            f"{c.id[:8]}  {c.updated_at:%Y-%m-%d}  {c.title}" for c in conversations
+            f"{c.id}  {c.updated_at:%Y-%m-%d}  {c.title}" for c in conversations
         )
     return wrap_tool_output(
         ToolOutput(data=conversations, formatted=formatted),
