@@ -383,17 +383,6 @@ export const useSettingsStore = create<SettingsState>()(
   ),
 );
 
-/** Return the knowledge groups the user belongs to (read + write). */
-export function getAllGroups(): string[] {
-  const { readGroups, writeGroups } = useSettingsStore.getState();
-  return [...new Set([...readGroups, ...writeGroups])].sort();
-}
-
-/** Check whether the user has write access to a knowledge group. */
-export function canWriteGroup(groupId: string): boolean {
-  return useSettingsStore.getState().writeGroups.includes(groupId);
-}
-
 /** The fixed role name that grants administrator privileges. */
 const ADMIN_ROLE = "admin";
 

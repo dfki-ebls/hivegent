@@ -18,7 +18,7 @@ import { featureFlags } from "@/lib/feature-flags";
 import type { PipelineSpec } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
 import { useDocumentsStore } from "@/stores/documents-store";
-import { canWriteGroup, getAllGroups, useSettingsStore } from "@/stores/settings-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import {
   type UploadOptions,
   selectHasPendingUploads,
@@ -49,7 +49,14 @@ export function DocumentManager() {
   const reportUpload = useUploadQueue((s) => s.report);
   const hasPendingUploads = useUploadQueue(selectHasPendingUploads);
 
-  const groups = useMemo(() => getAllGroups(), []);
+  // Subscribed, not snapshotted: the group lists arrive with the settings fetch,
+  // which resolves after this component first renders.
+  const readGroups = useSettingsStore((s) => s.readGroups);
+  const writeGroups = useSettingsStore((s) => s.writeGroups);
+  const groups = useMemo(
+    () => [...new Set([...readGroups, ...writeGroups])].sort(),
+    [readGroups, writeGroups],
+  );
 
   // Canonical directory every upload/create lands in — a workspace root or a
   // subdir armed by clicking a folder in the tree. Defaults to the personal root.
@@ -258,7 +265,7 @@ export function DocumentManager() {
             key={groupId}
             scope={groupScope(groupId)}
             label={groupId}
-            canWrite={canWriteGroup(groupId)}
+            canWrite={writeGroups.includes(groupId)}
             defaultOpen={false}
             searchQuery={searchQuery}
             pipelineSpec={pipelineSpec}
