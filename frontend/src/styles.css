@@ -150,6 +150,26 @@ code {
   }
 }
 
+/* Streamdown renders markdown links as a `<button>` (its link-safety
+   confirmation is on by default), which loses the anchor's pointer cursor even
+   though the link still looks and behaves like one. */
+[data-streamdown="link"] {
+  cursor: pointer;
+}
+
+/* shadcn ships every menu row with `cursor-default`, mimicking a native menu.
+   These rows are clickable controls here, so restore the pointer once for all
+   of them via the stable `data-slot` contract rather than per call site. The
+   rule stays unlayered so it wins over the `cursor-default` utility. */
+[data-slot="dropdown-menu-item"],
+[data-slot="dropdown-menu-checkbox-item"],
+[data-slot="dropdown-menu-radio-item"],
+[data-slot="dropdown-menu-sub-trigger"],
+[data-slot="select-item"],
+[data-slot="command-item"] {
+  cursor: pointer;
+}
+
 /* Radix ScrollArea wraps the viewport content in `display: table` to measure
    width for horizontal scrolling. Firefox then sizes that wrapper to the
    content's max-content width, so pre-wrap/prose text never wraps and vertical

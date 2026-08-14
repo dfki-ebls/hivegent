@@ -39,7 +39,7 @@ function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-2">
+        <Button variant="ghost" size="sm" className="gap-2 cursor-pointer">
           <User className="h-4 w-4" />
           <span className="hidden sm:inline">{userName}</span>
         </Button>

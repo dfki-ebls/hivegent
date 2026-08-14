@@ -63,8 +63,13 @@ export function MessageList({
     persistedError ||
     "An error occurred while processing your request.";
 
+  // `resize="instant"`: the default spring keeps its accumulated velocity when
+  // the browser clamps the scroll at the bottom, so content growing in bursts (a
+  // tool card's parameters streaming into an open accordion) overshoots and gets
+  // yanked back every frame, visibly bouncing. Only the resize follow is
+  // instant; the initial scroll and the scroll-to-bottom button stay smooth.
   return (
-    <Conversation className="min-h-0 flex-1">
+    <Conversation className="min-h-0 flex-1" resize="instant">
       <ConversationContent className="gap-3">
         <CompactionBanner compactedFrom={compactedFrom} onNavigatePrevious={onNavigatePrevious} />
         {isLoadingHistory && <Loader />}
