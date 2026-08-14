@@ -80,6 +80,15 @@ class TestRgSearch:
         assert any("include.md" in p for p in paths)
         assert not any("exclude.txt" in p for p in paths)
 
+    async def test_decodes_legacy_encoded_lines(self, tmp_path: Path) -> None:
+        # ripgrep hands back non-UTF-8 lines base64-encoded under a `bytes`
+        # key instead of `text`, in CRLF sources including the terminator.
+        (tmp_path / "legacy.txt").write_bytes("Leitfähigkeit\r\n".encode("cp1252"))
+        matches = await rg_search("Leitf", tmp_path)
+        assert matches[0].lines == (
+            RgLine(line_number=1, text="Leitfähigkeit", is_match=True),
+        )
+
     async def test_context_lines(self, tmp_path: Path) -> None:
         (tmp_path / "test.txt").write_text("aaa\nbbb\nccc\nddd\neee\n")
         matches = await rg_search("ccc", tmp_path, context_lines=1)

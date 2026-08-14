@@ -755,6 +755,51 @@ class TestJqTool:
         assert len(result.split("\n\n[truncated]")[0]) == 100
 
 
+class TestGrepSearch:
+    """Tests for GrepTool against real files on disk."""
+
+    @staticmethod
+    def _filenames(output: list[GrepMatch]) -> set[str]:
+        return {m.filename for m in output}
+
+    async def test_legacy_encoded_sibling_keeps_other_results(
+        self, tmp_path: Path
+    ) -> None:
+        # A Latin-1 line reaches the JSON output base64-encoded rather than as
+        # text; mis-parsing it used to discard every match of the whole root.
+        (tmp_path / "legacy.xml").write_bytes(
+            "<a name='Leitfähigkeit' unit='°C' />\n".encode("cp1252")
+        )
+        (tmp_path / "modern.xml").write_text("<a name='utf8' />\n")
+        result = await GrepTool(paths=tmp_path)("name=")
+        assert self._filenames(result.data) == {"legacy.xml", "modern.xml"}
+        assert "Leitfähigkeit" in result.text
+
+    async def test_original_dropped_when_description_matches(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "doc.xml").write_text("<a>needle</a>\n")
+        (tmp_path / "doc.md").write_text("```xml\n<a>needle</a>\n```\n")
+        (tmp_path / "raw.xml").write_text("<a>needle</a>\n")
+        result = await GrepTool(paths=tmp_path)("needle")
+        assert self._filenames(result.data) == {"doc.md", "raw.xml"}
+
+    async def test_original_kept_when_globbed(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.xml").write_text("<a>needle</a>\n")
+        (tmp_path / "doc.md").write_text("```xml\n<a>needle</a>\n```\n")
+        result = await GrepTool(paths=tmp_path)("needle", glob="*.xml")
+        assert self._filenames(result.data) == {"doc.xml"}
+
+    async def test_assets_payload_hidden_unless_ignored(self, tmp_path: Path) -> None:
+        assets = tmp_path / "doc.assets"
+        assets.mkdir()
+        (assets / "fig1.txt").write_text("needle\n")
+        hidden = await GrepTool(paths=tmp_path)("needle")
+        assert hidden.data == []
+        revealed = await GrepTool(paths=tmp_path)("needle", include_ignored=True)
+        assert self._filenames(revealed.data) == {"doc.assets/fig1.txt"}
+
+
 class TestGrepFormatting:
     """Tests for GrepTool match formatting and the line-level char budget."""
 

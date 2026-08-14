@@ -3,6 +3,8 @@
 import json
 from typing import Any
 
+from pydantic import JsonValue
+
 from .base import SubprocessError, run
 
 __all__ = ["jq_filter"]
@@ -13,7 +15,7 @@ async def jq_filter(
     data: Any,
     *,
     raw_output: bool = False,
-) -> list[Any]:
+) -> list[JsonValue]:
     """Run a jq filter against *data*.
 
     Args:

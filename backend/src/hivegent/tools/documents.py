@@ -12,7 +12,6 @@ from pydantic import Field
 
 from ..config import content_hash, normalize_unicode
 from ..converters import vision_media_type
-from ..entries import is_inside_assets_dir
 from ..humanize import pluralize
 from .base import (
     WORKSPACE_PATH_HINT,
@@ -22,9 +21,8 @@ from .base import (
     SyncPathTool,
     ToolOutput,
     ToolRetry,
+    entry_visible,
     excluded_dirs,
-    file_allowed,
-    is_in_excluded_dir,
     read_text_or_retry,
     resolve_file_or_retry,
     sidecar_hint,
@@ -226,15 +224,7 @@ def _walk_entries(
             if not is_dir and not absolute.is_file():
                 continue
             rel = str(absolute.relative_to(sp.path).as_posix())
-            if is_in_excluded_dir(rel, exclude_dirs):
-                continue
-            # Elements of `.assets` payload directories pollute the context
-            # (a single converted document can carry hundreds of extracted
-            # images), so only the directory itself is listed; like the
-            # build/vendor dirs, ``include_ignored=True`` reveals them.
-            if exclude_dirs and is_inside_assets_dir(rel):
-                continue
-            if not file_allowed(sp.filter_func, rel):
+            if not entry_visible(sp, rel, exclude_dirs):
                 continue
             yield sp, absolute, rel, is_dir
 

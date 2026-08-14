@@ -9,6 +9,7 @@ from typing import Annotated, Literal, override
 
 from pydantic import Field
 
+from ..entries import is_description_file, stem_path_from_reference
 from ..subprocesses import rg_search
 from .base import (
     WORKSPACE_SCOPE_HINT,
@@ -16,8 +17,8 @@ from .base import (
     IncludeIgnoredArg,
     SearchPath,
     ToolOutput,
+    entry_visible,
     excluded_dirs,
-    file_allowed,
 )
 from .formatting import BLOCK_SEP, GROUP_SEP, number_line, truncate_line
 
@@ -118,6 +119,39 @@ GrepOutputModeArg = Annotated[
 ]
 
 
+def _local_name(sp: SearchPath, path: str) -> str | None:
+    """Return *path* relative to the search root, or ``None`` if it escaped it."""
+    try:
+        return Path(path).relative_to(sp.path).as_posix()
+    except ValueError:
+        return None
+
+
+def _drop_shadowed_originals(matches: list[GrepMatch]) -> list[GrepMatch]:
+    """Drop original hits whose own markdown description matched as well.
+
+    Every entry keeps its markdown description beside the original it was
+    projected from, so a text original (XML, CSV, source code) matches twice
+    over with near-identical lines at shifted line numbers.  The description
+    wins: it is the face of the entry the user edits and the chunker indexes,
+    and it is regenerated whenever the original changes, so it never lags
+    behind while the reverse does not hold.  An entry with no description hit
+    is left alone, and a search explicitly globbed to the original's
+    extension still reaches it, since then no description is in the result
+    set to displace it.
+    """
+    classified = [
+        (m, is_description_file(m.filename), stem_path_from_reference(m.filename))
+        for m in matches
+    ]
+    described = {stem for _, is_description, stem in classified if is_description}
+    return [
+        m
+        for m, is_description, stem in classified
+        if is_description or stem not in described
+    ]
+
+
 async def _search_path(
     sp: SearchPath,
     pattern: str,
@@ -130,9 +164,8 @@ async def _search_path(
     """Run ripgrep against a single search path."""
     if not sp.path.exists():
         return []
-    matches: list[GrepMatch] = []
     try:
-        for rg_match in await rg_search(
+        rg_matches = await rg_search(
             pattern,
             sp.path,
             glob=glob,
@@ -140,25 +173,30 @@ async def _search_path(
             case_sensitive=case_sensitive,
             literal=literal,
             exclude_dirs=exclude_dirs,
-        ):
-            filename = str(Path(rg_match.path).relative_to(sp.path))
-            if file_allowed(sp.filter_func, filename):
-                matches.append(
-                    GrepMatch(
-                        filename=sp.prefixed(filename),
-                        lines=tuple(
-                            GrepLine(
-                                line_number=line.line_number,
-                                text=line.text,
-                                is_match=line.is_match,
-                            )
-                            for line in rg_match.lines
-                        ),
-                    )
-                )
+        )
     except Exception:
         logger.warning(
             "Grep failed for pattern %r in %s", pattern, sp.path, exc_info=True
+        )
+        return []
+
+    matches: list[GrepMatch] = []
+    for rg_match in rg_matches:
+        filename = _local_name(sp, rg_match.path)
+        if filename is None or not entry_visible(sp, filename, exclude_dirs):
+            continue
+        matches.append(
+            GrepMatch(
+                filename=sp.prefixed(filename),
+                lines=tuple(
+                    GrepLine(
+                        line_number=line.line_number,
+                        text=line.text,
+                        is_match=line.is_match,
+                    )
+                    for line in rg_match.lines
+                ),
+            )
         )
     return matches
 
@@ -194,6 +232,10 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
         to disable regex interpretation, or ``case_sensitive=True`` for
         exact case matching.  Use ``output_mode`` to switch between full
         match context, filenames only, or per-file counts.
+
+        A document that matches both in its markdown description and in the
+        original file it was projected from is reported once, under the
+        description.
         """
         # Context is wasted work when the formatted output discards it.
         effective_context = context if output_mode == "content" else 0
@@ -217,7 +259,7 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
                 for sp in paths
             )
         )
-        all_matches = [m for batch in results for m in batch]
+        all_matches = _drop_shadowed_originals([m for batch in results for m in batch])
         if not all_matches:
             return ToolOutput(data=all_matches, formatted="(no matches)")
         if output_mode == "files_with_matches":

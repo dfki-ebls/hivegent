@@ -17,6 +17,7 @@ from ..config import normalize_unicode
 from ..entries import (
     description_path_for_stem,
     is_description_file,
+    is_inside_assets_dir,
     stem_path_from_reference,
 )
 from ..text import NOT_TEXT_REASON, DecodedText, read_text_file
@@ -40,6 +41,7 @@ __all__ = [
     "ToolOutput",
     "ToolRetry",
     "coerce_paths",
+    "entry_visible",
     "excluded_dirs",
     "factory_tool_name",
     "file_allowed",
@@ -278,6 +280,23 @@ def is_in_excluded_dir(rel_path: str, exclude_dirs: tuple[str, ...]) -> bool:
         return False
     parts = rel_path.split("/")
     return any(excluded in parts for excluded in exclude_dirs)
+
+
+def entry_visible(sp: SearchPath, rel_path: str, exclude_dirs: tuple[str, ...]) -> bool:
+    """Whether the entry at *rel_path* may be shown for search path *sp*.
+
+    The one definition of what a path tool hides by default, shared by the
+    listing walk and the grep post-filter so ``include_ignored`` means the same
+    thing in both.  Elements of ``.assets`` payload directories are hidden with
+    the build and vendor directories: a single converted document can carry
+    hundreds of extracted images, and only the directory itself is worth
+    listing.  The search path's own filter always applies.
+    """
+    if is_in_excluded_dir(rel_path, exclude_dirs):
+        return False
+    if exclude_dirs and is_inside_assets_dir(rel_path):
+        return False
+    return file_allowed(sp.filter_func, rel_path)
 
 
 def resolve_accessible_file(

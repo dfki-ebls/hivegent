@@ -5,7 +5,8 @@ import json
 from collections.abc import Container, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+
+from pydantic import JsonValue
 
 from ..concurrency import shield_to_completion
 
@@ -38,9 +39,14 @@ class SubprocessResult:
         """
         return json.loads(self.stdout)
 
-    def stdout_ndjson(self) -> Iterator[Any]:
-        """Parse stdout as newline-delimited JSON (one object per line)."""
-        for line in self.stdout_text.splitlines():
+    def stdout_ndjson(self) -> Iterator[JsonValue]:
+        """Parse stdout as newline-delimited JSON (one object per line).
+
+        Split on the raw bytes rather than :attr:`stdout_text`: a large result
+        set would otherwise be copied twice at full size, and ``str`` splits on
+        more separators than JSON treats as line breaks.
+        """
+        for line in self.stdout.splitlines():
             if line.strip():
                 yield json.loads(line)
 
