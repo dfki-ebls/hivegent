@@ -32,6 +32,10 @@ Jede Antwort stützt sich auf Ihr Material, und der Kontextbereich zeigt die Dok
 Klicken Sie auf ein Dokument oder eine Stelle, um es zu öffnen und genau zu sehen, woher die Information stammt.
 So bleibt jede Antwort bis zu ihrer Quelle nachvollziehbar.
 
+Der Assistent durchsucht Ihre Dokumente auch dann, wenn er die Antwort bereits zu kennen glaubt.
+Er gibt eine Fundstelle wieder, ohne sie auszuschmücken.
+Deckt Ihr Material eine Frage nicht ab, sagt er das, statt stillschweigend aus allgemeinem Wissen zu antworten.
+
 ## Mit Dokumenten arbeiten
 
 Im Dokumenten-Arbeitsbereich fügen Sie Ihr Material hinzu und ordnen es.

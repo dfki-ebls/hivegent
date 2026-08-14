@@ -11,8 +11,12 @@ composes from the capabilities, while the debug/meta REST surface lists and
 invokes individual tools extracted from the very same capabilities, so an admin
 inspects exactly the tools an agent is built from.
 
-Cross-cutting agent behaviour (personality, language, citation, math, image)
-stays as agent-level ``instructions`` because it is not bound to any one feature.
+Guidance follows the tools it describes: a block bound to one feature rides on
+its capability, a block spanning several is a :class:`SharedInstructions` entry
+composed as soon as any of them is live, and only behaviour tied to no
+feature at all (personality, language, math) stays agent-level ``instructions``.
+Prompt text that explains a tool the model was not given is a defect, so nothing
+that names a tool belongs in the agent-level set.
 """
 
 from collections.abc import Sequence
@@ -28,9 +32,14 @@ from pydantic_ai.toolsets import AbstractToolset
 from ..config import settings
 from ..db.memory import load_memory
 from ..prompts import (
+    CITATION_INSTRUCTIONS,
+    GROUNDING_INSTRUCTIONS,
+    IMAGE_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS_EMPTY,
     PLAN_INSTRUCTIONS,
+    VERSION_INSTRUCTIONS,
+    WORKSPACE_PATH_INSTRUCTIONS,
     WRITE_INSTRUCTIONS,
 )
 from ..tools.pydantic_ai import capability_tools, invoke_tool
@@ -49,7 +58,9 @@ from .tools import (
 
 __all__ = [
     "FEATURES",
+    "SHARED_INSTRUCTIONS",
     "Feature",
+    "SharedInstructions",
     "build_capabilities",
     "collect_tool_schemas",
     "invoke_agent_tool",
@@ -111,14 +122,28 @@ class Feature:
 
 
 # The single source of truth for the agent's features.  ``explore``, ``write``,
-# ``plan``, and ``memory`` carry their own instructions: ``explore`` describes
+# ``plan``, and ``memory`` carry their own instructions: ``explore`` states the
+# grounding and version discipline for the retrieval tools it owns and describes
 # the live document scope (so the model knows which documents the user
 # selected), ``write`` says who decides where a new document goes, and
 # ``memory`` resolves the user's stored memory lazily so its guidance only loads
 # when active.  The rest are bare toolset bundles.  Adding a feature here
 # exposes it to the agent and the debug surface.
+#
+# Grounding rides here rather than on the agent so it appears exactly when the
+# tools it mandates do: a user who disables every explore tool must not be left
+# with a prompt ordering searches it can no longer perform.
 FEATURES: tuple[Feature, ...] = (
-    Feature.build("explore", explore_toolset, instructions=scope_instructions),
+    Feature.build(
+        "explore",
+        explore_toolset,
+        instructions=[
+            GROUNDING_INSTRUCTIONS,
+            VERSION_INSTRUCTIONS,
+            IMAGE_INSTRUCTIONS,
+            scope_instructions,
+        ],
+    ),
     Feature.build("subagent", subagent_toolset),
     Feature.build(
         "write", write_toolset, instructions=WRITE_INSTRUCTIONS, modes=_MUTATING
@@ -133,6 +158,39 @@ FEATURES: tuple[Feature, ...] = (
     Feature.build("conversation", conversation_toolset),
     Feature.build("plan", plan_toolset, instructions=PLAN_INSTRUCTIONS, modes=_PLAN),
 )
+
+
+@dataclass(frozen=True, slots=True)
+class SharedInstructions:
+    """A prompt block owned by several features rather than by one.
+
+    Some guidance describes what a group of features produces — the path syntax
+    every document tool speaks, the citation markup for every source a tool can
+    return — so it belongs to none of them alone and must not be repeated across
+    them.  It is composed once when any of ``features`` is live and drops out
+    when none is, the same rule a feature's own instructions follow.
+    """
+
+    id: str
+    features: frozenset[str]
+    text: str
+
+    def capability(self) -> AbstractCapability[UserDeps]:
+        """The instructions-only capability this block contributes to a run."""
+        return Capability(id=self.id, instructions=self.text)
+
+
+SHARED_INSTRUCTIONS: tuple[SharedInstructions, ...] = (
+    SharedInstructions(
+        "workspace-paths",
+        frozenset({"explore", "write"}),
+        WORKSPACE_PATH_INSTRUCTIONS,
+    ),
+    SharedInstructions(
+        "citation", frozenset({"explore", "web"}), CITATION_INSTRUCTIONS
+    ),
+)
+"""Guidance spanning several features, composed while any of them is live."""
 
 
 def _filter_disabled(disabled: frozenset[str]) -> AbstractCapability[UserDeps]:
@@ -187,7 +245,8 @@ def build_capabilities(
 
     Selects the features offered in ``mode``, drops any whose tools are all
     disabled (so a fully-disabled feature contributes neither tools nor
-    instructions), hides individually disabled tools via a single
+    instructions), adds the :data:`SHARED_INSTRUCTIONS` blocks whose features
+    survived that selection, hides individually disabled tools via a single
     :class:`PrepareTools` capability, and wraps each extra toolset (e.g. an MCP
     server) as its own capability.
 
@@ -206,11 +265,19 @@ def build_capabilities(
     """
     disabled = frozenset(tools_spec.disabled_tools or ())
 
-    result: list[AbstractCapability[UserDeps]] = [
-        feature.capability
+    features = [
+        feature
         for feature in FEATURES
         if mode in feature.modes and not feature.tool_names <= disabled
     ]
+    live = {feature.id for feature in features}
+
+    result: list[AbstractCapability[UserDeps]] = [
+        feature.capability for feature in features
+    ]
+    result.extend(
+        shared.capability() for shared in SHARED_INSTRUCTIONS if shared.features & live
+    )
 
     if disabled:
         result.append(_filter_disabled(disabled))

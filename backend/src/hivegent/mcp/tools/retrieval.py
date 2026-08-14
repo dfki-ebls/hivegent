@@ -12,7 +12,12 @@ from ...agents import (
 from ...chunkers.base import RetrievedChunk
 from ...config import settings
 from ...llm import create_openai_chat_model
-from ...prompts import EXPLORE_INSTRUCTIONS, join_instructions
+from ...prompts import (
+    EXPLORE_INSTRUCTIONS,
+    GROUNDING_INSTRUCTIONS,
+    VERSION_INSTRUCTIONS,
+    join_instructions,
+)
 from ...retrieval import build_search_tool
 from ...store import Casebase, build_search_paths
 from ...tools import (
@@ -85,7 +90,9 @@ async def explore_documents(
     all_stores = (store, *group_stores)
     result = await ctx.sample(
         task,
-        system_prompt=join_instructions([EXPLORE_INSTRUCTIONS]),
+        system_prompt=join_instructions(
+            [EXPLORE_INSTRUCTIONS, GROUNDING_INSTRUCTIONS, VERSION_INSTRUCTIONS]
+        ),
         tools=[
             ListDocumentsTool(paths=paths),
             GlobDocumentsTool(paths=paths),

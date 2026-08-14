@@ -14,7 +14,11 @@ from pydantic_ai.models import Model
 
 from ...config import settings
 from ...llm import is_context_overflow, model_from_config, summary_model_settings
-from ...prompts import EXPLORE_INSTRUCTIONS
+from ...prompts import (
+    EXPLORE_INSTRUCTIONS,
+    GROUNDING_INSTRUCTIONS,
+    VERSION_INSTRUCTIONS,
+)
 from ...tools.base import ToolOutput
 from ...tools.pydantic_ai import wrap_tool_output
 from ...types import LlmConfig, resolve_llm_config
@@ -52,7 +56,12 @@ SUBAGENT_CAPABILITIES: dict[SubagentName, AbstractCapability[UserDeps]] = {
     "documents": Capability(
         id="explore-subagent",
         toolsets=[explore_toolset],
-        instructions=[EXPLORE_INSTRUCTIONS, scope_instructions],
+        instructions=[
+            EXPLORE_INSTRUCTIONS,
+            GROUNDING_INSTRUCTIONS,
+            VERSION_INSTRUCTIONS,
+            scope_instructions,
+        ],
     ),
     "conversations": Capability(id="conversation", toolsets=[conversation_toolset]),
 }

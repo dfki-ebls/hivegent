@@ -53,12 +53,9 @@ from ...llm import model_from_config, resolve_thinking, thinking_model_settings
 from ...mcp import build_mcp_server, validate_mcp_servers
 from ...multimodal import BinaryContentMode
 from ...prompts import (
-    CITATION_INSTRUCTIONS,
-    IMAGE_INSTRUCTIONS,
     LANGUAGE_INSTRUCTIONS,
     MATH_INSTRUCTIONS,
     PERSONALITY_TEMPLATES,
-    WORKSPACE_PATH_INSTRUCTIONS,
     Personality,
     join_instructions,
 )
@@ -455,19 +452,11 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
             )
         ]
 
-    parts.extend(
-        [
-            LANGUAGE_INSTRUCTIONS,
-            WORKSPACE_PATH_INSTRUCTIONS,
-            CITATION_INSTRUCTIONS,
-            IMAGE_INSTRUCTIONS,
-            MATH_INSTRUCTIONS,
-        ]
-    )
+    parts.extend([LANGUAGE_INSTRUCTIONS, MATH_INSTRUCTIONS])
 
-    # These are the cross-cutting persona instructions only; the plan- and
-    # memory-mode guidance now rides on the plan/memory capabilities, composed
-    # by mode and tool enablement in `build_capabilities`.
+    # Only the guidance that is tied to no tool at all belongs here; everything
+    # describing what a tool does or returns rides on the capability that owns
+    # it, composed by mode and tool enablement in `build_capabilities`.
     instructions = join_instructions(parts)
 
     store = user_store(user)

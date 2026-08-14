@@ -32,6 +32,10 @@ Every answer is grounded in your material, and the context panel shows the docum
 Click a document or a passage to open it and see exactly where the information came from.
 This makes each answer traceable back to its source.
 
+The assistant searches your documents even when it thinks it already knows the answer.
+It reports what a passage says without embellishing it.
+If your material does not cover a question, it says so instead of quietly answering from general knowledge.
+
 ## Working with documents
 
 The document workspace is where you add and organize your material.
