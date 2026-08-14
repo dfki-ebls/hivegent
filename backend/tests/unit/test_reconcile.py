@@ -34,7 +34,11 @@ def workspace_dir(user_store: Casebase, monkeypatch: pytest.MonkeyPatch) -> Path
     async def delete_chunked_document(store: Casebase, reference: str) -> bool:
         return False
 
+    async def list_stem_paths(store: Casebase) -> list[str]:
+        return []
+
     monkeypatch.setattr(db_documents, "get_entry_state", get_entry_state)
+    monkeypatch.setattr(db_documents, "list_stem_paths", list_stem_paths)
     monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", chunk_and_index)
     monkeypatch.setattr(
         workspace.indexing, "delete_chunked_document", delete_chunked_document
@@ -65,6 +69,35 @@ async def test_reconcile_ingests_markdown_and_keeps_stray_files(
     # Files the SQL index does not vouch for stay untouched: disk is truth.
     assert (workspace_dir / "loose.bin").exists()
     assert (workspace_dir / "gone.assets/fig.png").exists()
+
+
+async def test_reconcile_canonicalizes_paths_before_ingesting(
+    user_store: Casebase, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hand-dropped decomposed name is folded to NFC, then ingested under it.
+
+    The ingest copies the on-disk spelling into ``stem_path`` verbatim, so
+    normalizing after it would leave a row no inbound path can address.
+    Escapes rather than literals: this file is saved precomposed.
+    """
+    nfd, nfc = "SU\u0308VOA.md", "S\u00dcVOA.md"
+    (workspace_dir / nfd).write_text("body")
+    # Pins the premise: a filesystem that normalizes on write fails here with a
+    # clear reason rather than turning the assertion below into a tautology.
+    assert [path.name for path in workspace_dir.iterdir()] == [nfd]
+
+    async def list_document_paths(store: Casebase) -> dict[str, int]:
+        return {}
+
+    monkeypatch.setattr(
+        reconcile.db_documents, "list_document_paths", list_document_paths
+    )
+
+    report = await reconcile.reconcile_store(user_store)
+
+    assert report.normalized.files_renamed == 1
+    assert report.entries_ingested == 1
+    assert [path.name for path in workspace_dir.iterdir()] == [nfc]
 
 
 async def test_reconcile_derives_descriptions_for_hand_dropped_text_files(

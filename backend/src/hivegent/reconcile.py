@@ -15,8 +15,13 @@ Anything needing a converter or a vision model stays inert until it is uploaded
 or reconverted explicitly: neither belongs in a sweep that blocks the server
 from accepting traffic.
 
+The same hand-drop is the one route by which a path can still enter the system
+without passing a canonicalizing boundary, so each store's paths and stems are
+folded to Unicode NFC (:mod:`hivegent.workspace.normalize`) before the ingest
+reads them.
+
 Reconciliation never deletes workspace files: they are the authoritative
-content.
+content.  It renames them only to canonicalize a spelling.
 
 The ingest pass runs through :func:`hivegent.workspace.sync_entries_from_disk`,
 the same idempotent fold-back primitive a future read-write shell tool will
@@ -25,8 +30,8 @@ call after a session.
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 from .chunks import delete_documents as _delete_chunked_documents
 from .config import settings
@@ -47,7 +52,6 @@ from .workspace.locks import store_lock
 
 __all__ = [
     "ReconcileReport",
-    "normalize_all",
     "reconcile_all",
     "reconcile_store",
 ]
@@ -59,6 +63,7 @@ logger = logging.getLogger(__name__)
 class ReconcileReport:
     """Per-casebase summary of work done during reconciliation."""
 
+    normalized: NormalizeReport = field(default_factory=NormalizeReport)
     entries_ingested: int = 0
     sql_orphans_removed: int = 0
 
@@ -104,17 +109,23 @@ def _disk_entry_references(store: Casebase) -> list[str]:
 async def reconcile_store(store: Casebase) -> ReconcileReport:
     """Bring *store*'s SQL index back into agreement with its disk content.
 
-    The filesystem is the source of truth: every on-disk description is
-    folded into SQL first, then SQL rows whose description vanished are
-    dropped.  Chunks cascade with documents and need no separate sweep, and
-    workspace files are never deleted here.
+    The filesystem is the source of truth: paths are canonicalized first,
+    then every on-disk description is folded into SQL, then SQL rows whose
+    description vanished are dropped.  Chunks cascade with documents and need
+    no separate sweep, and workspace files are never deleted here.
+
+    Normalization has to lead the ingest, which copies the on-disk spelling
+    into ``stem_path`` verbatim; see :mod:`hivegent.workspace.normalize`.
     """
-    ingested = await sync_entries_from_disk(store, _disk_entry_references(store))
+    normalized = await normalize_workspace_paths(store)
+    references = await asyncio.to_thread(_disk_entry_references, store)
+    ingested = await sync_entries_from_disk(store, references)
     async with store_lock(store):
         sql_paths = await db_documents.list_document_paths(store)
         sql_removed = await _sweep_sql_orphans(store, sql_paths)
 
     return ReconcileReport(
+        normalized=normalized,
         entries_ingested=ingested,
         sql_orphans_removed=sql_removed,
     )
@@ -136,52 +147,31 @@ def _disk_known_stores() -> set[Casebase]:
     return stores
 
 
-async def _known_stores() -> list[Casebase]:
-    """Return every casebase known to SQL or present on disk, in a stable order.
+async def reconcile_all() -> Mapping[str, ReconcileReport]:
+    """Reconcile every casebase known to SQL or present on disk.
 
     A store may exist on only one side: rows survive a workspace that was
-    removed, and a hand-created directory has no rows yet, so a sweep over
-    "everything" has to consider both.
+    removed, and a hand-created directory has no rows yet, so the sweep has to
+    consider both.  Each store holds its own lock, so they run concurrently,
+    and a store that raises is logged and dropped from the result rather than
+    aborting the rest: one unreadable workspace must not stop the others from
+    being repaired.
     """
     sql_stores = await db_documents.list_known_stores()
-    return sorted(sql_stores | _disk_known_stores(), key=lambda s: s.store_key)
+    stores = sorted(sql_stores | _disk_known_stores(), key=lambda s: s.store_key)
 
-
-async def _sweep_all[T](
-    label: str, sweep: Callable[[Casebase], Awaitable[T]]
-) -> Mapping[str, T]:
-    """Run *sweep* over every known casebase concurrently, isolating failures.
-
-    Each store holds its own lock, so the sweeps do not contend.  A store that
-    raises is logged and dropped from the result rather than aborting the rest:
-    one unreadable workspace must not stop the others from being repaired.
-    """
-    stores = await _known_stores()
-
-    async def _safe(store: Casebase) -> T | None:
+    async def _reconcile_safe(store: Casebase) -> ReconcileReport | None:
         try:
-            return await sweep(store)
+            return await reconcile_store(store)
         except Exception:
-            logger.warning("%s failed for %s", label, store.store_key, exc_info=True)
+            logger.warning(
+                "Reconciliation failed for %s", store.store_key, exc_info=True
+            )
             return None
 
-    reports = await asyncio.gather(*(_safe(store) for store in stores))
+    reports = await asyncio.gather(*(_reconcile_safe(store) for store in stores))
     return {
         store.store_key: report
         for store, report in zip(stores, reports, strict=True)
         if report is not None
     }
-
-
-async def reconcile_all() -> Mapping[str, ReconcileReport]:
-    """Reconcile every casebase known to SQL or present on disk."""
-    return await _sweep_all("Reconciliation", reconcile_store)
-
-
-async def normalize_all() -> Mapping[str, NormalizeReport]:
-    """Fold every casebase's workspace paths and SQL stems to NFC.
-
-    The repair pass for content that predates path canonicalisation; see
-    :mod:`hivegent.workspace.normalize`.
-    """
-    return await _sweep_all("Path normalization", normalize_workspace_paths)

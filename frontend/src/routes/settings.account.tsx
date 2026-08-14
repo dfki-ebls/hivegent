@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
-  CaseSensitiveIcon,
   DatabaseZapIcon,
   EyeIcon,
   FactoryIcon,
@@ -39,7 +38,6 @@ import {
   adminListGroups,
   adminListUsers,
   PERSONAL_SCOPE,
-  adminNormalizePaths,
   adminReindex,
   adminResetDatabase,
   adminResetWorkspace,
@@ -450,40 +448,18 @@ function AdminDangerZoneSection({
               key: "admin-reindex",
               title: "Reindex Knowledge",
               description:
-                "Reconcile every casebase: prune workspace and SQL orphans so disk and database stay in sync. Safe to run anytime; useful after manual file changes or an embedding configuration change.",
+                "Reconcile every casebase: ingest files copied into the workspace by hand, prune SQL orphans, and rewrite filenames to one canonical Unicode spelling so the assistant can address them. Nothing is deleted or re-embedded. Safe to run anytime; useful after manual file changes or an embedding configuration change.",
               confirm: "Reindex",
               run: async () => {
-                await adminReindex();
+                const { message } = await adminReindex();
+                await refresh();
+                return message;
               },
             })
           }
         >
           <RefreshCwIcon className="h-4 w-4 mr-2" />
           Reindex Knowledge
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="justify-start"
-          onClick={() =>
-            setAction({
-              key: "admin-normalize-paths",
-              title: "Normalize Filenames",
-              description:
-                "Rewrite workspace filenames and document paths to one canonical Unicode spelling. A file uploaded from macOS is stored decomposed, which the assistant cannot open because it only ever writes the precomposed form. Renames files on disk and updates the matching rows together; nothing is re-embedded and no file is deleted or overwritten. Safe to re-run, and worth running after copying files into the workspace by hand.",
-              confirm: "Normalize",
-              run: async () => {
-                const { files_renamed, stems_moved, collisions } = await adminNormalizePaths();
-                await refresh();
-                const skipped =
-                  collisions > 0 ? `, ${collisions} skipped (both spellings exist)` : "";
-                return `${files_renamed} file(s) and ${stems_moved} document row(s) renamed${skipped}`;
-              },
-            })
-          }
-        >
-          <CaseSensitiveIcon className="h-4 w-4 mr-2" />
-          Normalize Filenames
         </Button>
         <Button
           variant="outline"

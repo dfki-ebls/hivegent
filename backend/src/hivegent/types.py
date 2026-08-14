@@ -29,7 +29,6 @@ __all__ = [
     "AdminListGroupsResponse",
     "AdminListUsersResponse",
     "AdminMaintenanceState",
-    "AdminNormalizePathsResponse",
     "AdminReindexResponse",
     "AdminResetResponse",
     "AdminUserInfo",
@@ -890,17 +889,6 @@ class AdminReindexResponse(BaseModel):
     """Response for the global reindex action."""
 
     stores_reconciled: int = Field(description="Number of casebases reconciled")
-    message: str = Field(description="Human-readable status message")
-
-
-class AdminNormalizePathsResponse(BaseModel):
-    """Response for the workspace path-normalization sweep."""
-
-    files_renamed: int = Field(description="Workspace files and directories renamed")
-    stems_moved: int = Field(description="Document rows whose stem_path was rewritten")
-    collisions: int = Field(
-        description="Renames skipped because both spellings already exist"
-    )
     message: str = Field(description="Human-readable status message")
 
 

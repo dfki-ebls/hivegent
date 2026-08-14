@@ -130,14 +130,6 @@ export const AdminReindexResponseSchema = z.object({
 });
 export type AdminReindexResponse = z.infer<typeof AdminReindexResponseSchema>;
 
-export const AdminNormalizePathsResponseSchema = z.object({
-  files_renamed: z.number(),
-  stems_moved: z.number(),
-  collisions: z.number(),
-  message: z.string(),
-});
-export type AdminNormalizePathsResponse = z.infer<typeof AdminNormalizePathsResponseSchema>;
-
 export const AdminFactoryResetResponseSchema = z.object({
   actions: z.array(z.string()),
   message: z.string(),

@@ -8,10 +8,15 @@ uploaded from macOS before the fix carries a decomposed name on disk and in
 ``documents.stem_path``, which a model can never address because it can only
 emit the precomposed spelling.
 
-Run through the admin API rather than at boot.  Disk and SQL agree with each
-other today (both decomposed), so there is no drift to race, and one explicit
-sweep repairs both sides together.  It stays idempotent and re-runnable for
-content that arrives out of band later.
+:func:`hivegent.reconcile.reconcile_store` runs this first, so it covers every
+route by which a file reaches the workspace without passing a canonicalizing
+boundary: a deploy, a hand-drop picked up at boot, and the admin reindex.  It
+has to precede that ingest, which copies the on-disk spelling into
+``stem_path`` verbatim: until both sides are canonical, a decomposed entry
+matches no inbound path at all, so it can be neither read nor deleted and the
+next write lands beside it as a duplicate.  Disk and SQL are repaired together
+under the store lock, and the sweep is idempotent, so a canonical workspace
+costs one walk and no renames.
 """
 
 import asyncio

@@ -9,8 +9,6 @@ import {
   AdminListGroupsResponseSchema,
   AdminListUsersResponseSchema,
   AdminMaintenanceStateSchema,
-  type AdminNormalizePathsResponse,
-  AdminNormalizePathsResponseSchema,
   type AdminReindexResponse,
   AdminReindexResponseSchema,
   type AdminResetResponse,
@@ -1144,11 +1142,6 @@ export function adminResetDatabase(): Promise<AdminResetResponse> {
 /** Reconcile every casebase: prune workspace and SQL orphans. */
 export function adminReindex(): Promise<AdminReindexResponse> {
   return adminPost("/api/admin/reindex", AdminReindexResponseSchema);
-}
-
-/** Fold every workspace path and document stem to its canonical NFC spelling. */
-export function adminNormalizePaths(): Promise<AdminNormalizePathsResponse> {
-  return adminPost("/api/admin/normalize-paths", AdminNormalizePathsResponseSchema);
 }
 
 /** Composite factory reset: workspace + database. */
