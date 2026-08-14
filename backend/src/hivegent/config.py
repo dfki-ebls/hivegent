@@ -208,7 +208,10 @@ class LlmSettings(BaseModel):
     ``tool_calls_limit`` of ``None`` leaves tool calls uncapped.  ``retries`` is
     the per-run budget for re-prompting the model when a tool raises
     ``ModelRetry`` or output validation fails (applied to both); these retries
-    count against ``request_limit``.
+    count against ``request_limit``.  It is a global tolerance for every
+    correctable tool failure, not just argument errors, and is above one so a
+    single tool a model cannot get right on the first correction costs a turn
+    rather than the whole run.
 
     ``caption_concurrency`` caps how many image-caption calls to ``aux_model``
     a single document issues at once; an image-heavy document would otherwise
@@ -240,7 +243,7 @@ class LlmSettings(BaseModel):
     caption_concurrency: int = 4
     subagent_timeout_seconds: float | None = 180.0
     tool_output_max_chars: int = 120_000
-    retries: int = 1
+    retries: int = 2
 
 
 class SummarizationSettings(BaseModel):
