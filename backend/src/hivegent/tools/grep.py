@@ -198,7 +198,10 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
         # Context is wasted work when the formatted output discards it.
         effective_context = context if output_mode == "content" else 0
         exclude = excluded_dirs(include_ignored)
-        # A scope prefix on the glob narrows the search to one workspace.
+        # A scope prefix on the glob narrows the search to one workspace, and
+        # `scoped` folds it to NFC to match the canonically named files.
+        # `pattern` deliberately stays raw: it matches file content, which is
+        # never normalized, so folding it would stop it matching decomposed text.
         paths, glob = self.scoped(glob)
         results = await asyncio.gather(
             *(

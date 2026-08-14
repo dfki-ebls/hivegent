@@ -34,6 +34,8 @@ The implementation is split into focused submodules:
   disk-to-SQL entry sync (owns the chunk/index primitives).
 * :mod:`~hivegent.workspace.commit` — atomic commit, deletion, rollback, and
   the phased-upload lifecycle.
+* :mod:`~hivegent.workspace.normalize` — the one-off sweep folding pre-existing
+  paths and SQL stems to their canonical NFC spelling.
 * :mod:`~hivegent.workspace.uploads`, :mod:`~hivegent.workspace.documents`,
   :mod:`~hivegent.workspace.assets`, :mod:`~hivegent.workspace.directories`,
   :mod:`~hivegent.workspace.collections` — the public mutation API.
@@ -64,9 +66,11 @@ from .documents import (
 from .indexing import sync_entries_from_disk, sync_entry_from_disk
 from .locks import inflight_stems
 from .metadata import resolve_entry
+from .normalize import NormalizeReport, normalize_workspace_paths
 from .uploads import reconvert, replace_original, upload
 
 __all__ = [
+    "NormalizeReport",
     "create_directory",
     "delete_all",
     "delete_asset_description",
@@ -79,6 +83,7 @@ __all__ = [
     "inflight_stems",
     "move_directory",
     "move_document",
+    "normalize_workspace_paths",
     "prepare",
     "process_collection",
     "prune_empty_dirs",

@@ -40,9 +40,8 @@ from .base import (
     BinaryAttachment,
     ToolOutput,
     ToolRetry,
-    resolve_accessible_file,
+    resolve_file_or_retry,
     sidecar_hint,
-    workspace_root_hint,
 )
 
 __all__ = [
@@ -135,11 +134,7 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
         (e.g. ``"3"``, ``"2-5"``, ``"1,3,5-7"``); omit it to read the
         whole document.  ``pages`` is rejected for non-PDF inputs.
         """
-        resolved = resolve_accessible_file(self.resolved_paths, file_path)
-        if resolved is None or not resolved[2].is_file():
-            roots = workspace_root_hint(self.resolved_paths, file_path)
-            raise ToolRetry(f"'{file_path}' not found.{roots}")
-        sp, local, absolute = resolved
+        sp, local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
         canonical = sp.prefixed(local)
 
         media_type = vision_media_type(local)

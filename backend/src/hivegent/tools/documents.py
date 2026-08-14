@@ -10,7 +10,7 @@ from typing import Annotated, override
 
 from pydantic import Field
 
-from ..config import content_hash
+from ..config import content_hash, normalize_unicode
 from ..converters import vision_media_type
 from ..entries import is_inside_assets_dir
 from ..humanize import pluralize
@@ -26,9 +26,8 @@ from .base import (
     file_allowed,
     is_in_excluded_dir,
     read_text_or_retry,
-    resolve_accessible_file,
+    resolve_file_or_retry,
     sidecar_hint,
-    workspace_root_hint,
 )
 from .formatting import annotate_lines
 
@@ -277,7 +276,13 @@ def _glob_entries(
     max_results: int,
     exclude_dirs: tuple[str, ...],
 ) -> list[str]:
-    """Find files matching *pattern* across search paths, scoped to *subdir*."""
+    """Find files matching *pattern* across search paths, scoped to *subdir*.
+
+    *pattern* is a path argument matched against canonically named entries, so
+    it is folded here rather than at the call sites: unlike a scoped subdirectory
+    or glob it reaches neither :func:`resolve_search_path` nor :func:`scope_paths`.
+    """
+    pattern = normalize_unicode(pattern)
     # Without a base_glob, pass the user pattern straight to rglob and skip the
     # per-entry fnmatch pass.
     effective_glob = pattern if base_glob is None else base_glob
@@ -538,11 +543,7 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         stored in a legacy encoding is decoded transparently, with the
         source encoding named next to the hash.
         """
-        resolved = resolve_accessible_file(self.resolved_paths, file_path)
-        if resolved is None or not resolved[2].is_file():
-            roots = workspace_root_hint(self.resolved_paths, file_path)
-            raise ToolRetry(f"'{file_path}' not found.{roots}")
-        _sp, _local, absolute = resolved
+        _sp, _local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
 
         # Reads are uniform: the requested file is read as text and never
         # silently swapped for another.  Non-markdown inputs are redirected only

@@ -3,6 +3,7 @@
 import hashlib
 import os
 import re
+import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
@@ -44,6 +45,7 @@ __all__ = [
     "UrlPolicySettings",
     "content_digest",
     "content_hash",
+    "normalize_unicode",
     "sanitize_document_path",
     "sanitize_group_id",
     "sanitize_user_id",
@@ -130,10 +132,43 @@ def sanitize_group_id(group_id: str) -> str:
     return sanitized
 
 
+def normalize_unicode(value: str) -> str:
+    """Return *value* in Unicode NFC, the canonical spelling for every path.
+
+    Path strings only.  One visible filename has several byte spellings: a
+    macOS upload carries ``U`` plus a combining diaeresis while a model can
+    only ever emit the precomposed ``Ü``, so a path copied verbatim out of a
+    listing still misses on a normalization-sensitive filesystem.  Folding
+    every inbound path here gives disk, SQL, filters, and tool arguments one
+    spelling to agree on.
+
+    NFC because it is lossless and idempotent.  NFKC is neither: it would
+    rewrite ``ﬁle.md`` to ``file.md``, silently renaming documents.
+
+    Never applied to file content.  :mod:`hivegent.text` decodes user bytes
+    without transforming them and :func:`content_digest` fingerprints that
+    exact text, so normalizing content would invalidate every stored digest
+    and every ``expected_hash`` token.
+
+    Args:
+        value: The path string to canonicalize.
+
+    Returns:
+        The NFC form of *value*.
+
+    >>> normalize_unicode("SÜVOA.md")
+    'SÜVOA.md'
+    >>> normalize_unicode("ﬁle.md")
+    'ﬁle.md'
+    """
+    return unicodedata.normalize("NFC", value)
+
+
 def sanitize_document_path(path: str) -> str:
     """Sanitize a document path to prevent path traversal attacks.
 
-    Normalizes the path to POSIX forward slashes and rejects unsafe patterns.
+    Normalizes the path to POSIX forward slashes and Unicode NFC, and rejects
+    unsafe patterns.
 
     Args:
         path: The relative document path to sanitize.
@@ -150,8 +185,8 @@ def sanitize_document_path(path: str) -> str:
     if "\x00" in path:
         raise ValueError("Document path contains null bytes")
 
-    # Normalize to POSIX forward slashes
-    normalized = str(PurePosixPath(path.replace("\\", "/")))
+    # Normalize to POSIX forward slashes and one canonical Unicode spelling
+    normalized = str(PurePosixPath(normalize_unicode(path).replace("\\", "/")))
 
     if normalized.startswith("/"):
         raise ValueError("Document path must be relative")

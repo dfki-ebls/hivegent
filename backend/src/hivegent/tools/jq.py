@@ -12,8 +12,7 @@ from .base import (
     ToolOutput,
     ToolRetry,
     read_text_or_retry,
-    resolve_accessible_file,
-    workspace_root_hint,
+    resolve_file_or_retry,
 )
 from .documents import DocumentFilePathArg
 
@@ -38,11 +37,8 @@ class JqTool(AsyncPathTool[str]):
         file_path: DocumentFilePathArg,
     ) -> ToolOutput[str]:
         """Run a jq filter expression against a JSON file."""
-        resolved = resolve_accessible_file(self.resolved_paths, file_path)
-        if resolved is None or not resolved[2].is_file():
-            roots = workspace_root_hint(self.resolved_paths, file_path)
-            raise ToolRetry(f"file '{file_path}' not found.{roots}")
-        data = json.loads(read_text_or_retry(resolved[2], file_path).text)
+        _sp, _local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
+        data = json.loads(read_text_or_retry(absolute, file_path).text)
 
         try:
             result = await jq_filter(filter, data)

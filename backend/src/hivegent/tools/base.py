@@ -13,6 +13,7 @@ from typing import Annotated, Any, Self, get_type_hints, override
 
 from pydantic import BaseModel, Field
 
+from ..config import normalize_unicode
 from ..entries import (
     description_path_for_stem,
     is_description_file,
@@ -43,8 +44,10 @@ __all__ = [
     "factory_tool_name",
     "file_allowed",
     "is_in_excluded_dir",
+    "near_miss_hint",
     "read_text_or_retry",
     "resolve_accessible_file",
+    "resolve_file_or_retry",
     "resolve_search_path",
     "resolve_tool_cls",
     "scope_paths",
@@ -196,6 +199,10 @@ def resolve_search_path(
     A scope prefix is matched against each path's :attr:`SearchPath.scope`.
     An unprefixed filename falls back to the first scopeless path.
 
+    The filename is folded to NFC here, the single funnel every path-taking
+    tool passes through, so a decomposed spelling still resolves to the
+    canonically named file on a normalization-sensitive filesystem.
+
     Args:
         paths: Ordered search paths to check.
         filename: A filename that may carry a scope prefix.
@@ -204,6 +211,7 @@ def resolve_search_path(
         ``(search_path, local_filename)`` with the prefix stripped,
         or ``None`` if no path matches.
     """
+    filename = normalize_unicode(filename)
     match = _match_scope(paths, filename)
     if match is not None and match[1]:
         return match
@@ -224,6 +232,9 @@ def scope_paths(
     unchanged, so an unprefixed value still spans every workspace and a
     missing value covers them all.
 
+    Like :func:`resolve_search_path`, *raw* is folded to NFC so a decomposed
+    subdirectory or glob still matches the canonically named entries.
+
     Args:
         paths: The search paths in scope for the call.
         raw: A possibly prefixed subdirectory or glob, or ``None``.
@@ -235,6 +246,7 @@ def scope_paths(
     """
     if not raw:
         return paths, raw
+    raw = normalize_unicode(raw)
     match = _match_scope(paths, raw)
     if match is not None:
         sp, local = match
@@ -313,6 +325,60 @@ def workspace_root_hint(paths: tuple[SearchPath, ...], file_path: str) -> str:
         f" This tool addresses {', '.join(roots)}; give the full path, "
         "leading with one of them."
     )
+
+
+def near_miss_hint(absolute: Path) -> str:
+    """Name the sibling that a missed path almost matched.
+
+    A refusal on a path copied out of a listing one step earlier is otherwise
+    unactionable: nothing in the message says which of the many ways a name can
+    differ went wrong, and no respelling the caller can derive is more likely
+    than the one it already sent.  Siblings are compared case-folded and
+    NFC-folded, so a re-cased basename, the failure a canonical spelling
+    cannot rule out since the filesystem is case-sensitive, is named
+    outright.  Empty when nothing in the directory is equivalent.
+    """
+    target = normalize_unicode(absolute.name).casefold()
+    try:
+        siblings = sorted(
+            name
+            for path in absolute.parent.iterdir()
+            if (name := path.name) != absolute.name
+            and normalize_unicode(name).casefold() == target
+        )
+    except OSError:
+        return ""
+
+    if not siblings:
+        return ""
+
+    return f" A file with an equivalent name exists: {', '.join(siblings)}."
+
+
+def resolve_file_or_retry(
+    paths: tuple[SearchPath, ...], file_path: str
+) -> tuple[SearchPath, str, Path]:
+    """Resolve *file_path* to an existing file, or raise a correctable refusal.
+
+    Every reader owes a turned-away caller the same correction, and which one
+    it owes splits on the reason: a path naming no root is told which roots
+    exist, one naming a missing file is told which sibling it almost matched.
+    Neither is derivable from context, so the two hints live together here
+    rather than being re-decided per tool.
+
+    The mutating tools resolve through their own gateway instead: a mutation
+    may legitimately create the file, so absence is not a refusal there.
+    """
+    resolved = resolve_accessible_file(paths, file_path)
+    if resolved is None or not resolved[2].is_file():
+        hint = (
+            workspace_root_hint(paths, file_path)
+            if resolved is None
+            else near_miss_hint(resolved[2])
+        )
+        raise ToolRetry(f"'{file_path}' not found.{hint}")
+
+    return resolved
 
 
 def sidecar_hint(file_path: str) -> str:

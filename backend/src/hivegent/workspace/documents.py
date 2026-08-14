@@ -23,6 +23,7 @@ from ..entries import (
     entry_exists,
     is_description_file,
     is_projectable_original,
+    repoint_asset_refs,
     stem_path_from_reference,
 )
 from ..humanize import pluralize
@@ -490,7 +491,7 @@ async def _move_document_locked(
         # those references when the stem's basename changed.
         description_full = dst_workspace / dst_description
         body = _decode_existing(description_full)
-        updated = body.text.replace(f"{src_name}.assets/", f"{dst_name}.assets/")
+        updated = repoint_asset_refs(body.text, src_name, dst_name)
         description_full.write_text(updated, encoding="utf-8")
 
     # Move exactly this entry's row; a same-named sibling directory's rows

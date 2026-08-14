@@ -30,7 +30,7 @@ from ...db.engine import session
 from ...db.groups import delete_all_groups, list_groups_with_counts
 from ...db.models import Group, User
 from ...db.users import delete_all_users, delete_user, list_users_with_counts
-from ...reconcile import reconcile_all
+from ...reconcile import normalize_all, reconcile_all
 from ...store import Casebase
 from ...types import (
     AdminFactoryResetResponse,
@@ -38,6 +38,7 @@ from ...types import (
     AdminListGroupsResponse,
     AdminListUsersResponse,
     AdminMaintenanceState,
+    AdminNormalizePathsResponse,
     AdminReindexResponse,
     AdminResetResponse,
     AdminUserInfo,
@@ -170,6 +171,30 @@ async def admin_reindex() -> AdminReindexResponse:
     return AdminReindexResponse(
         stores_reconciled=len(reports),
         message=f"Reconciled {len(reports)} casebase(s)",
+    )
+
+
+@router.post("/normalize-paths")
+async def admin_normalize_paths() -> AdminNormalizePathsResponse:
+    """Fold every workspace path and document stem to its canonical NFC spelling.
+
+    Repairs content that predates path canonicalisation: a filename uploaded
+    from macOS is stored decomposed, which a model can never address because it
+    only ever emits the precomposed form.  Idempotent, so re-running it after
+    dropping files onto the workspace by hand is safe and cheap.
+    """
+    reports = (await normalize_all()).values()
+    renamed = sum(r.files_renamed for r in reports)
+    moved = sum(r.stems_moved for r in reports)
+    collisions = sum(r.collisions for r in reports)
+    return AdminNormalizePathsResponse(
+        files_renamed=renamed,
+        stems_moved=moved,
+        collisions=collisions,
+        message=(
+            f"Renamed {renamed} path(s) and {moved} document row(s) "
+            f"across {len(reports)} casebase(s), {collisions} skipped"
+        ),
     )
 
 

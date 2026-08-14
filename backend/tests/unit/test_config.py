@@ -46,6 +46,18 @@ class TestSanitizeDocumentPath:
     def test_normalizes_backslashes(self) -> None:
         assert sanitize_document_path("dir\\file.md") == "dir/file.md"
 
+    def test_normalizes_decomposed_characters(self) -> None:
+        # Escapes rather than literals: this file is saved precomposed, so
+        # spelling both sides out would compare NFC with NFC and assert
+        # nothing.  A macOS upload arrives decomposed while a model can only
+        # ever emit the precomposed form, and both must reach the same path.
+        assert sanitize_document_path("dir/SU\u0308VOA.md") == "dir/S\u00dcVOA.md"
+
+    def test_keeps_compatibility_characters(self) -> None:
+        # NFC, never NFKC: folding compatibility characters would silently
+        # rename the document to "file.md".
+        assert sanitize_document_path("\ufb01le.md") == "\ufb01le.md"
+
 
 class TestSanitizeUserId:
     """Tests for sanitize_user_id."""

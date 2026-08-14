@@ -25,7 +25,7 @@ call after a session.
 
 import asyncio
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from .chunks import delete_documents as _delete_chunked_documents
@@ -38,11 +38,16 @@ from .entries import (
     stem_path_from_reference,
 )
 from .store import Casebase
-from .workspace import sync_entries_from_disk
+from .workspace import (
+    NormalizeReport,
+    normalize_workspace_paths,
+    sync_entries_from_disk,
+)
 from .workspace.locks import store_lock
 
 __all__ = [
     "ReconcileReport",
+    "normalize_all",
     "reconcile_all",
     "reconcile_store",
 ]
@@ -131,26 +136,52 @@ def _disk_known_stores() -> set[Casebase]:
     return stores
 
 
-async def reconcile_all() -> Mapping[str, ReconcileReport]:
-    """Reconcile every casebase known to SQL or present on disk.
+async def _known_stores() -> list[Casebase]:
+    """Return every casebase known to SQL or present on disk, in a stable order.
 
-    Each store holds its own lock, so reconciliation runs concurrently.
+    A store may exist on only one side: rows survive a workspace that was
+    removed, and a hand-created directory has no rows yet, so a sweep over
+    "everything" has to consider both.
     """
     sql_stores = await db_documents.list_known_stores()
-    stores = sorted(sql_stores | _disk_known_stores(), key=lambda s: s.store_key)
+    return sorted(sql_stores | _disk_known_stores(), key=lambda s: s.store_key)
 
-    async def _reconcile_safe(store: Casebase) -> ReconcileReport | None:
+
+async def _sweep_all[T](
+    label: str, sweep: Callable[[Casebase], Awaitable[T]]
+) -> Mapping[str, T]:
+    """Run *sweep* over every known casebase concurrently, isolating failures.
+
+    Each store holds its own lock, so the sweeps do not contend.  A store that
+    raises is logged and dropped from the result rather than aborting the rest:
+    one unreadable workspace must not stop the others from being repaired.
+    """
+    stores = await _known_stores()
+
+    async def _safe(store: Casebase) -> T | None:
         try:
-            return await reconcile_store(store)
+            return await sweep(store)
         except Exception:
-            logger.warning(
-                "Reconciliation failed for %s", store.store_key, exc_info=True
-            )
+            logger.warning("%s failed for %s", label, store.store_key, exc_info=True)
             return None
 
-    reports = await asyncio.gather(*(_reconcile_safe(store) for store in stores))
+    reports = await asyncio.gather(*(_safe(store) for store in stores))
     return {
         store.store_key: report
         for store, report in zip(stores, reports, strict=True)
         if report is not None
     }
+
+
+async def reconcile_all() -> Mapping[str, ReconcileReport]:
+    """Reconcile every casebase known to SQL or present on disk."""
+    return await _sweep_all("Reconciliation", reconcile_store)
+
+
+async def normalize_all() -> Mapping[str, NormalizeReport]:
+    """Fold every casebase's workspace paths and SQL stems to NFC.
+
+    The repair pass for content that predates path canonicalisation; see
+    :mod:`hivegent.workspace.normalize`.
+    """
+    return await _sweep_all("Path normalization", normalize_workspace_paths)

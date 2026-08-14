@@ -410,6 +410,18 @@ class TestReadDocumentTool:
         assert result.total_lines == 1
         assert result.content_hash  # surfaced for optimistic-concurrency edits
 
+    def test_reads_file_named_with_a_decomposed_path(self, tmp_path: Path) -> None:
+        # The production failure: the file is stored precomposed but a model can
+        # only emit the decomposed spelling of a path it was shown, and on a
+        # normalization-sensitive filesystem the two name different files.
+        # Escapes, not literals: this file is saved precomposed, so writing both
+        # spellings out would compare NFC with NFC and assert nothing.
+        (tmp_path / "S\u00dcVOA.md").write_text("content here")
+        tool = ReadDocumentTool(paths=tmp_path)
+        result = tool("SU\u0308VOA.md").data
+        assert isinstance(result, DocumentRange)
+        assert result.content == "content here"
+
     def test_binary_original_directs_to_markdown_sidecar(self, tmp_path: Path) -> None:
         # A non-decodable original (report.docx) is never silently swapped; the
         # retry points the model at its <stem>.md sidecar so the read re-runs the

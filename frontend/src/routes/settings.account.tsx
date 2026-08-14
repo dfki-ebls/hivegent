@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
+  CaseSensitiveIcon,
   DatabaseZapIcon,
   EyeIcon,
   FactoryIcon,
@@ -38,6 +39,7 @@ import {
   adminListGroups,
   adminListUsers,
   PERSONAL_SCOPE,
+  adminNormalizePaths,
   adminReindex,
   adminResetDatabase,
   adminResetWorkspace,
@@ -71,7 +73,8 @@ interface DangerAction {
   title: string;
   description: string;
   confirm: string;
-  run: () => Promise<void>;
+  /** Returns an optional detail line for the success toast (counts, outcomes). */
+  run: () => Promise<string | void>;
 }
 
 interface ConfirmDialogProps {
@@ -464,6 +467,30 @@ function AdminDangerZoneSection({
           className="justify-start"
           onClick={() =>
             setAction({
+              key: "admin-normalize-paths",
+              title: "Normalize Filenames",
+              description:
+                "Rewrite workspace filenames and document paths to one canonical Unicode spelling. A file uploaded from macOS is stored decomposed, which the assistant cannot open because it only ever writes the precomposed form. Renames files on disk and updates the matching rows together; nothing is re-embedded and no file is deleted or overwritten. Safe to re-run, and worth running after copying files into the workspace by hand.",
+              confirm: "Normalize",
+              run: async () => {
+                const { files_renamed, stems_moved, collisions } = await adminNormalizePaths();
+                await refresh();
+                const skipped =
+                  collisions > 0 ? `, ${collisions} skipped (both spellings exist)` : "";
+                return `${files_renamed} file(s) and ${stems_moved} document row(s) renamed${skipped}`;
+              },
+            })
+          }
+        >
+          <CaseSensitiveIcon className="h-4 w-4 mr-2" />
+          Normalize Filenames
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="justify-start"
+          onClick={() =>
+            setAction({
               key: "admin-database",
               title: "Reset Database",
               description:
@@ -559,8 +586,8 @@ function AccountPage() {
     if (!action) return;
     setBusy(true);
     try {
-      await action.run();
-      toast.success(`${action.title} — done`);
+      const detail = await action.run();
+      toast.success(`${action.title} — done`, detail ? { description: detail } : undefined);
     } catch (e) {
       console.error(`${action.key} failed:`, e);
       toast.error(`${action.title} failed`, {

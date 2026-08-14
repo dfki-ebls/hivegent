@@ -301,6 +301,22 @@ async def list_document_paths(store: Casebase) -> dict[str, int]:
     return {description_path_for_stem(stem): int(count) for stem, count in rows}
 
 
+async def list_stem_paths(store: Casebase) -> list[str]:
+    """Return every raw ``stem_path`` in *store*.
+
+    The stems themselves, not the description paths
+    :func:`list_document_paths` derives: a caller that needs to address rows
+    would otherwise append ``.md`` here and strip it again through
+    :func:`~hivegent.entries.stem_path_from_reference`, which truncates a stem
+    that contains dots.  Skips that function's chunk-count aggregate too.
+    """
+    async with session() as s:
+        rows = (
+            await s.execute(select(Document.stem_path).where(_owner_filter(store)))
+        ).all()
+    return [stem for (stem,) in rows]
+
+
 async def get_line_counts(store: Casebase, references: Sequence[str]) -> dict[str, int]:
     """Return ``{reference: line_count}`` for the given workspace references.
 

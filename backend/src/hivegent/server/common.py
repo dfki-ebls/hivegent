@@ -4,7 +4,12 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from ..auth import User
-from ..config import sanitize_document_path, sanitize_group_id, settings
+from ..config import (
+    normalize_unicode,
+    sanitize_document_path,
+    sanitize_group_id,
+    settings,
+)
 from ..security import require_safe_external_url
 from ..store import Casebase, WorkspaceScope
 from ..types import DocumentFilter, LlmConfig, LlmTier, resolve_llm_config
@@ -61,7 +66,9 @@ def parse_document_filters(
     Entries are canonical workspace paths; a bare scope root selects the
     whole workspace (local ``/``). Unparseable entries and groups the
     caller cannot address (``user_groups``, i.e. :attr:`User.all_groups`)
-    are skipped.
+    are skipped.  Every entry is folded to NFC, so a filter captured from a
+    workspace tree before the paths were canonicalized still selects its
+    document instead of silently matching nothing.
 
     The include list is a whitelist over the whole corpus: as soon as any
     include entry exists, every store gets a filter, so a store without
@@ -73,7 +80,7 @@ def parse_document_filters(
         by_store: dict[str | None, list[str]] = {}
         for entry in entries:
             try:
-                scope, local = WorkspaceScope.parse(entry)
+                scope, local = WorkspaceScope.parse(normalize_unicode(entry))
             except ValueError:
                 continue
             group_id = scope.group_id

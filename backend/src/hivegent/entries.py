@@ -22,6 +22,7 @@ __all__ = [
     "is_inside_assets_dir",
     "is_projectable_original",
     "original_path_for_stem",
+    "repoint_asset_refs",
     "resolve_entry_paths",
     "stem_display_name",
     "stem_path_from_reference",
@@ -198,6 +199,20 @@ def asset_ref_for(assets_dir: str, relpath: str) -> str:
     'report.assets/img/fig1.png'
     """
     return str(PurePosixPath(PurePosixPath(assets_dir).name) / relpath)
+
+
+def repoint_asset_refs(markdown: str, src_name: str, dst_name: str) -> str:
+    """Repoint ``<name>.assets/`` references after an entry's basename changed.
+
+    A description addresses its payload by basename (see :func:`asset_ref_for`),
+    so a rename that changes the basename leaves every reference pointing at a
+    directory that no longer exists.  Every renamer needs the same rewrite, and
+    the reference format is the thing that must not drift between them.
+
+    >>> repoint_asset_refs("![](old.assets/fig.png)", "old", "new")
+    '![](new.assets/fig.png)'
+    """
+    return markdown.replace(f"{src_name}.assets/", f"{dst_name}.assets/")
 
 
 def original_path_for_stem(stem_path: str, original_suffix: str | None) -> str | None:
