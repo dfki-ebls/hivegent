@@ -1,4 +1,3 @@
-import { Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -26,7 +25,7 @@ import {
 } from "@/stores/upload-queue-store";
 import { CreateDirectoryDialog } from "@/components/CreateDirectoryDialog";
 import { DocumentDialog } from "@/components/DocumentDialog";
-import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/SearchInput";
 import { PipelineSettingsBar } from "@/components/documents/PipelineSettingsBar";
 import { ScopeSection } from "@/components/documents/ScopeSection";
 import { UploadArea } from "@/components/documents/UploadArea";
@@ -236,15 +235,11 @@ export function DocumentManager() {
         />
 
         <div className="p-4 pb-2">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search documents..."
-              className="pl-9"
-            />
-          </div>
+          <SearchInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Search documents..."
+          />
         </div>
       </div>
 

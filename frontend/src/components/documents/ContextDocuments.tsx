@@ -7,7 +7,7 @@ import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { DocumentDialog } from "@/components/DocumentDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DocumentGroup } from "@/components/documents/DocumentGroup";
-import { EmptyState } from "@/components/documents/EmptyState";
+import { EmptyState } from "@/components/EmptyState";
 
 export function ContextDocuments() {
   const chunks = useFetchedDocumentsStore((state) => state.chunks);

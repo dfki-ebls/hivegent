@@ -15,6 +15,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { EmptyState } from "@/components/EmptyState";
+import { SearchInput } from "@/components/SearchInput";
+import { useFuzzySearch } from "@/hooks/use-fuzzy-search";
 
 // --- Utility functions ---
 
@@ -56,16 +59,6 @@ function ErrorState({ message, onRetry }: ErrorStateProps) {
       <Button variant="outline" size="sm" onClick={onRetry}>
         Retry
       </Button>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
-      <MessageSquare className="h-8 w-8" />
-      <p className="text-sm">No conversations yet</p>
-      <p className="text-xs">Start a new chat to begin</p>
     </div>
   );
 }
@@ -285,6 +278,8 @@ export function ConversationsList({
   const { overrides } = useSettingsStore();
 
   const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const matches = useFuzzySearch(conversations, searchQuery, "title");
 
   useEffect(() => {
     void fetchConversations();
@@ -307,22 +302,47 @@ export function ConversationsList({
 
   if (isLoading) return <LoadingState />;
   if (error) return <ErrorState message={error} onRetry={fetchConversations} />;
-  if (conversations.length === 0) return <EmptyState />;
+  if (conversations.length === 0)
+    return (
+      <EmptyState
+        icon={<MessageSquare className="h-8 w-8" />}
+        title="No conversations yet"
+        description="Start a new chat to begin"
+      />
+    );
 
   return (
-    <div className="h-full space-y-2 overflow-y-auto p-2">
-      {conversations.map((conversation) => (
-        <ConversationItem
-          key={conversation.id}
-          title={conversation.title}
-          updatedAt={conversation.updated_at}
-          isActive={conversation.id === currentConversationId}
-          onSelect={() => onConversationSelect(conversation.id)}
-          onDelete={() => setPendingDelete({ id: conversation.id, title: conversation.title })}
-          onUpdateTitle={(title) => updateTitle(conversation.id, title)}
-          onGenerateTitle={() => handleGenerateTitle(conversation.id)}
+    <div className="flex h-full flex-col">
+      <div className="p-2 pb-0">
+        <SearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search conversations..."
         />
-      ))}
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+        {matches.length === 0 ? (
+          <EmptyState
+            icon={<MessageSquare className="h-8 w-8" />}
+            title="No matching conversations"
+            description="Try a different search term"
+          />
+        ) : (
+          matches.map((conversation) => (
+            <ConversationItem
+              key={conversation.id}
+              title={conversation.title}
+              updatedAt={conversation.updated_at}
+              isActive={conversation.id === currentConversationId}
+              onSelect={() => onConversationSelect(conversation.id)}
+              onDelete={() => setPendingDelete({ id: conversation.id, title: conversation.title })}
+              onUpdateTitle={(title) => updateTitle(conversation.id, title)}
+              onGenerateTitle={() => handleGenerateTitle(conversation.id)}
+            />
+          ))
+        )}
+      </div>
 
       <AlertDialog
         open={pendingDelete !== null}

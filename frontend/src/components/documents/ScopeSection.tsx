@@ -29,6 +29,7 @@ import {
   type FilterEntryState,
 } from "@/components/documents/FilterToggleButtons";
 import { ScopeDialogs, type ScopeDialogsHandle } from "@/components/documents/ScopeDialogs";
+import { useFuzzySearch } from "@/hooks/use-fuzzy-search";
 
 /** Edit/view dialog target within a scope (local path). */
 interface ScopeDialogState {
@@ -92,7 +93,7 @@ export function ScopeSection({
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [dialog, setDialog] = useState<ScopeDialogState | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
-  const [filtered, setFiltered] = useState(documents);
+  const filtered = useFuzzySearch(documents, searchQuery, "display_name", "filename");
 
   // Refresh this scope's documents and tree once on mount.
   useEffect(() => {
@@ -113,21 +114,6 @@ export function ScopeSection({
 
   const isSearching = searchQuery.trim().length > 0;
   const expanded = isOpen || isSearching;
-
-  // `filtered` is only read while searching (flatList + visibleFilePaths), so
-  // there's no need to mirror `documents` into it on the non-searching path.
-  useEffect(() => {
-    if (!isSearching) return;
-    let cancelled = false;
-    void import("fuse.js").then(({ default: Fuse }) => {
-      if (cancelled) return;
-      const fuse = new Fuse(documents, { keys: ["display_name", "filename"], threshold: 0.4 });
-      setFiltered(fuse.search(searchQuery).map((r) => r.item));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [documents, searchQuery, isSearching]);
 
   const docsByFilename = useMemo(() => new Map(documents.map((d) => [d.filename, d])), [documents]);
 
