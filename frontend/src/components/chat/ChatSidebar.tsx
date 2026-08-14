@@ -22,7 +22,7 @@ import { useSteeringQueue } from "@/hooks/chat/use-steering-queue";
 import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
 import { importConversation, transcribeAudio } from "@/lib/api";
 import { downloadJson } from "@/lib/download";
-import { getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
+import { activeChatError, getLastUserMessage, recordChatError } from "@/lib/chat/chat-utils";
 import { type AgentMode, type ReasoningEffort } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
@@ -59,6 +59,12 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   // (not a ref) so the adoption effect below runs once it is reported.
   const [createdId, setCreatedId] = useState<string | null>(null);
 
+  // Id of the message whose error banner the user dismissed. A persisted error
+  // rides on the last message, so keying on that id both hides it for this view
+  // only (`messages` stays a faithful projection of the stored conversation)
+  // and re-arms the banner for the next turn, which appends a new last message.
+  const [dismissedErrorId, setDismissedErrorId] = useState<string | null>(null);
+
   const [activeTab, setActiveTab] = useState<ChatTab>("chat");
   const [agentMode, setAgentMode] = useState<AgentMode>("interactive");
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("auto");
@@ -81,6 +87,10 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     draft,
     onConversationCreated: setCreatedId,
   });
+
+  const lastMessage = messages.at(-1);
+  const chatError = activeChatError(messages, error);
+  const visibleChatError = lastMessage?.id === dismissedErrorId ? undefined : chatError;
 
   const { isLoadingHistory, compactedFrom } = useConversationHistory(id, setMessages, draft);
   const { editingId, setEditing, clear: clearEditing } = useMessageEditing(status);
@@ -106,24 +116,24 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     handleSendMessage,
   );
 
-  // Once the first turn of a draft has settled cleanly, adopt the server-issued
-  // ID: hand the streamed messages to that route and navigate so reloads and the
-  // sidebar reflect the now-persisted conversation. The minted ID is already
-  // adopted for the transport in `onFinish`, so a retry continues this
-  // conversation regardless of navigation — the URL change is purely cosmetic.
-  // That lets us stay put while the turn is in an error state: navigating would
-  // discard this chat instance and with it the SDK error, hiding the in-place
-  // error bar (and its retry) since the destination only receives the messages.
-  // Once the error is retried into a clean turn or dismissed, navigation
-  // proceeds. Queued steering messages drain first (the transport already
-  // targets the adopted conversation) so their turns stream here and land in the
-  // handoff instead of being cut off mid-stream by the navigation.
+  // Once the first turn of a draft settles, adopt the server-issued ID on both
+  // success and failure. The backend persists a turn on every finish — clean,
+  // errored, or stopped — so a minted ID always names a real row; adopting only
+  // on success left a failed first turn stranded on the draft URL with its row
+  // invisible until a retry succeeded.
+  //
+  // Live SDK errors do not survive the route remount, so carry their text on the
+  // last handed-off message, matching the metadata the backend stores. Because
+  // `activeChatError` then reads that back, an overflow reaches auto-compaction
+  // after the handoff and on reload too, where it previously died with the SDK
+  // error and left the conversation stuck (the banner was suppressed on the
+  // grounds that compaction owned the case, but nothing fed compaction).
   useEffect(() => {
     if (!draft || !createdId || messages.length === 0) return;
-    if (isStreaming || error) return;
+    if (isStreaming) return;
     if (steeringQueue.length > 0) return;
     setCreatedId(null);
-    stashHandoff(createdId, messages);
+    stashHandoff(createdId, recordChatError(messages, error));
     void fetchConversations();
     // Replace, not push: the transient draft URL ("/") shouldn't be a
     // back-button target once it has become a real conversation.
@@ -147,7 +157,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     clearError: clearCompactionError,
   } = useAutoCompact({
     id,
-    chatError: error,
+    chatError,
     messages,
     isLoadingHistory,
     onRetry: handleSendMessage,
@@ -307,17 +317,17 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
           <MessageList
             messages={messages}
             status={status}
-            chatError={error}
+            chatError={visibleChatError}
             compactionError={compactionError}
             isLoadingHistory={isLoadingHistory}
             compactedFrom={compactedFrom}
             editingId={editingId}
-            showChatError={!!error && !isContextLengthError(error)}
             onNavigatePrevious={handleNavigateToPrevious}
             onRetry={handleRetry}
             onDismissError={() => {
               clearCompactionError();
               clearError();
+              setDismissedErrorId(lastMessage?.id ?? null);
             }}
             onSetEditing={setEditing}
             onCancelEdit={clearEditing}

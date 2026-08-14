@@ -52,7 +52,7 @@ export function getLastUserMessage(
  * Re-key the last user message to the tree-node id the backend stored it under
  * (returned in `X-Message-Id`), so edit and retry can address it.
  */
-export function adoptMessageNodeId(messages: UIMessage[], nodeId: string): UIMessage[] {
+export function adoptMessageNodeId(messages: ChatMessage[], nodeId: string): ChatMessage[] {
   const index = lastUserIndex(messages);
   if (index === -1) return messages;
   return messages.with(index, { ...messages[index], id: nodeId });
@@ -70,8 +70,8 @@ const CONTEXT_LENGTH_ERROR_PREFIX = "context_length_exceeded: ";
  * provider errors and prefixes overflows with a stable code, so no matching
  * of provider-specific message text happens here.
  */
-export function isContextLengthError(error: Error | null | undefined): boolean {
-  return error?.message.startsWith(CONTEXT_LENGTH_ERROR_PREFIX) ?? false;
+export function isContextLengthError(error: string | undefined): boolean {
+  return error?.startsWith(CONTEXT_LENGTH_ERROR_PREFIX) ?? false;
 }
 
 /**
@@ -84,19 +84,47 @@ export interface ChatMessageMetadata {
 }
 
 /**
- * A persisted run error to surface as a banner on reload, or undefined.
+ * The message type used throughout the chat, carrying our metadata shape.
  *
- * A stream error is transient live state that reload would otherwise lose, so
- * the backend stores it on the last turn's message metadata (see
- * `record_turn_error` in `backend/src/hivegent/server/vercel.py`). Reading the
- * last message shows the banner only while the latest turn is the failed one, so
- * a later successful turn clears it. Context-window overflows are suppressed here
- * just as they are live, since auto-compaction owns that case.
+ * `UIMessage` defaults its metadata to `unknown`, which forces a cast at every
+ * read; binding it once here types `message.metadata` everywhere instead. Chat
+ * state is created from this type in `useChat` (see `use-hivegent-chat.ts`), so
+ * the annotation flows outward rather than being re-asserted per call site.
  */
-export function persistedChatError(messages: UIMessage[]): string | undefined {
-  const error = (messages.at(-1)?.metadata as ChatMessageMetadata | undefined)?.chatError;
-  if (!error || error.startsWith(CONTEXT_LENGTH_ERROR_PREFIX)) return undefined;
-  return error;
+export type ChatMessage = UIMessage<ChatMessageMetadata>;
+
+/**
+ * The run error of the latest turn, live or persisted, or undefined.
+ *
+ * A stream error is transient SDK state that a reload or the draft-to-
+ * conversation remount would lose, so the backend stores it on the last turn's
+ * message metadata (see `record_turn_error` in
+ * `backend/src/hivegent/server/vercel.py`) and `recordChatError` does the same
+ * across the handoff. Reading the last message means a later successful turn
+ * retires the error on its own. This is the single source every consumer reads,
+ * so the banner and auto-compaction always agree on what failed.
+ */
+export function activeChatError(
+  messages: ChatMessage[],
+  liveError: Error | undefined,
+): string | undefined {
+  return liveError?.message ?? messages.at(-1)?.metadata?.chatError;
+}
+
+/**
+ * Store a live run error on the last message so it survives the draft-to-
+ * conversation handoff, which seeds the destination route from memory and so
+ * skips the fetch that would return the copy the backend just persisted.
+ */
+export function recordChatError(messages: ChatMessage[], error: Error | undefined): ChatMessage[] {
+  if (!error || messages.length === 0) return messages;
+
+  const index = messages.length - 1;
+  const message = messages[index];
+  return messages.with(index, {
+    ...message,
+    metadata: { ...message.metadata, chatError: error.message },
+  });
 }
 
 /**

@@ -1,11 +1,11 @@
-import type { UIMessage } from "@ai-sdk/react";
+import type { ChatMessage } from "@/lib/chat/chat-utils";
 import { useEffect, useRef, useState } from "react";
 import { getConversation, getConversationMessages } from "@/lib/api";
 import { useDraftHandoffStore } from "@/stores/draft-handoff-store";
 
 export function useConversationHistory(
   id: string,
-  setMessages: (messages: UIMessage[]) => void,
+  setMessages: (messages: ChatMessage[]) => void,
   draft = false,
 ) {
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);

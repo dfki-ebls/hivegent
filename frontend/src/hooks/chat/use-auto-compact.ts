@@ -1,9 +1,14 @@
-import type { UIMessage } from "@ai-sdk/react";
+
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { buildLlmConfig, compactConversation } from "@/lib/api";
-import { canCompact, getLastUserMessage, isContextLengthError } from "@/lib/chat/chat-utils";
+import {
+  type ChatMessage,
+  canCompact,
+  getLastUserMessage,
+  isContextLengthError,
+} from "@/lib/chat/chat-utils";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { useSettingsStore } from "@/stores/settings-store";
 
@@ -12,8 +17,8 @@ const MESSAGE_TOO_LARGE =
 
 interface UseAutoCompactArgs {
   id: string;
-  chatError: Error | undefined;
-  messages: UIMessage[];
+  chatError: string | undefined;
+  messages: ChatMessage[];
   isLoadingHistory: boolean;
   onRetry: (text: string) => void;
 }

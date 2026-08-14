@@ -1,4 +1,4 @@
-import { type UIMessage, type UseChatHelpers, useChat } from "@ai-sdk/react";
+import { type UseChatHelpers, useChat } from "@ai-sdk/react";
 import {
   type FileUIPart,
   DefaultChatTransport,
@@ -6,7 +6,7 @@ import {
 } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getAuthHeaders } from "@/lib/api";
-import { adoptMessageNodeId } from "@/lib/chat/chat-utils";
+import { type ChatMessage, adoptMessageNodeId } from "@/lib/chat/chat-utils";
 import { API_BASE_URL } from "@/lib/health";
 import type { SubagentSteps, SubagentUpdate } from "@/lib/chat/subagent";
 
@@ -68,7 +68,7 @@ export function useHivegentChat(
   const messageNodeIdRef = useRef<string | null>(null);
   // `onFinish` is a `useChat` argument, so it cannot close over the chat it
   // belongs to; it reaches the one setter it needs through this ref.
-  const setMessagesRef = useRef<UseChatHelpers<UIMessage>["setMessages"] | null>(null);
+  const setMessagesRef = useRef<UseChatHelpers<ChatMessage>["setMessages"] | null>(null);
 
   const transport = useMemo(
     () =>
@@ -122,7 +122,7 @@ export function useHivegentChat(
     setSubagentSteps(new Map());
   }, [id]);
 
-  const chat = useChat({
+  const chat = useChat<ChatMessage>({
     id,
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,

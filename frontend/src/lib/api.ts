@@ -1,4 +1,4 @@
-import type { UIMessage } from "@ai-sdk/react";
+import type { ChatMessage } from "@/lib/chat/chat-utils";
 import { z } from "zod";
 
 import type { AgentMode, McpServerEntry, ToolsSpec } from "@/lib/types";
@@ -414,14 +414,14 @@ export function buildToolsPayload(spec: ToolsSpec): Record<string, unknown> {
   };
 }
 
-export async function getConversationMessages(conversationId: string): Promise<UIMessage[]> {
+export async function getConversationMessages(conversationId: string): Promise<ChatMessage[]> {
   const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}/messages`);
   if (!res.ok) {
     return [];
   }
   const data: unknown = await res.json();
   if (!Array.isArray(data)) return [];
-  return data as UIMessage[];
+  return data as ChatMessage[];
 }
 
 // ============================================================
@@ -694,7 +694,7 @@ export async function generateConversationTitle(
 export async function compactConversation(
   conversationId: string,
   llm: LlmConfig,
-  messages: UIMessage[],
+  messages: ChatMessage[],
 ): Promise<CompactConversationResponse> {
   const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}/compaction`, {
     method: "POST",

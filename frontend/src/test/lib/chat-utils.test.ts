@@ -1,38 +1,35 @@
-import type { UIMessage } from "@ai-sdk/react";
 import { describe, expect, it } from "vitest";
 
 import {
+  type ChatMessage,
+  activeChatError,
   adoptMessageNodeId,
   canCompact,
   isContextLengthError,
-  persistedChatError,
+  recordChatError,
   showThinkingLoader,
 } from "@/lib/chat/chat-utils";
 
-const msg = (role: UIMessage["role"], text: string): UIMessage => ({
+const msg = (role: ChatMessage["role"], text: string): ChatMessage => ({
   id: `${role}-${text}`,
   role,
   parts: [{ type: "text", text }],
 });
 
-const assistant = (parts: UIMessage["parts"]): UIMessage[] => [
+const assistant = (parts: ChatMessage["parts"]): ChatMessage[] => [
   { id: "assistant", role: "assistant", parts },
 ];
 
 describe("isContextLengthError", () => {
   it("matches the backend's canonical overflow code", () => {
     expect(
-      isContextLengthError(
-        new Error("context_length_exceeded: Model token limit (provider default) exceeded"),
-      ),
+      isContextLengthError("context_length_exceeded: Model token limit (provider default) exceeded"),
     ).toBe(true);
   });
 
   it("ignores raw provider messages and unrelated errors", () => {
-    expect(
-      isContextLengthError(new Error("This model's maximum context length is 8192 tokens.")),
-    ).toBe(false);
-    expect(isContextLengthError(new Error("connection refused"))).toBe(false);
+    expect(isContextLengthError("This model's maximum context length is 8192 tokens.")).toBe(false);
+    expect(isContextLengthError("connection refused")).toBe(false);
     expect(isContextLengthError(undefined)).toBe(false);
   });
 });
@@ -43,7 +40,7 @@ describe("showThinkingLoader", () => {
   });
 
   it("keeps the loader visible in the gap after a tool call", () => {
-    const parts: UIMessage["parts"] = [
+    const parts: ChatMessage["parts"] = [
       {
         type: "dynamic-tool",
         toolName: "search",
@@ -57,12 +54,12 @@ describe("showThinkingLoader", () => {
   });
 
   it("hides the loader while text is actively streaming", () => {
-    const parts: UIMessage["parts"] = [{ type: "text", text: "hi", state: "streaming" }];
+    const parts: ChatMessage["parts"] = [{ type: "text", text: "hi", state: "streaming" }];
     expect(showThinkingLoader(assistant(parts), "streaming")).toBe(false);
   });
 
   it("hides the loader once the turn is ready", () => {
-    const parts: UIMessage["parts"] = [{ type: "text", text: "done", state: "done" }];
+    const parts: ChatMessage["parts"] = [{ type: "text", text: "done", state: "done" }];
     expect(showThinkingLoader(assistant(parts), "ready")).toBe(false);
   });
 });
@@ -99,20 +96,37 @@ describe("adoptMessageNodeId", () => {
   });
 });
 
-describe("persistedChatError", () => {
-  const withError = (error: string): UIMessage[] => [
-    { id: "user", role: "user", parts: [{ type: "text", text: "q" }], metadata: { chatError: error } },
+describe("activeChatError", () => {
+  const stored: ChatMessage[] = [
+    {
+      id: "user",
+      role: "user",
+      parts: [{ type: "text", text: "q" }],
+      metadata: { chatError: "provider exploded" },
+    },
   ];
 
   it("surfaces a stored run error from the last message", () => {
-    expect(persistedChatError(withError("provider exploded"))).toBe("provider exploded");
+    expect(activeChatError(stored, undefined)).toBe("provider exploded");
   });
 
-  it("suppresses overflow errors, which auto-compaction owns", () => {
-    expect(persistedChatError(withError("context_length_exceeded: too big"))).toBeUndefined();
+  it("prefers the live error over the stored one", () => {
+    expect(activeChatError(stored, new Error("still streaming when it died"))).toBe(
+      "still streaming when it died",
+    );
   });
 
   it("returns undefined when the last message carries no error", () => {
-    expect(persistedChatError([msg("assistant", "all good")])).toBeUndefined();
+    expect(activeChatError([msg("assistant", "all good")], undefined)).toBeUndefined();
+  });
+});
+
+describe("recordChatError", () => {
+  it("carries a live error through the route handoff", () => {
+    const messages = [msg("user", "q")];
+    const recorded = recordChatError(messages, new Error("provider exploded"));
+
+    expect(activeChatError(recorded, undefined)).toBe("provider exploded");
+    expect(recordChatError(messages, undefined)).toBe(messages);
   });
 });

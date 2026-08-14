@@ -1,4 +1,4 @@
-import type { UIMessage } from "@ai-sdk/react";
+
 import type { ChatStatus } from "ai";
 import {
   Conversation,
@@ -10,17 +10,16 @@ import { Loader } from "@/components/ai-elements/loader";
 import { ChatError } from "@/components/chat/ChatError";
 import { CompactionBanner } from "@/components/chat/CompactionBanner";
 import { MessageBubble } from "@/components/chat/MessageBubble";
-import { persistedChatError, showThinkingLoader } from "@/lib/chat/chat-utils";
+import { type ChatMessage, isContextLengthError, showThinkingLoader } from "@/lib/chat/chat-utils";
 
 interface MessageListProps {
-  messages: UIMessage[];
+  messages: ChatMessage[];
   status: ChatStatus;
-  chatError: Error | undefined;
+  chatError: string | undefined;
   compactionError: Error | null;
   isLoadingHistory: boolean;
   compactedFrom: string | null;
   editingId: string | null;
-  showChatError: boolean;
   onNavigatePrevious: (previousId: string) => void;
   onRetry: () => void;
   onDismissError: () => void;
@@ -41,7 +40,6 @@ export function MessageList({
   isLoadingHistory,
   compactedFrom,
   editingId,
-  showChatError,
   onNavigatePrevious,
   onRetry,
   onDismissError,
@@ -53,15 +51,11 @@ export function MessageList({
   onDeny,
   onExecutePlan,
 }: MessageListProps) {
-  // A live error is transient SDK state; a reloaded conversation carries its
-  // failure on the last message's metadata instead. Surface either through the
-  // same banner.
-  const persistedError = persistedChatError(messages);
+  // Context-window overflows never reach the banner, live or persisted, since
+  // auto-compaction owns that case.
+  const showError = !!compactionError || (!!chatError && !isContextLengthError(chatError));
   const errorMessage =
-    compactionError?.message ||
-    chatError?.message ||
-    persistedError ||
-    "An error occurred while processing your request.";
+    compactionError?.message || chatError || "An error occurred while processing your request.";
 
   // `resize="instant"`: the default spring keeps its accumulated velocity when
   // the browser clamps the scroll at the bottom, so content growing in bursts (a
@@ -96,7 +90,7 @@ export function MessageList({
           />
         ))}
         {showThinkingLoader(messages, status) && <Loader />}
-        {(showChatError || compactionError || persistedError) && (
+        {showError && (
           <ChatError message={errorMessage} onRetry={onRetry} onDismiss={onDismissError} />
         )}
       </ConversationContent>

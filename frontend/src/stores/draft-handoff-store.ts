@@ -1,4 +1,4 @@
-import type { UIMessage } from "@ai-sdk/react";
+import type { ChatMessage } from "@/lib/chat/chat-utils";
 import { create } from "zustand";
 
 /**
@@ -8,9 +8,9 @@ import { create } from "zustand";
  * turn never flashes through a loading state on the remount.
  */
 interface DraftHandoffState {
-  messages: Record<string, UIMessage[]>;
-  stash: (id: string, messages: UIMessage[]) => void;
-  take: (id: string) => UIMessage[] | undefined;
+  messages: Record<string, ChatMessage[]>;
+  stash: (id: string, messages: ChatMessage[]) => void;
+  take: (id: string) => ChatMessage[] | undefined;
 }
 
 export const useDraftHandoffStore = create<DraftHandoffState>((set, get) => ({

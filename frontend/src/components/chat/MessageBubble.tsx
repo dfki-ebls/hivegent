@@ -1,4 +1,3 @@
-import type { UIMessage } from "@ai-sdk/react";
 import type { ChatStatus } from "ai";
 import { CopyIcon, PencilIcon } from "lucide-react";
 import {
@@ -8,24 +7,22 @@ import {
   MessageContent,
 } from "@/components/ai-elements/message";
 import { MessagePart } from "@/components/chat/MessagePart";
-import { type ChatMessageMetadata, joinTextParts } from "@/lib/chat/chat-utils";
+import { type ChatMessage, joinTextParts } from "@/lib/chat/chat-utils";
 import { indexToolData } from "@/lib/chat/tool-part";
 
 const MS_IN_S = 1000;
 
 function reasoningDurationSeconds(
-  metadata: UIMessage["metadata"],
+  metadata: ChatMessage["metadata"],
   reasoningIndex: number,
 ): number | undefined {
-  const durationMs = (metadata as ChatMessageMetadata | undefined)?.reasoningDurationsMs?.[
-    reasoningIndex
-  ];
+  const durationMs = metadata?.reasoningDurationsMs?.[reasoningIndex];
 
   return typeof durationMs === "number" ? Math.ceil(durationMs / MS_IN_S) : undefined;
 }
 
 interface MessageBubbleProps {
-  message: UIMessage;
+  message: ChatMessage;
   isLastMessage: boolean;
   status: ChatStatus;
   editingId: string | null;
