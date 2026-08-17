@@ -99,6 +99,19 @@ export type PersistedOverrides = z.infer<typeof PersistedOverridesSchema>;
 // API response schemas
 // ============================================================
 
+/** One group the user belongs to, with the permission they hold on it.
+ *
+ * `id` is what every path and request uses (`@<id>/notes.md`); `name` is a
+ * display label only, falling back to the id when the identity provider
+ * supplied no display name.
+ */
+export const GroupInfoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  writable: z.boolean(),
+});
+export type GroupInfo = z.infer<typeof GroupInfoSchema>;
+
 /** Authenticated user information from the backend.
  *
  * Admin status is derived client-side from the fixed `admin` role being
@@ -108,8 +121,7 @@ export const UserResponseSchema = z.object({
   id: z.string(),
   email: z.string().nullable().optional(),
   name: z.string().nullable().optional(),
-  read_groups: z.array(z.string()).default([]),
-  write_groups: z.array(z.string()).default([]),
+  groups: z.array(GroupInfoSchema).default([]),
   roles: z.array(z.string()).default([]),
 });
 export type UserResponse = z.infer<typeof UserResponseSchema>;

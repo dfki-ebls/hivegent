@@ -79,6 +79,19 @@ Die Zugriffssteuerung richtet sich nach den Claims im Token jedes Benutzers.
 
 Konfigurieren Sie Ihren Anbieter so, dass diese Claims im Access-Token enthalten sind.
 
+### Gruppenidentität und Umbenennen
+
+Eine Gruppe wird über die Kennung identifiziert, die ihr Gruppen-Claim enthält, und der Claim kann einen Eintrag auf zwei Arten schreiben.
+
+Ein Objekt nach RFC 9068, das jeden Eintrag als SCIM-Form `{"value": "<id>", "display": "<name>"}` kodiert, führt Kennung und Anzeigename getrennt.
+Die Kennung adressiert die Gruppe in jedem Pfad (`@<id>/notes.md`), während der Anzeigename nur als Beschriftung in der Oberfläche dient, daher erhält das Umbenennen einer solchen Gruppe ihren geteilten Arbeitsbereich.
+Anbieter, die reine Kennungen ausgeben wie Entra ID, und solche mit einem Claim-Mapper, der auf die Gruppen-ID zeigen kann wie Keycloak, Authentik, Okta und Auth0, fallen ebenfalls hierunter.
+
+Eine reine Zeichenkette ist alles, was manche Anbieter, darunter Rauthy, ausgeben können.
+Dann gibt es keine separate Kennung, der Name ist die Kennung und erscheint direkt in Pfaden.
+Das funktioniert, aber beim Umbenennen einer solchen Gruppe bleiben ihre Dokumente unter dem alten Namen zurück, da der neue Name nicht von einer neu angelegten Gruppe zu unterscheiden ist.
+Konfigurieren Sie Ihren Anbieter auf die Objektform, wenn Umbenennungen sicher sein sollen.
+
 ## Aktualisieren
 
 ```bash

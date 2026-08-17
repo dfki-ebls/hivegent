@@ -3,7 +3,15 @@
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 import httpx
@@ -24,7 +32,7 @@ from joserfc.jws import extract_compact
 from joserfc.jwt import ClaimsOption, JWTClaimsRegistry
 from pydantic import AnyHttpUrl, ValidationError
 
-from .config import ADMIN_ROLE, sanitize_user_id, settings
+from .config import ADMIN_ROLE, sanitize_group_id, sanitize_user_id, settings
 from .db.groups import list_group_ids
 from .db.users import user_exists
 from .http_client import get_http_client
@@ -33,12 +41,14 @@ from .types import User
 __all__ = [
     "DEFAULT_JWT_ALGORITHMS",
     "IMPERSONATE_HEADER",
+    "GroupClaim",
     "User",
     "build_discovery_url",
     "fetch_oidc_configuration",
     "get_current_user",
-    "parse_group_claim",
+    "parse_group_claims",
     "require_admin",
+    "resolve_group_claim",
 ]
 
 logger = logging.getLogger(__name__)
@@ -48,10 +58,12 @@ IMPERSONATE_HEADER = "X-Impersonate-User"
 
 # Fallback when the IdP's discovery document doesn't advertise
 # ``id_token_signing_alg_values_supported`` and no explicit override is set.
-# Modern Ed25519-based signatures only — no legacy RSA/ECDSA algorithms.
-# joserfc spells the JWS alg ``EdDSA`` and the JWK ``crv`` value ``Ed25519``;
-# both names appear in the wild, so accept either.
-DEFAULT_JWT_ALGORITHMS: tuple[str, ...] = ("EdDSA", "Ed25519")
+# ``RS256`` is the one algorithm OpenID Connect Core requires of every
+# provider, and what Keycloak, Entra ID, Okta and Auth0 sign with by default;
+# ``ES256`` and the Ed25519 pair cover the providers that prefer elliptic
+# curves.  joserfc spells the JWS alg ``EdDSA`` and the JWK ``crv`` value
+# ``Ed25519``; both names appear in the wild, so accept either.
+DEFAULT_JWT_ALGORITHMS: tuple[str, ...] = ("RS256", "ES256", "EdDSA", "Ed25519")
 
 
 def build_discovery_url(issuer: str) -> str:
@@ -353,60 +365,127 @@ def _resolve_claim_path(claims: Mapping[str, Any], path: str) -> Any:
     return value
 
 
-def _resolve_claim_values(claims: Mapping[str, Any], paths: Sequence[str]) -> list[str]:
-    """Collect the non-empty string entries at the given dotted claim paths.
+def _claim_entries(claims: Mapping[str, Any], paths: Sequence[str]) -> Iterator[Any]:
+    """Yield the entries of every list-valued claim at the given dotted paths.
 
     Reading several paths lets a single backend serve identities whose
     groups live at different claim locations — e.g. interactive users with
     a top-level ``groups`` claim alongside a service bot whose IdP can only
     nest static claims under ``custom.groups``.  Entries from every path are
-    unioned in order; non-list claims and non-string/empty entries are skipped.
+    yielded in order; non-list claims are skipped.
     """
-    resolved: list[str] = []
     for path in paths:
         value = _resolve_claim_path(claims, path)
         if isinstance(value, list):
-            resolved.extend(
-                entry for entry in value if isinstance(entry, str) and entry
-            )
-    return resolved
+            yield from value
 
 
-def parse_group_claim(claims: Mapping[str, Any]) -> Iterator[tuple[str, str | None]]:
-    """Yield ``(group_id, permission)`` pairs from the OIDC groups claim.
+def _text(value: Any) -> str | None:
+    """Return *value* if it is a non-empty string, else ``None``."""
+    return value if isinstance(value, str) and value else None
 
-    Each entry in the groups claim can be:
-    - ``"engineering:write"`` -- permission ``"write"``
-    - ``"sales:read"`` -- permission ``"read"``
-    - ``"sales"`` -- bare name, permission ``None``
 
-    Malformed entries (non-strings, empties, suffix-only) are skipped.
+@dataclass(slots=True, frozen=True)
+class GroupClaim:
+    """One usable entry of a groups claim.
+
+    ``id`` identifies the group everywhere; ``display`` is the label a
+    client may show instead, and is ``None`` when the entry carried none.
+    ``permission`` is the ``:read`` / ``:write`` suffix a bare string may
+    carry, and ``None`` when the entry states none.
     """
-    for entry in _resolve_claim_values(claims, settings.claims.groups):
-        if ":" in entry:
-            group_id, _, suffix = entry.rpartition(":")
-            if group_id:
-                yield group_id, suffix
-        else:
-            yield entry, None
+
+    id: str
+    display: str | None = None
+    permission: str | None = None
 
 
-def _extract_group_permissions(
-    claims: dict[str, Any],
-) -> tuple[frozenset[str], frozenset[str]]:
-    """Split the groups claim into ``(read_groups, write_groups)``.
+def parse_group_claims(entries: Iterable[Any]) -> Iterator[GroupClaim]:
+    """Yield one :class:`GroupClaim` per usable entry of a groups claim.
 
-    Bare names without an explicit permission use the
+    OpenID Connect standardises no groups claim, so providers differ and
+    both shapes in use are accepted:
+
+    - The SCIM object of RFC 7643 §4.1.2, which RFC 9068 §2.2.3.1 names for
+      this claim: ``{"value": <id>, "display": <name>}``.  The ID is taken
+      verbatim, so one containing ``:`` survives, and it carries no
+      permission since RFC 7643 models none.  Entra ID emits bare IDs, and
+      Keycloak, Authentik, Okta and Auth0 can be pointed at the group ID
+      through a claim mapper, all of which land here too.
+    - A bare name, which is all some providers (Rauthy among them) can
+      emit, optionally suffixed with the permission (``"engineering:write"``).
+      There is no ID to recover, so the name doubles as one — which is why
+      renaming a group on such a provider strands its workspace.
+
+    Malformed entries (neither object nor string, empties, suffix-only) are
+    skipped.
+    """
+    for entry in entries:
+        if isinstance(entry, Mapping):
+            if group_id := _text(entry.get("value")):
+                yield GroupClaim(group_id, _text(entry.get("display")))
+
+        elif token := _text(entry):
+            group_id, separator, permission = token.rpartition(":")
+            if not separator:
+                yield GroupClaim(token)
+            elif group_id:
+                yield GroupClaim(group_id, permission=permission)
+
+
+def _accessible_group_claims(claims: Mapping[str, Any]) -> Iterator[GroupClaim]:
+    """Yield the group claims whose ID can name a workspace.
+
+    An ID that could not is dropped with a warning, costing access to that
+    group alone rather than the rest.
+    """
+    for claim in parse_group_claims(_claim_entries(claims, settings.claims.groups)):
+        try:
+            sanitize_group_id(claim.id)
+        except ValueError as exc:
+            logger.warning("skipping unusable group claim entry: %s", exc)
+            continue
+
+        yield claim
+
+
+def _extract_groups(
+    claims: Mapping[str, Any],
+) -> tuple[frozenset[str], frozenset[str], dict[str, str]]:
+    """Split the groups claim into ``(read_ids, write_ids, labels)``.
+
+    A group is identified by its ID everywhere — path prefix, workspace
+    directory, owner column — so *labels* is display only: it maps the IDs
+    a provider also supplied a name for, for the client to show in place of
+    the ID.  Entries without an explicit permission use the
     ``default_group_permission`` setting.
     """
-    read_groups: set[str] = set()
-    write_groups: set[str] = set()
-    for group_id, permission in parse_group_claim(claims):
-        write = permission == "write" or (
-            permission is None and settings.claims.default_group_permission == "write"
-        )
-        (write_groups if write else read_groups).add(group_id)
-    return frozenset(read_groups), frozenset(write_groups)
+    default_write = settings.claims.default_group_permission == "write"
+    read_ids: set[str] = set()
+    write_ids: set[str] = set()
+    labels: dict[str, str] = {}
+
+    for claim in _accessible_group_claims(claims):
+        if claim.permission == "write" or (claim.permission is None and default_write):
+            write_ids.add(claim.id)
+        else:
+            read_ids.add(claim.id)
+
+        if claim.display:
+            labels[claim.id] = claim.display
+
+    # A group named twice keeps the wider permission.
+    return frozenset(read_ids - write_ids), frozenset(write_ids), labels
+
+
+def resolve_group_claim(claims: Mapping[str, Any]) -> frozenset[str]:
+    """Return the ID of every group the claims grant access to.
+
+    The read/write split is an HTTP-layer concern; this is the entry point
+    for callers that only need the readable set (the MCP endpoint, which
+    exposes read-only document tools over group workspaces).
+    """
+    return frozenset(claim.id for claim in _accessible_group_claims(claims))
 
 
 def _extract_roles(claims: Mapping[str, Any]) -> frozenset[str]:
@@ -416,7 +495,11 @@ def _extract_roles(claims: Mapping[str, Any]) -> frozenset[str]:
     groups claim that models shared knowledge.  Non-string and empty
     entries are skipped.
     """
-    return frozenset(_resolve_claim_values(claims, settings.claims.roles))
+    return frozenset(
+        text
+        for entry in _claim_entries(claims, settings.claims.roles)
+        if (text := _text(entry))
+    )
 
 
 async def validate_jwt_token(token: str) -> User:
@@ -492,13 +575,14 @@ async def validate_jwt_token(token: str) -> User:
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    read_groups, write_groups = _extract_group_permissions(claims)
+    read_groups, write_groups, group_labels = _extract_groups(claims)
     return User(
         id=sub,
         email=claims.get("email"),
         name=claims.get("name") or claims.get("preferred_username"),
         read_groups=read_groups,
         write_groups=write_groups,
+        group_labels=group_labels,
         roles=_extract_roles(claims),
     )
 

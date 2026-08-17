@@ -48,14 +48,10 @@ export function DocumentManager() {
   const reportUpload = useUploadQueue((s) => s.report);
   const hasPendingUploads = useUploadQueue(selectHasPendingUploads);
 
-  // Subscribed, not snapshotted: the group lists arrive with the settings fetch,
-  // which resolves after this component first renders.
-  const readGroups = useSettingsStore((s) => s.readGroups);
-  const writeGroups = useSettingsStore((s) => s.writeGroups);
-  const groups = useMemo(
-    () => [...new Set([...readGroups, ...writeGroups])].sort(),
-    [readGroups, writeGroups],
-  );
+  // Subscribed, not snapshotted: the groups arrive with the settings fetch,
+  // which resolves after this component first renders. Already one sorted
+  // entry per group, so there is nothing to merge or order here.
+  const groups = useSettingsStore((s) => s.backendDefaults?.user.groups);
 
   // Canonical directory every upload/create lands in — a workspace root or a
   // subdir armed by clicking a folder in the tree. Defaults to the personal root.
@@ -255,12 +251,12 @@ export function DocumentManager() {
           onArmTarget={setTargetDir}
           onUploadInto={uploadTo}
         />
-        {groups.map((groupId) => (
+        {groups?.map((group) => (
           <ScopeSection
-            key={groupId}
-            scope={groupScope(groupId)}
-            label={groupId}
-            canWrite={writeGroups.includes(groupId)}
+            key={group.id}
+            scope={groupScope(group.id)}
+            label={group.name}
+            canWrite={group.writable}
             defaultOpen={false}
             searchQuery={searchQuery}
             pipelineSpec={pipelineSpec}

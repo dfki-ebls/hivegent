@@ -85,6 +85,33 @@ def content_hash(text: str) -> str:
     return content_digest(text)[:12]
 
 
+# Only alphanumeric characters, underscores, and hyphens: an ID is a path
+# segment, so anything else could traverse out of the workspace it names.
+_SAFE_ID_PATTERN = re.compile(r"[a-zA-Z0-9_-]+")
+
+
+def _sanitize_id(value: str, kind: str) -> str:
+    """Return *value* unchanged if it is safe as a path segment.
+
+    Args:
+        value: The identifier to check.
+        kind: What the identifier names, for the error message.
+
+    Returns:
+        The identifier, unchanged.
+
+    Raises:
+        ValueError: If the identifier is empty or contains unsafe characters.
+    """
+    if not value:
+        raise ValueError(f"{kind} ID cannot be empty")
+
+    if not _SAFE_ID_PATTERN.fullmatch(value):
+        raise ValueError(f"Invalid {kind.lower()} ID: {value!r}")
+
+    return value
+
+
 def sanitize_user_id(user_id: str) -> str:
     """Sanitize a user ID to prevent path traversal attacks.
 
@@ -97,20 +124,16 @@ def sanitize_user_id(user_id: str) -> str:
     Raises:
         ValueError: If the user ID is invalid or contains unsafe characters.
     """
-    if not user_id:
-        raise ValueError("User ID cannot be empty")
-
-    # Only allow alphanumeric characters, underscores, and hyphens
-    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "", user_id)
-
-    if not sanitized or sanitized != user_id:
-        raise ValueError(f"Invalid user ID: {user_id!r}")
-
-    return sanitized
+    return _sanitize_id(user_id, "User")
 
 
 def sanitize_group_id(group_id: str) -> str:
     """Sanitize a group ID to prevent path traversal attacks.
+
+    The ID is the identity provider's stable handle for the group — it names
+    the workspace directory, keys the SQL rows, and forms the ``@<id>``
+    prefix of every path addressing it, so it is held to the same narrow
+    alphabet as a user ID.
 
     Args:
         group_id: The group ID to sanitize.
@@ -121,15 +144,7 @@ def sanitize_group_id(group_id: str) -> str:
     Raises:
         ValueError: If the group ID is invalid or contains unsafe characters.
     """
-    if not group_id:
-        raise ValueError("Group ID cannot be empty")
-
-    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "", group_id)
-
-    if not sanitized or sanitized != group_id:
-        raise ValueError(f"Invalid group ID: {group_id!r}")
-
-    return sanitized
+    return _sanitize_id(group_id, "Group")
 
 
 def normalize_unicode(value: str) -> str:

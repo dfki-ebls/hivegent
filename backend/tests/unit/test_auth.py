@@ -9,7 +9,12 @@ from fastapi import HTTPException
 from joserfc.jwk import KeySet, OctKey
 
 from hivegent import auth
-from hivegent.auth import JWKSFetcher, build_discovery_url
+from hivegent.auth import (
+    GroupClaim,
+    JWKSFetcher,
+    build_discovery_url,
+    parse_group_claims,
+)
 from hivegent.config import settings
 
 
@@ -278,9 +283,13 @@ def test_default_claim_paths_union_top_level_and_custom() -> None:
     bot = {"custom": {"groups": ["team-kb:read"], "roles": ["auditor"]}}
     both = {"groups": ["eng:write"], "custom": {"groups": ["team-kb:read"]}}
 
-    assert dict(auth.parse_group_claim(user)) == {"eng": "write"}
-    assert dict(auth.parse_group_claim(bot)) == {"team-kb": "read"}
-    assert dict(auth.parse_group_claim(both)) == {"eng": "write", "team-kb": "read"}
+    def parsed(claims: dict[str, Any]) -> dict[str, str | None]:
+        entries = auth._claim_entries(claims, settings.claims.groups)
+        return {c.id: c.permission for c in parse_group_claims(entries)}
+
+    assert parsed(user) == {"eng": "write"}
+    assert parsed(bot) == {"team-kb": "read"}
+    assert parsed(both) == {"eng": "write", "team-kb": "read"}
     assert auth._extract_roles(user) == frozenset({"admin"})
     assert auth._extract_roles(bot) == frozenset({"auditor"})
 
@@ -343,3 +352,26 @@ async def test_impersonation_yields_personal_scope_without_roles(
     with pytest.raises(HTTPException) as exc_info:
         await auth._impersonate(admin, "ghost")
     assert exc_info.value.status_code == 404
+
+
+def _parsed_group_claims(entries: list[Any]) -> list[GroupClaim]:
+    return list(parse_group_claims(entries))
+
+
+def test_string_entries_split_off_the_permission_suffix() -> None:
+    assert _parsed_group_claims(["eng:write", "sales:read", "ops"]) == [
+        GroupClaim("eng", permission="write"),
+        GroupClaim("sales", permission="read"),
+        GroupClaim("ops"),
+    ]
+
+
+def test_scim_objects_carry_id_and_display() -> None:
+    """RFC 7643 §4.1.2 shape: the ID is verbatim, so a ``:`` in it survives."""
+    assert _parsed_group_claims([{"value": "9uh:8ei", "display": "Engineering"}]) == [
+        GroupClaim("9uh:8ei", "Engineering")
+    ]
+
+
+def test_malformed_entries_are_skipped() -> None:
+    assert _parsed_group_claims([":write", "", 42, {"display": "x"}]) == []

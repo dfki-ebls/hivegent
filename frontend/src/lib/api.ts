@@ -216,7 +216,13 @@ function encodeFilePath(filepath: string): string {
  */
 export const PERSONAL_SCOPE = "~";
 
-/** Canonical scope of a group's workspace. */
+/**
+ * Canonical scope of a group's workspace.
+ *
+ * Always built from `GroupInfo.id`, never the display name: the id is the
+ * group's only identity, so a path keeps addressing the same workspace after
+ * a rename. `GroupInfo.name` is for labels.
+ */
 export function groupScope(groupId: string): string {
   return `@${groupId}`;
 }

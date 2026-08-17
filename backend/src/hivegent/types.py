@@ -1,5 +1,6 @@
 """Shared types and server-facing schemas for Hivegent."""
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -59,6 +60,7 @@ __all__ = [
     "FrontendConfigResponse",
     "GenerateTitleRequest",
     "GenerateTitleResponse",
+    "GroupInfo",
     "LlmConfig",
     "McpOAuth2Config",
     "McpServerConfig",
@@ -175,6 +177,12 @@ class User:
     Group membership lives solely in the OIDC token and is never
     persisted: every field here is reconstructed per request from the
     validated JWT claims.
+
+    Groups are held as IDs, which is what every path, workspace directory,
+    and owner column uses.  ``group_labels`` carries the display names a
+    provider additionally supplied, for the client to show in place of an
+    opaque ID; nothing on the server reads it, so a rename upstream changes
+    only what the UI renders.
     """
 
     id: str
@@ -182,6 +190,7 @@ class User:
     name: str | None = None
     read_groups: frozenset[str] = field(default_factory=frozenset)
     write_groups: frozenset[str] = field(default_factory=frozenset)
+    group_labels: Mapping[str, str] = field(default_factory=dict, compare=False)
     roles: frozenset[str] = field(default_factory=frozenset)
 
     @property
@@ -615,6 +624,35 @@ class UpdateTitleRequest(BaseModel):
     )
 
 
+class GroupInfo(BaseModel):
+    """One group a user belongs to, with the permission they hold on it.
+
+    The ID is what every path and request uses; ``name`` is a label only,
+    falling back to the ID when the provider supplied no display name.  One
+    entry per group rather than a read list beside a write list, so a client
+    can render the set directly without merging two overlapping ones.
+    """
+
+    id: str = Field(description="Group identifier, used to build paths")
+    name: str = Field(description="Display label; the ID when none was supplied")
+    writable: bool = Field(description="Whether the user may write to the group")
+
+    @staticmethod
+    def build(user: User) -> list["GroupInfo"]:
+        """Serialize a user's groups, ordered as a client lists them."""
+        return sorted(
+            (
+                GroupInfo(
+                    id=group_id,
+                    name=user.group_labels.get(group_id, group_id),
+                    writable=group_id in user.write_groups,
+                )
+                for group_id in user.all_groups
+            ),
+            key=lambda group: group.name,
+        )
+
+
 class UserResponse(BaseModel):
     """Serializable user information for API responses.
 
@@ -626,13 +664,9 @@ class UserResponse(BaseModel):
     id: str = Field(description="User identifier")
     email: str | None = Field(default=None, description="User email address")
     name: str | None = Field(default=None, description="User display name")
-    read_groups: list[str] = Field(
+    groups: list[GroupInfo] = Field(
         default_factory=list,
-        description="Groups with read access",
-    )
-    write_groups: list[str] = Field(
-        default_factory=list,
-        description="Groups with write access",
+        description="Groups the user belongs to, with their permission on each",
     )
     roles: list[str] = Field(
         default_factory=list,
@@ -647,8 +681,7 @@ class UserResponse(BaseModel):
             id=user.id,
             email=user.email,
             name=user.name,
-            read_groups=sorted(user.read_groups),
-            write_groups=sorted(user.write_groups),
+            groups=GroupInfo.build(user),
             roles=sorted(user.roles),
         )
 

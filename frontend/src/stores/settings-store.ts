@@ -94,11 +94,6 @@ interface SettingsState {
   chunkingConfigs: PipelineConfigs;
   toolsSpec: ToolsSpec;
 
-  // User context (from backend, not persisted)
-  readGroups: string[];
-  writeGroups: string[];
-  roles: string[];
-
   // Whether the backend rejected us with its maintenance gate. While
   // true, the root route shows the maintenance screen instead of the
   // app; the init loop keeps polling so it clears itself.
@@ -161,9 +156,6 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       backendDefaults: null,
       overrides: EMPTY_OVERRIDES,
-      readGroups: [],
-      writeGroups: [],
-      roles: [],
       maintenance: false,
       ...UI_DEFAULTS,
 
@@ -182,13 +174,7 @@ export const useSettingsStore = create<SettingsState>()(
         while (true) {
           try {
             const defaults = await getSettings();
-            set({
-              maintenance: false,
-              backendDefaults: defaults,
-              readGroups: defaults.user.read_groups,
-              writeGroups: defaults.user.write_groups,
-              roles: defaults.user.roles,
-            });
+            set({ maintenance: false, backendDefaults: defaults });
             return;
           } catch (e) {
             const maintenance = e instanceof MaintenanceError;
@@ -393,7 +379,7 @@ const ADMIN_ROLE = "admin";
  * the server's `User.is_admin` property.
  */
 export function selectIsAdmin(state: SettingsState): boolean {
-  return state.roles.includes(ADMIN_ROLE);
+  return state.backendDefaults?.user.roles.includes(ADMIN_ROLE) ?? false;
 }
 
 /**

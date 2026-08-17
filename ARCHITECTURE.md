@@ -25,6 +25,7 @@
 - Processes uploaded files into recursive stem-based workspace entries, chunks searchable markdown companions, stores per-entry metadata, and refreshes retrieval indexes.
 - Uses PostgreSQL with the `pgvector` extension and cbrkit for dense, sparse, and hybrid retrieval.
 - Stores each user or group casebase under `data/workspace/<store_key>/`, keyed by the same `user:<id>` / `group:<id>` token that scopes SQL rows; per-store search scoping is enforced by a SQL filter against the documents owner columns, not by denormalised columns on `chunks`.
+- Reads group membership out of the OIDC groups claim, accepting both the SCIM object shape RFC 9068 prescribes and a bare name; the group ID keys storage and paths, while a supplied display name is passed through as a client-side label only.
 - Persists conversations and long-term memory separately from the retrieval index.
 - Mounts a FastMCP server at `/mcp` and can also connect to external MCP servers.
 

@@ -84,8 +84,7 @@ describe("getSettings", () => {
         id: "user1",
         email: "user@test.com",
         name: "Test User",
-        read_groups: [],
-        write_groups: [],
+        groups: [],
         roles: [],
       },
     };

@@ -79,6 +79,19 @@ Access control is driven by the claims in each user's token.
 
 Configure your provider to include these claims in the access token.
 
+### Group identity and renaming
+
+A group is identified by the id its groups claim carries, and the claim may spell an entry in either of two ways.
+
+An object following RFC 9068, which encodes each entry as the SCIM shape `{"value": "<id>", "display": "<name>"}`, carries the id and a display name separately.
+The id addresses the group in every path (`@<id>/notes.md`) while the display name is used only as a label in the interface, so renaming such a group keeps its shared workspace intact.
+Providers that emit bare identifiers such as Entra ID, and those with a claim mapper that can be pointed at the group id such as Keycloak, Authentik, Okta, and Auth0, land here too.
+
+A bare string is all some providers, Rauthy among them, can emit.
+There is then no separate id, so the name is the identifier and appears in paths directly.
+That works, but renaming such a group leaves its documents behind under the old name, since the new name is indistinguishable from a group that was just created.
+Configure your provider to emit the object shape if you want renames to be safe.
+
 ## Updating
 
 ```bash
