@@ -68,9 +68,7 @@ def _sync_verbatim_description(
     return True
 
 
-async def _sync_verbatim_projection(
-    workspace_dir: Path, resolved: EntryPaths
-) -> bool:
+async def _sync_verbatim_projection(workspace_dir: Path, resolved: EntryPaths) -> bool:
     """Synchronize the markdown projection of a projectable original.
 
     This derives a missing description and refreshes an existing one before

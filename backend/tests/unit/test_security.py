@@ -53,9 +53,7 @@ async def test_resolve_llm_config_is_idempotent_on_trust(
     """Re-resolving a trusted config keeps it trusted (image captioning re-resolves)."""
     monkeypatch.setattr(settings.llm, "base_url", "http://127.0.0.1:18000/v1")
     monkeypatch.setattr(settings.llm, "aux_model", "aux-model")
-    monkeypatch.setattr(
-        settings.llm, "inference_provider", InferenceProvider.VLLM
-    )
+    monkeypatch.setattr(settings.llm, "inference_provider", InferenceProvider.VLLM)
 
     once = resolve_llm_config(LlmConfig())
     twice = resolve_llm_config(once)

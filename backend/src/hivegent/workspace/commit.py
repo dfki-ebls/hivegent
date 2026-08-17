@@ -81,7 +81,9 @@ async def _write_prepared_files(
     stem_path = stem_path_from_reference(reserved.reference)
     assets_dir = assets_dir_for_stem(stem_path)
 
-    with TemporaryDirectory(prefix=f".{workspace.name}-stage-", dir=workspace.parent) as tmp:
+    with TemporaryDirectory(
+        prefix=f".{workspace.name}-stage-", dir=workspace.parent
+    ) as tmp:
         staging = Path(tmp)
         new_root = staging / "new"
         backup_root = staging / "backup"

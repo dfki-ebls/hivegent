@@ -23,7 +23,9 @@ const assistant = (parts: ChatMessage["parts"]): ChatMessage[] => [
 describe("isContextLengthError", () => {
   it("matches the backend's canonical overflow code", () => {
     expect(
-      isContextLengthError("context_length_exceeded: Model token limit (provider default) exceeded"),
+      isContextLengthError(
+        "context_length_exceeded: Model token limit (provider default) exceeded",
+      ),
     ).toBe(true);
   });
 

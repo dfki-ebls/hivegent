@@ -64,8 +64,7 @@ async def upload(
         raise ValueError("A companion original is supported only for markdown")
     if original_path is not None and (
         is_markdown_suffix(PurePosixPath(original_path).suffix.lower())
-        or stem_path_from_reference(original_path)
-        != stem_path_from_reference(filepath)
+        or stem_path_from_reference(original_path) != stem_path_from_reference(filepath)
     ):
         raise ValueError("A companion original must be a non-markdown sibling")
 

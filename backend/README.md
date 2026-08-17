@@ -94,7 +94,7 @@ So `_run_chat` reserves that node id before the run (`append_branch(head_id=...)
 Without it, editing a message sent earlier in the same session would resolve to no fork point and silently continue the conversation instead of forking at it — the client would drop the later messages while the server kept and replayed them.
 Only a request carrying a user prompt reserves an id, and `resolve_fork` treats a `messageId` as an edit only when it names a user turn on the active path: the AI SDK also sends `messageId` when it auto-continues a turn after a tool approval, where it names the assistant message that requested it.
 
-That auto-continuation is also why `ChatAdapter` keeps only the client's *user* messages (`messages` in `server/vercel.py`).
+That auto-continuation is also why `ChatAdapter` keeps only the client's _user_ messages (`messages` in `server/vercel.py`).
 The base adapter appends whatever the request carries on top of the caller's `message_history`, and the SDK's approval resend is the assistant message holding the pending tool call — already the last message of the replayed prefix.
 Appending it would put the same `tool_call_id` in the history twice: pydantic-ai closes the stored copy with a synthetic "interrupted" return and gives only the echo the real result, so the model sees its call interrupted and reissues it, which is the approval loop.
 The decision itself is unaffected, since `deferred_tool_results` reads it from the request rather than from the loaded messages.
@@ -142,7 +142,7 @@ That decoder is also half of what decides whether a document may be written, whi
 Both sides ask the same two questions in the same order: `converters.vision_media_type` (is this a format a vision model is shown directly?) and then the decoder (do these bytes decode?).
 `read_document` refuses on the first to hand the caller to `read_binary_document`, and `workspace.documents._current_text` refuses on it to say "upload a replacement", but the table is one table — growing it can no longer make one tool accept what the other rejects, and the tool descriptions promising the model they agree stay true.
 A refusal on either reader ends in `tools.base.sidecar_hint`, so a caller turned away is never sent to the other tool to be turned away again: an Office document is neither showable nor decodable, and both refusals name its `<stem>.md` instead.
-So a text file is editable and a binary is not, and the file's *name* only decides how an allowed write lands:
+So a text file is editable and a binary is not, and the file's _name_ only decides how an allowed write lands:
 
 - A markdown description is the indexed content itself, so `_rewrite_description` writes it and re-indexes it in place under the casebase lock.
 - Any other file is an original that `<stem>.md` is derived from, so `_rewrite_original` sends the new bytes through the same reserve → prepare → commit lifecycle an upload of the edited file would use (`commit._phased_upload`).

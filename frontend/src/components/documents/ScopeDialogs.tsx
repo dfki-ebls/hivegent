@@ -138,9 +138,7 @@ export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(fu
         open={pendingRename !== null}
         onOpenChange={(open) => !open && setPendingRename(null)}
         title={`Rename ${pendingRename?.kind === "directory" ? "folder" : "document"}`}
-        description={
-          pendingRename ? `Enter a new name for ${basename(pendingRename.path)}.` : ""
-        }
+        description={pendingRename ? `Enter a new name for ${basename(pendingRename.path)}.` : ""}
         label="Name"
         initialValue={pendingRename ? basename(pendingRename.path) : ""}
         submitLabel="Rename"

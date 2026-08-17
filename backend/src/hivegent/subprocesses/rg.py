@@ -102,9 +102,7 @@ class _RgBoundaryEvent(BaseModel):
     type: Literal["begin", "end", "context_separator", "summary"]
 
 
-type _RgEvent = Annotated[
-    _RgLineEvent | _RgBoundaryEvent, Field(discriminator="type")
-]
+type _RgEvent = Annotated[_RgLineEvent | _RgBoundaryEvent, Field(discriminator="type")]
 
 _EVENTS: TypeAdapter[_RgEvent] = TypeAdapter(_RgEvent)
 

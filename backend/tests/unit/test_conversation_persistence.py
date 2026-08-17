@@ -286,9 +286,7 @@ async def test_answered_approval_resolves_the_stored_call_once(
     assert len(calls) == 1
     assert len(returns) == 1
     assert returns[0].tool_call_id == calls[0].tool_call_id
-    assert str(returns[0].content) == (
-        "written" if approved else _TOOL_DENIED_REASON
-    )
+    assert str(returns[0].content) == ("written" if approved else _TOOL_DENIED_REASON)
 
 
 async def test_generic_run_error_is_recorded_for_reload() -> None:
@@ -439,9 +437,7 @@ def test_submit_not_addressing_a_user_turn_continues_the_conversation(
     the *assistant* message's id — forking there would drop the very response
     holding the approved call.
     """
-    prefix, fork_id = _fork_for_path(
-        _path(), regenerate=False, message_id=message_id
-    )
+    prefix, fork_id = _fork_for_path(_path(), regenerate=False, message_id=message_id)
 
     assert _texts(prefix) == ["q1", "a1", "q2", "a2"]
     assert fork_id == "n3"

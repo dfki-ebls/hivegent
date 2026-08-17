@@ -312,9 +312,7 @@ async def _apply_text_mutation(
     itself, or on an original whose description has to be re-derived from it.
     """
     if is_description_file(safe):
-        return await _rewrite_description(
-            store, safe, mutate, expected_hash, chunking
-        )
+        return await _rewrite_description(store, safe, mutate, expected_hash, chunking)
     return await _rewrite_original(store, safe, mutate, expected_hash, chunking)
 
 

@@ -39,9 +39,7 @@ class PlainTextConverter(DocumentConverter):
     # These overlap richer converters and therefore need an explicit AUTO
     # priority.  Every other suffix already reaches plain text through AUTO's
     # default.
-    extensions: ClassVar[frozenset[str]] = frozenset(
-        {".json", ".text", ".txt", ".xml"}
-    )
+    extensions: ClassVar[frozenset[str]] = frozenset({".json", ".text", ".txt", ".xml"})
     accepts_any_extension: ClassVar[bool] = True
 
     def _convert_sync(self, path: Path, /) -> ConversionResult:

@@ -50,9 +50,7 @@ def test_content_after_tool_call_starts_a_new_text_part(
                         index=0,
                         id="call-1",
                         type="function",
-                        function=ChoiceDeltaToolCallFunction(
-                            arguments='{"query":'
-                        ),
+                        function=ChoiceDeltaToolCallFunction(arguments='{"query":'),
                     )
                 ]
             )
@@ -139,7 +137,9 @@ def test_only_vllm_gets_the_qwen3_xml_parser_workarounds(
     assert type(vllm) is llm_module._SegmentedOpenAIChatModel
     assert type(llama_cpp) is OpenAIChatModel
     assert vllm.profile.get("openai_chat_supports_multiple_system_messages") is False
-    assert llama_cpp.profile.get("openai_chat_supports_multiple_system_messages") is None
+    assert (
+        llama_cpp.profile.get("openai_chat_supports_multiple_system_messages") is None
+    )
 
     for self_hosted in (vllm, llama_cpp):
         assert self_hosted.profile.get("supports_thinking") is True

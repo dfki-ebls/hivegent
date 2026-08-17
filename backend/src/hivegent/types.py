@@ -252,9 +252,7 @@ def resolve_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:
         api_key=llm.api_key or settings.llm.api_key,
         base_url=llm.base_url or configured_base_url,
         max_tokens=llm.max_tokens or default_max_tokens,
-        inference_provider=(
-            llm.inference_provider or settings.llm.inference_provider
-        ),
+        inference_provider=(llm.inference_provider or settings.llm.inference_provider),
     )
     resolved._base_url_is_trusted = llm.base_url_is_trusted or (
         not llm.base_url and configured_base_url is not None
@@ -497,9 +495,7 @@ class UpdateAssetDescriptionRequest(BaseModel):
 class GenerateAssetDescriptionRequest(BaseModel):
     """Request to generate an asset's companion .md description with the vision model."""
 
-    asset_name: str = Field(
-        description="Path of the asset within its assets directory"
-    )
+    asset_name: str = Field(description="Path of the asset within its assets directory")
     llm: LlmConfig = Field(default_factory=LlmConfig)
 
 

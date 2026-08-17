@@ -298,9 +298,7 @@ class TestTextOriginals:
         path.write_text("plain text wearing a binary extension")
 
         with pytest.raises(HTTPException) as exc:
-            await workspace.write_document_text(
-                user_store, path.name, "replacement"
-            )
+            await workspace.write_document_text(user_store, path.name, "replacement")
 
         assert exc.value.status_code == 422
         assert path.read_text() == "plain text wearing a binary extension"
@@ -568,9 +566,7 @@ class TestDeleteAssetDescription:
             deleted.append(reference)
             return True
 
-        monkeypatch.setattr(
-            workspace_assets, "delete_chunked_document", fake_delete
-        )
+        monkeypatch.setattr(workspace_assets, "delete_chunked_document", fake_delete)
         assets = workspace_dir / "doc.assets"
         assets.mkdir()
         (assets / "img.png").write_bytes(b"binary")

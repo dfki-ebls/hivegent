@@ -134,9 +134,7 @@ def _walk_assets(workspace_root: Path, assets_dir: str) -> list[str]:
     if not base.is_dir():
         return []
     return sorted(
-        p.relative_to(workspace_root).as_posix()
-        for p in base.rglob("*")
-        if p.is_file()
+        p.relative_to(workspace_root).as_posix() for p in base.rglob("*") if p.is_file()
     )
 
 
@@ -255,9 +253,7 @@ async def get_document(store: Casebase, reference: str) -> DocumentMetadata | No
         return _document_from_row(row, chunks_data, workspace_root)
 
 
-async def get_entry_metadata(
-    store: Casebase, reference: str
-) -> EntryMetadata | None:
+async def get_entry_metadata(store: Casebase, reference: str) -> EntryMetadata | None:
     """Load an entry's persisted metadata without chunks or filesystem walks."""
     stem_path = stem_path_from_reference(reference)
     async with session() as s:

@@ -33,9 +33,7 @@ def test_legacy_encodings_round_trip(encoding: str) -> None:
     ("text", "encoding"),
     [("Привет", "utf-16"), ("Ā", "utf-32")],
 )
-def test_bom_unicode_is_decoded_before_binary_checks(
-    text: str, encoding: str
-) -> None:
+def test_bom_unicode_is_decoded_before_binary_checks(text: str, encoding: str) -> None:
     decoded = decode_bytes(text.encode(encoding))
 
     assert decoded is not None

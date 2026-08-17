@@ -204,6 +204,7 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
             [message for message in self.run_input.messages if message.role == "user"]
         )
 
+
 async def _persist_safely(
     persist: PersistTurn, messages: Sequence[ModelMessage]
 ) -> None:
