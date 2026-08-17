@@ -6,7 +6,7 @@ import httpx
 import pytest
 from fastapi import HTTPException, UploadFile
 
-from hivegent.config import settings
+from hivegent.config import InferenceProvider, settings
 from hivegent.security import UrlPolicy, create_safe_async_client
 from hivegent.server.common import prepare_llm_config
 from hivegent.server.operations import enforce_upload_size
@@ -53,12 +53,17 @@ async def test_resolve_llm_config_is_idempotent_on_trust(
     """Re-resolving a trusted config keeps it trusted (image captioning re-resolves)."""
     monkeypatch.setattr(settings.llm, "base_url", "http://127.0.0.1:18000/v1")
     monkeypatch.setattr(settings.llm, "aux_model", "aux-model")
+    monkeypatch.setattr(
+        settings.llm, "inference_provider", InferenceProvider.VLLM
+    )
 
     once = resolve_llm_config(LlmConfig())
     twice = resolve_llm_config(once)
 
     assert once.base_url_is_trusted is True
+    assert once.inference_provider is InferenceProvider.VLLM
     assert twice.base_url == "http://127.0.0.1:18000/v1"
+    assert twice.inference_provider is InferenceProvider.VLLM
     assert twice.base_url_is_trusted is True
 
 

@@ -69,6 +69,7 @@ in
           llm = {
             model = "qwen3.6-35b-a3b";
             base_url = "http://localhost:18000/v1";
+            inference_provider = "llama.cpp";
           };
         }
       '';

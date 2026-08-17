@@ -9,11 +9,12 @@ from openai.types.chat import chat_completion_chunk
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponseStreamEvent, PartStartEvent
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIStreamedResponse
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import ModelProfileSpec, merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings, ThinkingEffort, ThinkingLevel
 
+from .config import InferenceProvider
 from .http_client import get_http_client
 from .types import LlmConfig, ReasoningEffort
 
@@ -145,52 +146,77 @@ def create_openai_client(
     )
 
 
+def _self_hosted_profile(*, qwen3_xml_parser: bool) -> ModelProfileSpec:
+    """Profile overrides a self-hosted runtime needs on top of pydantic-ai's.
+
+    ``supports_thinking``: these endpoints serve reasoning models pydantic-ai
+    does not recognise, so its name-based inference would say ``False`` and
+    silently strip the unified ``thinking`` setting from every request.
+    ``ignore_streamed_leading_whitespace``: what pydantic-ai's own Qwen
+    profile sets, which the OpenAI provider never resolves — it describes the
+    model rather than the server, so every self-hosted runtime gets it.
+
+    *qwen3_xml_parser* adds the one override that parser forces: the Qwen chat
+    template as vLLM applies it rejects a second ``system`` message with
+    "System message must be at the beginning.", and per-capability
+    instructions render as one each, so the leading ones are merged into one.
+
+    The returned callback receives the provider's already-resolved profile as
+    the base to layer these on top of.
+    """
+    overrides = OpenAIModelProfile(
+        supports_thinking=True,
+        ignore_streamed_leading_whitespace=True,
+    )
+    if qwen3_xml_parser:
+        overrides["openai_chat_supports_multiple_system_messages"] = False
+
+    return lambda profile: merge_profile(profile, overrides)
+
+
 def create_openai_chat_model(
     model: str,
     *,
     api_key: str | None,
     base_url: str | None,
+    inference_provider: InferenceProvider | None,
     allow_private_base_url: bool = False,
 ) -> OpenAIChatModel:
-    """Build an :class:`OpenAIChatModel` bound to the matching shared client."""
+    """Build an :class:`OpenAIChatModel` bound to the matching shared client.
+
+    One branch per runtime, so what each endpoint receives is readable in one
+    place and a provider added to the enum fails to type-check until it states
+    its own quirks.  A spec-compliant endpoint keeps pydantic-ai's own model
+    and profile untouched: every override either contradicts what the real
+    OpenAI API does or replaces inference already correct there.  ``None``
+    means the config was never resolved and is read as that strict contract,
+    the same way :func:`_reasoning_extra_body` reads it.
+
+    The segmented stream answers vLLM's ``qwen3_xml`` parser returning to
+    content mode after a tool call; llama.cpp's leaves message order alone.
+    """
     provider = create_openai_provider(
         api_key=api_key,
         base_url=base_url,
         allow_private_base_url=allow_private_base_url,
     )
-    # Self-hosted endpoints serve reasoning models pydantic-ai does not
-    # recognise, and the inferred profile then defaults to
-    # ``supports_thinking=False`` — which silently strips the unified
-    # ``thinking`` setting from every request.  Declare support ourselves
-    # (on top of the provider's name-based inference) so the configured
-    # effort reaches the server as ``reasoning_effort``.  The profile
-    # callback receives the provider's already-resolved default profile;
-    # ``merge_profile`` layers our override on top (profiles are now
-    # ``TypedDict``, so the old ``.update()`` method is gone).
-    #
-    # Per-capability instructions render as one ``system`` message each.  The
-    # real OpenAI API accepts that, but a self-hosted chat template (Qwen under
-    # vLLM) rejects the second one with "System message must be at the
-    # beginning.", so ask pydantic-ai to merge the leading system messages into
-    # one — semantically identical, and harmless for endpoints that would have
-    # accepted the split form.
-    #
-    # ``ignore_streamed_leading_whitespace`` is what pydantic-ai's own Qwen
-    # profile sets, but the OpenAI provider only ever resolves the OpenAI
-    # profile, so a self-hosted Qwen never inherits it; it is inert for an
-    # endpoint that does not pad its text with whitespace.
-    return _SegmentedOpenAIChatModel(
-        model,
-        provider=provider,
-        profile=lambda profile: merge_profile(
-            profile,
-            OpenAIModelProfile(
-                supports_thinking=True,
-                openai_chat_supports_multiple_system_messages=False,
-                ignore_streamed_leading_whitespace=True,
-            ),
-        ),
-    )
+    match inference_provider:
+        case None | InferenceProvider.OPENAI:
+            return OpenAIChatModel(model, provider=provider)
+
+        case InferenceProvider.LLAMA_CPP:
+            return OpenAIChatModel(
+                model,
+                provider=provider,
+                profile=_self_hosted_profile(qwen3_xml_parser=False),
+            )
+
+        case InferenceProvider.VLLM:
+            return _SegmentedOpenAIChatModel(
+                model,
+                provider=provider,
+                profile=_self_hosted_profile(qwen3_xml_parser=True),
+            )
 
 
 def model_from_config(config: LlmConfig) -> OpenAIChatModel:
@@ -204,6 +230,7 @@ def model_from_config(config: LlmConfig) -> OpenAIChatModel:
         config.model,
         api_key=config.api_key,
         base_url=config.base_url,
+        inference_provider=config.inference_provider,
         allow_private_base_url=config.base_url_is_trusted,
     )
 
@@ -230,13 +257,13 @@ def resolve_thinking(effort: ReasoningEffort) -> ThinkingLevel:
     return effort
 
 
-# Per-request reasoning caps for self-hosted (llama.cpp/vLLM) endpoints,
-# keyed by pydantic-ai effort level.  llama.cpp closes the reasoning block
-# once ``thinking_budget_tokens`` is reached, bounding a runaway thinking
-# loop without truncating the answer.  ``xhigh`` is intentionally absent so
-# it runs unbounded; the ``False`` (``none``) sentinel never indexes it.
-# The cap is honoured only while the server keeps ``--reasoning-budget`` at
-# its -1 default; a non-default command-line budget overrides the request.
+# Per-request reasoning caps for self-hosted endpoints, keyed by the generic
+# effort level before any model-specific mapping.  llama.cpp and vLLM force
+# the reasoning block closed at the cap without truncating the answer.
+# ``xhigh`` is intentionally absent so it runs unbounded; the ``False``
+# (``none``) sentinel never indexes it.  llama.cpp honours a request cap only
+# while ``--reasoning-budget`` remains at its -1 default.  vLLM requires a
+# reasoning parser and runner with thinking-budget support.
 _THINKING_BUDGET_TOKENS: Mapping[ThinkingEffort, int] = {
     "minimal": 512,
     "low": 2048,
@@ -245,20 +272,64 @@ _THINKING_BUDGET_TOKENS: Mapping[ThinkingEffort, int] = {
 }
 
 
+# Generic-to-native effort remapping for models whose reasoning levels do not
+# line up with pydantic-ai's, keyed by a casefolded model-name prefix (the part
+# after any ``<org>/``).  Levels a model does not implement are mapped onto the
+# nearest one it does; the budget above stays keyed on the generic level, so
+# two levels mapping to the same native one keep distinct caps.
+_REASONING_EFFORT_OVERRIDES: Mapping[str, Mapping[ThinkingEffort, ThinkingEffort]] = {
+    "qwen3.8": {"minimal": "low", "high": "medium"},
+}
+
+
+def _map_reasoning_effort(model: str, effort: ThinkingEffort) -> ThinkingEffort:
+    model_name = model.rsplit("/", maxsplit=1)[-1].casefold()
+    for prefix, overrides in _REASONING_EFFORT_OVERRIDES.items():
+        if model_name.startswith(prefix):
+            return overrides.get(effort, effort)
+
+    return effort
+
+
+def _reasoning_extra_body(
+    thinking: ThinkingLevel, provider: InferenceProvider | None
+) -> dict[str, object] | None:
+    match provider:
+        case InferenceProvider.LLAMA_CPP:
+            budget_field = "thinking_budget_tokens"
+        case InferenceProvider.VLLM:
+            budget_field = "thinking_token_budget"
+        case InferenceProvider.OPENAI | None:
+            return None
+
+    extra_body: dict[str, object] = {
+        "chat_template_kwargs": {"enable_thinking": thinking is not False}
+    }
+    budget = (
+        _THINKING_BUDGET_TOKENS.get(thinking) if isinstance(thinking, str) else None
+    )
+    if budget is not None:
+        extra_body[budget_field] = budget
+
+    return extra_body
+
+
 def thinking_model_settings(
     thinking: ThinkingLevel | None, config: LlmConfig
 ) -> ModelSettings:
     """Model settings applying *thinking* and *max_tokens* across endpoints.
 
     Spec-compliant OpenAI servers receive the unified pydantic-ai
-    ``thinking`` value (sent as ``reasoning_effort``).  llama.cpp and vLLM
-    ignore that field entirely; their only per-request switches are the
-    ``enable_thinking`` chat-template kwarg (overriding the server-side
-    default, e.g. llama.cpp's ``--reasoning on``) and, for the numeric
-    effort levels, a ``thinking_budget_tokens`` reasoning cap from
-    :data:`_THINKING_BUDGET_TOKENS`.  Both are only added for self-hosted
-    endpoints (``base_url`` set) — the real OpenAI API rejects unknown body
-    fields.
+    ``thinking`` value as the top-level ``reasoning_effort`` field, remapped by
+    :data:`_REASONING_EFFORT_OVERRIDES` to the level the model actually
+    implements.  The original generic effort independently selects a hard
+    reasoning token cap, preserving the distinction between levels that map to
+    the same native value.
+
+    Provider-specific request construction is selected by
+    ``config.inference_provider``.  llama.cpp and vLLM receive their respective
+    hard-budget field plus ``enable_thinking``, while OpenAI receives no extra
+    body fields.
 
     *thinking* of ``None`` omits every field so the server-side default
     decides (the "auto" reasoning level).  ``config.max_tokens`` (resolved
@@ -269,18 +340,13 @@ def thinking_model_settings(
     if config.max_tokens is not None:
         settings["max_tokens"] = config.max_tokens
     if thinking is not None:
-        settings["thinking"] = thinking
-        if config.base_url:
-            extra_body: dict[str, object] = {
-                "chat_template_kwargs": {"enable_thinking": thinking is not False}
-            }
-            budget = (
-                _THINKING_BUDGET_TOKENS.get(thinking)
-                if isinstance(thinking, str)
-                else None
-            )
-            if budget is not None:
-                extra_body["thinking_budget_tokens"] = budget
+        settings["thinking"] = (
+            _map_reasoning_effort(config.model, thinking)
+            if isinstance(thinking, str)
+            else thinking
+        )
+        extra_body = _reasoning_extra_body(thinking, config.inference_provider)
+        if extra_body is not None:
             settings["extra_body"] = extra_body
     return settings
 

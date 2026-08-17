@@ -38,6 +38,7 @@ url = "postgresql+psycopg://hivegent:hivegent@postgresql:5432/hivegent"
 model = "your-chat-model"
 aux_model = "your-small-vision-model"
 base_url = "http://your-llm-host:8000/v1"
+inference_provider = "vllm"
 # api_key = "..."   # only if your provider requires one
 
 [auth]
@@ -50,6 +51,7 @@ The most important settings:
 - `llm.model`: the main chat model, which needs a large context window and tool calling.
 - `llm.aux_model`: a small, fast, vision-capable model used for document conversion, captions, and titles. It falls back to the main model when unset.
 - `llm.base_url` and `llm.api_key`: your OpenAI-compatible endpoint.
+- `llm.inference_provider`: the endpoint implementation, one of `llama.cpp`, `vllm`, or `openai`. It defaults to `openai`, which sends only standard fields. Set it to match your server, otherwise reasoning control and the self-hosted chat-template fixes stay off.
 - `db.url`: the PostgreSQL connection string. The bundled database already has pgvector enabled.
 - `auth.issuer`: the OIDC provider's issuer URL.
 - `auth.audience`: the token audiences to accept. The entry `hivegent-*` accepts every current and future Hivegent client.

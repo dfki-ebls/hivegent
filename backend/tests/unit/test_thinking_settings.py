@@ -1,5 +1,6 @@
 """Reasoning-effort to request-settings mapping for self-hosted endpoints."""
 
+from hivegent.config import InferenceProvider
 from hivegent.llm import (
     _THINKING_BUDGET_TOKENS,
     AUTO_REASONING_EFFORT,
@@ -10,8 +11,21 @@ from hivegent.llm import (
 )
 from hivegent.types import LlmConfig
 
-SELF_HOSTED = LlmConfig(model="qwen", base_url="http://127.0.0.1:18101")
-OPENAI = LlmConfig(model="gpt", base_url=None)
+SELF_HOSTED = LlmConfig(
+    model="qwen",
+    base_url="http://127.0.0.1:18101",
+    inference_provider=InferenceProvider.LLAMA_CPP,
+)
+QWEN38 = LlmConfig(
+    model="Qwen/Qwen3.8-27B",
+    base_url="http://127.0.0.1:18101",
+    inference_provider=InferenceProvider.VLLM,
+)
+OPENAI = LlmConfig(
+    model="gpt",
+    base_url="https://api.openai.com/v1",
+    inference_provider=InferenceProvider.OPENAI,
+)
 
 
 def test_resolve_thinking_maps_sentinels_and_passes_levels_through() -> None:
@@ -21,12 +35,29 @@ def test_resolve_thinking_maps_sentinels_and_passes_levels_through() -> None:
     assert resolve_thinking("xhigh") == "xhigh"
 
 
-def test_auto_default_resolves_to_a_bounded_reasoning_cap() -> None:
-    settings = thinking_model_settings(resolve_thinking("auto"), SELF_HOSTED)
+def test_qwen38_maps_native_effort_without_losing_granular_budgets() -> None:
+    low = thinking_model_settings("minimal", QWEN38)
+    high = thinking_model_settings(resolve_thinking("auto"), QWEN38)
 
+    assert low.get("thinking") == "low"
+    assert low.get("extra_body") == {
+        "chat_template_kwargs": {"enable_thinking": True},
+        "thinking_token_budget": _THINKING_BUDGET_TOKENS["minimal"],
+    }
+    assert high.get("thinking") == "xhigh"
+    assert high.get("extra_body") == {
+        "chat_template_kwargs": {"enable_thinking": True},
+        "thinking_token_budget": _THINKING_BUDGET_TOKENS["high"],
+    }
+
+
+def test_other_self_hosted_models_keep_generic_high_effort() -> None:
+    settings = thinking_model_settings("high", SELF_HOSTED)
+
+    assert settings.get("thinking") == "high"
     assert settings.get("extra_body") == {
         "chat_template_kwargs": {"enable_thinking": True},
-        "thinking_budget_tokens": _THINKING_BUDGET_TOKENS[AUTO_REASONING_EFFORT],
+        "thinking_budget_tokens": _THINKING_BUDGET_TOKENS["high"],
     }
 
 

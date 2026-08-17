@@ -152,6 +152,7 @@ configs:
       model = "qwen3.6-27b"
       aux_model = "qwen3.5-0.8b"
       base_url = "http://host.docker.internal:18000/v1"
+      inference_provider = "llama.cpp"
 
       # Validate tokens Rauthy issues for the hivegent-* clients.
       [auth]

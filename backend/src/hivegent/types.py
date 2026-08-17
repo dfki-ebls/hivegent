@@ -1,6 +1,6 @@
 """Shared types and server-facing schemas for Hivegent."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -11,7 +11,7 @@ from pydantic_ai.settings import ThinkingEffort
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 
 from .chunkers import ChunkingSpec
-from .config import ADMIN_ROLE, settings
+from .config import ADMIN_ROLE, InferenceProvider, settings
 from .converters import ConversionSpec
 from .db.conversations import ConversationSummary
 from .entries import entry_owns, stem_path_from_reference
@@ -215,6 +215,7 @@ class LlmConfig(BaseModel):
     api_key: str = ""
     base_url: str | None = None
     max_tokens: int | None = None
+    inference_provider: InferenceProvider | None = None
 
     _base_url_is_trusted: bool = PrivateAttr(default=False)
 
@@ -251,6 +252,9 @@ def resolve_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:
         api_key=llm.api_key or settings.llm.api_key,
         base_url=llm.base_url or configured_base_url,
         max_tokens=llm.max_tokens or default_max_tokens,
+        inference_provider=(
+            llm.inference_provider or settings.llm.inference_provider
+        ),
     )
     resolved._base_url_is_trusted = llm.base_url_is_trusted or (
         not llm.base_url and configured_base_url is not None

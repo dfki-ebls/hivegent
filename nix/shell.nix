@@ -44,6 +44,7 @@ mkShell {
   HIVEGENT_LLM__MODEL = "qwen3.6-35b-a3b";
   HIVEGENT_LLM__AUX_MODEL = "qwen3.5-0.8b";
   HIVEGENT_LLM__BASE_URL = "http://localhost:18000/v1";
+  HIVEGENT_LLM__INFERENCE_PROVIDER = "llama.cpp";
   UV_PYTHON = lib.getExe python313;
   # tesserocr (in-process docling OCR) resolves tessdata from this prefix.
   TESSDATA_PREFIX = backend.tessdata;

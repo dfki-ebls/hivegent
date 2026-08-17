@@ -4,6 +4,7 @@ import hashlib
 import os
 import re
 import unicodedata
+from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
@@ -32,6 +33,7 @@ __all__ = [
     "ClaimSettings",
     "DatabaseSettings",
     "EmbeddingSettings",
+    "InferenceProvider",
     "LimitsSettings",
     "LlmSettings",
     "LogfireSettings",
@@ -216,6 +218,14 @@ def sanitize_document_path(path: str) -> str:
     return normalized
 
 
+class InferenceProvider(StrEnum):
+    """Inference server providing the OpenAI-compatible LLM endpoint."""
+
+    LLAMA_CPP = "llama.cpp"
+    VLLM = "vllm"
+    OPENAI = "openai"
+
+
 class LlmSettings(BaseModel):
     """LLM provider defaults, configurable via environment variables.
 
@@ -241,6 +251,15 @@ class LlmSettings(BaseModel):
     ``max_tokens`` (the main chat tier) defaults to ``None`` — open-ended,
     streamed answers should not be truncated — but is exposed so an operator
     can impose a ceiling.
+
+    ``inference_provider`` identifies which OpenAI-compatible implementation
+    serves the models.  Provider-specific request fields and model-profile
+    overrides are derived from it centrally rather than configured
+    individually.  It defaults to ``openai``, the strict reading: no
+    non-standard request fields and no profile overrides, which is the only
+    safe assumption for an endpoint that rejects what it does not know.  An
+    operator pointing ``base_url`` at llama.cpp or vLLM opts into the
+    compensation by naming it.
 
     The remaining knobs bound an agent run.  ``request_timeout_seconds`` is the
     per-request timeout applied to every model call (as ``ModelSettings.timeout``):
@@ -286,6 +305,7 @@ class LlmSettings(BaseModel):
     base_url: str = ""
     max_tokens: int | None = None
     aux_max_tokens: int | None = 2048
+    inference_provider: InferenceProvider = InferenceProvider.OPENAI
     request_timeout_seconds: float = 600.0
     tool_timeout_seconds: float | None = 300.0
     request_limit: int = 40

@@ -74,6 +74,7 @@ async def explore_documents(
                 model_name,
                 api_key=settings.llm.api_key,
                 base_url=settings.llm.base_url or None,
+                inference_provider=settings.llm.inference_provider,
                 allow_private_base_url=bool(settings.llm.base_url),
             ),
             deps=UserDeps(
