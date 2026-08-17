@@ -238,7 +238,7 @@ def model_from_config(config: LlmConfig) -> OpenAIChatModel:
 # ``auto`` is a stable public alias for the deployed default effort — kept in
 # the API enum so the default can be retargeted with a single edit here,
 # without touching clients or the request schema.  It resolves to ``high``.
-AUTO_REASONING_EFFORT: ThinkingEffort = "high"
+AUTO_REASONING_EFFORT: ThinkingEffort = "medium"
 
 
 def resolve_thinking(effort: ReasoningEffort) -> ThinkingLevel:
