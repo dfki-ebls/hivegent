@@ -1,9 +1,9 @@
 """Generic background-job routes: list, live feed, and cancel.
 
-Feature-agnostic surface over :mod:`hivegent.server.jobs`.  Any subsystem
+Feature-agnostic surface over :mod:`hivegent.jobs`.  Any subsystem
 that submits jobs (today: document processing) is observable and
 cancellable through these endpoints; the client renders them uniformly
-from the generic :class:`~hivegent.server.jobs.JobView` shape.
+from the generic :class:`~hivegent.jobs.JobView` shape.
 """
 
 import logging
@@ -16,7 +16,8 @@ from fastapi.sse import EventSourceResponse
 from pydantic import BaseModel
 
 from ...auth import User, get_current_user
-from ..jobs import FeedEvent, JobView, manager
+from ...jobs import FeedEvent, JobView, manager
+from ..common import ClientId
 
 __all__ = ["router"]
 
@@ -42,6 +43,7 @@ async def list_jobs(
 @router.get("/jobs/events", response_class=EventSourceResponse)
 async def job_events(
     user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
 ) -> AsyncIterable[FeedEvent]:
     """Stream the caller's job snapshots as Server-Sent Events.
 
@@ -50,7 +52,7 @@ async def job_events(
     the stream only ends the subscription — the jobs themselves run
     independently and are unaffected.
     """
-    async with aclosing(manager.subscribe(user.id)) as feed:
+    async with aclosing(manager.subscribe(user.id, client)) as feed:
         async for snapshot in feed:
             yield snapshot
 

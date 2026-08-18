@@ -21,18 +21,36 @@ type JobListener = (job: JobView) => void;
 
 const settledListeners = new Set<JobListener>();
 const startedListeners = new Set<JobListener>();
+const scopeChangedListeners = new Set<(scope: string) => void>();
+const feedReadyListeners = new Set<() => void>();
+
+/** Build a set's `on…` registrar: subscribe, and return the unsubscribe. */
+const register =
+  <L>(listeners: Set<L>) =>
+  (listener: L): (() => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  };
+
+/** Register a callback fired after the feed has replayed state on each connect. */
+export const onFeedReady = register(feedReadyListeners);
+
+/**
+ * Register a callback fired when a scope changes through work that never was a
+ * job — an inline mutation by a request, an agent, or an MCP client. The
+ * counterpart to {@link onJobSettled} for the same "reload this scope" need.
+ * Returns an unsubscribe function.
+ */
+export const onScopeChanged = register(scopeChangedListeners);
 
 /**
  * Register a callback fired once when any job reaches a terminal state. Keeps
  * the job store generic: a feature (e.g. documents) reacts only to its own job
  * kinds. Returns an unsubscribe function.
  */
-export function onJobSettled(listener: JobListener): () => void {
-  settledListeners.add(listener);
-  return () => {
-    settledListeners.delete(listener);
-  };
-}
+export const onJobSettled = register(settledListeners);
 
 /**
  * Register a callback fired once when a job first appears in an active
@@ -40,12 +58,7 @@ export function onJobSettled(listener: JobListener): () => void {
  * so a feature can react to a job's arrival (e.g. revealing the task tray).
  * Returns an unsubscribe function.
  */
-export function onJobStarted(listener: JobListener): () => void {
-  startedListeners.add(listener);
-  return () => {
-    startedListeners.delete(listener);
-  };
-}
+export const onJobStarted = register(startedListeners);
 
 /**
  * Resolve once the job with `id` reaches a terminal state. Lets a caller that
@@ -140,7 +153,9 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
           (job) => get().upsert(job, { seeding }),
           () => {
             seeding = false;
+            feedReadyListeners.forEach((listener) => listener());
           },
+          (scope) => scopeChangedListeners.forEach((listener) => listener(scope)),
         );
       } catch {
         // A failed connect counts as a drop; the backoff below handles it.

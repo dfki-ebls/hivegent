@@ -1,7 +1,7 @@
 """Shared helpers for the document routes' background jobs.
 
 Single uploads, reconvert, collections, and the bulk operations all run as
-background jobs (see :mod:`hivegent.server.jobs`); this module holds the
+background jobs (see :mod:`hivegent.jobs`); this module holds the
 upload size guard those routes share, collection-request validation, and the
 per-file bulk runner that reports its progress to a job context.
 """

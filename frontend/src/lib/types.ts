@@ -467,8 +467,15 @@ export type JobView = z.infer<typeof JobViewSchema>;
 /** Marks the end of the job feed's initial replay (see backend `FeedReady`). */
 export const FeedReadySchema = z.object({ type: z.literal("ready") });
 
-/** A job feed event: either a job snapshot or the seed-complete marker. */
-export const FeedEventSchema = z.union([JobViewSchema, FeedReadySchema]);
+/** A scope changed through work that ran inline, so never was a job. */
+export const ScopeChangedSchema = z.object({
+  type: z.literal("scope-changed"),
+  scope: z.string(),
+});
+export type ScopeChanged = z.infer<typeof ScopeChangedSchema>;
+
+/** A job feed event: a job snapshot, the seed-complete marker, or a change. */
+export const FeedEventSchema = z.union([JobViewSchema, FeedReadySchema, ScopeChangedSchema]);
 export type FeedEvent = z.infer<typeof FeedEventSchema>;
 
 /** Terminal job statuses — no further updates will arrive. */

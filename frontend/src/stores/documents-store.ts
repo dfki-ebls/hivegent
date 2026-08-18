@@ -24,7 +24,13 @@ import type {
   PipelineSpec,
 } from "@/lib/types";
 import { treeDocuments, withDirectory } from "@/lib/utils";
-import { awaitJobSettled, onJobSettled, useJobsStore } from "@/stores/jobs-store";
+import {
+  awaitJobSettled,
+  onFeedReady,
+  onJobSettled,
+  onScopeChanged,
+  useJobsStore,
+} from "@/stores/jobs-store";
 
 /** Per-scope document-management state. A scope is `~` (personal) or `@<group>`. */
 export interface ScopeState {
@@ -312,12 +318,27 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
   };
 });
 
+// Reload a scope the server reports as changed, but only one this store has
+// already read: an untouched scope has nothing to reconcile, and the section
+// that displays it fetches on mount, so a chat-only session never pays for the
+// full-workspace walk a refresh costs.
+const refreshIfLoaded = (scope: string) => {
+  if (useDocumentsStore.getState().byScope[scope]?.hasFetched) {
+    void useDocumentsStore.getState().refresh(scope);
+  }
+};
+
 // A settled document job may have changed its scope on disk: a success adds or
 // reconverts an entry, a failed/cancelled one drops the entry it had reserved,
 // and a bulk op moves or deletes many. Either way the view can be stale, so
 // refresh the scope on every terminal document job, not just successes.
 onJobSettled((job) => {
-  if (job.scope && job.kind.startsWith("document.")) {
-    void useDocumentsStore.getState().refresh(job.scope);
-  }
+  if (job.scope && job.kind.startsWith("document.")) refreshIfLoaded(job.scope);
 });
+
+// The same need for a mutation that ran inline and so never was a job.
+onScopeChanged(refreshIfLoaded);
+
+// Scope-change events are transient, so reconcile loaded scopes after every
+// feed handshake to cover mutations that occurred while it was disconnected.
+onFeedReady(() => Object.keys(useDocumentsStore.getState().byScope).forEach(refreshIfLoaded));

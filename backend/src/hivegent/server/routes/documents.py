@@ -29,6 +29,7 @@ from ...concurrency import shield_to_completion
 from ...config import settings
 from ...db.documents import get_document, get_line_counts
 from ...humanize import pluralize
+from ...jobs import JobContext, JobView, JobWork, manager
 from ...store import Casebase
 from ...types import (
     AssetEntry,
@@ -47,13 +48,14 @@ from ...types import (
     WriteDocumentRequest,
     WriteDocumentResponse,
 )
+from ...workspace_events import notify_workspace_change
 from ..common import (
+    ClientId,
     parse_pipeline_spec,
     prepare_llm_config,
     resolve_move,
     resolve_workspace_path,
 )
-from ..jobs import JobContext, JobView, JobWork, manager
 from ..models import (
     BulkDeleteRequest,
     BulkMoveRequest,
@@ -343,10 +345,12 @@ async def upload_collection(
 async def delete_all_documents(
     scope: str,
     user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
 ) -> BulkDeleteDocumentsResponse:
     """Delete all documents, chunks, and originals in a workspace."""
     store, _ = resolve_workspace_path(user, scope, write=True)
     await workspace.delete_all(store)
+    notify_workspace_change(user.id, store, client)
     return BulkDeleteDocumentsResponse(
         message="All documents and search index deleted successfully",
     )
@@ -543,6 +547,7 @@ async def move_document(
     filepath: str,
     request: MoveDocumentRequest,
     user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
 ) -> MoveDocumentResponse:
     """Move a document within a workspace or migrate it to another.
 
@@ -552,7 +557,13 @@ async def move_document(
     destination.
     """
     src_store, src, dst_store, dst = resolve_move(user, filepath, request.destination)
-    return await workspace.move_document(src_store, dst_store, src, dst)
+    result = await workspace.move_document(src_store, dst_store, src, dst)
+    # Both ends change on a cross-workspace move; the same store twice collapses
+    # to one notification for an in-place one.
+    notify_workspace_change(user.id, src_store, client)
+    if dst_store != src_store:
+        notify_workspace_change(user.id, dst_store, client)
+    return result
 
 
 @router.get("/documents/assets/{filepath:path}")
@@ -570,12 +581,15 @@ async def patch_asset_description(
     filepath: str,
     request: UpdateAssetDescriptionRequest,
     user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
 ) -> AssetEntry:
     """Update an asset's companion .md description."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
-    return await workspace.update_asset_description(
+    entry = await workspace.update_asset_description(
         store, safe, request.asset_name, request.content
     )
+    notify_workspace_change(user.id, store, client)
+    return entry
 
 
 @router.post("/documents/assets/{filepath:path}")
@@ -583,13 +597,16 @@ async def generate_asset_description(
     filepath: str,
     request: GenerateAssetDescriptionRequest,
     user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
 ) -> AssetEntry:
     """Generate an asset's companion .md description with the vision model."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
     llm = await prepare_llm_config(request.llm)
-    return await workspace.generate_asset_description(
+    entry = await workspace.generate_asset_description(
         store, safe, request.asset_name, llm
     )
+    notify_workspace_change(user.id, store, client)
+    return entry
 
 
 @router.delete("/documents/assets/{filepath:path}")
@@ -597,10 +614,13 @@ async def delete_asset_description(
     filepath: str,
     asset_name: str,
     user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
 ) -> AssetEntry:
     """Delete an asset's companion .md description, keeping the asset itself."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
-    return await workspace.delete_asset_description(store, safe, asset_name)
+    entry = await workspace.delete_asset_description(store, safe, asset_name)
+    notify_workspace_change(user.id, store, client)
+    return entry
 
 
 # Registered after the more specific /documents/assets/ PATCH route so the
@@ -610,6 +630,7 @@ async def write_document(
     filepath: str,
     request: WriteDocumentRequest,
     user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
 ) -> WriteDocumentResponse:
     """Replace a text document's content in place.
 
@@ -620,6 +641,7 @@ async def write_document(
     message = await workspace.write_document_text(
         store, safe, request.content, mode=request.mode, chunking=request.chunking
     )
+    notify_workspace_change(user.id, store, client)
     return WriteDocumentResponse(filename=safe, message=message)
 
 
@@ -637,10 +659,12 @@ async def get_document_content(
 async def delete_document(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
 ) -> DeleteDocumentResponse:
     """Delete a document and its associated chunks and original."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
     await workspace.delete_document(store, safe)
+    notify_workspace_change(user.id, store, client)
     return DeleteDocumentResponse(
         filename=safe,
         message="Document deleted successfully",

@@ -1,6 +1,8 @@
 """Shared helpers for server routes and operations."""
 
-from fastapi import HTTPException
+from typing import Annotated
+
+from fastapi import Header, HTTPException
 from pydantic import ValidationError
 
 from ..auth import User
@@ -16,6 +18,7 @@ from ..types import DocumentFilter, LlmConfig, LlmTier, resolve_llm_config
 from .models import PipelineSpec
 
 __all__ = [
+    "ClientId",
     "group_store",
     "group_stores",
     "parse_document_filters",
@@ -29,6 +32,13 @@ __all__ = [
     "safe_path",
     "user_store",
 ]
+
+
+# Identifies the browser tab making a request, so a change it caused is not
+# echoed back to it over the job feed — it re-reads the result itself. Absent
+# for any client that does not name itself (the CLI, an MCP client), which then
+# simply receives every notification.
+type ClientId = Annotated[str | None, Header(alias="X-Client-Id")]
 
 
 async def prepare_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:

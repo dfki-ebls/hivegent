@@ -66,6 +66,12 @@ interface DirectoryTreeViewProps {
 interface FlatRow {
   entry: DirectoryEntry;
   depth: number;
+  /**
+   * Local dir a drop on this row lands in (`""` for the scope root): its own
+   * path for a directory, its parent's for a file — so an expanded directory's
+   * whole span is a target for it, at every nesting level.
+   */
+  dropDir: string;
   isExpanded?: boolean;
   fileCount?: number;
 }
@@ -227,9 +233,10 @@ function flattenEntries(
   entry: DirectoryEntry,
   expandedDirs: Set<string>,
   depth: number,
+  parentPath = "",
 ): FlatRow[] {
   if (entry.type === "file") {
-    return [{ entry, depth }];
+    return [{ entry, depth, dropDir: parentPath }];
   }
 
   const rows: FlatRow[] = [];
@@ -237,12 +244,12 @@ function flattenEntries(
   // Skip the root directory row (rendered externally)
   if (entry.path) {
     const isExpanded = expandedDirs.has(entry.path);
-    rows.push({ entry, depth, isExpanded, fileCount: countFiles(entry) });
+    rows.push({ entry, depth, dropDir: entry.path, isExpanded, fileCount: countFiles(entry) });
     if (!isExpanded) return rows;
   }
 
   for (const child of (entry.children ?? []).toSorted(byKindThenName)) {
-    rows.push(...flattenEntries(child, expandedDirs, entry.path ? depth + 1 : depth));
+    rows.push(...flattenEntries(child, expandedDirs, entry.path ? depth + 1 : depth, entry.path));
   }
 
   return rows;
@@ -250,7 +257,7 @@ function flattenEntries(
 
 function FileRow({
   entry,
-  scope,
+  dnd,
   isMutating,
   depth,
   onEdit,
@@ -261,10 +268,9 @@ function FileRow({
   onRename,
   selected,
   onToggleSelect,
-  resolveDrag,
 }: {
   entry: DirectoryEntry;
-  scope: string;
+  dnd: TreeRowDnd;
   isMutating: boolean;
   depth: number;
   onEdit: () => void;
@@ -275,11 +281,9 @@ function FileRow({
   onRename?: () => void;
   selected?: boolean;
   onToggleSelect?: () => void;
-  resolveDrag: (() => TreeItemDrag) | null;
 }) {
   return (
-    // Files are drag sources only — you move a file, you never drop onto one.
-    <TreeRow dnd={{ scope, resolveDrag, destDir: null, onMove: null, onUpload: null }}>
+    <TreeRow dnd={dnd}>
       <RowMain
         isMutating={isMutating}
         checkbox={
@@ -342,7 +346,7 @@ function FileRow({
 
 function DirectoryRow({
   entry,
-  scope,
+  dnd,
   isExpanded,
   isMutating,
   depth,
@@ -357,12 +361,9 @@ function DirectoryRow({
   onDeleteDir,
   onRenameDir,
   onToggleSelect,
-  resolveDrag,
-  onMoveInto,
-  onUploadInto,
 }: {
   entry: DirectoryEntry;
-  scope: string;
+  dnd: TreeRowDnd;
   isExpanded: boolean;
   isMutating: boolean;
   depth: number;
@@ -377,27 +378,12 @@ function DirectoryRow({
   onDeleteDir?: () => void;
   onRenameDir?: () => void;
   onToggleSelect?: () => void;
-  resolveDrag: (() => TreeItemDrag) | null;
-  onMoveInto: ((drag: TreeItemDrag) => void) | null;
-  onUploadInto: ((items: DataTransferItem[], files: File[]) => void) | null;
 }) {
-  // Directory rows are drop targets exactly when the scope is writable, which is
-  // also when they are draggable — the caller gates both on the same condition.
-  const dndEnabled = resolveDrag != null;
   const FolderIcon = isExpanded ? FolderOpen : Folder;
   const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
 
   return (
-    <TreeRow
-      isArmed={isArmed}
-      dnd={{
-        scope,
-        resolveDrag,
-        destDir: dndEnabled ? entry.path : null,
-        onMove: onMoveInto,
-        onUpload: onUploadInto,
-      }}
-    >
+    <TreeRow isArmed={isArmed} dnd={dnd}>
       <RowMain
         isMutating={isMutating}
         checkbox={
@@ -520,21 +506,27 @@ export function DirectoryTreeView({
     return map;
   }, [flatRows]);
 
-  // A dragged file carries the whole selection when it is part of it, so
-  // grabbing any selected row moves them all; otherwise it carries just itself.
-  const resolveFileDrag = useCallback(
-    (path: string): (() => TreeItemDrag) | null => {
-      if (!onMoveInto) return null;
-      return () => {
-        const paths =
-          selectedFiles && selectedFiles.size > 1 && selectedFiles.has(path)
-            ? [...selectedFiles]
-            : [path];
-        return { scope, kind: "file", paths };
-      };
-    },
-    [onMoveInto, selectedFiles, scope],
-  );
+  // Both row kinds drop into their own `dropDir` and differ only in what they
+  // drag: a file carries the whole selection when it is part of one, so grabbing
+  // any selected row moves them all, while a directory carries itself.
+  const rowDnd = (row: FlatRow): TreeRowDnd => ({
+    scope,
+    resolveDrag: !onMoveInto
+      ? null
+      : row.entry.type === "file"
+        ? () => ({
+            scope,
+            kind: "file",
+            paths:
+              selectedFiles && selectedFiles.size > 1 && selectedFiles.has(row.entry.path)
+                ? [...selectedFiles]
+                : [row.entry.path],
+          })
+        : () => ({ scope, kind: "directory", paths: [row.entry.path] }),
+    destDir: onMoveInto ? row.dropDir : null,
+    onMove: onMoveInto ? (drag) => onMoveInto(drag, row.dropDir) : null,
+    onUpload: onUploadInto ? (items, files) => onUploadInto(row.dropDir, items, files) : null,
+  });
 
   const renderRow = (row: FlatRow) => {
     if (row.entry.type === "file") {
@@ -543,7 +535,7 @@ export function DirectoryTreeView({
         <FileRow
           key={row.entry.path}
           entry={row.entry}
-          scope={scope}
+          dnd={rowDnd(row)}
           isMutating={fileMutating}
           depth={row.depth}
           onEdit={() => onEditFile(row.entry.path)}
@@ -554,7 +546,6 @@ export function DirectoryTreeView({
           onRename={onRenameFile ? () => onRenameFile(row.entry.path) : undefined}
           selected={selectedFiles?.has(row.entry.path)}
           onToggleSelect={onToggleSelectFile ? () => onToggleSelectFile(row.entry.path) : undefined}
-          resolveDrag={resolveFileDrag(row.entry.path)}
         />
       );
     }
@@ -582,7 +573,7 @@ export function DirectoryTreeView({
       <DirectoryRow
         key={row.entry.path}
         entry={row.entry}
-        scope={scope}
+        dnd={rowDnd(row)}
         isExpanded={row.isExpanded ?? false}
         isMutating={mutatingPaths.has(row.entry.path)}
         depth={row.depth}
@@ -597,13 +588,6 @@ export function DirectoryTreeView({
         onDeleteDir={onDeleteDir ? () => onDeleteDir(row.entry.path) : undefined}
         onRenameDir={onRenameDir ? () => onRenameDir(row.entry.path) : undefined}
         onToggleSelect={onToggleSelectDir ? () => onToggleSelectDir(paths) : undefined}
-        resolveDrag={
-          onMoveInto ? () => ({ scope, kind: "directory", paths: [row.entry.path] }) : null
-        }
-        onMoveInto={onMoveInto ? (drag) => onMoveInto(drag, row.entry.path) : null}
-        onUploadInto={
-          onUploadInto ? (items, files) => onUploadInto(row.entry.path, items, files) : null
-        }
       />
     );
   };

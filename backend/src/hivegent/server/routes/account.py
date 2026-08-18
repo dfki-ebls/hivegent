@@ -9,7 +9,8 @@ from ...auth import User, get_current_user
 from ...db.memory import clear_memory
 from ...db.users import delete_user
 from ...types import BulkDeleteUserDataResponse, ClearMemoryResponse
-from ..common import user_store
+from ...workspace_events import notify_workspace_change
+from ..common import ClientId, user_store
 
 __all__ = ["router"]
 
@@ -31,6 +32,7 @@ async def delete_memory(
 @router.delete("/user-data")
 async def delete_all_user_data(
     user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
 ) -> BulkDeleteUserDataResponse:
     """Delete all data for the authenticated user.
 
@@ -43,6 +45,7 @@ async def delete_all_user_data(
     store = user_store(user)
     await workspace.delete_all(store)
     await delete_user(user.id)
+    notify_workspace_change(user.id, store, client)
     return BulkDeleteUserDataResponse(
         message="All user data deleted successfully",
     )

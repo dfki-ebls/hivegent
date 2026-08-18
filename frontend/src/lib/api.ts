@@ -62,6 +62,7 @@ import { featureFlags } from "@/lib/feature-flags";
 
 import { API_BASE_URL, waitForBackendReady } from "@/lib/health";
 import { getImpersonation, IMPERSONATE_HEADER } from "@/lib/impersonation";
+import { nanoid } from "nanoid";
 import { getOidc } from "@/oidc";
 
 /**
@@ -182,11 +183,21 @@ async function postJob(url: string, body: unknown, errorMsg: string): Promise<Jo
   return parseJobResponse(res, errorMsg);
 }
 
+const CLIENT_ID_HEADER = "X-Client-Id";
+
+/**
+ * Identifies this tab for the lifetime of the page. Sent on every request, so
+ * the server can skip echoing a change back over the job feed to the very tab
+ * whose request caused it — that one re-reads the result itself, while the
+ * user's other tabs need telling.
+ */
+const CLIENT_ID = nanoid();
+
 /**
  * Get the current auth headers for use with external transports.
  */
 export async function getAuthHeaders(): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { [CLIENT_ID_HEADER]: CLIENT_ID };
   const oidc = await getOidc();
   if (oidc.isUserLoggedIn) {
     headers.Authorization = `Bearer ${await oidc.getAccessToken()}`;
@@ -932,6 +943,7 @@ export async function cancelJob(id: string): Promise<void> {
 export async function subscribeJobs(
   onJob: (job: JobView) => void,
   onReady: () => void,
+  onScopeChanged: (scope: string) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   const res = await authFetch(`${API_BASE_URL}/api/jobs/events`, { signal });
@@ -943,8 +955,9 @@ export async function subscribeJobs(
   // throws "Stream ended..." when the connection drops — the caller's
   // reconnect loop handles that as a normal reconnect signal.
   await readSseEvents(res, FeedEventSchema, (event) => {
-    if ("type" in event) onReady();
-    else onJob(event);
+    if (!("type" in event)) onJob(event);
+    else if (event.type === "ready") onReady();
+    else onScopeChanged(event.scope);
     return undefined;
   });
 }

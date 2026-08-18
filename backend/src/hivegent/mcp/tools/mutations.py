@@ -20,6 +20,7 @@ from ...tools.mutations import (
     ExpectedHashArg,
     WriteModeArg,
 )
+from ...workspace_events import announcing_mutator
 from ..app import mcp_app
 from ..common import get_mcp_user_store
 
@@ -56,7 +57,9 @@ async def edit_document(
         paths=SearchPath(
             path=store.workspace_dir(settings.data_dir), scope=store.scope
         ),
-        mutator=scoped_operation(workspace.edit_document_text, (store,)),
+        mutator=announcing_mutator(
+            scoped_operation(workspace.edit_document_text, (store,)), store.id
+        ),
     )
     return await _apply(
         tool(file_path, old_string, new_string, replace_all, expected_hash)
@@ -84,6 +87,8 @@ async def write_document(
         paths=SearchPath(
             path=store.workspace_dir(settings.data_dir), scope=store.scope
         ),
-        mutator=scoped_operation(workspace.write_document_text, (store,)),
+        mutator=announcing_mutator(
+            scoped_operation(workspace.write_document_text, (store,)), store.id
+        ),
     )
     return await _apply(tool(file_path, content, mode, expected_hash))

@@ -1,16 +1,22 @@
-import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
+import { autoScrollForElements } from "@atlaskit/pragmatic-drag-and-drop-auto-scroll/element";
+import { autoScrollForExternal } from "@atlaskit/pragmatic-drag-and-drop-auto-scroll/external";
 import {
   draggable,
   dropTargetForElements,
-} from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
-import { dropTargetForExternal } from "@atlaskit/pragmatic-drag-and-drop/external/adapter";
-import { containsFiles, getFiles } from "@atlaskit/pragmatic-drag-and-drop/external/file";
+} from "@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter";
+import { dropTargetForExternal } from "@atlaskit/pragmatic-drag-and-drop/adapter/drop-target-for-external";
+import { combine } from "@atlaskit/pragmatic-drag-and-drop/utils/combine";
+import { containsFiles } from "@atlaskit/pragmatic-drag-and-drop/utils/contains-files";
+import { getFiles } from "@atlaskit/pragmatic-drag-and-drop/utils/get-files";
+
+import { parentDir } from "@/lib/utils";
 
 /**
  * Native drag-and-drop for the document tree. One model covers both gestures a
- * native file manager offers: dragging a row onto a folder (an internal move)
- * and dropping OS files onto a folder (an upload into it). Rows render flat as
- * siblings — never DOM-nested — so every drop target stands alone and no
+ * native file manager offers: dragging a row onto a directory (an internal
+ * move) and dropping OS files onto one (an upload into it). Every row is a drop
+ * target for the directory it belongs to, files included. Rows render flat as
+ * siblings — never DOM-nested — so every target stands alone and no
  * innermost-target arbitration is needed.
  */
 
@@ -45,9 +51,6 @@ export const DROP_CLASSES: Record<TreeDropState, string> = {
   blocked: "ring-1 ring-inset ring-destructive bg-destructive/10 cursor-no-drop",
 };
 
-const parentDir = (path: string): string =>
-  path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
-
 /**
  * Whether moving `drag` into `destDir` (a local dir, `""` for the scope root)
  * would actually change anything. A move into a different workspace always
@@ -58,13 +61,17 @@ const parentDir = (path: string): string =>
 export function isValidMove(drag: TreeItemDrag, destScope: string, destDir: string): boolean {
   if (drag.scope !== destScope) return true;
 
+  // `parentDir` yields the `dir/`-style prefix form, so compare against the
+  // destination in that same form.
+  const destPrefix = destDir ? `${destDir}/` : "";
+
   if (drag.kind === "directory") {
     const src = drag.paths[0];
     if (destDir === src || destDir.startsWith(`${src}/`)) return false;
-    return parentDir(src) !== destDir;
+    return parentDir(src) !== destPrefix;
   }
 
-  return drag.paths.some((p) => parentDir(p) !== destDir);
+  return drag.paths.some((p) => parentDir(p) !== destPrefix);
 }
 
 /** Destination for a drop target: the local dir it represents, `""` = root. */
@@ -146,4 +153,14 @@ export function registerTreeRow({
   }
 
   return combine(...cleanups);
+}
+
+/**
+ * Scroll `element` while a drag hovers near its top or bottom edge, so an entry
+ * can be dragged into a workspace that is off-screen in one gesture instead of
+ * dropping it halfway and scrolling by hand.
+ */
+export function registerTreeAutoScroll(element: HTMLElement): () => void {
+  const config = { element, getAllowedAxis: () => "vertical" as const };
+  return combine(autoScrollForElements(config), autoScrollForExternal(config));
 }

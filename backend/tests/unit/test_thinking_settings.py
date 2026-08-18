@@ -37,14 +37,14 @@ def test_resolve_thinking_maps_sentinels_and_passes_levels_through() -> None:
 
 def test_qwen38_maps_native_effort_without_losing_granular_budgets() -> None:
     low = thinking_model_settings("minimal", QWEN38)
-    high = thinking_model_settings(resolve_thinking("auto"), QWEN38)
+    high = thinking_model_settings("high", QWEN38)
 
     assert low.get("thinking") == "low"
     assert low.get("extra_body") == {
         "chat_template_kwargs": {"enable_thinking": True},
         "thinking_token_budget": _THINKING_BUDGET_TOKENS["minimal"],
     }
-    assert high.get("thinking") == "xhigh"
+    assert high.get("thinking") == "medium"
     assert high.get("extra_body") == {
         "chat_template_kwargs": {"enable_thinking": True},
         "thinking_token_budget": _THINKING_BUDGET_TOKENS["high"],

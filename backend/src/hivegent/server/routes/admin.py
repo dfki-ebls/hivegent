@@ -44,6 +44,7 @@ from ...types import (
     AdminUserInfo,
     BulkDeleteUserDataResponse,
 )
+from ...workspace_events import notify_workspace_change
 from ..maintenance import is_enabled, set_enabled
 
 __all__ = ["router"]
@@ -234,6 +235,9 @@ async def admin_delete_user_data(user_id: str) -> BulkDeleteUserDataResponse:
     store = _casebase_or_400("user", user_id)
     await workspace.delete_all(store)
     await delete_user(store.id)
+    # The wiped user is never the caller here, so every one of their tabs needs
+    # telling — none of them made this request.
+    notify_workspace_change(store.id, store)
     return BulkDeleteUserDataResponse(
         message=f"All data for user {store.id!r} deleted",
     )

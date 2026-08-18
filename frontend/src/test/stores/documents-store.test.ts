@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { getDirectories as getDirectoriesFn } from "@/lib/api";
 
+const jobEvents = vi.hoisted(() => ({ feedReady: undefined as (() => void) | undefined }));
+
 // Only the refresh read is exercised; the remaining store imports just
 // need to exist for the module to load (the factory is hoisted, so no helpers).
 vi.mock("@/lib/api", () => ({
@@ -22,6 +24,15 @@ vi.mock("@/lib/api", () => ({
   subscribeJobs: vi.fn<() => void>(),
   uploadCollection: vi.fn<() => void>(),
   uploadDocument: vi.fn<() => void>(),
+}));
+
+// Only the feed-ready hook is intercepted, to fire the handshake by hand; the
+// rest of the store stays real so this mock never has to track its exports.
+vi.mock("@/stores/jobs-store", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/stores/jobs-store")>()),
+  onFeedReady: (listener: () => void) => {
+    jobEvents.feedReady = listener;
+  },
 }));
 
 import { getDirectories } from "@/lib/api";
@@ -88,6 +99,16 @@ describe("useDocumentsStore refresh", () => {
     expect(vi.mocked(getDirectories)).toHaveBeenCalledTimes(2);
     const state = useDocumentsStore.getState().byScope["~"];
     expect(state.documents.map((d) => d.filename)).toEqual(["new.md"]);
+  });
+
+  it("reconciles loaded scopes after the feed connects", async () => {
+    vi.mocked(getDirectories).mockResolvedValue(treeWith("notes.md"));
+    await useDocumentsStore.getState().refresh("~");
+    vi.clearAllMocks();
+
+    jobEvents.feedReady?.();
+
+    expect(getDirectories).toHaveBeenCalledExactlyOnceWith("~");
   });
 });
 

@@ -7,6 +7,13 @@ manager runs it as an :class:`asyncio.Task`, tracks its lifecycle, and
 broadcasts every state change to subscribers (the SSE feed consumes
 these).
 
+The feed also carries :class:`ScopeChanged`, for work that already ran
+inline and so never was a job at all, so a client learns that a scope
+changed through the one channel it already watches instead of a second
+push mechanism invented per feature.  A subscription is tagged with the
+client it belongs to, which lets such a notification skip the very
+client whose request caused it — that one reads the result back itself.
+
 The registry is in-memory only: jobs do not survive a process restart.
 Each feature keeps its own durable state consistent when a job is
 cancelled or fails — e.g. the document pipeline rolls its workspace and
@@ -25,7 +32,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
-from ..config import settings
+from .config import settings
 
 __all__ = [
     "FeedEvent",
@@ -36,6 +43,7 @@ __all__ = [
     "JobStatus",
     "JobView",
     "JobWork",
+    "ScopeChanged",
     "manager",
 ]
 
@@ -108,7 +116,19 @@ class FeedReady(BaseModel):
     type: Literal["ready"] = "ready"
 
 
-type FeedEvent = JobView | FeedReady
+class ScopeChanged(BaseModel):
+    """A scope changed through work that ran inline, outside any job.
+
+    Nothing to track, cancel, or render, so it goes straight to the live
+    subscribers and is never retained: a reconnecting client re-reads the
+    scopes it holds, so nothing missed while disconnected is lost.
+    """
+
+    type: Literal["scope-changed"] = "scope-changed"
+    scope: str
+
+
+type FeedEvent = JobView | FeedReady | ScopeChanged
 
 
 class _Job(JobView):
@@ -200,7 +220,9 @@ class JobManager:
     retain_seconds: float = 3600.0
     queue_maxsize: int = 1024
     _jobs: dict[str, _Job] = field(default_factory=dict, init=False)
-    _subscribers: dict[str, set[asyncio.Queue[FeedEvent]]] = field(
+    # Per owner, each live subscription and the client id it was opened with
+    # (``None`` when the client did not name itself).
+    _subscribers: dict[str, dict[asyncio.Queue[FeedEvent], str | None]] = field(
         default_factory=dict, init=False
     )
     _semaphore: asyncio.Semaphore = field(init=False)
@@ -242,6 +264,17 @@ class JobManager:
         job.task = asyncio.create_task(self._run(job, work, on_settled))
         self._publish(job)
         return job.view()
+
+    def notify_scope_changed(
+        self, owner: str, scope: str, *, exclude_client: str | None = None
+    ) -> None:
+        """Tell *owner*'s subscribers that *scope* changed.
+
+        *exclude_client* is the client whose own request made the change: it
+        re-reads the scope as part of that request, so echoing to it would buy
+        a second read of the same state.
+        """
+        self._broadcast(owner, ScopeChanged(scope=scope), exclude_client)
 
     async def _run(
         self, job: _Job, work: JobWork, on_settled: Callable[[], None] | None
@@ -285,7 +318,9 @@ class JobManager:
         """Return every known job for *owner*, oldest first."""
         return [job.view() for job in self._owner_jobs(owner)]
 
-    async def subscribe(self, owner: str) -> AsyncGenerator[FeedEvent]:
+    async def subscribe(
+        self, owner: str, client: str | None = None
+    ) -> AsyncGenerator[FeedEvent]:
         """Yield *owner*'s snapshots: every retained job, a :class:`FeedReady`
         marker, then each change.
 
@@ -307,7 +342,7 @@ class JobManager:
         generator (e.g. via :func:`contextlib.aclosing`).
         """
         queue: asyncio.Queue[FeedEvent] = asyncio.Queue(maxsize=self.queue_maxsize)
-        self._subscribers.setdefault(owner, set()).add(queue)
+        self._subscribers.setdefault(owner, {})[queue] = client
         for job in self._owner_jobs(owner):
             _enqueue(queue, job.view())
         _enqueue(queue, FeedReady())
@@ -328,15 +363,21 @@ class JobManager:
         self._publish(job)
 
     def _publish(self, job: _Job) -> None:
-        view = job.view()
-        for queue in self._subscribers.get(job.owner, ()):
-            _enqueue(queue, view)
+        self._broadcast(job.owner, job.view())
+
+    def _broadcast(
+        self, owner: str, event: FeedEvent, exclude_client: str | None = None
+    ) -> None:
+        for queue, client in self._subscribers.get(owner, {}).items():
+            if exclude_client is not None and client == exclude_client:
+                continue
+            _enqueue(queue, event)
 
     def _unsubscribe(self, owner: str, queue: asyncio.Queue[FeedEvent]) -> None:
         subscribers = self._subscribers.get(owner)
         if subscribers is None:
             return
-        subscribers.discard(queue)
+        subscribers.pop(queue, None)
         if not subscribers:
             del self._subscribers[owner]
 
