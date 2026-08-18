@@ -107,6 +107,9 @@
     "vitest": "^4"
   },
   "overrides": {
+    "@hookform/resolvers": {
+      "ajv-formats": "^3"
+    },
     "linkify-it": "^5.0.2",
     "shiki": "$shiki"
   }
