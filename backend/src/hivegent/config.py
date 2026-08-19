@@ -339,13 +339,17 @@ class SummarizationSettings(BaseModel):
 class MultimodalSettings(BaseModel):
     """How binary content reaches the chat model.
 
-    ``binary_content`` governs both the agent's binary reader
-    (``read_binary_document``) and ad-hoc chat attachments.  ``images``
-    (the default) rasterises PDFs to page images, the only multimodal
-    content OpenAI-compatible vision servers (vLLM, SGLang, ...) accept;
-    ``native`` forwards them as ``application/pdf`` for providers with
-    first-class document understanding (OpenAI, Anthropic).  Set it to
-    match the configured ``llm.model``'s capabilities.
+    ``binary_content`` governs the agent's binary reader
+    (``read_binary_document``).  ``images`` (the default) rasterises PDFs
+    to page images, the only multimodal content OpenAI-compatible vision
+    servers (vLLM, SGLang, ...) accept; ``native`` forwards them as
+    ``application/pdf`` for providers with first-class document
+    understanding (OpenAI, Anthropic).  Set it to match the configured
+    ``llm.model``'s capabilities.
+
+    Ad-hoc chat attachments need no such policy: the composer accepts
+    images alone (:data:`~hivegent.converters.INGESTIBLE_IMAGE_MEDIA_TYPES`),
+    which every vision backend ingests identically.
 
     Configurable via ``HIVEGENT_MULTIMODAL__BINARY_CONTENT``.
     """
@@ -708,12 +712,18 @@ class LimitsSettings(BaseModel):
     so large embedded images inside PDFs (common with scanned pages)
     decode successfully; the value still guards against truly
     degenerate inputs.
+
+    ``max_attachment_bytes`` bounds one image attached to a chat turn.  It
+    sits well below ``max_file_size_bytes`` because an attachment rides in
+    the conversation's message history and is re-sent to the model on every
+    later turn, so its cost is paid per request rather than once.
     """
 
     max_file_size_bytes: int = 50 * 1024 * 1024  # 50 MB
     max_collection_size_bytes: int = 512 * 1024 * 1024  # 512 MB
     max_collection_files: int = 10_000
     max_image_pixels: int = 1_000_000_000  # ~3 GB uncompressed
+    max_attachment_bytes: int = 10 * 1024 * 1024  # 10 MB
 
 
 class JobSettings(BaseModel):

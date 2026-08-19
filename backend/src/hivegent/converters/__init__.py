@@ -19,6 +19,7 @@ from .base import (
 from .video import VIDEO_MEDIA_TYPES, is_video_suffix
 
 __all__ = [
+    "INGESTIBLE_IMAGE_MEDIA_TYPES",
     "VISION_MEDIA_TYPES",
     "ConversionPipeline",
     "ConversionPipelineInfo",
@@ -228,6 +229,17 @@ def projection_for(filename: str) -> EntryProjection:
 
 _INGESTIBLE_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 """Image formats a chat model accepts verbatim, the subset vision APIs agree on."""
+
+INGESTIBLE_IMAGE_MEDIA_TYPES: frozenset[str] = frozenset(
+    IMAGE_MEDIA_TYPES[ext] for ext in _INGESTIBLE_IMAGE_EXTENSIONS
+)
+"""Media types a chat model ingests verbatim as an image.
+
+The one table behind both halves of the chat-attachment gate: the client renders
+it as the file picker's ``accept`` filter (served in ``AttachmentLimits``) and
+the chat route validates every attachment against it, so a file the model could
+not read is refused in the browser and never costs a round trip.
+"""
 
 VISION_MEDIA_TYPES: dict[str, str] = {
     ".pdf": "application/pdf",

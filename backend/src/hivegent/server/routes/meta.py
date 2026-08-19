@@ -11,9 +11,14 @@ from ...agents import collect_tool_schemas
 from ...auth import User, get_current_user
 from ...chunkers import ChunkingPipelineInfo, get_chunking_pipelines_info
 from ...config import settings
-from ...converters import ConversionPipelineInfo, get_conversion_pipelines_info
+from ...converters import (
+    INGESTIBLE_IMAGE_MEDIA_TYPES,
+    ConversionPipelineInfo,
+    get_conversion_pipelines_info,
+)
 from ...mcp import build_mcp_toolset, validate_mcp_servers
 from ...types import (
+    AttachmentLimits,
     McpServerConfig,
     McpTestResponse,
     SettingsResponse,
@@ -40,6 +45,10 @@ async def get_settings(
         has_api_key=bool(settings.llm.api_key),
         base_url=settings.llm.base_url,
         user=UserResponse.from_user(user),
+        attachments=AttachmentLimits(
+            media_types=sorted(INGESTIBLE_IMAGE_MEDIA_TYPES),
+            max_bytes=settings.limits.max_attachment_bytes,
+        ),
     )
 
 

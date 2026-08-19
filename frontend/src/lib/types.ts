@@ -176,6 +176,13 @@ export const AdminMaintenanceStateSchema = z.object({
   enabled: z.boolean(),
 });
 
+/** What the chat composer may attach, as the backend defines it. */
+export const AttachmentLimitsSchema = z.object({
+  media_types: z.array(z.string()),
+  max_bytes: z.number(),
+});
+export type AttachmentLimits = z.infer<typeof AttachmentLimitsSchema>;
+
 /** Settings exposed by the backend. */
 export const BackendSettingsSchema = z.object({
   model: z.string(),
@@ -184,6 +191,7 @@ export const BackendSettingsSchema = z.object({
   has_api_key: z.boolean(),
   base_url: z.string(),
   user: UserResponseSchema,
+  attachments: AttachmentLimitsSchema,
 });
 export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
 

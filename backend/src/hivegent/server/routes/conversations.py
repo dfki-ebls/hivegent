@@ -31,8 +31,8 @@ from ...agents.subagent_events import SubagentUpdate
 from ...auth import User, get_current_user
 from ...compaction import CompactionResult, compact_conversation
 from ...config import settings
-from ...converters.pdf_raster import DEFAULT_MAX_PAGES, render_pdf_pages
-from ...converters.video import FRAME_MAX_DIMENSION
+from ...converters import INGESTIBLE_IMAGE_MEDIA_TYPES
+from ...converters.images import sanitize_image_bytes
 from ...db._common import new_id
 from ...db.conversations import (
     ConversationSummary,
@@ -49,9 +49,9 @@ from ...db.conversations import (
     resolve_fork,
     set_conversation_title,
 )
+from ...humanize import format_bytes
 from ...llm import model_from_config, resolve_thinking, thinking_model_settings
 from ...mcp import build_mcp_server, validate_mcp_servers
-from ...multimodal import BinaryContentMode
 from ...prompts import (
     LANGUAGE_INSTRUCTIONS,
     MATH_INSTRUCTIONS,
@@ -387,26 +387,46 @@ async def _parse_chat_config(request: Request) -> ChatRequestConfig:
     )
 
 
-async def _expand_pdf(item: UserContent) -> list[UserContent]:
-    """Rasterise a PDF attachment to page images; pass anything else through."""
-    if not (isinstance(item, BinaryContent) and item.media_type == "application/pdf"):
-        return [item]
+def _accept_attachment(item: UserContent) -> None:
+    """Admit one attached item, sanitising it in place, or reject it.
 
-    pages, _ = await render_pdf_pages(
-        item.data, None, FRAME_MAX_DIMENSION, DEFAULT_MAX_PAGES
-    )
-    return [BinaryContent(data=png, media_type="image/png") for png in pages]
+    Raises :class:`HTTPException` for anything but an image within the
+    size cap.  A PNG is stripped of the ancillary chunks that trip
+    Pillow-based inference servers, the same best-effort pass
+    ``read_binary_document`` applies to an image read off disk.
+    """
+    if isinstance(item, str):
+        return
+
+    if (
+        not isinstance(item, BinaryContent)
+        or item.media_type not in INGESTIBLE_IMAGE_MEDIA_TYPES
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only images can be attached to a chat message. Upload other "
+                "documents to your workspace, where they are converted and "
+                "indexed for the assistant to search."
+            ),
+        )
+
+    limit = settings.limits.max_attachment_bytes
+    if len(item.data) > limit:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Attached image exceeds the {format_bytes(limit)} limit.",
+        )
+
+    item.data = sanitize_image_bytes(item.data, item.media_type)
 
 
-async def _rasterize_pdf_attachments(messages: Sequence[ModelMessage]) -> None:
-    """Replace ``application/pdf`` attachments with rendered page images.
+def _accept_attachments(messages: Sequence[ModelMessage]) -> None:
+    """Admit the attachments of ``ChatAdapter.messages``, rejecting non-images.
 
-    Ad-hoc chat attachments arrive inline as ``BinaryContent``; a PDF
-    blob would reach the model as a ``file`` part that vision servers
-    reject.  Under :attr:`BinaryContentMode.IMAGES` the new user message
-    is rewritten in place *before* the run, so the persisted history
-    already carries images and never re-renders on later turns.  Raises
-    :class:`ValueError` for an unreadable or oversized PDF.
+    Takes the client's new prompt alone, never the replayed prefix, so an
+    already-admitted image is never re-scanned on a later turn.  Anything
+    but an image belongs in a workspace instead (see ``AGENTS.md``).
     """
     for message in messages:
         if not isinstance(message, ModelRequest):
@@ -414,10 +434,8 @@ async def _rasterize_pdf_attachments(messages: Sequence[ModelMessage]) -> None:
 
         for part in message.parts:
             if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                expanded = await asyncio.gather(
-                    *(_expand_pdf(item) for item in part.content)
-                )
-                part.content = [out for group in expanded for out in group]
+                for item in part.content:
+                    _accept_attachment(item)
 
 
 async def _run_chat(conversation_id: str, request: Request, user: User) -> Response:
@@ -478,16 +496,10 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail="Invalid chat request") from exc
 
-    # Rasterise any PDF attachment on the new user message in place (the
-    # adapter caches `messages`, so `run_stream` and persistence both see the
-    # images) when the model cannot ingest native `file` parts.
-    if settings.multimodal.binary_content is BinaryContentMode.IMAGES:
-        try:
-            await _rasterize_pdf_attachments(adapter.messages)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=400, detail=f"Could not process a PDF attachment: {exc}"
-            ) from exc
+    # Gate the new user message's attachments before the run. Sanitisation
+    # lands in place, and the adapter caches `messages`, so `run_stream` and
+    # persistence both see the admitted bytes.
+    _accept_attachments(adapter.messages)
 
     # Live subagent transcript snapshots flow through this sink; the streaming
     # response drains it concurrently with the run (see `run_and_persist`).

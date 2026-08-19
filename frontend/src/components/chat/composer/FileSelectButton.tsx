@@ -1,4 +1,4 @@
-import { Paperclip } from "lucide-react";
+import { ImagePlus } from "lucide-react";
 import { usePromptInputAttachments } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
 
@@ -6,9 +6,15 @@ import { Button } from "@/components/ui/button";
 export function FileSelectButton() {
   const { openFileDialog } = usePromptInputAttachments();
   return (
-    <Button type="button" variant="ghost" size="icon" onClick={openFileDialog}>
-      <Paperclip className="h-4 w-4" />
-      <span className="sr-only">Attach file</span>
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      title="Attach an image for the assistant to look at"
+      onClick={openFileDialog}
+    >
+      <ImagePlus className="h-4 w-4" />
+      <span className="sr-only">Attach image</span>
     </Button>
   );
 }

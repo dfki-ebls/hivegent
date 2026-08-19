@@ -17,6 +17,7 @@ import { featureFlags } from "@/lib/feature-flags";
 import {
   AssetProcessingMode,
   AssetProcessingModeSchema,
+  type AttachmentLimits,
   type BackendSettings,
   ChunkingPipeline,
   ChunkingPipelineSchema,
@@ -390,4 +391,16 @@ export function selectIsAdmin(state: SettingsState): boolean {
  */
 export function selectUserId(state: SettingsState): string | undefined {
   return state.backendDefaults?.user.id;
+}
+
+/**
+ * Zustand selector: the constraints the composer enforces on attachments.
+ *
+ * Undefined until the settings load, a sub-second window in which the
+ * composer simply does not filter and the server rejects what it must.
+ */
+export function selectAttachmentLimits(
+  state: SettingsState
+): AttachmentLimits | undefined {
+  return state.backendDefaults?.attachments;
 }

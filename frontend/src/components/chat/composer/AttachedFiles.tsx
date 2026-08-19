@@ -1,28 +1,32 @@
-import { Paperclip, X } from "lucide-react";
+import { X } from "lucide-react";
 import {
   PromptInputHeader,
   usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input";
-import { Badge } from "@/components/ui/badge";
 
-/** Renders badges for attached files. Must be inside <PromptInput>. */
+/** Renders thumbnails for attached images. Must be inside <PromptInput>. */
 export function AttachedFiles() {
   const { files, remove } = usePromptInputAttachments();
   if (files.length === 0) return null;
   return (
     <PromptInputHeader>
       {files.map((file) => (
-        <Badge key={file.id} variant="outline" className="gap-1 text-xs">
-          <Paperclip className="h-3 w-3" />
-          {file.filename}
+        <div key={file.id} className="group relative">
+          <img
+            src={file.url}
+            alt={file.filename ?? "Attached image"}
+            title={file.filename}
+            className="h-14 w-14 rounded-md border object-cover"
+          />
           <button
             type="button"
-            className="ml-0.5 rounded-full hover:bg-muted"
+            aria-label={`Remove ${file.filename ?? "image"}`}
+            className="absolute -right-1.5 -top-1.5 rounded-full border bg-background p-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
             onClick={() => remove(file.id)}
           >
             <X className="h-3 w-3" />
           </button>
-        </Badge>
+        </div>
       ))}
     </PromptInputHeader>
   );

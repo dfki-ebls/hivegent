@@ -14,8 +14,8 @@ __all__ = ["BinaryContentMode"]
 class BinaryContentMode(StrEnum):
     """How binary content reaches the chat model.
 
-    The agent's binary reader and ad-hoc chat attachments can carry
-    images, PDFs, and video.  This policy selects the representation:
+    The agent's binary reader can carry images, PDFs, and video.  This
+    policy selects the representation:
 
     - :attr:`IMAGES` rasterises PDFs to one image per page, the only
       multimodal content type OpenAI-compatible vision servers (vLLM,

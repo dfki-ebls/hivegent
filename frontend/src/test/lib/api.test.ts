@@ -87,6 +87,10 @@ describe("getSettings", () => {
         groups: [],
         roles: [],
       },
+      attachments: {
+        media_types: ["image/jpeg", "image/png"],
+        max_bytes: 10 * 1024 * 1024,
+      },
     };
 
     vi.mocked(fetch).mockResolvedValueOnce(

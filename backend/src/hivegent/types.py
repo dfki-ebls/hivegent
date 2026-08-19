@@ -34,6 +34,7 @@ __all__ = [
     "AdminResetResponse",
     "AdminUserInfo",
     "AssetProcessingMode",
+    "AttachmentLimits",
     "BulkDeleteConversationsResponse",
     "BulkDeleteDocumentsResponse",
     "BulkDeleteUserDataResponse",
@@ -686,6 +687,21 @@ class UserResponse(BaseModel):
         )
 
 
+class AttachmentLimits(BaseModel):
+    """What a chat turn may attach, so the client can enforce it locally.
+
+    The composer renders ``media_types`` as its file picker's ``accept``
+    filter and checks ``max_bytes`` before upload.  The chat route
+    validates the same values, since that filter is a convenience and
+    never the gate.
+    """
+
+    media_types: list[str] = Field(
+        description="Media types the chat composer accepts, sorted"
+    )
+    max_bytes: int = Field(description="Size cap for a single attachment")
+
+
 class SettingsResponse(BaseModel):
     """LLM settings with user context."""
 
@@ -705,6 +721,9 @@ class SettingsResponse(BaseModel):
     has_api_key: bool = Field(description="Whether a server-side API key is configured")
     base_url: str = Field(description="Default base URL for the LLM provider")
     user: UserResponse = Field(description="Authenticated user information")
+    attachments: AttachmentLimits = Field(
+        description="Constraints the chat composer enforces on attachments"
+    )
 
 
 class OidcPublicConfig(BaseModel):

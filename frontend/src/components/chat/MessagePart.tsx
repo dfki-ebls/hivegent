@@ -1,4 +1,5 @@
 import type { UIMessage } from "@ai-sdk/react";
+import { ImagePart } from "@/components/chat/parts/ImagePart";
 import { ReasoningPart } from "@/components/chat/parts/ReasoningPart";
 import { TextPart } from "@/components/chat/parts/TextPart";
 import { UserTextPart } from "@/components/chat/parts/UserTextPart";
@@ -66,6 +67,13 @@ export function MessagePart({
 
   if (part.type === "reasoning") {
     return <ReasoningPart part={part} duration={reasoningDuration} />;
+  }
+
+  // A user attachment is always an image, but a tool that returns binary
+  // content lands here too (pydantic-ai extracts it into a trailing user
+  // message), so gate on the media type rather than the part kind.
+  if (part.type === "file" && part.mediaType.startsWith("image/")) {
+    return <ImagePart url={part.url} filename={part.filename} />;
   }
 
   if (part.type === "step-start") {
