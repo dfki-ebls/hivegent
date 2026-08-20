@@ -23,6 +23,10 @@
   A browser tab names itself with `X-Client-Id` on every request and the notification skips that tab, so the client that asked keeps its own read-after-write (which still works with the feed down) while the user's other tabs learn from the feed, and neither reads the workspace twice.
   Delivery is per-owner, so a group workspace refreshes for the writer, not yet for the other members.
   A `ScopeChanged` event is transient and never retained, so the feed carries only what happens while it is open: the client closes that gap itself by re-reading every scope it already holds on each handshake (`onFeedReady`), which is what covers a mutation that landed while it was disconnected.
+- Citation line chips show only evidence captured in persisted read, grep, or search tool outputs from the conversation.
+  The document name opens the current workspace path separately and never applies a historical line anchor to current content.
+  Tool call IDs keep repeated reads distinct, and multiple captured versions are presented independently instead of guessing which one a citation meant.
+  A line chip with no supporting tool output is disabled.
 - A document is writable exactly when it is readable as text: the write tools accept markdown descriptions and plain-text originals (regenerating the original's markdown projection through the upload pipeline) and reject binaries, which are replaced by uploading instead.
 - A chat turn attaches images and nothing else, gated on `converters.INGESTIBLE_IMAGE_MEDIA_TYPES`, the media types every vision backend ingests identically, so no `BinaryContentMode` policy and no conversion runs on the chat's latency budget.
   Anything else belongs in a workspace, whose upload pipeline converts, chunks, and indexes it once for retrieval rather than spending context on it every turn, since an attachment is stored once but re-sent to the model on each later turn of the conversation.

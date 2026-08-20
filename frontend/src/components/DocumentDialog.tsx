@@ -67,9 +67,6 @@ interface DocumentDialogProps {
   image?: FetchedImage | null;
   /** When true the dialog opens directly into the full-document markdown view. */
   initialFullDoc?: boolean;
-  /** Citation view: hide the sidebar, showing the document with the cited span highlighted. */
-  citationView?: boolean;
-
   /** Management mode: show pipeline/chunk_size/created_at badges. */
   showMetadata?: boolean;
   /** Management mode: show rechunk button and trigger rechunk. */
@@ -186,7 +183,6 @@ export function DocumentDialog({
   fallbackFilename,
   image,
   initialFullDoc = false,
-  citationView = false,
   showMetadata = false,
   onRechunk,
   onReconvert,
@@ -488,7 +484,7 @@ export function DocumentDialog({
       : null;
   const hasAssets = Boolean(managedData?.assets_dir);
   const hasSidebar =
-    isNew || citationView || imageEntry
+    isNew || imageEntry
       ? false
       : isManagedMode
         ? managedLoading || (managedData?.chunks.length ?? 0) > 0 || hasAssets

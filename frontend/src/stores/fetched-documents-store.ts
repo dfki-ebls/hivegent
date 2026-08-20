@@ -20,7 +20,12 @@ interface FetchedDocumentsStore {
   addChunk: (chunk: Omit<FetchedChunk, "id">, totalLines?: number) => void;
 
   /** Mark a document as fully fetched, storing its full content. */
-  markFullDocument: (filename: string, content: string, origin: ChunkOrigin) => void;
+  markFullDocument: (
+    filename: string,
+    content: string,
+    origin: ChunkOrigin,
+    sourceId?: string,
+  ) => void;
 
   /** Record fetched document line counts (the coverage-map denominator). */
   setLineCounts: (counts: Record<string, number>) => void;
@@ -38,7 +43,13 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
 
   addChunk: (chunk, totalLines) =>
     set((state) => {
-      const id = makeChunkId(chunk.filename, chunk.origin, chunk.detail, chunk.position);
+      const id = makeChunkId(
+        chunk.filename,
+        chunk.origin,
+        chunk.detail,
+        chunk.position,
+        chunk.sourceId,
+      );
 
       // Deduplicate: skip if we already have this exact chunk
       if (state.chunks.has(id)) return state;
@@ -67,10 +78,10 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       return { chunks: newChunks, documents: newDocs };
     }),
 
-  markFullDocument: (filename, content, origin) =>
+  markFullDocument: (filename, content, origin, sourceId) =>
     set((state) => {
       const position: ChunkPosition = { type: "full_document" };
-      const id = makeChunkId(filename, origin, undefined, position);
+      const id = makeChunkId(filename, origin, undefined, position, sourceId);
 
       const existingChunk = state.chunks.get(id);
       const existingDoc = state.documents.get(filename);
@@ -84,7 +95,7 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
 
       const newChunks = chunkUpToDate ? state.chunks : new Map(state.chunks);
       if (!chunkUpToDate) {
-        newChunks.set(id, { id, filename, content, origin, position });
+        newChunks.set(id, { id, filename, content, origin, position, sourceId });
       }
 
       const newDocs = docUpToDate ? state.documents : new Map(state.documents);

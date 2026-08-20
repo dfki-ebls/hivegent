@@ -2,86 +2,213 @@
 
 import { FileTextIcon } from "lucide-react";
 import type { HTMLAttributes } from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { DocumentDialog } from "@/components/DocumentDialog";
 import { Badge } from "@/components/ui/badge";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  chunkOriginLabel,
   chunkPositionLabel,
   type FetchedChunk,
   type LinePosition,
-  makeChunkId,
   parseLinePositions,
 } from "@/lib/types";
-import { DocumentDialog } from "@/components/DocumentDialog";
+import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 
-/**
- * Inline citation rendered by Streamdown for `<cite>` tags.
- *
- * A citation is a self-contained void marker: all data lives in attributes and
- * it has no children.  The `line` attribute accepts a single line, a
- * comma-separated list, or `start-end` ranges; the filename is shown once and
- * each resolved position becomes its own clickable chip that opens the document
- * at that span.
- */
 interface CitationProps extends HTMLAttributes<HTMLElement> {
   src?: string;
   line?: string;
   node?: unknown;
 }
 
-/** Which target the dialog is open on: a position index, the full doc, or closed. */
-type OpenTarget = number | "full" | null;
+interface Evidence {
+  chunk: FetchedChunk;
+  lines: { number: number; text: string }[];
+}
+
+function lineBounds(position: LinePosition): [number, number] {
+  return position.type === "line"
+    ? [position.line, position.line]
+    : [position.startLine, position.endLine];
+}
+
+function evidenceFromChunk(chunk: FetchedChunk, position: LinePosition): Evidence | null {
+  let chunkStart: number;
+  let chunkEnd: number;
+
+  if (chunk.position.type === "line") {
+    chunkStart = chunk.position.line;
+    chunkEnd = chunk.position.line;
+  } else if (chunk.position.type === "line_range") {
+    chunkStart = chunk.position.startLine;
+    chunkEnd = chunk.position.endLine;
+  } else if (chunk.position.type === "full_document") {
+    chunkStart = 1;
+    chunkEnd = chunk.content.split("\n").length;
+  } else {
+    return null;
+  }
+
+  const [start, end] = lineBounds(position);
+  if (start < chunkStart || end > chunkEnd) return null;
+
+  const contentLines = chunk.content.split("\n");
+  const firstIndex = start - chunkStart;
+  const selected = contentLines.slice(firstIndex, firstIndex + end - start + 1);
+  if (selected.length !== end - start + 1) return null;
+
+  return {
+    chunk,
+    lines: selected.map((text, index) => ({ number: start + index, text })),
+  };
+}
+
+function evidenceForPosition(chunks: FetchedChunk[], position: LinePosition): Evidence[] {
+  const unique = new Map<string, Evidence>();
+
+  for (const chunk of chunks) {
+    if (chunk.origin === "preview") continue;
+    const evidence = evidenceFromChunk(chunk, position);
+    if (!evidence) continue;
+    const key = evidence.lines.map((line) => line.text).join("\n");
+    if (!unique.has(key)) unique.set(key, evidence);
+  }
+
+  return [...unique.values()];
+}
+
+function EvidenceDialog({
+  filename,
+  position,
+  evidence,
+  open,
+  onOpenChange,
+}: {
+  filename: string;
+  position: LinePosition;
+  evidence: Evidence[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[80vh] max-w-3xl flex-col">
+        <DialogHeader>
+          <DialogTitle>{filename}</DialogTitle>
+          <DialogDescription>
+            {chunkPositionLabel(position)} from the tool output stored with this conversation.
+            The document link opens the current workspace version separately.
+          </DialogDescription>
+        </DialogHeader>
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="space-y-4 pr-4">
+            {evidence.map(({ chunk, lines }) => (
+              <section key={chunk.id} className="overflow-hidden rounded-md border">
+                <div className="border-b bg-muted px-3 py-2 text-xs text-muted-foreground">
+                  Captured by {chunkOriginLabel(chunk)}
+                </div>
+                <pre className="overflow-x-auto p-3 text-sm">
+                  {lines.map(({ number, text }) => (
+                    <div key={number}>
+                      <span className="select-none text-muted-foreground">{number}: </span>
+                      {text}
+                    </div>
+                  ))}
+                </pre>
+              </section>
+            ))}
+          </div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export function Citation({ src, line }: CitationProps) {
-  const [open, setOpen] = useState<OpenTarget>(null);
+  const [currentDocumentOpen, setCurrentDocumentOpen] = useState(false);
+  const [evidenceIndex, setEvidenceIndex] = useState<number | null>(null);
+  const chunks = useFetchedDocumentsStore((state) => state.chunks);
+
+  const positions = useMemo(() => parseLinePositions(line), [line]);
+  const documentChunks = useMemo(
+    () => [...chunks.values()].filter((chunk) => chunk.filename === src),
+    [chunks, src],
+  );
+  const evidence = useMemo(
+    () => positions.map((position) => evidenceForPosition(documentChunks, position)),
+    [documentChunks, positions],
+  );
 
   if (!src) return null;
 
   const displayName = src.split("/").pop() ?? src;
-  const positions = parseLinePositions(line);
-
-  const chunkFor = (position: LinePosition): FetchedChunk => ({
-    id: makeChunkId(src, "citation", undefined, position),
-    filename: src,
-    content: "",
-    origin: "citation",
-    position,
-  });
 
   return (
     <Badge
       variant="secondary"
       className="inline-flex flex-wrap items-center gap-1 rounded-full align-middle text-xs font-normal"
     >
-      <button
-        type="button"
-        className="flex cursor-pointer items-center gap-1 rounded-full hover:text-accent-foreground"
-        onClick={() => setOpen("full")}
-      >
-        <FileTextIcon className="h-3 w-3 shrink-0" />
-        {displayName}
-      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="flex cursor-pointer items-center gap-1 rounded-full hover:text-accent-foreground"
+            onClick={() => setCurrentDocumentOpen(true)}
+          >
+            <FileTextIcon className="h-3 w-3 shrink-0" />
+            {displayName}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Open the current document</TooltipContent>
+      </Tooltip>
       {positions.length > 0 && <span aria-hidden className="h-3.5 w-px bg-border" />}
-      {positions.map((position, index) => (
-        <button
-          key={index}
-          type="button"
-          className="cursor-pointer rounded-full bg-background/60 px-1.5 hover:bg-accent"
-          onClick={() => setOpen(index)}
-        >
-          {chunkPositionLabel(position)}
-        </button>
-      ))}
-      {open !== null && (
-        <DocumentDialog
-          open
-          onOpenChange={(next) => {
-            if (!next) setOpen(null);
-          }}
+      {positions.map((position, index) => {
+        const available = evidence[index].length > 0;
+        const button = (
+          <button
+            key={index}
+            type="button"
+            disabled={!available}
+            className="rounded-full bg-background/60 px-1.5 enabled:cursor-pointer enabled:hover:bg-accent disabled:text-muted-foreground"
+            onClick={() => setEvidenceIndex(index)}
+          >
+            {chunkPositionLabel(position)}
+          </button>
+        );
+
+        return available ? (
+          button
+        ) : (
+          <Tooltip key={index}>
+            <TooltipTrigger asChild>{button}</TooltipTrigger>
+            <TooltipContent>No supporting tool output was captured for these lines.</TooltipContent>
+          </Tooltip>
+        );
+      })}
+      <DocumentDialog
+        open={currentDocumentOpen}
+        onOpenChange={setCurrentDocumentOpen}
+        filename={src}
+        fallbackFilename={src}
+        initialFullDoc
+      />
+      {evidenceIndex !== null && (
+        <EvidenceDialog
           filename={src}
-          chunk={open === "full" ? null : chunkFor(positions[open])}
-          fallbackFilename={src}
-          initialFullDoc={open === "full"}
-          citationView
+          position={positions[evidenceIndex]}
+          evidence={evidence[evidenceIndex]}
+          open
+          onOpenChange={(open) => {
+            if (!open) setEvidenceIndex(null);
+          }}
         />
       )}
     </Badge>

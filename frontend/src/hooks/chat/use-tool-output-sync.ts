@@ -7,7 +7,12 @@ import type { ChunkOrigin, FetchedChunk, FetchedImage } from "@/lib/types";
 export function useToolOutputSync(
   messages: UIMessage[],
   addChunk: (chunk: Omit<FetchedChunk, "id">, totalLines?: number) => void,
-  markFullDocument: (filename: string, content: string, origin: ChunkOrigin) => void,
+  markFullDocument: (
+    filename: string,
+    content: string,
+    origin: ChunkOrigin,
+    sourceId?: string,
+  ) => void,
   addImage: (filename: string, image: FetchedImage) => void,
 ) {
   useEffect(() => {
@@ -26,6 +31,7 @@ export function useToolOutputSync(
           addChunk,
           markFullDocument,
           addImage,
+          info.toolCallId,
         );
       }
     }

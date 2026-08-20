@@ -8,6 +8,8 @@ export const syncReadDocumentOutput: SyncOutput = (
   metadata,
   addChunk,
   markFullDocument,
+  _addImage,
+  sourceId,
 ) => {
   if (!input) return;
   const filename = input.file_path as string;
@@ -19,7 +21,8 @@ export const syncReadDocumentOutput: SyncOutput = (
 
   const isFullFile = result.start_line === 1 && result.end_line === result.total_lines;
   if (isFullFile) {
-    markFullDocument(filename, result.content, "read");
+    if (sourceId) markFullDocument(filename, result.content, "read", sourceId);
+    else markFullDocument(filename, result.content, "read");
     return;
   }
 
@@ -28,5 +31,8 @@ export const syncReadDocumentOutput: SyncOutput = (
     startLine: result.start_line,
     endLine: result.end_line,
   };
-  addChunk({ filename, content: result.content, origin: "read", position }, result.total_lines);
+  addChunk(
+    { filename, content: result.content, origin: "read", position, sourceId },
+    result.total_lines,
+  );
 };

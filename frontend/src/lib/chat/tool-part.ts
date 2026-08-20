@@ -9,12 +9,19 @@ export type SyncOutput = (
   text: string | null,
   metadata: unknown,
   addChunk: (chunk: Omit<FetchedChunk, "id">, totalLines?: number) => void,
-  markFullDocument: (filename: string, content: string, origin: ChunkOrigin) => void,
+  markFullDocument: (
+    filename: string,
+    content: string,
+    origin: ChunkOrigin,
+    sourceId?: string,
+  ) => void,
   addImage: (filename: string, image: FetchedImage) => void,
+  sourceId?: string,
 ) => void;
 
 export interface ToolPartInfo {
   toolName: string;
+  toolCallId?: string;
   state: ToolPart["state"];
   input: Record<string, unknown> | undefined;
   /**
@@ -123,6 +130,7 @@ export function getToolPartInfo(
 
   return {
     toolName,
+    toolCallId: typed.toolCallId,
     state: typed.state ?? "output-available",
     input: parseJson<Record<string, unknown>>(typed.input),
     text,

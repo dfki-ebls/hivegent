@@ -118,6 +118,22 @@ describe("useFetchedDocumentsStore", () => {
     });
   });
 
+  describe("tool evidence", () => {
+    it("keeps repeated reads from distinct tool calls", () => {
+      const store = useFetchedDocumentsStore.getState();
+      const base = {
+        filename: "report.md",
+        origin: "read" as const,
+        position: { type: "line" as const, line: 1 },
+      };
+
+      store.addChunk({ ...base, content: "before", sourceId: "call-1" });
+      store.addChunk({ ...base, content: "after", sourceId: "call-2" });
+
+      expect(useFetchedDocumentsStore.getState().chunks.size).toBe(2);
+    });
+  });
+
   describe("clearAll", () => {
     it("resets both maps", () => {
       useFetchedDocumentsStore.getState().addChunk({

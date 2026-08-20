@@ -573,9 +573,9 @@ export type ChunkPosition =
  * Where a fetched chunk came from: the model tools (read/grep/search/web) plus
  * the UI-only origins (preview fetch, citation marker).
  */
-export type ChunkOrigin = "read" | "grep" | "search" | "web" | "preview" | "citation";
+export type ChunkOrigin = "read" | "grep" | "search" | "web" | "preview";
 
-/** A single fetched chunk (search result, grep match, line range, etc.). */
+/** A single fetched chunk from a persisted tool result. */
 export interface FetchedChunk {
   id: string;
   filename: string;
@@ -584,6 +584,8 @@ export interface FetchedChunk {
   origin: ChunkOrigin;
   /** Optional query/pattern for display (grep pattern, search/web query). */
   detail?: string;
+  /** Tool call that captured this evidence, keeping repeated reads distinct. */
+  sourceId?: string;
   position: ChunkPosition;
   /**
    * Exact character offsets of the chunk in the original document.
@@ -628,6 +630,7 @@ export function makeChunkId(
   origin: ChunkOrigin,
   detail: string | undefined,
   position: ChunkPosition,
+  sourceId?: string,
 ): string {
   let positionKey: string;
   switch (position.type) {
@@ -650,7 +653,8 @@ export function makeChunkId(
 
   const originKey = detail ? `${origin}:${detail}` : origin;
 
-  return `${filename}::${originKey}::${positionKey}`;
+  const sourceKey = sourceId ? `::${sourceId}` : "";
+  return `${filename}::${originKey}::${positionKey}${sourceKey}`;
 }
 
 /**

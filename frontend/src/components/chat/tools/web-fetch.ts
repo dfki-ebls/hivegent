@@ -14,6 +14,8 @@ export const syncWebFetchOutput: SyncOutput = (
   metadata,
   _addChunk,
   markFullDocument,
+  _addImage,
+  sourceId,
 ) => {
   if (!input) return;
   if (metadata == null || typeof metadata !== "object" || !("content" in metadata)) return;
@@ -21,9 +23,11 @@ export const syncWebFetchOutput: SyncOutput = (
   if (!page.content) return;
   // Store under the final URL (after redirects) and, when it differs,
   // under the requested URL too — citations may reference either.
-  markFullDocument(page.url, page.content, "web");
+  if (sourceId) markFullDocument(page.url, page.content, "web", sourceId);
+  else markFullDocument(page.url, page.content, "web");
   const requested = input.url as string | undefined;
   if (requested && requested !== page.url) {
-    markFullDocument(requested, page.content, "web");
+    if (sourceId) markFullDocument(requested, page.content, "web", sourceId);
+    else markFullDocument(requested, page.content, "web");
   }
 };
