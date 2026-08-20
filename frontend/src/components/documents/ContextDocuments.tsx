@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import { useDocumentLineCounts } from "@/hooks/use-document-line-counts";
 import type { FetchedChunk, FetchedDocument } from "@/lib/types";
-import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
+import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { DocumentDialog } from "@/components/DocumentDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DocumentGroup } from "@/components/documents/DocumentGroup";
@@ -34,8 +34,7 @@ export function ContextDocuments() {
   );
 
   const getChunksForDoc = useCallback(
-    (doc: FetchedDocument): FetchedChunk[] =>
-      doc.chunkIds.map((id) => chunks.get(id)).filter((c): c is FetchedChunk => c != null),
+    (doc: FetchedDocument): FetchedChunk[] => chunksForDocument(doc, chunks),
     [chunks],
   );
 

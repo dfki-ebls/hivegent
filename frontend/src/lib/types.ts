@@ -718,6 +718,13 @@ export function isLinePosition(position: ChunkPosition): position is LinePositio
   return position.type === "line" || position.type === "line_range";
 }
 
+/** The inclusive `[start, end]` line span a line position covers. */
+export function lineBounds(position: LinePosition): [number, number] {
+  return position.type === "line"
+    ? [position.line, position.line]
+    : [position.startLine, position.endLine];
+}
+
 /**
  * Parse a citation `line` attribute ("42", "42,46", "50-55", "42,50-55,90")
  * into canonical line positions, skipping malformed tokens.

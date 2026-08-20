@@ -2,18 +2,17 @@ import type { UIMessage } from "@ai-sdk/react";
 import { useEffect } from "react";
 import { getToolHandler } from "@/components/chat/tools/registry";
 import { getToolPartInfo, indexToolData } from "@/lib/chat/tool-part";
-import type { ChunkOrigin, FetchedChunk, FetchedImage } from "@/lib/types";
+import type {
+  AddChunk,
+  AddImage,
+  MarkFullDocument,
+} from "@/stores/fetched-documents-store";
 
 export function useToolOutputSync(
   messages: UIMessage[],
-  addChunk: (chunk: Omit<FetchedChunk, "id">, totalLines?: number) => void,
-  markFullDocument: (
-    filename: string,
-    content: string,
-    origin: ChunkOrigin,
-    sourceId?: string,
-  ) => void,
-  addImage: (filename: string, image: FetchedImage) => void,
+  addChunk: AddChunk,
+  markFullDocument: MarkFullDocument,
+  addImage: AddImage,
 ) {
   useEffect(() => {
     for (const message of messages) {
@@ -24,15 +23,15 @@ export function useToolOutputSync(
         const info = getToolPartInfo(part, toolData);
         if (!info || info.state !== "output-available") continue;
         const handler = getToolHandler(info.toolName);
-        handler?.syncOutput?.(
-          info.input,
-          info.text,
-          info.metadata,
+        handler?.syncOutput?.({
+          input: info.input,
+          text: info.text,
+          metadata: info.metadata,
+          sourceId: info.toolCallId,
           addChunk,
           markFullDocument,
           addImage,
-          info.toolCallId,
-        );
+        });
       }
     }
   }, [messages, addChunk, markFullDocument, addImage]);

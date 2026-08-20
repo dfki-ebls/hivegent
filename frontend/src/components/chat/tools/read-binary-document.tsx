@@ -86,14 +86,7 @@ function descriptionPath(filePath: string): string {
  * merely references an image (via its `image_path`) does not surface one: the
  * fetched view mirrors what the model actually saw, not what it could have.
  */
-export const syncReadBinaryDocumentOutput: SyncOutput = (
-  _input,
-  _text,
-  metadata,
-  _addChunk,
-  _markFullDocument,
-  addImage,
-) => {
+export const syncReadBinaryDocumentOutput: SyncOutput = ({ metadata, addImage }) => {
   const result = isBinaryReadResult(metadata) ? metadata : null;
   if (!result || !result.media_type.startsWith("image/")) return;
   addImage(descriptionPath(result.file_path), {

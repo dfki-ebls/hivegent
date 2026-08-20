@@ -2,15 +2,13 @@ import type { DocumentRange, LinePosition } from "@/lib/types";
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
 /** Reads always return a DocumentRange; spanning the whole file means a full-document fetch. */
-export const syncReadDocumentOutput: SyncOutput = (
+export const syncReadDocumentOutput: SyncOutput = ({
   input,
-  _text,
   metadata,
   addChunk,
   markFullDocument,
-  _addImage,
   sourceId,
-) => {
+}) => {
   if (!input) return;
   const filename = input.file_path as string;
   if (!filename) return;
@@ -21,8 +19,7 @@ export const syncReadDocumentOutput: SyncOutput = (
 
   const isFullFile = result.start_line === 1 && result.end_line === result.total_lines;
   if (isFullFile) {
-    if (sourceId) markFullDocument(filename, result.content, "read", sourceId);
-    else markFullDocument(filename, result.content, "read");
+    markFullDocument(filename, result.content, "read", sourceId);
     return;
   }
 

@@ -18,10 +18,12 @@ import {
   chunkOriginLabel,
   chunkPositionLabel,
   type FetchedChunk,
+  isLinePosition,
+  lineBounds,
   type LinePosition,
   parseLinePositions,
 } from "@/lib/types";
-import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
+import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 
 interface CitationProps extends HTMLAttributes<HTMLElement> {
   src?: string;
@@ -34,25 +36,17 @@ interface Evidence {
   lines: { number: number; text: string }[];
 }
 
-function lineBounds(position: LinePosition): [number, number] {
-  return position.type === "line"
-    ? [position.line, position.line]
-    : [position.startLine, position.endLine];
-}
-
 function evidenceFromChunk(chunk: FetchedChunk, position: LinePosition): Evidence | null {
+  const contentLines = chunk.content.split("\n");
+
   let chunkStart: number;
   let chunkEnd: number;
 
-  if (chunk.position.type === "line") {
-    chunkStart = chunk.position.line;
-    chunkEnd = chunk.position.line;
-  } else if (chunk.position.type === "line_range") {
-    chunkStart = chunk.position.startLine;
-    chunkEnd = chunk.position.endLine;
+  if (isLinePosition(chunk.position)) {
+    [chunkStart, chunkEnd] = lineBounds(chunk.position);
   } else if (chunk.position.type === "full_document") {
     chunkStart = 1;
-    chunkEnd = chunk.content.split("\n").length;
+    chunkEnd = contentLines.length;
   } else {
     return null;
   }
@@ -60,7 +54,6 @@ function evidenceFromChunk(chunk: FetchedChunk, position: LinePosition): Evidenc
   const [start, end] = lineBounds(position);
   if (start < chunkStart || end > chunkEnd) return null;
 
-  const contentLines = chunk.content.split("\n");
   const firstIndex = start - chunkStart;
   const selected = contentLines.slice(firstIndex, firstIndex + end - start + 1);
   if (selected.length !== end - start + 1) return null;
@@ -136,11 +129,17 @@ export function Citation({ src, line }: CitationProps) {
   const [currentDocumentOpen, setCurrentDocumentOpen] = useState(false);
   const [evidenceIndex, setEvidenceIndex] = useState<number | null>(null);
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
+  // Subscribe to this document's entry rather than the whole map: its identity
+  // changes only when the document itself gains a chunk, so a tool output for
+  // some other file leaves every citation pointing at this one alone.
+  const document = useFetchedDocumentsStore((state) =>
+    src ? state.documents.get(src) : undefined,
+  );
 
   const positions = useMemo(() => parseLinePositions(line), [line]);
   const documentChunks = useMemo(
-    () => [...chunks.values()].filter((chunk) => chunk.filename === src),
-    [chunks, src],
+    () => (document ? chunksForDocument(document, chunks) : []),
+    [document, chunks],
   );
   const evidence = useMemo(
     () => positions.map((position) => evidenceForPosition(documentChunks, position)),
@@ -172,34 +171,30 @@ export function Citation({ src, line }: CitationProps) {
       {positions.length > 0 && <span aria-hidden className="h-3.5 w-px bg-border" />}
       {positions.map((position, index) => {
         const available = evidence[index].length > 0;
-        const button = (
-          <button
-            key={index}
-            type="button"
-            disabled={!available}
-            className="rounded-full bg-background/60 px-1.5 enabled:cursor-pointer enabled:hover:bg-accent disabled:text-muted-foreground"
-            onClick={() => setEvidenceIndex(index)}
-          >
-            {chunkPositionLabel(position)}
-          </button>
-        );
 
-        return available ? (
-          button
-        ) : (
+        return (
           <Tooltip key={index}>
-            <TooltipTrigger asChild>{button}</TooltipTrigger>
-            <TooltipContent>No supporting tool output was captured for these lines.</TooltipContent>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                disabled={!available}
+                className="rounded-full bg-background/60 px-1.5 enabled:cursor-pointer enabled:hover:bg-accent disabled:text-muted-foreground"
+                onClick={() => setEvidenceIndex(index)}
+              >
+                {chunkPositionLabel(position)}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {available
+                ? "Open the captured lines"
+                : "No supporting tool output was captured for these lines."}
+            </TooltipContent>
           </Tooltip>
         );
       })}
-      <DocumentDialog
-        open={currentDocumentOpen}
-        onOpenChange={setCurrentDocumentOpen}
-        filename={src}
-        fallbackFilename={src}
-        initialFullDoc
-      />
+      {currentDocumentOpen && (
+        <DocumentDialog open onOpenChange={setCurrentDocumentOpen} filename={src} />
+      )}
       {evidenceIndex !== null && (
         <EvidenceDialog
           filename={src}

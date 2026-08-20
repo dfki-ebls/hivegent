@@ -43,17 +43,6 @@ const TOOL_DENIED_REASON =
   "Do not call the same tool again with the same or similar arguments. " +
   "Stop working on this step, tell the user what you were about to do, and wait for their instructions.";
 
-/**
- * Why the pending approvals in the transcript cannot be answered right now.
- *
- * The SDK records but does not dispatch a decision made while the previous
- * turn's final chunks are still draining, so the buttons wait for it to settle.
- */
-function approvalBlockedReason(isStreaming: boolean) {
-  if (isStreaming) return "Available once the current response finishes.";
-  return undefined;
-}
-
 export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps) {
   const navigate = useNavigate();
   const addChunk = useFetchedDocumentsStore((state) => state.addChunk);
@@ -185,10 +174,10 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     clearAll();
   }, [id, clearAll]);
 
-  useToolOutputSync(messages, addChunk, markFullDocument, addImage);
   // Runs here rather than in the context panel: a citation renders in the
   // transcript whether or not the panel is open, and it must not be shown
   // before we know the document it points at still exists.
+  useToolOutputSync(messages, addChunk, markFullDocument, addImage);
   useChatErrorLogger(error, id, messages, buildRequestBody);
 
   const handleEditMessage = useCallback(
@@ -208,7 +197,10 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
           approved,
           reason: approved ? undefined : TOOL_DENIED_REASON,
         }),
-      blockedReason: approvalBlockedReason(isStreaming),
+      // The SDK records but does not dispatch a decision made while the
+      // previous turn's final chunks are still draining, so the buttons wait
+      // for it to settle.
+      blockedReason: isStreaming ? "Available once the current response finishes." : undefined,
     }),
     [addToolApprovalResponse, isStreaming],
   );

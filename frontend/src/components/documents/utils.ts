@@ -1,4 +1,4 @@
-import { type FetchedChunk, isLinePosition } from "@/lib/types";
+import { type FetchedChunk, isLinePosition, lineBounds } from "@/lib/types";
 
 /** A normalized read span (fractions in 0..1) within a document. */
 export interface MapSegment {
@@ -21,11 +21,7 @@ export function documentReadMap(chunks: FetchedChunk[], totalLines?: number): Ma
     if (position.type === "full_document") return [{ start: 0, end: 1 }];
 
     if (isLinePosition(position)) {
-      ranges.push(
-        position.type === "line"
-          ? [position.line, position.line]
-          : [position.startLine, position.endLine],
-      );
+      ranges.push(lineBounds(position));
     }
   }
 

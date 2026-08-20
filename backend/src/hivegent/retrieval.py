@@ -334,10 +334,6 @@ class _EnrichedRow:
     store_key: str
 
 
-def _store_key_for(owner_user_id: str | None, owner_group_id: str | None) -> str:
-    return Casebase.for_owner(owner_user_id, owner_group_id).store_key
-
-
 async def _load_enriched(keys: Sequence[str]) -> list[_EnrichedRow]:
     """Load chunk + document metadata for the keys in one JOIN query."""
     async with session() as s:
@@ -375,7 +371,7 @@ async def _load_enriched(keys: Sequence[str]) -> list[_EnrichedRow]:
             stem_path=stem_path,
             original_suffix=original_suffix,
             entry_kind=entry_kind.value,
-            store_key=_store_key_for(owner_user_id, owner_group_id),
+            store_key=Casebase.for_owner(owner_user_id, owner_group_id).store_key,
         )
         for (
             key,
@@ -412,9 +408,7 @@ def build_search_tool(
     """
     store_index = {s.store_key: s for s in stores}
     document_filters = (
-        {store: filter_for_store(store) for store in stores}
-        if filter_for_store is not None
-        else None
+        {store: filter_for_store(store) for store in stores} if filter_for_store else {}
     )
 
     async def resolve_filter() -> cbrkit_filter.Filter | None:

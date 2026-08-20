@@ -35,9 +35,11 @@ import {
   type FetchedImage,
   chunkOriginLabel,
   chunkPositionLabel,
+  isLinePosition,
+  lineBounds,
   sortChunks,
 } from "@/lib/types";
-import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
+import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -152,12 +154,7 @@ function resolveChunkRange(
   }
 
   const position = chunk.position;
-  const [startLine, endLine] =
-    position.type === "line_range"
-      ? [position.startLine, position.endLine]
-      : position.type === "line"
-        ? [position.line, position.line]
-        : [0, 0];
+  const [startLine, endLine] = isLinePosition(position) ? lineBounds(position) : [0, 0];
 
   if (startLine >= 1) {
     const lines = fullContent.split("\n");
@@ -249,10 +246,7 @@ export function DocumentDialog({
     if (isManagedMode || !filename) return [];
     const doc = documents.get(filename);
     if (!doc) return [];
-    const resolved = doc.chunkIds
-      .map((id) => chunks.get(id))
-      .filter((c): c is FetchedChunk => c != null);
-    return sortChunks(resolved);
+    return sortChunks(chunksForDocument(doc, chunks));
   }, [isManagedMode, filename, documents, chunks]);
 
   const activeChunk = activeChunkId ? (chunks.get(activeChunkId) ?? chunk) : chunk;

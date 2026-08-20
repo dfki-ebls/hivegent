@@ -1,6 +1,6 @@
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
-export const syncWebSearchOutput: SyncOutput = (input, _text, metadata, addChunk) => {
+export const syncWebSearchOutput: SyncOutput = ({ input, metadata, addChunk }) => {
   if (!input) return;
   if (!Array.isArray(metadata)) return;
   const results = metadata as { title: string; href: string; body: string }[];

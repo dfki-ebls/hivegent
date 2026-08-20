@@ -366,7 +366,7 @@ async def list_known_stores() -> set[Casebase]:
 async def resolve_accessible_document_ids(
     stores: Sequence[Casebase],
     *,
-    filters: Mapping[Casebase, DocumentFilter | None] | None = None,
+    filters: Mapping[Casebase, DocumentFilter | None] = {},
 ) -> list[str]:
     """Return the ids of the documents owned by *stores* the caller may see.
 
@@ -377,7 +377,8 @@ async def resolve_accessible_document_ids(
     than to the ranked results.  Pruning after the scan leaves a whitelist
     competing against the whole corpus for the top-k, so a chat scoped to two
     files could search them and be handed nothing; pruned at the SQL level the
-    scan never ranks anything else to begin with.
+    scan never ranks anything else to begin with.  With no store actually
+    scoped the ids alone are selected, since every row would be admitted.
     """
     if not stores:
         return []
@@ -391,6 +392,14 @@ async def resolve_accessible_document_ids(
     if not conditions:
         return []
 
+    where = sa.or_(*conditions)
+    scoped = {store: f for store, f in filters.items() if f is not None}
+
+    if not scoped:
+        async with session() as s:
+            result = await s.execute(select(Document.id).where(where))
+        return list(result.scalars().all())
+
     async with session() as s:
         result = await s.execute(
             select(
@@ -398,22 +407,20 @@ async def resolve_accessible_document_ids(
                 Document.stem_path,
                 Document.owner_user_id,
                 Document.owner_group_id,
-            ).where(sa.or_(*conditions))
+            ).where(where)
         )
         rows = result.all()
 
-    if filters is None:
-        return [row.id for row in rows]
+    admitted: list[str] = []
+    for row in rows:
+        store = Casebase.for_owner(row.owner_user_id, row.owner_group_id)
+        document_filter = scoped.get(store)
+        if document_filter is None or document_filter(
+            description_path_for_stem(row.stem_path)
+        ):
+            admitted.append(row.id)
 
-    return [
-        row.id
-        for row in rows
-        if (document_filter := filters.get(
-            Casebase.for_owner(row.owner_user_id, row.owner_group_id)
-        ))
-        is None
-        or document_filter(description_path_for_stem(row.stem_path))
-    ]
+    return admitted
 
 
 # ─── Writes ────────────────────────────────────────────────────────────

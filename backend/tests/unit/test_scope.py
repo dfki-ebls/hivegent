@@ -2,6 +2,8 @@
 
 import pytest
 
+from hivegent.agents.common import UserDeps
+from hivegent.server.common import parse_document_filters
 from hivegent.store import Casebase, WorkspaceScope, scoped_operation
 
 
@@ -50,3 +52,38 @@ class TestScopedOperation:
 
         with pytest.raises(ValueError, match="No accessible workspace"):
             await run("@other/notes.md", "x")
+
+
+class TestDocumentScopePrompt:
+    """The selection the user makes with the eye toggle must reach the model.
+
+    Nothing else ties a bare "in der Tabelle" to a file: the tools are pruned
+    to the selection, so an unmentioned scope leaves the model exploring a
+    workspace that silently no longer holds what it is looking for.
+    """
+
+    def _deps(self, included: list[str], excluded: list[str]) -> UserDeps:
+        document_filter, group_filters = parse_document_filters(
+            included, excluded, frozenset()
+        )
+        return UserDeps(
+            user_id="u1",
+            store=Casebase.for_user("u1"),
+            document_filter=document_filter,
+            group_filters=group_filters,
+        )
+
+    def test_included_documents_are_named(self) -> None:
+        scope = self._deps(["~/projekte/tabelle.md"], []).describe_document_scope()
+
+        assert "~/projekte/tabelle.md" in scope
+        assert "these documents" in scope
+
+    def test_excluded_documents_are_named(self) -> None:
+        scope = self._deps([], ["~/geheim.md"]).describe_document_scope()
+
+        assert "~/geheim.md" in scope
+
+    def test_no_selection_renders_nothing(self) -> None:
+        """An unscoped chat must not spend prompt on an empty block."""
+        assert self._deps([], []).describe_document_scope() == ""

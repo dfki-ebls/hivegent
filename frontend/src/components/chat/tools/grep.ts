@@ -1,15 +1,7 @@
 import type { ChunkPosition, GrepMatch } from "@/lib/types";
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
-export const syncGrepOutput: SyncOutput = (
-  input,
-  _text,
-  metadata,
-  addChunk,
-  _markFullDocument,
-  _addImage,
-  sourceId,
-) => {
+export const syncGrepOutput: SyncOutput = ({ input, metadata, addChunk, sourceId }) => {
   if (!input) return;
   if (!Array.isArray(metadata)) return;
   const matches = metadata as GrepMatch[];
@@ -26,16 +18,13 @@ export const syncGrepOutput: SyncOutput = (
       match.lines.length > 1
         ? { type: "line_range", startLine, endLine }
         : { type: "line", line: startLine };
-    addChunk(
-      {
-        filename: match.filename,
-        content: match.lines.map((l) => l.text).join("\n"),
-        origin: "grep",
-        detail: pattern,
-        position,
-        sourceId,
-      },
-      undefined,
-    );
+    addChunk({
+      filename: match.filename,
+      content: match.lines.map((l) => l.text).join("\n"),
+      origin: "grep",
+      detail: pattern,
+      position,
+      sourceId,
+    });
   }
 };

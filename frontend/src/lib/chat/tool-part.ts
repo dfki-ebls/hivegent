@@ -1,23 +1,26 @@
 import type { UIMessage } from "@ai-sdk/react";
 import type { ToolPart } from "@/components/ai-elements/tool";
-import type { ChunkOrigin, FetchedChunk, FetchedImage } from "@/lib/types";
+import type {
+  AddChunk,
+  AddImage,
+  MarkFullDocument,
+} from "@/stores/fetched-documents-store";
 
 export type { ToolPart };
 
-export type SyncOutput = (
-  input: Record<string, unknown> | undefined,
-  text: string | null,
-  metadata: unknown,
-  addChunk: (chunk: Omit<FetchedChunk, "id">, totalLines?: number) => void,
-  markFullDocument: (
-    filename: string,
-    content: string,
-    origin: ChunkOrigin,
-    sourceId?: string,
-  ) => void,
-  addImage: (filename: string, image: FetchedImage) => void,
-  sourceId?: string,
-) => void;
+/** Everything a tool handler may draw on to persist what its call captured. */
+export interface SyncOutputContext {
+  input: Record<string, unknown> | undefined;
+  text: string | null;
+  metadata: unknown;
+  /** Tool call that produced this output, keeping repeated reads distinct. */
+  sourceId?: string;
+  addChunk: AddChunk;
+  markFullDocument: MarkFullDocument;
+  addImage: AddImage;
+}
+
+export type SyncOutput = (ctx: SyncOutputContext) => void;
 
 export interface ToolPartInfo {
   toolName: string;

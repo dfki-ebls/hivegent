@@ -8,7 +8,7 @@ import {
   makeChunkId,
 } from "@/lib/types";
 
-interface FetchedDocumentsStore {
+export interface FetchedDocumentsStore {
   chunks: Map<string, FetchedChunk>;
   documents: Map<string, FetchedDocument>;
 
@@ -35,6 +35,21 @@ interface FetchedDocumentsStore {
 
   /** Reset both maps. */
   clearAll: () => void;
+}
+
+/** The store callbacks the tool-output sync hands to each tool handler. */
+export type AddChunk = FetchedDocumentsStore["addChunk"];
+export type MarkFullDocument = FetchedDocumentsStore["markFullDocument"];
+export type AddImage = FetchedDocumentsStore["addImage"];
+
+/** Resolve a document's chunks through the `chunkIds` index the store maintains. */
+export function chunksForDocument(
+  document: FetchedDocument,
+  chunks: ReadonlyMap<string, FetchedChunk>,
+): FetchedChunk[] {
+  return document.chunkIds
+    .map((id) => chunks.get(id))
+    .filter((chunk): chunk is FetchedChunk => chunk != null);
 }
 
 export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => ({
