@@ -12,6 +12,17 @@ Adopting it re-keys that bubble, which remounts it — the alternative, translat
 Submit, edit, regenerate, retry, and stop already work end-to-end against this backend.
 Editing a message or regenerating a reply forks a sibling branch server-side and preserves the prior one, but the UI to navigate those branches is not built yet.
 
+## Tool approvals
+
+Every request carries the chat settings (document scope, model, tools, personality, mode) because `prepareSendMessagesRequest` stamps them on, not because each call site attaches a body.
+The SDK issues the post-approval continuation itself, with only the options the decision was recorded with, so settings attached per call leave that one request bare and the turn resumes with the server's defaults — no document scope, no model override, no MCP servers.
+A per-call `body` still wins, which is how "Execute the plan" leaves the mode it is currently in.
+
+A decision is only in the browser's memory until the resumed turn is persisted, and the SDK dispatches the continuation only if the chat happens to be idle when the decision is recorded — it never looks again.
+The buttons therefore stay disabled until the turn settles (`approvalBlockedReason` in `ChatSidebar.tsx`); without that, a decision taken while the last chunks drained would be recorded, never sent, and leave the call dangling for the backend to close (see `backend/README.md`).
+
+The prompt itself is re-derived from stored history rather than stored as a decision, since a tool call with no result is an open approval.
+
 ## TODO: branch-navigation UI (Phase 2)
 
 The active branch is always the newest leaf — the backend stores no selection pointer (see `backend/README.md`).

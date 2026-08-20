@@ -8,7 +8,7 @@ cascade-delete with their owning document, so deletes only need to
 touch ``documents``.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Self, TypedDict
@@ -32,6 +32,7 @@ from ..entries import (
     stem_path_from_reference,
 )
 from ..store import Casebase
+from ..types import DocumentFilter
 from ._common import affected_rows, stem_subtree_filter
 from .engine import session
 from .groups import ensure_group
@@ -362,11 +363,21 @@ async def list_known_stores() -> set[Casebase]:
     return stores
 
 
-async def resolve_accessible_document_ids(stores: Sequence[Casebase]) -> list[str]:
-    """Return every document id owned by any of *stores*.
+async def resolve_accessible_document_ids(
+    stores: Sequence[Casebase],
+    *,
+    filters: Mapping[Casebase, DocumentFilter | None] | None = None,
+) -> list[str]:
+    """Return the ids of the documents owned by *stores* the caller may see.
 
     Used at search time to scope the cbrkit vector query without
     denormalising owner columns onto the chunks table.
+
+    *filters* applies the conversation's document scope here rather
+    than to the ranked results.  Pruning after the scan leaves a whitelist
+    competing against the whole corpus for the top-k, so a chat scoped to two
+    files could search them and be handed nothing; pruned at the SQL level the
+    scan never ranks anything else to begin with.
     """
     if not stores:
         return []
@@ -379,9 +390,30 @@ async def resolve_accessible_document_ids(stores: Sequence[Casebase]) -> list[st
         conditions.append(Document.owner_group_id.in_(group_ids))
     if not conditions:
         return []
+
     async with session() as s:
-        result = await s.execute(select(Document.id).where(sa.or_(*conditions)))
-    return list(result.scalars().all())
+        result = await s.execute(
+            select(
+                Document.id,
+                Document.stem_path,
+                Document.owner_user_id,
+                Document.owner_group_id,
+            ).where(sa.or_(*conditions))
+        )
+        rows = result.all()
+
+    if filters is None:
+        return [row.id for row in rows]
+
+    return [
+        row.id
+        for row in rows
+        if (document_filter := filters.get(
+            Casebase.for_owner(row.owner_user_id, row.owner_group_id)
+        ))
+        is None
+        or document_filter(description_path_for_stem(row.stem_path))
+    ]
 
 
 # ─── Writes ────────────────────────────────────────────────────────────

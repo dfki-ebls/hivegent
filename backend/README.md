@@ -100,6 +100,11 @@ Appending it would put the same `tool_call_id` in the history twice: pydantic-ai
 The decision itself is unaffected, since `deferred_tool_results` reads it from the request rather than from the loaded messages.
 The frontend includes an explicit reason with a denial, which pydantic-ai maps to `ToolDenied` and returns to the model instead of its bare default message.
 
+An approval the user never answers is closed by the next turn instead (`decline_pending_approvals`).
+A run that ends awaiting one leaves its call dangling on purpose, so a later request can carry the decision and resume it; a request that carries a new prompt instead ends that run for good, and the call can never be answered.
+Left in the stored history it is not inert: pydantic-ai repairs it on the way to the provider with a generic "interrupted" result, the model reads that as a transient failure and reissues the identical call, and the reissued call dangles in turn — one abandoned approval is enough to have every later turn repeat the same call with the same arguments.
+The refusal is stored as its own node before the run, which both states what happened and makes the delta's head the new user message, so the node id announced in `X-Message-Id` still lands on it.
+
 Because history is loaded from SQL, there is no browser round-trip to strip `ToolReturnPart.metadata`, and the client-trust surface shrinks from the whole conversation to one new message.
 Persistence is therefore hard-fail: a failed write surfaces as a trailing error chunk on a clean drain (no echo to recover from), and is only logged on a client disconnect.
 

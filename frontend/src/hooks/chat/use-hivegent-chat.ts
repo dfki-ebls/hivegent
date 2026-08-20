@@ -43,11 +43,13 @@ export interface UseHivegentChatOptions {
    * server-issued ID is reported back via `onConversationCreated`. */
   draft?: boolean;
   onConversationCreated?: (id: string) => void;
+  /** The current chat settings, read afresh for every outgoing request. */
+  requestBody?: () => Record<string, unknown>;
 }
 
 export function useHivegentChat(
   id: string,
-  { draft, onConversationCreated }: UseHivegentChatOptions = {},
+  { draft, onConversationCreated, requestBody }: UseHivegentChatOptions = {},
 ) {
   const onCreatedRef = useRef(onConversationCreated);
   onCreatedRef.current = onConversationCreated;
@@ -69,6 +71,10 @@ export function useHivegentChat(
   // `onFinish` is a `useChat` argument, so it cannot close over the chat it
   // belongs to; it reaches the one setter it needs through this ref.
   const setMessagesRef = useRef<UseChatHelpers<ChatMessage>["setMessages"] | null>(null);
+  // Read inside the transport, which is memoized on the chat identity alone, so
+  // the settings stay current without rebuilding it on every keystroke.
+  const requestBodyRef = useRef(requestBody);
+  requestBodyRef.current = requestBody;
 
   const transport = useMemo(
     () =>
@@ -81,6 +87,14 @@ export function useHivegentChat(
         // (none for a regenerate) plus the operation. The backend loads the
         // active-path prefix from its store and forks/appends under the node
         // addressed by `messageId`, ignoring the rest of the client array.
+        //
+        // The settings are stamped on here rather than at the call sites: the
+        // SDK issues the post-approval continuation itself, with whatever
+        // options the approval was recorded with, so a per-call body leaves
+        // that request settingless and the turn resumes with the server's
+        // defaults — no document scope, no model override, no MCP servers.
+        // A per-call `body` still wins, for the one caller that overrides the
+        // mode it is currently in.
         prepareSendMessagesRequest: ({ api, body, id: chatId, messages, trigger, messageId }) => {
           const lastMessage = trigger === "regenerate-message" ? undefined : messages.at(-1);
           return {
@@ -89,6 +103,7 @@ export function useHivegentChat(
                 ? `${API_BASE_URL}/api/conversations/${adoptedIdRef.current}/chat`
                 : api,
             body: {
+              ...requestBodyRef.current?.(),
               ...body,
               id: chatId,
               messages: lastMessage ? [lastMessage] : [],
@@ -158,7 +173,7 @@ export function useHivegentChat(
   const { sendMessage, regenerate } = chat;
 
   const sendUserMessage = useCallback(
-    async (input: SendUserMessageInput, body: Record<string, unknown>) => {
+    async (input: SendUserMessageInput, body?: Record<string, unknown>) => {
       const headers = await getAuthHeaders();
       const payload = input.messageId
         ? { text: input.text, messageId: input.messageId }
@@ -168,13 +183,9 @@ export function useHivegentChat(
     [sendMessage],
   );
 
-  const regenerateWithBody = useCallback(
-    async (body: Record<string, unknown>) => {
-      const headers = await getAuthHeaders();
-      await regenerate({ headers, body });
-    },
-    [regenerate],
-  );
+  const regenerateTurn = useCallback(async () => {
+    await regenerate({ headers: await getAuthHeaders() });
+  }, [regenerate]);
 
   const isStreaming = chat.status === "submitted" || chat.status === "streaming";
 
@@ -182,5 +193,5 @@ export function useHivegentChat(
   // that isn't a navigation (e.g. an error boundary), so it never outlives its UI.
   useStopOnUnmount(isStreaming, chat.stop);
 
-  return { ...chat, sendUserMessage, regenerateWithBody, isStreaming, subagentSteps };
+  return { ...chat, sendUserMessage, regenerateTurn, isStreaming, subagentSteps };
 }

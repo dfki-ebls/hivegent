@@ -7,23 +7,18 @@ import {
   ConfirmationRejected,
   ConfirmationRequest,
 } from "@/components/ai-elements/confirmation";
+import { useToolApproval } from "@/hooks/chat/use-tool-approval";
 import { snakeCaseToTitleCase } from "@/lib/utils";
 
 interface ApprovalRequestProps {
   toolName: string;
   approval: NonNullable<ToolUIPart["approval"]>;
   state: ToolUIPart["state"];
-  onApprove: (id: string) => void;
-  onDeny: (id: string) => void;
 }
 
-export function ApprovalRequest({
-  toolName,
-  approval,
-  state,
-  onApprove,
-  onDeny,
-}: ApprovalRequestProps) {
+export function ApprovalRequest({ toolName, approval, state }: ApprovalRequestProps) {
+  const { decide, blockedReason } = useToolApproval();
+
   return (
     <Confirmation approval={approval} state={state}>
       <ConfirmationRequest>
@@ -38,10 +33,20 @@ export function ApprovalRequest({
         <span className="text-sm text-orange-700 dark:text-orange-400">Denied</span>
       </ConfirmationRejected>
       <ConfirmationActions>
-        <ConfirmationAction variant="outline" onClick={() => onDeny(approval.id ?? "")}>
+        {blockedReason && (
+          <span className="mr-auto text-xs text-muted-foreground">{blockedReason}</span>
+        )}
+        <ConfirmationAction
+          variant="outline"
+          disabled={blockedReason !== undefined}
+          onClick={() => decide(approval.id ?? "", false)}
+        >
           Deny
         </ConfirmationAction>
-        <ConfirmationAction onClick={() => onApprove(approval.id ?? "")}>
+        <ConfirmationAction
+          disabled={blockedReason !== undefined}
+          onClick={() => decide(approval.id ?? "", true)}
+        >
           Approve
         </ConfirmationAction>
       </ConfirmationActions>

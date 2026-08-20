@@ -22,8 +22,6 @@ interface MessagePartProps {
   onCancelEdit: () => void;
   onSubmitEdit: (messageId: string, newText: string) => void;
   onRegenerate: () => void;
-  onApprove: (id: string) => void;
-  onDeny: (id: string) => void;
   onExecutePlan?: () => void;
 }
 
@@ -39,8 +37,6 @@ export function MessagePart({
   onCancelEdit,
   onSubmitEdit,
   onRegenerate,
-  onApprove,
-  onDeny,
   onExecutePlan,
 }: MessagePartProps) {
   if (part.type === "text" && isUserMessage) {
@@ -81,34 +77,20 @@ export function MessagePart({
   }
 
   return (
-    <ToolMessagePart
-      toolData={toolData}
-      part={part}
-      onApprove={onApprove}
-      onDeny={onDeny}
-      onExecutePlan={onExecutePlan}
-    />
+    <ToolMessagePart toolData={toolData} part={part} onExecutePlan={onExecutePlan} />
   );
 }
 
 interface ToolMessagePartProps {
   toolData: ReadonlyMap<string, unknown>;
   part: UIMessage["parts"][number];
-  onApprove: (id: string) => void;
-  onDeny: (id: string) => void;
   onExecutePlan?: () => void;
 }
 
 // Tool parts only: the live-subagent context subscription lives here rather
 // than in MessagePart, so only tool parts depend on the live map (other part
 // types never subscribe to it).
-function ToolMessagePart({
-  toolData,
-  part,
-  onApprove,
-  onDeny,
-  onExecutePlan,
-}: ToolMessagePartProps) {
+function ToolMessagePart({ toolData, part, onExecutePlan }: ToolMessagePartProps) {
   const toolCallId = "toolCallId" in part ? (part.toolCallId as string) : undefined;
   const liveSubagent = useSubagentLive(toolCallId);
 
@@ -133,12 +115,6 @@ function ToolMessagePart({
   }
 
   return (
-    <ToolFallback
-      toolName={info.toolName}
-      part={part as ToolPart}
-      formatted={info.formatted}
-      onApprove={onApprove}
-      onDeny={onDeny}
-    />
+    <ToolFallback toolName={info.toolName} part={part as ToolPart} formatted={info.formatted} />
   );
 }

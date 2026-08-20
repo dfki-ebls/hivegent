@@ -46,8 +46,8 @@ from .entries import description_path_for_stem, original_path_for_stem
 from .http_client import get_http_client
 from .llm import create_openai_client
 from .store import Casebase
-from .tools.base import SearchPathFilterFunc
 from .tools.retrieval import SearchResult, VectorSearchTool
+from .types import DocumentFilter
 
 __all__ = [
     "build_search_tool",
@@ -335,10 +335,7 @@ class _EnrichedRow:
 
 
 def _store_key_for(owner_user_id: str | None, owner_group_id: str | None) -> str:
-    if owner_user_id is not None:
-        return Casebase.for_user(owner_user_id).store_key
-    assert owner_group_id is not None
-    return Casebase.for_group(owner_group_id).store_key
+    return Casebase.for_owner(owner_user_id, owner_group_id).store_key
 
 
 async def _load_enriched(keys: Sequence[str]) -> list[_EnrichedRow]:
@@ -401,24 +398,29 @@ async def _load_enriched(keys: Sequence[str]) -> list[_EnrichedRow]:
 def build_search_tool(
     stores: Sequence[Casebase],
     *,
-    filter_for_store: Callable[[Casebase], SearchPathFilterFunc] | None = None,
+    filter_for_store: Callable[[Casebase], DocumentFilter | None] | None = None,
 ) -> VectorSearchTool[RetrievedChunk]:
     """Build a search tool restricted to *stores*.
 
-    Per-store scoping is enforced as a pre-filter at the SQL level: the
-    set of document ids owned by *stores* is resolved before the cbrkit
-    query, then passed as an ``In("document_id", ...)`` filter so the
-    HNSW/FTS scan never visits rows the caller cannot see.  The
-    optional *filter_for_store* prunes further per-file inside the
-    result mapper after the JOIN has loaded the filename.
+    Scoping is enforced entirely as a pre-filter at the SQL level: the set of
+    document ids owned by *stores* and admitted by *filter_for_store* is
+    resolved before the cbrkit query, then passed as an
+    ``In("document_id", ...)`` filter so the HNSW/FTS scan never visits a row
+    the caller cannot see — neither one owned by another store nor one the
+    conversation's document scope excludes.  The ids are resolved per call, so
+    a scope the user narrows between turns takes effect on the next search.
     """
     store_index = {s.store_key: s for s in stores}
-    file_filters = {
-        s.store_key: filter_for_store(s) if filter_for_store else None for s in stores
-    }
+    document_filters = (
+        {store: filter_for_store(store) for store in stores}
+        if filter_for_store is not None
+        else None
+    )
 
     async def resolve_filter() -> cbrkit_filter.Filter | None:
-        doc_ids = await db_documents.resolve_accessible_document_ids(stores)
+        doc_ids = await db_documents.resolve_accessible_document_ids(
+            stores, filters=document_filters
+        )
         if not doc_ids:
             return cbrkit_filter.Eq("document_id", "")  # match nothing
         return cbrkit_filter.In("document_id", doc_ids)
@@ -434,9 +436,6 @@ def build_search_tool(
             if store is None:
                 continue
             filename = description_path_for_stem(row.stem_path)
-            file_filter = file_filters.get(row.store_key)
-            if file_filter is not None and not file_filter(filename):
-                continue
             image_path = (
                 original_path_for_stem(row.stem_path, row.original_suffix)
                 if row.entry_kind == "image"

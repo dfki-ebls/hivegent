@@ -116,6 +116,20 @@ class Casebase:
         return cls(kind="group", id=group_id)
 
     @classmethod
+    def for_owner(cls, user_id: str | None, group_id: str | None) -> Self:
+        """Build the casebase owning a row, from its two owner FK columns.
+
+        The ``documents`` table carries exactly one of the pair (its
+        ``single_owner`` check constraint), so this is total for any row that
+        is actually in the database.
+        """
+        if user_id is not None:
+            return cls.for_user(user_id)
+        if group_id is not None:
+            return cls.for_group(group_id)
+        raise ValueError("document row has neither owner set")
+
+    @classmethod
     def from_store_key(cls, store_key: str) -> Self:
         """Parse a ``store_key`` back into a :class:`Casebase`.
 

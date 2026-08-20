@@ -59,6 +59,7 @@ __all__ = [
     "ChatAdapter",
     "chat_error_text",
     "close_orphan_tool_calls",
+    "decline_pending_approvals",
     "dump_messages_with_ids",
     "record_turn_error",
     "run_and_persist",
@@ -85,6 +86,14 @@ REASONING_DURATIONS_KEY = "reasoningDurationsMs"
 # Content for the synthetic failed return that closes a tool call left dangling
 # by an interrupted run (client disconnect) when no stream error text is known.
 INTERRUPTED_TOOL_ERROR = "The tool call did not complete because the run ended early."
+
+# Content for the denial that closes an approval request the user walked away
+# from by sending another message instead of answering it.
+ABANDONED_APPROVAL_DENIAL = (
+    "The user did not answer this approval request and moved on to another "
+    "message, so the call was never executed. Do not reissue it unless they "
+    "ask for it again."
+)
 
 # Message metadata key carrying a run's error text so the frontend can re-render
 # the chat error banner from reloaded history (a stream error is otherwise a
@@ -364,6 +373,45 @@ def close_orphan_tool_calls(
     ]
 
     return [*messages, ModelRequest(parts=returns)]
+
+
+def decline_pending_approvals(prefix: Sequence[ModelMessage]) -> ModelRequest | None:
+    """Refuse the approval requests *prefix* ends on, or ``None`` if it ends on none.
+
+    A run that finishes awaiting approval leaves its call dangling on purpose,
+    so the next request can carry the decision and resume it.  A next request
+    that carries a new prompt instead ends that run for good: the call can never
+    be answered now, yet it stays in the stored history, where pydantic-ai
+    repairs it on the way to the provider with a generic ``interrupted``
+    result.  The model reads that as a transient failure and reissues the
+    identical call, which is left dangling in turn — so a single abandoned
+    approval has every later turn repeat the same call with the same arguments.
+
+    Answering it as a denial instead says what actually happened, and once the
+    refusal is stored the history holds a resolved call rather than one that is
+    repaired again on every future turn.
+
+    Only a trailing response is considered, and then every call it holds is
+    unanswered by construction: a result is a ``ModelRequest`` part, so it can
+    only sit *after* the response that called for it, and nothing sits after
+    the last message.  An earlier dangling call needs no handling here — it was
+    already closed when its own turn ended.
+    """
+    if not prefix or not isinstance(last := prefix[-1], ModelResponse):
+        return None
+
+    returns = [
+        ToolReturnPart(
+            tool_name=part.tool_name,
+            content=ABANDONED_APPROVAL_DENIAL,
+            tool_call_id=part.tool_call_id,
+            outcome="denied",
+        )
+        for part in last.parts
+        if isinstance(part, ToolCallPart)
+    ]
+
+    return ModelRequest(parts=returns) if returns else None
 
 
 def record_turn_error(messages: list[ModelMessage], error_text: str) -> None:

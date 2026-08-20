@@ -46,6 +46,7 @@ from hivegent.server.vercel import (
     SDK_VERSION,
     ChatAdapter,
     PersistTurn,
+    decline_pending_approvals,
     dump_messages_with_ids,
     run_and_persist,
 )
@@ -287,6 +288,37 @@ async def test_answered_approval_resolves_the_stored_call_once(
     assert len(returns) == 1
     assert returns[0].tool_call_id == calls[0].tool_call_id
     assert str(returns[0].content) == ("written" if approved else _TOOL_DENIED_REASON)
+
+
+async def test_abandoned_approval_is_declined_for_the_next_turn() -> None:
+    """A prompt sent instead of an answer closes the pending call as a denial.
+
+    Left dangling, the call is repaired into a generic "interrupted" result on
+    the way to the provider on every later turn, and the model reads that as a
+    transient failure and reissues the identical call each time.
+    """
+    pending, _ = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        tool_needs_approval=True,
+    )
+    declined = decline_pending_approvals(pending[0])
+    assert declined is not None
+
+    returns = _parts([declined], ToolReturnPart)
+    assert [r.outcome for r in returns] == ["denied"]
+    assert returns[0].tool_call_id == _parts(pending[0], ToolCallPart)[0].tool_call_id
+    # The card reloads as a refusal rather than asking for approval all over again.
+    assert _tool_states([*pending[0], declined]) == ["output-denied"]
+
+
+async def test_a_settled_turn_has_no_approval_to_decline() -> None:
+    """Only a turn left awaiting approval is declined, never a finished one."""
+    settled, _ = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])]
+    )
+
+    assert decline_pending_approvals(settled[0]) is None
+    assert decline_pending_approvals([]) is None
 
 
 async def test_generic_run_error_is_recorded_for_reload() -> None:

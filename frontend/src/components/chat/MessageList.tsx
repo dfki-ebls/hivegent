@@ -26,8 +26,6 @@ interface MessageListProps {
   onCancelEdit: () => void;
   onSubmitEdit: (messageId: string, newText: string) => void;
   onRegenerate: () => void;
-  onApprove: (id: string) => void;
-  onDeny: (id: string) => void;
   onExecutePlan?: () => void;
 }
 
@@ -46,8 +44,6 @@ export function MessageList({
   onCancelEdit,
   onSubmitEdit,
   onRegenerate,
-  onApprove,
-  onDeny,
   onExecutePlan,
 }: MessageListProps) {
   // Context-window overflows never reach the banner, live or persisted, since
@@ -83,8 +79,6 @@ export function MessageList({
             onCancelEdit={onCancelEdit}
             onSubmitEdit={onSubmitEdit}
             onRegenerate={onRegenerate}
-            onApprove={onApprove}
-            onDeny={onDeny}
             onExecutePlan={index === messages.length - 1 ? onExecutePlan : undefined}
           />
         ))}

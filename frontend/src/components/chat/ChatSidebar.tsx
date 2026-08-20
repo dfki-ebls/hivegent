@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { type FileUIPart } from "ai";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AiDisclosure } from "@/components/chat/AiDisclosure";
 import { ChatHeader, type ChatTab } from "@/components/chat/ChatHeader";
@@ -20,6 +20,7 @@ import { SubagentLiveProvider } from "@/hooks/chat/use-subagent-live";
 import { useMessageEditing } from "@/hooks/chat/use-message-editing";
 import { useSteeringQueue } from "@/hooks/chat/use-steering-queue";
 import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
+import { ToolApprovalProvider, type ToolApprovalGate } from "@/hooks/chat/use-tool-approval";
 import { importConversation, transcribeAudio } from "@/lib/api";
 import { downloadJson } from "@/lib/download";
 import { activeChatError, getLastUserMessage, recordChatError } from "@/lib/chat/chat-utils";
@@ -41,6 +42,17 @@ const TOOL_DENIED_REASON =
   "The user rejected this tool call, so it was not executed. " +
   "Do not call the same tool again with the same or similar arguments. " +
   "Stop working on this step, tell the user what you were about to do, and wait for their instructions.";
+
+/**
+ * Why the pending approvals in the transcript cannot be answered right now.
+ *
+ * The SDK records but does not dispatch a decision made while the previous
+ * turn's final chunks are still draining, so the buttons wait for it to settle.
+ */
+function approvalBlockedReason(isStreaming: boolean) {
+  if (isStreaming) return "Available once the current response finishes.";
+  return undefined;
+}
 
 export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps) {
   const navigate = useNavigate();
@@ -80,12 +92,13 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     addToolApprovalResponse,
     stop,
     sendUserMessage,
-    regenerateWithBody,
+    regenerateTurn,
     isStreaming,
     subagentSteps,
   } = useHivegentChat(id, {
     draft,
     onConversationCreated: setCreatedId,
+    requestBody: buildRequestBody,
   });
 
   const lastMessage = messages.at(-1);
@@ -106,9 +119,9 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
       // the sole trigger that reveals the Context panel as documents are
       // pulled. Later turns leave the user's chosen tab alone.
       if (messages.length === 0) setDocumentTab("context");
-      await sendUserMessage({ text, files }, buildRequestBody());
+      await sendUserMessage({ text, files });
     },
-    [buildRequestBody, sendUserMessage, messages.length, setDocumentTab],
+    [sendUserMessage, messages.length, setDocumentTab],
   );
 
   const { queue: steeringQueue, enqueue: enqueueSteering } = useSteeringQueue(
@@ -173,28 +186,44 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   }, [id, clearAll]);
 
   useToolOutputSync(messages, addChunk, markFullDocument, addImage);
+  // Runs here rather than in the context panel: a citation renders in the
+  // transcript whether or not the panel is open, and it must not be shown
+  // before we know the document it points at still exists.
   useChatErrorLogger(error, id, messages, buildRequestBody);
 
   const handleEditMessage = useCallback(
     async (messageId: string, newText: string) => {
       clearEditing();
       clearAll();
-      await sendUserMessage({ text: newText, messageId }, buildRequestBody());
+      await sendUserMessage({ text: newText, messageId });
     },
-    [buildRequestBody, sendUserMessage, clearAll, clearEditing],
+    [sendUserMessage, clearAll, clearEditing],
+  );
+
+  const approvalGate = useMemo<ToolApprovalGate>(
+    () => ({
+      decide: (approvalId, approved) =>
+        void addToolApprovalResponse({
+          id: approvalId,
+          approved,
+          reason: approved ? undefined : TOOL_DENIED_REASON,
+        }),
+      blockedReason: approvalBlockedReason(isStreaming),
+    }),
+    [addToolApprovalResponse, isStreaming],
   );
 
   const handleRegenerate = useCallback(async () => {
     clearAll();
-    await regenerateWithBody(buildRequestBody());
-  }, [buildRequestBody, regenerateWithBody, clearAll]);
+    await regenerateTurn();
+  }, [regenerateTurn, clearAll]);
 
   const handleRetry = useCallback(async () => {
     const last = getLastUserMessage(messages);
     if (!last) return;
     clearAll();
-    await sendUserMessage({ text: last.text, messageId: last.id }, buildRequestBody());
-  }, [messages, buildRequestBody, sendUserMessage, clearAll]);
+    await sendUserMessage({ text: last.text, messageId: last.id });
+  }, [messages, sendUserMessage, clearAll]);
 
   // Leaves plan mode for the default one, so the plan's writes are carried out
   // but each is still confirmed by the user.
@@ -314,35 +343,29 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
 
       <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
         <SubagentLiveProvider value={subagentSteps}>
-          <MessageList
-            messages={messages}
-            status={status}
-            chatError={visibleChatError}
-            compactionError={compactionError}
-            isLoadingHistory={isLoadingHistory}
-            compactedFrom={compactedFrom}
-            editingId={editingId}
-            onNavigatePrevious={handleNavigateToPrevious}
-            onRetry={handleRetry}
-            onDismissError={() => {
-              clearCompactionError();
-              clearError();
-              setDismissedErrorId(lastMessage?.id ?? null);
-            }}
-            onSetEditing={setEditing}
-            onCancelEdit={clearEditing}
-            onSubmitEdit={handleEditMessage}
-            onRegenerate={handleRegenerate}
-            onApprove={(approvalId) => addToolApprovalResponse({ id: approvalId, approved: true })}
-            onDeny={(approvalId) =>
-              addToolApprovalResponse({
-                id: approvalId,
-                approved: false,
-                reason: TOOL_DENIED_REASON,
-              })
-            }
-            onExecutePlan={agentMode === "plan" ? handleExecutePlan : undefined}
-          />
+          <ToolApprovalProvider value={approvalGate}>
+            <MessageList
+              messages={messages}
+              status={status}
+              chatError={visibleChatError}
+              compactionError={compactionError}
+              isLoadingHistory={isLoadingHistory}
+              compactedFrom={compactedFrom}
+              editingId={editingId}
+              onNavigatePrevious={handleNavigateToPrevious}
+              onRetry={handleRetry}
+              onDismissError={() => {
+                clearCompactionError();
+                clearError();
+                setDismissedErrorId(lastMessage?.id ?? null);
+              }}
+              onSetEditing={setEditing}
+              onCancelEdit={clearEditing}
+              onSubmitEdit={handleEditMessage}
+              onRegenerate={handleRegenerate}
+              onExecutePlan={agentMode === "plan" ? handleExecutePlan : undefined}
+            />
+          </ToolApprovalProvider>
         </SubagentLiveProvider>
 
         <div className="border-t p-4 space-y-3">

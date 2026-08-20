@@ -8,24 +8,16 @@ interface ToolFallbackProps {
   toolName: string;
   part: ToolPart;
   formatted?: string | null;
-  onApprove: (id: string) => void;
-  onDeny: (id: string) => void;
 }
 
-export function ToolFallback({ toolName, part, formatted, onApprove, onDeny }: ToolFallbackProps) {
+export function ToolFallback({ toolName, part, formatted }: ToolFallbackProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
   const approval = "approval" in part ? (part as ToolUIPart).approval : undefined;
 
   return (
     <ToolCard toolName={toolName} part={part}>
       {approval && (
-        <ApprovalRequest
-          toolName={toolName}
-          approval={approval}
-          state={state}
-          onApprove={onApprove}
-          onDeny={onDeny}
-        />
+        <ApprovalRequest toolName={toolName} approval={approval} state={state} />
       )}
       {part.output !== undefined && (
         <ToolResult>

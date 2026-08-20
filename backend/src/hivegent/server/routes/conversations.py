@@ -84,7 +84,13 @@ from ..common import (
     user_store,
 )
 from ..operations import attachment_disposition
-from ..vercel import SDK_VERSION, ChatAdapter, dump_messages_with_ids, run_and_persist
+from ..vercel import (
+    SDK_VERSION,
+    ChatAdapter,
+    decline_pending_approvals,
+    dump_messages_with_ids,
+    run_and_persist,
+)
 
 __all__ = ["router"]
 
@@ -529,6 +535,18 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         regenerate=config.trigger == "regenerate-message",
         message_id=config.message_id,
     )
+
+    # A turn that ended awaiting approval left its call dangling so this request
+    # could answer it.  One that carries anything else abandons that approval,
+    # and the dangling call has to be closed here or every later turn replays it
+    # as a generic "interrupted" result and the model reissues the same call
+    # again and again.  Stored as its own node, so the delta below still starts
+    # with the message whose id is announced.
+    if adapter.deferred_tool_results is None:
+        declined = decline_pending_approvals(prefix)
+        if declined is not None:
+            fork_id = await append_branch(user.id, conversation_id, fork_id, [declined])
+            prefix = [*prefix, declined]
 
     # Reserve the node id the new user message will be persisted under, so the
     # client can address it for an edit without waiting for a reload.  Only a

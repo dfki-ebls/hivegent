@@ -30,8 +30,6 @@ interface MessageBubbleProps {
   onCancelEdit: () => void;
   onSubmitEdit: (messageId: string, newText: string) => void;
   onRegenerate: () => void;
-  onApprove: (id: string) => void;
-  onDeny: (id: string) => void;
   onExecutePlan?: () => void;
 }
 
@@ -44,8 +42,6 @@ export function MessageBubble({
   onCancelEdit,
   onSubmitEdit,
   onRegenerate,
-  onApprove,
-  onDeny,
   onExecutePlan,
 }: MessageBubbleProps) {
   const isAssistant = message.role === "assistant";
@@ -83,8 +79,6 @@ export function MessageBubble({
               onCancelEdit={onCancelEdit}
               onSubmitEdit={onSubmitEdit}
               onRegenerate={onRegenerate}
-              onApprove={onApprove}
-              onDeny={onDeny}
               onExecutePlan={isAssistant && isLastMessage ? onExecutePlan : undefined}
             />
           );
