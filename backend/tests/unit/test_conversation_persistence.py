@@ -40,6 +40,7 @@ from starlette.responses import StreamingResponse
 
 import hivegent.server.vercel as vercel_module
 from hivegent.db.conversations import ActiveNode, _fork_for_path, import_conversation
+from hivegent.server.routes.conversations import _instruction_snapshots
 from hivegent.server.vercel import (
     CHAT_ERROR_KEY,
     REASONING_DURATIONS_KEY,
@@ -49,6 +50,11 @@ from hivegent.server.vercel import (
     decline_pending_approvals,
     dump_messages_with_ids,
     run_and_persist,
+)
+from hivegent.types import (
+    ClientConversation,
+    ConversationArchive,
+    ServerConversation,
 )
 
 _TOOL_DENIED_REASON = "The user rejected this tool call. Do not retry it."
@@ -434,6 +440,97 @@ async def test_import_conversation_rejects_empty_export() -> None:
     """
     with pytest.raises(ValueError, match="no messages"):
         await import_conversation("user-1", [])
+
+
+class TestInstructionSnapshots:
+    """The system prompts an export reads back out of the stored history."""
+
+    def _pairs(self, *instructions: str | None) -> list[tuple[str, ModelMessage]]:
+        pairs: list[tuple[str, ModelMessage]] = []
+        for i, text in enumerate(instructions):
+            pairs.append(
+                (
+                    f"n{i}",
+                    ModelRequest(
+                        parts=[UserPromptPart(content=f"q{i}")], instructions=text
+                    ),
+                )
+            )
+        return pairs
+
+    def test_consecutive_identical_prompts_collapse(self) -> None:
+        """A prompt that never changed is one snapshot, not one per turn."""
+        snapshots = _instruction_snapshots(self._pairs("SYS", "SYS", "SYS"))
+
+        assert len(snapshots) == 1
+        assert snapshots[0].message_ids == ["n0", "n1", "n2"]
+
+    def test_a_changed_prompt_starts_a_new_snapshot(self) -> None:
+        """Narrowing the document scope mid-conversation stays visible."""
+        snapshots = _instruction_snapshots(self._pairs("SYS", "SYS scoped", "SYS"))
+
+        assert [s.text for s in snapshots] == ["SYS", "SYS scoped", "SYS"]
+        assert [s.message_ids for s in snapshots] == [["n0"], ["n1"], ["n2"]]
+
+    def test_messages_carrying_no_prompt_are_skipped(self) -> None:
+        """Responses hold none, and an imported turn may have lost its own."""
+        pairs: list[tuple[str, ModelMessage]] = [
+            ("n0", ModelResponse(parts=[TextPart(content="a")])),
+            *self._pairs(None),
+        ]
+        assert _instruction_snapshots(pairs) == []
+
+
+class TestConversationArchive:
+    """Which half of an exported archive an import restores."""
+
+    def _server(self, text: str | None) -> ServerConversation:
+        messages = (
+            [UIMessage(id="m1", role="user", parts=[TextUIPart(text=text)])]
+            if text is not None
+            else []
+        )
+        return ServerConversation(id="c1", title="persisted", messages=messages)
+
+    def _client(self, text: str) -> ClientConversation:
+        return ClientConversation(
+            id="c1",
+            title="in memory",
+            messages=[UIMessage(id="m1", role="user", parts=[TextUIPart(text=text)])],
+        )
+
+    def test_persisted_half_wins(self) -> None:
+        """The server copy is authoritative whenever it has messages."""
+        archive = ConversationArchive(
+            backend=self._server("persisted"), frontend=self._client("in memory")
+        )
+        messages, title = archive.active_path()
+
+        assert _texts(ChatAdapter.load_messages(messages)) == ["persisted"]
+        assert title == "persisted"
+
+    def test_client_half_covers_a_turn_that_never_persisted(self) -> None:
+        """A draft, or a turn that errored before the write, has only this half."""
+        for backend in (None, self._server(None)):
+            archive = ConversationArchive(backend=backend, frontend=self._client("live"))
+            messages, title = archive.active_path()
+
+            assert _texts(ChatAdapter.load_messages(messages)) == ["live"]
+            assert title == "in memory"
+
+    def test_title_falls_back_to_the_other_half(self) -> None:
+        """A server copy titled by neither side still imports under a name."""
+        archive = ConversationArchive(
+            backend=ServerConversation(
+                messages=[UIMessage(id="m1", role="user", parts=[TextUIPart(text="q")])]
+            ),
+            frontend=self._client("live"),
+        )
+        assert archive.active_path()[1] == "in memory"
+
+    def test_an_empty_archive_restores_nothing(self) -> None:
+        """Neither half present is rejected by the import guard, not persisted."""
+        assert ConversationArchive().active_path() == ([], None)
 
 
 def _path() -> list[ActiveNode]:

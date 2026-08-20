@@ -21,10 +21,10 @@ import { useMessageEditing } from "@/hooks/chat/use-message-editing";
 import { useSteeringQueue } from "@/hooks/chat/use-steering-queue";
 import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
 import { ToolApprovalProvider, type ToolApprovalGate } from "@/hooks/chat/use-tool-approval";
-import { importConversation, transcribeAudio } from "@/lib/api";
+import { getServerConversation, importConversation, transcribeAudio } from "@/lib/api";
 import { downloadJson } from "@/lib/download";
 import { activeChatError, getLastUserMessage, recordChatError } from "@/lib/chat/chat-utils";
-import { type AgentMode, type ReasoningEffort } from "@/lib/types";
+import { type AgentMode, type ConversationArchive, type ReasoningEffort } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
@@ -240,22 +240,27 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     await navigate({ to: "/" });
   }, [draft, onNewDraft, messages.length, error, clearFilter, navigate]);
 
-  // Export the chat exactly as the sidebar holds it in memory — the visible
-  // active path, including a turn that errored and was never persisted — so a
-  // failing conversation can be sent for debugging. The shape round-trips
-  // through the import route (extra debug fields are ignored on import).
-  const handleExport = useCallback(() => {
-    downloadJson(
-      {
+  // Export both halves of the conversation. `frontend` is what the sidebar
+  // holds in memory — the visible active path, including a turn that errored
+  // and was never persisted — so a failing conversation can be sent for
+  // debugging; `backend` is the persisted copy, and the only place the system
+  // prompts each turn ran under can be read (the stream never carries them to
+  // the browser). A draft has no server copy yet, so that half stays null. The
+  // archive round-trips through the import route.
+  const serverId = draft ? createdId : id;
+  const handleExport = useCallback(async () => {
+    const archive: ConversationArchive = {
+      backend: serverId ? await getServerConversation(serverId) : null,
+      frontend: {
         id,
         title: conversationTitle ?? null,
-        exportedAt: new Date().toISOString(),
+        exported_at: new Date().toISOString(),
         error: error?.message ?? null,
         messages,
       },
-      `conversation-${id}.json`,
-    );
-  }, [id, conversationTitle, error, messages]);
+    };
+    downloadJson(archive, `conversation-${id}.json`);
+  }, [id, serverId, conversationTitle, error, messages]);
 
   const handleConversationSelect = useCallback(
     async (conversationId: string) => {

@@ -48,6 +48,7 @@ from .users import ensure_user
 __all__ = [
     "ConversationData",
     "ConversationSummary",
+    "MessagePair",
     "append_branch",
     "conversation_exists",
     "create_compacted_conversation",

@@ -8,6 +8,7 @@
  */
 
 import { z } from "zod";
+import type { ChatMessage } from "@/lib/chat/chat-utils";
 
 // ============================================================
 // Enums
@@ -175,6 +176,43 @@ export const AdminListGroupsResponseSchema = z.object({
 export const AdminMaintenanceStateSchema = z.object({
   enabled: z.boolean(),
 });
+
+/**
+ * Conversation export/import interchange, mirroring `hivegent.types`.
+ *
+ * Plain interfaces rather than schemas: the halves carry `ChatMessage` arrays,
+ * which have no Zod schema anywhere (see `getConversationMessages`), and the
+ * archive is passed through to a download rather than driving any UI.
+ */
+
+/** One composed system prompt and the messages sent under it. */
+export interface InstructionsSnapshot {
+  message_ids: string[];
+  text: string;
+}
+
+/** A conversation's active path as the database holds it, with its prompts. */
+export interface ServerConversation {
+  id: string | null;
+  title: string | null;
+  messages: ChatMessage[];
+  instructions: InstructionsSnapshot[];
+}
+
+/** A conversation exactly as the browser tab held it, errors included. */
+export interface ClientConversation {
+  id: string;
+  title: string | null;
+  exported_at: string;
+  error: string | null;
+  messages: ChatMessage[];
+}
+
+/** Both halves of an exported conversation; either may be absent. */
+export interface ConversationArchive {
+  backend: ServerConversation | null;
+  frontend: ClientConversation | null;
+}
 
 /** What the chat composer may attach, as the backend defines it. */
 export const AttachmentLimitsSchema = z.object({

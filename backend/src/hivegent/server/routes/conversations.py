@@ -36,6 +36,7 @@ from ...converters.images import sanitize_image_bytes
 from ...db._common import new_id
 from ...db.conversations import (
     ConversationSummary,
+    MessagePair,
     append_branch,
     conversation_exists,
     delete_all_conversations,
@@ -67,12 +68,14 @@ from ...types import (
     ChatRequestConfig,
     CompactConversationRequest,
     CompactConversationResponse,
-    ConversationExport,
+    ConversationArchive,
     ConversationListResponse,
     DeleteConversationResponse,
     GenerateTitleRequest,
     GenerateTitleResponse,
+    InstructionsSnapshot,
     LlmConfig,
+    ServerConversation,
     ToolsSpec,
     UpdateTitleRequest,
 )
@@ -299,28 +302,61 @@ async def get_conversation_messages(
     return dump_messages_with_ids(pairs, siblings=siblings)
 
 
+def _instruction_snapshots(pairs: Sequence[MessagePair]) -> list[InstructionsSnapshot]:
+    """Group *pairs* by the system prompt each message was sent under.
+
+    pydantic-ai stamps the fully composed prompt (agent-level blocks plus every
+    live capability's, including the dynamic document scope) onto each
+    ``ModelRequest`` it sends, and that survives into the stored history, so the
+    prompts are read back here rather than recomposed — recomposing would
+    describe today's settings, not the ones the turn actually ran under.
+    Consecutive messages sharing a prompt collapse into one snapshot.
+    """
+    snapshots: list[InstructionsSnapshot] = []
+
+    for node_id, message in pairs:
+        if not isinstance(message, ModelRequest) or not message.instructions:
+            continue
+
+        text = message.instructions
+
+        if snapshots and snapshots[-1].text == text:
+            snapshots[-1].message_ids.append(node_id)
+        else:
+            snapshots.append(InstructionsSnapshot(message_ids=[node_id], text=text))
+
+    return snapshots
+
+
 @router.get("/conversations/{conversation_id}/export")
 async def export_conversation_route(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
 ) -> Response:
-    """Export a conversation's active path as downloadable Vercel AI messages.
+    """Export a conversation's active path as a downloadable archive.
 
-    The payload is a :class:`ConversationExport` (the same UI-message shape the
-    frontend holds and the ``/messages`` route returns), so a third-party
-    integration can consume it with only the Vercel AI message types, and the
-    counterpart :func:`import_conversation_route` restores it as a new
-    conversation owned by the importing user.
+    The payload is a :class:`ConversationArchive` whose ``backend`` half carries
+    the persisted messages and the system prompts they ran under; ``frontend``
+    is left unset, since this route has no browser state to speak for.  The
+    export button fills that half in and downloads the same shape, and the
+    counterpart :func:`import_conversation_route` restores either one.
     """
     summary = await load_conversation_summary(user.id, conversation_id)
     if summary is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     result = await load_active_for_display(user.id, conversation_id)
-    messages = dump_messages_with_ids(result[0], siblings=result[1]) if result else []
-    export = ConversationExport(id=summary.id, title=summary.title, messages=messages)
+    pairs, siblings = result if result else ([], {})
+    archive = ConversationArchive(
+        backend=ServerConversation(
+            id=summary.id,
+            title=summary.title,
+            messages=dump_messages_with_ids(pairs, siblings=siblings),
+            instructions=_instruction_snapshots(pairs),
+        )
+    )
     return Response(
-        content=export.model_dump_json(indent=2),
+        content=archive.model_dump_json(indent=2),
         media_type="application/json",
         headers={
             "Content-Disposition": attachment_disposition(
@@ -332,20 +368,26 @@ async def export_conversation_route(
 
 @router.post("/conversations/import")
 async def import_conversation_route(
-    export: ConversationExport,
+    archive: ConversationArchive,
     user: Annotated[User, Depends(get_current_user)],
 ) -> ConversationSummary:
-    """Restore an exported conversation as a new conversation owned by the user.
+    """Restore an exported archive as a new conversation owned by the user.
 
-    The UI messages are decoded to model messages and stored under fresh ids as
-    a single linear branch. Documents referenced by embedded tool outputs that
-    do not exist for this user are left unresolved rather than raising, so a
+    The persisted ``backend`` half is restored when it has messages, falling
+    back to ``frontend`` so an archive taken of a draft, or of a turn that
+    errored before reaching the database, still imports.  The UI messages are
+    decoded to model messages and stored under fresh ids as a single linear
+    branch; the archive's system prompts are a record of the original run and
+    are not replayed, since the imported conversation runs under the importing
+    user's own settings.  Documents referenced by embedded tool outputs that do
+    not exist for this user are left unresolved rather than raising, so a
     conversation captured against a different document collection still imports
     cleanly.
     """
+    ui_messages, title = archive.active_path()
     try:
-        messages = ChatAdapter.load_messages(export.messages)
-        return await import_conversation(user.id, messages, title=export.title)
+        messages = ChatAdapter.load_messages(ui_messages)
+        return await import_conversation(user.id, messages, title=title)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

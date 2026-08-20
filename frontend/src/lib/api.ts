@@ -29,7 +29,9 @@ import {
   ConversationListResponseSchema,
   DocumentLineCountsResponseSchema,
   type ConversationSummary,
+  type ConversationArchive,
   ConversationSummarySchema,
+  type ServerConversation,
   type ConversionPipelineInfo,
   ConversionPipelineInfoSchema,
   type CreateDirectoryResponse,
@@ -429,6 +431,26 @@ export function buildToolsPayload(spec: ToolsSpec): Record<string, unknown> {
         : null,
     })),
   };
+}
+
+/**
+ * The persisted half of a conversation, for the export archive.
+ *
+ * Carries the system prompts each turn ran under, which exist only server-side.
+ * Returns `null` when the conversation has never been persisted (a draft) or the
+ * fetch fails, so exporting still yields the client half rather than nothing.
+ */
+export async function getServerConversation(
+  conversationId: string,
+): Promise<ServerConversation | null> {
+  try {
+    const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}/export`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as ConversationArchive;
+    return data.backend ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getConversationMessages(conversationId: string): Promise<ChatMessage[]> {

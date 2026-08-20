@@ -40,11 +40,12 @@ __all__ = [
     "BulkDeleteUserDataResponse",
     "ChatRequestConfig",
     "ClearMemoryResponse",
+    "ClientConversation",
     "CollectionCompleteEvent",
     "CollectionProgressEvent",
     "CompactConversationRequest",
     "CompactConversationResponse",
-    "ConversationExport",
+    "ConversationArchive",
     "ConversationListResponse",
     "CreateDirectoryRequest",
     "CreateDirectoryResponse",
@@ -62,6 +63,7 @@ __all__ = [
     "GenerateTitleRequest",
     "GenerateTitleResponse",
     "GroupInfo",
+    "InstructionsSnapshot",
     "LlmConfig",
     "McpOAuth2Config",
     "McpServerConfig",
@@ -73,6 +75,7 @@ __all__ = [
     "PipelineSpec",
     "ProgressReporter",
     "ReasoningEffort",
+    "ServerConversation",
     "SettingsResponse",
     "ToolInfo",
     "ToolRunResult",
@@ -583,20 +586,77 @@ class CompactConversationRequest(BaseModel):
     messages: list[UIMessage] = Field(default_factory=list)
 
 
-class ConversationExport(BaseModel):
-    """A conversation's active path in Vercel AI UI-message format.
+class InstructionsSnapshot(BaseModel):
+    """One composed system prompt and the messages sent under it.
 
-    This is the interchange shape for the ``/export`` and ``/import`` routes,
-    and mirrors exactly what the frontend holds in memory (the visible chat,
-    including turns that never persisted to the database). Third-party
-    integrations can produce or consume it with only the Vercel AI message
-    types. Client-only debug fields (a live error, an export timestamp) are
-    accepted and ignored on import.
+    Snapshots are deduplicated by text, so a conversation whose scope, mode, or
+    personality changed mid-way carries one entry per distinct prompt rather
+    than one per message, and *when* it changed is legible from the ids.
+    """
+
+    message_ids: list[str] = Field(
+        description="Ids of the messages sent under this prompt, in order"
+    )
+    text: str = Field(description="The fully composed system prompt")
+
+
+class ServerConversation(BaseModel):
+    """A conversation's active path as the database holds it.
+
+    Server-authoritative and complete: the persisted messages plus the system
+    prompts they were actually sent under, which exist nowhere else (the Vercel
+    AI stream never carries instructions to the browser).
     """
 
     id: str | None = None
     title: str | None = None
     messages: list[UIMessage] = Field(default_factory=list)
+    instructions: list[InstructionsSnapshot] = Field(default_factory=list)
+
+
+class ClientConversation(BaseModel):
+    """A conversation exactly as the browser tab held it.
+
+    The visible active path, including a turn that errored and never reached
+    the database, which is why it is exported beside the server's copy rather
+    than derived from it.
+    """
+
+    id: str | None = None
+    title: str | None = None
+    exported_at: str | None = None
+    error: str | None = None
+    messages: list[UIMessage] = Field(default_factory=list)
+
+
+class ConversationArchive(BaseModel):
+    """The interchange shape of the ``/export`` and ``/import`` routes.
+
+    Both halves are optional and describe the same conversation from the two
+    places it lives: ``backend`` is what was persisted (with the system prompts),
+    ``frontend`` is what the user was looking at. A draft that never reached the
+    server has only the latter; the API route, which has no browser state, emits
+    only the former.
+
+    Import restores ``backend`` when it carries messages and falls back to
+    ``frontend``, so an archive of a conversation that failed before persisting
+    still round-trips.
+    """
+
+    backend: ServerConversation | None = None
+    frontend: ClientConversation | None = None
+
+    def active_path(self) -> tuple[list[UIMessage], str | None]:
+        """The messages to restore and the title to restore them under."""
+        for half in (self.backend, self.frontend):
+            if half is not None and half.messages:
+                return half.messages, half.title or self._other_title(half)
+
+        return [], None
+
+    def _other_title(self, half: ServerConversation | ClientConversation) -> str | None:
+        other = self.frontend if half is self.backend else self.backend
+        return other.title if other is not None else None
 
 
 class CompactConversationResponse(BaseModel):

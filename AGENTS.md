@@ -23,6 +23,11 @@
   A browser tab names itself with `X-Client-Id` on every request and the notification skips that tab, so the client that asked keeps its own read-after-write (which still works with the feed down) while the user's other tabs learn from the feed, and neither reads the workspace twice.
   Delivery is per-owner, so a group workspace refreshes for the writer, not yet for the other members.
   A `ScopeChanged` event is transient and never retained, so the feed carries only what happens while it is open: the client closes that gap itself by re-reading every scope it already holds on each handshake (`onFeedReady`), which is what covers a mutation that landed while it was disconnected.
+- A conversation export is a `ConversationArchive` with two halves, since the conversation exists in two places that can disagree.
+  `backend` is the persisted active path plus the system prompts each turn actually ran under, read back off `ModelRequest.instructions` rather than recomposed, because recomposing would describe today's settings and not the ones the turn ran under, and because the Vercel AI stream never carries instructions to the browser at all.
+  Snapshots collapse while the prompt is unchanged, so narrowing the document scope mid-conversation stays legible.
+  `frontend` is what the tab held, including a turn that errored before it was persisted, which is the case the export was built for.
+  Import restores `backend` when it has messages and falls back to `frontend`, so a draft and a failed turn both round-trip; the archived prompts are a record and are never replayed, since the imported conversation runs under the importing user's settings.
 - Citation line chips show only evidence captured in persisted read, grep, or search tool outputs from the conversation.
   The document name opens the current workspace path separately and never applies a historical line anchor to current content.
   Tool call IDs keep repeated reads distinct, and multiple captured versions are presented independently instead of guessing which one a citation meant.
