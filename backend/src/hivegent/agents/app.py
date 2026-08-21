@@ -11,6 +11,7 @@ from pydantic_ai.usage import UsageLimits
 
 from ..config import settings
 from .common import UserDeps
+from .guards import IncompleteToolCallGuard
 
 __all__ = ["base_agent", "turn_usage_limits", "user_agent"]
 
@@ -18,16 +19,23 @@ _default_model_settings = ModelSettings(
     timeout=settings.llm.request_timeout_seconds,
 )
 
+# Carried by the agents rather than composed per run: a run-level
+# ``capabilities`` argument adds to these rather than replacing them, so every
+# run is guarded, including the subagent and MCP ones that compose their own.
+_guards = [IncompleteToolCallGuard()]
+
 base_agent: Agent[None, str] = Agent(
     retries=settings.llm.retries,
     model_settings=_default_model_settings,
     tool_timeout=settings.llm.tool_timeout_seconds,
+    capabilities=_guards,
 )
 user_agent: Agent[UserDeps, str] = Agent(
     deps_type=UserDeps,
     retries=settings.llm.retries,
     model_settings=_default_model_settings,
     tool_timeout=settings.llm.tool_timeout_seconds,
+    capabilities=_guards,
 )
 
 

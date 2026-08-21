@@ -1,12 +1,43 @@
-"""Tests for canonical chat-stream error codes."""
+"""Tests for canonical chat-stream error codes.
 
+An HTTP rejection is a provider's own contract, so those cases carry a
+captured body.  The two overflows that surface as an exception instead are
+raised by pydantic-ai, which spells one of them as prose in a generic
+``UnexpectedModelBehavior`` — so those are driven through a real run
+(:func:`_run_error`) rather than restated here.  A hand-written copy of that
+sentence would keep passing after an upstream reword, while auto-compaction
+silently stopped firing.
+"""
+
+import pytest
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ModelResponsePart,
+    ThinkingPart,
+    ToolCallPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from hivegent.agents.app import base_agent
 from hivegent.server.vercel import CONTEXT_LENGTH_EXCEEDED, chat_error_text
 
 
 def _is_overflow(error: Exception) -> bool:
     return chat_error_text(error).startswith(f"{CONTEXT_LENGTH_EXCEEDED}: ")
+
+
+async def _run_error(parts: list[ModelResponsePart]) -> Exception:
+    """The error a run raises when the model returns *parts* cut off by the limit."""
+
+    def truncated(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=parts, finish_reason="length")
+
+    with pytest.raises(UnexpectedModelBehavior) as raised:
+        await base_agent.run("go", model=FunctionModel(truncated))
+
+    return raised.value
 
 
 def test_openai_structured_code() -> None:
@@ -67,13 +98,22 @@ def test_sglang_prose_body() -> None:
     assert _is_overflow(error)
 
 
-def test_finish_reason_length_without_output() -> None:
-    error = UnexpectedModelBehavior(
-        "Model token limit (provider default) exceeded before any response was"
-        " generated. Increase the `max_tokens` model setting, or simplify the"
-        " prompt to result in a shorter response that will fit within the limit."
-    )
-    assert _is_overflow(error)
+@pytest.mark.parametrize(
+    "parts",
+    [
+        # Nothing generated at all, and the reasoning-only variant of it: the
+        # limit went entirely on thinking.
+        [],
+        [ThinkingPart(content="hmm")],
+        # Cut off mid tool call, which `IncompleteToolCallGuard` turns into an
+        # error before the half-written call is dispatched.
+        [ToolCallPart(tool_name="edit_document", args='{"file_path":')],
+    ],
+)
+async def test_a_completion_that_ran_out_of_room_is_an_overflow(
+    parts: list[ModelResponsePart],
+) -> None:
+    assert _is_overflow(await _run_error(parts))
 
 
 def test_unrelated_errors_pass_through() -> None:

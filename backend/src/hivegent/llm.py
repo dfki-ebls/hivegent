@@ -6,7 +6,11 @@ from typing import override
 
 from openai import AsyncOpenAI
 from openai.types.chat import chat_completion_chunk
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    IncompleteToolCall,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.messages import ModelResponseStreamEvent, PartStartEvent
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIStreamedResponse
 from pydantic_ai.profiles import ModelProfileSpec, merge_profile
@@ -98,13 +102,18 @@ def is_context_overflow(error: Exception) -> bool:
 
     Classifies on the structure the exception offers first: providers
     reject an oversized prompt with a 400 whose body carries a stable
-    identifier (see :data:`_CONTEXT_OVERFLOW_CODES`). Message matching
-    remains only where no structure exists: vLLM's and SGLang's 400
-    bodies are plain prose, and pydantic-ai collapses an empty response
-    with ``finish_reason == "length"`` into the message of an
-    ``UnexpectedModelBehavior``.
+    identifier (see :data:`_CONTEXT_OVERFLOW_CODES`), and a completion that
+    ran out of room mid tool call is pydantic-ai's ``IncompleteToolCall``
+    (raised by :class:`~hivegent.agents.guards.IncompleteToolCallGuard`
+    before the call is dispatched, and by pydantic-ai itself once the tool's
+    retry budget is spent). Message matching remains only where no structure
+    exists: vLLM's and SGLang's 400 bodies are plain prose, and pydantic-ai
+    collapses an empty response with ``finish_reason == "length"`` into the
+    message of an ``UnexpectedModelBehavior``.
     """
     match error:
+        case IncompleteToolCall():
+            return True
         case ModelHTTPError(status_code=400, body=body):
             if isinstance(body, Mapping) and (
                 body.get("code") in _CONTEXT_OVERFLOW_CODES

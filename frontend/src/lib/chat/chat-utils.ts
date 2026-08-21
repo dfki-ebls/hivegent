@@ -1,5 +1,5 @@
 import type { UIMessage } from "@ai-sdk/react";
-import type { ChatStatus } from "ai";
+import type { ChatStatus, FileUIPart } from "ai";
 
 /**
  * Whether to show the standalone "thinking" loader below the conversation.
@@ -38,14 +38,35 @@ function lastUserIndex(messages: UIMessage[]): number {
   return messages.findLastIndex((message) => message.role === "user");
 }
 
-/** Find the last user message and return its id + concatenated text. */
-export function getLastUserMessage(
-  messages: UIMessage[],
-): { id: string; text: string } | undefined {
+/**
+ * A user turn in the form a resend needs: its node id plus every part that has
+ * to travel again.
+ *
+ * The single shape both resend paths read (the error banner's retry and
+ * auto-compaction's post-compaction retry), so neither can quietly carry less
+ * than the user sent. Attachments are the part that used to be dropped: they
+ * live only in client state until the turn succeeds, so a resend that omits
+ * them loses them for good.
+ */
+export interface UserTurn {
+  id: string;
+  text: string;
+  files: FileUIPart[];
+}
+
+/**
+ * The last user message as a re-sendable turn, or undefined if there is
+ * nothing to resend.
+ *
+ * A message carrying only attachments is a turn like any other — the chat
+ * accepts an image with no prose — so emptiness is judged on text *and* files.
+ */
+export function getLastUserMessage(messages: UIMessage[]): UserTurn | undefined {
   const last = messages[lastUserIndex(messages)];
   if (!last) return undefined;
-  const text = joinTextParts(last.parts);
-  return text ? { id: last.id, text } : undefined;
+  const text = joinTextParts(last.parts) ?? "";
+  const files = last.parts.filter((part): part is FileUIPart => part.type === "file");
+  return text || files.length > 0 ? { id: last.id, text, files } : undefined;
 }
 
 /**
@@ -109,6 +130,32 @@ export function activeChatError(
   liveError: Error | undefined,
 ): string | undefined {
   return liveError?.message ?? messages.at(-1)?.metadata?.chatError;
+}
+
+/**
+ * The run error auto-compaction may act on, or undefined.
+ *
+ * Compaction is a heavy, visible recovery — it summarizes, mints a second
+ * conversation, and navigates there — so it belongs to the turn that just
+ * failed under the user's eyes, never to a conversation they merely reopened.
+ * Both look identical to :func:`activeChatError`, since the backend persists a
+ * run error onto the message and hands it back on every later read.
+ *
+ * The origin is what separates them, and only two things carry one from this
+ * session: the SDK's live error, and the error the draft handed to the
+ * conversation it minted (`handoffError`), whose remount would otherwise drop
+ * it. Anything else on the last message is history. A later successful turn
+ * retires the metadata, so this goes quiet on its own.
+ */
+export function sessionChatError(
+  messages: ChatMessage[],
+  liveError: Error | undefined,
+  handoffError: string | undefined,
+): string | undefined {
+  const active = activeChatError(messages, liveError);
+  if (!active) return undefined;
+
+  return liveError || active === handoffError ? active : undefined;
 }
 
 /**

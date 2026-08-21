@@ -10,6 +10,11 @@ export function useConversationHistory(
 ) {
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [compactedFrom, setCompactedFrom] = useState<string | null>(null);
+  // The run error the draft handed over, if this mount was seeded by one.
+  // Only a failure from this session may drive auto-compaction, and the two
+  // origins part ways here: a handoff is memory from the turn we just ran,
+  // a fetch is history someone may simply have reopened.
+  const [handoffError, setHandoffError] = useState<string | undefined>(undefined);
   const setMessagesRef = useRef(setMessages);
   setMessagesRef.current = setMessages;
   const takeHandoff = useDraftHandoffStore((state) => state.take);
@@ -18,6 +23,7 @@ export function useConversationHistory(
     let cancelled = false;
     setIsLoadingHistory(true);
     setCompactedFrom(null);
+    setHandoffError(undefined);
     // A draft chat owns its messages in memory — there is no server history
     // to load, and loading the id would 404 since it isn't a row yet.
     if (draft) {
@@ -28,7 +34,8 @@ export function useConversationHistory(
     // directly so the freshly streamed turn doesn't flash a loading state.
     const seeded = takeHandoff(id);
     if (seeded) {
-      setMessagesRef.current(seeded);
+      setMessagesRef.current(seeded.messages);
+      setHandoffError(seeded.error);
       setIsLoadingHistory(false);
       return;
     }
@@ -53,5 +60,5 @@ export function useConversationHistory(
     };
   }, [id, draft, takeHandoff]);
 
-  return { isLoadingHistory, compactedFrom };
+  return { isLoadingHistory, compactedFrom, handoffError };
 }

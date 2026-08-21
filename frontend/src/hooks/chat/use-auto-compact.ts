@@ -1,9 +1,11 @@
 import { useNavigate } from "@tanstack/react-router";
+import type { FileUIPart } from "ai";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { buildLlmConfig, compactConversation } from "@/lib/api";
 import {
   type ChatMessage,
+  type UserTurn,
   canCompact,
   getLastUserMessage,
   isContextLengthError,
@@ -16,10 +18,16 @@ const MESSAGE_TOO_LARGE =
 
 interface UseAutoCompactArgs {
   id: string;
+  /**
+   * The failure this session produced (`sessionChatError`), not everything the
+   * banner shows. Reopening a conversation whose last turn overflowed must not
+   * summarize it and navigate the user to a second conversation they never
+   * asked for; only a generation that just failed here earns that.
+   */
   chatError: string | undefined;
   messages: ChatMessage[];
   isLoadingHistory: boolean;
-  onRetry: (text: string) => void;
+  onRetry: (text: string, files?: FileUIPart[]) => void;
 }
 
 export function useAutoCompact({
@@ -34,7 +42,10 @@ export function useAutoCompact({
   const overrides = useSettingsStore((state) => state.overrides);
   const [isCompacting, setIsCompacting] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const pendingRetryRef = useRef<string | null>(null);
+  // The `<conversation>:<error>` this hook has already acted on; see the
+  // trigger effect.
+  const handledErrorRef = useRef<string | null>(null);
+  const pendingRetryRef = useRef<UserTurn | null>(null);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
   const onRetryRef = useRef(onRetry);
@@ -59,7 +70,7 @@ export function useAutoCompact({
   }, []);
 
   const compact = useCallback(
-    async (retryMessageText?: string) => {
+    async (retryTurn?: UserTurn) => {
       setIsCompacting(true);
       setError(null);
       // A single toast keyed by the conversation evolves in place from loading
@@ -97,8 +108,8 @@ export function useAutoCompact({
           return;
         }
         clearAll();
-        if (retryMessageText) {
-          pendingRetryRef.current = retryMessageText;
+        if (retryTurn) {
+          pendingRetryRef.current = retryTurn;
         }
         await navigate({
           to: "/conversations/$id",
@@ -120,28 +131,42 @@ export function useAutoCompact({
     [id, overrides, clearAll, navigate],
   );
 
+  // Act at most once per distinct chat error, tracked on a ref rather than
+  // derived from the other state. That one rule replaces the several guards
+  // this needs: `isCompacting` flips a render too late to stop a second run
+  // (rebuilding `compact` mid-flight, as a settings change does, re-runs this),
+  // and gating on `error` would re-enter the moment the banner is cleared.
+  // Clearing the ref where the chat error clears keeps the two in step, so the
+  // next overflow is handled even when its text repeats.
   useEffect(() => {
+    if (!chatError) {
+      handledErrorRef.current = null;
+      setError(null);
+      return;
+    }
     if (!isContextLengthError(chatError)) return;
-    if (error) return;
+    // Keyed by conversation as well: compaction navigates to the one it minted
+    // while this instance stays mounted, and the retried turn there can fail
+    // with the very same text — a second conversation's failure, which must be
+    // judged on its own (it has one turn to compact, so it is told to shorten
+    // the message rather than compacted again).
+    const key = `${id}:${chatError}`;
+    if (handledErrorRef.current === key) return;
+    handledErrorRef.current = key;
+
     if (!canCompact(messagesRef.current)) {
       setError(new Error(MESSAGE_TOO_LARGE));
       return;
     }
-    void compact(getLastUserMessage(messagesRef.current)?.text);
-  }, [chatError, compact, error]);
+    void compact(getLastUserMessage(messagesRef.current));
+  }, [id, chatError, compact]);
 
   useEffect(() => {
     if (isLoadingHistory || !pendingRetryRef.current) return;
-    const text = pendingRetryRef.current;
+    const turn = pendingRetryRef.current;
     pendingRetryRef.current = null;
-    onRetryRef.current(text);
+    onRetryRef.current(turn.text, turn.files);
   }, [isLoadingHistory]);
-
-  // Drop a stale recovery error once the chat error clears, which happens when
-  // the user sends the next (e.g. shortened) message, so the banner doesn't linger.
-  useEffect(() => {
-    if (!chatError) setError(null);
-  }, [chatError]);
 
   const clearError = useCallback(() => setError(null), []);
 

@@ -175,9 +175,11 @@ export function useHivegentChat(
   const sendUserMessage = useCallback(
     async (input: SendUserMessageInput, body?: Record<string, unknown>) => {
       const headers = await getAuthHeaders();
-      const payload = input.messageId
-        ? { text: input.text, messageId: input.messageId }
-        : { text: input.text, files: input.files };
+      // One payload shape for every send. An edit/retry addresses a node with
+      // `messageId`, but it still submits a whole user message, so it carries
+      // the attachments too — the server forks a fresh message there rather
+      // than reusing the stored one, so anything left out is gone.
+      const payload = { text: input.text, files: input.files, messageId: input.messageId };
       await sendMessage(payload, { headers, body });
     },
     [sendMessage],

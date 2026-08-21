@@ -23,7 +23,12 @@ import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
 import { ToolApprovalProvider, type ToolApprovalGate } from "@/hooks/chat/use-tool-approval";
 import { getServerConversation, importConversation, transcribeAudio } from "@/lib/api";
 import { downloadJson } from "@/lib/download";
-import { activeChatError, getLastUserMessage, recordChatError } from "@/lib/chat/chat-utils";
+import {
+  activeChatError,
+  getLastUserMessage,
+  recordChatError,
+  sessionChatError,
+} from "@/lib/chat/chat-utils";
 import { type AgentMode, type ConversationArchive, type ReasoningEffort } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
@@ -94,7 +99,11 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   const chatError = activeChatError(messages, error);
   const visibleChatError = lastMessage?.id === dismissedErrorId ? undefined : chatError;
 
-  const { isLoadingHistory, compactedFrom } = useConversationHistory(id, setMessages, draft);
+  const { isLoadingHistory, compactedFrom, handoffError } = useConversationHistory(
+    id,
+    setMessages,
+    draft,
+  );
   const { editingId, setEditing, clear: clearEditing } = useMessageEditing(status);
 
   // Deliberately leaves the input untouched: it is also invoked while the
@@ -135,7 +144,10 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     if (isStreaming) return;
     if (steeringQueue.length > 0) return;
     setCreatedId(null);
-    stashHandoff(createdId, recordChatError(messages, error));
+    stashHandoff(createdId, {
+      messages: recordChatError(messages, error),
+      error: error?.message,
+    });
     void fetchConversations();
     // Replace, not push: the transient draft URL ("/") shouldn't be a
     // back-button target once it has become a real conversation.
@@ -159,7 +171,10 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     clearError: clearCompactionError,
   } = useAutoCompact({
     id,
-    chatError,
+    // The banner renders whatever the last turn failed with, reopened
+    // conversations included; compaction only ever answers this session's own
+    // failure, so it is handed the narrower of the two.
+    chatError: sessionChatError(messages, error, handoffError),
     messages,
     isLoadingHistory,
     onRetry: handleSendMessage,
@@ -214,7 +229,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     const last = getLastUserMessage(messages);
     if (!last) return;
     clearAll();
-    await sendUserMessage({ text: last.text, messageId: last.id });
+    await sendUserMessage({ text: last.text, files: last.files, messageId: last.id });
   }, [messages, sendUserMessage, clearAll]);
 
   // Leaves plan mode for the default one, so the plan's writes are carried out
