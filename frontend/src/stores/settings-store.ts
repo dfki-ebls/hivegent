@@ -399,8 +399,6 @@ export function selectUserId(state: SettingsState): string | undefined {
  * Undefined until the settings load, a sub-second window in which the
  * composer simply does not filter and the server rejects what it must.
  */
-export function selectAttachmentLimits(
-  state: SettingsState
-): AttachmentLimits | undefined {
+export function selectAttachmentLimits(state: SettingsState): AttachmentLimits | undefined {
   return state.backendDefaults?.attachments;
 }

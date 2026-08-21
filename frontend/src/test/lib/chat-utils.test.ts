@@ -40,11 +40,7 @@ describe("isContextLengthError", () => {
   });
 
   it("ignores raw provider messages and unrelated errors", () => {
-    expect(
-      isContextLengthError(
-        "This model's maximum context length is 8192 tokens.",
-      ),
-    ).toBe(false);
+    expect(isContextLengthError("This model's maximum context length is 8192 tokens.")).toBe(false);
     expect(isContextLengthError("connection refused")).toBe(false);
     expect(isContextLengthError(undefined)).toBe(false);
   });
@@ -70,16 +66,12 @@ describe("showThinkingLoader", () => {
   });
 
   it("hides the loader while text is actively streaming", () => {
-    const parts: ChatMessage["parts"] = [
-      { type: "text", text: "hi", state: "streaming" },
-    ];
+    const parts: ChatMessage["parts"] = [{ type: "text", text: "hi", state: "streaming" }];
     expect(showThinkingLoader(assistant(parts), "streaming")).toBe(false);
   });
 
   it("hides the loader once the turn is ready", () => {
-    const parts: ChatMessage["parts"] = [
-      { type: "text", text: "done", state: "done" },
-    ];
+    const parts: ChatMessage["parts"] = [{ type: "text", text: "done", state: "done" }];
     expect(showThinkingLoader(assistant(parts), "ready")).toBe(false);
   });
 });
@@ -90,36 +82,22 @@ describe("canCompact", () => {
   });
 
   it("blocks a freshly compacted conversation (summary + one new turn)", () => {
-    expect(
-      canCompact([msg("assistant", "summary"), msg("user", "huge file")]),
-    ).toBe(false);
+    expect(canCompact([msg("assistant", "summary"), msg("user", "huge file")])).toBe(false);
   });
 
   it("allows compaction once there is a prior user turn to compress", () => {
     expect(
-      canCompact([
-        msg("user", "first"),
-        msg("assistant", "reply"),
-        msg("user", "second"),
-      ]),
+      canCompact([msg("user", "first"), msg("assistant", "reply"), msg("user", "second")]),
     ).toBe(true);
   });
 });
 
 describe("adoptMessageNodeId", () => {
   it("re-keys the message the finished turn sent, not the answer to it", () => {
-    const messages = [
-      msg("user", "first"),
-      msg("assistant", "reply"),
-      msg("user", "second"),
-    ];
+    const messages = [msg("user", "first"), msg("assistant", "reply"), msg("user", "second")];
     const adopted = adoptMessageNodeId(messages, "node-9");
 
-    expect(adopted.map((m) => m.id)).toEqual([
-      "user-first",
-      "assistant-reply",
-      "node-9",
-    ]);
+    expect(adopted.map((m) => m.id)).toEqual(["user-first", "assistant-reply", "node-9"]);
     expect(adopted[2].parts).toBe(messages[2].parts);
   });
 
@@ -145,15 +123,13 @@ describe("activeChatError", () => {
   });
 
   it("prefers the live error over the stored one", () => {
-    expect(
-      activeChatError(stored, new Error("still streaming when it died")),
-    ).toBe("still streaming when it died");
+    expect(activeChatError(stored, new Error("still streaming when it died"))).toBe(
+      "still streaming when it died",
+    );
   });
 
   it("returns undefined when the last message carries no error", () => {
-    expect(
-      activeChatError([msg("assistant", "all good")], undefined),
-    ).toBeUndefined();
+    expect(activeChatError([msg("assistant", "all good")], undefined)).toBeUndefined();
   });
 });
 
@@ -186,9 +162,7 @@ describe("getLastUserMessage", () => {
   it("treats an attachment-only message as a turn", () => {
     // It never reaches the server on a failed turn, so a resend that skipped
     // it (as an empty `text` once did) would drop the user's request entirely.
-    const messages: ChatMessage[] = [
-      { id: "u1", role: "user", parts: [image] },
-    ];
+    const messages: ChatMessage[] = [{ id: "u1", role: "user", parts: [image] }];
     expect(getLastUserMessage(messages)).toEqual({
       id: "u1",
       text: "",
@@ -197,9 +171,7 @@ describe("getLastUserMessage", () => {
   });
 
   it("has nothing to resend for an empty message", () => {
-    expect(
-      getLastUserMessage([{ id: "u1", role: "user", parts: [] }]),
-    ).toBeUndefined();
+    expect(getLastUserMessage([{ id: "u1", role: "user", parts: [] }])).toBeUndefined();
     expect(getLastUserMessage([])).toBeUndefined();
   });
 });
@@ -220,9 +192,7 @@ describe("sessionChatError", () => {
   });
 
   it("reports a failure this tab just streamed", () => {
-    expect(sessionChatError(failed, new Error(OVERFLOW), undefined)).toBe(
-      OVERFLOW,
-    );
+    expect(sessionChatError(failed, new Error(OVERFLOW), undefined)).toBe(OVERFLOW);
   });
 
   it("reports the failure the draft handed to the conversation it minted", () => {

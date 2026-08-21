@@ -76,9 +76,7 @@ export function MessagePart({
     return null;
   }
 
-  return (
-    <ToolMessagePart toolData={toolData} part={part} onExecutePlan={onExecutePlan} />
-  );
+  return <ToolMessagePart toolData={toolData} part={part} onExecutePlan={onExecutePlan} />;
 }
 
 interface ToolMessagePartProps {

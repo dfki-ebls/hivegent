@@ -512,7 +512,9 @@ class TestConversationArchive:
     def test_client_half_covers_a_turn_that_never_persisted(self) -> None:
         """A draft, or a turn that errored before the write, has only this half."""
         for backend in (None, self._server(None)):
-            archive = ConversationArchive(backend=backend, frontend=self._client("live"))
+            archive = ConversationArchive(
+                backend=backend, frontend=self._client("live")
+            )
             messages, title = archive.active_path()
 
             assert _texts(ChatAdapter.load_messages(messages)) == ["live"]

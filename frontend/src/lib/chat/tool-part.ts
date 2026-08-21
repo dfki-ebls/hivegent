@@ -1,10 +1,6 @@
 import type { UIMessage } from "@ai-sdk/react";
 import type { ToolPart } from "@/components/ai-elements/tool";
-import type {
-  AddChunk,
-  AddImage,
-  MarkFullDocument,
-} from "@/stores/fetched-documents-store";
+import type { AddChunk, AddImage, MarkFullDocument } from "@/stores/fetched-documents-store";
 
 export type { ToolPart };
 

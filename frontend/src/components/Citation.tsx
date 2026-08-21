@@ -97,8 +97,8 @@ function EvidenceDialog({
         <DialogHeader>
           <DialogTitle>{filename}</DialogTitle>
           <DialogDescription>
-            {chunkPositionLabel(position)} from the tool output stored with this conversation.
-            The document link opens the current workspace version separately.
+            {chunkPositionLabel(position)} from the tool output stored with this conversation. The
+            document link opens the current workspace version separately.
           </DialogDescription>
         </DialogHeader>
         <ScrollArea className="min-h-0 flex-1">

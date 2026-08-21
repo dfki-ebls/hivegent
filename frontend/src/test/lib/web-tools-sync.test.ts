@@ -57,7 +57,11 @@ describe("syncWebFetchOutput", () => {
     const markFullDocument = vi.fn<SyncOutputContext["markFullDocument"]>();
     syncWebFetchOutput(context({ input: { url: "https://x" }, metadata: null, markFullDocument }));
     syncWebFetchOutput(
-      context({ input: { url: "https://x" }, metadata: { ...page, content: "" }, markFullDocument }),
+      context({
+        input: { url: "https://x" },
+        metadata: { ...page, content: "" },
+        markFullDocument,
+      }),
     );
     expect(markFullDocument).not.toHaveBeenCalled();
   });

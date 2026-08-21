@@ -27,7 +27,7 @@ type AttachmentError = Parameters<NonNullable<PromptInputProps["onError"]>>[0];
 /** Phrase a rejected attachment, mirroring what the chat route would say. */
 function attachmentErrorMessage(
   err: AttachmentError,
-  limits: AttachmentLimits | undefined
+  limits: AttachmentLimits | undefined,
 ): string {
   if (err.code === "accept") {
     return "Only images can be attached. Upload other documents to your workspace, where the assistant can search them.";
@@ -75,7 +75,7 @@ export function Composer({
   // invalidate on every character typed.
   const onAttachmentError = useCallback(
     (err: AttachmentError) => toast.error(attachmentErrorMessage(err, attachments)),
-    [attachments]
+    [attachments],
   );
 
   // Hide the mic when SpeechInput could only render disabled: no Web Speech

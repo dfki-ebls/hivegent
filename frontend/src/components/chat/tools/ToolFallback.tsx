@@ -16,9 +16,7 @@ export function ToolFallback({ toolName, part, formatted }: ToolFallbackProps) {
 
   return (
     <ToolCard toolName={toolName} part={part}>
-      {approval && (
-        <ApprovalRequest toolName={toolName} approval={approval} state={state} />
-      )}
+      {approval && <ApprovalRequest toolName={toolName} approval={approval} state={state} />}
       {part.output !== undefined && (
         <ToolResult>
           <pre className="whitespace-pre-wrap text-xs font-mono">

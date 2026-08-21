@@ -8,12 +8,7 @@ interface WebPageData {
   truncated: boolean;
 }
 
-export const syncWebFetchOutput: SyncOutput = ({
-  input,
-  metadata,
-  markFullDocument,
-  sourceId,
-}) => {
+export const syncWebFetchOutput: SyncOutput = ({ input, metadata, markFullDocument, sourceId }) => {
   if (!input) return;
   if (metadata == null || typeof metadata !== "object" || !("content" in metadata)) return;
   const page = metadata as WebPageData;
