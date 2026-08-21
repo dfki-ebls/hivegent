@@ -46,28 +46,19 @@ export function useAutoCompact({
   // trigger effect.
   const handledErrorRef = useRef<string | null>(null);
   const pendingRetryRef = useRef<UserTurn | null>(null);
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
   const onRetryRef = useRef(onRetry);
   onRetryRef.current = onRetry;
-  // Compaction is slow and the trigger (a greyed-out icon) resets quietly, so
-  // before applying the result we check the user is still looking at the chat
-  // we compacted, else it would navigate over wherever they moved on to.
-  //
-  // BOTH refs are required — they catch DISTINCT cases, so don't collapse them:
-  //  - currentIdRef: opening another conversation reuses this hook instance and
-  //    only changes the id prop, so the live ref diverges from the captured id.
-  //  - mountedRef: opening a new draft unmounts this subtree with the id prop
-  //    still equal to the captured id (no re-render in between), so currentIdRef
-  //    alone would miss it — only the unmount cleanup reveals the user left.
-  const currentIdRef = useRef(id);
-  currentIdRef.current = id;
-  const mountedRef = useRef(true);
+  // Route changes update the active id, while unmounting clears it, so a slow
+  // compaction never navigates over wherever the user moved in the meantime.
+  const activeIdRef = useRef<string | null>(id);
+  activeIdRef.current = id;
   useEffect(() => {
+    activeIdRef.current = id;
+
     return () => {
-      mountedRef.current = false;
+      activeIdRef.current = null;
     };
-  }, []);
+  }, [id]);
 
   const compact = useCallback(
     async (retryTurn?: UserTurn) => {
@@ -87,12 +78,12 @@ export function useAutoCompact({
         const result = await compactConversation(
           id,
           buildLlmConfig(overrides),
-          messagesRef.current,
+          messages,
         );
         // The user opened another chat while we were summarizing: leave their
         // view untouched and offer the compacted conversation behind an action
         // instead of yanking them to it.
-        if (!mountedRef.current || currentIdRef.current !== id) {
+        if (activeIdRef.current !== id) {
           toast.success("Conversation compacted", {
             id: toastId,
             description: "Open it to continue where this chat left off.",
@@ -121,14 +112,14 @@ export function useAutoCompact({
         toast.error("Couldn't compact the conversation", { id: toastId, description: message });
         // Only surface the inline retry banner if this chat is still on screen,
         // otherwise it would attach to whatever conversation the user moved to.
-        if (mountedRef.current && currentIdRef.current === id) {
+        if (activeIdRef.current === id) {
           setError(new Error(`Couldn't compact the conversation: ${message}`));
         }
       } finally {
         setIsCompacting(false);
       }
     },
-    [id, overrides, clearAll, navigate],
+    [id, overrides, messages, clearAll, navigate],
   );
 
   // Act at most once per distinct chat error, tracked on a ref rather than
@@ -154,12 +145,12 @@ export function useAutoCompact({
     if (handledErrorRef.current === key) return;
     handledErrorRef.current = key;
 
-    if (!canCompact(messagesRef.current)) {
+    if (!canCompact(messages)) {
       setError(new Error(MESSAGE_TOO_LARGE));
       return;
     }
-    void compact(getLastUserMessage(messagesRef.current));
-  }, [id, chatError, compact]);
+    void compact(getLastUserMessage(messages));
+  }, [id, chatError, compact, messages]);
 
   useEffect(() => {
     if (isLoadingHistory || !pendingRetryRef.current) return;

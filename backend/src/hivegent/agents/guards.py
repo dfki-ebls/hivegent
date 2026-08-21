@@ -52,7 +52,6 @@ __all__ = [
 ]
 
 
-@dataclass(slots=True)
 class IncompleteToolCallGuard(AbstractCapability[Any]):
     """Fail a turn whose response the token limit cut off mid tool call.
 

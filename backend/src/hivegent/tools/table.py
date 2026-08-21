@@ -1,15 +1,4 @@
-"""Table tool callable — query tabular documents with SQL.
-
-Tabular data is the one content type a line-oriented read cannot serve.  A
-spreadsheet's markdown projection is one very long line per row, so reading
-enough rows to answer a question costs more context than the answer is worth,
-and the per-line clip that protects the context drops the trailing columns of
-every row.  This tool queries the original file instead, so a question about
-three rows out of fifty thousand returns three rows.
-
-The counterpart to :mod:`hivegent.tools.jq` for JSON: structured content gets
-a query language rather than a read.
-"""
+"""Query tabular documents with SQL instead of reading projected rows."""
 
 import asyncio
 from dataclasses import dataclass, replace
@@ -40,21 +29,11 @@ __all__ = [
     "TableSheetArg",
 ]
 
-_EXCEL_SUFFIXES = frozenset({".xlsx", ".xlsb", ".xls"})
-
 _DELIMITED_SUFFIXES = frozenset({".csv", ".tsv"})
-"""The only formats whose loading a text decode can change.
-
-Excel and Parquet carry their own encoding, so retrying them decoded would
-redo a full parse to fail identically.
-"""
+"""Formats that can be retried through the shared text decoder."""
 
 _RELATION = "t"
-"""The one name a query addresses the table by.
-
-Fixed rather than derived from the filename, so no path is ever interpolated
-into the SQL and the model has a single name to target.
-"""
+"""Fixed query relation name, which avoids interpolating a file path."""
 
 TableQueryArg = Annotated[
     str | None,
@@ -113,11 +92,7 @@ class _Source:
 
 
 def _load_excel(path: Path, file_path: str, sheet: str | None) -> _Source:
-    """Load one worksheet, naming the others when the requested one is absent.
-
-    Reading the sheet names is a zip-directory lookup, not a parse, so it does
-    not double the cost of the read that follows.
-    """
+    """Load one worksheet and retain the workbook's sheet names."""
     sheets = tuple(fastexcel.read_excel(path).sheet_names)
 
     if sheet is not None and sheet not in sheets:
@@ -128,8 +103,7 @@ def _load_excel(path: Path, file_path: str, sheet: str | None) -> _Source:
 
     name = sheet if sheet is not None else sheets[0]
 
-    # Excel has no lazy scan, so the sheet is materialized, which its ~1M row
-    # ceiling bounds.  Only the query's result crosses into the context.
+    # Excel has no lazy scan, but only the query result reaches the context.
     return _Source(
         frame=pl.read_excel(path, sheet_name=name).lazy(),
         sheet=name,
@@ -137,18 +111,18 @@ def _load_excel(path: Path, file_path: str, sheet: str | None) -> _Source:
     )
 
 
-def _load_delimited(
-    path: Path, file_path: str, separator: str, *, decode: bool
-) -> _Source:
-    """Scan a delimited file, or parse it from text when it is not UTF-8.
+def _load(path: Path, file_path: str, sheet: str | None, *, decode: bool) -> _Source:
+    """Load *path* as a lazy frame, however its format has to be read."""
+    suffix = path.suffix.lower()
 
-    The lazy scan is the fast path and assumes UTF-8.  Decoding goes through
-    the same seam as every other user-supplied text read, so a legacy encoding
-    is reported rather than guessed at or silently mangled, at the cost of
-    holding the file in memory.  The decoded text is handed over as bytes:
-    polars re-encodes a ``StringIO`` internally, which would hold the file a
-    further three times over on the one path that is already memory-bound.
-    """
+    if suffix == ".parquet":
+        return _Source(frame=pl.scan_parquet(path))
+
+    if suffix not in _DELIMITED_SUFFIXES:
+        return _load_excel(path, file_path, sheet)
+
+    separator = "\t" if suffix == ".tsv" else ","
+
     if not decode:
         return _Source(frame=pl.scan_csv(path, separator=separator))
 
@@ -160,28 +134,8 @@ def _load_delimited(
     )
 
 
-def _load(path: Path, file_path: str, sheet: str | None, *, decode: bool) -> _Source:
-    """Load *path* as a lazy frame, however its format has to be read."""
-    suffix = path.suffix.lower()
-
-    if suffix in _EXCEL_SUFFIXES:
-        return _load_excel(path, file_path, sheet)
-
-    if suffix not in _DELIMITED_SUFFIXES:
-        return _Source(frame=pl.scan_parquet(path))
-
-    return _load_delimited(
-        path, file_path, "\t" if suffix == ".tsv" else ",", decode=decode
-    )
-
-
 def _cell(value: object) -> str:
-    """Render one cell as a table-safe string.
-
-    Length is not bounded here: this is what reaches the frontend, and clipping
-    it would be the read tools writing their per-line cap into the stored
-    content rather than into what the model is shown.
-    """
+    """Render a cell without applying the model-facing display cap."""
     if value is None:
         return ""
 
@@ -192,17 +146,8 @@ def _cell(value: object) -> str:
 class QueryTableTool(AsyncPathTool[TableResult]):
     """Query a tabular document with SQL instead of reading it line by line.
 
-    Five budgets keep a result bounded without hiding what it left out.
-    ``max_rows`` caps the rows a query returns and ``preview_rows`` the rows a
-    schema call samples, ``max_columns`` caps how many columns are rendered (a
-    ``SELECT *`` over a wide sheet is otherwise one enormous line),
-    ``max_cell_chars`` clips a single long cell, and ``max_formatted_chars``
-    bounds the rendered table as a whole.  Every cut is named in the output,
-    because a truncated table that does not say so reads as a complete answer.
-
-    All five are applied before :class:`TableResult` is built, so the rows and
-    columns it carries to the frontend are the ones the model was shown rather
-    than a second, wider version of the same answer.
+    Row, column, cell, and rendered-output budgets bound the result, and every
+    cut is named in the formatted output.
     """
 
     max_rows: int = 100
@@ -251,14 +196,8 @@ class QueryTableTool(AsyncPathTool[TableResult]):
             try:
                 return self._attempt(file_path, absolute, query, sheet, decode=False)
 
-            # ComputeError is the parse failing, which for a delimited file is
-            # most often bytes that are not UTF-8. A lazy scan only meets them
-            # when it reaches them, so the retry is driven by the failure: a
-            # probe would have to read the whole file to rule them out, which
-            # is the cost the lazy scan exists to avoid. Every query-authoring
-            # failure is a different PolarsError subclass and falls straight
-            # through, as does any parse failure in a format that carries its
-            # own encoding and would fail a decoded retry identically.
+            # A lazy scan discovers invalid UTF-8 only when it reaches it.
+            # Other query failures use different PolarsError subclasses.
             except pl.exceptions.ComputeError:
                 if not retryable:
                     raise
@@ -266,22 +205,13 @@ class QueryTableTool(AsyncPathTool[TableResult]):
                 return self._attempt(file_path, absolute, query, sheet, decode=True)
 
         except pl.exceptions.PolarsError as exc:
-            raise ToolRetry(self._failed(exc, query)) from exc
-
-    def _failed(self, exc: pl.exceptions.PolarsError, query: str | None) -> str:
-        """Turn a polars failure into a message the model can act on.
-
-        Its own text already names the offending column and lists the valid
-        ones, which is most of what a retry needs.  Only a query can be
-        rewritten, so only a query is told how.
-        """
-        if query is None:
-            return f"could not read the table: {exc}"
-
-        return (
-            f"query failed: {exc} The table is named '{_RELATION}'; call "
-            "without a query to see its columns and their types."
-        )
+            detail = (
+                f"query failed: {exc} The table is named '{_RELATION}'; call "
+                "without a query to see its columns and their types."
+                if query is not None
+                else f"could not read the table: {exc}"
+            )
+            raise ToolRetry(detail) from exc
 
     def _attempt(
         self,
@@ -323,10 +253,7 @@ class QueryTableTool(AsyncPathTool[TableResult]):
             source_encoding=source.source_encoding,
         )
 
-        # Render before settling the result: the output budget decides how many
-        # rows the model was actually shown, and a table trimmed on the text
-        # channel alone would leave the data channel claiming rows that never
-        # reached the transcript.
+        # Keep the structured rows aligned with the model-facing output.
         body, dropped = self._render(result, query)
 
         if dropped:
@@ -339,13 +266,7 @@ class QueryTableTool(AsyncPathTool[TableResult]):
         )
 
     def _render(self, result: TableResult, query: str | None) -> tuple[str, int]:
-        """Render the output, and report how many rows the budget cut.
-
-        Only the row lines are budgeted.  The heading and the schema are what
-        make the rows legible, so spending the budget on them would trade the
-        answer for more of its data, and exempting them makes the returned
-        count exactly a row count, which is what the result is trimmed by.
-        """
+        """Render the table and report how many row lines were omitted."""
         lines = self._preamble(result, query)
 
         if not result.rows:
@@ -358,21 +279,29 @@ class QueryTableTool(AsyncPathTool[TableResult]):
         ]
         spent = sum(len(line) + 1 for line in lines)
         body, dropped = cap_lines(
-            (self._row(row, width) for row in result.rows),
+            (
+                f"| {' | '.join(truncate_line(cell, self.max_cell_chars) for cell in row[:width])} |"
+                for row in result.rows
+            ),
             self.max_formatted_chars - spent,
         )
 
         return "\n".join([*lines, body]), dropped
 
-    def _row(self, row: tuple[str, ...], width: int) -> str:
-        """Render one row, clipping any cell too long to belong in a table."""
-        cells = (truncate_line(cell, self.max_cell_chars) for cell in row[:width])
-
-        return f"| {' | '.join(cells)} |"
-
     def _preamble(self, result: TableResult, query: str | None) -> list[str]:
         """Render the summary line, plus the schema when it was asked for."""
-        lines = [self._summary(result)]
+        parts = [result.file_path]
+
+        if result.sheet is not None:
+            parts.append(f"sheet '{result.sheet}'")
+
+        if result.total_rows is not None:
+            parts.append(f"{result.total_rows} {pluralize(result.total_rows, 'row')}")
+
+        if result.source_encoding is not None:
+            parts.append(f"decoded from {result.source_encoding}")
+
+        lines = [", ".join(parts)]
 
         if query is not None:
             return lines
@@ -389,21 +318,6 @@ class QueryTableTool(AsyncPathTool[TableResult]):
         ]
 
         return [*lines, "", "sample:"]
-
-    def _summary(self, result: TableResult) -> str:
-        """Name the file, the sheet, the row count, and any transcode."""
-        parts = [result.file_path]
-
-        if result.sheet is not None:
-            parts.append(f"sheet '{result.sheet}'")
-
-        if result.total_rows is not None:
-            parts.append(f"{result.total_rows} {pluralize(result.total_rows, 'row')}")
-
-        if result.source_encoding is not None:
-            parts.append(f"decoded from {result.source_encoding}")
-
-        return ", ".join(parts)
 
     def _hints(self, result: TableResult, query: str | None) -> list[str]:
         """Name every cut, so a partial table cannot read as a complete one."""

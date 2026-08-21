@@ -73,22 +73,14 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       newChunks.set(id, { ...chunk, id });
 
       const newDocs = new Map(state.documents);
-      const existing = newDocs.get(chunk.filename);
-
-      if (existing) {
-        newDocs.set(chunk.filename, {
-          ...existing,
-          totalLines: totalLines ?? existing.totalLines,
-          chunkIds: [...existing.chunkIds, id],
-        });
-      } else {
-        newDocs.set(chunk.filename, {
-          filename: chunk.filename,
-          fullContentFetched: false,
-          totalLines,
-          chunkIds: [id],
-        });
-      }
+      const existing = state.documents.get(chunk.filename);
+      newDocs.set(chunk.filename, {
+        ...existing,
+        filename: chunk.filename,
+        fullContentFetched: existing?.fullContentFetched ?? false,
+        totalLines: totalLines ?? existing?.totalLines,
+        chunkIds: [...(existing?.chunkIds ?? []), id],
+      });
 
       return { chunks: newChunks, documents: newDocs };
     }),
@@ -115,27 +107,17 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
 
       const newDocs = docUpToDate ? state.documents : new Map(state.documents);
       if (!docUpToDate) {
-        const totalLines = content.split("\n").length;
-        if (existingDoc) {
-          const chunkIds = existingDoc.chunkIds.includes(id)
-            ? existingDoc.chunkIds
-            : [...existingDoc.chunkIds, id];
-          newDocs.set(filename, {
-            ...existingDoc,
-            fullContentFetched: true,
-            fullContent: content,
-            totalLines,
-            chunkIds,
-          });
-        } else {
-          newDocs.set(filename, {
-            filename,
-            fullContentFetched: true,
-            fullContent: content,
-            totalLines,
-            chunkIds: [id],
-          });
-        }
+        const chunkIds = existingDoc?.chunkIds.includes(id)
+          ? existingDoc.chunkIds
+          : [...(existingDoc?.chunkIds ?? []), id];
+        newDocs.set(filename, {
+          ...existingDoc,
+          filename,
+          fullContentFetched: true,
+          fullContent: content,
+          totalLines: content.split("\n").length,
+          chunkIds,
+        });
       }
 
       return { chunks: newChunks, documents: newDocs };

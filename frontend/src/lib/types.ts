@@ -689,10 +689,9 @@ export function makeChunkId(
       break;
   }
 
-  const originKey = detail ? `${origin}:${detail}` : origin;
-
-  const sourceKey = sourceId ? `::${sourceId}` : "";
-  return `${filename}::${originKey}::${positionKey}${sourceKey}`;
+  return `${filename}::${detail ? `${origin}:${detail}` : origin}::${positionKey}${
+    sourceId ? `::${sourceId}` : ""
+  }`;
 }
 
 /**
@@ -771,17 +770,14 @@ export function parseLinePositions(line: string | undefined): LinePosition[] {
   if (!line) return [];
   const positions: LinePosition[] = [];
   for (const token of line.split(",")) {
-    const range = /^\s*(\d+)\s*-\s*(\d+)\s*$/.exec(token);
-    if (range) {
-      const startLine = Number(range[1]);
-      const endLine = Number(range[2]);
-      if (startLine >= 1 && endLine >= startLine) {
-        positions.push({ type: "line_range", startLine, endLine });
-      }
-      continue;
-    }
-    const single = /^\s*(\d+)\s*$/.exec(token);
-    if (single && Number(single[1]) >= 1) positions.push({ type: "line", line: Number(single[1]) });
+    const match = /^\s*(\d+)(?:\s*-\s*(\d+))?\s*$/.exec(token);
+    if (!match) continue;
+    const startLine = Number(match[1]);
+    const endLine = Number(match[2] ?? match[1]);
+    if (startLine < 1 || endLine < startLine) continue;
+    positions.push(
+      match[2] ? { type: "line_range", startLine, endLine } : { type: "line", line: startLine },
+    );
   }
   return positions;
 }

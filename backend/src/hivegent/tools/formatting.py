@@ -110,20 +110,19 @@ def cap_lines(
     ('ab\\ncd', 0)
     """
     kept: list[str] = []
-    omitted = 0
     total = 0
+    iterator = iter(lines)
 
-    for line in lines:
+    for line in iterator:
         extra = len(line) + (len(sep) if kept else 0)
 
-        if omitted or (kept and max_chars is not None and total + extra > max_chars):
-            omitted += 1
-            continue
+        if kept and max_chars is not None and total + extra > max_chars:
+            return sep.join(kept), 1 + sum(1 for _ in iterator)
 
         kept.append(line)
         total += extra
 
-    return sep.join(kept), omitted
+    return sep.join(kept), 0
 
 
 def hint_suffix(hints: Sequence[str]) -> str:

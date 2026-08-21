@@ -306,14 +306,6 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     [fetchConversations, handleConversationSelect],
   );
 
-  const handleNavigateToPrevious = useCallback(
-    (previousId: string) => {
-      clearFilter();
-      void navigate({ to: "/conversations/$id", params: { id: previousId } });
-    },
-    [clearFilter, navigate],
-  );
-
   // Server-side transcription backs the recording fallback for browsers
   // without a working Web Speech API; only offered when an STT model is
   // configured on the backend.
@@ -364,7 +356,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
               isLoadingHistory={isLoadingHistory}
               compactedFrom={compactedFrom}
               editingId={editingId}
-              onNavigatePrevious={handleNavigateToPrevious}
+              onNavigatePrevious={handleConversationSelect}
               onRetry={handleRetry}
               onDismissError={() => {
                 clearCompactionError();

@@ -606,8 +606,6 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
                 break
             selected.append(line)
             char_count += len(line) + 1
-        end = start + len(selected) - 1
-
         # Render before building the result: the formatted budget decides how
         # many of the selected lines the model actually sees, and the range
         # reported has to be the one it was shown, or the follow-up offset
@@ -618,7 +616,8 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         )
         if dropped:
             selected = selected[: len(selected) - dropped]
-            end = start + len(selected) - 1
+
+        end = start + len(selected) - 1
 
         result = DocumentRange(
             start_line=start,

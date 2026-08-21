@@ -600,33 +600,25 @@ class InstructionsSnapshot(BaseModel):
     text: str = Field(description="The fully composed system prompt")
 
 
-class ServerConversation(BaseModel):
-    """A conversation's active path as the database holds it.
-
-    Server-authoritative and complete: the persisted messages plus the system
-    prompts they were actually sent under, which exist nowhere else (the Vercel
-    AI stream never carries instructions to the browser).
-    """
+class _ArchivedConversation(BaseModel):
+    """Fields shared by both views of an archived conversation."""
 
     id: str | None = None
     title: str | None = None
     messages: list[UIMessage] = Field(default_factory=list)
+
+
+class ServerConversation(_ArchivedConversation):
+    """A persisted active path and the system prompts it ran under."""
+
     instructions: list[InstructionsSnapshot] = Field(default_factory=list)
 
 
-class ClientConversation(BaseModel):
-    """A conversation exactly as the browser tab held it.
+class ClientConversation(_ArchivedConversation):
+    """A conversation exactly as the browser tab held it, errors included."""
 
-    The visible active path, including a turn that errored and never reached
-    the database, which is why it is exported beside the server's copy rather
-    than derived from it.
-    """
-
-    id: str | None = None
-    title: str | None = None
     exported_at: str | None = None
     error: str | None = None
-    messages: list[UIMessage] = Field(default_factory=list)
 
 
 class ConversationArchive(BaseModel):
@@ -650,13 +642,11 @@ class ConversationArchive(BaseModel):
         """The messages to restore and the title to restore them under."""
         for half in (self.backend, self.frontend):
             if half is not None and half.messages:
-                return half.messages, half.title or self._other_title(half)
+                other = self.frontend if half is self.backend else self.backend
+
+                return half.messages, half.title or (other.title if other else None)
 
         return [], None
-
-    def _other_title(self, half: ServerConversation | ClientConversation) -> str | None:
-        other = self.frontend if half is self.backend else self.backend
-        return other.title if other is not None else None
 
 
 class CompactConversationResponse(BaseModel):

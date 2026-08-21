@@ -30,13 +30,8 @@ export const useDraftHandoffStore = create<DraftHandoffState>((set, get) => ({
   handoffs: {},
   stash: (id, handoff) => set((state) => ({ handoffs: { ...state.handoffs, [id]: handoff } })),
   take: (id) => {
-    const taken = get().handoffs[id];
-    if (taken) {
-      set((state) => {
-        const { [id]: _removed, ...rest } = state.handoffs;
-        return { handoffs: rest };
-      });
-    }
+    const { [id]: taken, ...handoffs } = get().handoffs;
+    if (taken) set({ handoffs });
     return taken;
   },
 }));

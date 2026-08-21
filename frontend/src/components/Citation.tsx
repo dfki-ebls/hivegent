@@ -36,22 +36,19 @@ interface Evidence {
   lines: { number: number; text: string }[];
 }
 
+type OpenTarget = "document" | number | null;
+
 function evidenceFromChunk(chunk: FetchedChunk, position: LinePosition): Evidence | null {
   const contentLines = chunk.content.split("\n");
-
-  let chunkStart: number;
-  let chunkEnd: number;
-
-  if (isLinePosition(chunk.position)) {
-    [chunkStart, chunkEnd] = lineBounds(chunk.position);
-  } else if (chunk.position.type === "full_document") {
-    chunkStart = 1;
-    chunkEnd = contentLines.length;
-  } else {
-    return null;
-  }
+  const chunkBounds: [number, number] | undefined = isLinePosition(chunk.position)
+    ? lineBounds(chunk.position)
+    : chunk.position.type === "full_document"
+      ? [1, contentLines.length]
+      : undefined;
+  if (!chunkBounds) return null;
 
   const [start, end] = lineBounds(position);
+  const [chunkStart, chunkEnd] = chunkBounds;
   if (start < chunkStart || end > chunkEnd) return null;
 
   const firstIndex = start - chunkStart;
@@ -82,17 +79,15 @@ function EvidenceDialog({
   filename,
   position,
   evidence,
-  open,
-  onOpenChange,
+  onClose,
 }: {
   filename: string;
   position: LinePosition;
   evidence: Evidence[];
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  onClose: () => void;
 }) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="flex max-h-[80vh] max-w-3xl flex-col">
         <DialogHeader>
           <DialogTitle>{filename}</DialogTitle>
@@ -126,8 +121,7 @@ function EvidenceDialog({
 }
 
 export function Citation({ src, line }: CitationProps) {
-  const [currentDocumentOpen, setCurrentDocumentOpen] = useState(false);
-  const [evidenceIndex, setEvidenceIndex] = useState<number | null>(null);
+  const [open, setOpen] = useState<OpenTarget>(null);
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   // Subscribe to this document's entry rather than the whole map: its identity
   // changes only when the document itself gains a chunk, so a tool output for
@@ -160,7 +154,7 @@ export function Citation({ src, line }: CitationProps) {
           <button
             type="button"
             className="flex cursor-pointer items-center gap-1 rounded-full hover:text-accent-foreground"
-            onClick={() => setCurrentDocumentOpen(true)}
+            onClick={() => setOpen("document")}
           >
             <FileTextIcon className="h-3 w-3 shrink-0" />
             {displayName}
@@ -179,7 +173,7 @@ export function Citation({ src, line }: CitationProps) {
                 type="button"
                 disabled={!available}
                 className="rounded-full bg-background/60 px-1.5 enabled:cursor-pointer enabled:hover:bg-accent disabled:text-muted-foreground"
-                onClick={() => setEvidenceIndex(index)}
+                onClick={() => setOpen(index)}
               >
                 {chunkPositionLabel(position)}
               </button>
@@ -192,18 +186,15 @@ export function Citation({ src, line }: CitationProps) {
           </Tooltip>
         );
       })}
-      {currentDocumentOpen && (
-        <DocumentDialog open onOpenChange={setCurrentDocumentOpen} filename={src} />
+      {open === "document" && (
+        <DocumentDialog open onOpenChange={(next) => !next && setOpen(null)} filename={src} />
       )}
-      {evidenceIndex !== null && (
+      {typeof open === "number" && (
         <EvidenceDialog
           filename={src}
-          position={positions[evidenceIndex]}
-          evidence={evidence[evidenceIndex]}
-          open
-          onOpenChange={(open) => {
-            if (!open) setEvidenceIndex(null);
-          }}
+          position={positions[open]}
+          evidence={evidence[open]}
+          onClose={() => setOpen(null)}
         />
       )}
     </Badge>

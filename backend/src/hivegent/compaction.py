@@ -33,7 +33,6 @@ class CompactionResult:
 
     new_conversation_id: str
     summary: str
-    original_conversation_id: str
 
 
 async def compact_conversation(
@@ -100,5 +99,4 @@ async def compact_conversation(
     return CompactionResult(
         new_conversation_id=new_id,
         summary=summary,
-        original_conversation_id=conversation_id,
     )
