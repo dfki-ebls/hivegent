@@ -4,12 +4,14 @@ Block separators and line numbering live here so they stay consistent
 wherever text is assembled for a model to read.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 
 __all__ = [
     "BLOCK_SEP",
     "GROUP_SEP",
     "annotate_lines",
+    "cap_lines",
+    "iter_annotated",
     "number_line",
     "truncate_block",
     "truncate_line",
@@ -80,6 +82,67 @@ def truncate_block(text: str, max_line_chars: int | None = None) -> str:
     return "\n".join(truncate_line(line, max_line_chars) for line in text.splitlines())
 
 
+def cap_lines(
+    lines: Iterable[str],
+    max_chars: int | None = None,
+    sep: str = "\n",
+) -> tuple[str, int]:
+    """Join *lines* with *sep* while the total stays within *max_chars*.
+
+    Returns the joined text and how many lines were left out.  Once the
+    budget is reached every remaining line is dropped, so what is kept is a
+    contiguous prefix rather than whichever later lines happened to fit, and
+    a caller can resume from exactly where the output stops.  The first line
+    is always kept, however long it is: a lone oversized line tells the
+    reader more than an empty result with a notice.
+
+    This is a different axis from :func:`truncate_line`.  That one bounds a
+    single runaway line; this one bounds what a whole tool return spends of
+    the model's context, which line numbers and markup add to on top of the
+    content the tool selected.
+
+    >>> cap_lines(["ab", "cd", "ef"], 5)
+    ('ab\\ncd', 1)
+    >>> cap_lines(["abcdef"], 3)
+    ('abcdef', 0)
+    >>> cap_lines(["ab", "cd"])
+    ('ab\\ncd', 0)
+    """
+    kept: list[str] = []
+    omitted = 0
+    total = 0
+
+    for line in lines:
+        extra = len(line) + (len(sep) if kept else 0)
+
+        if omitted or (kept and max_chars is not None and total + extra > max_chars):
+            omitted += 1
+            continue
+
+        kept.append(line)
+        total += extra
+
+    return sep.join(kept), omitted
+
+
+def iter_annotated(
+    lines: Iterable[str],
+    start_line: int = 1,
+    max_line_chars: int | None = None,
+) -> Iterator[str]:
+    """Yield each of *lines* numbered from *start_line*, clipped per line.
+
+    The line-at-a-time form of :func:`annotate_lines`, for callers that feed
+    the result to :func:`cap_lines` and need to know how many lines the
+    budget dropped.
+
+    >>> list(iter_annotated(["a", "b"], start_line=4))
+    ['4: a', '5: b']
+    """
+    for i, line in enumerate(lines):
+        yield number_line(start_line + i, truncate_line(line, max_line_chars))
+
+
 def annotate_lines(
     lines: Iterable[str],
     start_line: int = 1,
@@ -91,13 +154,11 @@ def annotate_lines(
     range and has to guess which line a sentence is on, producing off-by-one
     citations.  When *max_line_chars* is set, each line is first clipped by
     :func:`truncate_line` so one very long line cannot flood the context.
+    :func:`cap_lines` is the counterpart budget on the output as a whole.
 
     >>> annotate_lines(["a", "b"], start_line=4)
     '4: a\\n5: b'
     >>> annotate_lines(["abcdef"], max_line_chars=3)
     '1: ab…'
     """
-    return "\n".join(
-        number_line(start_line + i, truncate_line(line, max_line_chars))
-        for i, line in enumerate(lines)
-    )
+    return "\n".join(iter_annotated(lines, start_line, max_line_chars))

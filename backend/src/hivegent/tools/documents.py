@@ -16,6 +16,7 @@ from ..humanize import pluralize
 from .base import (
     WORKSPACE_PATH_HINT,
     WORKSPACE_SCOPE_HINT,
+    FullLinesArg,
     IncludeIgnoredArg,
     SearchPath,
     SyncPathTool,
@@ -27,7 +28,7 @@ from .base import (
     resolve_file_or_retry,
     sidecar_hint,
 )
-from .formatting import annotate_lines
+from .formatting import cap_lines, iter_annotated
 
 __all__ = [
     "DocumentFilePathArg",
@@ -505,16 +506,23 @@ class GlobDocumentsTool(SyncPathTool[list[str]]):
 class ReadDocumentTool(SyncPathTool[DocumentRange]):
     """Read a document's content as a line range with line numbers.
 
-    ``max_line_chars`` truncates each numbered line in the formatted
-    output so a single very long line — a base64-embedded image, a
-    minified bundle — cannot flood the model context, while ``max_chars``
-    bounds the window as a whole.  The structured ``content`` keeps the
-    untruncated lines for the frontend.
+    Three budgets sit on different axes.  ``max_chars`` bounds the window
+    of content selected, ``max_line_chars`` clips each numbered line so a
+    single very long line — a base64-embedded image, a minified bundle, a
+    wide markdown table row — cannot flood the model context, and
+    ``max_formatted_chars`` bounds the rendered output as a whole, which the
+    other two do not: line numbers and markup are added on top, and a window
+    that fits the content budget can still cost the model most of a turn.
+    ``full_lines`` opts out of the per-line clip for content whose tail
+    carries meaning; the whole-output budget then returns fewer lines rather
+    than more text.  The structured ``content`` keeps the lines the model was
+    shown, untruncated, for the frontend.
     """
 
     default_lines: int = 2000
     max_chars: int = 100_000
     max_line_chars: int = 2000
+    max_formatted_chars: int = 50_000
 
     @override
     def __call__(
@@ -522,6 +530,7 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         file_path: DocumentFilePathArg,
         offset: DocumentOffsetArg = 1,
         limit: DocumentLimitArg = None,
+        full_lines: FullLinesArg = False,
     ) -> ToolOutput[DocumentRange]:
         """Read a document's content.
 
@@ -529,7 +538,9 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         each prefixed with its line number.  When ``limit`` is omitted the
         tool reads a default window and reports how many lines remain so
         the caller can issue a follow-up with a higher ``offset``.  The
-        output is also clamped by a per-call character budget.  A file
+        output is also clamped by a per-call character budget.  Long lines
+        are clipped unless ``full_lines`` is set, and the output says when
+        that happened so the caller can ask for them whole.  A file
         stored in a legacy encoding is decoded transparently, with the
         source encoding named next to the hash.
         """
@@ -597,6 +608,18 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
             char_count += len(line) + 1
         end = start + len(selected) - 1
 
+        # Render before building the result: the formatted budget decides how
+        # many of the selected lines the model actually sees, and the range
+        # reported has to be the one it was shown, or the follow-up offset
+        # would skip whatever did not fit.
+        line_cap = None if full_lines else self.max_line_chars
+        body, dropped = cap_lines(
+            iter_annotated(selected, start, line_cap), self.max_formatted_chars
+        )
+        if dropped:
+            selected = selected[: len(selected) - dropped]
+            end = start + len(selected) - 1
+
         result = DocumentRange(
             start_line=start,
             end_line=end,
@@ -604,13 +627,20 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
             content="\n".join(selected),
             content_hash=file_hash,
         )
-        annotated = annotate_lines(selected, start, self.max_line_chars)
+
+        # A clipped line is the one truncation the reader cannot detect from
+        # the output alone, so it is named: a wide table's trailing columns
+        # are gone with nothing but an ellipsis to show for it.
+        hints: list[str] = []
+        if line_cap is not None and any(len(line) > line_cap for line in selected):
+            hints.append(
+                f"lines clipped at {line_cap} chars, "
+                "pass full_lines=true to read them whole"
+            )
         remaining = total - end
-        suffix = (
-            f"\n\n[{remaining} more lines — call again with offset={end + 1}]"
-            if remaining > 0
-            else ""
-        )
+        if remaining > 0:
+            hints.append(f"{remaining} more lines, call again with offset={end + 1}")
+        suffix = f"\n\n[{'; '.join(hints)}]" if hints else ""
         source = decoded.source_encoding
         encoding = f", decoded from {source}" if source else ""
         return ToolOutput(
@@ -618,6 +648,6 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
             formatted=(
                 f"lines {result.start_line}-{result.end_line} of "
                 f"{result.total_lines} (hash {file_hash}{encoding}):"
-                f"\n{annotated}{suffix}"
+                f"\n{body}{suffix}"
             ),
         )

@@ -561,6 +561,40 @@ class TestReadDocumentTool:
         assert isinstance(out.data, DocumentRange)
         assert long_line in out.data.content
 
+    def test_full_lines_opts_out_of_the_per_line_clip(self, tmp_path: Path) -> None:
+        # A wide markdown table row loses its trailing columns to the clip with
+        # nothing but an ellipsis to show for it, which the reader cannot spot
+        # from the output alone: the clip is named, and full_lines undoes it.
+        row = "| " + " | ".join(f"col{i}" for i in range(200)) + " |"
+        (tmp_path / "table.md").write_text(row)
+        tool = ReadDocumentTool(paths=tmp_path, max_line_chars=80)
+
+        clipped = tool("table.md").formatted
+        assert clipped is not None
+        assert "full_lines=true" in clipped
+        assert "col199" not in clipped
+
+        whole = tool("table.md", full_lines=True).formatted
+        assert whole is not None
+        assert "col199" in whole
+        assert "full_lines=true" not in whole
+
+    def test_formatted_budget_shrinks_range_and_continuation(
+        self, tmp_path: Path
+    ) -> None:
+        # The rendered budget decides what the model actually saw, so both the
+        # reported range and the follow-up offset track it; otherwise the next
+        # call resumes past the lines that never fit.
+        (tmp_path / "doc.md").write_text("\n".join(f"line{i}" for i in range(100)))
+        tool = ReadDocumentTool(paths=tmp_path, max_formatted_chars=40)
+        out = tool("doc.md")
+
+        assert isinstance(out.data, DocumentRange)
+        assert 0 < out.data.end_line < 100
+        assert out.formatted is not None
+        assert f"offset={out.data.end_line + 1}" in out.formatted
+        assert out.data.content.splitlines()[-1] == f"line{out.data.end_line - 1}"
+
     # --- offset / limit tests ---
 
     def test_correct_range(self, tmp_path: Path) -> None:

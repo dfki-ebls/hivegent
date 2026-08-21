@@ -784,9 +784,10 @@ class NetworkSettings(BaseModel):
     ``webfetch_*`` knobs only apply to the ``web_fetch`` agent tool:
     ``webfetch_max_response_bytes`` caps how many raw bytes are
     downloaded per page, ``webfetch_max_chars`` caps the extracted text
-    handed to the model, and ``webfetch_max_line_chars`` truncates each
+    handed to the model, ``webfetch_max_line_chars`` truncates each
     numbered line so a data-URI or minified line cannot flood the
-    context.  ``web_search`` queries the official
+    context, and ``webfetch_max_formatted_chars`` bounds the rendered
+    output as a whole, which neither of the other two does.  ``web_search`` queries the official
     Wikipedia API directly — no scraping, so no bot detection or rate
     limits — and only ever returns ``wikipedia.org`` links, matching the
     default ``web_urls`` allow list.  ``websearch_language`` selects the
@@ -803,6 +804,7 @@ class NetworkSettings(BaseModel):
     webfetch_max_response_bytes: int = 5_000_000
     webfetch_max_chars: int = 100_000
     webfetch_max_line_chars: int = 2000
+    webfetch_max_formatted_chars: int = 50_000
     webfetch_max_redirects: int = 5
     websearch_language: str = "en"
     contact_email: str = ""

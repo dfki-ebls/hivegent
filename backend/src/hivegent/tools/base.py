@@ -31,6 +31,7 @@ __all__ = [
     "AsyncTool",
     "BinaryAttachment",
     "CallInfo",
+    "FullLinesArg",
     "IncludeIgnoredArg",
     "PathTool",
     "SearchPath",
@@ -105,6 +106,19 @@ IncludeIgnoredArg = Annotated[
             "When true, include common build and vendor directories "
             "(node_modules, .git, dist, build, .next, coverage, "
             "__pycache__) that are skipped by default."
+        ),
+    ),
+]
+
+FullLinesArg = Annotated[
+    bool,
+    Field(
+        description=(
+            "When true, return every line in full instead of clipping it to a "
+            "per-line character budget. Use it for content whose tail carries "
+            "meaning, such as a wide markdown table whose trailing columns "
+            "would otherwise be cut off. The whole-output budget still "
+            "applies, so expect fewer lines per call, not more text."
         ),
     ),
 ]

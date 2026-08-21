@@ -18,7 +18,7 @@ from cbrkit.typing import AsyncRetrieverFunc
 from pydantic import Field
 
 from .base import AsyncTool, ToolOutput
-from .formatting import BLOCK_SEP, annotate_lines, truncate_block
+from .formatting import BLOCK_SEP, annotate_lines, cap_lines, truncate_block
 
 __all__ = [
     "SearchMaxResultsArg",
@@ -91,6 +91,9 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
         max_line_chars: Per-line truncation cap for the formatted output,
             guarding the context against a chunk carrying a base64-embedded
             image or other very long line.
+        max_formatted_chars: Whole-output budget for the formatted results,
+            dropping trailing results the per-line cap cannot bound: chunk
+            size is a chunker setting, so N results have no ceiling here.
     """
 
     storage_factory: Callable[[], Awaitable[VectorStorage]] | None = None
@@ -101,6 +104,7 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
     ) = None
     candidate_multiplier: int = 1
     max_line_chars: int = 2000
+    max_formatted_chars: int = 50_000
 
     @override
     async def __call__(
@@ -123,7 +127,10 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
         if not final:
             return ToolOutput(data=final, formatted="(no results)")
         return ToolOutput(
-            data=final, formatted=_format_results(final, self.max_line_chars)
+            data=final,
+            formatted=_format_results(
+                final, self.max_line_chars, self.max_formatted_chars
+            ),
         )
 
     async def _search(
@@ -175,15 +182,18 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
             return results
 
 
-def _format_results(results: Sequence[Any], max_line_chars: int) -> str:
+def _format_results(
+    results: Sequence[Any], max_line_chars: int, max_formatted_chars: int | None = None
+) -> str:
     """Render search results as a human/LLM-readable string block.
 
     Accepts both :class:`SearchResult` and ``RetrievedChunk`` via attribute
     lookup; either is a valid downstream of :class:`VectorSearchTool`.
     *max_line_chars* truncates each line so a long line in a chunk cannot
-    flood the context.
+    flood the context, and *max_formatted_chars* drops trailing results once
+    the rendered block exceeds the budget.
     """
-    lines: list[str] = []
+    blocks: list[str] = []
     for i, r in enumerate(results, 1):
         key = getattr(r, "key", None) or getattr(r, "filename", "?")
         chunk_idx = getattr(r, "chunk_index", None)
@@ -201,5 +211,12 @@ def _format_results(results: Sequence[Any], max_line_chars: int) -> str:
         # so it pins the top hit to 100% and the worst to 0% even when every
         # result is off-topic, which misleads the model. Rank carries the
         # ordering without fabricating an absolute relevance magnitude.
-        lines.append(f"[{i}] {label}\n{text}")
-    return BLOCK_SEP.join(lines)
+        blocks.append(f"[{i}] {label}\n{text}")
+
+    body, omitted = cap_lines(blocks, max_formatted_chars, BLOCK_SEP)
+    if not omitted:
+        return body
+    return (
+        f"{body}{BLOCK_SEP}({omitted} of {len(blocks)} results omitted, "
+        "narrow the query or lower max_results)"
+    )

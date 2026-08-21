@@ -15,7 +15,7 @@ from pydantic import Field
 
 from ..security import UnsafeUrlError, UrlPolicy, create_safe_async_client
 from .base import AsyncTool, ToolOutput, ToolRetry
-from .formatting import BLOCK_SEP, annotate_lines
+from .formatting import BLOCK_SEP, cap_lines, iter_annotated
 
 __all__ = [
     "WebFetch",
@@ -205,14 +205,17 @@ class WebFetch(AsyncTool[WebPage]):
     ``max_response_bytes`` caps how many raw bytes are downloaded per
     page and ``max_chars`` caps the extracted text.  ``max_line_chars``
     truncates each numbered line so a data-URI or minified line cannot
-    flood the context.  The safe transport validates the requested URL
-    and every redirect hop against ``policy``.
+    flood the context, and ``max_formatted_chars`` bounds the rendered
+    output as a whole, which neither of the other two does.  The safe
+    transport validates the requested URL and every redirect hop against
+    ``policy``.
     """
 
     timeout_seconds: float = 10.0
     max_response_bytes: int = 5_000_000
     max_chars: int = 100_000
     max_line_chars: int = 2000
+    max_formatted_chars: int = 50_000
     max_redirects: int = 5
     user_agent: str = field(default_factory=build_user_agent)
     policy: UrlPolicy = field(default_factory=UrlPolicy)
@@ -296,12 +299,9 @@ class WebFetch(AsyncTool[WebPage]):
         if not content:
             return ToolOutput(data=page, formatted="(no readable text on this page)")
         header = f"{title} — {url}" if title else url
-        suffix = "\n\n[truncated]" if truncated else ""
-        return ToolOutput(
-            data=page,
-            formatted=(
-                f"{header}\n"
-                f"{annotate_lines(content.splitlines(), 1, self.max_line_chars)}"
-                f"{suffix}"
-            ),
+        rendered, omitted = cap_lines(
+            iter_annotated(content.splitlines(), 1, self.max_line_chars),
+            self.max_formatted_chars,
         )
+        suffix = "\n\n[truncated]" if truncated or omitted else ""
+        return ToolOutput(data=page, formatted=f"{header}\n{rendered}{suffix}")

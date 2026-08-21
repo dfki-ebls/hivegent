@@ -14,13 +14,14 @@ from ..subprocesses import rg_search
 from .base import (
     WORKSPACE_SCOPE_HINT,
     AsyncPathTool,
+    FullLinesArg,
     IncludeIgnoredArg,
     SearchPath,
     ToolOutput,
     entry_visible,
     excluded_dirs,
 )
-from .formatting import BLOCK_SEP, GROUP_SEP, number_line, truncate_line
+from .formatting import BLOCK_SEP, GROUP_SEP, cap_lines, number_line, truncate_line
 
 __all__ = [
     "GrepCaseSensitiveArg",
@@ -225,6 +226,7 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
         literal: GrepLiteralArg = False,
         output_mode: GrepOutputModeArg = "content",
         include_ignored: IncludeIgnoredArg = False,
+        full_lines: FullLinesArg = False,
     ) -> ToolOutput[list[GrepMatch]]:
         """Search documents for a pattern.
 
@@ -274,30 +276,30 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
             lines = [f"{fn}: {n}" for fn, n in sorted(counts.items())[:max_results]]
             return ToolOutput(data=all_matches, formatted="\n".join(lines))
         capped = all_matches[:max_results]
-        return ToolOutput(data=capped, formatted=self._format_matches(capped))
+        return ToolOutput(
+            data=capped, formatted=self._format_matches(capped, full_lines)
+        )
 
-    def _format_matches(self, matches: list[GrepMatch]) -> str:
+    def _format_matches(self, matches: list[GrepMatch], full_lines: bool = False) -> str:
         # Budget at the line level rather than the block level: ripgrep can
         # merge many nearby hits into one block whose formatted form dwarfs
         # the budget, and dropping it whole would print nothing but a notice.
         total_lines = sum(len(m.lines) for m in matches)
-        out: list[str] = []
-        total = 0
-        for line in self._iter_lines(matches):
-            if total + len(line) > self.max_formatted_chars:
-                break
-            out.append(line)
-            total += len(line)
-        omitted = total_lines - len(out)
-        if omitted:
-            notice = (
-                f"({omitted} of {total_lines} lines omitted, "
-                f"reduce context or narrow the pattern/glob)"
-            )
-            out.append(f"{BLOCK_SEP}{notice}" if out else notice)
-        return "".join(out)
+        line_cap = None if full_lines else self.max_line_chars
+        body, omitted = cap_lines(
+            self._iter_lines(matches, line_cap), self.max_formatted_chars, ""
+        )
+        if not omitted:
+            return body
+        notice = (
+            f"({omitted} of {total_lines} lines omitted, "
+            f"reduce context or narrow the pattern/glob)"
+        )
+        return f"{body}{BLOCK_SEP}{notice}"
 
-    def _iter_lines(self, matches: list[GrepMatch]) -> Iterator[str]:
+    def _iter_lines(
+        self, matches: list[GrepMatch], max_line_chars: int | None
+    ) -> Iterator[str]:
         """Yield each match line with the separator that precedes it.
 
         The document path is emitted once as a heading; every line then
@@ -320,7 +322,7 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
                 mark = ":" if line.is_match else "-"
                 body = number_line(
                     line.line_number,
-                    truncate_line(line.text, self.max_line_chars),
+                    truncate_line(line.text, max_line_chars),
                     mark,
                 )
                 yield f"{prefix}{body}"
