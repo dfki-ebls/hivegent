@@ -113,6 +113,54 @@ class TestQueryTableTool:
         assert "4 of 12 columns shown" in out.formatted
         assert "c11" not in out.formatted
 
+    async def test_text_columns_are_retyped_when_every_value_parses(
+        self, tmp_path: Path
+    ) -> None:
+        # A spreadsheet hands out numbers and dates as text, which is what
+        # otherwise turns a plain SUM or a date comparison into a dtype error.
+        book = openpyxl.Workbook()
+        sheet = book.active
+        assert sheet is not None
+        sheet.append(["zip", "amount", "day"])
+        sheet.append(["01067", "10.5", "2024-01-02"])
+        sheet.append(["10115", "20", "2024-02-03"])
+        book.save(tmp_path / "typed.xlsx")
+        tool = QueryTableTool(paths=tmp_path)
+
+        out = await tool(
+            "typed.xlsx", "SELECT SUM(amount) AS s FROM t WHERE day > '2024-01-15'"
+        )
+        assert out.data.rows == (("20.0",),)
+
+        # A zero-padded value is an identifier, so the column stays text.
+        schema = await tool("typed.xlsx")
+        assert schema.data.dtypes == ("String", "Float64", "Date")
+        assert [column.name for column in schema.data.text_columns] == [
+            "amount",
+            "day",
+        ]
+
+    async def test_mixed_column_is_reported_before_a_query_fails_over_it(
+        self, tmp_path: Path
+    ) -> None:
+        # One "N/A" keeps the column text; naming the share that parses is
+        # what lets the first query wrap it in TRY_CAST rather than the second.
+        rows = "\n".join(f"r{i},{i if i != 2 else 'N/A'}" for i in range(4))
+        (tmp_path / "mixed.csv").write_text(f"name,val\n{rows}")
+        tool = QueryTableTool(paths=tmp_path)
+        out = await tool("mixed.csv")
+
+        assert out.data.text_columns[0].name == "val"
+        assert (out.data.text_columns[0].parsed, out.data.text_columns[0].total) == (
+            3,
+            4,
+        )
+        assert out.formatted is not None
+        assert "val (3 of 4 parse as Int64)" in out.formatted
+
+        with pytest.raises(ToolRetry, match="TRY_CAST"):
+            await tool("mixed.csv", "SELECT SUM(val) FROM t")
+
     async def test_non_tabular_file_is_refused(self, tmp_path: Path) -> None:
         (tmp_path / "notes.md").write_text("plain prose")
         tool = QueryTableTool(paths=tmp_path)
