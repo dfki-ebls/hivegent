@@ -33,6 +33,14 @@
   Tool call IDs keep repeated reads distinct, and multiple captured versions are presented independently instead of guessing which one a citation meant.
   A line chip with no supporting tool output is disabled.
 - A document is writable exactly when it is readable as text: the write tools accept markdown descriptions and plain-text originals (regenerating the original's markdown projection through the upload pipeline) and reject binaries, which are replaced by uploading instead.
+- Tabular documents are queried, not read: `query_table` runs Polars SQL against the original CSV/TSV/Parquet/Excel file in `data/workspace/`, which is the same trade `jq` makes for JSON.
+  A spreadsheet's markdown projection is one very long line per row, so a line read spends the context on rows the question does not need and the per-line clip silently drops the trailing columns of the rows it does return.
+  The table is always addressed as `t`, so no path is interpolated into the SQL, and omitting the query returns the columns, their types, and the row count as the cheap first call.
+  `converters.TABULAR_SUFFIXES` is the one table behind the split, for the same reason `VISION_MEDIA_TYPES` is the one table behind read/read_binary: `query_table` gates on it and `read_document` points at `query_table` when a read lands on one of these, so the reader cannot silently spend the context on a table that could have been queried.
+  Excel is read through `fastexcel` (calamine), which covers `.xlsx`, `.xlsb`, and `.xls` with no extension download; a delimited file in a legacy encoding is retried once through `read_text_or_retry`, gated on `ComputeError` plus a delimited suffix, since a lazy scan only meets the offending bytes when it reaches them and every query-authoring failure is a different `PolarsError` subclass.
+  Every budget is applied before the `TableResult` is built, and only the row lines are budgeted, so the count the rows are trimmed by is exactly a row count.
+  Rows are cut on both channels, while column and cell width bind the rendering only, matching how a read trims to the lines it showed but keeps each one whole in `content`.
+  The read tools still serve the markdown projection, which is what retrieval and citation line anchors are built on.
 - A chat turn attaches images and nothing else, gated on `converters.INGESTIBLE_IMAGE_MEDIA_TYPES`, the media types every vision backend ingests identically, so no `BinaryContentMode` policy and no conversion runs on the chat's latency budget.
   Anything else belongs in a workspace, whose upload pipeline converts, chunks, and indexes it once for retrieval rather than spending context on it every turn, since an attachment is stored once but re-sent to the model on each later turn of the conversation.
   `/settings` serves the same table and the size cap to the client as `AttachmentLimits`, so the file picker refuses what the chat route would refuse and a rejection costs no round trip.

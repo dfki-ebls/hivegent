@@ -66,9 +66,10 @@ def format_document_scope(
         lines.append(
             "The user has scoped this conversation to a specific set of "
             "documents. Your document tools (list_documents, glob_documents, "
-            "grep, read_document, search) only see what is listed here, and "
-            "everything else in the workspace is hidden. Treat this selection "
-            "as the documents the user is referring to with phrases like "
+            "grep, read_document, query_table, search) only see what is "
+            "listed here, and everything else in the workspace is hidden. "
+            "Treat this selection as the documents the user is referring to "
+            "with phrases like "
             '"these documents" or "the two files".'
         )
         lines.append("")
@@ -135,6 +136,7 @@ Guidelines:
 - Start with list_documents (to browse) or glob_documents (to match filenames) to see what is available.
 - Use grep and search tools to find relevant content.
 - Use read_document to read specific sections when needed; pass `offset` and `limit` to page through large files.
+- For a spreadsheet or CSV, use query_table rather than read_document: a SQL query returns the rows you need, where reading a table wastes the context on rows you do not and cuts off the trailing columns of every row it does return.
 - Focus on answering the specific exploration task given to you.
 - Produce a clear, structured summary of your findings.
 - Include filenames and line numbers so the caller can locate the information; quote each filename exactly as the tools return it, keeping its leading `~/` or `@<group>/` scope prefix.

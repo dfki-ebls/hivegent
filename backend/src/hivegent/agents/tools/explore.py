@@ -9,6 +9,7 @@ from ...tools import (
     GlobDocumentsTool,
     GrepTool,
     ListDocumentsTool,
+    QueryTableTool,
     ReadBinaryDocumentTool,
     ReadDocumentTool,
     VectorSearchTool,
@@ -38,6 +39,10 @@ def _read_binary_document(deps: UserDeps) -> ReadBinaryDocumentTool:
     )
 
 
+def _query_table(deps: UserDeps) -> QueryTableTool:
+    return QueryTableTool(paths=deps.search_paths())
+
+
 def _grep(deps: UserDeps) -> GrepTool:
     return GrepTool(paths=deps.search_paths())
 
@@ -56,6 +61,7 @@ register_agent_tools(
         _glob_documents,
         _read_document,
         _read_binary_document,
+        _query_table,
         _grep,
         _search,
     ],

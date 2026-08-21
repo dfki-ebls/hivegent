@@ -27,6 +27,7 @@ from .mutations import EditDocumentTool, WriteDocumentTool
 from .plan import CreatePlanTool
 from .retrieval import SearchResult, SearchType, VectorSearchTool
 from .scope import Scope
+from .table import QueryTableTool, TableResult
 from .web import WebFetch, WebPage, WebSearch, build_user_agent
 
 __all__ = [
@@ -44,6 +45,7 @@ __all__ = [
     "GrepTool",
     "JqTool",
     "ListDocumentsTool",
+    "QueryTableTool",
     "ReadBinaryDocumentTool",
     "ReadDocumentTool",
     "Scope",
@@ -51,6 +53,7 @@ __all__ = [
     "SearchPathFilterFunc",
     "SearchResult",
     "SearchType",
+    "TableResult",
     "Tool",
     "VectorSearchTool",
     "WebFetch",

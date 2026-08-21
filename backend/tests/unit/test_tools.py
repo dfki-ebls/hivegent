@@ -561,6 +561,16 @@ class TestReadDocumentTool:
         assert isinstance(out.data, DocumentRange)
         assert long_line in out.data.content
 
+    def test_tabular_file_is_pointed_at_query_table(self, tmp_path: Path) -> None:
+        # The one moment the caller finds out a line read was the wrong tool
+        # for this file is when it reads one, so the read says so.
+        (tmp_path / "sales.csv").write_text("region,amount\nEU,100")
+        tool = ReadDocumentTool(paths=tmp_path)
+        formatted = tool("sales.csv").formatted
+
+        assert formatted is not None
+        assert "query_table" in formatted
+
     def test_full_lines_opts_out_of_the_per_line_clip(self, tmp_path: Path) -> None:
         # A wide markdown table row loses its trailing columns to the clip with
         # nothing but an ellipsis to show for it, which the reader cannot spot

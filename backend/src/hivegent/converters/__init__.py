@@ -20,6 +20,7 @@ from .video import VIDEO_MEDIA_TYPES, is_video_suffix
 
 __all__ = [
     "INGESTIBLE_IMAGE_MEDIA_TYPES",
+    "TABULAR_SUFFIXES",
     "VISION_MEDIA_TYPES",
     "ConversionPipeline",
     "ConversionPipelineInfo",
@@ -29,6 +30,7 @@ __all__ = [
     "EntryProjection",
     "get_conversion_pipelines_info",
     "get_converter",
+    "is_tabular",
     "projection_for",
     "projects_verbatim",
     "resolve_auto_pipeline",
@@ -261,6 +263,28 @@ The narrowness would stop being load-bearing if the binary reader rasterised
 non-ingestible images the way it already samples video; that is a feature, not a
 simplification of this table.
 """
+
+
+TABULAR_SUFFIXES: frozenset[str] = frozenset(
+    {".csv", ".tsv", ".parquet", ".xlsx", ".xlsb", ".xls"}
+)
+"""Extensions a SQL query can be run against in place.
+
+The one table behind the read/query split, for the same reason
+:data:`VISION_MEDIA_TYPES` is the one table behind read/read_binary: the tool
+that queries these and the tool that would otherwise read them line by line
+have to agree on which files they are, or the reader silently spends the
+context on a table that could have been queried.
+
+Wider than any single converter's ``extensions``, because a projection is not
+the point: a columnar format no converter claims is still queryable, and a
+format that does earn a markdown projection is still better queried.
+"""
+
+
+def is_tabular(file_path: str) -> bool:
+    """Return whether *file_path* names a table a SQL query can be run against."""
+    return Path(file_path).suffix.lower() in TABULAR_SUFFIXES
 
 
 def vision_media_type(file_path: str) -> str | None:

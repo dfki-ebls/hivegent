@@ -4,13 +4,14 @@ Block separators and line numbering live here so they stay consistent
 wherever text is assembled for a model to read.
 """
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 
 __all__ = [
     "BLOCK_SEP",
     "GROUP_SEP",
     "annotate_lines",
     "cap_lines",
+    "hint_suffix",
     "iter_annotated",
     "number_line",
     "truncate_block",
@@ -123,6 +124,21 @@ def cap_lines(
         total += extra
 
     return sep.join(kept), omitted
+
+
+def hint_suffix(hints: Sequence[str]) -> str:
+    """Render *hints* as the bracketed note that trails a tool's output.
+
+    The one place the convention lives, so every tool that has to admit what
+    its budgets left out admits it the same way.  No hints means no note, not
+    an empty bracket.
+
+    >>> hint_suffix(["3 more lines", "pass full_lines=true"])
+    '\\n\\n[3 more lines; pass full_lines=true]'
+    >>> hint_suffix([])
+    ''
+    """
+    return f"\n\n[{'; '.join(hints)}]" if hints else ""
 
 
 def iter_annotated(

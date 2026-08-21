@@ -11,7 +11,7 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..config import content_hash, normalize_unicode
-from ..converters import vision_media_type
+from ..converters import is_tabular, vision_media_type
 from ..humanize import pluralize
 from .base import (
     WORKSPACE_PATH_HINT,
@@ -28,7 +28,7 @@ from .base import (
     resolve_file_or_retry,
     sidecar_hint,
 )
-from .formatting import cap_lines, iter_annotated
+from .formatting import cap_lines, hint_suffix, iter_annotated
 
 __all__ = [
     "DocumentFilePathArg",
@@ -632,15 +632,29 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         # the output alone, so it is named: a wide table's trailing columns
         # are gone with nothing but an ellipsis to show for it.
         hints: list[str] = []
+
+        # Reading a table one line at a time is what query_table exists to
+        # avoid, and this is the only place the caller finds that out at the
+        # moment it matters. The same table gates both tools, so neither can
+        # start disagreeing about which files these are.
+        if is_tabular(file_path):
+            hints.append(
+                "this is a tabular file, query_table runs SQL over it and "
+                "returns only the rows you ask for"
+            )
+
         if line_cap is not None and any(len(line) > line_cap for line in selected):
             hints.append(
                 f"lines clipped at {line_cap} chars, "
                 "pass full_lines=true to read them whole"
             )
+
         remaining = total - end
+
         if remaining > 0:
             hints.append(f"{remaining} more lines, call again with offset={end + 1}")
-        suffix = f"\n\n[{'; '.join(hints)}]" if hints else ""
+
+        suffix = hint_suffix(hints)
         source = decoded.source_encoding
         encoding = f", decoded from {source}" if source else ""
         return ToolOutput(
