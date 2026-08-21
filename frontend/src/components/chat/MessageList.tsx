@@ -8,6 +8,7 @@ import {
 import { Loader } from "@/components/ai-elements/loader";
 import { ChatError } from "@/components/chat/ChatError";
 import { CompactionBanner } from "@/components/chat/CompactionBanner";
+import { ContextLimitBanner } from "@/components/chat/ContextLimitBanner";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { type ChatMessage, isContextLengthError, showThinkingLoader } from "@/lib/chat/chat-utils";
 
@@ -15,12 +16,13 @@ interface MessageListProps {
   messages: ChatMessage[];
   status: ChatStatus;
   chatError: string | undefined;
-  compactionError: Error | null;
+  compactDisabled: boolean;
   isLoadingHistory: boolean;
   compactedFrom: string | null;
   editingId: string | null;
   onNavigatePrevious: (previousId: string) => void;
   onRetry: () => void;
+  onCompact: () => void;
   onDismissError: () => void;
   onSetEditing: (id: string) => void;
   onCancelEdit: () => void;
@@ -33,12 +35,13 @@ export function MessageList({
   messages,
   status,
   chatError,
-  compactionError,
+  compactDisabled,
   isLoadingHistory,
   compactedFrom,
   editingId,
   onNavigatePrevious,
   onRetry,
+  onCompact,
   onDismissError,
   onSetEditing,
   onCancelEdit,
@@ -46,11 +49,7 @@ export function MessageList({
   onRegenerate,
   onExecutePlan,
 }: MessageListProps) {
-  // Context-window overflows never reach the banner, live or persisted, since
-  // auto-compaction owns that case.
-  const showError = !!compactionError || (!!chatError && !isContextLengthError(chatError));
-  const errorMessage =
-    compactionError?.message || chatError || "An error occurred while processing your request.";
+  const contextLimitReached = isContextLengthError(chatError);
 
   // `resize="instant"`: the default spring keeps its accumulated velocity when
   // the browser clamps the scroll at the bottom, so content growing in bursts (a
@@ -83,8 +82,15 @@ export function MessageList({
           />
         ))}
         {showThinkingLoader(messages, status) && <Loader />}
-        {showError && (
-          <ChatError message={errorMessage} onRetry={onRetry} onDismiss={onDismissError} />
+        {contextLimitReached && (
+          <ContextLimitBanner
+            disabled={compactDisabled}
+            onCompact={onCompact}
+            onDismiss={onDismissError}
+          />
+        )}
+        {chatError && !contextLimitReached && (
+          <ChatError message={chatError} onRetry={onRetry} onDismiss={onDismissError} />
         )}
       </ConversationContent>
       <ConversationScrollButton />

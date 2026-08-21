@@ -11,7 +11,7 @@ import { ChatSuggestions } from "@/components/chat/Suggestions";
 import { ConversationsList } from "@/components/chat/ConversationsList";
 import { StreamingNavGuard } from "@/components/chat/StreamingNavGuard";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { useAutoCompact } from "@/hooks/chat/use-auto-compact";
+import { useCompaction } from "@/hooks/chat/use-compaction";
 import { useBuildRequestBody } from "@/hooks/chat/use-build-request-body";
 import { useChatErrorLogger } from "@/hooks/chat/use-chat-error-logger";
 import { useConversationHistory } from "@/hooks/chat/use-conversation-history";
@@ -27,7 +27,6 @@ import {
   activeChatError,
   getLastUserMessage,
   recordChatError,
-  sessionChatError,
 } from "@/lib/chat/chat-utils";
 import { type AgentMode, type ConversationArchive, type ReasoningEffort } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
@@ -99,11 +98,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   const chatError = activeChatError(messages, error);
   const visibleChatError = lastMessage?.id === dismissedErrorId ? undefined : chatError;
 
-  const { isLoadingHistory, compactedFrom, handoffError } = useConversationHistory(
-    id,
-    setMessages,
-    draft,
-  );
+  const { isLoadingHistory, compactedFrom } = useConversationHistory(id, setMessages, draft);
   const { editingId, setEditing, clear: clearEditing } = useMessageEditing(status);
 
   // Deliberately leaves the input untouched: it is also invoked while the
@@ -134,20 +129,15 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   // invisible until a retry succeeded.
   //
   // Live SDK errors do not survive the route remount, so carry their text on the
-  // last handed-off message, matching the metadata the backend stores. Because
-  // `activeChatError` then reads that back, an overflow reaches auto-compaction
-  // after the handoff and on reload too, where it previously died with the SDK
-  // error and left the conversation stuck (the banner was suppressed on the
-  // grounds that compaction owned the case, but nothing fed compaction).
+  // last handed-off message, matching the metadata the backend stores.
+  // `activeChatError` reads that back, so the recovery banner survives both the
+  // handoff and a later reload.
   useEffect(() => {
     if (!draft || !createdId || messages.length === 0) return;
     if (isStreaming) return;
     if (steeringQueue.length > 0) return;
     setCreatedId(null);
-    stashHandoff(createdId, {
-      messages: recordChatError(messages, error),
-      error: error?.message,
-    });
+    stashHandoff(createdId, recordChatError(messages, error));
     void fetchConversations();
     // Replace, not push: the transient draft URL ("/") shouldn't be a
     // back-button target once it has become a real conversation.
@@ -164,21 +154,15 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     navigate,
   ]);
 
-  const {
-    compact,
-    isCompacting,
-    error: compactionError,
-    clearError: clearCompactionError,
-  } = useAutoCompact({
+  const { compact, isCompacting } = useCompaction({
     id,
-    // The banner renders whatever the last turn failed with, reopened
-    // conversations included; compaction only ever answers this session's own
-    // failure, so it is handed the narrower of the two.
-    chatError: sessionChatError(messages, error, handoffError),
     messages,
     isLoadingHistory,
     onRetry: handleSendMessage,
   });
+
+  // One condition behind both compact buttons, the header's and the banner's.
+  const compactDisabled = status !== "ready" || isCompacting;
 
   // Reset the fetched-documents panel whenever the chat identity changes —
   // this covers every navigation path, including plain links like the header
@@ -329,7 +313,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
       <ChatHeader
         activeTab={activeTab}
         hasMessages={messages.length > 0}
-        compactDisabled={status !== "ready" || isCompacting}
+        compactDisabled={compactDisabled}
         onCompact={() => compact()}
         onNewChat={handleNewChat}
         onHistoryClick={() => fetchConversations()}
@@ -352,14 +336,14 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
               messages={messages}
               status={status}
               chatError={visibleChatError}
-              compactionError={compactionError}
+              compactDisabled={compactDisabled}
               isLoadingHistory={isLoadingHistory}
               compactedFrom={compactedFrom}
               editingId={editingId}
               onNavigatePrevious={handleConversationSelect}
               onRetry={handleRetry}
+              onCompact={() => void compact(true)}
               onDismissError={() => {
-                clearCompactionError();
                 clearError();
                 setDismissedErrorId(lastMessage?.id ?? null);
               }}

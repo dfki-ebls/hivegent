@@ -47,9 +47,8 @@ async def compact_conversation(
     model (the conversation being compacted typically overflows a small
     model's context) and creates a new conversation with the summary as
     the initial context.
-    The messages come from the client rather than the database: the turn
-    that triggers auto-compaction fails on a context-length error and is
-    never persisted, so the database copy would be stale or missing.
+    The messages come from the client rather than the database so the summary
+    reflects the exact branch and partial turn visible to the user.
 
     The new conversation links back to the original via ``compacted_from``
     only when the original is a persisted row — a freshly minted draft has

@@ -119,9 +119,8 @@ def chat_error_text(error: Exception) -> str:
     """Serialize *error* for the chat stream.
 
     Context-window overflows are prefixed with the stable
-    ``context_length_exceeded`` code so the frontend can trigger
-    auto-compaction with an exact match instead of fuzzy-matching
-    provider prose.
+    ``context_length_exceeded`` code so the frontend can offer compaction
+    with an exact match instead of fuzzy-matching provider prose.
     """
     if is_context_overflow(error):
         return f"{CONTEXT_LENGTH_EXCEEDED}: {error}"

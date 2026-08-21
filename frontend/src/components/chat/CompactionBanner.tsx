@@ -6,7 +6,7 @@ interface CompactionBannerProps {
   onNavigatePrevious: (previousId: string) => void;
 }
 
-// In-progress feedback lives in a toast (see use-auto-compact): it stays
+// In-progress feedback lives in a toast (see use-compaction): it stays
 // visible regardless of scroll position and is scoped to the conversation
 // being compacted, unlike an inline banner driven by hook-instance state.
 export function CompactionBanner({ compactedFrom, onNavigatePrevious }: CompactionBannerProps) {

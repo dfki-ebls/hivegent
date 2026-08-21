@@ -39,6 +39,7 @@ def test_content_after_tool_call_starts_a_new_text_part(
         _model_profile=model.profile,
         _response=cast(Any, None),
         _provider_name="test",
+        _model_id_namespace="test",
         _provider_url="http://localhost/v1",
     )
     choices = [

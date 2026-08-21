@@ -42,11 +42,10 @@ function lastUserIndex(messages: UIMessage[]): number {
  * A user turn in the form a resend needs: its node id plus every part that has
  * to travel again.
  *
- * The single shape both resend paths read (the error banner's retry and
- * auto-compaction's post-compaction retry), so neither can quietly carry less
- * than the user sent. Attachments are the part that used to be dropped: they
- * live only in client state until the turn succeeds, so a resend that omits
- * them loses them for good.
+ * The single shape both resend paths read (the error banner's retry and the
+ * post-compaction retry), so neither can quietly carry less than the user sent.
+ * Attachments are the part that used to be dropped: they live only in client
+ * state until the turn succeeds, so a resend that omits them loses them for good.
  */
 export interface UserTurn {
   id: string;
@@ -87,7 +86,7 @@ const CONTEXT_LENGTH_ERROR_PREFIX = "context_length_exceeded: ";
 
 /**
  * Whether a chat error means the conversation overflowed the model's context
- * window, in which case auto-compaction can recover. The backend classifies
+ * window, in which case compaction can recover. The backend classifies
  * provider errors and prefixes overflows with a stable code, so no matching
  * of provider-specific message text happens here.
  */
@@ -123,39 +122,13 @@ export type ChatMessage = UIMessage<ChatMessageMetadata>;
  * `backend/src/hivegent/server/vercel.py`) and `recordChatError` does the same
  * across the handoff. Reading the last message means a later successful turn
  * retires the error on its own. This is the single source every consumer reads,
- * so the banner and auto-compaction always agree on what failed.
+ * so every error surface agrees on what failed.
  */
 export function activeChatError(
   messages: ChatMessage[],
   liveError: Error | undefined,
 ): string | undefined {
   return liveError?.message ?? messages.at(-1)?.metadata?.chatError;
-}
-
-/**
- * The run error auto-compaction may act on, or undefined.
- *
- * Compaction is a heavy, visible recovery — it summarizes, mints a second
- * conversation, and navigates there — so it belongs to the turn that just
- * failed under the user's eyes, never to a conversation they merely reopened.
- * Both look identical to :func:`activeChatError`, since the backend persists a
- * run error onto the message and hands it back on every later read.
- *
- * The origin is what separates them, and only two things carry one from this
- * session: the SDK's live error, and the error the draft handed to the
- * conversation it minted (`handoffError`), whose remount would otherwise drop
- * it. Anything else on the last message is history. A later successful turn
- * retires the metadata, so this goes quiet on its own.
- */
-export function sessionChatError(
-  messages: ChatMessage[],
-  liveError: Error | undefined,
-  handoffError: string | undefined,
-): string | undefined {
-  const active = activeChatError(messages, liveError);
-  if (!active) return undefined;
-
-  return liveError || active === handoffError ? active : undefined;
 }
 
 /**
@@ -172,22 +145,4 @@ export function recordChatError(messages: ChatMessage[], error: Error | undefine
     ...message,
     metadata: { ...message.metadata, chatError: error.message },
   });
-}
-
-/**
- * Whether compacting the conversation could plausibly resolve an overflow.
- *
- * Compaction summarizes everything before the last user message and then
- * re-sends that message. It can only free up room when there is a prior user
- * turn to compress: a lone oversized turn (a huge pasted file, a request that
- * pulls in too much context) just overflows again, and a freshly compacted
- * conversation starts with only its summary plus one new turn. Requiring a
- * second user turn stops both from looping.
- */
-export function canCompact(messages: UIMessage[]): boolean {
-  let userTurns = 0;
-  for (const message of messages) {
-    if (message.role === "user" && ++userTurns >= 2) return true;
-  }
-  return false;
 }

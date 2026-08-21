@@ -4,15 +4,11 @@ import {
   type ChatMessage,
   activeChatError,
   adoptMessageNodeId,
-  canCompact,
   getLastUserMessage,
   isContextLengthError,
   recordChatError,
-  sessionChatError,
   showThinkingLoader,
 } from "@/lib/chat/chat-utils";
-
-const OVERFLOW = "context_length_exceeded: too long";
 
 const image: ChatMessage["parts"][number] = {
   type: "file",
@@ -73,22 +69,6 @@ describe("showThinkingLoader", () => {
   it("hides the loader once the turn is ready", () => {
     const parts: ChatMessage["parts"] = [{ type: "text", text: "done", state: "done" }];
     expect(showThinkingLoader(assistant(parts), "ready")).toBe(false);
-  });
-});
-
-describe("canCompact", () => {
-  it("blocks a lone oversized user turn", () => {
-    expect(canCompact([msg("user", "huge file")])).toBe(false);
-  });
-
-  it("blocks a freshly compacted conversation (summary + one new turn)", () => {
-    expect(canCompact([msg("assistant", "summary"), msg("user", "huge file")])).toBe(false);
-  });
-
-  it("allows compaction once there is a prior user turn to compress", () => {
-    expect(
-      canCompact([msg("user", "first"), msg("assistant", "reply"), msg("user", "second")]),
-    ).toBe(true);
   });
 });
 
@@ -173,34 +153,5 @@ describe("getLastUserMessage", () => {
   it("has nothing to resend for an empty message", () => {
     expect(getLastUserMessage([{ id: "u1", role: "user", parts: [] }])).toBeUndefined();
     expect(getLastUserMessage([])).toBeUndefined();
-  });
-});
-
-describe("sessionChatError", () => {
-  const failed: ChatMessage[] = [
-    {
-      id: "u1",
-      role: "user",
-      parts: [{ type: "text", text: "q" }],
-      metadata: { chatError: OVERFLOW },
-    },
-  ];
-
-  it("ignores a failure that was only loaded from history", () => {
-    // Reopening the conversation must not summarize it and navigate away.
-    expect(sessionChatError(failed, undefined, undefined)).toBeUndefined();
-  });
-
-  it("reports a failure this tab just streamed", () => {
-    expect(sessionChatError(failed, new Error(OVERFLOW), undefined)).toBe(OVERFLOW);
-  });
-
-  it("reports the failure the draft handed to the conversation it minted", () => {
-    expect(sessionChatError(failed, undefined, OVERFLOW)).toBe(OVERFLOW);
-  });
-
-  it("goes quiet once a later turn retires the error", () => {
-    const recovered = [...failed, msg("assistant", "all good")];
-    expect(sessionChatError(recovered, undefined, OVERFLOW)).toBeUndefined();
   });
 });

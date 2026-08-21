@@ -73,6 +73,7 @@ Past conversations are listed in the sidebar with their titles and timestamps.
 - Export a conversation to a file and import it again later.
 
 When a conversation grows very long, use Compact to summarize the earlier history so it keeps fitting into the model's context.
+If the model reaches its context limit, a banner offers to compact the conversation and retry the last message, including after reopening an older conversation.
 
 ## Tuning the assistant
 

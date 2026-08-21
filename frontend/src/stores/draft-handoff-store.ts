@@ -2,33 +2,24 @@ import type { ChatMessage } from "@/lib/chat/chat-utils";
 import { create } from "zustand";
 
 /**
- * The draft turn a freshly minted conversation inherits on the remount.
- *
- * `error` is the run error as the SDK reported it live, kept apart from the
- * copy `recordChatError` writes into the messages: the metadata renders the
- * banner, while this says the failure belongs to this session rather than to
- * loaded history — the one thing auto-compaction may act on.
- */
-export interface DraftHandoff {
-  messages: ChatMessage[];
-  error?: string;
-}
-
-/**
  * Hands the first turn of a freshly minted conversation from the draft chat
  * to the `/conversations/$id` route it navigates to. Seeding the messages
  * locally lets the destination skip the history fetch, so the just-streamed
  * turn never flashes through a loading state on the remount.
+ *
+ * A run error travels inside the messages' own metadata (`recordChatError`),
+ * so the destination renders the same recovery UI as a conversation loaded
+ * from history.
  */
 interface DraftHandoffState {
-  handoffs: Record<string, DraftHandoff>;
-  stash: (id: string, handoff: DraftHandoff) => void;
-  take: (id: string) => DraftHandoff | undefined;
+  handoffs: Record<string, ChatMessage[]>;
+  stash: (id: string, messages: ChatMessage[]) => void;
+  take: (id: string) => ChatMessage[] | undefined;
 }
 
 export const useDraftHandoffStore = create<DraftHandoffState>((set, get) => ({
   handoffs: {},
-  stash: (id, handoff) => set((state) => ({ handoffs: { ...state.handoffs, [id]: handoff } })),
+  stash: (id, messages) => set((state) => ({ handoffs: { ...state.handoffs, [id]: messages } })),
   take: (id) => {
     const { [id]: taken, ...handoffs } = get().handoffs;
     if (taken) set({ handoffs });

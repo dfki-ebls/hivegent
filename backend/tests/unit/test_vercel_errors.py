@@ -5,8 +5,8 @@ captured body.  The two overflows that surface as an exception instead are
 raised by pydantic-ai, which spells one of them as prose in a generic
 ``UnexpectedModelBehavior`` — so those are driven through a real run
 (:func:`_run_error`) rather than restated here.  A hand-written copy of that
-sentence would keep passing after an upstream reword, while auto-compaction
-silently stopped firing.
+sentence would keep passing after an upstream reword, while the compaction
+offer silently stopped appearing.
 """
 
 import pytest

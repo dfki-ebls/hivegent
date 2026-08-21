@@ -148,11 +148,11 @@ def create_openai_client(
     allow_private_base_url: bool = False,
 ) -> AsyncOpenAI:
     """Create an OpenAI SDK client bound to the matching shared HTTP client."""
-    return AsyncOpenAI(
-        api_key=api_key or None,
-        base_url=base_url or None,
-        http_client=get_http_client(allow_private=allow_private_base_url),
-    )
+    return create_openai_provider(
+        api_key=api_key,
+        base_url=base_url,
+        allow_private_base_url=allow_private_base_url,
+    ).client
 
 
 def _self_hosted_profile(*, qwen3_xml_parser: bool) -> ModelProfileSpec:

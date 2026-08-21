@@ -10,6 +10,7 @@ interrupted finishes, and the hard-fail error chunk) and
 ``dump_messages_with_ids`` (anchoring ``UIMessage`` ids to tree-node ids).
 """
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
 
@@ -382,6 +383,54 @@ async def test_interrupted_stream_persists_the_partial_answer() -> None:
 
     assert "q1" in _texts(recorded[0])
     assert "The answer is 42" in _texts(recorded[0])
+
+
+async def test_cancelled_response_stops_the_model_stream_and_persists() -> None:
+    """A client disconnect cancels provider streaming and saves partial output."""
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    never = asyncio.Event()
+
+    async def stream_until_cancelled(
+        messages: Sequence[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str]:
+        yield "partial"
+        started.set()
+        try:
+            await never.wait()
+        finally:
+            cancelled.set()
+
+    adapter = _adapter(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        model=FunctionModel(stream_function=stream_until_cancelled),
+    )
+    recorded: list[list[ModelMessage]] = []
+
+    async def persist(messages: Sequence[ModelMessage]) -> None:
+        recorded.append(list(messages))
+
+    response = await run_and_persist(
+        adapter,
+        adapter.run_stream(),
+        persist=persist,
+    )
+    assert isinstance(response, StreamingResponse)
+
+    async def consume() -> None:
+        async for _ in response.body_iterator:
+            pass
+
+    consumer = asyncio.create_task(consume())
+    await started.wait()
+    consumer.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await consumer
+
+    assert cancelled.is_set()
+    assert recorded
+    assert "partial" in _texts(recorded[0])
 
 
 async def test_reasoning_duration_is_persisted_as_message_metadata(

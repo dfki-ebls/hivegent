@@ -575,11 +575,9 @@ class ConversationListResponse(BaseModel):
 class CompactConversationRequest(BaseModel):
     """Request to compact a conversation.
 
-    The client sends its in-memory message history rather than relying on
-    the server to re-read it: the turn that triggers auto-compaction fails
-    on a context-length error and is never persisted, and a freshly minted
-    conversation may not be reconciled to its server ID yet. Summarizing
-    the messages the client holds avoids both races.
+    The client sends its in-memory message history so the summary reflects
+    the exact branch and partial turn visible when the user requests
+    compaction.
     """
 
     llm: LlmConfig = Field(default_factory=LlmConfig)
