@@ -3,11 +3,16 @@
 from io import BytesIO
 
 import httpx
+import httpx2
 import pytest
 from fastapi import HTTPException, UploadFile
 
 from hivegent.config import InferenceProvider, settings
-from hivegent.security import UrlPolicy, create_safe_async_client
+from hivegent.security import (
+    UrlPolicy,
+    create_legacy_safe_async_client,
+    create_safe_async_client,
+)
 from hivegent.server.common import prepare_llm_config
 from hivegent.server.operations import enforce_upload_size
 from hivegent.types import LlmConfig, resolve_llm_config
@@ -18,6 +23,15 @@ async def test_safe_async_client_blocks_private_ip_connections() -> None:
     # Pin the guard on regardless of the ambient ``allow_private_urls`` the
     # dev shell exports, so the test exercises the filter, not the env.
     async with create_safe_async_client(timeout=0.1, policy=UrlPolicy()) as client:
+        with pytest.raises(httpx2.ConnectError, match="private or reserved"):
+            await client.get("http://127.0.0.1:1")
+
+
+async def test_legacy_safe_client_blocks_private_ip_connections() -> None:
+    """The FastMCP compatibility client retains connect-time protection."""
+    async with create_legacy_safe_async_client(
+        timeout=0.1, policy=UrlPolicy()
+    ) as client:
         with pytest.raises(httpx.ConnectError, match="private or reserved"):
             await client.get("http://127.0.0.1:1")
 

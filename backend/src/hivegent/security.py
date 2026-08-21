@@ -22,13 +22,16 @@ from dataclasses import dataclass
 from typing import Any, cast, override
 
 import httpcore
+import httpcore2
 import httpx
+import httpx2
 
 __all__ = [
     "TRUSTED_URL_POLICY",
     "SafeAsyncHTTPTransport",
     "UnsafeUrlError",
     "UrlPolicy",
+    "create_legacy_safe_async_client",
     "create_safe_async_client",
     "is_safe_external_url",
     "require_safe_external_url",
@@ -115,7 +118,7 @@ async def _is_private_ip_async(host: str) -> bool:
     return any(_is_blocked_ip(str(info[4][0])) for info in infos)
 
 
-def _check_url_shape(url: httpx.URL) -> str:
+def _check_url_shape(url: httpx.URL | httpx2.URL) -> str:
     """Validate scheme, credentials, and host of a parsed URL.
 
     Returns:
@@ -141,8 +144,8 @@ def _parse_and_check_shape(url: str) -> str:
     if not url:
         raise UnsafeUrlError("URL is empty.")
     try:
-        parsed = httpx.URL(url)
-    except (httpx.InvalidURL, TypeError) as exc:
+        parsed = httpx2.URL(url)
+    except (httpx2.InvalidURL, TypeError) as exc:
         raise UnsafeUrlError(f"Invalid URL: {exc}") from exc
     return _check_url_shape(parsed)
 
@@ -167,7 +170,12 @@ def is_safe_external_url(url: str, *, policy: UrlPolicy) -> bool:
     return True
 
 
-class _SafeAsyncNetworkBackend(httpcore.AsyncNetworkBackend):
+type _SocketOption = httpcore2.SOCKET_OPTION
+type _AsyncNetworkBackend = httpcore.AsyncNetworkBackend | httpcore2.AsyncNetworkBackend
+type _AsyncNetworkStream = httpcore.AsyncNetworkStream | httpcore2.AsyncNetworkStream
+
+
+class _SafeAsyncNetworkBackend:
     """Blocks private and reserved addresses at TCP-connect time.
 
     The request-time check in :class:`SafeAsyncHTTPTransport` and this
@@ -175,13 +183,13 @@ class _SafeAsyncNetworkBackend(httpcore.AsyncNetworkBackend):
     (DNS rebinding), so the peer IP is re-verified after connecting.
     """
 
-    def __init__(self) -> None:
-        # ``httpcore.AnyIOBackend`` is typed as a union of the real class
-        # and a stub raised when anyio is missing; isinstance narrows back
-        # to the abstract base for type checkers.
-        backend = httpcore.AnyIOBackend()
-        assert isinstance(backend, httpcore.AsyncNetworkBackend)
+    def __init__(
+        self,
+        backend: _AsyncNetworkBackend,
+        connect_error: type[Exception],
+    ) -> None:
         self._backend = backend
+        self._connect_error = connect_error
 
     async def connect_tcp(
         self,
@@ -189,10 +197,10 @@ class _SafeAsyncNetworkBackend(httpcore.AsyncNetworkBackend):
         port: int,
         timeout: float | None = None,
         local_address: str | None = None,
-        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
-    ) -> httpcore.AsyncNetworkStream:
+        socket_options: Iterable[_SocketOption] | None = None,
+    ) -> _AsyncNetworkStream:
         if await _is_private_ip_async(host):
-            raise httpcore.ConnectError(
+            raise self._connect_error(
                 "URL resolves to a private or reserved IP address."
             )
         stream = await self._backend.connect_tcp(
@@ -205,7 +213,7 @@ class _SafeAsyncNetworkBackend(httpcore.AsyncNetworkBackend):
         peer = stream.get_extra_info("server_addr")
         if not peer or _is_blocked_ip(str(peer[0])):
             await stream.aclose()
-            raise httpcore.ConnectError(
+            raise self._connect_error(
                 "Connection reached a private or reserved IP address."
             )
         return stream
@@ -214,15 +222,35 @@ class _SafeAsyncNetworkBackend(httpcore.AsyncNetworkBackend):
         self,
         path: str,
         timeout: float | None = None,
-        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
-    ) -> httpcore.AsyncNetworkStream:
-        raise httpcore.ConnectError("Unix sockets are not allowed for external URLs.")
+        socket_options: Iterable[_SocketOption] | None = None,
+    ) -> _AsyncNetworkStream:
+        raise self._connect_error("Unix sockets are not allowed for external URLs.")
 
     async def sleep(self, seconds: float) -> None:
         await self._backend.sleep(seconds)
 
 
-class SafeAsyncHTTPTransport(httpx.AsyncBaseTransport):
+def _install_safe_network_backend(
+    transport: httpx.AsyncHTTPTransport | httpx2.AsyncHTTPTransport,
+    backend: object,
+    connect_error: type[Exception],
+) -> None:
+    """Install the common SSRF backend into an HTTPX transport pool.
+
+    ``AnyIOBackend`` is typed as a union of the real class and a stub raised
+    when anyio is missing, so the assert narrows it back to the interface.
+    Writing the pool's private backend is the one unsound step, and it spans
+    both httpcore versions, which no single base class can be declared for.
+    """
+    assert isinstance(
+        backend, httpcore.AsyncNetworkBackend | httpcore2.AsyncNetworkBackend
+    )
+    transport._pool._network_backend = _SafeAsyncNetworkBackend(  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]  # ty: ignore[invalid-assignment]
+        backend, connect_error
+    )
+
+
+class SafeAsyncHTTPTransport(httpx2.AsyncBaseTransport):
     """HTTPX transport that enforces a :class:`UrlPolicy` on every request.
 
     URL shape and host policy are checked per request, which covers each
@@ -230,9 +258,54 @@ class SafeAsyncHTTPTransport(httpx.AsyncBaseTransport):
     addresses, the connect-time backend additionally blocks private and
     reserved IPs after DNS resolution.  *inner* is the wrapped transport
     that performs the request once the checks pass; it defaults to a
-    real network transport (tests substitute ``httpx.MockTransport`` to
+    real network transport (tests substitute ``httpx2.MockTransport`` to
     exercise the enforcement without the network).
     """
+
+    def __init__(
+        self,
+        *,
+        policy: UrlPolicy,
+        inner: httpx2.AsyncBaseTransport | None = None,
+    ) -> None:
+        if inner is None:
+            transport = httpx2.AsyncHTTPTransport(trust_env=False)
+            if not policy.allow_private:
+                _install_safe_network_backend(
+                    transport,
+                    httpcore2.AnyIOBackend(),
+                    httpcore2.ConnectError,
+                )
+            inner = transport
+        self._policy = policy
+        self._inner = inner
+
+    @override
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        host = _check_url_shape(request.url)
+        self._policy.check_host(host)
+        return await self._inner.handle_async_request(request)
+
+    @override
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+def create_safe_async_client(
+    *,
+    policy: UrlPolicy,
+    **kwargs: Any,
+) -> httpx2.AsyncClient:
+    """Create an HTTPX async client with request- and connect-time SSRF protection.
+
+    Pass :data:`TRUSTED_URL_POLICY` for operator-configured endpoints.
+    """
+    transport = SafeAsyncHTTPTransport(policy=policy)
+    return httpx2.AsyncClient(transport=transport, trust_env=False, **kwargs)
+
+
+class _LegacySafeAsyncHTTPTransport(httpx.AsyncBaseTransport):
+    """Legacy HTTPX transport retained for FastMCP's client factory."""
 
     def __init__(
         self,
@@ -243,7 +316,11 @@ class SafeAsyncHTTPTransport(httpx.AsyncBaseTransport):
         if inner is None:
             transport = httpx.AsyncHTTPTransport(trust_env=False)
             if not policy.allow_private:
-                transport._pool._network_backend = _SafeAsyncNetworkBackend()  # pyright: ignore[reportPrivateUsage]  # ty: ignore[invalid-assignment]
+                _install_safe_network_backend(
+                    transport,
+                    httpcore.AnyIOBackend(),
+                    httpcore.ConnectError,
+                )
             inner = transport
         self._policy = policy
         self._inner = inner
@@ -259,16 +336,13 @@ class SafeAsyncHTTPTransport(httpx.AsyncBaseTransport):
         await self._inner.aclose()
 
 
-def create_safe_async_client(
+def create_legacy_safe_async_client(
     *,
     policy: UrlPolicy,
     **kwargs: Any,
 ) -> httpx.AsyncClient:
-    """Create an HTTPX async client with request- and connect-time SSRF protection.
-
-    Pass :data:`TRUSTED_URL_POLICY` for operator-configured endpoints.
-    """
-    transport = SafeAsyncHTTPTransport(policy=policy)
+    """Create an SSRF-safe legacy HTTPX client for FastMCP."""
+    transport = _LegacySafeAsyncHTTPTransport(policy=policy)
     return httpx.AsyncClient(transport=transport, trust_env=False, **kwargs)
 
 

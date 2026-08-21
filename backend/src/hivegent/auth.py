@@ -14,7 +14,7 @@ from collections.abc import (
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-import httpx
+import httpx2
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastmcp.server.auth.oidc_proxy import OIDCConfiguration
@@ -76,11 +76,8 @@ def fetch_oidc_configuration(
 ) -> OIDCConfiguration:
     """Fetch and parse the OIDC discovery document for ``issuer``.
 
-    Delegates to fastmcp's ``OIDCConfiguration.get_oidc_configuration``
-    so the FastAPI and FastMCP auth layers share one implementation.
-
     Raises:
-        httpx.HTTPError: On transport failure.
+        httpx2.HTTPError: On transport failure.
         pydantic.ValidationError: On malformed payload.
         ValueError: If ``issuer`` is empty.
     """
@@ -92,9 +89,9 @@ def fetch_oidc_configuration(
         if timeout_seconds is None
         else timeout_seconds
     )
-    return OIDCConfiguration.get_oidc_configuration(
-        config_url, strict=False, timeout_seconds=int(timeout)
-    )
+    response = httpx2.get(str(config_url), timeout=timeout)
+    response.raise_for_status()
+    return OIDCConfiguration.model_validate({**response.json(), "strict": False})
 
 
 class _SingleFlightCache[T]:
@@ -175,7 +172,7 @@ class JWKSFetcher:
             config = await asyncio.to_thread(
                 fetch_oidc_configuration, settings.auth.issuer
             )
-        except httpx.HTTPError as e:
+        except httpx2.HTTPError as e:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Failed to fetch OIDC discovery document: {e}",
@@ -235,7 +232,7 @@ class JWKSFetcher:
             )
             response.raise_for_status()
             jwks_data = response.json()
-        except httpx.HTTPError as e:
+        except httpx2.HTTPError as e:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Failed to fetch JWKS: {e}",

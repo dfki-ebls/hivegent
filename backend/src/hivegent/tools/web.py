@@ -8,7 +8,7 @@ from importlib.metadata import metadata
 from typing import Annotated, override
 from urllib.parse import quote
 
-import httpx
+import httpx2
 from bs4 import BeautifulSoup
 from markdownify import MarkdownConverter
 from pydantic import Field
@@ -118,7 +118,7 @@ class WebSearch(AsyncTool[list[dict[str, str]]]):
                 response = await client.get(endpoint, params=params)
                 response.raise_for_status()
                 hits = response.json().get("query", {}).get("search", [])
-        except (httpx.HTTPError, UnsafeUrlError) as exc:
+        except (httpx2.HTTPError, UnsafeUrlError) as exc:
             logger.warning("Web search failed for query %r: %s", query, exc)
             raise ToolRetry(
                 "web search failed — the Wikipedia API may be unavailable or "
@@ -235,13 +235,17 @@ class WebFetch(AsyncTool[WebPage]):
             return await self._fetch(url)
         except ToolRetry:
             raise
-        except httpx.TimeoutException as exc:
+        except httpx2.TimeoutException as exc:
             raise ToolRetry("request timed out.") from exc
-        except httpx.TooManyRedirects as exc:
+        except httpx2.TooManyRedirects as exc:
             raise ToolRetry("too many redirects.") from exc
-        except httpx.HTTPStatusError as exc:
+        except httpx2.HTTPStatusError as exc:
             raise ToolRetry(f"HTTP {exc.response.status_code}.") from exc
-        except (UnsafeUrlError, httpx.UnsupportedProtocol, httpx.ConnectError) as exc:
+        except (
+            UnsafeUrlError,
+            httpx2.UnsupportedProtocol,
+            httpx2.ConnectError,
+        ) as exc:
             raise ToolRetry(str(exc)) from exc
         except Exception as exc:
             logger.exception("Web fetch failed for URL %r", url)
@@ -263,7 +267,7 @@ class WebFetch(AsyncTool[WebPage]):
                 body, truncated = await self._read_capped(response)
             return self._finalize(str(response.url), response, mime, body, truncated)
 
-    async def _read_capped(self, response: httpx.Response) -> tuple[bytes, bool]:
+    async def _read_capped(self, response: httpx2.Response) -> tuple[bytes, bool]:
         """Stream the response body up to the configured byte cap."""
         buffer = bytearray()
         async for chunk in response.aiter_bytes():
@@ -275,7 +279,7 @@ class WebFetch(AsyncTool[WebPage]):
     def _finalize(
         self,
         url: str,
-        response: httpx.Response,
+        response: httpx2.Response,
         mime: str,
         body: bytes,
         truncated: bool,

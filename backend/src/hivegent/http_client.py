@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Literal
 
-import httpx
+import httpx2
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, get_user_agent
 
 from .config import settings
@@ -37,7 +37,7 @@ class _SharedHttpClients:
     """
 
     def __init__(self) -> None:
-        self._clients: dict[_HttpClientKind, httpx.AsyncClient] | None = None
+        self._clients: dict[_HttpClientKind, httpx2.AsyncClient] | None = None
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncIterator[None]:
@@ -45,7 +45,7 @@ class _SharedHttpClients:
             raise RuntimeError(
                 "shared HTTP client lifespan entered while already active"
             )
-        timeout = httpx.Timeout(
+        timeout = httpx2.Timeout(
             timeout=DEFAULT_HTTP_TIMEOUT,
             connect=settings.network.connect_timeout_seconds,
         )
@@ -71,7 +71,7 @@ class _SharedHttpClients:
             for client in clients.values():
                 await client.aclose()
 
-    def get(self, kind: _HttpClientKind) -> httpx.AsyncClient:
+    def get(self, kind: _HttpClientKind) -> httpx2.AsyncClient:
         if self._clients is None:
             raise RuntimeError(
                 "Shared HTTP client is not initialised. Wrap the entrypoint in "
@@ -96,7 +96,7 @@ async def shared_http_client_lifespan() -> AsyncIterator[None]:
         yield
 
 
-def get_http_client(*, allow_private: bool) -> httpx.AsyncClient:
+def get_http_client(*, allow_private: bool) -> httpx2.AsyncClient:
     """Return the shared HTTP client matching the URL trust policy.
 
     ``allow_private`` selects the trusted client for operator-configured

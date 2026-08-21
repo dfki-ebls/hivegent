@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any
 
-import httpx
+import httpx2
 import typer
 
 from .humanize import format_bytes
@@ -96,14 +96,14 @@ def _make_request(
     token: str,
     json_data: Mapping[str, Any] | None = None,
     files: Mapping[str, Any] | None = None,
-) -> httpx.Response:
+) -> httpx2.Response:
     """Make an authenticated request to the API."""
     api_url = _get_api_url()
     url = f"{api_url}{path}"
     headers = {"Authorization": f"Bearer {token}"}
 
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx2.Client(timeout=30.0) as client:
             if method == "GET":
                 return client.get(url, headers=headers)
             elif method == "POST":
@@ -116,7 +116,7 @@ def _make_request(
                 return client.delete(url, headers=headers)
             else:
                 raise ValueError(f"Unknown method: {method}")
-    except httpx.HTTPError as e:
+    except httpx2.HTTPError as e:
         typer.echo(f"Request failed: {e}", err=True)
         raise typer.Exit(1)
 
@@ -157,7 +157,7 @@ def login(
     discovery_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
 
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx2.Client(timeout=30.0) as client:
             discovery = client.get(discovery_url)
             discovery.raise_for_status()
             token_url = discovery.json()["token_endpoint"]
@@ -171,7 +171,7 @@ def login(
             )
             response.raise_for_status()
             token_data = response.json()
-    except httpx.HTTPError as e:
+    except httpx2.HTTPError as e:
         typer.echo(f"Failed to authenticate: {e}", err=True)
         raise typer.Exit(1)
     except (KeyError, ValueError) as e:

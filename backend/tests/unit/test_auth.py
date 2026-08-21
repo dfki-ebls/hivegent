@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 from fastapi import HTTPException
 from joserfc.jwk import KeySet, OctKey
@@ -33,23 +33,23 @@ async def test_get_jwks_uses_jwks_uri_from_discovery_doc(
 
     requested_urls: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         url = str(request.url)
         requested_urls.append(url)
         if url == discovery_url:
-            return httpx.Response(200, json=discovery_payload)
+            return httpx2.Response(200, json=discovery_payload)
         if url == custom_jwks_uri:
-            return httpx.Response(200, json=jwks_payload)
+            return httpx2.Response(200, json=jwks_payload)
         raise AssertionError(f"unexpected URL {url!r}")
 
-    def fake_sync_get(url: Any, **_: Any) -> httpx.Response:
-        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+    def fake_sync_get(url: Any, **_: Any) -> httpx2.Response:
+        with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
             return client.get(str(url))
 
-    monkeypatch.setattr(httpx, "get", fake_sync_get)
+    monkeypatch.setattr(httpx2, "get", fake_sync_get)
 
     fetcher = JWKSFetcher()
-    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    mock_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     monkeypatch.setattr(auth, "get_http_client", lambda **_: mock_client)
 
     try:
@@ -123,10 +123,10 @@ async def test_get_jwks_serves_stale_keys_when_refresh_fails(
 
     monkeypatch.setattr(fetcher, "_get_discovery", fake_get_discovery)
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("idp unreachable", request=request)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("idp unreachable", request=request)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     monkeypatch.setattr(auth, "get_http_client", lambda **_: client)
 
     try:

@@ -312,7 +312,7 @@ wheels = [
 
 [[package]]
 name = "cbrkit"
-version = "1.5.5"
+version = "1.5.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "frozendict" },
@@ -325,12 +325,19 @@ dependencies = [
     { name = "scipy" },
     { name = "xmltodict" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/be/1becc58f509c7a734874ccc9fb548fc1eba2e7f1bc9a65666a6fa2a98c06/cbrkit-1.5.5.tar.gz", hash = "sha256:f73d901251cf94f67ac1aa36c525d4add74499b6e389bc6b415f3182679b0c31", size = 183409, upload-time = "2026-08-20T12:16:03.019Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/b5/3c7d0620477ee34e7a1dc0d6ff22d151a8ce0480611ecf4facce2a537440/cbrkit-1.5.6.tar.gz", hash = "sha256:79b3c030a9b18ea5368cd54d5971b131296578f2a1c1e7de1abcbb81e4375fc7", size = 183155, upload-time = "2026-08-21T13:50:29.918Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/63/27feb7ce72eaa6432966e358e85c970c0720843b81fdbe153185a936f9a6/cbrkit-1.5.5-py3-none-any.whl", hash = "sha256:ae0072cc6208b6295e920af503c8843fe56d3f402699761ee4db3d47ecf36b21", size = 234837, upload-time = "2026-08-20T12:16:01.136Z" },
+    { url = "https://files.pythonhosted.org/packages/53/df/c7c00e2f861a891d5d9d1e034cbafde54b91db011a531438b1b0f5dc27f0/cbrkit-1.5.6-py3-none-any.whl", hash = "sha256:cb6f8c1fd4b0fe0d694d410861e6d084ea2bd886585e87755e6941ced20af644", size = 233940, upload-time = "2026-08-21T13:50:28.344Z" },
 ]
 
 [package.optional-dependencies]
+http = [
+    { name = "httpx2" },
+]
+openai = [
+    { name = "openai" },
+    { name = "tiktoken" },
+]
 pgvector = [
     { name = "pgvector" },
     { name = "sqlalchemy", extra = ["asyncio"] },
@@ -1469,19 +1476,23 @@ version = "0.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
-    { name = "cbrkit", extra = ["pgvector", "sql"] },
+    { name = "cbrkit", extra = ["http", "openai", "pgvector", "sql"] },
     { name = "chonkie" },
     { name = "fastapi", extra = ["standard"] },
     { name = "fastexcel" },
     { name = "fastmcp" },
     { name = "firecrawl-anydoc" },
     { name = "frozendict" },
+    { name = "httpcore" },
+    { name = "httpcore2" },
     { name = "httpx" },
+    { name = "httpx2" },
     { name = "joserfc" },
     { name = "logfire" },
     { name = "lxml" },
     { name = "markdownify" },
     { name = "nanoid" },
+    { name = "openai" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-instrumentation-fastapi" },
     { name = "pdf-inspector" },
@@ -1534,7 +1545,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1,<2" },
-    { name = "cbrkit", extras = ["sql", "pgvector"], specifier = ">=1.5.4,<2" },
+    { name = "cbrkit", extras = ["http", "openai", "sql", "pgvector"], specifier = ">=1.5.6,<2" },
     { name = "chonkie", specifier = ">=1,<2" },
     { name = "chonkie", extras = ["semantic"], marker = "extra == 'semantic'", specifier = ">=1,<2" },
     { name = "docling", marker = "extra == 'docling'", specifier = ">=2,<3" },
@@ -1544,7 +1555,10 @@ requires-dist = [
     { name = "firecrawl-anydoc", specifier = ">=0.1,<0.2" },
     { name = "frozendict", specifier = ">=2.4.7" },
     { name = "hivegent", extras = ["docling", "pdf-oxide", "semantic"], marker = "extra == 'all'" },
+    { name = "httpcore", specifier = ">=1,<2" },
+    { name = "httpcore2", specifier = ">=2,<3" },
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "httpx2", specifier = ">=2,<3" },
     { name = "joserfc", specifier = ">=1,<2" },
     { name = "kreuzberg", marker = "extra == 'kreuzberg'", specifier = ">=4,<5" },
     { name = "logfire", specifier = ">=4,<5" },
@@ -1552,6 +1566,7 @@ requires-dist = [
     { name = "markdownify", specifier = ">=1,<2" },
     { name = "markitdown", extras = ["all"], marker = "extra == 'markitdown'", specifier = ">=0.1,<1" },
     { name = "nanoid", specifier = ">=2,<3" },
+    { name = "openai", specifier = ">=3,<4" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1,<2" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.60b1" },
     { name = "pdf-inspector", specifier = ">=1,<2" },
@@ -1595,15 +1610,15 @@ wheels = [
 
 [[package]]
 name = "httpcore2"
-version = "2.11.0"
+version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "h11" },
     { name = "truststore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/30/7d/ee6787efd5fe675d7cfd5eb149e40ccb5bdfc7e7c9252edcf7825c38986f/httpcore2-2.11.0.tar.gz", hash = "sha256:82e6fc95d784e6ee22ebd4b2cb57df53a2efb13ad6a11260a236ecebbc5f50c7", size = 67532, upload-time = "2026-08-18T08:03:53.008Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/be/ad/f4f0e57345f1870f3e8cb624e058d7eca6e5a27d33bcc3311d9b618734cd/httpcore2-2.12.0.tar.gz", hash = "sha256:9293522bba0aa7c4c8e9e3f040c16575bd8868e155a77fa30c7a9085a5eae648", size = 67548, upload-time = "2026-08-18T13:22:08.211Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f3/54/e84a5c82ac0959d5e55b3970d326fd95306446b2bf0702302888745f7e5c/httpcore2-2.11.0-py3-none-any.whl", hash = "sha256:c7c899fbc6b8abb6e747dda427aa6f52934c45e191eabb986965164ebb02a908", size = 83061, upload-time = "2026-08-18T08:03:50.894Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/74/d370e55600d9bcfa0d9794b0166126d49291a3d2b20c268fc98c453a4948/httpcore2-2.12.0-py3-none-any.whl", hash = "sha256:7e04258ce01013d7d615e5b910a3b27fac937d7a95038227e79652b4ba3b4ceb", size = 83074, upload-time = "2026-08-18T13:22:05.854Z" },
 ]
 
 [[package]]
@@ -1661,7 +1676,7 @@ wheels = [
 
 [[package]]
 name = "httpx2"
-version = "2.11.0"
+version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", marker = "sys_platform != 'emscripten'" },
@@ -1670,9 +1685,9 @@ dependencies = [
     { name = "idna" },
     { name = "truststore", marker = "sys_platform != 'emscripten'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d5/4d/b3fcae38f29bfb0f300517d085c488f41f65e5b0a73023976b2122f568cc/httpx2-2.11.0.tar.gz", hash = "sha256:ea01b2e8febfb026e2601814c77ecb1e64fff114a87bc789cb520e67f27e7809", size = 99617, upload-time = "2026-08-18T08:03:53.691Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7f/f8/579a8b51e42e38ee32647df9f08aa25643ae788e275cc625b199829c4671/httpx2-2.12.0.tar.gz", hash = "sha256:7631fe9887a8a2275f4a2540e053aa670fcc50742864a9ae7c66e609fdcf12cf", size = 100040, upload-time = "2026-08-18T13:22:09.086Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/29/f60bcf54028601920c0ce3da81537bcd0af4ee19dd9672af85dc9dfd60e0/httpx2-2.11.0-py3-none-any.whl", hash = "sha256:c9790f62a327110f52a099f1e2030cbe32f78b28781ad68fe58bfd6f23e73ab0", size = 95043, upload-time = "2026-08-18T08:03:52.004Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/95/411ba65569158e862368917aaf56597f3e5fa3b91b0502919638465a08f3/httpx2-2.12.0-py3-none-any.whl", hash = "sha256:cc8b6eecb8661c146b8f89a60e97456ee086e91a784ed31ac450c3a9e613dd36", size = 95427, upload-time = "2026-08-18T13:22:06.834Z" },
 ]
 
 [[package]]

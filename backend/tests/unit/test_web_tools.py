@@ -2,7 +2,7 @@
 
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 
 import hivegent.tools.web as web_module
@@ -20,11 +20,13 @@ def _patch_safe_client(monkeypatch: pytest.MonkeyPatch, handler: Any) -> None:
     production; only the network layer is substituted.
     """
 
-    def fake_client(*, policy: UrlPolicy, **client_kwargs: Any) -> httpx.AsyncClient:
+    def fake_client(
+        *, policy: UrlPolicy, **client_kwargs: Any
+    ) -> httpx2.AsyncClient:
         transport = SafeAsyncHTTPTransport(
-            policy=policy, inner=httpx.MockTransport(handler)
+            policy=policy, inner=httpx2.MockTransport(handler)
         )
-        return httpx.AsyncClient(transport=transport, **client_kwargs)
+        return httpx2.AsyncClient(transport=transport, **client_kwargs)
 
     monkeypatch.setattr(web_module, "create_safe_async_client", fake_client)
 
@@ -93,13 +95,13 @@ class TestWebSearch:
     async def test_results_are_shaped_from_the_configured_edition(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             # The configured language picks the Wikipedia edition.
             assert request.url.host == "de.wikipedia.org"
             assert request.url.params["srsearch"] == "ChatGPT"
             # The configured operator User-Agent is sent on the request.
             assert request.headers["user-agent"] == "hivegent-test (+mailto:a@b.org)"
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json=_search_response(
                     ("ChatGPT", 'a <span class="searchmatch">ChatGPT</span> bot'),
@@ -123,8 +125,8 @@ class TestWebSearch:
     async def test_api_failure_raises_tool_retry(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(503)
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(503)
 
         _patch_safe_client(monkeypatch, handler)
         with pytest.raises(ToolRetry, match="web search failed"):
@@ -153,10 +155,10 @@ class TestWebFetch:
     async def test_html_is_converted_and_redirects_followed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             if request.url.path == "/start":
-                return httpx.Response(302, headers={"location": "/final"})
-            return httpx.Response(
+                return httpx2.Response(302, headers={"location": "/final"})
+            return httpx2.Response(
                 200, content=HTML, headers={"content-type": "text/html; charset=utf-8"}
             )
 
@@ -173,10 +175,12 @@ class TestWebFetch:
     async def test_redirect_to_denied_host_is_blocked(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             if request.url.host == "example.com":
-                return httpx.Response(302, headers={"location": "https://evil.com/x"})
-            return httpx.Response(
+                return httpx2.Response(
+                    302, headers={"location": "https://evil.com/x"}
+                )
+            return httpx2.Response(
                 200, content=b"hi", headers={"content-type": "text/plain"}
             )
 
@@ -189,8 +193,8 @@ class TestWebFetch:
     async def test_unsupported_content_type_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(
                 200, content=b"\x89PNG", headers={"content-type": "image/png"}
             )
 
@@ -201,8 +205,8 @@ class TestWebFetch:
     async def test_content_is_truncated_to_caps(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(
                 200, content=b"a" * 100, headers={"content-type": "text/plain"}
             )
 
@@ -220,8 +224,8 @@ class TestWebFetch:
         long_line = "data:image/png;base64," + "A" * 5_000
         body = f"intro\n{long_line}\ntail".encode()
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(
                 200, content=body, headers={"content-type": "text/plain"}
             )
 
@@ -234,8 +238,8 @@ class TestWebFetch:
     async def test_too_many_redirects_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(302, headers={"location": "/loop"})
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(302, headers={"location": "/loop"})
 
         tool = _fetch_tool(monkeypatch, handler, max_redirects=3)
         with pytest.raises(ToolRetry, match="too many redirects"):

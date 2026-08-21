@@ -11,7 +11,7 @@ from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset
 
 from ..config import settings
-from ..security import create_safe_async_client, require_safe_external_url
+from ..security import create_legacy_safe_async_client, require_safe_external_url
 from ..types import McpServerConfig
 
 __all__ = ["build_mcp_server", "build_mcp_toolset", "validate_mcp_servers"]
@@ -28,7 +28,7 @@ def _safe_httpx_client_factory(
     The explicit positional-or-keyword parameters match ``McpHttpClientFactory``;
     ``**kwargs`` absorbs transport-supplied extras such as ``follow_redirects``.
     """
-    return create_safe_async_client(
+    return create_legacy_safe_async_client(
         policy=settings.security.user_policy(),
         headers=headers,
         timeout=timeout,
@@ -56,7 +56,7 @@ async def validate_mcp_servers(servers: Iterable[McpServerConfig]) -> None:
 def build_mcp_toolset(server_cfg: McpServerConfig) -> MCPToolset[Any]:
     """Build an SSRF-safe MCP toolset from a user-provided config.
 
-    Each connection is opened through :func:`create_safe_async_client`, which
+    Each connection is opened through :func:`create_legacy_safe_async_client`, which
     FastMCP closes after every session, so the factory mints a fresh client
     per connection. Routing all HTTP traffic (including the OAuth2 token
     exchange) through it rejects private and reserved hosts at connect time,
