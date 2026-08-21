@@ -75,11 +75,7 @@ export function useAutoCompact({
         // Summarization spans the whole (overflowing) conversation, so it
         // needs the regular model's context window — the aux model is
         // reserved for small scoped tasks like titles and captions.
-        const result = await compactConversation(
-          id,
-          buildLlmConfig(overrides),
-          messages,
-        );
+        const result = await compactConversation(id, buildLlmConfig(overrides), messages);
         // The user opened another chat while we were summarizing: leave their
         // view untouched and offer the compacted conversation behind an action
         // instead of yanking them to it.

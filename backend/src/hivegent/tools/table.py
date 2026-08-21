@@ -40,7 +40,7 @@ TableQueryArg = Annotated[
     Field(
         description=(
             f"SQL SELECT over the table, which is always named '{_RELATION}', "
-            f"e.g. \"SELECT region, SUM(amount) AS total FROM {_RELATION} "
+            f'e.g. "SELECT region, SUM(amount) AS total FROM {_RELATION} '
             'GROUP BY region ORDER BY total DESC". Supports the usual '
             "aggregates, WHERE, HAVING, ORDER BY, CTEs, window functions, and "
             "self-joins. Omit it to get the columns, their types, the row "
@@ -247,7 +247,9 @@ class QueryTableTool(AsyncPathTool[TableResult]):
             sheets=source.sheets,
             columns=tuple(rows.columns),
             dtypes=tuple(str(dtype) for dtype in rows.dtypes),
-            rows=tuple(tuple(_cell(value) for value in row) for row in rows.iter_rows()),
+            rows=tuple(
+                tuple(_cell(value) for value in row) for row in rows.iter_rows()
+            ),
             total_rows=total,
             truncated=collected.height > limit,
             source_encoding=source.source_encoding,

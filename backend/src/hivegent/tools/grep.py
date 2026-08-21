@@ -280,7 +280,9 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
             data=capped, formatted=self._format_matches(capped, full_lines)
         )
 
-    def _format_matches(self, matches: list[GrepMatch], full_lines: bool = False) -> str:
+    def _format_matches(
+        self, matches: list[GrepMatch], full_lines: bool = False
+    ) -> str:
         # Budget at the line level rather than the block level: ripgrep can
         # merge many nearby hits into one block whose formatted form dwarfs
         # the budget, and dropping it whole would print nothing but a notice.
