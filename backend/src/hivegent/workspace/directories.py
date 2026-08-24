@@ -16,12 +16,10 @@ from ..concurrency import shield_to_completion
 from ..config import settings
 from ..db import documents as db_documents
 from ..store import Casebase
-from ..types import MoveDirectoryResponse
 from .locks import _locked_for, _reject_if_scope_inflight, store_lock
 from .paths import (
     _check_destination_parents,
     _check_not_assets_path,
-    _count_files,
     _is_blocked_by_other,
     _is_same_file,
     _remove_tree,
@@ -54,7 +52,7 @@ async def create_directory(store: Casebase, path: str) -> None:
 
 async def _move_directory_locked(
     src_store: Casebase, dst_store: Casebase, src: str, dst: str
-) -> MoveDirectoryResponse:
+) -> None:
     """Move a directory's files and SQL rows. Caller holds the lock(s).
 
     Source paths resolve under *src_store*'s workspace and destination paths
@@ -101,21 +99,12 @@ async def _move_directory_locked(
     if _is_blocked_by_other(dst_dir, src_dir):
         raise HTTPException(status_code=409, detail="Destination already exists")
 
-    files_moved = await asyncio.to_thread(_count_files, src_dir)
     dst_dir.parent.mkdir(parents=True, exist_ok=True)
     src_dir.rename(dst_dir)
 
     # Children-only: a same-named sibling document (stem equal to ``src``)
     # lives outside the directory and keeps its row.
     await db_documents.move_subtree(src_store, src, dst_store, dst)
-
-    return MoveDirectoryResponse(
-        source=src,
-        destination=dst,
-        files_moved=files_moved,
-        message="Directory moved successfully",
-    )
-
 
 async def prune_empty_dirs(store: Casebase, sources: Iterable[str]) -> None:
     """Remove directories left empty after their entries moved away.
@@ -142,7 +131,7 @@ async def prune_empty_dirs(store: Casebase, sources: Iterable[str]) -> None:
 
 async def move_directory(
     src_store: Casebase, dst_store: Casebase, src: str, dst: str
-) -> MoveDirectoryResponse:
+) -> None:
     """Move or rename a workspace directory; document rows follow via SQL.
 
     *src_store* and *dst_store* may be the same casebase (a rename within one
@@ -152,12 +141,10 @@ async def move_directory(
     its rows cannot drift apart.
     """
     async with _locked_for(src_store, scope=src, dst_store=dst_store):
-        return await shield_to_completion(
-            _move_directory_locked(src_store, dst_store, src, dst)
-        )
+        await shield_to_completion(_move_directory_locked(src_store, dst_store, src, dst))
 
 
-async def _delete_directory_locked(store: Casebase, path: str) -> int:
+async def _delete_directory_locked(store: Casebase, path: str) -> None:
     """Delete a directory's files and SQL rows. Caller holds the lock."""
     if not path:
         # A bare scope root resolves to an empty path; deleting it here would
@@ -168,15 +155,11 @@ async def _delete_directory_locked(store: Casebase, path: str) -> int:
     directory_path = workspace_dir / path
     if not directory_path.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
-    files_deleted = await asyncio.to_thread(_count_files, directory_path)
     await asyncio.to_thread(_remove_tree, directory_path)
     # Children-only: a same-named sibling document (stem equal to *path*)
     # lives outside the directory and keeps its row.
     await db_documents.delete_subtree(store, path)
-    return files_deleted
-
-
-async def delete_directory(store: Casebase, path: str) -> int:
+async def delete_directory(store: Casebase, path: str) -> None:
     """Delete a workspace directory; matching SQL documents cascade out.
 
     The FS removal + SQL delete run to completion under the lock even on a
@@ -184,7 +167,7 @@ async def delete_directory(store: Casebase, path: str) -> int:
     its rows linger.
     """
     async with _locked_for(store, scope=path):
-        return await shield_to_completion(_delete_directory_locked(store, path))
+        await shield_to_completion(_delete_directory_locked(store, path))
 
 
 async def delete_all(store: Casebase) -> None:

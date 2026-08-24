@@ -437,50 +437,6 @@ export const DirectoryTreeResponseSchema = z.object({
 });
 export type DirectoryTreeResponse = z.infer<typeof DirectoryTreeResponseSchema>;
 
-/** Response from creating a directory. */
-export const CreateDirectoryResponseSchema = z.object({
-  path: z.string(),
-  message: z.string(),
-});
-export type CreateDirectoryResponse = z.infer<typeof CreateDirectoryResponseSchema>;
-
-/** Response from moving a document. */
-export const MoveDocumentResponseSchema = z.object({
-  source: z.string(),
-  destination: z.string(),
-  message: z.string(),
-});
-export type MoveDocumentResponse = z.infer<typeof MoveDocumentResponseSchema>;
-
-/** Response from moving a directory. */
-export const MoveDirectoryResponseSchema = z.object({
-  source: z.string(),
-  destination: z.string(),
-  files_moved: z.number(),
-  message: z.string(),
-});
-export type MoveDirectoryResponse = z.infer<typeof MoveDirectoryResponseSchema>;
-
-/** Response from deleting a directory. */
-export const DeleteDirectoryResponseSchema = z.object({
-  path: z.string(),
-  files_deleted: z.number(),
-  message: z.string(),
-});
-export type DeleteDirectoryResponse = z.infer<typeof DeleteDirectoryResponseSchema>;
-
-/** Response from document upload. */
-export const UploadDocumentResponseSchema = z.object({
-  filename: z.string(),
-  converted_filename: z.string().nullable(),
-  size_bytes: z.number(),
-  conversion_pipeline_used: z.string().nullable(),
-  chunk_count: z.number().nullable(),
-  chunking_pipeline_used: z.string().nullable(),
-  message: z.string(),
-});
-export type UploadDocumentResponse = z.infer<typeof UploadDocumentResponseSchema>;
-
 /** Lifecycle status of a background job. */
 export const JobStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "cancelled"]);
 export type JobStatus = z.infer<typeof JobStatusSchema>;

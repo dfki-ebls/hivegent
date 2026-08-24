@@ -34,21 +34,14 @@ import {
   type ServerConversation,
   type ConversionPipelineInfo,
   ConversionPipelineInfoSchema,
-  type CreateDirectoryResponse,
-  CreateDirectoryResponseSchema,
-  type DeleteDirectoryResponse,
-  DeleteDirectoryResponseSchema,
   type DirectoryTreeResponse,
   DirectoryTreeResponseSchema,
-  type MoveDirectoryResponse,
-  MoveDirectoryResponseSchema,
   type GenerateTitleResponse,
   GenerateTitleResponseSchema,
   FeedEventSchema,
   type JobView,
   JobViewSchema,
   type LlmConfig,
-  type MoveDocumentResponse,
   type ToolInfo,
   ToolInfoSchema,
   type ToolRunResult,
@@ -56,7 +49,6 @@ import {
   type ToolSchema,
   ToolSchemaSchema,
   TranscriptionResponseSchema,
-  MoveDocumentResponseSchema,
   type PipelineSpec,
 } from "@/lib/types";
 
@@ -116,46 +108,17 @@ function fallbackMessage(fallback: string, status: number): string {
   return `${statusExplanation(status) ?? fallback} (HTTP ${status})`;
 }
 
-/**
- * GET a JSON endpoint, including the HTTP status in the thrown error so a
- * failure report pinpoints the layer (backend status vs proxy 502/503).
- */
-async function getJson(url: string, errorMsg: string): Promise<unknown> {
-  const res = await authFetch(url);
-  if (!res.ok) {
-    await throwIfMaintenance(res);
-    throw new Error(fallbackMessage(errorMsg, res.status));
-  }
-  return (await res.json()) as unknown;
-}
-
-/**
- * Thrown when the backend rejects a request with the maintenance gate
- * (503 + `{"code": "maintenance"}` detail). The gate covers the whole
- * `/api` router, so any {@link getJson} reader can hit it; the settings
- * store turns it into the full-screen maintenance notice.
- */
+/** Thrown when the backend rejects a request through the maintenance gate. */
 export class MaintenanceError extends Error {}
 
-/** Raise {@link MaintenanceError} if `res` is the maintenance gate's 503. */
-async function throwIfMaintenance(res: Response): Promise<void> {
-  if (res.status !== 503) return;
-  const body = (await res.json().catch(() => null)) as {
-    detail?: { code?: string; message?: string };
-  } | null;
-  if (body?.detail?.code === "maintenance") {
-    throw new MaintenanceError(body.detail.message);
-  }
-}
-
-/**
- * Build the error for a failed response: the backend's `detail` when the body
- * carries one, otherwise the {@link fallbackMessage} for the status. Proxy-level
- * failures (a 413 from Caddy's body cap, a 502 for a gateway timeout) have no
- * JSON body, so the status-based explanation is the only diagnostic available.
- */
 async function responseError(res: Response, fallback: string): Promise<Error> {
-  const body = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+  const body = (await res.json().catch(() => null)) as {
+    detail?: string | { code?: string; message?: string };
+  } | null;
+  if (res.status === 503 && typeof body?.detail === "object" && body.detail.code === "maintenance") {
+    return new MaintenanceError(body.detail.message);
+  }
+
   return new Error(
     typeof body?.detail === "string" && body.detail
       ? body.detail
@@ -163,26 +126,53 @@ async function responseError(res: Response, fallback: string): Promise<Error> {
   );
 }
 
-/**
- * Validate a job-submission response into a {@link JobView}, raising `errorMsg`
- * on an HTTP error. Shared by every endpoint that starts a background job —
- * uploads (multipart) and the JSON job posts via {@link postJob}.
- */
-async function parseJobResponse(res: Response, errorMsg: string): Promise<JobView> {
-  if (!res.ok) {
-    throw await responseError(res, errorMsg);
-  }
-  return JobViewSchema.parse(await res.json());
+async function checkedResponse(
+  url: string,
+  errorMessage: string,
+  options?: RequestInit,
+): Promise<Response> {
+  const response = await authFetch(url, options);
+  if (!response.ok) throw await responseError(response, errorMessage);
+  return response;
+}
+
+async function requestJson<T>(
+  url: string,
+  errorMessage: string,
+  schema: z.ZodType<T>,
+  options?: RequestInit,
+): Promise<T> {
+  const response = await checkedResponse(url, errorMessage, options);
+  return schema.parse(await response.json());
+}
+
+async function requestVoid(
+  url: string,
+  errorMessage: string,
+  options?: RequestInit,
+): Promise<void> {
+  await checkedResponse(url, errorMessage, options);
+}
+
+async function requestText(url: string, errorMessage: string): Promise<string> {
+  return (await checkedResponse(url, errorMessage)).text();
+}
+
+async function requestBlob(url: string, errorMessage: string): Promise<Blob> {
+  return (await checkedResponse(url, errorMessage)).blob();
+}
+
+function jsonRequest(method: "POST" | "PUT" | "PATCH" | "DELETE", body: unknown): RequestInit {
+  return {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
 }
 
 /** POST a JSON body to a job endpoint and return the started job's snapshot. */
 async function postJob(url: string, body: unknown, errorMsg: string): Promise<JobView> {
-  const res = await authFetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return parseJobResponse(res, errorMsg);
+  return requestJson(url, errorMsg, JobViewSchema, jsonRequest("POST", body));
 }
 
 const CLIENT_ID_HEADER = "X-Client-Id";
@@ -280,48 +270,45 @@ export function requiresConversion(filename: string): boolean {
 
 /** Fetch server-side LLM settings. */
 export async function getSettings(): Promise<BackendSettings> {
-  const data = await getJson(`${API_BASE_URL}/api/settings`, "Failed to fetch settings");
-  return BackendSettingsSchema.parse(data);
+  return requestJson(`${API_BASE_URL}/api/settings`, "Failed to fetch settings", BackendSettingsSchema);
 }
 
 /** Transcribe recorded audio via the backend STT endpoint. */
 export async function transcribeAudio(audio: Blob): Promise<string> {
   const form = new FormData();
   form.append("audio", audio, "recording.webm");
-  const res = await authFetch(`${API_BASE_URL}/api/transcription`, {
-    method: "POST",
-    body: form,
-  });
-  if (!res.ok) {
-    throw new Error("Failed to transcribe audio");
-  }
-  const data: unknown = await res.json();
-  return TranscriptionResponseSchema.parse(data).text;
+  return (
+    await requestJson(
+      `${API_BASE_URL}/api/transcription`,
+      "Failed to transcribe audio",
+      TranscriptionResponseSchema,
+      { method: "POST", body: form },
+    )
+  ).text;
 }
 
 /** Fetch available agent tools from the backend. */
 export async function listTools(): Promise<ToolInfo[]> {
-  const data = await getJson(`${API_BASE_URL}/api/tools`, "Failed to fetch tools");
-  return z.array(ToolInfoSchema).parse(data);
+  return requestJson(`${API_BASE_URL}/api/tools`, "Failed to fetch tools", z.array(ToolInfoSchema));
 }
 
 /** Fetch every agent tool with its parameter JSON Schema (admin only). */
 export async function listToolSchemas(): Promise<ToolSchema[]> {
-  const data = await getJson(`${API_BASE_URL}/api/debug/tools`, "Failed to fetch tool schemas");
-  return z.array(ToolSchemaSchema).parse(data);
+  return requestJson(
+    `${API_BASE_URL}/api/debug/tools`,
+    "Failed to fetch tool schemas",
+    z.array(ToolSchemaSchema),
+  );
 }
 
 /** Invoke an agent tool with arbitrary arguments (admin only). */
 export async function runTool(name: string, args: Record<string, unknown>): Promise<ToolRunResult> {
-  const res = await authFetch(`${API_BASE_URL}/api/debug/tools/${encodeURIComponent(name)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args),
-  });
-  if (!res.ok) {
-    throw await responseError(res, "Failed to run tool");
-  }
-  return ToolRunResultSchema.parse(await res.json());
+  return requestJson(
+    `${API_BASE_URL}/api/debug/tools/${encodeURIComponent(name)}`,
+    "Failed to run tool",
+    ToolRunResultSchema,
+    jsonRequest("POST", args),
+  );
 }
 
 /** Response from testing an MCP server connection. */
@@ -505,13 +492,16 @@ export async function uploadDocument(
   file: File,
   options?: UploadDocumentOptions & { signal?: AbortSignal },
 ): Promise<JobView> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`, {
-    method: "PUT",
-    body: documentUploadFormData(filename, file, options),
-    signal: options?.signal,
-  });
-
-  return parseJobResponse(res, "Upload failed");
+  return requestJson(
+    `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`,
+    "Upload failed",
+    JobViewSchema,
+    {
+      method: "PUT",
+      body: documentUploadFormData(filename, file, options),
+      signal: options?.signal,
+    },
+  );
 }
 
 /**
@@ -526,15 +516,11 @@ export async function writeDocument(
   chunking?: PipelineSpec["chunking"],
   mode: "replace" | "create" = "replace",
 ): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, mode, chunking: chunking ?? null }),
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Save failed");
-  }
+  return requestVoid(
+    `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`,
+    "Save failed",
+    jsonRequest("PATCH", { content, mode, chunking: chunking ?? null }),
+  );
 }
 
 /** Options for collection upload (ZIP or directory). */
@@ -563,12 +549,12 @@ export async function uploadCollection(
     formData.append("llm_config", JSON.stringify(options.llm));
   }
 
-  const res = await authFetch(
+  return requestJson(
     `${API_BASE_URL}/api/documents/collections/${encodeFilePath(target)}`,
+    "Collection upload failed",
+    JobViewSchema,
     { method: "POST", body: formData, signal: options?.signal },
   );
-
-  return parseJobResponse(res, "Collection upload failed");
 }
 
 /**
@@ -619,48 +605,36 @@ async function readSseEvents<TEvent, TResult>(
 }
 
 export async function deleteDocument(filename: string): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`, {
+  return requestVoid(`${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`, "Delete failed", {
     method: "DELETE",
   });
-
-  if (!res.ok) {
-    throw await responseError(res, "Delete failed");
-  }
 }
 
 export async function getDocumentContent(filename: string): Promise<string> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`);
-
-  if (!res.ok) {
-    throw new Error("Failed to fetch document content");
-  }
-
-  return res.text();
+  return requestText(
+    `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`,
+    "Failed to fetch document content",
+  );
 }
 
 /** Fetch a workspace asset (e.g. image) as a blob URL for display. */
 export async function fetchDocumentAsset(filepath: string, signal?: AbortSignal): Promise<string> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`, {
-    signal,
-  });
-
-  if (!res.ok) {
-    throw new Error("Failed to fetch document asset");
-  }
-
-  const blob = await res.blob();
+  const blob = await (
+    await checkedResponse(
+      `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`,
+      "Failed to fetch document asset",
+      { signal },
+    )
+  ).blob();
   return URL.createObjectURL(blob);
 }
 
 /** Download the original binary file for a document. */
 export async function downloadOriginal(filepath: string): Promise<Blob> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/original/${encodeFilePath(filepath)}`);
-
-  if (!res.ok) {
-    throw await responseError(res, "Download failed");
-  }
-
-  return res.blob();
+  return requestBlob(
+    `${API_BASE_URL}/api/documents/original/${encodeFilePath(filepath)}`,
+    "Download failed",
+  );
 }
 
 /**
@@ -678,56 +652,46 @@ export async function replaceOriginal(
   if (spec) formData.append("pipeline_spec", JSON.stringify(spec));
   if (llm) formData.append("llm_config", JSON.stringify(llm));
 
-  const res = await authFetch(
+  return requestJson(
     `${API_BASE_URL}/api/documents/original/${encodeFilePath(filepath)}`,
+    "Replace failed",
+    JobViewSchema,
     { method: "PUT", body: formData },
   );
-
-  return parseJobResponse(res, "Replace failed");
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {
-  const data = await getJson(`${API_BASE_URL}/api/conversations`, "Failed to list conversations");
-  return ConversationListResponseSchema.parse(data).conversations;
+  return (
+    await requestJson(
+      `${API_BASE_URL}/api/conversations`,
+      "Failed to list conversations",
+      ConversationListResponseSchema,
+    )
+  ).conversations;
 }
 
 export async function updateConversationTitle(
   conversationId: string,
   title: string,
 ): Promise<ConversationSummary> {
-  const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Update failed");
-  }
-
-  const data: unknown = await res.json();
-  return ConversationSummarySchema.parse(data);
+  return requestJson(
+    `${API_BASE_URL}/api/conversations/${conversationId}`,
+    "Update failed",
+    ConversationSummarySchema,
+    jsonRequest("PATCH", { title }),
+  );
 }
 
 export async function generateConversationTitle(
   conversationId: string,
   llm: LlmConfig,
 ): Promise<GenerateTitleResponse> {
-  const res = await authFetch(
+  return requestJson(
     `${API_BASE_URL}/api/conversations/${conversationId}/title/generation`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ llm }),
-    },
+    "Title generation failed",
+    GenerateTitleResponseSchema,
+    jsonRequest("POST", { llm }),
   );
-
-  if (!res.ok) {
-    throw await responseError(res, "Title generation failed");
-  }
-
-  const data: unknown = await res.json();
-  return GenerateTitleResponseSchema.parse(data);
 }
 
 export async function compactConversation(
@@ -735,112 +699,89 @@ export async function compactConversation(
   llm: LlmConfig,
   messages: ChatMessage[],
 ): Promise<CompactConversationResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}/compaction`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ llm, messages }),
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Compaction failed");
-  }
-
-  const data: unknown = await res.json();
-  return CompactConversationResponseSchema.parse(data);
+  return requestJson(
+    `${API_BASE_URL}/api/conversations/${conversationId}/compaction`,
+    "Compaction failed",
+    CompactConversationResponseSchema,
+    jsonRequest("POST", { llm, messages }),
+  );
 }
 
 export async function getConversation(conversationId: string): Promise<ConversationSummary | null> {
   const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}`);
-  if (!res.ok) return null;
+  if (res.status === 404) return null;
+  if (!res.ok) throw await responseError(res, "Failed to fetch conversation");
   const data: unknown = await res.json();
   return ConversationSummarySchema.parse(data);
 }
 
 /** Restore a previously exported conversation as a new chat owned by the user. */
 export async function importConversation(file: File): Promise<ConversationSummary> {
-  const res = await authFetch(`${API_BASE_URL}/api/conversations/import`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: await file.text(),
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Import failed");
-  }
-
-  const data: unknown = await res.json();
-  return ConversationSummarySchema.parse(data);
+  return requestJson(
+    `${API_BASE_URL}/api/conversations/import`,
+    "Import failed",
+    ConversationSummarySchema,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: await file.text() },
+  );
 }
 
 export async function deleteConversation(conversationId: string): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}`, {
+  return requestVoid(`${API_BASE_URL}/api/conversations/${conversationId}`, "Delete failed", {
     method: "DELETE",
   });
-
-  if (!res.ok) {
-    throw await responseError(res, "Delete failed");
-  }
 }
 
 // Conversion pipeline API functions
 
 export async function listConversionPipelines(): Promise<ConversionPipelineInfo[]> {
-  const data = await getJson(
+  return requestJson(
     `${API_BASE_URL}/api/pipelines/conversion`,
     "Failed to get conversion pipelines",
+    z.array(ConversionPipelineInfoSchema),
   );
-  return z.array(ConversionPipelineInfoSchema).parse(data);
 }
 
 // Chunking pipeline API functions
 
 export async function listChunkingPipelines(): Promise<ChunkingPipelineInfo[]> {
-  const data = await getJson(
+  return requestJson(
     `${API_BASE_URL}/api/pipelines/chunking`,
     "Failed to get chunking pipelines",
+    z.array(ChunkingPipelineInfoSchema),
   );
-  return z.array(ChunkingPipelineInfoSchema).parse(data);
 }
 
 export async function getDocumentChunks(filename: string): Promise<ChunkedDocumentResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/chunks/${encodeFilePath(filename)}`);
-
-  if (!res.ok) {
-    throw await responseError(res, "Failed to fetch chunks");
-  }
-
-  const data: unknown = await res.json();
-  return ChunkedDocumentResponseSchema.parse(data);
+  return requestJson(
+    `${API_BASE_URL}/api/documents/chunks/${encodeFilePath(filename)}`,
+    "Failed to fetch chunks",
+    ChunkedDocumentResponseSchema,
+  );
 }
 
 /** Batch-resolve document line counts; unknown paths are omitted from the map. */
 export async function getDocumentLineCounts(files: string[]): Promise<Record<string, number>> {
   if (files.length === 0) return {};
 
-  const res = await authFetch(`${API_BASE_URL}/api/documents/line-counts`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ files }),
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Failed to fetch line counts");
-  }
-
-  const data: unknown = await res.json();
-  return DocumentLineCountsResponseSchema.parse(data).line_counts;
+  return (
+    await requestJson(
+      `${API_BASE_URL}/api/documents/line-counts`,
+      "Failed to fetch line counts",
+      DocumentLineCountsResponseSchema,
+      jsonRequest("POST", { files }),
+    )
+  ).line_counts;
 }
 
 // Asset API functions
 
 /** List assets for a document. */
 export async function listDocumentAssets(filename: string): Promise<AssetListResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`);
-  if (!res.ok) {
-    throw await responseError(res, "Failed to list assets");
-  }
-  const data: unknown = await res.json();
-  return AssetListResponseSchema.parse(data);
+  return requestJson(
+    `${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`,
+    "Failed to list assets",
+    AssetListResponseSchema,
+  );
 }
 
 /** Update an asset's companion .md description. */
@@ -849,16 +790,12 @@ export async function updateAssetDescription(
   assetName: string,
   content: string,
 ): Promise<AssetEntry> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ asset_name: assetName, content }),
-  });
-  if (!res.ok) {
-    throw await responseError(res, "Failed to update description");
-  }
-  const data: unknown = await res.json();
-  return AssetEntrySchema.parse(data);
+  return requestJson(
+    `${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`,
+    "Failed to update description",
+    AssetEntrySchema,
+    jsonRequest("PATCH", { asset_name: assetName, content }),
+  );
 }
 
 /** Generate an asset's companion .md description with the vision model. */
@@ -867,16 +804,12 @@ export async function generateAssetDescription(
   assetName: string,
   llm?: LlmConfig,
 ): Promise<AssetEntry> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ asset_name: assetName, llm: llm ?? {} }),
-  });
-  if (!res.ok) {
-    throw await responseError(res, "Failed to generate description");
-  }
-  const data: unknown = await res.json();
-  return AssetEntrySchema.parse(data);
+  return requestJson(
+    `${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`,
+    "Failed to generate description",
+    AssetEntrySchema,
+    jsonRequest("POST", { asset_name: assetName, llm: llm ?? {} }),
+  );
 }
 
 /** Delete an asset's companion .md description, keeping the asset itself. */
@@ -884,15 +817,12 @@ export async function deleteAssetDescription(
   filename: string,
   assetName: string,
 ): Promise<AssetEntry> {
-  const res = await authFetch(
+  return requestJson(
     `${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}?asset_name=${encodeURIComponent(assetName)}`,
+    "Failed to delete description",
+    AssetEntrySchema,
     { method: "DELETE" },
   );
-  if (!res.ok) {
-    throw await responseError(res, "Failed to delete description");
-  }
-  const data: unknown = await res.json();
-  return AssetEntrySchema.parse(data);
 }
 
 /** Options for document reconversion. */
@@ -921,8 +851,10 @@ export async function reconvertDocument(
   filename: string,
   options?: ReconvertDocumentOptions & { signal?: AbortSignal },
 ): Promise<JobView> {
-  const res = await authFetch(
+  return requestJson(
     `${API_BASE_URL}/api/documents/reconvert/${encodeFilePath(filename)}`,
+    "Reconvert failed",
+    JobViewSchema,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -930,29 +862,20 @@ export async function reconvertDocument(
       signal: options?.signal,
     },
   );
-
-  return parseJobResponse(res, "Reconvert failed");
 }
 
 // --- Background jobs (generic) ---
 
 /** List the caller's known background jobs. */
 export async function listJobs(): Promise<JobView[]> {
-  const res = await authFetch(`${API_BASE_URL}/api/jobs`);
-  if (!res.ok) {
-    throw await responseError(res, "Failed to list jobs");
-  }
-  return z.array(JobViewSchema).parse(await res.json());
+  return requestJson(`${API_BASE_URL}/api/jobs`, "Failed to list jobs", z.array(JobViewSchema));
 }
 
 /** Request cancellation of a background job. Idempotent server-side. */
 export async function cancelJob(id: string): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/jobs/${encodeURIComponent(id)}`, {
+  return requestVoid(`${API_BASE_URL}/api/jobs/${encodeURIComponent(id)}`, "Failed to cancel job", {
     method: "DELETE",
   });
-  if (!res.ok) {
-    throw await responseError(res, "Failed to cancel job");
-  }
 }
 
 /**
@@ -968,10 +891,9 @@ export async function subscribeJobs(
   onScopeChanged: (scope: string) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/jobs/events`, { signal });
-  if (!res.ok) {
-    throw new Error(fallbackMessage("Job feed failed", res.status));
-  }
+  const res = await checkedResponse(`${API_BASE_URL}/api/jobs/events`, "Job feed failed", {
+    signal,
+  });
 
   // The feed never terminates with a completion event, so `readSseEvents`
   // throws "Stream ended..." when the connection drops — the caller's
@@ -1031,77 +953,49 @@ export function bulkDelete(files: string[]): Promise<JobView> {
 
 /** Fetch a workspace directory tree; `scope` is `~` (personal) or `@<group>`. */
 export async function getDirectories(scope: string): Promise<DirectoryTreeResponse> {
-  const data = await getJson(
+  return requestJson(
     `${API_BASE_URL}/api/directories/${encodeFilePath(scope)}`,
     "Failed to fetch directory tree",
+    DirectoryTreeResponseSchema,
   );
-  return DirectoryTreeResponseSchema.parse(data);
 }
 
-export async function createDirectory(path: string): Promise<CreateDirectoryResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/directories`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path }),
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Failed to create directory");
-  }
-
-  const data: unknown = await res.json();
-  return CreateDirectoryResponseSchema.parse(data);
+export async function createDirectory(path: string): Promise<void> {
+  return requestVoid(
+    `${API_BASE_URL}/api/directories`,
+    "Failed to create directory",
+    jsonRequest("POST", { path }),
+  );
 }
 
-export async function deleteDirectory(dirpath: string): Promise<DeleteDirectoryResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/directories`, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path: dirpath }),
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Failed to delete directory");
-  }
-
-  const data: unknown = await res.json();
-  return DeleteDirectoryResponseSchema.parse(data);
+export async function deleteDirectory(dirpath: string): Promise<void> {
+  return requestVoid(
+    `${API_BASE_URL}/api/directories`,
+    "Failed to delete directory",
+    jsonRequest("DELETE", { path: dirpath }),
+  );
 }
 
 export async function moveDirectory(
   source: string,
   destination: string,
-): Promise<MoveDirectoryResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/directories/move`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source, destination }),
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Failed to move directory");
-  }
-
-  const data: unknown = await res.json();
-  return MoveDirectoryResponseSchema.parse(data);
+): Promise<void> {
+  return requestVoid(
+    `${API_BASE_URL}/api/directories/move`,
+    "Failed to move directory",
+    jsonRequest("POST", { source, destination }),
+  );
 }
 
 export async function moveDocument(
   filepath: string,
   destination: string,
-): Promise<MoveDocumentResponse> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/move/${encodeFilePath(filepath)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ destination }),
-  });
-
-  if (!res.ok) {
-    throw await responseError(res, "Move failed");
-  }
-
-  const data: unknown = await res.json();
-  return MoveDocumentResponseSchema.parse(data);
+): Promise<void> {
+  return requestVoid(
+    `${API_BASE_URL}/api/documents/move/${encodeFilePath(filepath)}`,
+    "Move failed",
+    jsonRequest("POST", { destination }),
+  );
 }
 
 // ============================================================
@@ -1110,12 +1004,9 @@ export async function moveDocument(
 
 /** Delete all conversations for the authenticated user. */
 export async function deleteAllConversations(): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/conversations`, {
+  return requestVoid(`${API_BASE_URL}/api/conversations`, "Failed to delete conversations", {
     method: "DELETE",
   });
-  if (!res.ok) {
-    throw await responseError(res, "Failed to delete conversations");
-  }
 }
 
 /**
@@ -1123,32 +1014,25 @@ export async function deleteAllConversations(): Promise<void> {
  * `scope` is `~` (personal) or `@<group>`.
  */
 export async function deleteAllDocuments(scope: string): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/documents/${encodeFilePath(scope)}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    throw await responseError(res, "Failed to delete documents");
-  }
+  return requestVoid(
+    `${API_BASE_URL}/api/documents/${encodeFilePath(scope)}`,
+    "Failed to delete documents",
+    { method: "DELETE" },
+  );
 }
 
 /** Clear the user's persistent memory. */
 export async function clearMemory(): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/memory`, {
+  return requestVoid(`${API_BASE_URL}/api/memory`, "Failed to clear memory", {
     method: "DELETE",
   });
-  if (!res.ok) {
-    throw await responseError(res, "Failed to clear memory");
-  }
 }
 
 /** Delete all user data (conversations, documents, tokens). */
 export async function deleteAllUserData(): Promise<void> {
-  const res = await authFetch(`${API_BASE_URL}/api/user-data`, {
+  return requestVoid(`${API_BASE_URL}/api/user-data`, "Failed to delete user data", {
     method: "DELETE",
   });
-  if (!res.ok) {
-    throw await responseError(res, "Failed to delete user data");
-  }
 }
 
 // ============================================================
@@ -1163,11 +1047,7 @@ export async function deleteAllUserData(): Promise<void> {
 
 /** POST helper that validates an admin reset response, raising on HTTP errors. */
 async function adminPost<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-  const res = await authFetch(`${API_BASE_URL}${path}`, { method: "POST" });
-  if (!res.ok) {
-    throw await responseError(res, "Admin action failed");
-  }
-  return schema.parse(await res.json());
+  return requestJson(`${API_BASE_URL}${path}`, "Admin action failed", schema, { method: "POST" });
 }
 
 /** Wipe the workspace tree on disk and the matching SQL document rows. */
@@ -1192,56 +1072,63 @@ export function adminFactoryReset(): Promise<AdminFactoryResetResponse> {
 
 /** List every user known to the local database (footprint-bearing only). */
 export async function adminListUsers(): Promise<AdminUserInfo[]> {
-  const data = await getJson(`${API_BASE_URL}/api/admin/users`, "Failed to list users");
-  return AdminListUsersResponseSchema.parse(data).users;
+  return (
+    await requestJson(
+      `${API_BASE_URL}/api/admin/users`,
+      "Failed to list users",
+      AdminListUsersResponseSchema,
+    )
+  ).users;
 }
 
 /** List every group known to the local database. */
 export async function adminListGroups(): Promise<AdminGroupInfo[]> {
-  const data = await getJson(`${API_BASE_URL}/api/admin/groups`, "Failed to list groups");
-  return AdminListGroupsResponseSchema.parse(data).groups;
+  return (
+    await requestJson(
+      `${API_BASE_URL}/api/admin/groups`,
+      "Failed to list groups",
+      AdminListGroupsResponseSchema,
+    )
+  ).groups;
 }
 
 /** Read the server's global maintenance flag. */
 export async function adminGetMaintenance(): Promise<boolean> {
-  const data = await getJson(
-    `${API_BASE_URL}/api/admin/maintenance`,
-    "Failed to read maintenance mode",
-  );
-  return AdminMaintenanceStateSchema.parse(data).enabled;
+  return (
+    await requestJson(
+      `${API_BASE_URL}/api/admin/maintenance`,
+      "Failed to read maintenance mode",
+      AdminMaintenanceStateSchema,
+    )
+  ).enabled;
 }
 
 /** Set the server's global maintenance flag (persisted across restarts). */
 export async function adminSetMaintenance(enabled: boolean): Promise<boolean> {
-  const res = await authFetch(`${API_BASE_URL}/api/admin/maintenance`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled }),
-  });
-  if (!res.ok) {
-    throw await responseError(res, "Failed to set maintenance mode");
-  }
-  return AdminMaintenanceStateSchema.parse(await res.json()).enabled;
+  return (
+    await requestJson(
+      `${API_BASE_URL}/api/admin/maintenance`,
+      "Failed to set maintenance mode",
+      AdminMaintenanceStateSchema,
+      jsonRequest("PUT", { enabled }),
+    )
+  ).enabled;
 }
 
 /** Wipe all data owned by a single user (workspace + SQL + index). */
 export async function adminDeleteUserData(userId: string): Promise<void> {
-  const res = await authFetch(
+  return requestVoid(
     `${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}/data`,
+    "Failed to delete user data",
     { method: "DELETE" },
   );
-  if (!res.ok) {
-    throw await responseError(res, "Failed to delete user data");
-  }
 }
 
 /** Wipe all data owned by a single group (workspace + SQL + index). */
 export async function adminDeleteGroupData(groupId: string): Promise<void> {
-  const res = await authFetch(
+  return requestVoid(
     `${API_BASE_URL}/api/admin/groups/${encodeURIComponent(groupId)}/data`,
+    "Failed to delete group data",
     { method: "DELETE" },
   );
-  if (!res.ok) {
-    throw await responseError(res, "Failed to delete group data");
-  }
 }

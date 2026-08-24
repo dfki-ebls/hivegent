@@ -11,9 +11,8 @@ from collections.abc import AsyncIterable
 from contextlib import aclosing
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from fastapi.sse import EventSourceResponse
-from pydantic import BaseModel
 
 from ...auth import User, get_current_user
 from ...jobs import FeedEvent, JobView, manager
@@ -23,13 +22,6 @@ __all__ = ["router"]
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-class CancelJobResponse(BaseModel):
-    """Result of a cancel request: whether a live job was signalled."""
-
-    job_id: str
-    cancelled: bool
 
 
 @router.get("/jobs")
@@ -57,14 +49,13 @@ async def job_events(
             yield snapshot
 
 
-@router.delete("/jobs/{job_id}")
+@router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_job(
     job_id: str,
     user: Annotated[User, Depends(get_current_user)],
-) -> CancelJobResponse:
+) -> None:
     """Request cancellation of one of the caller's jobs.
 
-    Idempotent: cancelling an unknown or already-finished job reports
-    ``cancelled=False`` rather than erroring, so a double click is safe.
+    Idempotent: unknown and already-finished jobs still return successfully.
     """
-    return CancelJobResponse(job_id=job_id, cancelled=manager.cancel(user.id, job_id))
+    manager.cancel(user.id, job_id)

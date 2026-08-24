@@ -29,7 +29,7 @@ from ..entries import (
 from ..humanize import pluralize
 from ..store import Casebase
 from ..text import NOT_TEXT_REASON, DecodedText, read_text_file
-from ..types import LlmConfig, MoveDocumentResponse, PipelineSpec
+from ..types import LlmConfig, PipelineSpec
 from .commit import (
     _delete_single_locked,
     _ensure_upload_slot_locked,
@@ -396,7 +396,7 @@ async def delete_document(store: Casebase, safe: str) -> None:
 
 async def _move_document_locked(
     src_store: Casebase, dst_store: Casebase, src: str, dst: str
-) -> MoveDocumentResponse:
+) -> None:
     """Move a logical entry's files and SQL rows. Caller holds the lock(s).
 
     Source paths resolve under *src_store*'s workspace and destination paths
@@ -503,16 +503,9 @@ async def _move_document_locked(
             src_store, metadata.assets_dir, dst_store, assets_dir_for_stem(dst_stem)
         )
 
-    return MoveDocumentResponse(
-        source=src,
-        destination=dst_description,
-        message="Document moved successfully",
-    )
-
-
 async def move_document(
     src_store: Casebase, dst_store: Casebase, src: str, dst: str
-) -> MoveDocumentResponse:
+) -> None:
     """Move a logical entry, its original, and its child-assets subtree.
 
     *src_store* and *dst_store* may be the same casebase (a rename within one
@@ -522,6 +515,4 @@ async def move_document(
     cancellation cannot leave the renamed files pointing at stale SQL rows.
     """
     async with _locked_for(src_store, src, dst_store=dst_store):
-        return await shield_to_completion(
-            _move_document_locked(src_store, dst_store, src, dst)
-        )
+        await shield_to_completion(_move_document_locked(src_store, dst_store, src, dst))

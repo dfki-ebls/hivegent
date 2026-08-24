@@ -125,11 +125,10 @@ class TestMoveDocument:
         (workspace_dir / "notes/inner.md").write_text("inner")
         repo.docs["notes"] = _doc("notes", original_suffix=".pdf")
 
-        resp = await workspace.move_document(
+        await workspace.move_document(
             user_store, user_store, "notes.md", "archive/notes.md"
         )
 
-        assert resp.destination == "archive/notes.md"
         assert (workspace_dir / "archive/notes.md").is_file()
         assert (workspace_dir / "archive/notes.pdf").is_file()
         assert not (workspace_dir / "notes.md").exists()
@@ -145,11 +144,11 @@ class TestMoveDocument:
         (workspace_dir / "archive").mkdir()
         repo.docs["report"] = _doc("report", original_suffix=".pdf")
 
-        resp = await workspace.move_document(
+        await workspace.move_document(
             user_store, user_store, "report.md", "archive"
         )
 
-        assert resp.destination == "archive/report.md"
+        assert (workspace_dir / "archive/report.md").is_file()
         assert (workspace_dir / "archive/report.pdf").is_file()
 
     async def test_conflict_is_detected_before_any_rename(
@@ -180,11 +179,11 @@ class TestMoveDocument:
         (workspace_dir / "a.tar.gz").write_bytes(b"x")
         repo.docs["a.tar"] = _doc("a.tar", original_suffix=".gz")
 
-        resp = await workspace.move_document(
+        await workspace.move_document(
             user_store, user_store, "a.tar.md", "dir/a.tar.md"
         )
 
-        assert resp.destination == "dir/a.tar.md"
+        assert (workspace_dir / "dir/a.tar.md").is_file()
         assert (workspace_dir / "dir/a.tar.gz").is_file()
         assert repo.calls == [("move_document", "a.tar", "dir/a.tar")]
 
@@ -218,11 +217,10 @@ class TestMoveDirectory:
         (workspace_dir / "images/x.md").write_text("x")
         (workspace_dir / "archive").mkdir()
 
-        resp = await workspace.move_directory(
+        await workspace.move_directory(
             user_store, user_store, "images", "archive"
         )
 
-        assert resp.destination == "archive/images"
         assert (workspace_dir / "archive/images/x.md").is_file()
         assert repo.calls == [("move_subtree", "images", "archive/images")]
 
@@ -287,11 +285,10 @@ class TestCrossStoreMove:
         doc = _doc("report", original_suffix=".pdf")
         repo.docs["report"] = doc.model_copy(update={"assets_dir": "report.assets"})
 
-        resp = await workspace.move_document(
+        await workspace.move_document(
             user_store, group_store, "report.md", "report.md"
         )
 
-        assert resp.destination == "report.md"
         assert (group_dir / "report.md").is_file()
         assert (group_dir / "report.pdf").is_file()
         assert (group_dir / "report.assets/a.png").is_file()
@@ -338,12 +335,10 @@ class TestCrossStoreMove:
         (workspace_dir / "shared").mkdir()
         (workspace_dir / "shared/x.md").write_text("x")
 
-        resp = await workspace.move_directory(
+        await workspace.move_directory(
             user_store, group_store, "shared", "shared"
         )
 
-        assert resp.destination == "shared"
-        assert resp.files_moved == 1
         assert (group_dir / "shared/x.md").is_file()
         assert not (workspace_dir / "shared").exists()
         assert repo.store_moves == [("move_subtree", "user:testuser", "group:team")]

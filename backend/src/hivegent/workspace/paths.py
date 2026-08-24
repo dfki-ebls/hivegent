@@ -3,11 +3,7 @@
 No async and no SQL: this module is the path arithmetic, the HTTP-level
 validation every mutation shares — ``mv`` destination resolution,
 case-insensitive inode aliasing, parent-chain checks, the upload size limit —
-and the blocking filesystem primitives the mutations build from.  The latter
-are deliberately synchronous: each is called while the casebase lock is held,
-so callers hand the expensive ones (:func:`_count_files`, :func:`_remove_tree`)
-to :func:`asyncio.to_thread` rather than stalling the event loop for as long as
-the subtree takes.
+and the blocking filesystem primitives the mutations build from.
 """
 
 import shutil
@@ -23,11 +19,6 @@ from ..entries import ContentStat, is_assets_dir
 from ..humanize import format_bytes
 
 __all__: list[str] = []
-
-
-def _count_files(directory: Path) -> int:
-    """Count the regular files anywhere under *directory*."""
-    return sum(1 for path in directory.rglob("*") if path.is_file())
 
 
 def _remove_tree(directory: Path) -> None:

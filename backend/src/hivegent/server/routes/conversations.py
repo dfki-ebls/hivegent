@@ -5,7 +5,7 @@ import logging
 from collections.abc import Sequence
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
 from pydantic_ai import BinaryContent, DeferredToolRequests
 from pydantic_ai.exceptions import ModelHTTPError
@@ -64,13 +64,11 @@ from ...tools.formatting import BLOCK_SEP
 from ...types import (
     MODE_VALUES,
     REASONING_EFFORT_VALUES,
-    BulkDeleteConversationsResponse,
     ChatRequestConfig,
     CompactConversationRequest,
     CompactConversationResponse,
     ConversationArchive,
     ConversationListResponse,
-    DeleteConversationResponse,
     GenerateTitleRequest,
     GenerateTitleResponse,
     InstructionsSnapshot,
@@ -209,29 +207,24 @@ Return ONLY the title, no quotes or extra text.
         ) from exc
 
 
-@router.delete("/conversations/{conversation_id}")
+@router.delete(
+    "/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_conversation(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
-) -> DeleteConversationResponse:
+) -> None:
     """Delete a conversation."""
     if not await remove_conversation(user.id, conversation_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return DeleteConversationResponse(
-        id=conversation_id,
-        message="Conversation deleted successfully",
-    )
 
 
-@router.delete("/conversations")
+@router.delete("/conversations", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_all_conversations_route(
     user: Annotated[User, Depends(get_current_user)],
-) -> BulkDeleteConversationsResponse:
+) -> None:
     """Delete all conversations for the authenticated user."""
-    return BulkDeleteConversationsResponse(
-        deleted_count=await delete_all_conversations(user.id),
-        message="All conversations deleted successfully",
-    )
+    await delete_all_conversations(user.id)
 
 
 @router.post("/conversations/{conversation_id}/compaction")

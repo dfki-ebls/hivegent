@@ -19,7 +19,7 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
 from starlette.responses import FileResponse, Response
 
 from ... import workspace
@@ -34,19 +34,15 @@ from ...store import Casebase
 from ...types import (
     AssetEntry,
     AssetListResponse,
-    BulkDeleteDocumentsResponse,
     CollectionCompleteEvent,
     CollectionProgressEvent,
-    DeleteDocumentResponse,
     DocumentLineCountsResponse,
     GenerateAssetDescriptionRequest,
     LlmConfig,
     MoveDocumentRequest,
-    MoveDocumentResponse,
     PipelineSpec,
     UpdateAssetDescriptionRequest,
     WriteDocumentRequest,
-    WriteDocumentResponse,
 )
 from ...workspace_events import notify_workspace_change
 from ..common import (
@@ -341,19 +337,16 @@ async def upload_collection(
     )
 
 
-@router.delete("/documents/{scope}")
+@router.delete("/documents/{scope}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_all_documents(
     scope: str,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> BulkDeleteDocumentsResponse:
+) -> None:
     """Delete all documents, chunks, and originals in a workspace."""
     store, _ = resolve_workspace_path(user, scope, write=True)
     await workspace.delete_all(store)
     notify_workspace_change(user.id, store, client)
-    return BulkDeleteDocumentsResponse(
-        message="All documents and search index deleted successfully",
-    )
 
 
 @router.post("/documents/rechunk/bulk")
@@ -542,13 +535,13 @@ async def reconvert_document(
     )
 
 
-@router.post("/documents/move/{filepath:path}")
+@router.post("/documents/move/{filepath:path}", status_code=status.HTTP_204_NO_CONTENT)
 async def move_document(
     filepath: str,
     request: MoveDocumentRequest,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> MoveDocumentResponse:
+) -> None:
     """Move a document within a workspace or migrate it to another.
 
     ``filepath`` and ``destination`` are canonical paths; resolving both with
@@ -557,13 +550,12 @@ async def move_document(
     destination.
     """
     src_store, src, dst_store, dst = resolve_move(user, filepath, request.destination)
-    result = await workspace.move_document(src_store, dst_store, src, dst)
+    await workspace.move_document(src_store, dst_store, src, dst)
     # Both ends change on a cross-workspace move; the same store twice collapses
     # to one notification for an in-place one.
     notify_workspace_change(user.id, src_store, client)
     if dst_store != src_store:
         notify_workspace_change(user.id, dst_store, client)
-    return result
 
 
 @router.get("/documents/assets/{filepath:path}")
@@ -625,24 +617,23 @@ async def delete_asset_description(
 
 # Registered after the more specific /documents/assets/ PATCH route so the
 # catch-all path parameter cannot shadow it.
-@router.patch("/documents/{filepath:path}")
+@router.patch("/documents/{filepath:path}", status_code=status.HTTP_204_NO_CONTENT)
 async def write_document(
     filepath: str,
     request: WriteDocumentRequest,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> WriteDocumentResponse:
+) -> None:
     """Replace a text document's content in place.
 
     Unlike the PUT upload route this keeps the entry's original binary,
     assets, and provenance, and only rewrites the markdown and its chunks.
     """
     store, safe = resolve_workspace_path(user, filepath, write=True)
-    message = await workspace.write_document_text(
+    await workspace.write_document_text(
         store, safe, request.content, mode=request.mode, chunking=request.chunking
     )
     notify_workspace_change(user.id, store, client)
-    return WriteDocumentResponse(filename=safe, message=message)
 
 
 @router.get("/documents/{filepath:path}")
@@ -655,17 +646,13 @@ async def get_document_content(
     return await get_document_response(store, safe)
 
 
-@router.delete("/documents/{filepath:path}")
+@router.delete("/documents/{filepath:path}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> DeleteDocumentResponse:
+) -> None:
     """Delete a document and its associated chunks and original."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
     await workspace.delete_document(store, safe)
     notify_workspace_change(user.id, store, client)
-    return DeleteDocumentResponse(
-        filename=safe,
-        message="Document deleted successfully",
-    )

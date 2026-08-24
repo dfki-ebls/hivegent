@@ -35,11 +35,7 @@ __all__ = [
     "AdminUserInfo",
     "AssetProcessingMode",
     "AttachmentLimits",
-    "BulkDeleteConversationsResponse",
-    "BulkDeleteDocumentsResponse",
-    "BulkDeleteUserDataResponse",
     "ChatRequestConfig",
-    "ClearMemoryResponse",
     "ClientConversation",
     "CollectionCompleteEvent",
     "CollectionProgressEvent",
@@ -48,11 +44,7 @@ __all__ = [
     "ConversationArchive",
     "ConversationListResponse",
     "CreateDirectoryRequest",
-    "CreateDirectoryResponse",
-    "DeleteConversationResponse",
     "DeleteDirectoryRequest",
-    "DeleteDirectoryResponse",
-    "DeleteDocumentResponse",
     "DirectoryEntry",
     "DirectoryTreeResponse",
     "DocumentFilter",
@@ -70,7 +62,6 @@ __all__ = [
     "McpTestResponse",
     "Mode",
     "MoveDocumentRequest",
-    "MoveDocumentResponse",
     "OidcPublicConfig",
     "PipelineSpec",
     "ProgressReporter",
@@ -88,7 +79,6 @@ __all__ = [
     "User",
     "UserResponse",
     "WriteDocumentRequest",
-    "WriteDocumentResponse",
     "resolve_llm_config",
 ]
 
@@ -426,13 +416,6 @@ class ChatRequestConfig(BaseModel):
     )
 
 
-class ClearMemoryResponse(BaseModel):
-    """Response for clearing user memory."""
-
-    cleared: bool = Field(description="Whether memory was cleared")
-    message: str = Field(description="Status message")
-
-
 class DocumentInfo(BaseModel):
     """Metadata about a logical workspace entry."""
 
@@ -527,13 +510,6 @@ class UploadDocumentResponse(BaseModel):
     message: str = Field(description="Status message")
 
 
-class DeleteDocumentResponse(BaseModel):
-    """Response for document deletion."""
-
-    filename: str = Field(description="The deleted filename")
-    message: str = Field(description="Status message")
-
-
 class DocumentLineCountsResponse(BaseModel):
     """Batch document line counts, keyed by the requested workspace path."""
 
@@ -554,13 +530,6 @@ class WriteDocumentRequest(BaseModel):
         default=None,
         description="Chunking pipeline to re-index with (defaults to the standard pipeline)",
     )
-
-
-class WriteDocumentResponse(BaseModel):
-    """Response for an in-place document text write."""
-
-    filename: str = Field(description="The written filename")
-    message: str = Field(description="Status message")
 
 
 class ConversationListResponse(BaseModel):
@@ -654,13 +623,6 @@ class CompactConversationResponse(BaseModel):
         description="ID of the new compacted conversation",
     )
     summary: str = Field(description="Summary of the original conversation")
-    message: str = Field(description="Status message")
-
-
-class DeleteConversationResponse(BaseModel):
-    """Response for conversation deletion."""
-
-    id: str = Field(description="The deleted conversation ID")
     message: str = Field(description="Status message")
 
 
@@ -857,25 +819,10 @@ class CreateDirectoryRequest(BaseModel):
     path: str = Field(description="Relative path of the directory to create")
 
 
-class CreateDirectoryResponse(BaseModel):
-    """Response for directory creation."""
-
-    path: str = Field(description="The created directory path")
-    message: str = Field(description="Status message")
-
-
 class MoveDocumentRequest(BaseModel):
     """Request to move a document to a new location."""
 
     destination: str = Field(description="Destination relative path")
-
-
-class MoveDocumentResponse(BaseModel):
-    """Response for document move."""
-
-    source: str = Field(description="Original relative path")
-    destination: str = Field(description="New relative path")
-    message: str = Field(description="Status message")
 
 
 class MoveDirectoryRequest(BaseModel):
@@ -885,46 +832,10 @@ class MoveDirectoryRequest(BaseModel):
     destination: str = Field(description="New relative path for the directory")
 
 
-class MoveDirectoryResponse(BaseModel):
-    """Response for directory move."""
-
-    source: str = Field(description="Original relative path")
-    destination: str = Field(description="New relative path")
-    files_moved: int = Field(description="Number of files moved")
-    message: str = Field(description="Status message")
-
-
 class DeleteDirectoryRequest(BaseModel):
     """Request to delete a directory."""
 
     path: str = Field(description="Relative path of the directory to delete")
-
-
-class DeleteDirectoryResponse(BaseModel):
-    """Response for directory deletion."""
-
-    path: str = Field(description="The deleted directory path")
-    files_deleted: int = Field(description="Number of files deleted")
-    message: str = Field(description="Status message")
-
-
-class BulkDeleteConversationsResponse(BaseModel):
-    """Response for bulk conversation deletion."""
-
-    deleted_count: int = Field(description="Number of conversations deleted")
-    message: str = Field(description="Status message")
-
-
-class BulkDeleteDocumentsResponse(BaseModel):
-    """Response for bulk document deletion."""
-
-    message: str = Field(description="Status message")
-
-
-class BulkDeleteUserDataResponse(BaseModel):
-    """Response for complete user data wipe."""
-
-    message: str = Field(description="Status message")
 
 
 class FailedFile(BaseModel):

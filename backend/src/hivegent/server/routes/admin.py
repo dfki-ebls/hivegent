@@ -18,7 +18,7 @@ leaves the deployment in the same state as a clean checkout.
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import delete
 
 from ... import workspace
@@ -42,7 +42,6 @@ from ...types import (
     AdminReindexResponse,
     AdminResetResponse,
     AdminUserInfo,
-    BulkDeleteUserDataResponse,
 )
 from ...workspace_events import notify_workspace_change
 from ..maintenance import is_enabled, set_enabled
@@ -223,8 +222,8 @@ def _casebase_or_400(kind: str, identifier: str) -> Casebase:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.delete("/users/{user_id}/data")
-async def admin_delete_user_data(user_id: str) -> BulkDeleteUserDataResponse:
+@router.delete("/users/{user_id}/data", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_user_data(user_id: str) -> None:
     """Wipe all data owned by a single user.
 
     ``workspace.delete_all`` clears documents (cascades to chunks via
@@ -238,13 +237,10 @@ async def admin_delete_user_data(user_id: str) -> BulkDeleteUserDataResponse:
     # The wiped user is never the caller here, so every one of their tabs needs
     # telling — none of them made this request.
     notify_workspace_change(store.id, store)
-    return BulkDeleteUserDataResponse(
-        message=f"All data for user {store.id!r} deleted",
-    )
 
 
-@router.delete("/groups/{group_id}/data")
-async def admin_delete_group_data(group_id: str) -> BulkDeleteUserDataResponse:
+@router.delete("/groups/{group_id}/data", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_group_data(group_id: str) -> None:
     """Wipe all data owned by a single group.
 
     Removes the group's workspace directory and SQL document rows
@@ -254,6 +250,3 @@ async def admin_delete_group_data(group_id: str) -> BulkDeleteUserDataResponse:
     """
     store = _casebase_or_400("group", group_id)
     await workspace.delete_all(store)
-    return BulkDeleteUserDataResponse(
-        message=f"All data for group {store.id!r} deleted",
-    )
