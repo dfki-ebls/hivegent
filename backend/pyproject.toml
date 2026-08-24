@@ -96,9 +96,6 @@ extend-immutable-calls = ["fastmcp.dependencies.CurrentAccessToken", "fastmcp.de
 
 [tool.uv.exclude-newer-package]
 cbrkit = false
-# pdf-inspector 1.x landed within the global soak window; drop this override
-# once the cutoff has caught up with it.
-pdf-inspector = false
 pydantic-ai-slim = "1 day"
 pydantic-graph = "1 day"
 pydantic-evals = "1 day"

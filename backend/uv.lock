@@ -16,10 +16,9 @@ exclude-newer-span = "P3D"
 
 [options.exclude-newer-package]
 pydantic-ai-slim = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
-cbrkit = false
 pydantic-graph = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
+cbrkit = false
 pydantic-evals = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
-pdf-inspector = false
 
 [[package]]
 name = "accelerate"
