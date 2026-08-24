@@ -1,3 +1,9 @@
+# SQLAlchemy 2.0 ``Mapped[T] = mapped_column(...)`` declarations are initialized
+# by the ORM metaclass at runtime, which basedpyright cannot see through, so it
+# flags every column as uninitialized.  Scoped to this module: it is the only
+# ORM-shaped one, and elsewhere the check is worth keeping.
+# pyright: reportUninitializedInstanceVariable=false
+
 """SQLAlchemy 2.0 schema for Hivegent.
 
 Single module — small enough to read top-to-bottom.  Repositories convert

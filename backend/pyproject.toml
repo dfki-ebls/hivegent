@@ -74,12 +74,6 @@ timezone = "UTC"
 file_template = "%%(year)d%%(month).2d%%(day).2d_%%(hour).2d%%(minute).2d_%%(rev)s_%%(slug)s"
 
 [tool.basedpyright]
-# SQLAlchemy 2.0 ``Mapped[T] = mapped_column(...)`` declarations are
-# initialized by the ORM metaclass at runtime, but basedpyright cannot see
-# through that and flags every column as uninitialized.  Disable globally
-# because every legitimate uninitialized-attribute case in this repo also
-# happens to be ORM-shaped.
-reportUninitializedInstanceVariable = false
 
 [tool.logfire]
 # `configure_observability` is a no-op unless an OTLP endpoint or
