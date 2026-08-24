@@ -74,6 +74,11 @@ timezone = "UTC"
 file_template = "%%(year)d%%(month).2d%%(day).2d_%%(hour).2d%%(minute).2d_%%(rev)s_%%(slug)s"
 
 [tool.basedpyright]
+# Pin the deployment target so typeshed's platform-conditional stubs resolve to
+# the branch that actually runs.  The default (`All`) also considers the win32
+# branch, which is where `multiprocessing.Pipe` yields `PipeConnection` and no
+# amount of local casting reads honestly.
+pythonPlatform = "Linux"
 
 [tool.logfire]
 # `configure_observability` is a no-op unless an OTLP endpoint or

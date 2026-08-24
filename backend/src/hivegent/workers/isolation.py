@@ -18,9 +18,7 @@ import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from multiprocessing import get_context
-from multiprocessing.connection import (
-    _ConnectionBase,  # pyright: ignore[reportPrivateUsage]
-)
+from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 from typing import cast
 
@@ -59,7 +57,7 @@ type _Outcome[T] = _Success[T] | _Failure
 
 
 def _worker_entry[T](
-    connection: _ConnectionBase,
+    connection: Connection,
     func: Callable[..., T],
     args: tuple[object, ...],
 ) -> None:
@@ -81,7 +79,7 @@ def _worker_entry[T](
 
 def _spawn[T](
     func: Callable[..., T], args: tuple[object, ...], name: str
-) -> tuple[BaseProcess, _ConnectionBase]:
+) -> tuple[BaseProcess, Connection]:
     """Start a fresh spawned worker and return it with its result pipe.
 
     Spawn is forced over the default fork so the worker inherits none of the
@@ -103,7 +101,7 @@ def _spawn[T](
 
 def _wait[T](
     process: BaseProcess,
-    receive: _ConnectionBase,
+    receive: Connection,
     timeout_seconds: float | None,
     name: str,
 ) -> _Outcome[T]:
