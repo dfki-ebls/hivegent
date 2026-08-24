@@ -79,13 +79,7 @@ function TitleEditor({ value, onChange, onSave, onCancel }: TitleEditorProps) {
   };
 
   return (
-    <div
-      role="toolbar"
-      tabIndex={-1}
-      className="flex items-center gap-1"
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => e.stopPropagation()}
-    >
+    <div className="flex items-center gap-1">
       <Input
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -118,13 +112,11 @@ function ConversationActions({
   onDelete,
 }: ConversationActionsProps) {
   return (
-    <div
-      role="toolbar"
-      tabIndex={-1}
-      className="absolute right-2 top-2 flex items-center gap-1 rounded bg-background/90 p-0.5"
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => e.stopPropagation()}
-    >
+    // Faded rather than the `hidden group-hover:inline-flex` the document and
+    // directory rows use, because `display: none` drops the buttons out of the
+    // tab order.  Pointer events are withheld to match, so a faded button
+    // cannot take a click meant for the row button beside it.
+    <div className="pointer-events-none flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
       <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onEdit} title="Edit title">
         <PencilIcon className="h-3 w-3" />
       </Button>
@@ -175,7 +167,6 @@ function ConversationItem({
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(title);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isHovered, setIsHovered] = useState(false);
 
   const handleSaveEdit = () => {
     if (editValue.trim() !== title) {
@@ -203,52 +194,56 @@ function ConversationItem({
     setIsEditing(true);
   };
 
+  // Shared by both branches so the editor does not fork the row's chrome.
+  const icon = <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />;
+  const timestamp = (
+    <p className="mt-1 text-xs text-muted-foreground">{formatRelativeTime(updatedAt)}</p>
+  );
+
   return (
     <div
-      // Cannot use <button> because the item contains nested action buttons
-      // and an inline title editor input.
-      // eslint-disable-next-line jsx-a11y/prefer-tag-over-role
-      role="button"
-      tabIndex={0}
-      className={`group relative w-full rounded-lg border p-3 transition-colors cursor-pointer text-left ${
+      className={`group flex w-full items-start gap-2 rounded-lg border p-3 transition-colors ${
         isActive
           ? "border-primary bg-primary/5"
           : "border-transparent hover:border-border hover:bg-muted/50"
       }`}
-      onClick={() => !isEditing && onSelect()}
-      onKeyDown={(e) => {
-        if ((e.key === "Enter" || e.key === " ") && !isEditing) {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
     >
-      <div className="flex items-start gap-2">
-        <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          {isEditing ? (
+      {isEditing ? (
+        // The editor's <Input> cannot sit inside the row button, so this branch
+        // drops the button rather than nesting an interactive element.
+        <>
+          {icon}
+          <div className="min-w-0 flex-1">
             <TitleEditor
               value={editValue}
               onChange={setEditValue}
               onSave={handleSaveEdit}
               onCancel={handleCancelEdit}
             />
-          ) : (
-            <p className="truncate text-sm font-medium">{title || "Untitled"}</p>
-          )}
-          <p className="mt-1 text-xs text-muted-foreground">{formatRelativeTime(updatedAt)}</p>
-        </div>
-      </div>
-
-      {isHovered && !isEditing && (
-        <ConversationActions
-          isGenerating={isGenerating}
-          onEdit={handleStartEdit}
-          onGenerate={handleGenerateTitle}
-          onDelete={onDelete}
-        />
+            {timestamp}
+          </div>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-start gap-2 text-left cursor-pointer"
+            aria-current={isActive ? "page" : undefined}
+            onClick={onSelect}
+          >
+            {icon}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{title || "Untitled"}</p>
+              {timestamp}
+            </div>
+          </button>
+          <ConversationActions
+            isGenerating={isGenerating}
+            onEdit={handleStartEdit}
+            onGenerate={handleGenerateTitle}
+            onDelete={onDelete}
+          />
+        </>
       )}
     </div>
   );

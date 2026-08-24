@@ -1,14 +1,16 @@
 import type { ChatStatus, FileUIPart } from "ai";
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { toast } from "sonner";
 import {
   PromptInput,
   PromptInputBody,
   PromptInputFooter,
+  PromptInputProvider,
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
   type PromptInputProps,
+  usePromptInputController,
 } from "@/components/ai-elements/prompt-input";
 import { SpeechInput } from "@/components/ai-elements/speech-input";
 import { AttachedFiles } from "@/components/chat/composer/AttachedFiles";
@@ -50,7 +52,47 @@ interface ComposerProps {
   onAudioRecorded?: (audio: Blob) => Promise<string>;
 }
 
-export function Composer({
+/** Appends a transcription to the draft, in its own component so that the
+ * controller subscription (which fires on every keystroke) reaches only the
+ * mic button and not the whole composer. */
+function ComposerSpeechInput({
+  disabled,
+  onAudioRecorded,
+}: {
+  disabled: boolean;
+  onAudioRecorded?: (audio: Blob) => Promise<string>;
+}) {
+  const { textInput } = usePromptInputController();
+
+  return (
+    <SpeechInput
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md"
+      disabled={disabled}
+      onTranscriptionChange={(text) =>
+        textInput.setInput(textInput.value ? `${textInput.value} ${text}` : text)
+      }
+      onAudioRecorded={onAudioRecorded}
+    />
+  );
+}
+
+// The provider owns the draft, which keeps a keystroke inside the composer
+// instead of re-rendering the message list and the whole sidebar, and makes
+// `PromptInput` skip the <form> reset that used to restore the selects.
+// `ComposerContent` is a separate component only because
+// `usePromptInputController` has to run below the provider.
+export function Composer(props: ComposerProps) {
+  return (
+    <PromptInputProvider>
+      <ComposerContent {...props} />
+    </PromptInputProvider>
+  );
+}
+
+function ComposerContent({
   onSubmit,
   status,
   onStop,
@@ -61,18 +103,13 @@ export function Composer({
   onReasoningEffortChange,
   onAudioRecorded,
 }: ComposerProps) {
-  // The draft lives here rather than in ChatSidebar so a keystroke re-renders
-  // the composer alone instead of the message list and the whole sidebar.
-  const [input, setInput] = useState("");
-
   // Served by the backend so the picker, the paste handler, and the chat
   // route all gate on one table: a file the model could not read is refused
   // here rather than after a round trip.
   const attachments = useSettingsStore(selectAttachmentLimits);
 
-  // Stable across keystrokes: `onError` feeds PromptInput's attachment
-  // callbacks, whose memoization the draft state above would otherwise
-  // invalidate on every character typed.
+  // Stable across renders: `onError` feeds PromptInput's attachment callbacks,
+  // whose memoization an unstable identity would invalidate.
   const onAttachmentError = useCallback(
     (err: AttachmentError) => toast.error(attachmentErrorMessage(err, attachments)),
     [attachments],
@@ -91,17 +128,12 @@ export function Composer({
       accept={attachments?.media_types.join(",")}
       maxFileSize={attachments?.max_bytes}
       onError={onAttachmentError}
-      onSubmit={(msg) => {
-        setInput("");
-        onSubmit(msg.text, msg.files);
-      }}
+      onSubmit={(msg) => onSubmit(msg.text, msg.files)}
     >
       <DocumentFilterBadges />
       <AttachedFiles />
       <PromptInputBody>
         <PromptInputTextarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
           placeholder={isStreaming ? "Steer the conversation..." : "Ask about your documents..."}
         />
       </PromptInputBody>
@@ -109,15 +141,8 @@ export function Composer({
         <PromptInputTools>
           <FileSelectButton />
           {showSpeechInput && (
-            <SpeechInput
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md"
+            <ComposerSpeechInput
               disabled={status !== "ready"}
-              onTranscriptionChange={(text) =>
-                setInput((prev) => (prev ? `${prev} ${text}` : text))
-              }
               onAudioRecorded={onAudioRecorded}
             />
           )}
