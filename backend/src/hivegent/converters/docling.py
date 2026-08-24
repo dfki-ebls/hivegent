@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import PIL.Image
-import PIL.ImageFile
+import PIL.PngImagePlugin
 from docling.backend.msword_backend import MsWordDocumentBackend
 from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
@@ -97,11 +97,15 @@ def _default_convert_options() -> ConvertPipelineOptions:
 # guards against truly degenerate files.
 PIL.Image.MAX_IMAGE_PIXELS = settings.limits.max_image_pixels
 
-# Raise the safe decompression block size for PNG text chunks (iTXt/zTXt).
-# The default 1 MB causes "Decompressed Data Too Large" for images with
-# large embedded metadata (common in Office documents). We are generous
-# while still guarding against decompression bombs.
-PIL.ImageFile.SAFEBLOCK = 32 * 1024 * 1024  # ty: ignore[invalid-assignment]
+# Raise the safe decompression size for PNG text chunks (iTXt/zTXt).  The
+# default 1 MB causes "Decompressed Data Too Large" for images with large
+# embedded metadata (common in Office documents).  Setting the derived
+# constants rather than ``ImageFile.SAFEBLOCK`` is deliberate: PngImagePlugin
+# reads SAFEBLOCK once at import time, so writing it only takes effect while
+# that module happens to be unimported.  The total stays at Pillow's default,
+# so a raised per-chunk bound does not lift the per-image one.
+PIL.PngImagePlugin.MAX_TEXT_CHUNK = 32 * 1024 * 1024  # ty: ignore[invalid-assignment]
+PIL.PngImagePlugin.MAX_TEXT_MEMORY = 64 * 1024 * 1024
 
 
 class _MsWordBackend(MsWordDocumentBackend):
