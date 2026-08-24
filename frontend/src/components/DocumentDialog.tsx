@@ -91,6 +91,26 @@ interface DocumentDialogProps {
 type ViewMode = "full-doc" | "chunk" | "edit" | "asset";
 type SidebarTab = "chunks" | "assets";
 
+interface ContentChunk {
+  id: string;
+  content: string;
+  badge: string;
+  detail?: string;
+  isFullDocument?: boolean;
+  range: { start: number; end: number } | null;
+  originLabel?: string;
+}
+
+interface ContentModel {
+  content: string | null;
+  chunks: ContentChunk[];
+  loading: boolean;
+  error: string | null;
+  assetsDir: string | null;
+  image: { path: string; mime: string | null } | null;
+  metadata: ChunkedDocumentResponse | null;
+}
+
 function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleString();
 }
@@ -172,6 +192,17 @@ function resolveChunkRange(
   return idx >= 0 ? { start: idx, end: idx + chunk.content.length } : null;
 }
 
+function fetchedContentChunk(chunk: FetchedChunk, content: string | null): ContentChunk {
+  return {
+    id: chunk.id,
+    content: chunk.content,
+    badge: chunkPositionLabel(chunk.position),
+    isFullDocument: chunk.position.type === "full_document",
+    range: content ? resolveChunkRange(content, chunk) : null,
+    originLabel: chunkOriginLabel(chunk),
+  };
+}
+
 export function DocumentDialog({
   open,
   onOpenChange,
@@ -189,7 +220,6 @@ export function DocumentDialog({
   target,
   onSave,
 }: DocumentDialogProps) {
-  // --- State ---
   // Local content is only used in managed mode (custom getContent fetcher).
   // In fetched mode the store is the source of truth (see `fullContent` below).
   const [localFullContent, setLocalFullContent] = useState<string | null>(null);
@@ -197,14 +227,11 @@ export function DocumentDialog({
   const [viewMode, setViewMode] = useState<ViewMode>("full-doc");
   const [activeChunkId, setActiveChunkId] = useState<string | null>(null);
 
-  // Managed-mode chunk data
   const [managedData, setManagedData] = useState<ChunkedDocumentResponse | null>(null);
   const [managedLoading, setManagedLoading] = useState(false);
   const [managedError, setManagedError] = useState<string | null>(null);
   const [isRechunking, setIsRechunking] = useState(false);
-  const [managedActiveIndex, setManagedActiveIndex] = useState<number | null>(null);
 
-  // Editing state
   const [editFilename, setEditFilename] = useState(filenameProp);
   const [editContent, setEditContent] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -239,19 +266,60 @@ export function DocumentDialog({
     filename ? state.documents.get(filename)?.fullContent : undefined,
   );
 
-  const fullContent = isManagedMode ? localFullContent : (storedFullContent ?? null);
+  const contentModel = useMemo<ContentModel>(() => {
+    if (isManagedMode) {
+      return {
+        content: localFullContent,
+        chunks:
+          managedData?.chunks.map((item, index) => ({
+            id: `managed:${index}`,
+            content: item.text,
+            badge: `Chunk #${index}`,
+            detail: `${item.token_count} tokens`,
+            range: { start: item.start_index, end: item.end_index },
+          })) ?? [],
+        loading: isLoading || managedLoading,
+        error: managedError,
+        assetsDir: managedData?.assets_dir ?? null,
+        image:
+          managedData?.entry_kind === "image" && managedData.original_path
+            ? { path: managedData.original_path, mime: managedData.mime ?? null }
+            : null,
+        metadata: managedData,
+      };
+    }
 
-  // --- Fetched-mode sibling chunks ---
-  const siblingChunks = useMemo(() => {
-    if (isManagedMode || !filename) return [];
-    const doc = documents.get(filename);
-    if (!doc) return [];
-    return sortChunks(chunksForDocument(doc, chunks));
-  }, [isManagedMode, filename, documents, chunks]);
+    const content = storedFullContent ?? null;
+    const document = filename ? documents.get(filename) : undefined;
+    const fetched = document ? chunksForDocument(document, chunks) : [];
+    if (chunk && !fetched.some((item) => item.id === chunk.id)) fetched.push(chunk);
 
-  const activeChunk = activeChunkId ? (chunks.get(activeChunkId) ?? chunk) : chunk;
+    return {
+      content,
+      chunks: sortChunks(fetched).map((item) => fetchedContentChunk(item, content)),
+      loading: isLoading,
+      error: null,
+      assetsDir: null,
+      image: null,
+      metadata: null,
+    };
+  }, [
+    chunk,
+    isLoading,
+    isManagedMode,
+    localFullContent,
+    managedData,
+    managedError,
+    managedLoading,
+    chunks,
+    documents,
+    filename,
+    storedFullContent,
+  ]);
 
-  // --- Reset state on open ---
+  const fullContent = contentModel.content;
+  const activeChunk = contentModel.chunks.find((item) => item.id === activeChunkId) ?? null;
+
   useEffect(() => {
     if (!open) return;
 
@@ -260,7 +328,6 @@ export function DocumentDialog({
     setSaveError(null);
     setManagedData(null);
     setManagedError(null);
-    setManagedActiveIndex(null);
     setSidebarTab("chunks");
     setAssetsData(null);
     setActiveAssetIndex(null);
@@ -279,7 +346,6 @@ export function DocumentDialog({
     }
   }, [open, chunk, initialFullDoc, isNew, filenameProp]);
 
-  // --- Fetch managed chunks ---
   const fetchManagedChunks = useCallback(() => {
     if (!filename) return;
     setManagedLoading(true);
@@ -299,7 +365,6 @@ export function DocumentDialog({
 
   const isWeb = isWebUrl(filename);
 
-  // --- Fetch full document content ---
   useEffect(() => {
     if (!open || !filename || isNew) return;
 
@@ -357,9 +422,6 @@ export function DocumentDialog({
       node.scrollIntoView({ behavior, block: overflows ? "start" : "center" });
     });
   }, []);
-  const highlightKey = isManagedMode ? `m:${managedActiveIndex}` : `f:${activeChunkId}`;
-
-  // --- Fetch assets lazily on first switch to the assets tab ---
   // (404 when the document has none → tab stays hidden via assets_dir)
   useEffect(() => {
     if (!open || !isManagedMode || sidebarTab !== "assets" || assetsData || !filename) return;
@@ -370,7 +432,6 @@ export function DocumentDialog({
       .finally(() => setAssetsLoading(false));
   }, [open, isManagedMode, sidebarTab, assetsData, filename]);
 
-  // --- Rechunk handler ---
   const handleRechunk = useCallback(async () => {
     if (!onRechunk) return;
     setIsRechunking(true);
@@ -448,7 +509,6 @@ export function DocumentDialog({
     }
   }, [activeAssetIndex, assetsData, filename, replaceActiveAsset]);
 
-  // --- Save handler ---
   const handleSave = async () => {
     if (!onSave || !editFilename.trim()) return;
     setIsSaving(true);
@@ -465,33 +525,24 @@ export function DocumentDialog({
 
   if (!isNew && !chunk && !fallbackFilename && !filenameProp) return null;
 
-  // --- Determine sidebar visibility ---
   // An uploaded image is a single image whose whole caption is one chunk, so we
   // render it like an extracted asset (image + caption + file metadata) and drop
   // the chunk/asset sidebar entirely.
-  const imageEntry =
-    isManagedMode && managedData?.entry_kind === "image" && managedData.original_path
-      ? {
-          path: managedData.original_path,
-          mime: managedData.mime,
-        }
-      : null;
-  const hasAssets = Boolean(managedData?.assets_dir);
+  const imageEntry = contentModel.image;
+  const hasAssets = contentModel.assetsDir != null;
   const hasSidebar =
     isNew || imageEntry
       ? false
       : isManagedMode
-        ? managedLoading || (managedData?.chunks.length ?? 0) > 0 || hasAssets
+        ? contentModel.loading || contentModel.chunks.length > 0 || hasAssets
         : true;
-
-  // --- Render helpers ---
 
   const renderChunkHighlight = (content: string, start: number, end: number) => (
     <ScrollArea className="flex-1 min-h-0">
       <pre className="whitespace-pre-wrap text-sm p-4 font-mono">
         <span className="text-muted-foreground">{content.slice(0, start)}</span>
         <span
-          key={highlightKey}
+          key={activeChunkId}
           ref={highlightRef}
           className="bg-yellow-200/50 dark:bg-yellow-900/50 border-l-2 border-yellow-500 pl-1"
         >
@@ -608,21 +659,21 @@ export function DocumentDialog({
       if (!fullContent) {
         // No full content fetched — show the excerpts the model actually
         // read (search snippets, grep hits) instead of a dead end.
-        if (siblingChunks.length > 0) {
+        if (contentModel.chunks.length > 0) {
           return (
             <ScrollArea className="flex-1 min-h-0">
               <div className="p-4 space-y-4">
-                {siblingChunks.map((sibling) => (
-                  <div key={sibling.id} className="space-y-1">
+                {contentModel.chunks.map((item) => (
+                  <div key={item.id} className="space-y-1">
                     <div className="flex items-center gap-2">
                       <Badge variant="outline" className="text-xs">
-                        {chunkOriginLabel(sibling)}
+                        {item.originLabel}
                       </Badge>
                       <Badge variant="secondary" className="text-xs">
-                        {chunkPositionLabel(sibling.position)}
+                        {item.badge}
                       </Badge>
                     </div>
-                    <pre className="whitespace-pre-wrap text-sm font-mono">{sibling.content}</pre>
+                    <pre className="whitespace-pre-wrap text-sm font-mono">{item.content}</pre>
                   </div>
                 ))}
               </div>
@@ -752,15 +803,7 @@ export function DocumentDialog({
       );
     }
 
-    // Chunk-in-context view
-    if (isManagedMode) {
-      // Managed mode: use start_index / end_index
-      if (managedActiveIndex != null && managedData && fullContent) {
-        const chunkInfo = managedData.chunks[managedActiveIndex];
-        if (chunkInfo) {
-          return renderChunkHighlight(fullContent, chunkInfo.start_index, chunkInfo.end_index);
-        }
-      }
+    if (!activeChunk) {
       return (
         <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
           Select a chunk from the sidebar
@@ -768,12 +811,7 @@ export function DocumentDialog({
       );
     }
 
-    // Fetched mode: locate chunk in full content using its stored position
-    if (!activeChunk) return null;
-
     if (!fullContent) {
-      // Full content was never fetched — the chunk text itself is still
-      // exactly what the model read, so show it instead of nothing.
       if (activeChunk.content) {
         return (
           <ScrollArea className="flex-1 min-h-0">
@@ -788,12 +826,10 @@ export function DocumentDialog({
       );
     }
 
-    const range = resolveChunkRange(fullContent, activeChunk);
-    if (range) {
-      return renderChunkHighlight(fullContent, range.start, range.end);
+    if (activeChunk.range) {
+      return renderChunkHighlight(fullContent, activeChunk.range.start, activeChunk.range.end);
     }
-    // Couldn't locate the cited line — show the whole document so the
-    // user at least has the source in front of them.
+
     return (
       <ScrollArea className="flex-1 min-h-0">
         <pre className="whitespace-pre-wrap text-sm p-4 font-mono">{fullContent}</pre>
@@ -804,75 +840,76 @@ export function DocumentDialog({
   const renderSidebar = () => {
     if (!hasSidebar) return null;
 
-    if (isManagedMode) {
-      // Managed-mode sidebar: chunks from API + optional assets tab
-      if (managedLoading) {
-        return (
-          <div className="w-56 shrink-0 border-r flex items-center justify-center">
-            <Spinner className="size-5 text-muted-foreground" />
-          </div>
-        );
-      }
-      if (managedError) {
-        return (
-          <div className="w-56 shrink-0 border-r flex items-center justify-center p-2">
-            <p className="text-xs text-muted-foreground">{managedError}</p>
-          </div>
-        );
-      }
-      if (!managedData || (managedData.chunks.length === 0 && !hasAssets)) return null;
-
+    if (isManagedMode && managedLoading) {
       return (
-        <div className="w-56 shrink-0 border-r min-h-0 flex flex-col">
-          <div className="p-2 space-y-1 shrink-0">
-            {/* Full Document toggle */}
-            <button
-              type="button"
-              className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
-                viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
-              }`}
-              onClick={() => {
-                setManagedActiveIndex(null);
-                setActiveAssetIndex(null);
-                setIsEditingAssetDescription(false);
-                startTransition(() => setViewMode("full-doc"));
-              }}
-            >
-              <FileText className="h-3 w-3 shrink-0" />
-              <span className="font-medium">Full document</span>
-            </button>
+        <div className="w-56 shrink-0 border-r flex items-center justify-center">
+          <Spinner className="size-5 text-muted-foreground" />
+        </div>
+      );
+    }
+
+    if (contentModel.error) {
+      return (
+        <div className="w-56 shrink-0 border-r flex items-center justify-center p-2">
+          <p className="text-xs text-muted-foreground">{contentModel.error}</p>
+        </div>
+      );
+    }
+
+    if (isManagedMode && !contentModel.metadata && !hasAssets) return null;
+
+    return (
+      <div className="w-56 shrink-0 border-r min-h-0 flex flex-col">
+        <div className="p-2 space-y-1 shrink-0">
+          <button
+            type="button"
+            className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
+              viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
+            }`}
+            onClick={() => {
+              setActiveChunkId(null);
+              setActiveAssetIndex(null);
+              setIsEditingAssetDescription(false);
+              startTransition(() => setViewMode("full-doc"));
+            }}
+          >
+            <FileText className="h-3 w-3 shrink-0" />
+            <span className="font-medium">Full document</span>
+          </button>
+        </div>
+
+        {hasAssets && (
+          <div className="px-2 shrink-0">
+            <Tabs value={sidebarTab} onValueChange={(value) => setSidebarTab(value as SidebarTab)}>
+              <TabsList className="w-full">
+                <TabsTrigger value="chunks" className="flex-1 text-xs">
+                  Chunks
+                </TabsTrigger>
+                <TabsTrigger value="assets" className="flex-1 text-xs">
+                  Assets
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
           </div>
+        )}
 
-          {hasAssets && (
-            <div className="px-2 shrink-0">
-              <Tabs value={sidebarTab} onValueChange={(v) => setSidebarTab(v as SidebarTab)}>
-                <TabsList className="w-full">
-                  <TabsTrigger value="chunks" className="flex-1 text-xs">
-                    Chunks
-                  </TabsTrigger>
-                  <TabsTrigger value="assets" className="flex-1 text-xs">
-                    Assets
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </div>
-          )}
+        <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
+          {!hasAssets && contentModel.chunks.length > 0 && <div className="border-t my-1" />}
 
-          <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
-            {!hasAssets && managedData.chunks.length > 0 && <div className="border-t my-1" />}
-
-            {sidebarTab === "chunks" &&
-              managedData.chunks.map((chunkInfo, i) => (
+          {sidebarTab === "chunks" &&
+            contentModel.chunks
+              .filter((item) => !item.isFullDocument)
+              .map((item) => (
                 <button
-                  key={i}
+                  key={item.id}
                   type="button"
                   className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
-                    viewMode === "chunk" && managedActiveIndex === i
+                    viewMode === "chunk" && item.id === activeChunkId
                       ? "bg-accent text-accent-foreground"
                       : "hover:bg-muted"
                   }`}
                   onClick={() => {
-                    setManagedActiveIndex(i);
+                    setActiveChunkId(item.id);
                     setActiveAssetIndex(null);
                     setIsEditingAssetDescription(false);
                     setViewMode("chunk");
@@ -881,109 +918,57 @@ export function DocumentDialog({
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <Badge
                       variant={
-                        viewMode === "chunk" && managedActiveIndex === i ? "default" : "outline"
+                        viewMode === "chunk" && item.id === activeChunkId ? "default" : "outline"
                       }
                       className="text-[10px] shrink-0"
                     >
-                      Chunk #{i}
+                      {item.badge}
                     </Badge>
-                    <span className="text-muted-foreground">{chunkInfo.token_count} tokens</span>
+                    {item.detail && <span className="text-muted-foreground">{item.detail}</span>}
                   </div>
                   <p className="truncate text-muted-foreground mt-0.5">
-                    {chunkInfo.text.slice(0, 60)}
-                    {chunkInfo.text.length > 60 ? "..." : ""}
+                    {item.content.slice(0, 60)}
+                    {item.content.length > 60 ? "..." : ""}
                   </p>
                 </button>
               ))}
 
-            {sidebarTab === "assets" &&
-              (assetsLoading ? (
-                <div className="flex items-center justify-center py-4">
-                  <Spinner className="size-4 text-muted-foreground" />
-                </div>
-              ) : (
-                assetsData?.assets.map((asset, i) => (
-                  <button
-                    key={asset.path}
-                    type="button"
-                    className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
-                      viewMode === "asset" && activeAssetIndex === i
-                        ? "bg-accent text-accent-foreground"
-                        : "hover:bg-muted"
-                    }`}
-                    onClick={() => {
-                      setActiveAssetIndex(i);
-                      setManagedActiveIndex(null);
-                      setIsEditingAssetDescription(false);
-                      setViewMode("asset");
-                    }}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <ImageIcon className="h-3 w-3 shrink-0" />
-                      <span className="truncate font-medium">{asset.name}</span>
-                    </div>
-                    <p className="truncate text-muted-foreground mt-0.5">
-                      {asset.description
-                        ? asset.description.slice(0, 60) +
-                          (asset.description.length > 60 ? "..." : "")
-                        : "No description"}
-                    </p>
-                  </button>
-                ))
-              ))}
-          </div>
+          {sidebarTab === "assets" &&
+            (assetsLoading ? (
+              <div className="flex items-center justify-center py-4">
+                <Spinner className="size-4 text-muted-foreground" />
+              </div>
+            ) : (
+              assetsData?.assets.map((asset, index) => (
+                <button
+                  key={asset.path}
+                  type="button"
+                  className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
+                    viewMode === "asset" && activeAssetIndex === index
+                      ? "bg-accent text-accent-foreground"
+                      : "hover:bg-muted"
+                  }`}
+                  onClick={() => {
+                    setActiveAssetIndex(index);
+                    setActiveChunkId(null);
+                    setIsEditingAssetDescription(false);
+                    setViewMode("asset");
+                  }}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <ImageIcon className="h-3 w-3 shrink-0" />
+                    <span className="truncate font-medium">{asset.name}</span>
+                  </div>
+                  <p className="truncate text-muted-foreground mt-0.5">
+                    {asset.description
+                      ? asset.description.slice(0, 60) +
+                        (asset.description.length > 60 ? "..." : "")
+                      : "No description"}
+                  </p>
+                </button>
+              ))
+            ))}
         </div>
-      );
-    }
-
-    // Fetched-mode sidebar: sibling chunks from store
-    return (
-      <div className="w-56 shrink-0 border-r min-h-0 overflow-y-auto p-2 space-y-1">
-        {/* Full Document toggle */}
-        <button
-          type="button"
-          className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
-            viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
-          }`}
-          onClick={() => startTransition(() => setViewMode("full-doc"))}
-        >
-          <FileText className="h-3 w-3 shrink-0" />
-          <span className="font-medium">Full document</span>
-        </button>
-
-        {siblingChunks.length > 0 && <div className="border-t my-1" />}
-
-        {/* Chunk entries */}
-        {siblingChunks
-          .filter((c) => c.position.type !== "full_document")
-          .map((sibling) => (
-            <button
-              key={sibling.id}
-              type="button"
-              className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
-                viewMode === "chunk" && sibling.id === activeChunkId
-                  ? "bg-accent text-accent-foreground"
-                  : "hover:bg-muted"
-              }`}
-              onClick={() => {
-                setActiveChunkId(sibling.id);
-                setViewMode("chunk");
-              }}
-            >
-              <Badge
-                variant={
-                  viewMode === "chunk" && sibling.id === activeChunkId ? "default" : "outline"
-                }
-                className="text-[10px]"
-              >
-                {chunkPositionLabel(sibling.position)}
-              </Badge>
-              <p className="truncate text-muted-foreground mt-0.5">
-                {sibling.content.slice(0, 60)}
-                {sibling.content.length > 60 ? "..." : ""}
-              </p>
-            </button>
-          ))}
       </div>
     );
   };
@@ -1013,14 +998,16 @@ export function DocumentDialog({
           {/* Metadata badges, then the document actions on their own line below. */}
           {(showMetadata || editable) && (
             <div className="flex flex-col gap-1.5 text-sm text-muted-foreground">
-              {showMetadata && managedData && (
+              {showMetadata && contentModel.metadata && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary">Chunking: {managedData.pipeline}</Badge>
-                  <Badge variant="secondary">{managedData.chunks.length} chunks</Badge>
-                  {managedData.size_bytes != null && (
-                    <Badge variant="outline">{formatFileSize(managedData.size_bytes)}</Badge>
+                  <Badge variant="secondary">Chunking: {contentModel.metadata.pipeline}</Badge>
+                  <Badge variant="secondary">{contentModel.chunks.length} chunks</Badge>
+                  {contentModel.metadata.size_bytes != null && (
+                    <Badge variant="outline">{formatFileSize(contentModel.metadata.size_bytes)}</Badge>
                   )}
-                  <Badge variant="outline">Created: {formatDate(managedData.created_at)}</Badge>
+                  <Badge variant="outline">
+                    Created: {formatDate(contentModel.metadata.created_at)}
+                  </Badge>
                 </div>
               )}
               {viewMode !== "edit" && (
@@ -1089,16 +1076,14 @@ export function DocumentDialog({
         <div className="flex flex-1 min-h-0">
           {renderSidebar()}
 
-          {/* Main content area */}
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            {/* Chunk info bar (fetched mode only, when viewing a chunk) */}
-            {!isManagedMode && viewMode === "chunk" && activeChunk && (
+            {viewMode === "chunk" && activeChunk?.originLabel && (
               <div className="flex items-center gap-2 px-4 py-2 border-b">
                 <Badge variant="outline" className="text-xs">
-                  {chunkOriginLabel(activeChunk)}
+                  {activeChunk.originLabel}
                 </Badge>
                 <Badge variant="secondary" className="text-xs">
-                  {chunkPositionLabel(activeChunk.position)}
+                  {activeChunk.badge}
                 </Badge>
               </div>
             )}
