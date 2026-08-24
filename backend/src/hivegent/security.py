@@ -7,23 +7,22 @@ policies at the composition points (see ``SecuritySettings`` in
 
 Enforcement has exactly one choke point per concern: the safe transport
 checks URL shape and host policy on every request (covering each
-redirect hop httpx follows), and its connect-time network backend
-blocks private and reserved IPs after DNS resolution — the
-resolved-address check that defends against DNS rebinding.  The
-``validate_*`` helpers exist only to fail fast with clear errors at API
-boundaries; the transport re-enforces everything they check.
+redirect hop HTTPX follows), then resolves the host and connects to the
+validated address instead of the name.  Pinning the address is what
+closes the DNS-rebinding window: the name cannot resolve to one address
+for the check and another for the connect.  The ``validate_*`` helpers
+exist only to fail fast with clear errors at API boundaries; the
+transport re-enforces everything they check.
 """
 
 import asyncio
 import ipaddress
 import socket
+from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast, override
 
-import httpcore
-import httpcore2
-import httpx
 import httpx2
 
 __all__ = [
@@ -31,7 +30,6 @@ __all__ = [
     "SafeAsyncHTTPTransport",
     "UnsafeUrlError",
     "UrlPolicy",
-    "create_legacy_safe_async_client",
     "create_safe_async_client",
     "is_safe_external_url",
     "require_safe_external_url",
@@ -108,17 +106,47 @@ def _is_blocked_ip(addr: str) -> bool:
     )
 
 
-async def _is_private_ip_async(host: str) -> bool:
+async def _resolve_public_addresses(host: str) -> list[str]:
+    """Resolve *host* to addresses that are all public.
+
+    Every address is checked, not just the one that ends up being used,
+    so a name that mixes public and private records is refused outright.
+
+    Returns:
+        The resolved addresses, or *host* itself when it is already an
+        IP literal.
+
+    Raises:
+        UnsafeUrlError: If the host does not resolve, or resolves to any
+            private or reserved address.
+    """
+    try:
+        blocked = _is_blocked_ip(host)
+    except ValueError:
+        pass  # Not an IP literal — resolve it below.
+    else:
+        if blocked:
+            raise UnsafeUrlError("URL resolves to a private or reserved IP address.")
+
+        return [host]
+
     try:
         infos = await asyncio.to_thread(
             socket.getaddrinfo, host, None, proto=socket.IPPROTO_TCP
         )
-    except socket.gaierror:
-        return True
-    return any(_is_blocked_ip(str(info[4][0])) for info in infos)
+    except socket.gaierror as exc:
+        raise UnsafeUrlError("URL host could not be resolved.") from exc
+
+    addresses = [str(info[4][0]) for info in infos]
+    if not addresses:
+        raise UnsafeUrlError("URL host could not be resolved.")
+    if any(_is_blocked_ip(address) for address in addresses):
+        raise UnsafeUrlError("URL resolves to a private or reserved IP address.")
+
+    return addresses
 
 
-def _check_url_shape(url: httpx.URL | httpx2.URL) -> str:
+def _check_url_shape(url: httpx2.URL) -> str:
     """Validate scheme, credentials, and host of a parsed URL.
 
     Returns:
@@ -170,96 +198,48 @@ def is_safe_external_url(url: str, *, policy: UrlPolicy) -> bool:
     return True
 
 
-type _SocketOption = httpcore2.SOCKET_OPTION
-type _AsyncNetworkBackend = httpcore.AsyncNetworkBackend | httpcore2.AsyncNetworkBackend
-type _AsyncNetworkStream = httpcore.AsyncNetworkStream | httpcore2.AsyncNetworkStream
+def _new_transport() -> httpx2.AsyncHTTPTransport:
+    """Mint a network transport that ignores ambient proxy environment.
 
-
-class _SafeAsyncNetworkBackend:
-    """Blocks private and reserved addresses at TCP-connect time.
-
-    The request-time check in :class:`SafeAsyncHTTPTransport` and this
-    connect-time check can resolve a hostname to different addresses
-    (DNS rebinding), so the peer IP is re-verified after connecting.
+    The one construction site for the ``trust_env=False`` invariant, and
+    the seam tests substitute to exercise the pinning path without a
+    network.
     """
-
-    def __init__(
-        self,
-        backend: _AsyncNetworkBackend,
-        connect_error: type[Exception],
-    ) -> None:
-        self._backend = backend
-        self._connect_error = connect_error
-
-    async def connect_tcp(
-        self,
-        host: str,
-        port: int,
-        timeout: float | None = None,
-        local_address: str | None = None,
-        socket_options: Iterable[_SocketOption] | None = None,
-    ) -> _AsyncNetworkStream:
-        if await _is_private_ip_async(host):
-            raise self._connect_error(
-                "URL resolves to a private or reserved IP address."
-            )
-        stream = await self._backend.connect_tcp(
-            host,
-            port,
-            timeout=timeout,
-            local_address=local_address,
-            socket_options=socket_options,
-        )
-        peer = stream.get_extra_info("server_addr")
-        if not peer or _is_blocked_ip(str(peer[0])):
-            await stream.aclose()
-            raise self._connect_error(
-                "Connection reached a private or reserved IP address."
-            )
-        return stream
-
-    async def connect_unix_socket(
-        self,
-        path: str,
-        timeout: float | None = None,
-        socket_options: Iterable[_SocketOption] | None = None,
-    ) -> _AsyncNetworkStream:
-        raise self._connect_error("Unix sockets are not allowed for external URLs.")
-
-    async def sleep(self, seconds: float) -> None:
-        await self._backend.sleep(seconds)
+    return httpx2.AsyncHTTPTransport(trust_env=False)
 
 
-def _install_safe_network_backend(
-    transport: httpx.AsyncHTTPTransport | httpx2.AsyncHTTPTransport,
-    backend: object,
-    connect_error: type[Exception],
-) -> None:
-    """Install the common SSRF backend into an HTTPX transport pool.
+@dataclass(slots=True)
+class _PinnedHost:
+    """A host's chosen address and the connection pool pinned to it."""
 
-    ``AnyIOBackend`` is typed as a union of the real class and a stub raised
-    when anyio is missing, so the assert narrows it back to the interface.
-    Writing the pool's private backend is the one unsound step, and it spans
-    both httpcore versions, which no single base class can be declared for.
-    """
-    assert isinstance(
-        backend, httpcore.AsyncNetworkBackend | httpcore2.AsyncNetworkBackend
-    )
-    transport._pool._network_backend = _SafeAsyncNetworkBackend(  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]  # ty: ignore[invalid-assignment]
-        backend, connect_error
-    )
+    address: str
+    transport: httpx2.AsyncHTTPTransport
+
+
+#: How many hosts keep a live pinned pool.  The process-wide client
+#: reaches model-supplied hosts, so without a bound the pools (and their
+#: sockets) would accumulate for the lifetime of the server.
+_MAX_PINNED_HOSTS = 32
 
 
 class SafeAsyncHTTPTransport(httpx2.AsyncBaseTransport):
     """HTTPX transport that enforces a :class:`UrlPolicy` on every request.
 
     URL shape and host policy are checked per request, which covers each
-    redirect hop httpx follows; unless the policy allows private
-    addresses, the connect-time backend additionally blocks private and
-    reserved IPs after DNS resolution.  *inner* is the wrapped transport
-    that performs the request once the checks pass; it defaults to a
-    real network transport (tests substitute ``httpx2.MockTransport`` to
-    exercise the enforcement without the network).
+    redirect hop HTTPX follows.  Unless the policy allows private
+    addresses, the transport resolves the host and connects to the
+    validated address while preserving the original HTTP host and TLS
+    server name, which is what closes the DNS-rebinding window.
+
+    Because the connection pool then keys on the pinned address, each
+    host gets its own pool so hosts sharing an IP cannot reuse each
+    other's TLS connections.  The chosen address is kept with the pool
+    and re-used while it stays among the host's resolved addresses, so a
+    rotating resolver does not force a fresh handshake per request.
+
+    *inner* replaces the network transport outright, skipping pinning
+    along with it; it exists for callers that already hold a transport,
+    and for tests of the shape and host checks alone.
     """
 
     def __init__(
@@ -268,27 +248,68 @@ class SafeAsyncHTTPTransport(httpx2.AsyncBaseTransport):
         policy: UrlPolicy,
         inner: httpx2.AsyncBaseTransport | None = None,
     ) -> None:
-        if inner is None:
-            transport = httpx2.AsyncHTTPTransport(trust_env=False)
-            if not policy.allow_private:
-                _install_safe_network_backend(
-                    transport,
-                    httpcore2.AnyIOBackend(),
-                    httpcore2.ConnectError,
-                )
-            inner = transport
         self._policy = policy
-        self._inner = inner
+        self._pin = inner is None and not policy.allow_private
+        self._inner = inner or _new_transport()
+        self._pinned: OrderedDict[str, _PinnedHost] = OrderedDict()
+
+    async def _pinned_host(self, host: str) -> _PinnedHost:
+        """Return the pool pinned to a still-valid address for *host*.
+
+        Raises:
+            UnsafeUrlError: If the host does not resolve to a public
+                address.
+        """
+        addresses = await _resolve_public_addresses(host)
+        pinned = self._pinned.pop(host, None)
+        if pinned is not None:
+            if pinned.address in addresses:
+                self._pinned[host] = pinned  # Re-inserted as most recently used.
+
+                return pinned
+
+            await pinned.transport.aclose()
+
+        while len(self._pinned) >= _MAX_PINNED_HOSTS:
+            _, evicted = self._pinned.popitem(last=False)
+            await evicted.transport.aclose()
+
+        pinned = _PinnedHost(address=addresses[0], transport=_new_transport())
+        self._pinned[host] = pinned
+
+        return pinned
 
     @override
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         host = _check_url_shape(request.url)
         self._policy.check_host(host)
-        return await self._inner.handle_async_request(request)
+        if not self._pin:
+            return await self._inner.handle_async_request(request)
+
+        try:
+            pinned = await self._pinned_host(host)
+        except UnsafeUrlError as exc:
+            raise httpx2.ConnectError(str(exc), request=request) from exc
+
+        headers = request.headers.copy()
+        headers["Host"] = request.url.netloc.decode("ascii")
+        pinned_request = httpx2.Request(
+            request.method,
+            request.url.copy_with(host=pinned.address),
+            headers=headers,
+            stream=request.stream,
+            extensions={**request.extensions, "sni_hostname": host},
+        )
+
+        return await pinned.transport.handle_async_request(pinned_request)
 
     @override
     async def aclose(self) -> None:
-        await self._inner.aclose()
+        pinned = list(self._pinned.values())
+        self._pinned.clear()
+        await asyncio.gather(
+            self._inner.aclose(), *(entry.transport.aclose() for entry in pinned)
+        )
 
 
 def create_safe_async_client(
@@ -304,48 +325,6 @@ def create_safe_async_client(
     return httpx2.AsyncClient(transport=transport, trust_env=False, **kwargs)
 
 
-class _LegacySafeAsyncHTTPTransport(httpx.AsyncBaseTransport):
-    """Legacy HTTPX transport retained for FastMCP's client factory."""
-
-    def __init__(
-        self,
-        *,
-        policy: UrlPolicy,
-        inner: httpx.AsyncBaseTransport | None = None,
-    ) -> None:
-        if inner is None:
-            transport = httpx.AsyncHTTPTransport(trust_env=False)
-            if not policy.allow_private:
-                _install_safe_network_backend(
-                    transport,
-                    httpcore.AnyIOBackend(),
-                    httpcore.ConnectError,
-                )
-            inner = transport
-        self._policy = policy
-        self._inner = inner
-
-    @override
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        host = _check_url_shape(request.url)
-        self._policy.check_host(host)
-        return await self._inner.handle_async_request(request)
-
-    @override
-    async def aclose(self) -> None:
-        await self._inner.aclose()
-
-
-def create_legacy_safe_async_client(
-    *,
-    policy: UrlPolicy,
-    **kwargs: Any,
-) -> httpx.AsyncClient:
-    """Create an SSRF-safe legacy HTTPX client for FastMCP."""
-    transport = _LegacySafeAsyncHTTPTransport(policy=policy)
-    return httpx.AsyncClient(transport=transport, trust_env=False, **kwargs)
-
-
 async def validate_external_url_async(url: str, *, policy: UrlPolicy) -> None:
     """Validate that *url* is safe to dereference, including a DNS check.
 
@@ -355,8 +334,8 @@ async def validate_external_url_async(url: str, *, policy: UrlPolicy) -> None:
     """
     host = _parse_and_check_shape(url)
     policy.check_host(host)
-    if not policy.allow_private and await _is_private_ip_async(host):
-        raise UnsafeUrlError("URL resolves to a private or reserved IP address.")
+    if not policy.allow_private:
+        await _resolve_public_addresses(host)
 
 
 def validate_external_headers(

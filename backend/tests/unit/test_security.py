@@ -2,15 +2,14 @@
 
 from io import BytesIO
 
-import httpx
 import httpx2
 import pytest
 from fastapi import HTTPException, UploadFile
 
+import hivegent.security as security_module
 from hivegent.config import InferenceProvider, settings
 from hivegent.security import (
     UrlPolicy,
-    create_legacy_safe_async_client,
     create_safe_async_client,
 )
 from hivegent.server.common import prepare_llm_config
@@ -27,13 +26,48 @@ async def test_safe_async_client_blocks_private_ip_connections() -> None:
             await client.get("http://127.0.0.1:1")
 
 
-async def test_legacy_safe_client_blocks_private_ip_connections() -> None:
-    """The FastMCP compatibility client retains connect-time protection."""
-    async with create_legacy_safe_async_client(
-        timeout=0.1, policy=UrlPolicy()
-    ) as client:
-        with pytest.raises(httpx.ConnectError, match="private or reserved"):
-            await client.get("http://127.0.0.1:1")
+async def test_safe_async_client_pins_address_and_preserves_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The safe transport connects by IP without changing HTTP or TLS identity."""
+    captured: list[httpx2.Request] = []
+
+    async def resolve(host: str) -> list[str]:
+        assert host == "example.com"
+        return ["203.0.113.1", "203.0.113.2"]
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        captured.append(request)
+        return httpx2.Response(200)
+
+    transports = 0
+
+    def new_transport() -> httpx2.MockTransport:
+        nonlocal transports
+        transports += 1
+
+        return httpx2.MockTransport(handler)
+
+    monkeypatch.setattr(security_module, "_resolve_public_addresses", resolve)
+    monkeypatch.setattr(security_module, "_new_transport", new_transport)
+
+    async with create_safe_async_client(policy=UrlPolicy()) as client:
+        for _ in range(2):
+            response = await client.get(
+                "https://example.com:8443/path", headers={"Host": "attacker.invalid"}
+            )
+            assert response.status_code == 200
+
+    assert len(captured) == 2
+    assert {request.url.host for request in captured} == {"203.0.113.1"}
+    assert captured[0].headers["host"] == "example.com:8443"
+    # A ``str`` is required: httpcore passes it to anyio's TLS wrapper,
+    # which encodes it.  Bytes raise there, so every HTTPS request would
+    # fail while plain HTTP kept working.
+    assert captured[0].extensions["sni_hostname"] == "example.com"
+    # One pool for the host, re-used across requests despite the second
+    # resolved address, plus the unused ``_inner`` minted in __init__.
+    assert transports == 2
 
 
 async def test_prepare_llm_config_trusts_configured_base_url_only(
