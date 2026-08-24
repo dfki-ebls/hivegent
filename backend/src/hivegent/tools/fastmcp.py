@@ -37,7 +37,7 @@ def _attachment_to_block(att: BinaryAttachment) -> ContentBlock:
         return ImageContent(
             type="image",
             data=encoded,
-            mimeType=att.media_type,
+            mime_type=att.media_type,
         )
     # Percent-encode the identifier so pydantic AnyUrl doesn't silently
     # collapse `..` segments or reinterpret `?`/`#`/space.
@@ -46,7 +46,7 @@ def _attachment_to_block(att: BinaryAttachment) -> ContentBlock:
         type="resource",
         resource=BlobResourceContents(
             uri=uri,  # pyright: ignore[reportArgumentType]
-            mimeType=att.media_type,
+            mime_type=att.media_type,
             blob=encoded,
         ),
     )

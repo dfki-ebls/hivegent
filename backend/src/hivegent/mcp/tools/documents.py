@@ -1,6 +1,6 @@
 """Document-oriented MCP tool registrations."""
 
-from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAccessIssue]
+from fastmcp.dependencies import Depends
 
 from ...config import settings
 from ...store import Casebase, build_search_paths

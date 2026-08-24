@@ -1,7 +1,7 @@
 """Retrieval-oriented MCP tool registrations."""
 
-from fastmcp import Context
-from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAccessIssue]
+from fastmcp.dependencies import Depends
+from fastmcp.exceptions import ToolError
 
 from ...agents import (
     SUBAGENT_CAPABILITIES,
@@ -11,23 +11,12 @@ from ...agents import (
 )
 from ...chunkers.base import RetrievedChunk
 from ...config import settings
-from ...llm import create_openai_chat_model
-from ...prompts import (
-    EXPLORE_INSTRUCTIONS,
-    GROUNDING_INSTRUCTIONS,
-    VERSION_INSTRUCTIONS,
-    join_instructions,
-)
+from ...llm import model_from_config
 from ...retrieval import build_search_tool
-from ...store import Casebase, build_search_paths
-from ...tools import (
-    GlobDocumentsTool,
-    GrepTool,
-    ListDocumentsTool,
-    ReadDocumentTool,
-    VectorSearchTool,
-)
+from ...store import Casebase
+from ...tools import VectorSearchTool
 from ...tools.fastmcp import register_mcp_tools
+from ...types import LlmConfig, resolve_llm_config
 from ..app import mcp_app
 from ..common import (
     ExploreTaskArg,
@@ -59,47 +48,23 @@ register_mcp_tools(
 @mcp_app.tool()
 async def explore_documents(
     task: ExploreTaskArg,
-    ctx: Context,
     user_id: str = Depends(get_mcp_user_id),
     store: Casebase = Depends(get_mcp_user_store),
     group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
-) -> str | None:
-    """Explore documents with a subagent or MCP sampling fallback."""
-    model_name = settings.llm.model
+) -> str:
+    """Explore documents with the configured subagent."""
+    if not settings.llm.model:
+        raise ToolError("Document exploration requires a configured LLM model.")
 
-    if model_name:
-        result = await user_agent.run(
-            task,
-            model=create_openai_chat_model(
-                model_name,
-                api_key=settings.llm.api_key,
-                base_url=settings.llm.base_url or None,
-                inference_provider=settings.llm.inference_provider,
-                allow_private_base_url=bool(settings.llm.base_url),
-            ),
-            deps=UserDeps(
-                user_id=user_id,
-                store=store,
-                group_stores=group_stores,
-            ),
-            capabilities=[SUBAGENT_CAPABILITIES["documents"]],
-            usage_limits=turn_usage_limits,
-        )
-        return result.output
-
-    paths = build_search_paths(store, group_stores, settings.data_dir)
-    all_stores = (store, *group_stores)
-    result = await ctx.sample(
+    result = await user_agent.run(
         task,
-        system_prompt=join_instructions(
-            [EXPLORE_INSTRUCTIONS, GROUNDING_INSTRUCTIONS, VERSION_INSTRUCTIONS]
+        model=model_from_config(resolve_llm_config(LlmConfig(), tier="main")),
+        deps=UserDeps(
+            user_id=user_id,
+            store=store,
+            group_stores=group_stores,
         ),
-        tools=[
-            ListDocumentsTool(paths=paths),
-            GlobDocumentsTool(paths=paths),
-            GrepTool(paths=paths),
-            build_search_tool(all_stores),
-            ReadDocumentTool(paths=paths),
-        ],
+        capabilities=[SUBAGENT_CAPABILITIES["documents"]],
+        usage_limits=turn_usage_limits,
     )
-    return result.text
+    return result.output

@@ -2,8 +2,7 @@
 
 from collections.abc import Awaitable
 
-from fastmcp import Context
-from fastmcp.dependencies import Depends  # pyright: ignore[reportAttributeAccessIssue]
+from fastmcp.dependencies import Depends
 from fastmcp.exceptions import ToolError
 
 from ... import workspace
@@ -38,21 +37,10 @@ async def edit_document(
     file_path: DocumentTargetPathArg,
     old_string: EditOldStringArg,
     new_string: EditNewStringArg,
-    ctx: Context,
     replace_all: EditReplaceAllArg = False,
     expected_hash: ExpectedHashArg = None,
     store: Casebase = Depends(get_mcp_user_store),
 ) -> str:
-    response = await ctx.elicit(
-        message=(
-            f"Allow edit to '{file_path}'?\n\n"
-            f"Replace:\n{old_string!r}\n\nWith:\n{new_string!r}"
-        ),
-        response_type=None,
-    )
-    if response.action != "accept":
-        return "Edit denied by user."
-
     tool = EditDocumentTool(
         paths=SearchPath(
             path=store.workspace_dir(settings.data_dir), scope=store.scope
@@ -70,19 +58,10 @@ async def edit_document(
 async def write_document(
     file_path: DocumentTargetPathArg,
     content: DocumentContentArg,
-    ctx: Context,
     mode: WriteModeArg = "replace",
     expected_hash: ExpectedHashArg = None,
     store: Casebase = Depends(get_mcp_user_store),
 ) -> str:
-    action = "Create/overwrite" if mode == "replace" else mode.capitalize()
-    response = await ctx.elicit(
-        message=f"Allow {action} '{file_path}' ({len(content)} chars)?",
-        response_type=None,
-    )
-    if response.action != "accept":
-        return "Write denied by user."
-
     tool = WriteDocumentTool(
         paths=SearchPath(
             path=store.workspace_dir(settings.data_dir), scope=store.scope
