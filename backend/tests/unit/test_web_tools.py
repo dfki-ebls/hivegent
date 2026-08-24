@@ -5,34 +5,50 @@ from typing import Any
 import httpx2
 import pytest
 
-import hivegent.tools.web as web_module
+from hivegent import security
 from hivegent.config import SecuritySettings, UrlPolicySettings
-from hivegent.security import SafeAsyncHTTPTransport, UrlPolicy, is_safe_external_url
+from hivegent.security import (
+    UrlPolicy,
+    create_safe_async_client,
+    require_safe_external_url,
+)
 from hivegent.tools.base import ToolRetry
 from hivegent.tools.web import WebFetch, WebSearch
 
+#: Permits every host, so a fetch test opts out of policy enforcement.
+_ANY_HOST = UrlPolicy(allow_hosts=("*",))
 
-def _patch_safe_client(monkeypatch: pytest.MonkeyPatch, handler: Any) -> None:
-    """Back the web tools' safe client with a mock transport.
 
-    The real :class:`SafeAsyncHTTPTransport` still wraps the mock, so the
-    URL shape and host-policy checks run on every hop exactly as in
-    production; only the network layer is substituted.
+def _web_client(
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Any,
+    policy: UrlPolicy,
+    max_redirects: int = 5,
+) -> httpx2.AsyncClient:
+    """Build the pooled web client the tools take, over a mock transport.
+
+    Only the network layer is substituted, so the real client is built and its
+    request hook applies the host policy on every hop exactly as in production.
     """
+    monkeypatch.setattr(
+        security, "_egress_transport", lambda _proxy_url: httpx2.MockTransport(handler)
+    )
 
-    def fake_client(
-        *, policy: UrlPolicy, **client_kwargs: Any
-    ) -> httpx2.AsyncClient:
-        transport = SafeAsyncHTTPTransport(
-            policy=policy, inner=httpx2.MockTransport(handler)
-        )
-        return httpx2.AsyncClient(transport=transport, **client_kwargs)
-
-    monkeypatch.setattr(web_module, "create_safe_async_client", fake_client)
+    return create_safe_async_client(
+        policy=policy,
+        proxy_url="http://127.0.0.1:4750",
+        timeout=10.0,
+        follow_redirects=True,
+        max_redirects=max_redirects,
+    )
 
 
 class TestUrlPolicy:
     """Host allow/deny semantics."""
+
+    def test_user_policy_defaults_to_deny_all(self) -> None:
+        with pytest.raises(ValueError, match="allowlist"):
+            SecuritySettings().user_policy().check_host("api.example.com")
 
     def test_entry_matches_domain_and_subdomains(self) -> None:
         policy = UrlPolicy(allow_hosts=("example.com",))
@@ -56,7 +72,9 @@ class TestUrlPolicy:
             web_urls=UrlPolicySettings(
                 allow_hosts=["wikipedia.org"], deny_hosts=["test.wikipedia.org"]
             ),
-            user_urls=UrlPolicySettings(deny_hosts=["evil.com"]),
+            user_urls=UrlPolicySettings(
+                allow_hosts=["llm.corp.example"], deny_hosts=["evil.com"]
+            ),
         )
         web = sec.web_policy()
         web.check_host("de.wikipedia.org")
@@ -68,13 +86,19 @@ class TestUrlPolicy:
         with pytest.raises(ValueError, match="blocked"):
             user.check_host("evil.com")
 
-    def test_is_safe_external_url_rejects_unsafe_shapes(self) -> None:
-        policy = UrlPolicy()
-        assert is_safe_external_url("https://example.com/page", policy=policy)
-        assert not is_safe_external_url("ftp://example.com", policy=policy)
-        assert not is_safe_external_url("https://user:pw@example.com", policy=policy)
-        assert not is_safe_external_url("http://127.0.0.1/x", policy=policy)
-        assert not is_safe_external_url("", policy=policy)
+    def test_external_url_validation_rejects_unsafe_urls(self) -> None:
+        policy = UrlPolicy(allow_hosts=("*",))
+        require_safe_external_url("https://example.com/page", "url", policy=policy)
+        for url in (
+            "ftp://example.com",
+            "https://user:pw@example.com",
+            "",
+        ):
+            with pytest.raises(ValueError):
+                require_safe_external_url(url, "url", policy=policy)
+
+        with pytest.raises(ValueError, match="allowlist"):
+            require_safe_external_url("https://example.com", "url", policy=UrlPolicy())
 
 
 def _search_response(*titles_and_snippets: tuple[str, str]) -> dict[str, Any]:
@@ -109,9 +133,12 @@ class TestWebSearch:
                 ),
             )
 
-        _patch_safe_client(monkeypatch, handler)
         out = await WebSearch(
-            language="de", user_agent="hivegent-test (+mailto:a@b.org)"
+            client=_web_client(
+                monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
+            ),
+            language="de",
+            user_agent="hivegent-test (+mailto:a@b.org)",
         )("ChatGPT")
 
         assert [r["href"] for r in out.data] == [
@@ -128,9 +155,11 @@ class TestWebSearch:
         def handler(request: httpx2.Request) -> httpx2.Response:
             return httpx2.Response(503)
 
-        _patch_safe_client(monkeypatch, handler)
+        client = _web_client(
+            monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
+        )
         with pytest.raises(ToolRetry, match="web search failed"):
-            await WebSearch()("anything")
+            await WebSearch(client=client)("anything")
 
 
 HTML = b"""
@@ -142,11 +171,17 @@ HTML = b"""
 def _fetch_tool(
     monkeypatch: pytest.MonkeyPatch,
     handler: Any,
+    policy: UrlPolicy = _ANY_HOST,
+    max_redirects: int = 5,
     **kwargs: Any,
 ) -> WebFetch:
-    """Build a WebFetch whose safe client is backed by a mock transport."""
-    _patch_safe_client(monkeypatch, handler)
-    return WebFetch(**kwargs)
+    """Build a WebFetch whose pooled client is backed by a mock transport.
+
+    ``max_redirects`` binds the client, not the tool, because HTTPX accepts
+    redirect settings only there.
+    """
+    client = _web_client(monkeypatch, handler, policy, max_redirects)
+    return WebFetch(client=client, **kwargs)
 
 
 class TestWebFetch:
@@ -177,15 +212,15 @@ class TestWebFetch:
     ) -> None:
         def handler(request: httpx2.Request) -> httpx2.Response:
             if request.url.host == "example.com":
-                return httpx2.Response(
-                    302, headers={"location": "https://evil.com/x"}
-                )
+                return httpx2.Response(302, headers={"location": "https://evil.com/x"})
             return httpx2.Response(
                 200, content=b"hi", headers={"content-type": "text/plain"}
             )
 
         tool = _fetch_tool(
-            monkeypatch, handler, policy=UrlPolicy(deny_hosts=("evil.com",))
+            monkeypatch,
+            handler,
+            UrlPolicy(allow_hosts=("example.com",), deny_hosts=("evil.com",)),
         )
         with pytest.raises(ToolRetry, match="blocked"):
             await tool("https://example.com/start")

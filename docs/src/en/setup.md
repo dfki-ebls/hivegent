@@ -58,6 +58,11 @@ The most important settings:
 
 Common extras are `HIVEGENT_TOOLS__ENABLE_WEB=true` to allow web search, `HIVEGENT_EMBEDDING__MODEL` to change the embedding model, and `HIVEGENT_MCP__ENABLE=true` to expose the MCP endpoint.
 
+User-provided LLM and MCP server URLs are disabled until their hosts are listed under `[security.user_urls] allow_hosts`.
+An entry permits that domain and its subdomains, an empty list denies every host, and `"*"` permits any public host.
+These requests and all model-controlled web requests pass through the bundled Smokescreen proxy, which rejects private and reserved destinations after DNS resolution.
+Operator-configured URLs such as `llm.base_url` remain direct and trusted.
+
 ## Identity provider (OIDC)
 
 Hivegent delegates login to an OIDC provider and is provider-agnostic.

@@ -41,12 +41,12 @@ __all__ = [
 type ClientId = Annotated[str | None, Header(alias="X-Client-Id")]
 
 
-async def prepare_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:
+def prepare_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:
     """Resolve defaults and check user-provided ``base_url`` values.
 
     Centralizes the request-boundary check so each route can stay a
-    one-liner. Pydantic only checks URL shape; this is the async hook
-    that actually resolves the host and rejects private user targets.
+    one-liner.
+    Pydantic checks URL shape, while this hook applies the user URL allowlist.
     Server-configured base URLs are trusted operator input.
 
     *tier* selects which configured ``(model, max_tokens)`` pair backs the
@@ -56,7 +56,7 @@ async def prepare_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmCon
     """
     if llm.base_url:
         try:
-            await require_safe_external_url(
+            require_safe_external_url(
                 llm.base_url,
                 "LLM base_url",
                 policy=settings.security.user_policy(),

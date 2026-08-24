@@ -1,6 +1,5 @@
 """External MCP server builders."""
 
-import asyncio
 from collections.abc import Iterable
 from typing import Any
 
@@ -21,36 +20,30 @@ def _safe_httpx_client_factory(
     headers: dict[str, str] | None = None,
     timeout: httpx2.Timeout | None = None,
     auth: httpx2.Auth | None = None,
-    **kwargs: Any,
+    follow_redirects: bool = False,
 ) -> httpx2.AsyncClient:
     """Adapt :func:`create_safe_async_client` to FastMCP's client factory protocol.
 
-    The explicit positional-or-keyword parameters match ``McpHttpClientFactory``;
-    ``**kwargs`` absorbs transport-supplied extras such as ``follow_redirects``.
+    The first three parameters are ``McpHttpClientFactory``; ``follow_redirects``
+    is the one extra the streamable-HTTP transport passes.  Naming every
+    parameter keeps the untrusted client's proxy and transport out of reach of
+    whatever a future FastMCP release decides to hand its factory.
     """
     return create_safe_async_client(
         policy=settings.security.user_policy(),
+        proxy_url=settings.security.egress_proxy_url,
         headers=headers,
         timeout=timeout,
         auth=auth,
-        **kwargs,
+        follow_redirects=follow_redirects,
     )
 
 
-async def validate_mcp_servers(servers: Iterable[McpServerConfig]) -> None:
-    """Run the async SSRF check on each server URL before dereferencing.
-
-    Pydantic validators only check scheme/host shape (no DNS) so model
-    construction stays non-blocking; this is the request-boundary hook
-    that actually resolves the host and rejects private targets.
-    """
+def validate_mcp_servers(servers: Iterable[McpServerConfig]) -> None:
+    """Apply the user URL allowlist before dereferencing MCP server URLs."""
     policy = settings.security.user_policy()
-    await asyncio.gather(
-        *(
-            require_safe_external_url(s.url, "MCP server url", policy=policy)
-            for s in servers
-        )
-    )
+    for server in servers:
+        require_safe_external_url(server.url, "MCP server url", policy=policy)
 
 
 def build_mcp_toolset(server_cfg: McpServerConfig) -> MCPToolset[Any]:
@@ -58,10 +51,10 @@ def build_mcp_toolset(server_cfg: McpServerConfig) -> MCPToolset[Any]:
 
     Each connection is opened through :func:`create_safe_async_client`, which
     FastMCP closes after every session, so the factory mints a fresh client
-    per connection.  Routing all HTTP traffic (including the OAuth2 token
-    exchange) through it puts every request behind
-    :class:`~hivegent.security.SafeAsyncHTTPTransport`, which owns the host
-    policy and the resolved-address check.
+    per connection.
+    Routing all HTTP traffic, including the OAuth2 token exchange, through it
+    applies the host policy on every request and leaves address validation to
+    the egress proxy.
     """
     auth: httpx2.Auth | None = None
     if server_cfg.oauth2:

@@ -1,9 +1,12 @@
 """Process-wide HTTP client lifecycle.
 
 Shared clients are opened by the FastAPI lifespan and re-used by outbound
-callers so connection pooling pays for itself. The user-policy client
-enforces the SSRF filter; the trusted client allows operator-configured
-private endpoints.
+callers so connection pooling pays for itself.
+The user-policy and web clients use the SSRF-safe egress proxy, while the
+trusted client connects directly to operator-configured endpoints.
+The two proxied clients are separate because ``user_urls`` and ``web_urls``
+are independent policies, and pooling the web client is what keeps a research
+turn from paying a fresh CONNECT and TLS handshake per tool call.
 """
 
 from collections.abc import AsyncIterator
@@ -14,16 +17,18 @@ import httpx2
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, get_user_agent
 
 from .config import settings
-from .security import TRUSTED_URL_POLICY, create_safe_async_client
+from .security import create_safe_async_client
 
 __all__ = [
-    "get_http_client",
+    "get_trusted_http_client",
+    "get_user_http_client",
+    "get_web_http_client",
     "shared_http_client_lifespan",
 ]
 
 # Named client variants. Add a new kind here (and a matching entry in the
 # lifespan) to introduce another specialized client later.
-_HttpClientKind = Literal["user", "trusted"]
+_HttpClientKind = Literal["user", "trusted", "web"]
 
 
 class _SharedHttpClients:
@@ -45,22 +50,37 @@ class _SharedHttpClients:
             raise RuntimeError(
                 "shared HTTP client lifespan entered while already active"
             )
+        network = settings.network
         timeout = httpx2.Timeout(
             timeout=DEFAULT_HTTP_TIMEOUT,
-            connect=settings.network.connect_timeout_seconds,
+            connect=network.connect_timeout_seconds,
         )
         headers = {"User-Agent": get_user_agent()}
-        # The user client enforces the settings-derived user URL policy
-        # (``allow_private_urls`` toggle plus host allow/deny lists); the
-        # trusted client is unrestricted for operator-configured endpoints.
         self._clients = {
             "user": create_safe_async_client(
                 policy=settings.security.user_policy(),
+                proxy_url=settings.security.egress_proxy_url,
                 timeout=timeout,
                 headers=headers,
             ),
-            "trusted": create_safe_async_client(
-                policy=TRUSTED_URL_POLICY, timeout=timeout, headers=headers
+            "trusted": httpx2.AsyncClient(
+                timeout=timeout,
+                headers=headers,
+                trust_env=False,
+            ),
+            # Redirects are followed for both web tools: every hop is checked
+            # by the request hook and the egress proxy, so a search that lands
+            # on a redirecting Wikipedia language alias resolves rather than
+            # failing. The hop limit is client-level in HTTPX either way.
+            "web": create_safe_async_client(
+                policy=settings.security.web_policy(),
+                proxy_url=settings.security.egress_proxy_url,
+                timeout=httpx2.Timeout(
+                    timeout=network.webfetch_timeout_seconds,
+                    connect=network.connect_timeout_seconds,
+                ),
+                follow_redirects=True,
+                max_redirects=network.webfetch_max_redirects,
             ),
         }
         try:
@@ -96,12 +116,16 @@ async def shared_http_client_lifespan() -> AsyncIterator[None]:
         yield
 
 
-def get_http_client(*, allow_private: bool) -> httpx2.AsyncClient:
-    """Return the shared HTTP client matching the URL trust policy.
+def get_trusted_http_client() -> httpx2.AsyncClient:
+    """Return the direct client for operator-configured endpoints."""
+    return _shared.get("trusted")
 
-    ``allow_private`` selects the trusted client for operator-configured
-    URLs; otherwise the user-policy client that enforces the SSRF filter.
-    Fails loudly when called outside :func:`shared_http_client_lifespan` so
-    misuse surfaces immediately instead of binding to the wrong loop.
-    """
-    return _shared.get("trusted" if allow_private else "user")
+
+def get_user_http_client() -> httpx2.AsyncClient:
+    """Return the policy-checked proxy client for user-provided endpoints."""
+    return _shared.get("user")
+
+
+def get_web_http_client() -> httpx2.AsyncClient:
+    """Return the pooled client the model's web tools browse through."""
+    return _shared.get("web")

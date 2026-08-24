@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 from markdownify import MarkdownConverter
 from pydantic import Field
 
-from ..security import UnsafeUrlError, UrlPolicy, create_safe_async_client
+from ..security import UnsafeUrlError
 from .base import AsyncTool, ToolOutput, ToolRetry
 from .formatting import BLOCK_SEP, cap_lines, iter_annotated
 
@@ -69,17 +69,20 @@ def _snippet_text(html: str) -> str:
 class WebSearch(AsyncTool[list[dict[str, str]]]):
     """Search Wikipedia for up-to-date information.
 
-    Queries the official MediaWiki API directly through the SSRF-safe
-    transport — no scraping, so no bot detection or rate limits — and
-    only ever returns ``wikipedia.org`` links.  ``language`` selects the
-    edition (``en`` → en.wikipedia.org, ``de`` → de.wikipedia.org), whose
-    host the transport checks against ``policy`` like any other request.
+    Queries the official MediaWiki API through the egress proxy with no
+    scraping, bot detection, or search-engine rate limits.
+    It only returns ``wikipedia.org`` links.
+    ``language`` selects the edition, whose host the client checks against its
+    URL policy like every request and redirect.
+
+    ``client`` is the pooled, policy-checked web client; it is owned by the
+    application lifespan, so this tool uses it without ever closing it.
     """
 
+    client: httpx2.AsyncClient
     language: str = "en"
     timeout_seconds: float = 10.0
     user_agent: str = field(default_factory=build_user_agent)
-    policy: UrlPolicy = field(default_factory=UrlPolicy)
 
     @override
     async def __call__(
@@ -110,14 +113,14 @@ class WebSearch(AsyncTool[list[dict[str, str]]]):
             "formatversion": "2",
         }
         try:
-            async with create_safe_async_client(
-                policy=self.policy,
+            response = await self.client.get(
+                endpoint,
+                params=params,
                 timeout=self.timeout_seconds,
                 headers={"User-Agent": self.user_agent},
-            ) as client:
-                response = await client.get(endpoint, params=params)
-                response.raise_for_status()
-                hits = response.json().get("query", {}).get("search", [])
+            )
+            response.raise_for_status()
+            hits = response.json().get("query", {}).get("search", [])
         except (httpx2.HTTPError, UnsafeUrlError) as exc:
             logger.warning("Web search failed for query %r: %s", query, exc)
             raise ToolRetry(
@@ -206,19 +209,21 @@ class WebFetch(AsyncTool[WebPage]):
     page and ``max_chars`` caps the extracted text.  ``max_line_chars``
     truncates each numbered line so a data-URI or minified line cannot
     flood the context, and ``max_formatted_chars`` bounds the rendered
-    output as a whole, which neither of the other two does.  The safe
-    transport validates the requested URL and every redirect hop against
-    ``policy``.
+    output as a whole, which neither of the other two does.
+    ``client`` is the pooled web client: its request hook validates the URL and
+    every redirect hop against the URL host policy, and the egress proxy rejects
+    non-public destinations after resolution.  Following redirects and the hop
+    limit are both client-level in HTTPX, so they are configured there.  The
+    lifespan owns the client, so this tool uses it without ever closing it.
     """
 
+    client: httpx2.AsyncClient
     timeout_seconds: float = 10.0
     max_response_bytes: int = 5_000_000
     max_chars: int = 100_000
     max_line_chars: int = 2000
     max_formatted_chars: int = 50_000
-    max_redirects: int = 5
     user_agent: str = field(default_factory=build_user_agent)
-    policy: UrlPolicy = field(default_factory=UrlPolicy)
 
     @override
     async def __call__(self, url: WebUrlArg) -> ToolOutput[WebPage]:
@@ -227,9 +232,8 @@ class WebFetch(AsyncTool[WebPage]):
         HTML is reduced to its markdown text content; plain-text and JSON
         responses pass through unchanged.  Each content line is numbered
         so it can be cited like a document line.  Redirects are followed
-        by the client; the safe transport re-validates every hop against
-        the SSRF filter and the URL host policy so a public URL cannot
-        redirect somewhere disallowed.
+        by the client, whose request hook checks every hop against the URL
+        host policy before the egress proxy connects.
         """
         try:
             return await self._fetch(url)
@@ -252,20 +256,19 @@ class WebFetch(AsyncTool[WebPage]):
             raise ToolRetry("failed to fetch URL.") from exc
 
     async def _fetch(self, url: str) -> ToolOutput[WebPage]:
-        async with create_safe_async_client(
-            policy=self.policy,
+        async with self.client.stream(
+            "GET",
+            url,
             timeout=self.timeout_seconds,
-            follow_redirects=True,
-            max_redirects=self.max_redirects,
             headers={"User-Agent": self.user_agent},
-        ) as client:
-            async with client.stream("GET", url) as response:
-                response.raise_for_status()
-                mime = _mime_type(response.headers.get("content-type", ""))
-                if not _is_textual(mime) and not _is_html(mime):
-                    raise ToolRetry(f"unsupported content type '{mime}'.")
-                body, truncated = await self._read_capped(response)
-            return self._finalize(str(response.url), response, mime, body, truncated)
+        ) as response:
+            response.raise_for_status()
+            mime = _mime_type(response.headers.get("content-type", ""))
+            if not _is_textual(mime) and not _is_html(mime):
+                raise ToolRetry(f"unsupported content type '{mime}'.")
+            body, truncated = await self._read_capped(response)
+
+        return self._finalize(str(response.url), response, mime, body, truncated)
 
     async def _read_capped(self, response: httpx2.Response) -> tuple[bytes, bool]:
         """Stream the response body up to the configured byte cap."""

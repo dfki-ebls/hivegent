@@ -72,7 +72,7 @@ async def test_mcp_server(
 ) -> McpTestResponse:
     """Test connectivity to an MCP server and return the discovered tool count."""
     try:
-        await validate_mcp_servers([config])
+        validate_mcp_servers([config])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

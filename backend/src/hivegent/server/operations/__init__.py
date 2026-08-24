@@ -15,7 +15,6 @@ from .processing import (
     spool_dir,
     summarize_failed_files,
     summarize_failures,
-    validate_collection_upload,
 )
 from .reads import (
     attachment_disposition,
@@ -36,5 +35,4 @@ __all__ = [
     "spool_dir",
     "summarize_failed_files",
     "summarize_failures",
-    "validate_collection_upload",
 ]

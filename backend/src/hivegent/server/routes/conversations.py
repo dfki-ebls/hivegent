@@ -178,7 +178,7 @@ Return ONLY the title, no quotes or extra text.
 """
 
     async def _generate() -> str:
-        resolved = await prepare_llm_config(request.llm)
+        resolved = prepare_llm_config(request.llm)
         result = await base_agent.run(
             f"Conversation:\n{conversation_preview}",
             model=model_from_config(resolved),
@@ -244,7 +244,7 @@ async def create_conversation_compaction(
     messages = ChatAdapter.load_messages(request.messages)
 
     async def _compact() -> CompactionResult:
-        llm_config = await prepare_llm_config(request.llm, tier="main")
+        llm_config = prepare_llm_config(request.llm, tier="main")
         return await compact_conversation(
             user.id, conversation_id, messages, llm_config
         )
@@ -489,9 +489,9 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     config = await _parse_chat_config(request)
     config.conversation_id = conversation_id
 
-    config.llm = await prepare_llm_config(config.llm, tier="main")
+    config.llm = prepare_llm_config(config.llm, tier="main")
     try:
-        await validate_mcp_servers(config.tools.mcp_servers)
+        validate_mcp_servers(config.tools.mcp_servers)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

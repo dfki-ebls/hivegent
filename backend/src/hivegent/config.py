@@ -17,7 +17,7 @@ from pydantic_settings import (
 )
 
 from .multimodal import BinaryContentMode
-from .security import UrlPolicy
+from .security import DEFAULT_EGRESS_PROXY_URL, UrlPolicy
 
 CONFIG_FILE_ENV_VAR = "HIVEGENT_CONFIG_FILE"
 DEFAULT_CONFIG_FILE = Path("config.toml")
@@ -546,64 +546,56 @@ class UrlPolicySettings(BaseModel):
     """Host allow/deny rules for one class of outbound URLs.
 
     An ``example.com`` entry matches ``example.com`` and any of its
-    subdomains.  The deny list always wins; a non-empty allow list
-    refuses every host not on it, while an empty allow list permits any
-    host the SSRF filter accepts.
+    subdomains.  The deny list always wins, an empty allow list denies
+    every host, and ``*`` allows every publicly routable host.
     """
 
     allow_hosts: list[str] = []
     deny_hosts: list[str] = []
 
-    def to_policy(self, *, allow_private: bool) -> UrlPolicy:
+    def to_policy(self) -> UrlPolicy:
         """Resolve into the runtime policy enforced by the security module."""
         return UrlPolicy(
-            allow_private=allow_private,
             allow_hosts=tuple(self.allow_hosts),
             deny_hosts=tuple(self.deny_hosts),
         )
 
 
 class SecuritySettings(BaseModel):
-    """SSRF and transport-safety settings.
+    """Outbound URL and transport-safety settings.
 
-    ``allow_private_urls`` opens the SSRF filter so user-supplied URLs
-    (LLM ``base_url``, MCP server URLs, ``web_fetch``) may dial private
-    or loopback addresses. Default off, turn on only when authenticated
-    users are allowed to reach the same network. Server-configured URLs
-    are trusted operator input and do not need this setting.
+    User and model-controlled traffic passes through ``egress_proxy_url``.
+    The proxy resolves destinations and rejects non-public addresses, while
+    the application enforces the appropriate hostname allowlist on every
+    request and redirect.
+    Operator-configured endpoints use a separate direct client.
 
     ``user_urls`` is the host policy applied to user-supplied endpoint
-    URLs (user LLM ``base_url``, MCP server URLs); operator-configured
-    URLs (the trusted HTTP client) bypass it.  ``web_urls``
-    independently scopes what the model may browse with the web tools
-    (``web_search`` results, ``web_fetch`` targets and redirect hops).
-    The two policies do not inherit from each other, so a host barred
-    from both goes on both deny lists.  The default web allow list is
-    Wikipedia (every language edition, since an entry covers all of its
-    subdomains), exactly the hosts the default ``wikipedia`` search
-    engine can return — a
-    curated, ad-free corpus that is safe to expose out of the box.  When
-    both web lists are empty, the web tools are not registered at all:
-    exposing the open web to the model needs an explicit operator
-    decision, and search results that could never be fetched would be
-    pointless.
+    URLs (user LLM ``base_url``, MCP server URLs).
+    Its empty default denies every endpoint.
+    ``web_urls`` independently scopes what the model may browse with the web
+    tools, including search results, fetch targets, and redirect hops.
+    The two policies do not inherit from each other.
+    The default web allow list covers every Wikipedia language edition, which
+    is the curated corpus returned by the default search engine.
+    When the web allow list is empty, the web tools are not registered.
 
     CORS, security headers, rate limiting, and body-size caps are
     enforced by the Caddy reverse proxy, not here.
     """
 
-    allow_private_urls: bool = False
+    egress_proxy_url: str = DEFAULT_EGRESS_PROXY_URL
     expose_api_docs: bool = False
     user_urls: UrlPolicySettings = UrlPolicySettings()
     web_urls: UrlPolicySettings = UrlPolicySettings(allow_hosts=["wikipedia.org"])
 
     def user_policy(self) -> UrlPolicy:
         """Resolve the policy for user-supplied endpoint URLs."""
-        return self.user_urls.to_policy(allow_private=self.allow_private_urls)
+        return self.user_urls.to_policy()
 
     def web_policy(self) -> UrlPolicy:
         """Resolve the policy for the model's web tools."""
-        return self.web_urls.to_policy(allow_private=self.allow_private_urls)
+        return self.web_urls.to_policy()
 
 
 class ToolsSettings(BaseModel):

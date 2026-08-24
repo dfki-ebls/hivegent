@@ -39,7 +39,7 @@ async def create_transcription(
     client = create_openai_client(
         api_key=settings.llm.api_key,
         base_url=settings.llm.base_url or None,
-        allow_private_base_url=True,
+        base_url_is_trusted=True,
     )
 
     async def _transcribe() -> str:

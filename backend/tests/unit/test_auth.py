@@ -50,7 +50,7 @@ async def test_get_jwks_uses_jwks_uri_from_discovery_doc(
 
     fetcher = JWKSFetcher()
     mock_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    monkeypatch.setattr(auth, "get_http_client", lambda **_: mock_client)
+    monkeypatch.setattr(auth, "get_trusted_http_client", lambda: mock_client)
 
     try:
         await fetcher.get_jwks()
@@ -127,7 +127,7 @@ async def test_get_jwks_serves_stale_keys_when_refresh_fails(
         raise httpx2.ConnectError("idp unreachable", request=request)
 
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    monkeypatch.setattr(auth, "get_http_client", lambda **_: client)
+    monkeypatch.setattr(auth, "get_trusted_http_client", lambda: client)
 
     try:
         assert await fetcher.get_jwks() is stale

@@ -13,6 +13,8 @@ flowchart TD
     mcp["MCP-Endpunkt /mcp"]
     db[("PostgreSQL + pgvector")]
     llm["Sprachmodell<br/>(OpenAI-kompatibel)"]
+    egress["Ausgehender Proxy<br/>(Smokescreen)"]
+    external["Vom Benutzer gewählte<br/>LLM-, MCP- und Web-Ziele"]
 
     user --> browser
     browser <-->|Anmeldung| oidc
@@ -21,6 +23,8 @@ flowchart TD
     backend --> agent
     backend --> mcp
     agent --> llm
+    agent --> egress
+    egress --> external
     agent --> db
     backend --> db
 ```
@@ -39,6 +43,9 @@ flowchart TD
 - Identitätsanbieter: ein externer OIDC-Anmeldedienst wie Rauthy, Keycloak oder Authentik.
   Der Browser meldet sich dort an, das Backend prüft die ausgestellten Token, und Gruppen- sowie Administratorrechte werden aus den Token-Claims gelesen.
 - Sprachmodell: ein beliebiger OpenAI-kompatibler Endpunkt, gehostet oder lokal.
+- Ausgehender Proxy: Smokescreen löst jedes vom Benutzer oder Modell gewählte Ziel auf und stellt die Verbindung her, wobei private und reservierte Adressen abgelehnt werden.
+  Das Backend prüft zusätzlich bei jeder Anfrage und Weiterleitung getrennte Hostnamen-Freigabelisten für Benutzer-Endpunkte und Web-Werkzeuge.
+  Vom Betreiber konfigurierte Dienste verwenden direkte Clients und passieren diese Vertrauensgrenze nicht.
 
 ## Schnittstellen
 
@@ -48,6 +55,6 @@ flowchart TD
 
 ## Bereitstellung
 
-Das veröffentlichte Container-Image bündelt das Backend, das fertige Frontend und einen Reverse-Proxy.
+Das veröffentlichte Container-Image bündelt das Backend, das fertige Frontend, den eingehenden Caddy-Proxy und den ausgehenden Smokescreen-Proxy.
 Eine typische Bereitstellung besteht daher aus drei Containern: der Hivegent-App, PostgreSQL und dem Identitätsanbieter.
 Einzelheiten finden Sie unter [Einrichtung](setup.md).

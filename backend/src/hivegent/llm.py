@@ -19,7 +19,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings, ThinkingEffort, ThinkingLevel
 
 from .config import InferenceProvider
-from .http_client import get_http_client
+from .http_client import get_trusted_http_client, get_user_http_client
 from .types import LlmConfig, ReasoningEffort
 
 __all__ = [
@@ -131,13 +131,15 @@ def create_openai_provider(
     *,
     api_key: str | None,
     base_url: str | None,
-    allow_private_base_url: bool = False,
+    base_url_is_trusted: bool,
 ) -> OpenAIProvider:
     """Create an OpenAI provider bound to the matching shared HTTP client."""
     return OpenAIProvider(
         api_key=api_key or None,
         base_url=base_url or None,
-        http_client=get_http_client(allow_private=allow_private_base_url),
+        http_client=(
+            get_trusted_http_client() if base_url_is_trusted else get_user_http_client()
+        ),
     )
 
 
@@ -145,13 +147,13 @@ def create_openai_client(
     *,
     api_key: str | None,
     base_url: str | None,
-    allow_private_base_url: bool = False,
+    base_url_is_trusted: bool,
 ) -> AsyncOpenAI:
     """Create an OpenAI SDK client bound to the matching shared HTTP client."""
     return create_openai_provider(
         api_key=api_key,
         base_url=base_url,
-        allow_private_base_url=allow_private_base_url,
+        base_url_is_trusted=base_url_is_trusted,
     ).client
 
 
@@ -189,7 +191,7 @@ def create_openai_chat_model(
     api_key: str | None,
     base_url: str | None,
     inference_provider: InferenceProvider | None,
-    allow_private_base_url: bool = False,
+    base_url_is_trusted: bool,
 ) -> OpenAIChatModel:
     """Build an :class:`OpenAIChatModel` bound to the matching shared client.
 
@@ -207,7 +209,7 @@ def create_openai_chat_model(
     provider = create_openai_provider(
         api_key=api_key,
         base_url=base_url,
-        allow_private_base_url=allow_private_base_url,
+        base_url_is_trusted=base_url_is_trusted,
     )
     match inference_provider:
         case None | InferenceProvider.OPENAI:
@@ -240,7 +242,7 @@ def model_from_config(config: LlmConfig) -> OpenAIChatModel:
         api_key=config.api_key,
         base_url=config.base_url,
         inference_provider=config.inference_provider,
-        allow_private_base_url=config.base_url_is_trusted,
+        base_url_is_trusted=config.base_url_is_trusted,
     )
 
 

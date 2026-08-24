@@ -20,6 +20,7 @@ let
   # backend, so it is the package's concern, not the unit's.
   package =
     if cfg.torchCompile then cfg.package.override { enableTorchCompile = true; } else cfg.package;
+  egressProxy = cfg.egressProxy.package.onLoopback cfg.egressProxy.port;
 in
 {
   options.services.hivegent = {
@@ -55,6 +56,23 @@ in
         Port `hivegent serve` listens on. Mirrored into
         `mcp.base_url`'s default and into the systemd `SocketBindAllow`.
       '';
+    };
+
+    egressProxy = {
+      package = lib.mkPackageOption pkgs "smokescreen" {
+        default = null;
+        extraDescription = ''
+          Defaults to the Smokescreen package built by the hivegent flake.
+        '';
+      };
+
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = cfg.egressProxy.package.passthru.defaultPort;
+        description = ''
+          Loopback port for the SSRF-safe outbound HTTP CONNECT proxy.
+        '';
+      };
     };
 
     settings = lib.mkOption {
@@ -199,6 +217,7 @@ in
         ];
 
         services.hivegent.settings.data_dir = lib.mkDefault "/var/lib/hivegent";
+        services.hivegent.settings.security.egress_proxy_url = lib.mkDefault egressProxy.url;
 
         # The upload limits are the single source of truth: feed them to the
         # backend enforcer here (mkDefault, so a direct `settings.limits`
@@ -212,7 +231,11 @@ in
         systemd.services.hivegent = {
           description = "Hivegent backend";
           wantedBy = [ "multi-user.target" ];
-          after = [ "network.target" ];
+          after = [
+            "network.target"
+            "hivegent-egress-proxy.service"
+          ];
+          requires = [ "hivegent-egress-proxy.service" ];
 
           environment = {
             # Avoid tool caches under `/var/empty`.
@@ -253,6 +276,26 @@ in
             SocketBindAllow = "tcp:${toString cfg.port}";
             # CUDA-backed document/OCR models need the host NVIDIA character devices.
             PrivateDevices = false;
+          };
+
+          unitConfig = {
+            StartLimitBurst = 5;
+            StartLimitIntervalSec = 600;
+          };
+        };
+
+        systemd.services.hivegent-egress-proxy = {
+          description = "Hivegent SSRF-safe outbound proxy";
+          wantedBy = [ "multi-user.target" ];
+          after = [ "network.target" ];
+
+          serviceConfig = hardening // {
+            Type = "exec";
+            DynamicUser = true;
+            Restart = "on-failure";
+            RestartSec = 5;
+            ExecStart = lib.getExe egressProxy.package;
+            SocketBindAllow = "tcp:${toString cfg.egressProxy.port}";
           };
 
           unitConfig = {

@@ -6,80 +6,56 @@ import httpx2
 import pytest
 from fastapi import HTTPException, UploadFile
 
-import hivegent.security as security_module
+from hivegent import security
 from hivegent.config import InferenceProvider, settings
-from hivegent.security import (
-    UrlPolicy,
-    create_safe_async_client,
-)
+from hivegent.security import UrlPolicy, create_safe_async_client
 from hivegent.server.common import prepare_llm_config
 from hivegent.server.operations import enforce_upload_size
 from hivegent.types import LlmConfig, resolve_llm_config
 
 
-async def test_safe_async_client_blocks_private_ip_connections() -> None:
-    """The safe transport rejects private addresses at connection time."""
-    # Pin the guard on regardless of the ambient ``allow_private_urls`` the
-    # dev shell exports, so the test exercises the filter, not the env.
-    async with create_safe_async_client(timeout=0.1, policy=UrlPolicy()) as client:
-        with pytest.raises(httpx2.ConnectError, match="private or reserved"):
-            await client.get("http://127.0.0.1:1")
+def test_safe_async_client_requires_egress_proxy() -> None:
+    """An untrusted client cannot silently fall back to direct networking."""
+    with pytest.raises(ValueError, match="egress proxy"):
+        create_safe_async_client(
+            policy=UrlPolicy(allow_hosts=("example.com",)),
+            proxy_url="",
+            timeout=1.0,
+        )
 
 
-async def test_safe_async_client_pins_address_and_preserves_origin(
+async def test_safe_async_client_checks_every_redirect_hop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The safe transport connects by IP without changing HTTP or TLS identity."""
-    captured: list[httpx2.Request] = []
+    """The host policy runs on each hop, so an allowed URL cannot redirect out."""
 
-    async def resolve(host: str) -> list[str]:
-        assert host == "example.com"
-        return ["203.0.113.1", "203.0.113.2"]
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(302, headers={"Location": "https://evil.example/final"})
 
-    async def handler(request: httpx2.Request) -> httpx2.Response:
-        captured.append(request)
-        return httpx2.Response(200)
+    monkeypatch.setattr(
+        security, "_egress_transport", lambda _proxy_url: httpx2.MockTransport(handler)
+    )
 
-    transports = 0
-
-    def new_transport() -> httpx2.MockTransport:
-        nonlocal transports
-        transports += 1
-
-        return httpx2.MockTransport(handler)
-
-    monkeypatch.setattr(security_module, "_resolve_public_addresses", resolve)
-    monkeypatch.setattr(security_module, "_new_transport", new_transport)
-
-    async with create_safe_async_client(policy=UrlPolicy()) as client:
-        for _ in range(2):
-            response = await client.get(
-                "https://example.com:8443/path", headers={"Host": "attacker.invalid"}
-            )
-            assert response.status_code == 200
-
-    assert len(captured) == 2
-    assert {request.url.host for request in captured} == {"203.0.113.1"}
-    assert captured[0].headers["host"] == "example.com:8443"
-    # A ``str`` is required: httpcore passes it to anyio's TLS wrapper,
-    # which encodes it.  Bytes raise there, so every HTTPS request would
-    # fail while plain HTTP kept working.
-    assert captured[0].extensions["sni_hostname"] == "example.com"
-    # One pool for the host, re-used across requests despite the second
-    # resolved address, plus the unused ``_inner`` minted in __init__.
-    assert transports == 2
+    async with create_safe_async_client(
+        policy=UrlPolicy(allow_hosts=("safe.example",)),
+        proxy_url="http://127.0.0.1:4750",
+        timeout=1.0,
+        follow_redirects=True,
+    ) as client:
+        with pytest.raises(ValueError, match="allowlist"):
+            await client.get("https://safe.example/start")
 
 
-async def test_prepare_llm_config_trusts_configured_base_url_only(
+def test_prepare_llm_config_trusts_configured_base_url_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Server-configured LLM URLs bypass only the user URL policy."""
-    monkeypatch.setattr(settings.security, "allow_private_urls", False)
+    monkeypatch.setattr(settings.security.user_urls, "allow_hosts", [])
     monkeypatch.setattr(settings.llm, "model", "configured-model")
     monkeypatch.setattr(settings.llm, "api_key", "")
     monkeypatch.setattr(settings.llm, "base_url", "http://127.0.0.1:18000/v1")
 
-    resolved = await prepare_llm_config(LlmConfig())
+    resolved = prepare_llm_config(LlmConfig())
 
     assert resolved.base_url == "http://127.0.0.1:18000/v1"
     assert resolved.base_url_is_trusted is True
@@ -87,7 +63,7 @@ async def test_prepare_llm_config_trusts_configured_base_url_only(
     monkeypatch.setattr(settings.llm, "base_url", "")
 
     with pytest.raises(HTTPException) as exc_info:
-        await prepare_llm_config(
+        prepare_llm_config(
             LlmConfig(model="user-model", base_url="http://127.0.0.1:18000/v1")
         )
 
@@ -95,7 +71,7 @@ async def test_prepare_llm_config_trusts_configured_base_url_only(
     assert "Unsafe LLM base_url" in str(exc_info.value.detail)
 
 
-async def test_resolve_llm_config_is_idempotent_on_trust(
+def test_resolve_llm_config_is_idempotent_on_trust(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Re-resolving a trusted config keeps it trusted (image captioning re-resolves)."""

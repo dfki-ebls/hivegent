@@ -287,9 +287,8 @@ class McpOAuth2Config(BaseModel):
 class McpServerConfig(BaseModel):
     """User-provided MCP server configuration.
 
-    ``url`` and ``headers`` run through the SSRF / header-injection
-    filter; private hosts require ``HIVEGENT_SECURITY__ALLOW_PRIVATE_URLS=1``
-    (independent of the auth toggle).
+    ``url`` and ``headers`` run through the URL policy and header-injection
+    checks, and every connection goes through the SSRF-safe egress proxy.
     """
 
     url: str

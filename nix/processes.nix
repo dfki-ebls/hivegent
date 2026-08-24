@@ -3,7 +3,11 @@
   imports = [ inputs.process-compose.flakeModule ];
 
   perSystem =
-    { pkgs, ... }:
+    { pkgs, config, ... }:
+    let
+      smokescreen = config.packages.smokescreen;
+      egressProxy = smokescreen.onLoopback smokescreen.defaultPort;
+    in
     {
       process-compose.hivegent = {
         imports = [
@@ -20,11 +24,15 @@
         settings.processes = {
           backend = {
             depends_on.db.condition = "process_healthy";
+            depends_on.egress-proxy.condition = "process_started";
             command = ''
               exec ${lib.getExe pkgs.uv} \
                 --project backend \
                 run hivegent serve --host 127.0.0.1 --reload
             '';
+            # The dev stack owns the proxy port, so it also states the URL
+            # rather than relying on the backend's compiled-in default.
+            environment = [ "HIVEGENT_SECURITY__EGRESS_PROXY_URL=${egressProxy.url}" ];
             # FastAPI only serves once lifespan startup (migrations, reconcile)
             # finishes, so a healthy probe means the backend is ready for traffic.
             # Cadence mirrors the NixOS deployment's `/api/health` check (Caddy's
@@ -44,6 +52,7 @@
               failure_threshold = 60;
             };
           };
+          egress-proxy.command = "exec ${lib.getExe egressProxy.package}";
           # Gate the dev server on a ready backend so the SPA's startup fetches
           # never hit a booting backend and flood the proxy with ECONNREFUSED.
           frontend = {

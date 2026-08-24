@@ -1,4 +1,4 @@
-# All-in-one container: FastAPI backend + Caddy proxy/SPA in one layered image,
+# All-in-one container: FastAPI backend, outbound proxy, and Caddy/SPA in one image,
 # supervised by dinit as PID 1. Secure by default — unprivileged `nobody` uid, no
 # shell, no `--privileged` — with a baked healthcheck across the chain (Caddy ->
 # API). Caddy serves plain HTTP; front it with a TLS terminator for public use.
@@ -20,6 +20,7 @@
   dinit,
   backend,
   frontend,
+  smokescreen,
   # Overridable mdbook handbook package bundled into the image, or `null` to
   # keep its path private (404). Rebuilt below with `site-url` matching
   # `docsPath`, so the package's own `sitePath` is irrelevant.
@@ -34,6 +35,8 @@
   httpPort ? 8080,
   # Backend bind port; loopback-only, never exposed — Caddy is the only ingress.
   backendPort ? 8000,
+  # Loopback-only Smokescreen port used by untrusted outbound HTTP clients.
+  egressProxyPort ? smokescreen.passthru.defaultPort,
   # Whether Caddy proxies `/mcp` (off → 404); the backend must also enable MCP.
   enableMcp ? false,
   # Run the chat bridge (Vercel Chat SDK) as a third supervised service and route
@@ -54,6 +57,7 @@ let
   docsUrl = lib.optionalString (docs != null) "${docsPrefix}/";
   handbook = if docs == null then null else docs.override { sitePath = docsUrl; };
   spa = frontend.override { inherit docsUrl; };
+  egressProxy = smokescreen.onLoopback egressProxyPort;
 
   # Docker healthcheck durations are nanoseconds.
   seconds = n: n * 1000000000;
@@ -102,6 +106,7 @@ let
     PYTHONUNBUFFERED = "1";
     HIVEGENT_DATA_DIR = dataDir;
     HIVEGENT_CONFIG_FILE = "${dataDir}/config.toml";
+    HIVEGENT_SECURITY__EGRESS_PROXY_URL = egressProxy.url;
     SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
   };
 
@@ -149,9 +154,13 @@ let
     backend = daemon // {
       command = "${lib.getExe' backend "hivegent"} serve --host 127.0.0.1 --port ${toString backendPort}";
       env-file = backendEnv;
+      depends-on = [ "egress-proxy" ];
       start-timeout = 600;
       # Must exceed uvicorn's `timeout_graceful_shutdown` (30s); dinit's default is 10s.
       stop-timeout = 45;
+    };
+    egress-proxy = daemon // {
+      command = lib.getExe egressProxy.package;
     };
     caddy = daemon // {
       command = "${lib.getExe caddy} run --config ${caddyfile} --adapter caddyfile";
@@ -226,7 +235,7 @@ dockerTools.streamLayeredImage {
     };
   };
   meta = {
-    description = "Hivegent all-in-one container (backend + Caddy proxy/SPA)";
+    description = "Hivegent container with inbound and outbound proxies";
     maintainers = with lib.maintainers; [ mirkolenz ];
     platforms = lib.platforms.linux;
   };

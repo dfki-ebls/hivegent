@@ -2,8 +2,8 @@
 
 Single uploads, reconvert, collections, and the bulk operations all run as
 background jobs (see :mod:`hivegent.jobs`); this module holds the
-upload size guard those routes share, collection-request validation, and the
-per-file bulk runner that reports its progress to a job context.
+upload size guard those routes share and the per-file bulk runner that
+reports its progress to a job context.
 """
 
 import logging
@@ -15,8 +15,7 @@ from fastapi import HTTPException, UploadFile
 
 from ...config import settings
 from ...humanize import format_bytes
-from ...types import FailedFile, LlmConfig, PipelineSpec, ProgressReporter
-from ..common import parse_pipeline_spec, prepare_llm_config
+from ...types import FailedFile, ProgressReporter
 
 __all__ = [
     "cleanup_spool_dir",
@@ -25,7 +24,6 @@ __all__ = [
     "spool_dir",
     "summarize_failed_files",
     "summarize_failures",
-    "validate_collection_upload",
 ]
 
 logger = logging.getLogger(__name__)
@@ -125,19 +123,6 @@ async def run_bulk_document_job(
             f"{verb} {succeeded} of {total}; "
             f"{len(failed)} failed: {summarize_failures(failed)}"
         )
-
-
-async def validate_collection_upload(
-    pipeline_spec: str,
-    llm_config: str,
-) -> tuple[PipelineSpec, LlmConfig]:
-    """Parse and validate pipeline and LLM configuration for collection uploads.
-
-    Async because the SSRF check runs DNS off the event loop.
-    """
-    spec = parse_pipeline_spec(pipeline_spec)
-    resolved = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
-    return spec, resolved
 
 
 def enforce_upload_size(file: UploadFile, *, limit: int, label: str) -> None:

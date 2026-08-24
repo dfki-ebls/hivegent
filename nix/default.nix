@@ -24,6 +24,7 @@
       imports = [ ./nixos ];
       services.hivegent.package = lib.mkDefault perSystem.config.packages.backend;
       services.hivegent.bridge.package = lib.mkDefault perSystem.config.packages.bridge;
+      services.hivegent.egressProxy.package = lib.mkDefault perSystem.config.packages.smokescreen;
       # Blank the URL when `caddy.docs` is null so the SPA hides the link.
       services.hivegent.caddy.frontend = lib.mkDefault (
         perSystem.config.packages.frontend.override {
@@ -49,7 +50,12 @@
         inherit (config.packages) hivegent backend;
       };
       checks = {
-        inherit (config.packages) backend frontend bridge;
+        inherit (config.packages)
+          backend
+          frontend
+          bridge
+          smokescreen
+          ;
         inherit (config.packages.backend.passthru.tests) pytest;
       };
       packages = {
@@ -60,6 +66,7 @@
         frontend = pkgs.callPackage ../frontend { };
         bridge = pkgs.callPackage ../bridge { };
         docs = pkgs.callPackage ../docs { };
+        smokescreen = pkgs.callPackage ./smokescreen.nix { };
         tessdata = pkgs.callPackage ./tessdata.nix { };
         release-env = pkgs.buildEnv {
           name = "release-env";
@@ -84,6 +91,7 @@
             frontend
             docs
             bridge
+            smokescreen
             ;
         };
       };

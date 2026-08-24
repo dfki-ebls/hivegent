@@ -69,7 +69,6 @@ from ..operations import (
     run_bulk_document_job,
     spool_dir,
     summarize_failed_files,
-    validate_collection_upload,
 )
 
 __all__ = ["router"]
@@ -215,7 +214,7 @@ async def replace_original(
     """
     store, safe = resolve_workspace_path(user, filepath, write=True)
     spec = parse_pipeline_spec(pipeline_spec)
-    llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
+    llm = prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     new_filename = file.filename
     spool = await _spool_payload(
         file, limit=settings.limits.max_file_size_bytes, label="File"
@@ -255,7 +254,7 @@ async def upload_document(
     """
     store, safe = resolve_workspace_path(user, filepath, write=True)
     spec = parse_pipeline_spec(pipeline_spec)
-    llm = await prepare_llm_config(LlmConfig.model_validate_json(llm_config))
+    llm = prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     spool = await _spool_payload(
         file, limit=settings.limits.max_file_size_bytes, label="File"
     )
@@ -292,7 +291,8 @@ async def upload_collection(
     subdir under it — so a drop can target a folder, not just the workspace root;
     it resolves to the store and destination subdir like every other item route.
     """
-    spec, resolved = await validate_collection_upload(pipeline_spec, llm_config)
+    spec = parse_pipeline_spec(pipeline_spec)
+    resolved = prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     store, dest = resolve_workspace_path(user, target, write=True)
     spool = await _spool_payload(
         file, limit=settings.limits.max_collection_size_bytes, label="Collection"
@@ -378,7 +378,7 @@ async def bulk_reconvert(
 ) -> JobView:
     """Reconvert multiple documents as a single background job."""
     spec = request.pipeline
-    resolved = await prepare_llm_config(request.llm)
+    resolved = prepare_llm_config(request.llm)
 
     async def _reconvert_one(filepath: str) -> None:
         store, safe = resolve_workspace_path(user, filepath, write=True)
@@ -523,7 +523,7 @@ async def reconvert_document(
 ) -> JobView:
     """Re-convert a document from its original binary file as a background job."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
-    resolved = await prepare_llm_config(request.llm)
+    resolved = prepare_llm_config(request.llm)
 
     async def work(ctx: JobContext) -> None:
         await workspace.reconvert(
@@ -593,7 +593,7 @@ async def generate_asset_description(
 ) -> AssetEntry:
     """Generate an asset's companion .md description with the vision model."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
-    llm = await prepare_llm_config(request.llm)
+    llm = prepare_llm_config(request.llm)
     entry = await workspace.generate_asset_description(
         store, safe, request.asset_name, llm
     )

@@ -13,6 +13,8 @@ flowchart TD
     mcp["MCP endpoint /mcp"]
     db[("PostgreSQL + pgvector")]
     llm["Language model<br/>(OpenAI-compatible)"]
+    egress["Outbound proxy<br/>(Smokescreen)"]
+    external["User-selected<br/>LLM, MCP, and web hosts"]
 
     user --> browser
     browser <-->|Login| oidc
@@ -21,6 +23,8 @@ flowchart TD
     backend --> agent
     backend --> mcp
     agent --> llm
+    agent --> egress
+    egress --> external
     agent --> db
     backend --> db
 ```
@@ -39,6 +43,9 @@ flowchart TD
 - Identity provider: an external OIDC login service such as Rauthy, Keycloak, or Authentik.
   The browser logs in there, the backend validates the issued tokens, and group and admin permissions are read from the token claims.
 - Language model: any OpenAI-compatible endpoint, hosted or local.
+- Outbound proxy: Smokescreen resolves and connects to every user or model-controlled destination while rejecting private and reserved addresses.
+  The backend still applies separate hostname allowlists to user endpoints and web tools on every request and redirect.
+  Operator-configured services use direct clients and do not pass through this trust boundary.
 
 ## Interfaces
 
@@ -48,6 +55,6 @@ flowchart TD
 
 ## Deployment
 
-The published container image bundles the backend, the built frontend, and a reverse proxy.
+The published container image bundles the backend, the built frontend, the Caddy inbound proxy, and the Smokescreen outbound proxy.
 A typical deployment is therefore three containers: the Hivegent app, PostgreSQL, and the identity provider.
 See [Setup](setup.md) for the details.

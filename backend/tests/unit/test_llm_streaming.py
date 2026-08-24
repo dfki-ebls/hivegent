@@ -26,12 +26,13 @@ def test_content_after_tool_call_starts_a_new_text_part(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Interleaved vLLM content must remain a valid ordered part stream."""
-    monkeypatch.setattr(llm_module, "get_http_client", lambda **_: None)
+    monkeypatch.setattr(llm_module, "get_user_http_client", lambda: None)
     model = create_openai_chat_model(
         "test-model",
         api_key="test",
         base_url="http://localhost/v1",
         inference_provider=InferenceProvider.VLLM,
+        base_url_is_trusted=False,
     )
     response = model._streamed_response_cls(
         model_request_parameters=ModelRequestParameters(),
@@ -95,7 +96,11 @@ def test_content_after_tool_call_starts_a_new_text_part(
 
 def _model(model: str, provider: InferenceProvider) -> OpenAIChatModel:
     return create_openai_chat_model(
-        model, api_key="test", base_url=None, inference_provider=provider
+        model,
+        api_key="test",
+        base_url=None,
+        inference_provider=provider,
+        base_url_is_trusted=False,
     )
 
 
@@ -112,7 +117,7 @@ def test_openai_endpoint_gets_no_self_hosted_quirks(
     non-reasoning model as reasoning, so seeing it track the model name is
     proof the override is gone rather than merely agreeing by chance.
     """
-    monkeypatch.setattr(llm_module, "get_http_client", lambda **_: None)
+    monkeypatch.setattr(llm_module, "get_user_http_client", lambda: None)
 
     reasoning = _openai_model("gpt-5")
 
@@ -130,7 +135,7 @@ def test_only_vllm_gets_the_qwen3_xml_parser_workarounds(
     llama.cpp orders messages correctly and accepts several system messages,
     so it takes the shared self-hosted profile without either workaround.
     """
-    monkeypatch.setattr(llm_module, "get_http_client", lambda **_: None)
+    monkeypatch.setattr(llm_module, "get_user_http_client", lambda: None)
 
     vllm = _model("qwen", InferenceProvider.VLLM)
     llama_cpp = _model("qwen", InferenceProvider.LLAMA_CPP)
