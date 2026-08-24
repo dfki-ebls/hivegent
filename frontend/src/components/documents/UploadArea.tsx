@@ -119,7 +119,6 @@ export function UploadArea({
         <input
           ref={directoryInputRef}
           type="file"
-          // @ts-expect-error webkitdirectory is not in React's type definitions
           webkitdirectory=""
           multiple
           className="hidden"
