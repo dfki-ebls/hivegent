@@ -17,6 +17,7 @@ from ..config import content_hash, sanitize_document_path, settings
 from ..converters import vision_media_type
 from ..db import documents as db_documents
 from ..entries import (
+    SCRATCH_DIR_NAME,
     ContentStat,
     assets_dir_for_stem,
     description_path_for_stem,
@@ -326,6 +327,12 @@ async def _apply_text_mutation(
     does the name decide where an entry write lands: on the indexed description
     itself, or on an original whose description has to be re-derived from it.
     """
+    if PurePosixPath(safe).name == SCRATCH_DIR_NAME:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{safe}' names a scratch directory, not a writable file",
+        )
+
     if is_scratch_path(safe) or is_description_file(safe):
         return await _rewrite_in_place(store, safe, mutate, expected_hash, chunking)
     return await _rewrite_original(store, safe, mutate, expected_hash, chunking)

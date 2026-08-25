@@ -60,6 +60,7 @@ def test_scratch_paths_are_workspace_content_but_never_entries() -> None:
     """
     assert is_scratch_path(".scratch/state.json")
     assert is_scratch_path("notes/.scratch/run.md")
+    assert is_scratch_path(".scratch")
     assert not is_scratch_path("notes/report.md")
     assert not is_scratch_path("notes/scratch/report.md")
 

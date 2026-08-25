@@ -8,10 +8,11 @@ from pydantic import Field
 from pydantic_ai import RunContext
 
 from ..config import settings
+from ..entries import is_scratch_path
 from ..llm_config import LlmConfig
 from ..prompts import format_document_scope
 from ..store import Casebase, build_search_paths
-from ..tools.base import SearchPath
+from ..tools.base import SearchPath, SearchPathFilterFunc
 from ..types import AUTO_APPROVED_MODES, MUTATING_MODES, DocumentFilter, Mode
 from .subagent_events import SubagentUpdate
 
@@ -86,6 +87,31 @@ class UserDeps:
             dir_fn=Casebase.workspace_path if writable else Casebase.workspace_dir,
             filter_for_store=self.filter_for_store,
         )
+
+    def python_paths(self, *, writable: bool = False) -> tuple[SearchPath, ...]:
+        """Return noncreating paths that keep scratch state in scope.
+
+        Document filters still govern ordinary files. Scratch is private run
+        state rather than a document selection, so it remains reachable in an
+        otherwise narrowed chat. *writable* narrows the groups exactly as it
+        does for :meth:`search_paths`, so the sandbox's output writer spans the
+        same roots the write tools do.
+        """
+        return build_search_paths(
+            self.store,
+            self.write_group_stores if writable else self.group_stores,
+            settings.data_dir,
+            dir_fn=Casebase.workspace_path,
+            filter_for_store=self._python_filter_for_store,
+        )
+
+    def _python_filter_for_store(self, store: Casebase) -> SearchPathFilterFunc:
+        """Apply the document selection everywhere except scratch."""
+        document_filter = self.filter_for_store(store)
+        if document_filter is None:
+            return None
+
+        return lambda path: is_scratch_path(path) or document_filter(path)
 
     def filter_for_store(self, store: Casebase) -> DocumentFilter | None:
         """Get the applicable DocumentFilter for a specific store.

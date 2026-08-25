@@ -124,6 +124,8 @@ def is_scratch_path(rel_path: str) -> bool:
     True
     >>> is_scratch_path("notes/.scratch/state.csv")
     True
+    >>> is_scratch_path(".scratch")
+    True
     >>> is_scratch_path("notes/report.md")
     False
     """

@@ -14,12 +14,14 @@ from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
+import hivegent.agents.tools.compute as compute_tools
 from hivegent import workspace
 from hivegent.agents.common import UserDeps
 from hivegent.agents.tools.compute import _validate_run_python
 from hivegent.agents.tools.write import write_document
 from hivegent.store import Casebase
 from hivegent.tools.base import ToolRetry
+from hivegent.types import DocumentFilter
 
 
 @pytest.fixture()
@@ -79,6 +81,39 @@ async def test_refuses_a_group_the_user_may_only_read(
         await tool("@archive/notes/a.md", "hi")
 
     assert routed == []
+
+
+def test_python_paths_are_lazy_and_keep_scratch_outside_document_filters(
+    deps: UserDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    filtered = replace(
+        deps,
+        document_filter=DocumentFilter(included=frozenset({"report.md"})),
+        group_filters={
+            "team": DocumentFilter(included=frozenset({"report.md"})),
+            "archive": DocumentFilter(included=frozenset({"report.md"})),
+        },
+    )
+    pool = object()
+    monkeypatch.setattr(compute_tools, "get_monty_pool", lambda: pool)
+
+    tool = compute_tools._run_python(filtered)
+
+    assert tool.pool is pool
+    assert all(not path.path.exists() for path in tool.resolved_paths)
+    assert len(tool.resolved_paths) == 3
+    for path in tool.resolved_paths:
+        assert path.filter_func is not None
+        assert path.filter_func(".scratch/run.json")
+        assert path.filter_func("report.md")
+        assert not path.filter_func("other.md")
+
+    assert tool.writer is not None
+    assert len(tool.writer.resolved_paths) == 2
+    for path in tool.writer.resolved_paths:
+        assert path.filter_func is not None
+        assert path.filter_func("notes/.scratch/state.json")
+        assert not path.filter_func("other.md")
 
 
 def test_python_workspace_write_approval_depends_on_mode(deps: UserDeps) -> None:

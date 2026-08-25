@@ -4,6 +4,7 @@ import asyncio
 import reprlib
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from stat import S_ISREG
 from typing import Annotated, override
 
 from pydantic import Field
@@ -22,16 +23,18 @@ from pydantic_monty import (
 
 from ..config import content_hash
 from ..humanize import pluralize
+from ..text import MAX_BYTES_PER_CHAR
 from .base import (
     WORKSPACE_PATH_HINT,
     AsyncPathTool,
     ToolOutput,
     ToolRetry,
+    entry_stat,
     read_text_or_retry,
     resolve_file_or_retry,
     sidecar_hint,
 )
-from .formatting import cap_lines, hint_suffix, truncate_line
+from .formatting import cap_lines, hint_suffix, truncate_line, truncate_middle
 from .mutations import WriteDocumentTool, resolve_mutation_target
 
 __all__ = [
@@ -152,14 +155,11 @@ def _diagnostic(exc: MontyError, printed: str, max_chars: int) -> str:
         if isinstance(exc, MontySyntaxError | MontyRuntimeError)
         else str(exc)
     )
-    printed, dropped, _clipped = _budget_lines(printed.rstrip("\n"), max_chars)
+    diagnostic = detail
+    if printed := printed.rstrip("\n"):
+        diagnostic = f"Printed before the failure:\n{printed}\n\n{detail}"
 
-    if not printed:
-        return detail
-
-    note = _dropped_hint(dropped)
-
-    return f"Printed before the failure:\n{printed}{note}\n\n{detail}"
+    return truncate_middle(diagnostic, max_chars)
 
 
 @dataclass(slots=True, frozen=True)
@@ -321,7 +321,11 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
             if PurePosixPath(canonical_script).suffix.lower() != ".py":
                 raise ToolRetry(f"'{canonical_script}' is not a `.py` script.")
 
-            source = self._read(canonical_script, absolute) or ""
+            source = self._read(canonical_script, absolute, 0) or ""
+
+        subject = "The script and workspace inputs are"
+        staged = len(source)
+        self._check_budget(staged, subject)
 
         # Every path is resolved before any file is read, so one path serving as
         # both an input and the output is read, decoded, and budgeted once.
@@ -330,15 +334,21 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         if output is not None:
             targets.append(output)
 
+        # The budget is charged file by file rather than once at the end: it
+        # bounds host memory, which a check that runs only after every input has
+        # already been decoded no longer does.
         files: dict[str, str] = {}
         for canonical, absolute in targets:
-            if canonical not in files and (text := self._read(canonical, absolute)):
-                files[canonical] = text
+            if canonical in files:
+                continue
 
-        self._check_budget(
-            len(source) + sum(map(len, files.values())),
-            "The script and workspace inputs are",
-        )
+            text = self._read(canonical, absolute, staged)
+            if text is None:
+                continue
+
+            files[canonical] = text
+            staged += len(text)
+            self._check_budget(staged, subject)
 
         return _PreparedRun(
             source=source,
@@ -373,15 +383,32 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
 
         return canonical, absolute
 
-    @staticmethod
-    def _read(canonical_path: str, absolute_path: Path) -> str | None:
+    def _read(
+        self, canonical_path: str, absolute_path: Path, staged: int
+    ) -> str | None:
         """Decode a resolved workspace file, or ``None`` when it does not exist.
 
         Only the declared output can be missing: an input is resolved through
         the reader, which refuses a path naming no file.
+
+        *staged* is the character count already charged to the run. A file is
+        sized before it is decoded, so one that cannot fit whatever it decodes
+        to is refused without ever being read into memory: a file above
+        :data:`~hivegent.text.MAX_BYTES_PER_CHAR` times the remaining budget is
+        over it for certain, while anything smaller is left to the exact check
+        on the decoded text.
         """
-        if not absolute_path.is_file():
+        st = entry_stat(absolute_path)
+        if st is None or not S_ISREG(st.st_mode):
             return None
+
+        remaining = self.max_workspace_chars - staged
+        if st.st_size > remaining * MAX_BYTES_PER_CHAR:
+            raise ToolRetry(
+                f"'{canonical_path}' is too large for one Python run "
+                f"(the script and workspace inputs may total "
+                f"{self.max_workspace_chars} characters)."
+            )
 
         return read_text_or_retry(
             absolute_path, canonical_path, sidecar_hint(canonical_path)
@@ -426,23 +453,16 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
 
         original = prepared.files.get(prepared.output)
         virtual_path = PurePosixPath(_virtual_path(prepared.output))
-        file = next(
-            (
-                candidate
-                for candidate in filesystem.files
-                if not candidate.deleted and candidate.path == virtual_path
-            ),
-            None,
-        )
-        if file is None:
+        if not filesystem.path_is_file(virtual_path):
             if original is None:
                 return None, "The declared workspace output was not created."
 
             raise ToolRetry("The declared output cannot be deleted or renamed.")
 
-        content = file.read_content()
-        if not isinstance(content, str):
-            raise ToolRetry("The declared output must be written as text, not bytes.")
+        try:
+            content = filesystem.path_read_text(virtual_path)
+        except UnicodeDecodeError as exc:
+            raise ToolRetry("The declared output must contain UTF-8 text.") from exc
 
         self._check_budget(len(content), "The declared workspace output is")
 

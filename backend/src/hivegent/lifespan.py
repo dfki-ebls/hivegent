@@ -33,20 +33,23 @@ class LifespanResource[T]:
         self._name = name
         self._opened_by = opened_by
         self._open_resource = open_resource
+        self._active = False
         self._resource: T | None = None
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncIterator[None]:
         """Open the resource for the duration of the context."""
-        if self._resource is not None:
+        if self._active:
             raise RuntimeError(f"{self._name} lifespan entered while already active")
 
-        async with self._open_resource() as resource:
-            self._resource = resource
-            try:
+        self._active = True
+        try:
+            async with self._open_resource() as resource:
+                self._resource = resource
                 yield
-            finally:
-                self._resource = None
+        finally:
+            self._resource = None
+            self._active = False
 
     def get(self) -> T:
         """Return the open resource, or raise when the lifespan is not active."""

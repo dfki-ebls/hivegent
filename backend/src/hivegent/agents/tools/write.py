@@ -5,6 +5,7 @@ from pydantic_ai import FunctionToolset
 from ... import workspace
 from ...store import scoped_operation
 from ...tools import EditDocumentTool, WriteDocumentTool
+from ...tools.base import SearchPath
 from ...tools.pydantic_ai import register_agent_tools
 from ...workspace_events import announcing_mutator
 from ..common import UserDeps
@@ -22,15 +23,19 @@ def _edit_document(deps: UserDeps) -> EditDocumentTool:
     )
 
 
-def write_document(deps: UserDeps) -> WriteDocumentTool:
+def write_document(
+    deps: UserDeps, paths: tuple[SearchPath, ...] | None = None
+) -> WriteDocumentTool:
     """Build the canonical scoped document writer for one agent run.
 
-    Public because ``run_python`` composes it to commit its declared output;
-    :func:`~hivegent.tools.base.factory_tool_name` strips no leading underscore
-    it does not have, so the registered tool name is unchanged.
+    Public because ``run_python`` composes it to commit its declared output,
+    passing its own writable roots so the output it writes is scoped exactly
+    like the files it read.  Registration ignores the extra parameter: the
+    adapter reads the return annotation and calls the factory with the deps
+    alone.
     """
     return WriteDocumentTool(
-        paths=deps.search_paths(writable=True),
+        paths=deps.search_paths(writable=True) if paths is None else paths,
         mutator=announcing_mutator(
             scoped_operation(workspace.write_document_text, deps.writable_stores),
             deps.user_id,

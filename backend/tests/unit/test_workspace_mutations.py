@@ -123,6 +123,14 @@ class TestEditDocumentText:
 
 
 class TestWriteDocumentText:
+    async def test_rejects_scratch_directory_as_a_file(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        with pytest.raises(HTTPException, match="scratch directory"):
+            await workspace.write_document_text(user_store, ".scratch", "orphan")
+
+        assert not (workspace_dir / ".scratch").exists()
+
     async def test_replace_creates_file(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:

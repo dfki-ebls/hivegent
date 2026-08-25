@@ -5,7 +5,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from fnmatch import fnmatch
-from pathlib import Path
+from os import stat_result
+from stat import S_ISDIR, S_ISREG
 from typing import Annotated, override
 
 from pydantic import Field
@@ -23,6 +24,7 @@ from .base import (
     ToolOutput,
     ToolRetry,
     canonical_local_path,
+    entry_stat,
     entry_visible,
     excluded_dirs,
     read_text_or_retry,
@@ -208,8 +210,8 @@ def _walk_entries(
     *,
     root_subpath: str | None = None,
     include_dirs: bool,
-) -> Iterator[tuple[SearchPath, Path, str, bool]]:
-    """Walk search paths yielding ``(sp, absolute, relative, is_dir)`` tuples.
+) -> Iterator[tuple[SearchPath, str, stat_result]]:
+    """Walk search paths yielding ``(sp, relative, stat)`` tuples.
 
     Applies ``base_glob``, the excluded-dir filter, and the search path's
     own ``filter_func``.  Callers handle sorting, capping, and any
@@ -220,29 +222,34 @@ def _walk_entries(
     skipped rather than listed, since its name is an alias for a file the
     filter was never asked about.  Uploads refuse symlinks for the same
     reason, so one can only reach the workspace by hand.
+
+    The one ``lstat`` each entry costs is handed to the caller rather than
+    thrown away, since the size and mtime a listing reports come off exactly
+    that stat and nothing about the entry can have moved in between.
     """
     for sp in resolved_paths:
         base = sp.path.resolve()
         root = base
         if root_subpath:
-            resolved_root = canonical_local_path(sp, root_subpath)
+            resolved_root = canonical_local_path(base, root_subpath)
             if resolved_root is None:
                 continue
-            root = resolved_root[1]
+            _canonical, root = resolved_root
         if not root.exists():
             continue
         for absolute in sorted(root.rglob(base_glob or "*")):
-            if absolute.is_symlink():
+            st = entry_stat(absolute)
+            if st is None:
                 continue
-            is_dir = absolute.is_dir()
+            is_dir = S_ISDIR(st.st_mode)
             if is_dir and not include_dirs:
                 continue
-            if not is_dir and not absolute.is_file():
+            if not is_dir and not S_ISREG(st.st_mode):
                 continue
             rel = str(absolute.relative_to(base).as_posix())
             if not entry_visible(sp, rel, exclude_dirs):
                 continue
-            yield sp, absolute, rel, is_dir
+            yield sp, rel, st
 
 
 def _scan_entries(
@@ -255,17 +262,17 @@ def _scan_entries(
 ) -> list[DocumentSummary]:
     """Collect matching file and directory entries from search paths."""
     results: list[DocumentSummary] = []
-    for sp, absolute, rel, is_dir in _walk_entries(
+    for sp, rel, st in _walk_entries(
         resolved_paths, base_glob, exclude_dirs, include_dirs=True
     ):
         if not _matches_subdir_and_depth(rel, subdir, max_depth):
             continue
-        stat = absolute.stat()
+        is_dir = S_ISDIR(st.st_mode)
         results.append(
             DocumentSummary(
                 filename=sp.prefixed(rel),
-                size=stat.st_size if not is_dir else 0,
-                modified_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
+                size=0 if is_dir else st.st_size,
+                modified_at=datetime.fromtimestamp(st.st_mtime, tz=UTC),
                 is_directory=is_dir,
             )
         )
@@ -294,7 +301,7 @@ def _glob_entries(
     effective_glob = pattern if base_glob is None else base_glob
     skip_fnmatch = base_glob is None
     results: list[str] = []
-    for sp, _absolute, rel, _is_dir in _walk_entries(
+    for sp, rel, _st in _walk_entries(
         resolved_paths,
         effective_glob,
         exclude_dirs,
@@ -613,14 +620,12 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         end = min(total, start + window - 1)
 
         # Cap by character budget: one giant line still gets returned alone so
-        # the caller sees something rather than an empty range.
-        selected: list[str] = []
-        char_count = 0
-        for line in all_lines[start - 1 : end]:
-            if selected and char_count + len(line) + 1 > self.max_chars:
-                break
-            selected.append(line)
-            char_count += len(line) + 1
+        # the caller sees something rather than an empty range.  Both budgets
+        # below run the same rule, so both are asked for it the same way and
+        # trim the window by what it dropped.
+        window = all_lines[start - 1 : end]
+        _text, over_budget = cap_lines(window, self.max_chars)
+        selected = window[: len(window) - over_budget]
         # Render before building the result: the formatted budget decides how
         # many of the selected lines the model actually sees, and the range
         # reported has to be the one it was shown, or the follow-up offset

@@ -3,11 +3,14 @@
 import asyncio
 import os
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from multiprocessing import active_children
 
 import pytest
 
 from hivegent.concurrency import bounded_as_completed, shield_to_completion
+from hivegent.lifespan import LifespanResource
 from hivegent.workers.isolation import (
     WorkerCrashError,
     WorkerTimeoutError,
@@ -18,6 +21,28 @@ from hivegent.workers.isolation import (
 def _child_pids() -> set[int | None]:
     """Return the current multiprocessing child process identifiers."""
     return {process.pid for process in active_children()}
+
+
+async def test_lifespan_reserves_ownership_before_resource_startup() -> None:
+    """Concurrent startup opens one resource and rejects the second owner."""
+    opened: list[bool] = []
+
+    @asynccontextmanager
+    async def open_resource() -> AsyncIterator[object]:
+        opened.append(True)
+        await asyncio.sleep(0)
+        yield object()
+
+    holder = LifespanResource("Test resource", "test_lifespan", open_resource)
+
+    async def enter() -> None:
+        async with holder.lifespan():
+            await asyncio.sleep(0)
+
+    results = await asyncio.gather(enter(), enter(), return_exceptions=True)
+
+    assert opened == [True]
+    assert sum(isinstance(result, RuntimeError) for result in results) == 1
 
 
 async def test_runs_to_completion_and_reraises_cancel() -> None:

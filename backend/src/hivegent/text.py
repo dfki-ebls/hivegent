@@ -5,10 +5,24 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ["NOT_TEXT_REASON", "DecodedText", "decode_bytes", "read_text_file"]
+__all__ = [
+    "MAX_BYTES_PER_CHAR",
+    "NOT_TEXT_REASON",
+    "DecodedText",
+    "decode_bytes",
+    "read_text_file",
+]
 
 NOT_TEXT_REASON = "is not text-like content"
 """Shared wording for a rejected read, wrapped in each layer's own exception."""
+
+MAX_BYTES_PER_CHAR = 4
+"""Widest encoding of one character across the table below.
+
+Lives here because it is a property of that table, not of any caller: it turns
+a file size into a lower bound on the character count, which is what lets a
+reader with a character budget refuse an oversized file before decoding it.
+"""
 
 # The C0 and C1 control blocks (Unicode category ``Cc``) minus the whitespace
 # and escape characters that legitimately occur in text: \a \b \t \n \v \f \r \x1b.

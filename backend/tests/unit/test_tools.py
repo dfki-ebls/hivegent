@@ -12,7 +12,13 @@ from pydantic_monty import AsyncMonty
 from hivegent.config import content_hash
 from hivegent.converters import VISION_MEDIA_TYPES
 from hivegent.store import WorkspaceScope
-from hivegent.tools.base import SearchPath, ToolRetry, scope_paths
+from hivegent.tools import python as python_tool
+from hivegent.tools.base import (
+    SearchPath,
+    ToolRetry,
+    resolve_accessible_file,
+    scope_paths,
+)
 from hivegent.tools.binary import ReadBinaryDocumentTool
 from hivegent.tools.documents import (
     DocumentRange,
@@ -26,6 +32,7 @@ from hivegent.tools.grep import GrepLine, GrepMatch, GrepTool
 from hivegent.tools.jq import JqTool
 from hivegent.tools.mutations import EditDocumentTool, WriteDocumentTool
 from hivegent.tools.python import PythonResult, RunPythonTool
+from hivegent.types import DocumentFilter
 
 
 def _as_summaries(
@@ -58,6 +65,57 @@ class TestScopePaths:
 
     def test_unknown_prefix_falls_through(self) -> None:
         assert scope_paths(self.PATHS, "@ghost/x") == (self.PATHS, "@ghost/x")
+
+
+class TestPathCanonicalization:
+    """A filter must see the file an operation touches, not the alias it named."""
+
+    @staticmethod
+    def _scoped(root: Path) -> SearchPath:
+        """A personal-workspace root that hides ``excluded.md``."""
+        return SearchPath(
+            path=root,
+            scope=WorkspaceScope(),
+            filter_func=DocumentFilter(excluded=frozenset({"excluded.md"})),
+        )
+
+    def test_traversal_alias_cannot_reach_a_filtered_document(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "excluded.md").write_text("secret")
+        (tmp_path / "sub").mkdir()
+        paths = (self._scoped(tmp_path),)
+
+        assert resolve_accessible_file(paths, "~/excluded.md") is None
+        assert resolve_accessible_file(paths, "~/sub/../excluded.md") is None
+
+    def test_symlink_alias_cannot_reach_a_filtered_document(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "excluded.md").write_text("secret")
+        (tmp_path / "alias.md").symlink_to(tmp_path / "excluded.md")
+
+        assert resolve_accessible_file((self._scoped(tmp_path),), "~/alias.md") is None
+
+    def test_resolved_path_is_returned_canonically(self, tmp_path: Path) -> None:
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "allowed.md").write_text("ok")
+
+        resolved = resolve_accessible_file(
+            (self._scoped(tmp_path),), "~/sub/../allowed.md"
+        )
+
+        assert resolved is not None
+        assert resolved[1] == "allowed.md"
+
+    def test_listing_subdirectory_cannot_escape_its_filter(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "excluded.md").write_text("secret")
+        (tmp_path / "sub").mkdir()
+        tool = GlobDocumentsTool(paths=(self._scoped(tmp_path),))
+
+        assert tool("*.md", path="~/sub/..").data == []
 
 
 class TestListDocumentsTool:
@@ -800,8 +858,12 @@ class TestJqTool:
         (tmp_path / "big.json").write_text(json.dumps(data))
         tool = JqTool(paths=tmp_path, max_output_chars=100)
         result = (await tool(".", "big.json")).data
+
+        # The budget is a budget, marker included, and both ends of the JSON
+        # survive so the shape of the value is still readable.
+        assert len(result) == 100
         assert "[truncated]" in result
-        assert len(result.split("\n\n[truncated]")[0]) == 100
+        assert result.startswith('[{"items":') and result.endswith("]}]")
 
 
 class TestGrepSearch:
@@ -911,6 +973,27 @@ class TestGrepFormatting:
         assert "omitted" not in formatted
 
 
+def _recording_python_tool(
+    tool: RunPythonTool, workspace: Path
+) -> tuple[RunPythonTool, list[tuple[str, str, str, str | None]]]:
+    """Attach a scoped writer and return its recorded mutations."""
+    calls: list[tuple[str, str, str, str | None]] = []
+
+    async def mutate(
+        path: str, content: str, mode: str, expected_hash: str | None
+    ) -> str:
+        calls.append((path, content, mode, expected_hash))
+        return "written"
+
+    scoped = SearchPath(path=workspace, scope=WorkspaceScope())
+    configured = replace(
+        tool,
+        paths=(scoped,),
+        writer=WriteDocumentTool(paths=(scoped,), mutator=mutate),
+    )
+    return configured, calls
+
+
 class TestRunPythonTool:
     """Tests for RunPythonTool."""
 
@@ -937,6 +1020,18 @@ class TestRunPythonTool:
         with pytest.raises(ToolRetry, match="ZeroDivisionError") as exc_info:
             await tool("print('before')\n1 / 0")
         assert "before" in str(exc_info.value)
+
+    async def test_failure_diagnostic_fits_output_budget(
+        self, tool: RunPythonTool
+    ) -> None:
+        capped = replace(tool, max_output_chars=80)
+
+        with pytest.raises(ToolRetry) as exc_info:
+            await capped("raise ValueError('x' * 10_000)")
+
+        diagnostic = str(exc_info.value)
+        assert len(diagnostic) <= 80
+        assert "truncated" in diagnostic
 
     async def test_time_limit_bounds_a_runaway_program(
         self, tool: RunPythonTool
@@ -978,6 +1073,27 @@ class TestRunPythonTool:
 
         assert result.data.result == "'intermediate'"
         assert next_run.data.result == "False"
+
+    async def test_oversized_input_is_refused_before_it_is_decoded(
+        self, tool: RunPythonTool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The budget bounds host memory, so a file that cannot fit it must never
+        # reach the decoder: twenty large inputs would otherwise all be read in
+        # before a single check ran.
+        (tmp_path / "big.txt").write_text("x" * 1000)
+        monkeypatch.setattr(
+            python_tool,
+            "read_text_or_retry",
+            lambda *args, **kwargs: pytest.fail("the input was decoded"),
+        )
+        bounded = replace(
+            tool,
+            paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),),
+            max_workspace_chars=10,
+        )
+
+        with pytest.raises(ToolRetry, match="~/big.txt"):
+            await bounded("1", input_paths=("~/big.txt",))
 
     async def test_stored_script_reads_and_writes_scoped_files(
         self, tool: RunPythonTool, tmp_path: Path
@@ -1081,6 +1197,64 @@ class TestRunPythonTool:
         assert calls == [
             ("~/output.txt", "new", "replace", content_hash("old"))
         ]
+
+    async def test_empty_inputs_and_outputs_remain_present(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        (tmp_path / "input.txt").write_text("")
+        (tmp_path / "output.txt").write_text("")
+        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
+        await workspace_tool(
+            code=(
+                "from pathlib import Path\n"
+                'source = Path("/workspace/~/input.txt")\n'
+                'output = Path("/workspace/~/output.txt")\n'
+                "assert source.exists() and source.read_text() == ''\n"
+                "assert output.exists() and output.read_text() == ''\n"
+                'output.write_text("new")'
+            ),
+            input_paths=("~/input.txt",),
+            output_path="~/output.txt",
+        )
+
+        assert calls == [
+            ("~/output.txt", "new", "replace", content_hash(""))
+        ]
+
+    async def test_file_renamed_to_output_is_persisted(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
+        await workspace_tool(
+            code=(
+                "from pathlib import Path\n"
+                'temporary = Path("/workspace/~/temporary.txt")\n'
+                'temporary.write_text("final")\n'
+                'temporary.rename("/workspace/~/output.txt")'
+            ),
+            output_path="~/output.txt",
+        )
+
+        assert calls == [("~/output.txt", "final", "create", None)]
+
+    async def test_output_renamed_away_is_not_persisted(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "output.txt"
+        output.write_text("old")
+        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
+
+        with pytest.raises(ToolRetry, match="deleted or renamed"):
+            await workspace_tool(
+                code=(
+                    "from pathlib import Path\n"
+                    'Path("/workspace/~/output.txt").rename('
+                    '"/workspace/~/moved.txt")'
+                ),
+                output_path="~/output.txt",
+            )
+
+        assert calls == []
 
     async def test_a_path_given_as_both_input_and_output_is_staged_once(
         self, tool: RunPythonTool, tmp_path: Path

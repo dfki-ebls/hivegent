@@ -8,7 +8,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from os import stat_result
 from pathlib import Path
+from stat import S_ISLNK
 from typing import Annotated, Any, Self, get_type_hints, override
 
 from pydantic import BaseModel, Field
@@ -43,6 +45,7 @@ __all__ = [
     "ToolRetry",
     "canonical_local_path",
     "coerce_paths",
+    "entry_stat",
     "entry_visible",
     "excluded_dirs",
     "factory_tool_name",
@@ -314,17 +317,32 @@ def entry_visible(sp: SearchPath, rel_path: str, exclude_dirs: tuple[str, ...]) 
     return file_allowed(sp.filter_func, rel_path)
 
 
-def canonical_local_path(sp: SearchPath, local: str) -> tuple[str, Path] | None:
-    """Resolve *local* against *sp* to its canonical name and absolute path.
+def entry_stat(path: Path) -> stat_result | None:
+    """Return *path*'s own stat, or ``None`` when it names no addressable entry.
+
+    One ``lstat`` answers what ``is_symlink`` / ``is_dir`` / ``is_file`` ask in
+    three, and a symlink is reported as absent rather than followed: its name
+    is an alias for a file the document filter was never asked about, which is
+    also why the upload pipeline refuses one.
+    """
+    try:
+        st = path.lstat()
+    except OSError:
+        return None
+
+    return None if S_ISLNK(st.st_mode) else st
+
+
+def canonical_local_path(root: Path, local: str) -> tuple[str, Path] | None:
+    """Resolve *local* under an already-resolved *root* to its canonical form.
 
     The one place a spelling becomes an identity: ``..`` segments are folded
     away and symlinks are followed, so the name a filter is asked about is the
     file the operation would actually touch, not the alias it was addressed
-    by. Returns ``None`` when the target escapes the root or is the root
-    itself, which names no entry.
+    by. Returns ``None`` when the target escapes *root* or is *root* itself,
+    which names no entry.
     """
-    root = sp.path.resolve()
-    absolute = (sp.path / local).resolve()
+    absolute = (root / local).resolve()
     if not absolute.is_relative_to(root) or absolute == root:
         return None
 
@@ -349,7 +367,7 @@ def resolve_accessible_file(
     if resolved is None:
         return None
     sp, local = resolved
-    canonical = canonical_local_path(sp, local)
+    canonical = canonical_local_path(sp.path.resolve(), local)
     if canonical is None:
         return None
     local, absolute = canonical

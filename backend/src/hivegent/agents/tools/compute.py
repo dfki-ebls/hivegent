@@ -30,8 +30,10 @@ def _run_python(deps: UserDeps) -> RunPythonTool:
     return RunPythonTool(
         pool=get_monty_pool(),
         limits=_limits,
-        paths=deps.search_paths(),
-        writer=write_document(deps) if deps.can_write else None,
+        paths=deps.python_paths(),
+        writer=write_document(deps, deps.python_paths(writable=True))
+        if deps.can_write
+        else None,
     )
 
 

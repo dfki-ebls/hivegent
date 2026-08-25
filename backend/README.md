@@ -157,6 +157,17 @@ So a text file is editable and a binary is not, and the file's _name_ only decid
 Creating a file is the one place the name still constrains the write: a new document may be markdown or a plain-text format (`is_projectable_original`), because those are the ones whose projection can be derived without a converter, and a new original must claim a free stem so a write can never silently supersede another entry's description or original.
 Everything else is uploaded, which is also the way to replace a binary.
 
+### Scratch directories
+
+A `.scratch/` directory anywhere in a workspace is content and never a document: `entries.is_scratch_path` is checked before the format seam above, so the reconcile walk skips it, a write lands as plain bytes with no projection or stem claim, and the user-facing tree hides it.
+That is what `run_python` parks between calls without paying chunking or leaving a `documents` row to disagree with the disk.
+It is cleared by `workspace.directories.cleanup_scratch_dirs` from the lifespan, next to the job spool, because reconciliation never deletes workspace files and a boot is the one moment nothing can be racing a live turn.
+
+Two properties of that design are deliberate for now and are the places to revisit first if scratch grows load-bearing.
+
+- TODO(scratch): scratch state is workspace-wide rather than conversation-scoped, so one conversation can read another's scratch files by guessing the path, and so can any member of a readable group workspace. That is acceptable while scratch holds a run's own intermediates and the accepted architecture, but a `.scratch/<conversation-id>/` namespace with only the current one in scope is the fix when scratch starts carrying anything a document filter would have hidden.
+- TODO(scratch): scratch has no aggregate quota and is pruned only at startup, and the delete API deliberately cannot reach it, so a long-lived server writing unique output paths can fill the disk between boots. Add a per-owner byte quota enforced at write time, an age-based sweep, or deletion of a conversation's namespace when it settles.
+
 ### Preparing for a read-write shell tool
 
 A future shell tool will let the agent run native commands such as `ls`, `cat`, `find`, `grep`, and editors that modify files directly, bypassing the structured mutation gateway.
