@@ -22,6 +22,7 @@ from .base import (
     SyncPathTool,
     ToolOutput,
     ToolRetry,
+    canonical_local_path,
     entry_visible,
     excluded_dirs,
     read_text_or_retry,
@@ -213,18 +214,32 @@ def _walk_entries(
     Applies ``base_glob``, the excluded-dir filter, and the search path's
     own ``filter_func``.  Callers handle sorting, capping, and any
     additional filters (subdir, depth, fnmatch).
+
+    Every entry is yielded under its canonical name: *root_subpath* is folded
+    and containment-checked like any other path argument, and a symlink is
+    skipped rather than listed, since its name is an alias for a file the
+    filter was never asked about.  Uploads refuse symlinks for the same
+    reason, so one can only reach the workspace by hand.
     """
     for sp in resolved_paths:
-        root = sp.path / root_subpath if root_subpath else sp.path
+        base = sp.path.resolve()
+        root = base
+        if root_subpath:
+            resolved_root = canonical_local_path(sp, root_subpath)
+            if resolved_root is None:
+                continue
+            root = resolved_root[1]
         if not root.exists():
             continue
         for absolute in sorted(root.rglob(base_glob or "*")):
+            if absolute.is_symlink():
+                continue
             is_dir = absolute.is_dir()
             if is_dir and not include_dirs:
                 continue
             if not is_dir and not absolute.is_file():
                 continue
-            rel = str(absolute.relative_to(sp.path).as_posix())
+            rel = str(absolute.relative_to(base).as_posix())
             if not entry_visible(sp, rel, exclude_dirs):
                 continue
             yield sp, absolute, rel, is_dir

@@ -41,6 +41,7 @@ __all__ = [
     "Tool",
     "ToolOutput",
     "ToolRetry",
+    "canonical_local_path",
     "coerce_paths",
     "entry_visible",
     "excluded_dirs",
@@ -313,26 +314,48 @@ def entry_visible(sp: SearchPath, rel_path: str, exclude_dirs: tuple[str, ...]) 
     return file_allowed(sp.filter_func, rel_path)
 
 
+def canonical_local_path(sp: SearchPath, local: str) -> tuple[str, Path] | None:
+    """Resolve *local* against *sp* to its canonical name and absolute path.
+
+    The one place a spelling becomes an identity: ``..`` segments are folded
+    away and symlinks are followed, so the name a filter is asked about is the
+    file the operation would actually touch, not the alias it was addressed
+    by. Returns ``None`` when the target escapes the root or is the root
+    itself, which names no entry.
+    """
+    root = sp.path.resolve()
+    absolute = (sp.path / local).resolve()
+    if not absolute.is_relative_to(root) or absolute == root:
+        return None
+
+    return absolute.relative_to(root).as_posix(), absolute
+
+
 def resolve_accessible_file(
     paths: tuple[SearchPath, ...],
     file_path: str,
 ) -> tuple[SearchPath, str, Path] | None:
-    """Resolve *file_path* to its search path, local name, and absolute path.
+    """Resolve *file_path* to its search path, canonical name, and absolute path.
 
     Performs the checks every document tool shares: prefix resolution,
-    filter predicate, and traversal defense against symlink escapes.
-    Does *not* require the file to exist — callers that need that
-    should check :py:meth:`pathlib.Path.is_file` on the returned path.
+    traversal and symlink-escape defense, and the filter predicate. The
+    filter is applied to the canonical path rather than the spelling the
+    caller sent, so no alias — ``a/../b.md`` or a symlink — reaches a
+    document the filter excludes. Does *not* require the file to exist —
+    callers that need that should check :py:meth:`pathlib.Path.is_file` on
+    the returned path.
     """
     resolved = resolve_search_path(paths, file_path)
     if resolved is None:
         return None
     sp, local = resolved
+    canonical = canonical_local_path(sp, local)
+    if canonical is None:
+        return None
+    local, absolute = canonical
     if not file_allowed(sp.filter_func, local):
         return None
-    absolute = (sp.path / local).resolve()
-    if not absolute.is_relative_to(sp.path.resolve()):
-        return None
+
     return sp, local, absolute
 
 
