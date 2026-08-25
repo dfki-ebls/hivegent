@@ -16,6 +16,10 @@
 - FastAPI server for handling requests and responses
 - Pydantic AI for LLMs and agents
 - The filesystem under `data/workspace/` is the source of truth for document content; the `documents` and `chunks` rows are an index derived from it.
+- A `.scratch/` directory anywhere in a workspace is content and never a document: `entries.is_scratch_path` is checked before the format seam (`is_description_file` / `is_projectable_original`), so the reconcile walk skips it, a write lands as plain bytes with no projection or stem claim, and the tree hides it.
+  That is what a run parks between `run_python` calls without paying chunking or leaving a `documents` row to disagree with the disk, and it is why no third storage tier was needed: scratch is the workspace, minus the indexing.
+  The path tools still list, glob, and grep it, deliberately, since a run has to find its own state back; only the user-facing tree hides it, and `_check_not_reserved_path` keeps the upload, move, and directory API out of it the same way it keeps them out of `.assets`.
+  It is cleared by `workspace.cleanup_scratch_dirs` from the lifespan, next to the job spool, since reconciliation never deletes workspace files.
 - Workspace mutations should go through the API; markdown and plain-text files dropped or edited by hand are ingested into SQL on startup (a plain-text original has its `<stem>.md` derived for it), files needing a converter stay inert on disk (visible, deletable, but never chunked) until uploaded or reconverted, and reconciliation never deletes workspace files.
 - Every change to a workspace reaches the client on the per-owner SSE feed, which the frontend turns into a refresh of the named scope.
   Long-running work is a real job and the settled `document.*` job carries it; a mutation that ran inline never was a job, so it publishes a `ScopeChanged` event instead via `workspace_events` (`notify_workspace_change` for a caller holding the store, `announcing_mutator` for the write tools, which hold only a canonical path).

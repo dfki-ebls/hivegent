@@ -8,6 +8,7 @@ from .converters import projects_verbatim
 from .converters.base import DOCUMENT_EXTENSION, is_markdown_suffix
 
 __all__ = [
+    "SCRATCH_DIR_NAME",
     "ContentStat",
     "EntryPaths",
     "asset_ref_for",
@@ -21,6 +22,7 @@ __all__ = [
     "is_ignorable_path",
     "is_inside_assets_dir",
     "is_projectable_original",
+    "is_scratch_path",
     "original_path_for_stem",
     "repoint_asset_refs",
     "resolve_entry_paths",
@@ -102,6 +104,30 @@ def is_ignorable_path(rel_path: str) -> bool:
         return True
 
     return pure.name in _JUNK_FILENAMES or pure.name.startswith("._")
+
+
+SCRATCH_DIR_NAME = ".scratch"
+"""Directory whose contents are workspace content but never a document."""
+
+
+def is_scratch_path(rel_path: str) -> bool:
+    """Return whether a path lies in a scratch directory.
+
+    The intent-driven half of the seam :func:`is_description_file` describes.
+    A scratch file is ordinary workspace content — readable, writable, and
+    deletable by the same tools as any other — that is deliberately never
+    folded into SQL, so it costs no chunking and leaves no ``documents`` row
+    to disagree with the disk.  Format decides the rest of that seam; this is
+    the one part the caller decides, by where it puts the file.
+
+    >>> is_scratch_path(".scratch/run.json")
+    True
+    >>> is_scratch_path("notes/.scratch/state.csv")
+    True
+    >>> is_scratch_path("notes/report.md")
+    False
+    """
+    return SCRATCH_DIR_NAME in PurePosixPath(rel_path).parts
 
 
 def is_description_file(rel_path: str) -> bool:

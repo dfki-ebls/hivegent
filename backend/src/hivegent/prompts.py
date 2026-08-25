@@ -215,7 +215,8 @@ PYTHON_INSTRUCTIONS = """
 Work out arithmetic, dates, sorting, and counting with the run_python tool instead of in your head, and state the result it returned rather than one you estimated.
 When write_document and edit_document are available, use a `.py` workspace document for a longer program that may need correction, then edit and rerun its `script_path` after a small error.
 Pass only the workspace text files the program needs as `input_paths`, and use `output_path` only for a file the program should persist.
-Park intermediates in `/tmp`, which exists from the start and is thrown away with the rest of the private filesystem when the call ends.
+Park intermediates within one program in `/tmp`, which exists from the start and is thrown away with the rest of the private filesystem when the call ends.
+To carry state between calls, write a `.scratch/` path instead, which stays in the workspace without being indexed, and pass it back as an `input_path` next time.
 """
 
 PLAN_INSTRUCTIONS = """

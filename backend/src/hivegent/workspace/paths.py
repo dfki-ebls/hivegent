@@ -15,7 +15,7 @@ from pathlib import Path, PurePosixPath
 from fastapi import HTTPException
 
 from ..config import settings
-from ..entries import ContentStat, is_assets_dir
+from ..entries import SCRATCH_DIR_NAME, ContentStat, is_assets_dir, is_scratch_path
 from ..humanize import format_bytes
 
 __all__: list[str] = []
@@ -162,18 +162,31 @@ def _check_destination_parents(workspace_dir: Path, target: str) -> None:
         )
 
 
-def _check_not_assets_path(path: str) -> None:
-    """Reject paths that reach into the managed ``.assets`` layer.
+def _check_not_reserved_path(path: str) -> None:
+    """Reject paths reaching into a layer the workspace manages for itself.
 
-    ``.assets`` directories are derived storage owned by their document entry
-    and hidden from the directory tree, so creating or renaming one through
-    the generic directory/move API would silently strand content the UI can
-    never show again.
+    Two reserved directory names, one rule, so a caller cannot land content in
+    either by the generic create/move/upload API and have it silently disowned:
+    an ``.assets`` payload belongs to its document entry, and a ``.scratch``
+    directory is agent state that is never indexed and is wiped at the next
+    boot.  Both are hidden from the tree, so content placed there through this
+    API would either be unshowable or destroyed.  The write tools reach scratch
+    on their own path, which is the one way it is meant to be written.
     """
     if any(is_assets_dir(part) for part in PurePosixPath(path).parts):
         raise HTTPException(
             status_code=400,
             detail="'.assets' directories are managed through their owning document",
+        )
+
+    if is_scratch_path(path):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{SCRATCH_DIR_NAME}' holds agent scratch state, is never "
+                "indexed, and is cleared on restart; write it with the document "
+                "tools or choose another path"
+            ),
         )
 
 

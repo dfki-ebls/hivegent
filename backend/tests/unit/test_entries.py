@@ -17,7 +17,9 @@ from hivegent.db.documents import _entry_from_row, _EntryColumns, _original_suff
 from hivegent.db.models import Document
 from hivegent.entries import (
     description_path_for_stem,
+    is_description_file,
     is_projectable_original,
+    is_scratch_path,
     original_path_for_stem,
     stem_path_from_reference,
 )
@@ -48,6 +50,22 @@ def test_projectable_originals_are_the_verbatim_formats(
     because deriving it is not free; junk and managed assets are never entries.
     """
     assert is_projectable_original(rel_path) is projectable
+
+
+def test_scratch_paths_are_workspace_content_but_never_entries() -> None:
+    """Scratch is decided by location, independently of the format seam.
+
+    A scratch file keeps whatever format it has — the point is that neither the
+    markdown half nor the projectable half of the seam can pull it into SQL.
+    """
+    assert is_scratch_path(".scratch/state.json")
+    assert is_scratch_path("notes/.scratch/run.md")
+    assert not is_scratch_path("notes/report.md")
+    assert not is_scratch_path("notes/scratch/report.md")
+
+    # Both formats that would otherwise be indexed, parked in scratch.
+    assert is_description_file("notes/.scratch/run.md")
+    assert is_projectable_original("notes/.scratch/state.ini")
 
 
 def _project(entry: EntryMetadata) -> EntryMetadata:

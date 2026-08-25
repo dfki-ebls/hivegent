@@ -8,18 +8,19 @@ import that touches the same subtree.
 
 import asyncio
 from collections.abc import Iterable
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
 
 from ..concurrency import shield_to_completion
 from ..config import settings
 from ..db import documents as db_documents
+from ..entries import SCRATCH_DIR_NAME
 from ..store import Casebase
 from .locks import _locked_for, _reject_if_scope_inflight, store_lock
 from .paths import (
     _check_destination_parents,
-    _check_not_assets_path,
+    _check_not_reserved_path,
     _is_blocked_by_other,
     _is_same_file,
     _remove_tree,
@@ -27,6 +28,7 @@ from .paths import (
 )
 
 __all__ = [
+    "cleanup_scratch_dirs",
     "create_directory",
     "delete_all",
     "delete_directory",
@@ -40,7 +42,7 @@ async def create_directory(store: Casebase, path: str) -> None:
     """Create an empty workspace directory."""
     if not path:
         raise HTTPException(status_code=400, detail="Directory path required")
-    _check_not_assets_path(path)
+    _check_not_reserved_path(path)
     async with _locked_for(store, path):
         workspace_dir = store.workspace_dir(settings.data_dir)
         directory_path = workspace_dir / path
@@ -68,7 +70,7 @@ async def _move_directory_locked(
 
     if not src:
         raise HTTPException(status_code=400, detail="Directory path required")
-    _check_not_assets_path(src)
+    _check_not_reserved_path(src)
     src_dir = src_workspace / src
     if not src_dir.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
@@ -76,7 +78,7 @@ async def _move_directory_locked(
     dst = _resolve_move_destination(
         dst_workspace, PurePosixPath(src).name, dst, src_dir
     )
-    _check_not_assets_path(dst)
+    _check_not_reserved_path(dst)
     _reject_if_scope_inflight(dst_store, dst)
     if not cross_store and dst == src:
         raise HTTPException(
@@ -183,6 +185,34 @@ async def delete_all(store: Casebase) -> None:
     async with _locked_for(store, whole_store=True):
         await db_documents.delete_all(store)
         await asyncio.to_thread(_remove_tree, store.workspace_path(settings.data_dir))
+
+
+def _prune_scratch_dirs(root: Path) -> None:
+    """Remove every scratch directory under *root*, without descending into one."""
+    for dir_path, dir_names, _files in root.walk():
+        if SCRATCH_DIR_NAME not in dir_names:
+            continue
+
+        dir_names.remove(SCRATCH_DIR_NAME)
+        scratch = dir_path / SCRATCH_DIR_NAME
+        # A symlink by that name is not a scratch directory and `rmtree` refuses
+        # one, so it is left alone rather than failing the boot.
+        if not scratch.is_symlink():
+            _remove_tree(scratch)
+
+
+async def cleanup_scratch_dirs() -> None:
+    """Drop every workspace scratch directory, called once at startup.
+
+    Scratch is what a run parks between tool calls, not content: nothing indexes
+    it, nothing else refers to it, and nothing prunes it while the server runs,
+    so a boot is the one moment it can be cleared without racing a live turn.
+    It cannot ride reconciliation, which never deletes workspace files — the
+    same reason the job spool is wiped from the lifespan rather than a sweep.
+    """
+    await asyncio.to_thread(
+        _prune_scratch_dirs, Casebase.workspace_root(settings.data_dir)
+    )
 
 
 async def delete_workspace_root() -> None:

@@ -20,6 +20,7 @@ from ..reconcile import reconcile_all
 from ..retrieval import reconcile_index_state, warm_index
 from ..sandbox import monty_pool_lifespan
 from ..workers.pool import pipeline_pool
+from ..workspace import cleanup_scratch_dirs
 from .access_log import install_probe_access_filter
 from .maintenance import load_persisted_state
 from .operations import cleanup_spool_dir
@@ -107,6 +108,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _verify_vector_dim()
         await _verify_fts_config()
         cleanup_spool_dir()
+        await cleanup_scratch_dirs()
         await load_persisted_state(app)
         await reconcile_index_state()
         # Load the embedding model now so the first upload after boot does not

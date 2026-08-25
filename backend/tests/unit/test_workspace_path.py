@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from hivegent.server.common import resolve_workspace_path
 from hivegent.store import Casebase
 from hivegent.types import User
+from hivegent.workspace.paths import _check_not_reserved_path
 
 _USER = User(
     id="alice",
@@ -57,3 +58,30 @@ def test_non_member_group_is_forbidden() -> None:
     with pytest.raises(HTTPException) as exc:
         resolve_workspace_path(_USER, "@secret/x.md")
     assert exc.value.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".scratch/state.json",
+        "notes/.scratch/state.json",
+        "notes/report.assets/fig1.png",
+    ],
+)
+def test_reserved_directories_are_closed_to_the_generic_api(path: str) -> None:
+    """Upload, move, and create-directory refuse the layers the workspace owns.
+
+    Both reserved names would otherwise accept content the user can never see
+    again: an `.assets` payload is disowned by its entry, and a `.scratch` file
+    is deleted at the next boot.  Scratch is reachable only through the write
+    tools, which is the one path it is meant to be written by.
+    """
+    with pytest.raises(HTTPException) as exc_info:
+        _check_not_reserved_path(path)
+
+    assert exc_info.value.status_code == 400
+
+
+def test_ordinary_paths_pass_the_reserved_check() -> None:
+    _check_not_reserved_path("notes/report.md")
+    _check_not_reserved_path("notes/scratch/report.md")

@@ -23,6 +23,7 @@ from ..entries import (
     entry_exists,
     is_description_file,
     is_projectable_original,
+    is_scratch_path,
     repoint_asset_refs,
     stem_path_from_reference,
 )
@@ -40,12 +41,12 @@ from .indexing import chunk_and_index_document
 from .locks import _locked_for, _reject_if_inflight
 from .paths import (
     _check_destination_parents,
-    _check_not_assets_path,
+    _check_not_reserved_path,
     _enforce_file_size,
     _is_blocked_by_other,
     _is_same_file,
     _resolve_move_destination,
-    _write_markdown_file,
+    _write_workspace_file,
 )
 from .prepare import _Reserved
 
@@ -201,19 +202,26 @@ def _write_mutation(safe: str, content: str, mode: str) -> _TextMutation:
     return mutate
 
 
-async def _rewrite_description(
+async def _rewrite_in_place(
     store: Casebase,
     safe: str,
     mutate: _TextMutation,
     expected_hash: str | None,
     chunking: ChunkingSpec | None,
 ) -> str:
-    """Rewrite a markdown description and re-index it where it lies.
+    """Rewrite a file whose own bytes are the content, indexing it where it lies.
 
-    A description is the indexed content itself, so there is nothing to derive:
-    the write and the chunk + embed + upsert run back to back under the casebase
-    lock, shielded so a cancel cannot leave the new markdown wearing the rows of
-    the old.
+    Two kinds of file are their own content and derive nothing: a markdown
+    description, which *is* the indexed text, and a scratch file, which is
+    deliberately never indexed at all.  They share every step but the last, so
+    they share the body and differ by one branch rather than by a second copy
+    of it.
+
+    The lock is not only for the index: it spans read, hash check, and write, so
+    ``expected_hash`` is genuine optimistic concurrency rather than a check
+    followed by a hopeful write, and :func:`_locked_for` rejects a mutation that
+    collides with a phased upload.  The chunk + embed + upsert is shielded so a
+    cancel cannot leave the new markdown wearing the rows of the old.
     """
     async with _locked_for(store, safe):
         workspace_dir = store.workspace_dir(settings.data_dir)
@@ -221,12 +229,17 @@ async def _rewrite_description(
         current = decoded.text if decoded is not None else None
         _check_expected_hash(safe, current, expected_hash)
         content, message = mutate(current)
-        _enforce_file_size(content.encode("utf-8"))
+        data = content.encode("utf-8")
+        _enforce_file_size(data)
         _check_destination_parents(workspace_dir, safe)
-        stat = _write_markdown_file(workspace_dir, safe, content)
-        await shield_to_completion(
-            chunk_and_index_document(store, safe, content, chunking, stat=stat)
-        )
+        written = _write_workspace_file(workspace_dir, safe, data)
+        # Scratch stops here: no rows, and so no fingerprint to stamp them with.
+        if not is_scratch_path(safe):
+            await shield_to_completion(
+                chunk_and_index_document(
+                    store, safe, content, chunking, stat=ContentStat.from_path(written)
+                )
+            )
     return message + _transcode_note(decoded.source_encoding if decoded else None)
 
 
@@ -309,11 +322,12 @@ async def _apply_text_mutation(
 ) -> str:
     """Persist a text mutation, keeping the entry's projection in step with it.
 
-    The name decides only where the write lands — on the indexed description
+    Location decides first — a scratch path is never an entry — and only then
+    does the name decide where an entry write lands: on the indexed description
     itself, or on an original whose description has to be re-derived from it.
     """
-    if is_description_file(safe):
-        return await _rewrite_description(store, safe, mutate, expected_hash, chunking)
+    if is_scratch_path(safe) or is_description_file(safe):
+        return await _rewrite_in_place(store, safe, mutate, expected_hash, chunking)
     return await _rewrite_original(store, safe, mutate, expected_hash, chunking)
 
 
@@ -429,7 +443,7 @@ async def _move_document_locked(
             src_description_full,
         )
     )
-    _check_not_assets_path(dst_stem)
+    _check_not_reserved_path(dst_stem)
     # Same stem in the same store is a no-op; across stores it is a genuine
     # re-home of the entry, so only reject the in-place case.
     if not cross_store and dst_stem == src_stem:

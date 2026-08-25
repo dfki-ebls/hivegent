@@ -11,7 +11,7 @@ from ... import workspace
 from ...config import settings
 from ...converters.base import DOCUMENT_EXTENSION
 from ...db.documents import list_document_paths
-from ...entries import assets_dir_for_stem, is_assets_dir
+from ...entries import assets_dir_for_stem, is_assets_dir, is_scratch_path
 from ...store import Casebase
 from ...types import (
     DirectoryEntry,
@@ -135,7 +135,7 @@ def _build_directory_tree(
 
     subdirs, file_stats = _scan_directory(dir_path)
     for item in subdirs:
-        if not is_assets_dir(item.name):
+        if not is_assets_dir(item.name) and not is_scratch_path(item.name):
             children.append(
                 _build_directory_tree(item, root_path, chunk_counts, hidden_stems)
             )

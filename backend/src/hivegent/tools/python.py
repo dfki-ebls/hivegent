@@ -35,7 +35,7 @@ from .formatting import cap_lines, hint_suffix, truncate_line
 from .mutations import WriteDocumentTool, resolve_mutation_target
 
 __all__ = [
-    "SCRATCH_DIR",
+    "SANDBOX_TMP_DIR",
     "CodeArg",
     "PythonInputPathsArg",
     "PythonOutputPathArg",
@@ -181,21 +181,18 @@ class PythonResult:
 
 
 @dataclass(slots=True, frozen=True)
-class _WorkspaceFile:
-    """One scoped workspace text file staged in Monty's private filesystem."""
-
-    canonical_path: str
-    original: str | None
-
-
-@dataclass(slots=True, frozen=True)
 class _PreparedRun:
-    """Resolved source and private files for one sandbox execution."""
+    """Resolved source and private files for one sandbox execution.
+
+    ``files`` holds the text of every path that exists.  The one path that may
+    be absent is the declared ``output``, which a program is allowed to create,
+    so its absence is simply a missing key.
+    """
 
     source: str
     script_path: str | None
-    files: tuple[_WorkspaceFile, ...]
-    output: _WorkspaceFile | None
+    files: dict[str, str]
+    output: str | None
 
 
 def _virtual_path(canonical_path: str) -> str:
@@ -203,7 +200,7 @@ def _virtual_path(canonical_path: str) -> str:
     return str(PurePosixPath("/workspace") / canonical_path)
 
 
-SCRATCH_DIR = PurePosixPath("/tmp")
+SANDBOX_TMP_DIR = PurePosixPath("/tmp")
 """Scratch directory every run starts with, also named by ``TMPDIR``.
 
 Monty has no ``tempfile`` module and no working directory, so a program with an
@@ -256,9 +253,11 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         CPython environment. The program has no network or host filesystem
         access. Inputs can be literals or explicitly named workspace text files,
         which are private in-memory copies under ``/workspace``. Intermediates
-        belong in ``/tmp`` (also ``TMPDIR``), which exists from the start and
-        is discarded when the call ends. Only the declared output file can
-        persist, and only after the program succeeds. Only ``asyncio``, ``collections``, ``dataclasses``,
+        belong in ``/tmp`` (also ``TMPDIR``), which exists from the start and is
+        discarded when the call ends. Only the declared output file can persist,
+        and only after the program succeeds; name it under a `.scratch/`
+        directory to carry state to a later call without adding a document. Only ``asyncio``,
+        ``collections``, ``dataclasses``,
         ``datetime``, ``functools``, ``itertools``, ``json``, ``math``, ``os``,
         ``pathlib``, ``re``, ``sys``, ``typing``, and ``unicodedata`` can be
         imported. There is no numpy or pandas, and classes cannot inherit. End
@@ -272,7 +271,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
             input_paths,
             output_path,
         )
-        filesystem = self._filesystem(prepared.files, prepared.output)
+        filesystem = self._filesystem(prepared)
         printed = CollectString()
 
         async with self.pool.checkout(
@@ -295,9 +294,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
                     _diagnostic(exc, printed.output, self.max_output_chars)
                 ) from exc
 
-        written_file, write_report = await self._persist_output(
-            prepared.output, filesystem
-        )
+        written_file, write_report = await self._persist_output(prepared, filesystem)
 
         return self._output(
             value,
@@ -318,44 +315,36 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         if (code is None) == (script_path is None):
             raise ToolRetry("Provide exactly one of `code` or `script_path`.")
 
-        if code is not None:
-            source = code
-            canonical_script = None
-        else:
-            assert script_path is not None
-            script = self._read_file(script_path)
-            if PurePosixPath(script.canonical_path).suffix.lower() != ".py":
-                raise ToolRetry(f"'{script.canonical_path}' is not a `.py` script.")
+        source, canonical_script = code or "", None
+        if script_path is not None:
+            canonical_script, absolute = self._resolve_input(script_path)
+            if PurePosixPath(canonical_script).suffix.lower() != ".py":
+                raise ToolRetry(f"'{canonical_script}' is not a `.py` script.")
 
-            source = script.original or ""
-            canonical_script = script.canonical_path
+            source = self._read(canonical_script, absolute) or ""
 
         # Every path is resolved before any file is read, so one path serving as
         # both an input and the output is read, decoded, and budgeted once.
-        output_target = (
-            None if output_path is None else self._resolve_output(output_path)
-        )
+        output = None if output_path is None else self._resolve_output(output_path)
         targets = [self._resolve_input(raw) for raw in input_paths]
-        if output_target is not None:
-            targets.append(output_target)
+        if output is not None:
+            targets.append(output)
 
-        staged: dict[str, _WorkspaceFile] = {}
+        files: dict[str, str] = {}
         for canonical, absolute in targets:
-            if canonical in staged:
-                continue
-
-            staged[canonical] = self._read_workspace_file(canonical, absolute)
+            if canonical not in files and (text := self._read(canonical, absolute)):
+                files[canonical] = text
 
         self._check_budget(
-            len(source) + sum(len(item.original or "") for item in staged.values()),
+            len(source) + sum(map(len, files.values())),
             "The script and workspace inputs are",
         )
 
         return _PreparedRun(
             source=source,
             script_path=canonical_script,
-            files=tuple(staged.values()),
-            output=None if output_target is None else staged[output_target[0]],
+            files=files,
+            output=None if output is None else output[0],
         )
 
     def _resolve_input(self, file_path: str) -> tuple[str, Path]:
@@ -384,26 +373,19 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
 
         return canonical, absolute
 
-    def _read_file(self, file_path: str) -> _WorkspaceFile:
-        """Resolve and decode one existing readable workspace file."""
-        return self._read_workspace_file(*self._resolve_input(file_path))
-
     @staticmethod
-    def _read_workspace_file(
-        canonical_path: str, absolute_path: Path
-    ) -> _WorkspaceFile:
-        """Decode a resolved workspace file, or record that it does not exist.
+    def _read(canonical_path: str, absolute_path: Path) -> str | None:
+        """Decode a resolved workspace file, or ``None`` when it does not exist.
 
         Only the declared output can be missing: an input is resolved through
         the reader, which refuses a path naming no file.
         """
         if not absolute_path.is_file():
-            return _WorkspaceFile(canonical_path=canonical_path, original=None)
+            return None
 
-        decoded = read_text_or_retry(
+        return read_text_or_retry(
             absolute_path, canonical_path, sidecar_hint(canonical_path)
-        )
-        return _WorkspaceFile(canonical_path=canonical_path, original=decoded.text)
+        ).text
 
     def _check_budget(self, total_chars: int, subject: str) -> None:
         """Refuse text too large to stage into, or commit out of, one run."""
@@ -416,22 +398,19 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         )
 
     @staticmethod
-    def _filesystem(
-        staged: tuple[_WorkspaceFile, ...], output: _WorkspaceFile | None
-    ) -> OSAccess:
+    def _filesystem(prepared: _PreparedRun) -> OSAccess:
         """Create the private filesystem, preserving a missing output as missing."""
         filesystem = OSAccess(
             [
-                MemoryFile(_virtual_path(item.canonical_path), item.original)
-                for item in staged
-                if item.original is not None
+                MemoryFile(_virtual_path(path), text)
+                for path, text in prepared.files.items()
             ],
-            environ={"TMPDIR": str(SCRATCH_DIR)},
+            environ={"TMPDIR": str(SANDBOX_TMP_DIR)},
         )
-        filesystem.path_mkdir(SCRATCH_DIR, parents=True, exist_ok=True)
-        if output is not None and output.original is None:
+        filesystem.path_mkdir(SANDBOX_TMP_DIR, parents=True, exist_ok=True)
+        if prepared.output is not None and prepared.output not in prepared.files:
             filesystem.path_mkdir(
-                PurePosixPath(_virtual_path(output.canonical_path)).parent,
+                PurePosixPath(_virtual_path(prepared.output)).parent,
                 parents=True,
                 exist_ok=True,
             )
@@ -439,13 +418,14 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         return filesystem
 
     async def _persist_output(
-        self, output: _WorkspaceFile | None, filesystem: OSAccess
+        self, prepared: _PreparedRun, filesystem: OSAccess
     ) -> tuple[str | None, str | None]:
         """Commit one changed text output through the workspace mutation gateway."""
-        if output is None:
+        if prepared.output is None:
             return None, None
 
-        virtual_path = PurePosixPath(_virtual_path(output.canonical_path))
+        original = prepared.files.get(prepared.output)
+        virtual_path = PurePosixPath(_virtual_path(prepared.output))
         file = next(
             (
                 candidate
@@ -455,7 +435,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
             None,
         )
         if file is None:
-            if output.original is None:
+            if original is None:
                 return None, "The declared workspace output was not created."
 
             raise ToolRetry("The declared output cannot be deleted or renamed.")
@@ -466,31 +446,27 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
 
         self._check_budget(len(content), "The declared workspace output is")
 
-        if output.original is not None and content == output.original:
+        if content == original:
             return None, "The declared workspace output was unchanged."
 
         assert self.writer is not None
-        mode = "replace" if output.original is not None else "create"
-        expected_hash = (
-            content_hash(output.original) if output.original is not None else None
-        )
         result = await self.writer(
-            output.canonical_path,
+            prepared.output,
             content,
-            mode,
-            expected_hash,
+            "replace" if original is not None else "create",
+            content_hash(original) if original is not None else None,
         )
 
-        return output.canonical_path, result.text
+        return prepared.output, result.text
 
     def _output(
         self,
         value: object,
         printed: str,
         *,
-        script_path: str | None = None,
-        written_file: str | None = None,
-        write_report: str | None = None,
+        script_path: str | None,
+        written_file: str | None,
+        write_report: str | None,
     ) -> ToolOutput[PythonResult]:
         """Budget what the program produced and render it for the model.
 

@@ -29,6 +29,7 @@ from ..entries import (
     entry_exists,
     is_description_file,
     is_ignorable_path,
+    is_scratch_path,
     stem_path_from_reference,
 )
 from ..humanize import format_bytes
@@ -181,7 +182,9 @@ def _content_relative_paths(root: Path) -> list[str]:
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()
-        if not is_ignorable_path(rel):
+        # Reserved names are never collection content: junk is not a document,
+        # and scratch is workspace state a member must not be able to claim.
+        if not is_ignorable_path(rel) and not is_scratch_path(rel):
             paths.append(rel)
     return paths
 

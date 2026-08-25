@@ -21,7 +21,7 @@ from ..store import Casebase
 from ..types import PipelineSpec, ProgressReporter, UploadCompleteEvent
 from .commit import _ensure_upload_slot_locked, _phased_upload
 from .metadata import _merge_entry_paths, resolve_entry
-from .paths import _enforce_file_size
+from .paths import _check_not_reserved_path, _enforce_file_size
 from .prepare import _Reserved
 
 __all__ = [
@@ -53,6 +53,7 @@ async def upload(
     """
     if not filepath:
         raise HTTPException(status_code=400, detail="Document path required")
+    _check_not_reserved_path(filepath)
     if (original_path is None) != (original_content is None):
         raise ValueError("original_path and original_content must be provided together")
     _enforce_file_size(content)
