@@ -13,7 +13,6 @@ from ..entries import is_description_file, stem_path_from_reference
 from ..subprocesses import rg_search
 from .base import (
     WORKSPACE_SCOPE_HINT,
-    AsyncPathTool,
     FullLinesArg,
     IncludeIgnoredArg,
     SearchPath,
@@ -22,6 +21,7 @@ from .base import (
     excluded_dirs,
 )
 from .formatting import BLOCK_SEP, GROUP_SEP, cap_lines, number_line, truncate_line
+from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
 
 __all__ = [
     "GrepCaseSensitiveArg",
@@ -203,7 +203,7 @@ async def _search_path(
 
 
 @dataclass(slots=True, frozen=True)
-class GrepTool(AsyncPathTool[list[GrepMatch]]):
+class GrepTool(RedirectingPathTool[list[GrepMatch]]):
     """Search documents for a pattern.
 
     ``max_line_chars`` and ``max_formatted_chars`` safeguard the LLM
@@ -227,7 +227,8 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
         output_mode: GrepOutputModeArg = "content",
         include_ignored: IncludeIgnoredArg = False,
         full_lines: FullLinesArg = False,
-    ) -> ToolOutput[list[GrepMatch]]:
+        output_path: OutputPathArg = None,
+    ) -> ToolOutput[list[GrepMatch] | RedirectedOutput]:
         """Search documents for a pattern.
 
         Defaults to case-insensitive regex search.  Set ``literal=True``
@@ -262,6 +263,25 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
             )
         )
         all_matches = _drop_shadowed_originals([m for batch in results for m in batch])
+
+        return await self.redirect(
+            self._render(all_matches, output_mode, max_results, full_lines),
+            output_path,
+        )
+
+    def _render(
+        self,
+        all_matches: list[GrepMatch],
+        output_mode: GrepOutputMode,
+        max_results: int,
+        full_lines: bool,
+    ) -> ToolOutput[list[GrepMatch]]:
+        """Render the matches in the shape *output_mode* asks for.
+
+        The counting modes cap only their text, so their structured data keeps
+        every match; the content mode caps both, since a match the text never
+        showed still carries its lines and the frontend cites what it is given.
+        """
         if not all_matches:
             return ToolOutput(data=all_matches, formatted="(no matches)")
         if output_mode == "files_with_matches":

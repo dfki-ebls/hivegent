@@ -17,8 +17,11 @@ from pydantic_ai.usage import RunUsage
 import hivegent.agents.tools.compute as compute_tools
 from hivegent import workspace
 from hivegent.agents.common import UserDeps
-from hivegent.agents.tools.compute import _validate_run_python
-from hivegent.agents.tools.write import write_document
+from hivegent.agents.tools.write import (
+    validate_output_path,
+    validate_output_write,
+    write_document,
+)
 from hivegent.store import Casebase
 from hivegent.tools.base import ToolRetry
 from hivegent.types import DocumentFilter
@@ -83,7 +86,7 @@ async def test_refuses_a_group_the_user_may_only_read(
     assert routed == []
 
 
-def test_python_paths_are_lazy_and_keep_scratch_outside_document_filters(
+def test_working_paths_are_lazy_and_keep_scratch_outside_document_filters(
     deps: UserDeps, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     filtered = replace(
@@ -116,7 +119,7 @@ def test_python_paths_are_lazy_and_keep_scratch_outside_document_filters(
         assert not path.filter_func("other.md")
 
 
-def test_python_workspace_write_approval_depends_on_mode(deps: UserDeps) -> None:
+def test_agent_output_write_approval_depends_on_mode(deps: UserDeps) -> None:
     def context(mode: str, *, approved: bool = False) -> RunContext[UserDeps]:
         return RunContext(
             deps=replace(deps, mode=mode),
@@ -126,12 +129,27 @@ def test_python_workspace_write_approval_depends_on_mode(deps: UserDeps) -> None
         )
 
     with pytest.raises(ApprovalRequired):
-        _validate_run_python(context("interactive"), output_path="~/output.txt")
+        validate_output_path(context("interactive"), output_path="~/output.txt")
 
-    _validate_run_python(
+    validate_output_path(
         context("interactive", approved=True), output_path="~/output.txt"
     )
-    _validate_run_python(context("write"), output_path="~/output.txt")
+    validate_output_path(context("write"), output_path="~/output.txt")
 
     with pytest.raises(ModelRetry, match="unavailable"):
-        _validate_run_python(context("read"), output_path="~/output.txt")
+        validate_output_path(context("read"), output_path="~/output.txt")
+
+
+def test_run_python_output_accepts_arbitrary_text_suffix(deps: UserDeps) -> None:
+    context = RunContext(
+        deps=replace(deps, mode="write"),
+        model=TestModel(),
+        usage=RunUsage(),
+    )
+
+    assert (
+        compute_tools.compute_toolset.tools["run_python"].args_validator
+        is validate_output_write
+    )
+    validate_output_write(context, output_path="~/result.csv")
+    validate_output_write(context, output_path="~/report.md")

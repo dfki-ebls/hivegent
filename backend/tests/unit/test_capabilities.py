@@ -63,7 +63,9 @@ def test_grounding_rides_with_the_retrieval_tools() -> None:
 def test_shared_block_survives_on_its_remaining_feature() -> None:
     """Path guidance is owned by explore *and* write, so write alone keeps it."""
     disabled = ToolsSpec(disabled_tools=sorted(_EXPLORE.tool_names))
-    ids = {capability.id for capability in build_capabilities(disabled, mode="interactive")}
+    ids = {
+        capability.id for capability in build_capabilities(disabled, mode="interactive")
+    }
     assert "workspace-paths" in ids
 
 

@@ -14,6 +14,7 @@ from hivegent.security import (
 )
 from hivegent.tools.base import ToolRetry
 from hivegent.tools.web import WebFetch, WebSearch
+from tests.helpers import returned
 
 #: Permits every host, so a fetch test opts out of policy enforcement.
 _ANY_HOST = UrlPolicy(allow_hosts=("*",))
@@ -133,13 +134,15 @@ class TestWebSearch:
                 ),
             )
 
-        out = await WebSearch(
-            client=_web_client(
-                monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
-            ),
-            language="de",
-            user_agent="hivegent-test (+mailto:a@b.org)",
-        )("ChatGPT")
+        out = await returned(
+            WebSearch(
+                client=_web_client(
+                    monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
+                ),
+                language="de",
+                user_agent="hivegent-test (+mailto:a@b.org)",
+            )("ChatGPT")
+        )
 
         assert [r["href"] for r in out.data] == [
             "https://de.wikipedia.org/wiki/ChatGPT",
@@ -198,7 +201,7 @@ class TestWebFetch:
             )
 
         tool = _fetch_tool(monkeypatch, handler)
-        out = await tool("https://example.com/start")
+        out = await returned(tool("https://example.com/start"))
 
         assert out.data.url == "https://example.com/final"
         assert out.data.title == "Test Page"
@@ -246,7 +249,7 @@ class TestWebFetch:
             )
 
         tool = _fetch_tool(monkeypatch, handler, max_chars=10)
-        out = await tool("https://example.com/big")
+        out = await returned(tool("https://example.com/big"))
         assert out.data.content == "a" * 10
         assert out.data.truncated
         assert out.text.endswith("[truncated]")
@@ -265,7 +268,7 @@ class TestWebFetch:
             )
 
         tool = _fetch_tool(monkeypatch, handler, max_line_chars=80)
-        out = await tool("https://example.com/page")
+        out = await returned(tool("https://example.com/page"))
         assert "…" in out.text
         assert len(max(out.text.splitlines(), key=len)) < 200
         assert long_line in out.data.content

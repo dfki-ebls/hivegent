@@ -88,24 +88,25 @@ class UserDeps:
             filter_for_store=self.filter_for_store,
         )
 
-    def python_paths(self, *, writable: bool = False) -> tuple[SearchPath, ...]:
+    def working_paths(self, *, writable: bool = False) -> tuple[SearchPath, ...]:
         """Return noncreating paths that keep scratch state in scope.
 
         Document filters still govern ordinary files. Scratch is private run
         state rather than a document selection, so it remains reachable in an
         otherwise narrowed chat. *writable* narrows the groups exactly as it
-        does for :meth:`search_paths`, so the sandbox's output writer spans the
-        same roots the write tools do.
+        does for :meth:`search_paths`, so a run's own writes — the sandbox's
+        declared output and a tool's redirected one — span the same roots the
+        write tools do.
         """
         return build_search_paths(
             self.store,
             self.write_group_stores if writable else self.group_stores,
             settings.data_dir,
             dir_fn=Casebase.workspace_path,
-            filter_for_store=self._python_filter_for_store,
+            filter_for_store=self._working_filter_for_store,
         )
 
-    def _python_filter_for_store(self, store: Casebase) -> SearchPathFilterFunc:
+    def _working_filter_for_store(self, store: Casebase) -> SearchPathFilterFunc:
         """Apply the document selection everywhere except scratch."""
         document_filter = self.filter_for_store(store)
         if document_filter is None:

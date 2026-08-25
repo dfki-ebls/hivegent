@@ -15,6 +15,7 @@ __all__ = [
     "PERSONALITY_TEMPLATES",
     "PLAN_INSTRUCTIONS",
     "PYTHON_INSTRUCTIONS",
+    "REDIRECT_INSTRUCTIONS",
     "SCRATCH_INSTRUCTIONS",
     "VERSION_INSTRUCTIONS",
     "WORKSPACE_PATH_INSTRUCTIONS",
@@ -218,6 +219,14 @@ When write_document and edit_document are available, write a longer program that
 Pass only the workspace text files the program needs as `input_paths`, and use `output_path` only for a file the program should persist.
 Park intermediates within one program in `/tmp`, which exists from the start and is thrown away with the rest of the private filesystem when the call ends.
 To carry state to a later call, name the `output_path` under `.scratch/` too, and pass it back as an `input_path` next time.
+A file another tool wrote through its own `output_path` is an ordinary workspace file, so name it in `input_paths` to work from it here.
+"""
+
+REDIRECT_INSTRUCTIONS = """
+Where a tool takes an `output_path`, that call writes its result to the workspace file you name and hands you back only a receipt for it.
+Reach for it when a call would return far more than you need to read but a later step can work from the whole of it, then read or process the file instead of the result.
+The suffix decides what is stored: `.json` keeps the structured result in full, `.txt` keeps the text you would otherwise have been shown.
+Put the file under a `.scratch/` directory unless the user asked for the file itself.
 """
 
 SCRATCH_INSTRUCTIONS = """

@@ -17,6 +17,7 @@ from ...retrieval import build_search_tool
 from ...store import Casebase
 from ...tools import VectorSearchTool
 from ...tools.fastmcp import register_mcp_tools
+from ...tools.sink import OutputPathArg
 from ..app import mcp_app
 from ..common import (
     ExploreTaskArg,
@@ -37,11 +38,17 @@ def _search(
     return build_search_tool((store, *group_stores))
 
 
+# These tools are built with no writer, so the redirect they declare cannot
+# be honoured here and is left out rather than advertised and refused: every
+# MCP workspace write goes behind an elicitation the generated wrapper has no
+# way to raise, and the guidance that makes a redirect worth using is the
+# agent's prompt, which no MCP client is handed.
 register_mcp_tools(
     mcp_app,
     [
         _search,
     ],
+    omit=(OutputPathArg,),
 )
 
 

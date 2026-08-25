@@ -1,5 +1,6 @@
 """Document listing, globbing, and reading tool callables."""
 
+import asyncio
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -20,7 +21,6 @@ from .base import (
     FullLinesArg,
     IncludeIgnoredArg,
     SearchPath,
-    SyncPathTool,
     ToolOutput,
     ToolRetry,
     canonical_local_path,
@@ -32,6 +32,7 @@ from .base import (
     sidecar_hint,
 )
 from .formatting import cap_lines, hint_suffix, iter_annotated
+from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
 
 __all__ = [
     "DocumentFilePathArg",
@@ -383,20 +384,21 @@ def _format_document_tree(
 
 
 @dataclass(slots=True, frozen=True)
-class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
+class ListDocumentsTool(RedirectingPathTool[list[DocumentSummary] | DocumentTreeNode]):
     """List available documents as a flat list or hierarchical tree."""
 
     glob: str | None = None
 
     @override
-    def __call__(
+    async def __call__(
         self,
         path: DocumentPathArg = None,
         flatten: DocumentFlattenArg = True,
         max_depth: DocumentMaxDepthArg = 1,
         max_results: DocumentMaxResultsArg = 200,
         include_ignored: IncludeIgnoredArg = False,
-    ) -> ToolOutput[list[DocumentSummary] | DocumentTreeNode]:
+        output_path: OutputPathArg = None,
+    ) -> ToolOutput[list[DocumentSummary] | DocumentTreeNode | RedirectedOutput]:
         """List available documents with sizes and dates.
 
         Set ``flatten=False`` to show a hierarchical directory tree.
@@ -405,6 +407,23 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
         payload directories are skipped by default; pass
         ``include_ignored=True`` to include them.
         """
+        # The walk stats every entry, so it goes to a thread rather than the
+        # event loop, which is where pydantic-ai ran it while it was sync.
+        result = await asyncio.to_thread(
+            self._list, path, flatten, max_depth, max_results, include_ignored
+        )
+
+        return await self.redirect(result, output_path)
+
+    def _list(
+        self,
+        path: str | None,
+        flatten: bool,
+        max_depth: int | None,
+        max_results: int,
+        include_ignored: bool,
+    ) -> ToolOutput[list[DocumentSummary] | DocumentTreeNode]:
+        """Scan the workspace and render it flat or as a tree."""
         exclude = excluded_dirs(include_ignored)
         paths, subdir = self.scoped(path)
 
@@ -482,19 +501,20 @@ class ListDocumentsTool(SyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
 
 
 @dataclass(slots=True, frozen=True)
-class GlobDocumentsTool(SyncPathTool[list[str]]):
+class GlobDocumentsTool(RedirectingPathTool[list[str]]):
     """Find documents whose filenames match a glob pattern."""
 
     glob: str | None = None
 
     @override
-    def __call__(
+    async def __call__(
         self,
         pattern: GlobPatternArg,
         path: DocumentPathArg = None,
         max_results: GlobMaxResultsArg = 1000,
         include_ignored: IncludeIgnoredArg = False,
-    ) -> ToolOutput[list[str]]:
+        output_path: OutputPathArg = None,
+    ) -> ToolOutput[list[str] | RedirectedOutput]:
         """Find document filenames matching a glob pattern.
 
         Returns a flat list of relative filenames.  Use ``list_documents``
@@ -503,6 +523,20 @@ class GlobDocumentsTool(SyncPathTool[list[str]]):
         payload directories are skipped by default; pass
         ``include_ignored=True`` to include them.
         """
+        result = await asyncio.to_thread(
+            self._glob, pattern, path, max_results, include_ignored
+        )
+
+        return await self.redirect(result, output_path)
+
+    def _glob(
+        self,
+        pattern: str,
+        path: str | None,
+        max_results: int,
+        include_ignored: bool,
+    ) -> ToolOutput[list[str]]:
+        """Match filenames against *pattern*, reporting what was hidden."""
         paths, subdir = self.scoped(path)
         results = _glob_entries(
             paths,
@@ -525,7 +559,7 @@ class GlobDocumentsTool(SyncPathTool[list[str]]):
 
 
 @dataclass(slots=True, frozen=True)
-class ReadDocumentTool(SyncPathTool[DocumentRange]):
+class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
     """Read a document's content as a line range with line numbers.
 
     Three budgets sit on different axes.  ``max_chars`` bounds the window
@@ -547,13 +581,14 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
     max_formatted_chars: int = 50_000
 
     @override
-    def __call__(
+    async def __call__(
         self,
         file_path: DocumentFilePathArg,
         offset: DocumentOffsetArg = 1,
         limit: DocumentLimitArg = None,
         full_lines: FullLinesArg = False,
-    ) -> ToolOutput[DocumentRange]:
+        output_path: OutputPathArg = None,
+    ) -> ToolOutput[DocumentRange | RedirectedOutput]:
         """Read a document's content.
 
         Returns the lines from ``offset`` (1-indexed) up to ``limit`` lines,
@@ -566,6 +601,20 @@ class ReadDocumentTool(SyncPathTool[DocumentRange]):
         stored in a legacy encoding is decoded transparently, with the
         source encoding named next to the hash.
         """
+        result = await asyncio.to_thread(
+            self._read, file_path, offset, limit, full_lines
+        )
+
+        return await self.redirect(result, output_path)
+
+    def _read(
+        self,
+        file_path: str,
+        offset: int,
+        limit: int | None,
+        full_lines: bool,
+    ) -> ToolOutput[DocumentRange]:
+        """Decode the file and render the requested window of lines."""
         _sp, _local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
 
         # Reads are uniform: the requested file is read as text and never

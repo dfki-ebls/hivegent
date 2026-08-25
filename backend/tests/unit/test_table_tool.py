@@ -7,6 +7,7 @@ import pytest
 
 from hivegent.tools.base import ToolRetry
 from hivegent.tools.table import QueryTableTool
+from tests.helpers import returned
 
 
 def _sales_dir(tmp_path: Path) -> Path:
@@ -39,7 +40,7 @@ class TestQueryTableTool:
         self, tmp_path: Path
     ) -> None:
         tool = QueryTableTool(paths=_sales_dir(tmp_path))
-        out = await tool("sales.csv")
+        out = await returned(tool("sales.csv"))
 
         assert out.data.columns == ("region", "amount")
         assert out.data.total_rows == 50
@@ -51,17 +52,19 @@ class TestQueryTableTool:
         self, tmp_path: Path
     ) -> None:
         tool = QueryTableTool(paths=_sales_dir(tmp_path))
-        out = await tool(
-            "sales.csv",
-            "SELECT region, SUM(amount) AS total FROM t GROUP BY region "
-            "ORDER BY region",
+        out = await returned(
+            tool(
+                "sales.csv",
+                "SELECT region, SUM(amount) AS total FROM t GROUP BY region "
+                "ORDER BY region",
+            )
         )
 
         assert out.data.rows == (("EU", "625"), ("US", "600"))
 
     async def test_row_cap_is_named_in_the_output(self, tmp_path: Path) -> None:
         tool = QueryTableTool(paths=_sales_dir(tmp_path), max_rows=10)
-        out = await tool("sales.csv", "SELECT * FROM t")
+        out = await returned(tool("sales.csv", "SELECT * FROM t"))
 
         assert out.data.truncated
         assert len(out.data.rows) == 10
@@ -75,7 +78,7 @@ class TestQueryTableTool:
         (tmp_path / "rows.csv").write_text(f"value\n{rows}")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await tool("rows.csv", "SELECT * FROM t", row_limit=150)
+        out = await returned(tool("rows.csv", "SELECT * FROM t", row_limit=150))
 
         assert len(out.data.rows) == 150
         assert not out.data.truncated
@@ -83,11 +86,9 @@ class TestQueryTableTool:
     async def test_render_budget_keeps_structured_rows_aligned(
         self, tmp_path: Path
     ) -> None:
-        tool = QueryTableTool(
-            paths=_sales_dir(tmp_path), max_formatted_chars=100
-        )
+        tool = QueryTableTool(paths=_sales_dir(tmp_path), max_formatted_chars=100)
 
-        out = await tool("sales.csv", "SELECT * FROM t", row_limit=50)
+        out = await returned(tool("sales.csv", "SELECT * FROM t", row_limit=50))
 
         assert 0 < len(out.data.rows) < 50
         assert out.data.truncated
@@ -105,7 +106,7 @@ class TestQueryTableTool:
             f"name,city\n{filler}\nGrüße,Köln\n".encode("cp1252")
         )
         tool = QueryTableTool(paths=tmp_path)
-        out = await tool("legacy.csv", "SELECT * FROM t WHERE city = 'Köln'")
+        out = await returned(tool("legacy.csv", "SELECT * FROM t WHERE city = 'Köln'"))
 
         assert out.data.source_encoding == "cp1252"
         assert out.data.rows == (("Grüße", "Köln"),)
@@ -114,7 +115,7 @@ class TestQueryTableTool:
         self, tmp_path: Path
     ) -> None:
         tool = QueryTableTool(paths=_workbook_dir(tmp_path))
-        out = await tool("book.xlsx", sheet="Q2")
+        out = await returned(tool("book.xlsx", sheet="Q2"))
 
         assert out.data.sheet == "Q2"
         assert out.data.sheets == ("Q1", "Q2")
@@ -132,7 +133,7 @@ class TestQueryTableTool:
         values = ",".join(str(i) for i in range(12))
         (tmp_path / "wide.csv").write_text(f"{header}\n{values}")
         tool = QueryTableTool(paths=tmp_path, max_columns=4)
-        out = await tool("wide.csv", "SELECT * FROM t")
+        out = await returned(tool("wide.csv", "SELECT * FROM t"))
 
         assert len(out.data.columns) == 12
         assert out.formatted is not None
@@ -153,13 +154,15 @@ class TestQueryTableTool:
         book.save(tmp_path / "typed.xlsx")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await tool(
-            "typed.xlsx", "SELECT SUM(amount) AS s FROM t WHERE day > '2024-01-15'"
+        out = await returned(
+            tool(
+                "typed.xlsx", "SELECT SUM(amount) AS s FROM t WHERE day > '2024-01-15'"
+            )
         )
         assert out.data.rows == (("20.0",),)
 
         # A zero-padded value is an identifier, so the column stays text.
-        schema = await tool("typed.xlsx")
+        schema = await returned(tool("typed.xlsx"))
         assert schema.data.dtypes == ("String", "Float64", "Date")
         assert [column.name for column in schema.data.text_columns] == [
             "amount",
@@ -174,7 +177,7 @@ class TestQueryTableTool:
         rows = "\n".join(f"r{i},{i if i != 2 else 'N/A'}" for i in range(4))
         (tmp_path / "mixed.csv").write_text(f"name,val\n{rows}")
         tool = QueryTableTool(paths=tmp_path)
-        out = await tool("mixed.csv")
+        out = await returned(tool("mixed.csv"))
 
         assert out.data.text_columns[0].name == "val"
         assert (out.data.text_columns[0].parsed, out.data.text_columns[0].total) == (

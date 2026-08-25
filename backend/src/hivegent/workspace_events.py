@@ -9,6 +9,7 @@ canonical path it was handed.
 from collections.abc import Awaitable, Callable
 from typing import Concatenate
 
+from .entries import is_scratch_path
 from .jobs import manager
 from .store import Casebase, WorkspaceScope
 
@@ -38,12 +39,19 @@ def announcing_mutator[**P, R](
     narrowest place that sees both the path and the fact that the write
     succeeded — the layers below hold a :class:`Casebase`, whose id is the
     *group* for a shared workspace, so none of them can name the user to tell.
+
+    A scratch write is the one that stays quiet: the tree hides `.scratch/`, so
+    the refresh it would trigger costs every other tab a re-read of a workspace
+    that looks exactly as it did.  A run parking its own state there is the
+    common case, not the rare one, which is what makes the difference worth
+    drawing.
     """
 
     async def run(path: str, *args: P.args, **kwargs: P.kwargs) -> R:
         result = await mutator(path, *args, **kwargs)
-        scope, _local = WorkspaceScope.parse(path)
-        manager.notify_scope_changed(owner, scope.prefix)
+        scope, local = WorkspaceScope.parse(path)
+        if not is_scratch_path(local):
+            manager.notify_scope_changed(owner, scope.prefix)
         return result
 
     return run

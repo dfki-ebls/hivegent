@@ -17,8 +17,9 @@ from cbrkit import filter as cbrkit_filter
 from cbrkit.typing import AsyncRetrieverFunc
 from pydantic import Field
 
-from .base import AsyncTool, ToolOutput
+from .base import ToolOutput
 from .formatting import BLOCK_SEP, annotate_lines, cap_lines, truncate_block
+from .sink import OutputPathArg, RedirectedOutput, RedirectingTool
 
 __all__ = [
     "SearchMaxResultsArg",
@@ -67,7 +68,7 @@ SearchTypeArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
+class VectorSearchTool[R = SearchResult](RedirectingTool[list[R]]):
     """Search the global vector index with SQL-level scope filtering.
 
     Args:
@@ -112,7 +113,8 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
         query: SearchQueryArg,
         max_results: SearchMaxResultsArg = 10,
         search_type: SearchTypeArg = "hybrid",
-    ) -> ToolOutput[list[R]]:
+        output_path: OutputPathArg = None,
+    ) -> ToolOutput[list[R] | RedirectedOutput]:
         """Search indexed chunks using dense, sparse, or hybrid retrieval."""
         raw = await self._search(query, max_results, search_type)
         raw.sort(key=lambda r: r.score, reverse=True)
@@ -124,13 +126,14 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
             else cast(list[R], raw)
         )
 
-        if not final:
-            return ToolOutput(data=final, formatted="(no results)")
-        return ToolOutput(
-            data=final,
-            formatted=_format_results(
-                final, self.max_line_chars, self.max_formatted_chars
-            ),
+        formatted = (
+            _format_results(final, self.max_line_chars, self.max_formatted_chars)
+            if final
+            else "(no results)"
+        )
+
+        return await self.redirect(
+            ToolOutput(data=final, formatted=formatted), output_path
         )
 
     async def _search(

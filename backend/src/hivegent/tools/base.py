@@ -7,7 +7,7 @@ import types
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from os import stat_result
 from pathlib import Path
 from stat import S_ISLNK
@@ -38,7 +38,6 @@ __all__ = [
     "PathTool",
     "SearchPath",
     "SearchPathFilterFunc",
-    "SyncPathTool",
     "SyncTool",
     "Tool",
     "ToolOutput",
@@ -571,7 +570,7 @@ class PathTool[T](Tool[T], ABC):
     Accepts a bare :class:`~pathlib.Path`, a single :class:`SearchPath`,
     or a tuple.  Use :attr:`resolved_paths` to obtain the normalised
     tuple.  Concrete subclasses should inherit from
-    :class:`SyncPathTool` or :class:`AsyncPathTool`.
+    :class:`AsyncPathTool`.
     """
 
     paths: Path | SearchPath | tuple[SearchPath, ...] = ()
@@ -587,11 +586,6 @@ class PathTool[T](Tool[T], ABC):
         Thin wrapper over :func:`scope_paths` for the filter tools.
         """
         return scope_paths(self.resolved_paths, raw)
-
-
-@dataclass(slots=True, frozen=True)
-class SyncPathTool[T](PathTool[T], SyncTool[T], ABC):
-    """Synchronous tool with search paths."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -690,6 +684,35 @@ class CallInfo:
     annotations: dict[str, Any]
     is_async: bool
     source_module: str
+
+    def without(self, *annotations: Any) -> Self:
+        """Drop the parameters carrying any of these annotations.
+
+        Addressed by annotation rather than by name: the shared ``Annotated``
+        alias a tool declares an argument with is what says the argument is
+        that one, so a surface names the type it cannot honour instead of
+        keeping a string of the spelling in step with it.
+
+        Both adapters synthesize a signature rather than edit one — the
+        FastMCP one already appends a ``_tool_`` parameter no ``__call__``
+        declares — so leaving an argument out is the same act as putting one
+        in, and no schema is rewritten after the fact.  It is what a surface
+        uses for an argument it could only advertise and then refuse on every
+        call, which is a defect in the schema rather than a mode.
+        """
+        dropped = {
+            name for name, hint in self.annotations.items() if hint in annotations
+        }
+
+        return replace(
+            self,
+            params=tuple(p for p in self.params if p.name not in dropped),
+            annotations={
+                name: hint
+                for name, hint in self.annotations.items()
+                if name not in dropped
+            },
+        )
 
     def apply_to(
         self,

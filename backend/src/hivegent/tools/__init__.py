@@ -28,6 +28,7 @@ from .plan import CreatePlanTool
 from .python import PythonResult, RunPythonTool
 from .retrieval import SearchResult, SearchType, VectorSearchTool
 from .scope import Scope
+from .sink import RedirectedOutput
 from .table import QueryTableTool, TableResult
 from .web import WebFetch, WebPage, WebSearch, build_user_agent
 
@@ -50,6 +51,7 @@ __all__ = [
     "QueryTableTool",
     "ReadBinaryDocumentTool",
     "ReadDocumentTool",
+    "RedirectedOutput",
     "RunPythonTool",
     "Scope",
     "SearchPath",

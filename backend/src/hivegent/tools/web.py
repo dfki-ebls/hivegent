@@ -14,8 +14,9 @@ from markdownify import MarkdownConverter
 from pydantic import Field
 
 from ..security import UnsafeUrlError
-from .base import AsyncTool, ToolOutput, ToolRetry
+from .base import ToolOutput, ToolRetry
 from .formatting import BLOCK_SEP, cap_lines, hint_suffix, iter_annotated
+from .sink import OutputPathArg, RedirectedOutput, RedirectingTool
 
 __all__ = [
     "WebFetch",
@@ -66,7 +67,7 @@ def _snippet_text(html: str) -> str:
 
 
 @dataclass(slots=True, frozen=True)
-class WebSearch(AsyncTool[list[dict[str, str]]]):
+class WebSearch(RedirectingTool[list[dict[str, str]]]):
     """Search Wikipedia for up-to-date information.
 
     Queries the official MediaWiki API through the egress proxy with no
@@ -89,7 +90,8 @@ class WebSearch(AsyncTool[list[dict[str, str]]]):
         self,
         query: WebQueryArg,
         max_results: WebMaxResultsArg = 5,
-    ) -> ToolOutput[list[dict[str, str]]]:
+        output_path: OutputPathArg = None,
+    ) -> ToolOutput[list[dict[str, str]] | RedirectedOutput]:
         """Search Wikipedia (and only Wikipedia) for up-to-date information.
 
         This searches the Wikipedia encyclopedia exclusively, not the
@@ -136,15 +138,17 @@ class WebSearch(AsyncTool[list[dict[str, str]]]):
             }
             for hit in hits
         ]
-        if not results:
-            return ToolOutput(data=results, formatted="(no results)")
         blocks: list[str] = []
         for i, r in enumerate(results, 1):
             block = f"[{i}] {r['title']} ({r['href']})"
             if r["body"]:
                 block += f"\n    {r['body']}"
             blocks.append(block)
-        return ToolOutput(data=results, formatted=BLOCK_SEP.join(blocks))
+        formatted = BLOCK_SEP.join(blocks) if results else "(no results)"
+
+        return await self.redirect(
+            ToolOutput(data=results, formatted=formatted), output_path
+        )
 
 
 @dataclass(slots=True, frozen=True)
@@ -202,7 +206,7 @@ def _html_to_markdown(body: bytes) -> tuple[str, str]:
 
 
 @dataclass(slots=True, frozen=True)
-class WebFetch(AsyncTool[WebPage]):
+class WebFetch(RedirectingTool[WebPage]):
     """Fetch a web page and return its readable content.
 
     ``max_response_bytes`` caps how many raw bytes are downloaded per
@@ -226,7 +230,9 @@ class WebFetch(AsyncTool[WebPage]):
     user_agent: str = field(default_factory=build_user_agent)
 
     @override
-    async def __call__(self, url: WebUrlArg) -> ToolOutput[WebPage]:
+    async def __call__(
+        self, url: WebUrlArg, output_path: OutputPathArg = None
+    ) -> ToolOutput[WebPage | RedirectedOutput]:
         """Fetch a web page as readable text.
 
         HTML is reduced to its markdown text content; plain-text and JSON
@@ -236,7 +242,7 @@ class WebFetch(AsyncTool[WebPage]):
         host policy before the egress proxy connects.
         """
         try:
-            return await self._fetch(url)
+            return await self.redirect(await self._fetch(url), output_path)
         except ToolRetry:
             raise
         except httpx2.TimeoutException as exc:

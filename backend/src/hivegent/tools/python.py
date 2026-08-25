@@ -35,7 +35,8 @@ from .base import (
     sidecar_hint,
 )
 from .formatting import cap_lines, hint_suffix, truncate_line, truncate_middle
-from .mutations import WriteDocumentTool, resolve_mutation_target
+from .mutations import WriteDocumentTool
+from .sink import resolve_output_target
 
 __all__ = [
     "SANDBOX_TMP_DIR",
@@ -329,7 +330,10 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
 
         # Every path is resolved before any file is read, so one path serving as
         # both an input and the output is read, decoded, and budgeted once.
-        output = None if output_path is None else self._resolve_output(output_path)
+        output: tuple[str, Path] | None = None
+        if output_path is not None:
+            _sink, canonical, absolute = resolve_output_target(self.writer, output_path)
+            output = (canonical, absolute)
         targets = [self._resolve_input(raw) for raw in input_paths]
         if output is not None:
             targets.append(output)
@@ -361,27 +365,6 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         """Resolve one readable workspace file, which must already exist."""
         sp, local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
         return sp.prefixed(local), absolute
-
-    def _resolve_output(self, output_path: str) -> tuple[str, Path]:
-        """Resolve the one writable output, which need not exist yet.
-
-        Routed through the resolver the commit itself runs through, so a path
-        the write would turn away is turned away here, in the same words, before
-        the program runs.
-        """
-        if self.writer is None:
-            raise ToolRetry(
-                "Writing to the workspace is not available to this tool, so "
-                "`output_path` cannot be used."
-            )
-
-        canonical, _local, absolute = resolve_mutation_target(
-            self.writer.resolved_paths, output_path
-        )
-        if absolute.is_dir():
-            raise ToolRetry(f"'{canonical}' is a directory.")
-
-        return canonical, absolute
 
     def _read(
         self, canonical_path: str, absolute_path: Path, staged: int

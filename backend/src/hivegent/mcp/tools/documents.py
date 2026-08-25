@@ -13,6 +13,7 @@ from ...tools import (
     ReadDocumentTool,
 )
 from ...tools.fastmcp import register_mcp_tools
+from ...tools.sink import OutputPathArg
 from ..app import mcp_app
 from ..common import get_mcp_group_stores, get_mcp_user_store
 
@@ -72,6 +73,11 @@ def _grep(
     return GrepTool(paths=build_search_paths(store, group_stores, settings.data_dir))
 
 
+# These tools are built with no writer, so the redirect they declare cannot
+# be honoured here and is left out rather than advertised and refused: every
+# MCP workspace write goes behind an elicitation the generated wrapper has no
+# way to raise, and the guidance that makes a redirect worth using is the
+# agent's prompt, which no MCP client is handed.
 register_mcp_tools(
     mcp_app,
     [
@@ -82,4 +88,5 @@ register_mcp_tools(
         _query_table,
         _grep,
     ],
+    omit=(OutputPathArg,),
 )

@@ -15,7 +15,6 @@ from pydantic import Field
 from ..converters import TABULAR_SUFFIXES, is_tabular
 from ..humanize import pluralize
 from .base import (
-    AsyncPathTool,
     ToolOutput,
     ToolRetry,
     read_text_or_retry,
@@ -24,6 +23,7 @@ from .base import (
 )
 from .documents import DocumentFilePathArg
 from .formatting import hint_suffix, truncate_line
+from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
 
 __all__ = [
     "QueryTableTool",
@@ -337,7 +337,7 @@ def _cell(value: object) -> str:
 
 
 @dataclass(slots=True, frozen=True)
-class QueryTableTool(AsyncPathTool[TableResult]):
+class QueryTableTool(RedirectingPathTool[TableResult]):
     """Query a tabular document with SQL instead of reading it line by line.
 
     Row, column, cell, and rendered-output budgets bound the result, and every
@@ -359,7 +359,8 @@ class QueryTableTool(AsyncPathTool[TableResult]):
         query: TableQueryArg = None,
         sheet: TableSheetArg = None,
         row_limit: TableRowLimitArg = _DEFAULT_ROW_LIMIT,
-    ) -> ToolOutput[TableResult]:
+        output_path: OutputPathArg = None,
+    ) -> ToolOutput[TableResult | RedirectedOutput]:
         """Query a spreadsheet or delimited document with SQL.
 
         Runs a SQL SELECT against the file, which is always addressed as ``t``,
@@ -381,9 +382,11 @@ class QueryTableTool(AsyncPathTool[TableResult]):
 
         # Polars releases the GIL, but the call still blocks, so it stays off
         # the event loop.
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             self._run, file_path, absolute, query, sheet, row_limit
         )
+
+        return await self.redirect(result, output_path)
 
     def _run(
         self,

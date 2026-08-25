@@ -39,6 +39,7 @@ from ..prompts import (
     MEMORY_INSTRUCTIONS_EMPTY,
     PLAN_INSTRUCTIONS,
     PYTHON_INSTRUCTIONS,
+    REDIRECT_INSTRUCTIONS,
     SCRATCH_INSTRUCTIONS,
     VERSION_INSTRUCTIONS,
     WORKSPACE_PATH_INSTRUCTIONS,
@@ -176,12 +177,14 @@ class SharedInstructions:
     every document tool speaks, the citation markup for every source a tool can
     return — so it belongs to none of them alone and must not be repeated across
     them.  It is composed once when any of ``features`` is live and drops out
-    when none is, the same rule a feature's own instructions follow.
+    when none is, the same rule a feature's own instructions follow, and
+    ``modes`` narrows it further for a block whose subject a mode withholds.
     """
 
     id: str
     features: frozenset[str]
     text: str
+    modes: frozenset[Mode] = MODE_VALUES
 
     def capability(self) -> AbstractCapability[UserDeps]:
         """The instructions-only capability this block contributes to a run."""
@@ -199,6 +202,14 @@ SHARED_INSTRUCTIONS: tuple[SharedInstructions, ...] = (
     ),
     SharedInstructions(
         "scratch", frozenset({"compute", "write"}), SCRATCH_INSTRUCTIONS
+    ),
+    # The redirect argument is a workspace write, so a read-only run refuses
+    # every use of it: the guidance goes where the argument itself does.
+    SharedInstructions(
+        "redirect",
+        frozenset({"explore", "web"}),
+        REDIRECT_INSTRUCTIONS,
+        modes=MUTATING_MODES,
     ),
 )
 """Guidance spanning several features, composed while any of them is live."""
@@ -287,7 +298,9 @@ def build_capabilities(
         feature.capability for feature in features
     ]
     result.extend(
-        shared.capability() for shared in SHARED_INSTRUCTIONS if shared.features & live
+        shared.capability()
+        for shared in SHARED_INSTRUCTIONS
+        if shared.features & live and mode in shared.modes
     )
 
     if disabled:

@@ -10,9 +10,7 @@ from mcp.types import ElicitResult, InputRequiredResult, InputResponses
 
 from hivegent.mcp.confirmation import PendingMutation, confirm_mutation
 
-MUTATION = PendingMutation(
-    summary="replace of '~/notes.md'", payload=("hello",)
-)
+MUTATION = PendingMutation(summary="replace of '~/notes.md'", payload=("hello",))
 
 ElicitAction = Literal["accept", "decline", "cancel"]
 

@@ -67,6 +67,8 @@ def wrap_tool_output(result: ToolOutput[Any]) -> ToolResult:
 
 def for_fastmcp(
     factory_provider: Callable[..., Tool[Any]],
+    *,
+    omit: Sequence[Any] = (),
 ) -> Callable[..., Any]:
     """Build a wrapper function whose signature FastMCP can introspect.
 
@@ -77,11 +79,14 @@ def for_fastmcp(
     Args:
         factory_provider: Callable that returns a Tool instance.
             Must have a return annotation that is a ``Tool`` subclass.
+        omit: Annotations whose parameters this surface cannot honour, and
+            so leaves out of the built signature.  The tool's own default
+            stands in for each one at call time.
 
     Returns:
         A callable with rewritten signature, annotations, and docstring.
     """
-    info = CallInfo.from_factory(factory_provider)
+    info = CallInfo.from_factory(factory_provider).without(*omit)
 
     # Append _tool_ as KEYWORD_ONLY with Depends default.
     tool_param = inspect.Parameter(
@@ -121,6 +126,8 @@ def for_fastmcp(
 def register_mcp_tools(
     app: FastMCP,
     factories: Sequence[Callable[..., Tool[Any]]],
+    *,
+    omit: Sequence[Any] = (),
 ) -> None:
     """Register multiple Tool factories on a FastMCP app.
 
@@ -130,9 +137,10 @@ def register_mcp_tools(
     Args:
         app: The FastMCP application.
         factories: Sequence of factory callables.
+        omit: Annotations whose parameters to leave out of every signature.
     """
     for factory in factories:
-        fn = for_fastmcp(factory)
+        fn = for_fastmcp(factory, omit=omit)
         app.tool(
             fn,
             name=factory_tool_name(fn),

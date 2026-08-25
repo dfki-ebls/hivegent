@@ -225,6 +225,7 @@ def register_agent_tools[D](
     deps_type: type[D],
     factories: Sequence[Callable[[D], Tool[Any]]],
     *,
+    args_validator: ArgsValidatorFunc[D, ...] | None = None,
     requires_approval: bool | None = None,
 ) -> None:
     """Register multiple Tool factories on a FunctionToolset.
@@ -236,6 +237,7 @@ def register_agent_tools[D](
         toolset: The target toolset.
         deps_type: The RunContext deps type.
         factories: Sequence of factory callables.
+        args_validator: Optional validator applied to every tool's arguments.
         requires_approval: Whether tool calls need user approval.
     """
     for factory in factories:
@@ -243,6 +245,7 @@ def register_agent_tools[D](
             toolset,
             deps_type,
             factory,
+            args_validator=args_validator,
             requires_approval=requires_approval,
         )
 
