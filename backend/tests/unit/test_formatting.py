@@ -1,6 +1,6 @@
 """Tests for the shared LLM-output formatting budgets."""
 
-from hivegent.tools.formatting import cap_lines
+from hivegent.tools.formatting import cap_lines, truncate_middle
 
 
 class TestCapLines:
@@ -20,3 +20,10 @@ class TestCapLines:
 
     def test_unbounded_budget_keeps_everything(self) -> None:
         assert cap_lines(["a", "b"]) == ("a\nb", 0)
+
+
+def test_truncate_middle_preserves_both_ends_within_exact_budget() -> None:
+    text = truncate_middle("abcdefghijklmnop", 15)
+
+    assert text == "ab[truncated]op"
+    assert len(text) == 15

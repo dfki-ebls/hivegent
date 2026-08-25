@@ -43,6 +43,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import RunContext, ToolDefinition
 
+from ..tools.formatting import truncate_middle
 from .common import UserDeps
 
 __all__ = [
@@ -94,24 +95,6 @@ class IncompleteToolCallGuard(AbstractCapability[Any]):
         return response
 
 
-def _truncate_middle(text: str, max_chars: int) -> str:
-    """Clamp *text* to about *max_chars*, keeping the head and tail.
-
-    Errors land at the tail of build/test output and schemas at the head,
-    so both ends are kept and the elided middle is marked.  The caller only
-    invokes this once ``text`` already exceeds ``max_chars``.
-    """
-    head = max_chars * 2 // 3
-    tail = max_chars - head
-
-    return (
-        f"{text[:head]}\n\n"
-        f"[tool output truncated: showing first {head:,} + "
-        f"last {tail:,} of {len(text):,} characters]\n\n"
-        f"{text[-tail:]}"
-    )
-
-
 @dataclass(slots=True)
 class ToolOutputLimit(AbstractCapability[UserDeps]):
     """Bound the plain text a tool return sends the model, keeping structured data.
@@ -153,7 +136,7 @@ class ToolOutputLimit(AbstractCapability[UserDeps]):
         if len(text) <= self.max_chars:
             return result
 
-        truncated = _truncate_middle(text, self.max_chars)
+        truncated = truncate_middle(text, self.max_chars)
 
         return (
             truncated

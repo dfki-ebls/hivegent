@@ -16,6 +16,7 @@ __all__ = [
     "number_line",
     "truncate_block",
     "truncate_line",
+    "truncate_middle",
 ]
 
 BLOCK_SEP = "\n---\n"
@@ -62,6 +63,27 @@ def truncate_line(text: str, max_chars: int | None = None) -> str:
     if max_chars is None or len(text) <= max_chars:
         return text
     return text[: max_chars - 1] + "…"
+
+
+def truncate_middle(text: str, max_chars: int) -> str:
+    """Clip *text* to *max_chars*, preserving both ends exactly.
+
+    >>> truncate_middle("abcdefghijklmnop", 15)
+    'ab[truncated]op'
+    """
+    if len(text) <= max_chars:
+        return text
+
+    if max_chars <= 0:
+        return ""
+
+    label = "[truncated]"
+    marker = label if max_chars > len(label) else ""
+    remaining = max_chars - len(marker)
+    leading = (remaining + 1) // 2
+    trailing = remaining - leading
+    suffix = text[-trailing:] if trailing else ""
+    return f"{text[:leading]}{marker}{suffix}"
 
 
 def truncate_block(text: str, max_line_chars: int | None = None) -> str:

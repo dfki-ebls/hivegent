@@ -15,7 +15,7 @@ from pydantic import Field
 
 from ..security import UnsafeUrlError
 from .base import AsyncTool, ToolOutput, ToolRetry
-from .formatting import BLOCK_SEP, cap_lines, iter_annotated
+from .formatting import BLOCK_SEP, cap_lines, hint_suffix, iter_annotated
 
 __all__ = [
     "WebFetch",
@@ -310,5 +310,5 @@ class WebFetch(AsyncTool[WebPage]):
             iter_annotated(content.splitlines(), 1, self.max_line_chars),
             self.max_formatted_chars,
         )
-        suffix = "\n\n[truncated]" if truncated or omitted else ""
+        suffix = hint_suffix(["truncated"] if truncated or omitted else [])
         return ToolOutput(data=page, formatted=f"{header}\n{rendered}{suffix}")

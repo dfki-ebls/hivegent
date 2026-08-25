@@ -15,6 +15,7 @@ from .base import (
     resolve_file_or_retry,
 )
 from .documents import DocumentFilePathArg
+from .formatting import truncate_middle
 
 __all__ = ["JqFilterArg", "JqTool"]
 
@@ -45,6 +46,5 @@ class JqTool(AsyncPathTool[str]):
         except ValueError as exc:
             raise ToolRetry(str(exc)) from exc
         output = json.dumps(result, default=str)
-        if len(output) > self.max_output_chars:
-            output = output[: self.max_output_chars] + "\n\n[truncated]"
-        return ToolOutput(data=output)
+
+        return ToolOutput(data=truncate_middle(output, self.max_output_chars))
