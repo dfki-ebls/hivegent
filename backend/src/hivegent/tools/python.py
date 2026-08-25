@@ -48,8 +48,9 @@ CodeArg = Annotated[
     str,
     Field(
         description=(
-            "The Python program to run. Its trailing expression is the value "
-            "returned to you, and whatever it prints comes back alongside."
+            "The program to run in Monty, a lightweight interpreter for a "
+            "subset of Python. Its trailing expression is the value returned "
+            "to you, and whatever it prints comes back alongside."
         ),
     ),
 ]
@@ -107,22 +108,22 @@ class RunPythonTool(AsyncTool[PythonResult]):
     pool: AsyncMonty
     limits: ResourceLimits = field(default_factory=_default_limits)
     max_output_chars: int = 20_000
-    max_line_chars: int = 2_000
 
     @override
     async def __call__(self, code: CodeArg) -> ToolOutput[PythonResult]:
-        """Run a short Python program and return what it printed and evaluated.
+        """Run a short program in the Monty interpreter.
 
         Reach for it whenever an answer turns on arithmetic, dates, sorting, or
-        counting, rather than working the result out in your head.  The program
-        runs in an isolated interpreter with no network, no filesystem, and no
-        access to the user's documents, so every input it needs must appear as
-        a literal in the code you send.  Only ``asyncio``, ``collections``,
-        ``dataclasses``, ``datetime``, ``functools``, ``itertools``, ``json``,
-        ``math``, ``os``, ``pathlib``, ``re``, ``sys``, ``typing``, and
-        ``unicodedata`` can be imported, there is no numpy or pandas, and
-        classes cannot inherit.  End the program with the expression whose
-        value you want back, and print anything else worth seeing.
+        counting, rather than working the result out in your head. Monty
+        supports only a subset of Python and its standard library, it is not a
+        CPython environment. The program runs with no network, filesystem, or
+        access to the user's documents, so every input must appear as a literal
+        in the code. Only ``asyncio``, ``collections``, ``dataclasses``,
+        ``datetime``, ``functools``, ``itertools``, ``json``, ``math``, ``os``,
+        ``pathlib``, ``re``, ``sys``, ``typing``, and ``unicodedata`` can be
+        imported. There is no numpy or pandas, and classes cannot inherit. End
+        the program with the expression whose value you want back, and print
+        anything else worth seeing.
         """
         printed = CollectString()
 
@@ -149,8 +150,10 @@ class RunPythonTool(AsyncTool[PythonResult]):
         The value is what the call was for, so it keeps the whole output budget
         to itself and printed output is bounded separately.
         """
+        printed_lines = printed.splitlines()
+        clipped = any(len(line) > self.max_output_chars for line in printed_lines)
         lines = (
-            truncate_line(line, self.max_line_chars) for line in printed.splitlines()
+            truncate_line(line, self.max_output_chars) for line in printed_lines
         )
         stdout, dropped = cap_lines(lines, self.max_output_chars)
         result = (
@@ -169,6 +172,8 @@ class RunPythonTool(AsyncTool[PythonResult]):
         body = "\n".join(parts) or "The program printed nothing and returned no value."
 
         return ToolOutput(
-            data=PythonResult(result=result, stdout=stdout, truncated=bool(dropped)),
+            data=PythonResult(
+                result=result, stdout=stdout, truncated=clipped or bool(dropped)
+            ),
             formatted=body + hint_suffix(hints),
         )

@@ -1,6 +1,7 @@
 from pydantic import TypeAdapter
 
 from hivegent.agents import explore_toolset
+from hivegent.agents.tools import compute_toolset
 from hivegent.mcp import mcp_app
 from hivegent.tools.base import tool_description
 from hivegent.tools.documents import (
@@ -9,7 +10,9 @@ from hivegent.tools.documents import (
     ListDocumentsTool,
 )
 from hivegent.tools.grep import GrepContextArg, GrepPatternArg, GrepTool
+from hivegent.tools.python import CodeArg, RunPythonTool
 from hivegent.tools.retrieval import SearchTypeArg
+from hivegent.tools.table import QueryTableTool, TableRowLimitArg
 
 
 def _description(annotation: object) -> str | None:
@@ -36,6 +39,29 @@ def test_agent_search_tool_uses_consistent_search_type_name() -> None:
     assert schema["properties"]["search_type"]["description"] == _description(
         SearchTypeArg
     )
+
+
+def test_agent_table_tool_exposes_configurable_row_limit() -> None:
+    tool = explore_toolset.tools["query_table"]
+    schema = tool.function_schema.json_schema
+
+    assert tool.description == tool_description(QueryTableTool)
+    assert schema["properties"]["row_limit"]["maximum"] == 1000
+    assert schema["properties"]["row_limit"]["description"] == _description(
+        TableRowLimitArg
+    )
+
+
+def test_agent_python_tool_describes_monty_constraints() -> None:
+    tool = compute_toolset.tools["run_python"]
+    schema = tool.function_schema.json_schema
+    description = tool.description
+
+    assert description == tool_description(RunPythonTool)
+    assert description is not None
+    assert "Monty interpreter" in description
+    assert "subset of Python and its standard library" in description
+    assert schema["properties"]["code"]["description"] == _description(CodeArg)
 
 
 async def test_mcp_tool_reuses_canonical_docstring_and_alias_metadata() -> None:

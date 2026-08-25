@@ -949,3 +949,14 @@ class TestRunPythonTool:
         result = await capped("for i in range(50):\n    print('line', i)")
         assert result.data.truncated
         assert "more printed lines]" in result.text
+
+    async def test_long_printed_line_fits_output_budget(
+        self, tool: RunPythonTool
+    ) -> None:
+        result = await tool("print('x' * 10_000)")
+        assert result.data.stdout == "x" * 10_000
+
+        capped = replace(tool, max_output_chars=20)
+        result = await capped("print('x' * 100)")
+        assert result.data.stdout == "x" * 19 + "…"
+        assert result.data.truncated

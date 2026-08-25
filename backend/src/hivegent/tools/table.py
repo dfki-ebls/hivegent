@@ -23,12 +23,13 @@ from .base import (
     sidecar_hint,
 )
 from .documents import DocumentFilePathArg
-from .formatting import cap_lines, hint_suffix, truncate_line
+from .formatting import hint_suffix, truncate_line
 
 __all__ = [
     "QueryTableTool",
     "TableQueryArg",
     "TableResult",
+    "TableRowLimitArg",
     "TableSheetArg",
     "TextColumn",
 ]
@@ -44,6 +45,9 @@ _LEADING_ZERO = r"^[+-]?0\d"
 
 _DATETIME = r"^\d{4}-\d{1,2}-\d{1,2}[ T]\d"
 """The shape Polars infers a format for, which is what makes that parse total."""
+
+_DEFAULT_ROW_LIMIT = 100
+_MAX_ROW_LIMIT = 1000
 
 
 @dataclass(slots=True, frozen=True)
@@ -129,6 +133,18 @@ TableSheetArg = Annotated[
             "Worksheet to query in a spreadsheet that has more than one. "
             "Defaults to the first sheet; omit the query to see them all."
         ),
+    ),
+]
+
+TableRowLimitArg = Annotated[
+    int,
+    Field(
+        description=(
+            f"Maximum query rows to return. Defaults to {_DEFAULT_ROW_LIMIT}, "
+            "increase it when the task needs more complete row-level data."
+        ),
+        ge=1,
+        le=_MAX_ROW_LIMIT,
     ),
 ]
 
@@ -328,7 +344,7 @@ class QueryTableTool(AsyncPathTool[TableResult]):
     cut is named in the formatted output.
     """
 
-    max_rows: int = 100
+    max_rows: int = _MAX_ROW_LIMIT
     preview_rows: int = 5
     max_columns: int = 40
     max_cell_chars: int = 200
@@ -342,6 +358,7 @@ class QueryTableTool(AsyncPathTool[TableResult]):
         file_path: DocumentFilePathArg,
         query: TableQueryArg = None,
         sheet: TableSheetArg = None,
+        row_limit: TableRowLimitArg = _DEFAULT_ROW_LIMIT,
     ) -> ToolOutput[TableResult]:
         """Query a spreadsheet or delimited document with SQL.
 
@@ -364,16 +381,23 @@ class QueryTableTool(AsyncPathTool[TableResult]):
 
         # Polars releases the GIL, but the call still blocks, so it stays off
         # the event loop.
-        return await asyncio.to_thread(self._run, file_path, absolute, query, sheet)
+        return await asyncio.to_thread(
+            self._run, file_path, absolute, query, sheet, row_limit
+        )
 
     def _run(
-        self, file_path: str, absolute: Path, query: str | None, sheet: str | None
+        self,
+        file_path: str,
+        absolute: Path,
+        query: str | None,
+        sheet: str | None,
+        row_limit: int,
     ) -> ToolOutput[TableResult]:
         """Load the file, then run the query against what it turned out to be."""
         source = self._open(file_path, absolute, sheet)
 
         try:
-            return self._query(file_path, source, query)
+            return self._query(file_path, source, query, row_limit)
 
         except pl.exceptions.PolarsError as exc:
             raise ToolRetry(self._failure(exc, source, query)) from exc
@@ -426,10 +450,14 @@ class QueryTableTool(AsyncPathTool[TableResult]):
         return detail
 
     def _query(
-        self, file_path: str, source: _Source, query: str | None
+        self,
+        file_path: str,
+        source: _Source,
+        query: str | None,
+        row_limit: int,
     ) -> ToolOutput[TableResult]:
         """Run the query over the loaded frame and render what it returned."""
-        limit = self.preview_rows if query is None else self.max_rows
+        limit = self.preview_rows if query is None else min(row_limit, self.max_rows)
         frame = (
             source.frame
             if query is None
@@ -445,89 +473,129 @@ class QueryTableTool(AsyncPathTool[TableResult]):
             else None
         )
 
-        rows = collected.head(limit)
+        frame_rows = collected.head(limit)
+        columns = tuple(frame_rows.columns)
+        dtypes = tuple(str(dtype) for dtype in frame_rows.dtypes)
+        preamble = self._preamble(
+            file_path=file_path,
+            source=source,
+            columns=columns,
+            dtypes=dtypes,
+            total_rows=total,
+            query=query,
+        )
+        rows, body, output_truncated = self._render(frame_rows, columns, preamble)
+
         result = TableResult(
             file_path=file_path,
             sheet=source.sheet,
             sheets=source.sheets,
-            columns=tuple(rows.columns),
-            dtypes=tuple(str(dtype) for dtype in rows.dtypes),
-            rows=tuple(
-                tuple(_cell(value) for value in row) for row in rows.iter_rows()
-            ),
+            columns=columns,
+            dtypes=dtypes,
+            rows=rows,
             total_rows=total,
-            truncated=collected.height > limit,
+            truncated=collected.height > limit or output_truncated,
             source_encoding=source.source_encoding,
             text_columns=source.text_columns,
         )
 
-        # Keep the structured rows aligned with the model-facing output.
-        body, dropped = self._render(result, query)
-
-        if dropped:
-            result = replace(
-                result, rows=result.rows[: len(result.rows) - dropped], truncated=True
-            )
-
         return ToolOutput(
-            data=result, formatted=body + hint_suffix(self._hints(result, query))
+            data=result,
+            formatted=body
+            + hint_suffix(
+                self._hints(
+                    result,
+                    query,
+                    can_increase_rows=(
+                        not output_truncated
+                        and collected.height > limit
+                        and limit < self.max_rows
+                    ),
+                )
+            ),
         )
 
-    def _render(self, result: TableResult, query: str | None) -> tuple[str, int]:
-        """Render the table and report how many row lines were omitted."""
-        lines = self._preamble(result, query)
+    def _render(
+        self,
+        frame: pl.DataFrame,
+        columns: tuple[str, ...],
+        lines: list[str],
+    ) -> tuple[tuple[tuple[str, ...], ...], str, bool]:
+        """Budget rows while rendering them, without converting a dropped tail."""
+        if frame.is_empty():
+            return (), "\n".join([*lines, "(no rows)"]), False
 
-        if not result.rows:
-            return "\n".join([*lines, "(no rows)"]), 0
-
-        width = min(len(result.columns), self.max_columns)
+        width = min(len(columns), self.max_columns)
         lines += [
-            f"| {' | '.join(result.columns[:width])} |",
+            f"| {' | '.join(columns[:width])} |",
             f"| {' | '.join('---' for _ in range(width))} |",
         ]
         spent = sum(len(line) + 1 for line in lines)
-        body, dropped = cap_lines(
-            (
+        kept: list[tuple[str, ...]] = []
+        rendered: list[str] = []
+
+        for values in frame.iter_rows():
+            row = tuple(_cell(value) for value in values)
+            line = (
                 f"| {' | '.join(truncate_line(cell, self.max_cell_chars) for cell in row[:width])} |"
-                for row in result.rows
-            ),
-            self.max_formatted_chars - spent,
-        )
+            )
+            extra = len(line) + (1 if rendered else 0)
 
-        return "\n".join([*lines, body]), dropped
+            if rendered and spent + extra > self.max_formatted_chars:
+                return tuple(kept), "\n".join([*lines, *rendered]), True
 
-    def _preamble(self, result: TableResult, query: str | None) -> list[str]:
+            kept.append(row)
+            rendered.append(line)
+            spent += extra
+
+        return tuple(kept), "\n".join([*lines, *rendered]), False
+
+    def _preamble(
+        self,
+        file_path: str,
+        source: _Source,
+        columns: tuple[str, ...],
+        dtypes: tuple[str, ...],
+        total_rows: int | None,
+        query: str | None,
+    ) -> list[str]:
         """Render the summary line, plus the schema when it was asked for."""
-        parts = [result.file_path]
+        parts = [file_path]
 
-        if result.sheet is not None:
-            parts.append(f"sheet '{result.sheet}'")
+        if source.sheet is not None:
+            parts.append(f"sheet '{source.sheet}'")
 
-        if result.total_rows is not None:
-            parts.append(f"{result.total_rows} {pluralize(result.total_rows, 'row')}")
+        if total_rows is not None:
+            parts.append(f"{total_rows} {pluralize(total_rows, 'row')}")
 
-        if result.source_encoding is not None:
-            parts.append(f"decoded from {result.source_encoding}")
+        if source.source_encoding is not None:
+            parts.append(f"decoded from {source.source_encoding}")
 
         lines = [", ".join(parts)]
 
         if query is not None:
             return lines
 
-        if len(result.sheets) > 1:
-            lines += ["", f"sheets: {', '.join(result.sheets)}"]
+        if len(source.sheets) > 1:
+            lines += ["", f"sheets: {', '.join(source.sheets)}"]
 
         # One column per line rather than a wide preview: the schema is the
         # point of this call, and a vertical list of it is never too wide.
         lines += ["", "columns:"]
         lines += [
             f"{name}: {dtype}"
-            for name, dtype in zip(result.columns, result.dtypes, strict=True)
+            for name, dtype in zip(columns, dtypes, strict=True)
         ]
 
         return [*lines, "", "sample:"]
 
-    def _hints(self, result: TableResult, query: str | None) -> list[str]:
+    def _hints(
+        self,
+        result: TableResult,
+        query: str | None,
+        *,
+        can_increase_rows: bool,
+    ) -> list[str]:
         """Name every cut, so a partial table cannot read as a complete one."""
         hints: list[str] = []
 
@@ -538,9 +606,14 @@ class QueryTableTool(AsyncPathTool[TableResult]):
             )
 
         if result.truncated and query is not None:
+            increase = (
+                f", increase row_limit up to {self.max_rows}"
+                if can_increase_rows
+                else ""
+            )
             hints.append(
-                f"{len(result.rows)} rows shown, narrow with WHERE or "
-                "aggregate with GROUP BY"
+                f"{len(result.rows)} rows shown{increase}, narrow with WHERE, "
+                "or aggregate with GROUP BY"
             )
 
         if query is None:

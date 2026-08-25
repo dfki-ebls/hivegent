@@ -68,6 +68,32 @@ class TestQueryTableTool:
         assert out.formatted is not None
         assert "10 rows shown" in out.formatted
 
+    async def test_model_can_request_more_than_default_row_limit(
+        self, tmp_path: Path
+    ) -> None:
+        rows = "\n".join(str(index) for index in range(150))
+        (tmp_path / "rows.csv").write_text(f"value\n{rows}")
+        tool = QueryTableTool(paths=tmp_path)
+
+        out = await tool("rows.csv", "SELECT * FROM t", row_limit=150)
+
+        assert len(out.data.rows) == 150
+        assert not out.data.truncated
+
+    async def test_render_budget_keeps_structured_rows_aligned(
+        self, tmp_path: Path
+    ) -> None:
+        tool = QueryTableTool(
+            paths=_sales_dir(tmp_path), max_formatted_chars=100
+        )
+
+        out = await tool("sales.csv", "SELECT * FROM t", row_limit=50)
+
+        assert 0 < len(out.data.rows) < 50
+        assert out.data.truncated
+        assert out.formatted is not None
+        assert f"{len(out.data.rows)} rows shown" in out.formatted
+
     async def test_legacy_encoding_is_decoded_and_reported(
         self, tmp_path: Path
     ) -> None:
