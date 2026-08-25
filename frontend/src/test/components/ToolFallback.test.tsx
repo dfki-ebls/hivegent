@@ -4,11 +4,6 @@ import { ToolFallback } from "@/components/chat/tools/ToolFallback";
 import { ToolApprovalProvider } from "@/hooks/chat/use-tool-approval";
 import type { ToolPart } from "@/lib/chat/tool-part";
 
-// The card lives inside a `Conversation`; only its scroll handler is needed here.
-vi.mock("@/hooks/chat/use-stay-scrolled-on-toggle", () => ({
-  useStayScrolledOnToggle: () => () => {},
-}));
-
 function part(state: ToolPart["state"]): ToolPart {
   return {
     type: "tool-write_document",

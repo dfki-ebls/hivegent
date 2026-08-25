@@ -1,16 +1,24 @@
 import type { ChatStatus } from "ai";
 import {
-  Conversation,
-  ConversationContent,
-  ConversationEmptyState,
-  ConversationScrollButton,
-} from "@/components/ai-elements/conversation";
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller";
 import { Loader } from "@/components/ai-elements/loader";
 import { ChatError } from "@/components/chat/ChatError";
 import { CompactionBanner } from "@/components/chat/CompactionBanner";
 import { ContextLimitBanner } from "@/components/chat/ContextLimitBanner";
 import { MessageBubble } from "@/components/chat/MessageBubble";
-import { type ChatMessage, isContextLengthError, showThinkingLoader } from "@/lib/chat/chat-utils";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import {
+  type ChatMessage,
+  isChatBusy,
+  isContextLengthError,
+  showThinkingLoader,
+} from "@/lib/chat/chat-utils";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -51,49 +59,84 @@ export function MessageList({
 }: MessageListProps) {
   const contextLimitReached = isContextLengthError(chatError);
 
-  // `resize="instant"`: the default spring keeps its accumulated velocity when
-  // the browser clamps the scroll at the bottom, so content growing in bursts (a
-  // tool card's parameters streaming into an open accordion) overshoots and gets
-  // yanked back every frame, visibly bouncing. Only the resize follow is
-  // instant; the initial scroll and the scroll-to-bottom button stay smooth.
+  if (isLoadingHistory) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <Loader />
+      </div>
+    );
+  }
+
   return (
-    <Conversation className="min-h-0 flex-1" resize="instant">
-      <ConversationContent className="gap-3">
-        <CompactionBanner compactedFrom={compactedFrom} onNavigatePrevious={onNavigatePrevious} />
-        {isLoadingHistory && <Loader />}
-        {!isLoadingHistory && messages.length === 0 && !chatError && (
-          <ConversationEmptyState
-            title="Ask about your documents"
-            description="Start a conversation to search and explore your documents."
-          />
-        )}
-        {messages.map((message, index) => (
-          <MessageBubble
-            key={message.id}
-            message={message}
-            isLastMessage={index === messages.length - 1}
-            status={status}
-            editingId={editingId}
-            onSetEditing={onSetEditing}
-            onCancelEdit={onCancelEdit}
-            onSubmitEdit={onSubmitEdit}
-            onRegenerate={onRegenerate}
-            onExecutePlan={index === messages.length - 1 ? onExecutePlan : undefined}
-          />
-        ))}
-        {showThinkingLoader(messages, status) && <Loader />}
-        {contextLimitReached && (
-          <ContextLimitBanner
-            disabled={compactDisabled}
-            onCompact={onCompact}
-            onDismiss={onDismissError}
-          />
-        )}
-        {chatError && !contextLimitReached && (
-          <ChatError message={chatError} onRetry={onRetry} onDismiss={onDismissError} />
-        )}
-      </ConversationContent>
-      <ConversationScrollButton />
-    </Conversation>
+    <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor">
+      <MessageScroller className="min-h-0 flex-1">
+        <MessageScrollerViewport>
+          <MessageScrollerContent
+            aria-busy={isChatBusy(status)}
+            className="gap-3 p-4"
+          >
+            {compactedFrom && (
+              <MessageScrollerItem>
+                <CompactionBanner
+                  compactedFrom={compactedFrom}
+                  onNavigatePrevious={onNavigatePrevious}
+                />
+              </MessageScrollerItem>
+            )}
+            {messages.length === 0 && !chatError && (
+              <MessageScrollerItem className="flex min-h-[50vh]">
+                <Empty className="p-8">
+                  <EmptyHeader className="gap-1">
+                    <EmptyTitle className="text-sm">Ask about your documents</EmptyTitle>
+                    <EmptyDescription>
+                      Start a conversation to search and explore your documents.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              </MessageScrollerItem>
+            )}
+            {messages.map((message, index) => (
+              <MessageScrollerItem
+                key={message.id}
+                messageId={message.id}
+                scrollAnchor={message.role === "user"}
+              >
+                <MessageBubble
+                  message={message}
+                  isLastMessage={index === messages.length - 1}
+                  status={status}
+                  editingId={editingId}
+                  onSetEditing={onSetEditing}
+                  onCancelEdit={onCancelEdit}
+                  onSubmitEdit={onSubmitEdit}
+                  onRegenerate={onRegenerate}
+                  onExecutePlan={index === messages.length - 1 ? onExecutePlan : undefined}
+                />
+              </MessageScrollerItem>
+            ))}
+            {showThinkingLoader(messages, status) && (
+              <MessageScrollerItem className="flex justify-center">
+                <Loader />
+              </MessageScrollerItem>
+            )}
+            {contextLimitReached && (
+              <MessageScrollerItem>
+                <ContextLimitBanner
+                  disabled={compactDisabled}
+                  onCompact={onCompact}
+                  onDismiss={onDismissError}
+                />
+              </MessageScrollerItem>
+            )}
+            {chatError && !contextLimitReached && (
+              <MessageScrollerItem>
+                <ChatError message={chatError} onRetry={onRetry} onDismiss={onDismissError} />
+              </MessageScrollerItem>
+            )}
+          </MessageScrollerContent>
+        </MessageScrollerViewport>
+        <MessageScrollerButton />
+      </MessageScroller>
+    </MessageScrollerProvider>
   );
 }

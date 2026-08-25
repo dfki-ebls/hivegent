@@ -9,7 +9,6 @@ import {
   PlanTrigger,
 } from "@/components/ai-elements/plan";
 import { Button } from "@/components/ui/button";
-import { useStayScrolledOnToggle } from "@/hooks/chat/use-stay-scrolled-on-toggle";
 import { parseJson, type ToolPart } from "@/lib/chat/tool-part";
 
 interface CreatePlanToolProps {
@@ -20,10 +19,9 @@ interface CreatePlanToolProps {
 export function CreatePlanTool({ part, onExecutePlan }: CreatePlanToolProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
   const input = parseJson<{ title?: string; description?: string; steps?: string[] }>(part.input);
-  const stayScrolled = useStayScrolledOnToggle();
 
   return (
-    <Plan defaultOpen isStreaming={state === "input-streaming"} onOpenChange={stayScrolled}>
+    <Plan defaultOpen isStreaming={state === "input-streaming"}>
       <PlanHeader>
         <div>
           <PlanTitle>{input?.title ?? "Plan"}</PlanTitle>

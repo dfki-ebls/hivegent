@@ -6,7 +6,7 @@ import {
 } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getAuthHeaders } from "@/lib/api";
-import { type ChatMessage, adoptMessageNodeId } from "@/lib/chat/chat-utils";
+import { type ChatMessage, adoptMessageNodeId, isChatBusy } from "@/lib/chat/chat-utils";
 import { API_BASE_URL } from "@/lib/health";
 import type { SubagentSteps, SubagentUpdate } from "@/lib/chat/subagent";
 
@@ -189,7 +189,7 @@ export function useHivegentChat(
     await regenerate({ headers: await getAuthHeaders() });
   }, [regenerate]);
 
-  const isStreaming = chat.status === "submitted" || chat.status === "streaming";
+  const isStreaming = isChatBusy(chat.status);
 
   // Belt-and-suspenders behind StreamingNavGuard: abort the run on a teardown
   // that isn't a navigation (e.g. an error boundary), so it never outlives its UI.

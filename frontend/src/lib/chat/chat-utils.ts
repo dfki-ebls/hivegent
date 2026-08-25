@@ -1,6 +1,11 @@
 import type { UIMessage } from "@ai-sdk/react";
 import type { ChatStatus, FileUIPart } from "ai";
 
+/** Whether a chat request is waiting for or receiving model output. */
+export function isChatBusy(status: ChatStatus): boolean {
+  return status === "submitted" || status === "streaming";
+}
+
 /**
  * Whether to show the standalone "thinking" loader below the conversation.
  *
@@ -11,12 +16,11 @@ import type { ChatStatus, FileUIPart } from "ai";
  * stays open with no visible output until the model starts its next block.
  */
 export function showThinkingLoader(messages: UIMessage[], status: ChatStatus): boolean {
-  const busy = status === "submitted" || status === "streaming";
   const last = messages.at(-1)?.parts.at(-1);
   const streamingOutput =
     (last?.type === "text" || last?.type === "reasoning") && last.state === "streaming";
 
-  return busy && !streamingOutput;
+  return isChatBusy(status) && !streamingOutput;
 }
 
 /** Concatenate text from all text parts of a message (or part list). */
