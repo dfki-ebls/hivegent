@@ -2,8 +2,10 @@
 
 from collections.abc import Awaitable
 
+from fastmcp import Context
 from fastmcp.dependencies import Depends
 from fastmcp.exceptions import ToolError
+from mcp.types import InputRequiredResult
 
 from ... import workspace
 from ...config import settings
@@ -22,6 +24,7 @@ from ...tools.mutations import (
 from ...workspace_events import announcing_mutator
 from ..app import mcp_app
 from ..common import get_mcp_user_store
+from ..confirmation import MUTATION_ANNOTATIONS, PendingMutation, confirm_mutation
 
 __all__ = ["edit_document", "write_document"]
 
@@ -32,15 +35,28 @@ async def _apply(result: Awaitable[ToolOutput[str]]) -> str:
         return (await result).data
 
 
-@mcp_app.tool(description=tool_description(EditDocumentTool))
+@mcp_app.tool(
+    description=tool_description(EditDocumentTool), annotations=MUTATION_ANNOTATIONS
+)
 async def edit_document(
     file_path: DocumentTargetPathArg,
     old_string: EditOldStringArg,
     new_string: EditNewStringArg,
+    ctx: Context,
     replace_all: EditReplaceAllArg = False,
     expected_hash: ExpectedHashArg = None,
     store: Casebase = Depends(get_mcp_user_store),
-) -> str:
+) -> str | InputRequiredResult:
+    ask = confirm_mutation(
+        ctx,
+        PendingMutation(
+            summary=f"edit to '{file_path}'",
+            payload=(old_string, new_string, str(replace_all)),
+        ),
+    )
+    if ask is not None:
+        return ask
+
     tool = EditDocumentTool(
         paths=SearchPath(
             path=store.workspace_dir(settings.data_dir), scope=store.scope
@@ -54,14 +70,27 @@ async def edit_document(
     )
 
 
-@mcp_app.tool(description=tool_description(WriteDocumentTool))
+@mcp_app.tool(
+    description=tool_description(WriteDocumentTool), annotations=MUTATION_ANNOTATIONS
+)
 async def write_document(
     file_path: DocumentTargetPathArg,
     content: DocumentContentArg,
+    ctx: Context,
     mode: WriteModeArg = "replace",
     expected_hash: ExpectedHashArg = None,
     store: Casebase = Depends(get_mcp_user_store),
-) -> str:
+) -> str | InputRequiredResult:
+    ask = confirm_mutation(
+        ctx,
+        PendingMutation(
+            summary=f"{mode} of '{file_path}' ({len(content)} characters)",
+            payload=(content,),
+        ),
+    )
+    if ask is not None:
+        return ask
+
     tool = WriteDocumentTool(
         paths=SearchPath(
             path=store.workspace_dir(settings.data_dir), scope=store.scope
