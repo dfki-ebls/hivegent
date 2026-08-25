@@ -170,14 +170,17 @@ Two properties of that design are deliberate for now and are the places to revis
 
 ### Preparing for a read-write shell tool
 
-A future shell tool will let the agent run native commands such as `ls`, `cat`, `find`, `grep`, and editors that modify files directly, bypassing the structured mutation gateway.
-The ingest seam above is the integration point: after a session, call `workspace.sync_entries_from_disk(store, touched_paths)` under the casebase lock to fold the filesystem changes back into SQL.
+A future shell tool will let the agent run native commands such as `ls`, `cat`, `find`, `grep`, and editors that modify files directly, bypassing the structured mutation gateway inside an isolated session.
+The live filesystem and its SQL index stay unchanged while commands run, and an explicit checkpoint folds an approved session diff back into both before notifying clients.
 The following pieces still need to be built before that tool ships, and none of them require breaking changes to the code above.
 
-- TODO(shell): sandbox arbitrary command execution per casebase (bind-mount only that store's workspace, no or restricted network, resource, time, and output-size limits). `subprocesses.run` is unsandboxed and is safe only for the fixed-argument tools (`rg`, `jq`, `pandoc`), not for agent-driven commands.
-- TODO(shell): run each session against an isolated working copy or overlay of the store so the casebase lock is taken only at fold-back time, never held for an interactive session. overlayfs and `systemd-nspawn` are Linux-only, so dev on macOS needs a copy-based working dir or a Linux VM.
-- TODO(shell): surface the session diff for approval before fold-back, which keeps the "mutations go through a gateway" guarantee and gives free rollback (discard the working copy).
-- TODO(shell): decide whether shell-created binaries and converter-backed formats should be auto-converted into entries at fold-back. A shell-created text file already becomes one (`is_projectable_original`), but a `.pdf` or `.csv` stays inert on disk until it is uploaded or reconverted, because folding it in means running a converter — affordable in a session's fold-back, unlike in the boot sweep that shares this ingest path.
+- TODO(shell): put arbitrary command execution behind a dedicated sandbox runner with a narrow session API rather than adding a shell or container-runtime socket to the backend, and let the runner implementation select an OCI sandbox, `systemd-nspawn`, or a stronger runtime without changing the agent tool.
+- TODO(shell): sandbox each session per casebase as an unprivileged user with only that store's working copy visible, no backend secrets or service sockets, no capabilities or devices, a read-only root, and explicit network, CPU, memory, process, duration, output, and disk limits. `subprocesses.run` is unsandboxed and is safe only for the fixed-argument tools (`rg`, `jq`, `pandoc`), not for agent-driven commands.
+- TODO(shell): run each session against an isolated working copy or overlay of the store so the casebase lock is never held while commands run, with a copy-based directory or Linux VM for macOS development because overlayfs and `systemd-nspawn` are Linux-only.
+- TODO(shell): compute the session diff in trusted runner code, surface it for approval, and make checkpoints explicit so a session can fold back several times or discard every pending change for free.
+- TODO(shell): add one workspace fold-back gateway that maps every created, changed, renamed, and deleted physical path to its logical entry, prepares converter-backed formats outside the lock, acquires the casebase lock, rejects changes whose live starting hashes moved, marks the affected entries in flight, applies the diff, synchronizes them through the disk-to-SQL ingest seam, clears the claims, and only then notifies clients.
+- TODO(shell): keep an entry whose synchronization failed out of retrieval rather than serving stale chunks, retain its dirty state for retry, and report the checkpoint as unsettled until every affected indexable entry succeeds.
+- TODO(shell): decide which shell-created binaries and converter-backed formats become entries at fold-back. A shell-created plain-text file can use `is_projectable_original`, a changed existing original must refresh its projection, and a new `.pdf` or `.csv` may either run the upload conversion pipeline or remain explicitly inert on disk.
 - TODO(shell): keep all workspace access behind `Casebase.workspace_dir(data_dir)` so the working-copy root can be injected in one place. Do not hardcode the workspace path elsewhere.
 
 ## Video and animated-media pipeline
