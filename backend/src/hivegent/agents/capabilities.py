@@ -39,6 +39,7 @@ from ..prompts import (
     MEMORY_INSTRUCTIONS_EMPTY,
     PLAN_INSTRUCTIONS,
     PYTHON_INSTRUCTIONS,
+    SCRATCH_INSTRUCTIONS,
     VERSION_INSTRUCTIONS,
     WORKSPACE_PATH_INSTRUCTIONS,
     WRITE_INSTRUCTIONS,
@@ -195,6 +196,9 @@ SHARED_INSTRUCTIONS: tuple[SharedInstructions, ...] = (
     ),
     SharedInstructions(
         "citation", frozenset({"explore", "web"}), CITATION_INSTRUCTIONS
+    ),
+    SharedInstructions(
+        "scratch", frozenset({"compute", "write"}), SCRATCH_INSTRUCTIONS
     ),
 )
 """Guidance spanning several features, composed while any of them is live."""

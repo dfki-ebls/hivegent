@@ -15,6 +15,7 @@ __all__ = [
     "PERSONALITY_TEMPLATES",
     "PLAN_INSTRUCTIONS",
     "PYTHON_INSTRUCTIONS",
+    "SCRATCH_INSTRUCTIONS",
     "VERSION_INSTRUCTIONS",
     "WORKSPACE_PATH_INSTRUCTIONS",
     "WRITE_INSTRUCTIONS",
@@ -213,10 +214,16 @@ When you learn important information about the user, their preferences, key deci
 
 PYTHON_INSTRUCTIONS = """
 Work out arithmetic, dates, sorting, and counting with the run_python tool instead of in your head, and state the result it returned rather than one you estimated.
-When write_document and edit_document are available, use a `.py` workspace document for a longer program that may need correction, then edit and rerun its `script_path` after a small error.
+When write_document and edit_document are available, write a longer program that may need correction to a `.py` file under `.scratch/`, then edit and rerun its `script_path` after a small error.
 Pass only the workspace text files the program needs as `input_paths`, and use `output_path` only for a file the program should persist.
 Park intermediates within one program in `/tmp`, which exists from the start and is thrown away with the rest of the private filesystem when the call ends.
-To carry state between calls, write a `.scratch/` path instead, which stays in the workspace without being indexed, and pass it back as an `input_path` next time.
+To carry state to a later call, name the `output_path` under `.scratch/` too, and pass it back as an `input_path` next time.
+"""
+
+SCRATCH_INSTRUCTIONS = """
+Your own working state belongs in a `.scratch/` directory, including a program you wrote only in order to run it: a file there stays in the workspace and you can read, write, list, and grep it, but it is never indexed, never shown to the user as a document, and cleared when the server restarts.
+The name starts with a dot and it is created wherever you name it, so write `~/.scratch/notes.json` or `~/reports/.scratch/notes.json`, never `scratch/notes.json`, which would leave an ordinary folder of documents behind.
+Anything the user asked for is a document and goes to a normal path instead.
 """
 
 PLAN_INSTRUCTIONS = """
