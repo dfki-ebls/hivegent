@@ -41,6 +41,7 @@ The agent works through a set of tools, grouped into toolsets, and chooses which
 | Toolset               | What it lets the assistant do                                                                    | Availability                 |
 | --------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------- |
 | Search and read       | Search your documents by meaning or exact text and open whole documents or single passages       | Always                       |
+| Calculations          | Run a small Python program in a sandbox to work out numbers, dates, and counts reliably          | Always                       |
 | Delegated exploration | Spin off focused sub-agents to explore documents, past conversations, or the web and report back | Always                       |
 | Conversation history  | Look back over earlier conversations to reuse what was already established                       | Always                       |
 | Memory                | Save useful facts to recall in later conversations                                               | Always                       |

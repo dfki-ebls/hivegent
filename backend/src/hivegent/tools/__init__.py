@@ -25,6 +25,7 @@ from .grep import GrepLine, GrepMatch, GrepTool
 from .jq import JqTool
 from .mutations import EditDocumentTool, WriteDocumentTool
 from .plan import CreatePlanTool
+from .python import PythonResult, RunPythonTool
 from .retrieval import SearchResult, SearchType, VectorSearchTool
 from .scope import Scope
 from .table import QueryTableTool, TableResult
@@ -45,9 +46,11 @@ __all__ = [
     "GrepTool",
     "JqTool",
     "ListDocumentsTool",
+    "PythonResult",
     "QueryTableTool",
     "ReadBinaryDocumentTool",
     "ReadDocumentTool",
+    "RunPythonTool",
     "Scope",
     "SearchPath",
     "SearchPathFilterFunc",

@@ -19,4 +19,10 @@ the ``spawn`` start method and rely on ``hivegent/__main__.py`` being
 import-guarded so a worker never re-runs the CLI.  Worker bodies live in
 dependency-light leaf modules (e.g. :mod:`.pdf`) with heavy libraries imported
 lazily inside the function, keeping worker startup fast.
+
+The Monty sandbox pool (:mod:`hivegent.sandbox`, sized by
+``sandbox.max_processes``) is a third set of long-lived worker processes whose
+count adds to these again, but it belongs to neither mechanism: it runs
+sandboxed source rather than a picklable callable, over a worker protocol Monty
+owns end to end.
 """

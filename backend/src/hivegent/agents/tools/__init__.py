@@ -1,5 +1,6 @@
 """Built-in agent toolset registrations."""
 
+from .compute import compute_toolset
 from .conversation import conversation_toolset
 from .explore import explore_toolset
 from .memory import memory_toolset
@@ -11,6 +12,7 @@ from .write import write_toolset
 __all__ = [
     "SUBAGENT_CAPABILITIES",
     "SubagentName",
+    "compute_toolset",
     "conversation_toolset",
     "explore_toolset",
     "memory_toolset",

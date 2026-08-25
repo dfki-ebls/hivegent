@@ -38,6 +38,7 @@ from ..prompts import (
     MEMORY_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS_EMPTY,
     PLAN_INSTRUCTIONS,
+    PYTHON_INSTRUCTIONS,
     VERSION_INSTRUCTIONS,
     WORKSPACE_PATH_INSTRUCTIONS,
     WRITE_INSTRUCTIONS,
@@ -47,6 +48,7 @@ from ..types import MODE_VALUES, Mode, ToolSchema, ToolsSpec
 from .common import UserDeps, scope_instructions
 from .guards import IterationLimitWarner, ToolOutputLimit
 from .tools import (
+    compute_toolset,
     conversation_toolset,
     explore_toolset,
     memory_toolset,
@@ -144,6 +146,7 @@ FEATURES: tuple[Feature, ...] = (
             scope_instructions,
         ],
     ),
+    Feature.build("compute", compute_toolset, instructions=PYTHON_INSTRUCTIONS),
     Feature.build("subagent", subagent_toolset),
     Feature.build(
         "write", write_toolset, instructions=WRITE_INSTRUCTIONS, modes=_MUTATING

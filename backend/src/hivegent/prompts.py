@@ -14,6 +14,7 @@ __all__ = [
     "MEMORY_INSTRUCTIONS_EMPTY",
     "PERSONALITY_TEMPLATES",
     "PLAN_INSTRUCTIONS",
+    "PYTHON_INSTRUCTIONS",
     "VERSION_INSTRUCTIONS",
     "WORKSPACE_PATH_INSTRUCTIONS",
     "WRITE_INSTRUCTIONS",
@@ -208,6 +209,10 @@ Always include previously saved information you want to retain, as the tool over
 MEMORY_INSTRUCTIONS_EMPTY = """
 You have persistent memory that is preserved across conversations, but it is currently empty.
 When you learn important information about the user, their preferences, key decisions, or ongoing projects, use the save_memory tool to start building your memory.
+"""
+
+PYTHON_INSTRUCTIONS = """
+Work out arithmetic, dates, sorting, and counting with the run_python tool instead of in your head, and state the result it returned rather than one you estimated.
 """
 
 PLAN_INSTRUCTIONS = """

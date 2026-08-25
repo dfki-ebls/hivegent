@@ -45,6 +45,10 @@
   Every budget is applied before the `TableResult` is built, and only the row lines are budgeted, so the count the rows are trimmed by is exactly a row count.
   Rows are cut on both channels, while column and cell width bind the rendering only, matching how a read trims to the lines it showed but keeps each one whole in `content`.
   The read tools still serve the markdown projection, which is what retrieval and citation line anchors are built on.
+- The model computes with `run_python`, a Monty sandbox that reaches nothing outside itself: no network, no filesystem, no host functions, and a budget on execution time and memory that surfaces to the model as a plain `TimeoutError` or `MemoryError`.
+  Whatever a program works on is passed in as a literal, deliberately, since an `external_lookup` entry or a mount would be an unconstrained filesystem primitive written here, next to the read tools that already do that job under their own path and scope checks.
+  The worker pool is owned by the FastAPI lifespan (`sandbox.py`), like the HTTP clients, because a tool instance is built per call and a pool per call would spawn and reap a worker every time.
+  Every call takes a fresh session out of it: `max_duration_secs` counts cumulatively per session, so a reused session that once ran long would fail every later call with a timeout it did not cause.
 - A chat turn attaches images and nothing else, gated on `converters.INGESTIBLE_IMAGE_MEDIA_TYPES`, the media types every vision backend ingests identically, so no `BinaryContentMode` policy and no conversion runs on the chat's latency budget.
   Anything else belongs in a workspace, whose upload pipeline converts, chunks, and indexes it once for retrieval rather than spending context on it every turn, since an attachment is stored once but re-sent to the model on each later turn of the conversation.
   `/settings` serves the same table and the size cap to the client as `AttachmentLimits`, so the file picker refuses what the chat route would refuse and a rejection costs no round trip.

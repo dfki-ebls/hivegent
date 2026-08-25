@@ -41,6 +41,7 @@ Der Agent arbeitet mit einer Reihe von Werkzeugen, die in Werkzeuggruppen geglie
 | Werkzeuggruppe       | Was sie dem Assistenten ermöglicht                                                                           | Verfügbarkeit                |
 | -------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------- |
 | Suchen und Lesen     | Ihre Dokumente nach Bedeutung oder exaktem Text durchsuchen und ganze Dokumente oder einzelne Stellen öffnen | Immer                        |
+| Berechnungen         | Ein kleines Python-Programm in einer Sandbox ausführen, um Zahlen, Daten und Anzahlen zuverlässig zu ermitteln | Immer                        |
 | Delegierte Erkundung | Fokussierte Unteragenten starten, die Dokumente, frühere Unterhaltungen oder das Web erkunden und berichten  | Immer                        |
 | Unterhaltungsverlauf | In früheren Unterhaltungen nachsehen, um bereits Geklärtes wiederzuverwenden                                 | Immer                        |
 | Gedächtnis           | Nützliche Fakten speichern, um sie in späteren Unterhaltungen abzurufen                                      | Immer                        |

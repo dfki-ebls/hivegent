@@ -27,6 +27,7 @@ dependencies = [
   "polars>=1,<2",
   "psycopg[binary]>=3,<4",
   "pydantic-ai-slim[ui,openai,mcp]>=2,<3",
+  "pydantic-monty>=0.0.21,<0.0.22",
   "pydantic-settings>=2,<3",
   "pypdfium2>=5,<6",
   "sentence_transformers>=5,<6",

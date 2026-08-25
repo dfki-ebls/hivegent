@@ -612,6 +612,34 @@ class ToolsSettings(BaseModel):
     enable_web: bool = False
 
 
+class SandboxSettings(BaseModel):
+    """Worker pool and resource budget for the model's Python sandbox.
+
+    The pool settings size the `monty` worker subprocesses the ``run_python``
+    tool checks sessions out of: ``min_processes`` workers stay warm so a
+    snippet never pays a process start, and ``max_processes`` (the CPU count by
+    default) caps how many snippets run at once, with further checkouts waiting
+    up to ``checkout_timeout_seconds`` for a worker to come free.  These
+    processes are additive to the conversion pools (:mod:`hivegent.workers`),
+    which are sized on their own.
+
+    The budgets bound one snippet.  ``max_duration_seconds`` counts only time
+    the interpreter spends executing bytecode, and ``max_memory_bytes`` counts
+    what the worker's allocator hands out, both enforced inside the sandbox and
+    reported to the model as a plain ``TimeoutError`` or ``MemoryError`` it can
+    correct its code from.  ``request_timeout_seconds`` is the parent-side
+    backstop behind them: a worker that blows past it is killed and replaced,
+    so it should sit comfortably above ``max_duration_seconds``.
+    """
+
+    min_processes: int = 1
+    max_processes: int | None = None
+    checkout_timeout_seconds: float | None = 30.0
+    request_timeout_seconds: float | None = 60.0
+    max_duration_seconds: float = 5.0
+    max_memory_bytes: int = 256_000_000
+
+
 class ComputeSettings(BaseModel):
     """Framework-agnostic compute tunables shared by every neural backend.
 
@@ -850,6 +878,7 @@ class Settings(BaseSettings):
     auth: AuthSettings = AuthSettings()
     security: SecuritySettings = SecuritySettings()
     tools: ToolsSettings = ToolsSettings()
+    sandbox: SandboxSettings = SandboxSettings()
     compute: ComputeSettings = ComputeSettings()
     conversion: ConversionSettings = ConversionSettings()
     limits: LimitsSettings = LimitsSettings()

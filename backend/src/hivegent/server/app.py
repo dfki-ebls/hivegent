@@ -18,6 +18,7 @@ from ..mcp import mcp_app
 from ..observability import configure_observability
 from ..reconcile import reconcile_all
 from ..retrieval import reconcile_index_state, warm_index
+from ..sandbox import monty_pool_lifespan
 from ..workers.pool import pipeline_pool
 from .access_log import install_probe_access_filter
 from .maintenance import load_persisted_state
@@ -101,7 +102,7 @@ async def _verify_fts_config() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open shared resources and delegate to MCP."""
-    async with shared_http_client_lifespan(), engine_lifespan():
+    async with monty_pool_lifespan(), shared_http_client_lifespan(), engine_lifespan():
         await apply_migrations()
         await _verify_vector_dim()
         await _verify_fts_config()

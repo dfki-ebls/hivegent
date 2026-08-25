@@ -1,10 +1,13 @@
 """Unit tests for shared tool classes and ToolFactory."""
 
 import json
+from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from pydantic_monty import AsyncMonty
 
 from hivegent.converters import VISION_MEDIA_TYPES
 from hivegent.store import WorkspaceScope
@@ -21,6 +24,7 @@ from hivegent.tools.documents import (
 from hivegent.tools.grep import GrepLine, GrepMatch, GrepTool
 from hivegent.tools.jq import JqTool
 from hivegent.tools.mutations import EditDocumentTool, WriteDocumentTool
+from hivegent.tools.python import PythonResult, RunPythonTool
 
 
 def _as_summaries(
@@ -904,3 +908,44 @@ class TestGrepFormatting:
         )
         assert formatted == "a.md\n1:x\n---\nb.md\n1:x"
         assert "omitted" not in formatted
+
+
+class TestRunPythonTool:
+    """Tests for RunPythonTool."""
+
+    @pytest.fixture()
+    async def tool(self) -> AsyncIterator[RunPythonTool]:
+        async with AsyncMonty(min_processes=1) as pool:
+            yield RunPythonTool(pool=pool)
+
+    async def test_returns_value_and_printed_output(self, tool: RunPythonTool) -> None:
+        result = await tool("import math\nprint('working')\nmath.factorial(5)")
+        assert result.data == PythonResult(result="120", stdout="working")
+        assert result.text == "working\nResult: 120"
+
+    async def test_statement_only_program_has_no_result(
+        self, tool: RunPythonTool
+    ) -> None:
+        result = await tool("total = 1 + 1")
+        assert result.data == PythonResult()
+        assert "no value" in result.text
+
+    async def test_failure_retries_with_traceback_and_prior_output(
+        self, tool: RunPythonTool
+    ) -> None:
+        with pytest.raises(ToolRetry, match="ZeroDivisionError") as exc_info:
+            await tool("print('before')\n1 / 0")
+        assert "before" in str(exc_info.value)
+
+    async def test_time_limit_bounds_a_runaway_program(
+        self, tool: RunPythonTool
+    ) -> None:
+        bounded = replace(tool, limits={"max_duration_secs": 0.2})
+        with pytest.raises(ToolRetry, match="TimeoutError"):
+            await bounded("while True:\n    pass")
+
+    async def test_printed_output_is_capped(self, tool: RunPythonTool) -> None:
+        capped = replace(tool, max_output_chars=20)
+        result = await capped("for i in range(50):\n    print('line', i)")
+        assert result.data.truncated
+        assert "more printed lines]" in result.text
