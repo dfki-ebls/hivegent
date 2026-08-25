@@ -17,7 +17,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from hivegent.agents.summarize import _format_messages_for_summary, summarize_messages
 from hivegent.llm import summary_model_settings
-from hivegent.types import LlmConfig
+from hivegent.llm_config import LlmConfig
 
 models.ALLOW_MODEL_REQUESTS = False
 

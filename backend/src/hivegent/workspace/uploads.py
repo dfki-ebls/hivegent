@@ -16,8 +16,9 @@ from ..config import settings
 from ..converters.base import is_markdown_suffix
 from ..db import documents as db_documents
 from ..entries import entry_exists, resolve_entry_paths, stem_path_from_reference
+from ..llm_config import LlmConfig
 from ..store import Casebase
-from ..types import LlmConfig, PipelineSpec, ProgressReporter, UploadCompleteEvent
+from ..types import PipelineSpec, ProgressReporter, UploadCompleteEvent
 from .commit import _ensure_upload_slot_locked, _phased_upload
 from .metadata import _merge_entry_paths, resolve_entry
 from .paths import _enforce_file_size

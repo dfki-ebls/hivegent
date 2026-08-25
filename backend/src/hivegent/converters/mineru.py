@@ -45,8 +45,6 @@ class MinerUConverterConfig(BaseModel):
     """Configuration for the MinerU conversion pipeline."""
 
 
-# MinerU has no public format listing API.
-# https://github.com/opendatalab/MinerU#supported-file-types
 @dataclass(slots=True, frozen=True)
 class MinerUConverter(DocumentConverter):
     """Document converter using the MinerU library (pipeline backend).
@@ -56,18 +54,6 @@ class MinerUConverter(DocumentConverter):
     """
 
     name = "mineru"
-    label = "MinerU"
-    description = "High-quality PDF parsing (no XLSX)"
-    extensions = frozenset(
-        {
-            ".pdf",
-            ".docx",
-            ".pptx",
-            ".png",
-            ".jpg",
-            ".jpeg",
-        }
-    )
     config: MinerUConverterConfig = field(default_factory=MinerUConverterConfig)
     device: str = field(default="auto", kw_only=True)
     """Compute device for the models (``"auto"`` self-detects); code-level, not a setting."""

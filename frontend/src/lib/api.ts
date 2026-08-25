@@ -22,6 +22,7 @@ import {
   BackendSettingsSchema,
   type ChunkedDocumentResponse,
   ChunkedDocumentResponseSchema,
+  type ChunkingPipeline,
   type ChunkingPipelineInfo,
   ChunkingPipelineInfoSchema,
   type CompactConversationResponse,
@@ -32,6 +33,7 @@ import {
   type ConversationArchive,
   ConversationSummarySchema,
   type ServerConversation,
+  type ConversionPipeline,
   type ConversionPipelineInfo,
   ConversionPipelineInfoSchema,
   type DirectoryTreeResponse,
@@ -42,6 +44,8 @@ import {
   type JobView,
   JobViewSchema,
   type LlmConfig,
+  type PipelineConfigInfo,
+  PipelineConfigInfoSchema,
   type ToolInfo,
   ToolInfoSchema,
   type ToolRunResult,
@@ -741,6 +745,16 @@ export async function listConversionPipelines(): Promise<ConversionPipelineInfo[
   );
 }
 
+export async function getConversionPipelineConfig(
+  pipeline: ConversionPipeline,
+): Promise<PipelineConfigInfo> {
+  return requestJson(
+    `${API_BASE_URL}/api/pipelines/conversion/${encodeURIComponent(pipeline)}/config`,
+    "Failed to get conversion pipeline configuration",
+    PipelineConfigInfoSchema,
+  );
+}
+
 // Chunking pipeline API functions
 
 export async function listChunkingPipelines(): Promise<ChunkingPipelineInfo[]> {
@@ -748,6 +762,16 @@ export async function listChunkingPipelines(): Promise<ChunkingPipelineInfo[]> {
     `${API_BASE_URL}/api/pipelines/chunking`,
     "Failed to get chunking pipelines",
     z.array(ChunkingPipelineInfoSchema),
+  );
+}
+
+export async function getChunkingPipelineConfig(
+  pipeline: ChunkingPipeline,
+): Promise<PipelineConfigInfo> {
+  return requestJson(
+    `${API_BASE_URL}/api/pipelines/chunking/${encodeURIComponent(pipeline)}/config`,
+    "Failed to get chunking pipeline configuration",
+    PipelineConfigInfoSchema,
   );
 }
 

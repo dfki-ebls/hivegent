@@ -55,8 +55,6 @@ class FastDocumentChunker(DocumentChunker):
     """
 
     name = "fast"
-    label = "Fast"
-    description = "High-throughput delimiter-based splitting"
     config: FastChunkerConfig = field(default_factory=FastChunkerConfig)
 
     def _split_sync(self, text: str) -> list[ChunkData]:

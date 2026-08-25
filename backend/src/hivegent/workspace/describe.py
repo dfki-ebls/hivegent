@@ -17,7 +17,7 @@ from ..converters.video import (
     sample_animated_image,
     sample_video,
 )
-from ..types import LlmConfig, resolve_llm_config
+from ..llm_config import LlmConfig, resolve_llm_config
 
 __all__: list[str] = []
 

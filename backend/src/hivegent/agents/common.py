@@ -8,10 +8,11 @@ from pydantic import Field
 from pydantic_ai import RunContext
 
 from ..config import settings
+from ..llm_config import LlmConfig
 from ..prompts import format_document_scope
 from ..store import Casebase, build_search_paths
 from ..tools.base import SearchPath
-from ..types import DocumentFilter, LlmConfig
+from ..types import DocumentFilter
 from .subagent_events import SubagentUpdate
 
 __all__ = [

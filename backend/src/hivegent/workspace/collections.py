@@ -32,13 +32,13 @@ from ..entries import (
     stem_path_from_reference,
 )
 from ..humanize import format_bytes
+from ..llm_config import LlmConfig
 from ..store import Casebase
 from ..text import NOT_TEXT_REASON, read_text_file
 from ..types import (
     CollectionCompleteEvent,
     CollectionProgressEvent,
     FailedFile,
-    LlmConfig,
     PipelineSpec,
 )
 from .locks import _store_claim

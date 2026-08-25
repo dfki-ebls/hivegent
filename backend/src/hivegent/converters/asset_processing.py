@@ -31,7 +31,7 @@ from pydantic_ai import BinaryContent
 
 from ..agents.app import base_agent
 from ..llm import model_from_config, thinking_model_settings
-from ..types import LlmConfig
+from ..llm_config import LlmConfig
 from .base import AssetRole, ExtractedImage
 from .images import sanitize_image_bytes
 from .video import MediaSample

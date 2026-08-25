@@ -12,11 +12,11 @@ from ...agents import (
 from ...chunkers.base import RetrievedChunk
 from ...config import settings
 from ...llm import model_from_config
+from ...llm_config import LlmConfig, resolve_llm_config
 from ...retrieval import build_search_tool
 from ...store import Casebase
 from ...tools import VectorSearchTool
 from ...tools.fastmcp import register_mcp_tools
-from ...types import LlmConfig, resolve_llm_config
 from ..app import mcp_app
 from ..common import (
     ExploreTaskArg,

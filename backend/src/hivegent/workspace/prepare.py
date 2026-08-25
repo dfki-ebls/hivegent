@@ -51,9 +51,10 @@ from ..entries import (
     description_path_for_stem,
     stem_path_from_reference,
 )
+from ..llm_config import LlmConfig
 from ..store import Casebase
 from ..text import NOT_TEXT_REASON, decode_bytes
-from ..types import AssetProcessingMode, LlmConfig, PipelineSpec, ProgressReporter
+from ..types import AssetProcessingMode, PipelineSpec, ProgressReporter
 from .describe import _build_image_description, _build_video_description
 from .metadata import _build_entry_metadata
 
@@ -565,15 +566,13 @@ async def _prepare_convertible(
     basename = PurePosixPath(filepath).name
     conversion_pipeline = spec.conversion.pipeline
     is_auto = conversion_pipeline == ConversionPipeline.AUTO
-    resolved_conversion = (
-        resolve_auto_pipeline(basename) if is_auto else conversion_pipeline
-    )
-    if is_auto and resolved_conversion == ConversionPipeline.PLAIN_TEXT:
+    if is_auto and resolve_auto_pipeline(basename) is ConversionPipeline.PLAIN_TEXT:
         # Skip the converter's temp-file round trip: AUTO already falls back
         # to the same projection (or a stub) for anything it cannot decode.
         return _prepare_plain_text_or_stub(filepath, content, origin=origin)
 
-    converter = _build_converter(resolved_conversion, basename, spec, llm)
+    converter = _build_converter(conversion_pipeline, basename, spec, llm)
+    resolved_conversion = ConversionPipeline(converter.name)
 
     try:
         result, resolved_conversion = await _convert_source(

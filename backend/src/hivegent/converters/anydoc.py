@@ -28,42 +28,13 @@ class AnydocConverter(DocumentConverter):
     Documents whose figures carry meaning belong on docling.  Images that name
     an external URL are unaffected and pass through as markdown images.
 
-    ``.pdf`` is deliberately absent from :attr:`extensions` even though anydoc
-    reads it.  It delegates PDFs to a vendored copy of pdf-inspector, which
+    The registry deliberately excludes ``.pdf`` even though anydoc reads it.
+    It delegates PDFs to a vendored copy of pdf-inspector, which
     :class:`~hivegent.converters.pdf_inspector.PdfInspectorConverter` drives
     directly at its own, newer version.
     """
 
     name: ClassVar[str] = "anydoc"
-    label: ClassVar[str] = "anydoc"
-    description: ClassVar[str] = (
-        "Fast structural converter for Office, OpenDocument, RTF, EPUB, and CSV"
-    )
-    # https://github.com/firecrawl/anydoc#supported-formats, minus ``.pdf``.
-    extensions: ClassVar[frozenset[str]] = frozenset(
-        {
-            ".doc",
-            ".docx",
-            ".docm",
-            ".ppt",
-            ".pps",
-            ".pot",
-            ".pptx",
-            ".pptm",
-            ".ppsx",
-            ".ppsm",
-            ".xls",
-            ".xlsx",
-            ".xlsm",
-            ".xlsb",
-            ".odt",
-            ".ods",
-            ".odp",
-            ".rtf",
-            ".epub",
-            ".csv",
-        }
-    )
 
     def _convert_sync(self, path: Path, /) -> ConversionResult:
         # ``to_markdown`` detects the format from the content and falls back to

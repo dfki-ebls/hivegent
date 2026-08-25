@@ -30,6 +30,7 @@ from ...config import settings
 from ...db.documents import get_document, get_line_counts
 from ...humanize import pluralize
 from ...jobs import JobContext, JobView, JobWork, manager
+from ...llm_config import LlmConfig
 from ...store import Casebase
 from ...types import (
     AssetEntry,
@@ -38,7 +39,6 @@ from ...types import (
     CollectionProgressEvent,
     DocumentLineCountsResponse,
     GenerateAssetDescriptionRequest,
-    LlmConfig,
     MoveDocumentRequest,
     PipelineSpec,
     UpdateAssetDescriptionRequest,

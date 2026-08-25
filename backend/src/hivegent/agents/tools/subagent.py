@@ -14,6 +14,7 @@ from pydantic_ai.models import Model
 
 from ...config import settings
 from ...llm import is_context_overflow, model_from_config, summary_model_settings
+from ...llm_config import LlmConfig, resolve_llm_config
 from ...prompts import (
     EXPLORE_INSTRUCTIONS,
     GROUNDING_INSTRUCTIONS,
@@ -21,7 +22,6 @@ from ...prompts import (
 )
 from ...tools.base import ToolOutput
 from ...tools.pydantic_ai import wrap_tool_output
-from ...types import LlmConfig, resolve_llm_config
 from ..app import turn_usage_limits, user_agent
 from ..common import ExploreTaskArg, UserDeps, scope_instructions
 from ..subagent_events import SubagentTranscriptBuilder, SubagentUpdate

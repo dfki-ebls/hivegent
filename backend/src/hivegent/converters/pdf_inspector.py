@@ -43,9 +43,6 @@ class PdfInspectorConverter(DocumentConverter):
     """
 
     name: ClassVar[str] = "pdf-inspector"
-    label: ClassVar[str] = "pdf-inspector"
-    description: ClassVar[str] = "Fast layout-aware PDF to markdown converter, no OCR"
-    extensions: ClassVar[frozenset[str]] = frozenset({".pdf"})
     config: PdfInspectorConverterConfig = field(
         default_factory=PdfInspectorConverterConfig
     )

@@ -12,8 +12,6 @@ class NoneDocumentChunker(DocumentChunker):
     """Chunker that returns the full text as one chunk."""
 
     name = "none"
-    label = "None"
-    description = "Keep the full document as a single chunk"
 
     async def _split(
         self,

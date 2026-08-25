@@ -31,8 +31,9 @@ from ..entries import (
     resolve_entry_paths,
     stem_path_from_reference,
 )
+from ..llm_config import LlmConfig
 from ..store import Casebase
-from ..types import LlmConfig, PipelineSpec, ProgressReporter, UploadCompleteEvent
+from ..types import PipelineSpec, ProgressReporter, UploadCompleteEvent
 from .indexing import chunk_and_index_document, delete_chunked_document
 from .locks import _add_inflight, _discard_inflight, _locked_for, store_lock
 from .metadata import _merge_entry_paths

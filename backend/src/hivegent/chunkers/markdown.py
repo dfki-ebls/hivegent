@@ -37,8 +37,6 @@ class MarkdownDocumentChunker(DocumentChunker):
     """
 
     name = "markdown"
-    label = "Markdown"
-    description = "Parses markdown into semantic elements (text, tables, code)"
     config: MarkdownChunkerConfig = field(default_factory=MarkdownChunkerConfig)
 
     def _split_sync(self, text: str) -> list[ChunkData]:

@@ -179,8 +179,6 @@ class DocumentChunker(ABC):
     """
 
     name: ClassVar[str]
-    label: ClassVar[str]
-    description: ClassVar[str]
 
     def _split_sync(self, text: str, /) -> list[ChunkData]:
         """CPU-bound chunking core, run in a worker process.

@@ -17,7 +17,7 @@ from .db.conversations import (
     extract_title,
 )
 from .llm import model_from_config, summary_model_settings
-from .types import LlmConfig
+from .llm_config import LlmConfig
 
 __all__ = [
     "CompactionResult",

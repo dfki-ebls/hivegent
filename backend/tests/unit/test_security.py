@@ -8,10 +8,10 @@ from fastapi import HTTPException, UploadFile
 
 from hivegent import security
 from hivegent.config import InferenceProvider, settings
+from hivegent.llm_config import LlmConfig, resolve_llm_config
 from hivegent.security import UrlPolicy, create_safe_async_client
 from hivegent.server.common import prepare_llm_config
 from hivegent.server.operations import enforce_upload_size
-from hivegent.types import LlmConfig, resolve_llm_config
 
 
 def test_safe_async_client_requires_egress_proxy() -> None:

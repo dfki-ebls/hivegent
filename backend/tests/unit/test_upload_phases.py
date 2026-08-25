@@ -19,8 +19,8 @@ from hivegent import workspace
 from hivegent.chunkers.base import EntryMetadata
 from hivegent.config import settings
 from hivegent.db import documents as db_documents
+from hivegent.llm_config import LlmConfig
 from hivegent.store import Casebase
-from hivegent.types import LlmConfig
 from hivegent.workspace import commit, prepare
 
 

@@ -2,7 +2,8 @@
 
 from pydantic import BaseModel, Field
 
-from ..types import LlmConfig, PipelineSpec
+from ..llm_config import LlmConfig
+from ..types import PipelineSpec
 
 __all__ = [
     "BulkDeleteRequest",

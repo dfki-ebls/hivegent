@@ -14,6 +14,7 @@ from .base import (
     collect_dir_images,
     is_external_ref,
 )
+from .formats import PANDOC_FORMAT_OVERRIDES, PANDOC_SANDBOX_INCOMPATIBLE
 
 __all__ = ["PandocConverter", "PandocConverterConfig"]
 
@@ -27,52 +28,6 @@ class PandocConverterConfig(BaseModel):
     """Configuration for the Pandoc conversion pipeline."""
 
     model_config = ConfigDict(extra="forbid")
-
-
-# Pandoc cannot always infer the input format from the file extension.
-# Explicit format names are provided for safety even when pandoc might
-# auto-detect, since the cost of an override is zero while a wrong guess
-# causes a runtime error.
-# https://pandoc.org/MANUAL.html#general-options (--from)
-_FORMAT_OVERRIDES: dict[str, str] = {
-    ".txt": "markdown",
-    ".html": "html",
-    ".xml": "html",
-    ".csv": "csv",
-    ".adoc": "asciidoc",
-    ".odt": "odt",
-    ".rst": "rst",
-    ".rtf": "rtf",
-    ".epub": "epub",
-    ".tex": "latex",
-    ".docbook": "docbook",
-    ".bib": "bibtex",
-    ".ris": "ris",
-    ".tsv": "tsv",
-    ".fb2": "fb2",
-    ".opml": "opml",
-    ".org": "org",
-    ".ipynb": "ipynb",
-    ".creole": "creole",
-    ".djot": "djot",
-    ".dokuwiki": "dokuwiki",
-    ".jats": "jats",
-    ".jira": "jira",
-    ".man": "man",
-    ".mediawiki": "mediawiki",
-    ".muse": "muse",
-    ".pod": "pod",
-    ".t2t": "t2t",
-    ".textile": "textile",
-    ".tikiwiki": "tikiwiki",
-    ".twiki": "twiki",
-    ".vimwiki": "vimwiki",
-    ".typst": "typst",
-}
-
-# These formats are zip-based containers that require filesystem access
-# and cannot run in pandoc's sandbox mode.
-_SANDBOX_INCOMPATIBLE = frozenset({".docx", ".pptx", ".xlsx", ".epub", ".odt"})
 
 
 def _normalize_media_refs(markdown: str, media_path: Path) -> str:
@@ -112,25 +67,19 @@ class PandocConverter(DocumentConverter):
     """
 
     name = "pandoc"
-    label = "Pandoc"
-    description = (
-        "Universal converter for ODT, RST, RTF, EPUB, LaTeX, Org, "
-        "DocBook, Typst, and more"
-    )
-    extensions = frozenset(_FORMAT_OVERRIDES) | _SANDBOX_INCOMPATIBLE
     config: PandocConverterConfig = field(default_factory=PandocConverterConfig)
 
     async def _convert(self, path: Path, /) -> ConversionResult:
         suffix = path.suffix.lower()
-        use_sandbox = suffix not in _SANDBOX_INCOMPATIBLE
+        use_sandbox = suffix not in PANDOC_SANDBOX_INCOMPATIBLE
 
         # Formats with embedded media benefit from --extract-media.
-        if suffix in _SANDBOX_INCOMPATIBLE:
+        if suffix in PANDOC_SANDBOX_INCOMPATIBLE:
             with tempfile.TemporaryDirectory() as media_dir:
                 media_path = Path(media_dir)
                 markdown = await pandoc_convert(
                     path,
-                    from_format=_FORMAT_OVERRIDES.get(suffix),
+                    from_format=PANDOC_FORMAT_OVERRIDES.get(suffix),
                     sandbox=use_sandbox,
                     extra_args=[f"--extract-media={media_path}"],
                 )
@@ -140,7 +89,7 @@ class PandocConverter(DocumentConverter):
 
         markdown = await pandoc_convert(
             path,
-            from_format=_FORMAT_OVERRIDES.get(suffix),
+            from_format=PANDOC_FORMAT_OVERRIDES.get(suffix),
             sandbox=use_sandbox,
         )
         return ConversionResult(markdown=markdown)

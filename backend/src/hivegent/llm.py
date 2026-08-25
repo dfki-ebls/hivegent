@@ -20,7 +20,7 @@ from pydantic_ai.settings import ModelSettings, ThinkingEffort, ThinkingLevel
 
 from .config import InferenceProvider
 from .http_client import get_trusted_http_client, get_user_http_client
-from .types import LlmConfig, ReasoningEffort
+from .llm_config import LlmConfig, ReasoningEffort
 
 __all__ = [
     "AUTO_REASONING_EFFORT",

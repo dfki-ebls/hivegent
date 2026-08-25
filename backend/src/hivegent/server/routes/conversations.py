@@ -52,6 +52,7 @@ from ...db.conversations import (
 )
 from ...humanize import format_bytes
 from ...llm import model_from_config, resolve_thinking, thinking_model_settings
+from ...llm_config import LlmConfig
 from ...mcp import build_mcp_server, validate_mcp_servers
 from ...prompts import (
     LANGUAGE_INSTRUCTIONS,
@@ -72,7 +73,6 @@ from ...types import (
     GenerateTitleRequest,
     GenerateTitleResponse,
     InstructionsSnapshot,
-    LlmConfig,
     ServerConversation,
     ToolsSpec,
     UpdateTitleRequest,

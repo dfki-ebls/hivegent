@@ -2,16 +2,19 @@
 
 import subprocess
 import sys
-from importlib.util import find_spec
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
+from hivegent import converters
 from hivegent.converters import ConversionPipeline, get_converter, resolve_auto_pipeline
 from hivegent.converters.base import fenced_code_block
 from hivegent.converters.plain_text import PlainTextConverter
-from hivegent.types import LlmConfig, PipelineSpec
+from hivegent.llm_config import LlmConfig
+from hivegent.pipeline_registry import PipelineImplementation
+from hivegent.types import PipelineSpec
 from hivegent.workspace import prepare
 
 
@@ -32,6 +35,7 @@ from hivegent.workspace import prepare
         ("server.py", ConversionPipeline.PLAIN_TEXT),
         # Structured text keeps its richer converter.
         ("data.csv", ConversionPipeline.DOCLING),
+        ("archive.tar.gz", ConversionPipeline.DOCLING),
         # An unclaimed extension (and a name with none at all) falls back to
         # plain-text, which decides from the content rather than the name.
         ("laws2", ConversionPipeline.PLAIN_TEXT),
@@ -42,18 +46,49 @@ def test_auto_routes_plain_text(filename: str, expected: ConversionPipeline) -> 
     assert resolve_auto_pipeline(filename) is expected
 
 
-@pytest.mark.skipif(find_spec("cysignals") is None, reason="docling extra absent")
-def test_converters_package_preimports_cysignals() -> None:
-    # cysignals installs signal handlers at import time and so imports cleanly
-    # only on the main thread.  The package has to pull it in during its own
-    # import, or the lazy docling load raises in the reconcile walk's worker
-    # thread.  A subprocess is the only place the side effect is observable.
-    code = "import sys, hivegent.converters; print('cysignals' in sys.modules)"
+def test_auto_routing_is_dependency_free_in_worker_thread() -> None:
+    code = (
+        "import sys\n"
+        "from concurrent.futures import ThreadPoolExecutor\n"
+        "def route():\n"
+        "    from hivegent.converters import resolve_auto_pipeline\n"
+        "    return resolve_auto_pipeline('report.pdf').value\n"
+        "with ThreadPoolExecutor(max_workers=1) as executor:\n"
+        "    pipeline = executor.submit(route).result()\n"
+        "print(pipeline, 'cysignals' in sys.modules)\n"
+    )
     result = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
     )
 
-    assert result.stdout.strip() == "True"
+    assert result.stdout.strip() == "docling False"
+
+
+def test_auto_priority_members_declare_their_routing_extensions() -> None:
+    # A pipeline listed in _AUTO_PRIORITY without auto_extensions would silently
+    # never win AUTO, since routing reads that field and not the capability.
+    for pipeline in converters._AUTO_PRIORITY:
+        assert converters._CONVERTERS[pipeline].auto_extensions
+
+
+def test_auto_uses_next_available_converter(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unavailable() -> PipelineImplementation[converters.DocumentConverter]:
+        raise ImportError("docling unavailable")
+
+    registration = converters._CONVERTERS[ConversionPipeline.DOCLING]
+    monkeypatch.setitem(
+        converters._CONVERTERS,
+        ConversionPipeline.DOCLING,
+        replace(registration, loader=unavailable),
+    )
+
+    converter = get_converter(ConversionPipeline.AUTO, filename="data.csv")
+
+    assert converter.name == ConversionPipeline.PANDOC.value
 
 
 def test_auto_accepts_undeclared_extension() -> None:
@@ -89,7 +124,7 @@ async def test_plain_text_transcodes_and_reports_encoding(tmp_path: Path) -> Non
     assert result.source_encoding == "utf-16"
 
 
-async def test_auto_plain_text_bypasses_converter(
+async def test_auto_plain_text_uses_plain_text_pipeline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -108,6 +143,7 @@ async def test_auto_plain_text_bypasses_converter(
     )
 
     assert prepared.conversion_pipeline_used == ConversionPipeline.PLAIN_TEXT.value
+    assert "plain text" in prepared.main.markdown
 
 
 async def test_plain_text_rejects_binary(tmp_path: Path) -> None:

@@ -12,9 +12,10 @@ from ..config import (
     sanitize_group_id,
     settings,
 )
+from ..llm_config import LlmConfig, LlmTier, resolve_llm_config
 from ..security import require_safe_external_url
 from ..store import Casebase, WorkspaceScope
-from ..types import DocumentFilter, LlmConfig, LlmTier, resolve_llm_config
+from ..types import DocumentFilter
 from .models import PipelineSpec
 
 __all__ = [

@@ -1,23 +1,18 @@
 """Document chunking infrastructure for Hivegent."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, get_type_hints
+from functools import cache
+from typing import Any
 
-from cbrkit.helpers import optional_dependencies
 from pydantic import BaseModel
 
+from ..pipeline_registry import (
+    PipelineConfigInfo,
+    PipelineImplementation,
+    PipelineRegistration,
+)
 from .base import DocumentChunker
-from .fast import FastDocumentChunker
-from .late import LateDocumentChunker
-from .markdown import MarkdownDocumentChunker
-from .neural import NeuralDocumentChunker
-from .none import NoneDocumentChunker
-from .recursive import RecursiveDocumentChunker
-from .sentence import SentenceDocumentChunker
-from .slumber import SlumberDocumentChunker
-from .table import TableDocumentChunker
-from .token import TokenDocumentChunker
 
 __all__ = [
     "ChunkingPipeline",
@@ -25,6 +20,7 @@ __all__ = [
     "ChunkingSpec",
     "DocumentChunker",
     "get_chunker",
+    "get_chunking_pipeline_config",
     "get_chunking_pipelines_info",
 ]
 
@@ -61,40 +57,144 @@ class ChunkingPipelineInfo:
     value: str
     label: str
     description: str
-    config_schema: dict[str, Any] = field(default_factory=dict)
-    config_defaults: dict[str, Any] = field(default_factory=dict)
 
 
-_CHUNKERS: dict[ChunkingPipeline, type[DocumentChunker]] = {
-    ChunkingPipeline.NONE: NoneDocumentChunker,
-    ChunkingPipeline.TOKEN: TokenDocumentChunker,
-    ChunkingPipeline.FAST: FastDocumentChunker,
-    ChunkingPipeline.SENTENCE: SentenceDocumentChunker,
-    ChunkingPipeline.RECURSIVE: RecursiveDocumentChunker,
-    ChunkingPipeline.TABLE: TableDocumentChunker,
-    ChunkingPipeline.MARKDOWN: MarkdownDocumentChunker,
-    ChunkingPipeline.NEURAL: NeuralDocumentChunker,
-    ChunkingPipeline.LATE: LateDocumentChunker,
-    ChunkingPipeline.SLUMBER: SlumberDocumentChunker,
+def _load_none() -> PipelineImplementation[DocumentChunker]:
+    from .none import NoneDocumentChunker
+
+    return PipelineImplementation(NoneDocumentChunker)
+
+
+def _load_token() -> PipelineImplementation[DocumentChunker]:
+    from .token import TokenChunkerConfig, TokenDocumentChunker
+
+    return PipelineImplementation(TokenDocumentChunker, TokenChunkerConfig)
+
+
+def _load_fast() -> PipelineImplementation[DocumentChunker]:
+    from .fast import FastChunkerConfig, FastDocumentChunker
+
+    return PipelineImplementation(FastDocumentChunker, FastChunkerConfig)
+
+
+def _load_sentence() -> PipelineImplementation[DocumentChunker]:
+    from .sentence import SentenceChunkerConfig, SentenceDocumentChunker
+
+    return PipelineImplementation(SentenceDocumentChunker, SentenceChunkerConfig)
+
+
+def _load_recursive() -> PipelineImplementation[DocumentChunker]:
+    from .recursive import RecursiveChunkerConfig, RecursiveDocumentChunker
+
+    return PipelineImplementation(RecursiveDocumentChunker, RecursiveChunkerConfig)
+
+
+def _load_table() -> PipelineImplementation[DocumentChunker]:
+    from .table import TableChunkerConfig, TableDocumentChunker
+
+    return PipelineImplementation(TableDocumentChunker, TableChunkerConfig)
+
+
+def _load_markdown() -> PipelineImplementation[DocumentChunker]:
+    from .markdown import MarkdownChunkerConfig, MarkdownDocumentChunker
+
+    return PipelineImplementation(MarkdownDocumentChunker, MarkdownChunkerConfig)
+
+
+def _load_semantic() -> PipelineImplementation[DocumentChunker]:
+    from .semantic import SemanticChunkerConfig, SemanticDocumentChunker
+
+    return PipelineImplementation(SemanticDocumentChunker, SemanticChunkerConfig)
+
+
+def _load_code() -> PipelineImplementation[DocumentChunker]:
+    from .code import CodeChunkerConfig, CodeDocumentChunker
+
+    return PipelineImplementation(CodeDocumentChunker, CodeChunkerConfig)
+
+
+def _load_neural() -> PipelineImplementation[DocumentChunker]:
+    from .neural import NeuralChunkerConfig, NeuralDocumentChunker
+
+    return PipelineImplementation(NeuralDocumentChunker, NeuralChunkerConfig)
+
+
+def _load_late() -> PipelineImplementation[DocumentChunker]:
+    from .late import LateChunkerConfig, LateDocumentChunker
+
+    return PipelineImplementation(LateDocumentChunker, LateChunkerConfig)
+
+
+def _load_slumber() -> PipelineImplementation[DocumentChunker]:
+    from .slumber import SlumberChunkerConfig, SlumberDocumentChunker
+
+    return PipelineImplementation(SlumberDocumentChunker, SlumberChunkerConfig)
+
+
+_CHUNKERS: dict[ChunkingPipeline, PipelineRegistration[DocumentChunker]] = {
+    ChunkingPipeline.NONE: PipelineRegistration(
+        loader=_load_none,
+        label="None",
+        description="Keep the full document as a single chunk",
+    ),
+    ChunkingPipeline.TOKEN: PipelineRegistration(
+        loader=_load_token,
+        label="Token",
+        description="Fixed token-count chunks for uniform processing",
+    ),
+    ChunkingPipeline.FAST: PipelineRegistration(
+        loader=_load_fast,
+        label="Fast",
+        description="High-throughput delimiter-based splitting",
+    ),
+    ChunkingPipeline.SENTENCE: PipelineRegistration(
+        loader=_load_sentence,
+        label="Sentence",
+        description="Respects sentence boundaries, good for prose and plain text",
+    ),
+    ChunkingPipeline.RECURSIVE: PipelineRegistration(
+        loader=_load_recursive,
+        label="Recursive",
+        description="Hierarchical splitting by headings, paragraphs, and sentences",
+    ),
+    ChunkingPipeline.TABLE: PipelineRegistration(
+        loader=_load_table,
+        label="Table",
+        description="Row-based splitting for tabular data",
+    ),
+    ChunkingPipeline.MARKDOWN: PipelineRegistration(
+        loader=_load_markdown,
+        label="Markdown",
+        description="Parses markdown into semantic elements (text, tables, code)",
+    ),
+    ChunkingPipeline.SEMANTIC: PipelineRegistration(
+        loader=_load_semantic,
+        label="Semantic",
+        description="Splits by semantic similarity using embeddings",
+        dependencies=("model2vec",),
+    ),
+    ChunkingPipeline.CODE: PipelineRegistration(
+        loader=_load_code,
+        label="Code",
+        description="Syntax-aware splitting using tree-sitter",
+        dependencies=("tree_sitter_language_pack",),
+    ),
+    ChunkingPipeline.NEURAL: PipelineRegistration(
+        loader=_load_neural,
+        label="Neural",
+        description="Neural model-based chunk boundary detection",
+    ),
+    ChunkingPipeline.LATE: PipelineRegistration(
+        loader=_load_late,
+        label="Late",
+        description="Late-interaction embedding-aware chunk boundaries",
+    ),
+    ChunkingPipeline.SLUMBER: PipelineRegistration(
+        loader=_load_slumber,
+        label="Slumber",
+        description="LLM-guided intelligent chunk boundary decisions",
+    ),
 }
-
-with optional_dependencies():
-    from .semantic import SemanticDocumentChunker
-
-    _CHUNKERS[ChunkingPipeline.SEMANTIC] = SemanticDocumentChunker
-
-with optional_dependencies():
-    from .code import CodeDocumentChunker
-
-    _CHUNKERS[ChunkingPipeline.CODE] = CodeDocumentChunker
-
-
-def _config_model(cls: type[DocumentChunker]) -> type[BaseModel] | None:
-    """Derive a chunker's Pydantic config model from its ``config`` field."""
-    annotation = get_type_hints(cls).get("config")
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return annotation
-    return None
 
 
 def get_chunker(
@@ -118,44 +218,52 @@ def get_chunker(
     Raises:
         ImportError: If the chunker's dependencies are not installed.
         ValidationError: If the config is invalid for the pipeline.
-        ValueError: If the pipeline is not recognized.
     """
     if pipeline == ChunkingPipeline.AUTO:
         pipeline = ChunkingPipeline.RECURSIVE
 
-    cls = _CHUNKERS.get(pipeline)
-    if cls is None:
-        if pipeline in ChunkingPipeline:
-            raise ImportError(
-                f"Chunking pipeline '{pipeline.value}' is not available. "
-                f"Install its dependencies to enable it."
-            )
-        raise ValueError(f"Unknown chunking pipeline: {pipeline}")
+    try:
+        implementation = _CHUNKERS[pipeline].load(pipeline.value)
+    except ImportError as exc:
+        raise ImportError(
+            f"Chunking pipeline '{pipeline.value}' is not available. "
+            "Install its dependencies to enable it."
+        ) from exc
 
     kwargs: dict[str, Any] = {}
-    if config and (model := _config_model(cls)) is not None:
-        kwargs["config"] = model(**config)
-    return cls(**kwargs)
+    if config and implementation.config is not None:
+        kwargs["config"] = implementation.config(**config)
+
+    return implementation.cls(**kwargs)
 
 
 def get_chunking_pipelines_info() -> list[ChunkingPipelineInfo]:
-    """Get metadata for all chunking pipelines."""
-    infos = [
+    """Get dependency-free metadata for installed chunking pipelines."""
+    return [
         ChunkingPipelineInfo(
             value=ChunkingPipeline.AUTO.value,
             label="Auto",
             description="Recommended default: structure-aware recursive splitting",
         ),
-    ]
-    for pipeline, cls in _CHUNKERS.items():
-        model = _config_model(cls)
-        infos.append(
+        *(
             ChunkingPipelineInfo(
                 value=pipeline.value,
-                label=cls.label,
-                description=cls.description,
-                config_schema=model.model_json_schema() if model else {},
-                config_defaults=model().model_dump() if model else {},
+                label=registration.label,
+                description=registration.description,
             )
-        )
-    return infos
+            for pipeline, registration in _CHUNKERS.items()
+            if registration.available
+        ),
+    ]
+
+
+@cache
+def get_chunking_pipeline_config(
+    pipeline: ChunkingPipeline,
+) -> PipelineConfigInfo:
+    """Get configuration metadata for one selected chunking pipeline."""
+    registration = _CHUNKERS.get(pipeline)
+    if registration is None or not registration.available:
+        raise ValueError(f"Chunking pipeline '{pipeline.value}' is not available")
+
+    return registration.config_info(pipeline.value)

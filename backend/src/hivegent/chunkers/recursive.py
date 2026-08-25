@@ -47,8 +47,6 @@ class RecursiveDocumentChunker(DocumentChunker):
     """
 
     name = "recursive"
-    label = "Recursive"
-    description = "Hierarchical splitting by headings, paragraphs, and sentences"
     config: RecursiveChunkerConfig = field(default_factory=RecursiveChunkerConfig)
 
     def _split_sync(self, text: str) -> list[ChunkData]:

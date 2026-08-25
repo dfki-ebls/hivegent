@@ -9,7 +9,7 @@ from hivegent.llm import (
     summary_model_settings,
     thinking_model_settings,
 )
-from hivegent.types import LlmConfig
+from hivegent.llm_config import LlmConfig
 
 SELF_HOSTED = LlmConfig(
     model="qwen",

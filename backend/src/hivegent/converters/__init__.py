@@ -1,33 +1,32 @@
 """Document conversion infrastructure for Hivegent."""
 
-import importlib
-from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from functools import cache
 from pathlib import Path
-from typing import Any, Protocol, get_type_hints
+from typing import Any
 
 from pydantic import BaseModel
 
-# cysignals installs signal handlers at import time and therefore imports
-# cleanly only on the main thread.  It arrives with tesserocr, which the docling
-# converter imports, and converter modules are loaded lazily: the first load can
-# happen off the main thread (the reconcile walk resolves extensions through
-# ``asyncio.to_thread``, and conversion itself does when ``worker_processes`` is
-# 1), where that import raises.  Pulling it up into the package every one of
-# those paths goes through runs it while the process is still importing, on its
-# main thread; the lazy imports then hit ``sys.modules``.  It ships with the
-# optional docling extra, so its absence is not an error.
-with suppress(ImportError):
-    import cysignals  # noqa: F401
-
+from ..llm_config import LlmConfig
+from ..pipeline_registry import (
+    PipelineConfigInfo,
+    PipelineImplementation,
+    PipelineRegistration,
+)
 from .base import (
     IMAGE_MEDIA_TYPES,
     ConversionResult,
     DocumentConverter,
     is_image_suffix,
     is_markdown_suffix,
+)
+from .formats import (
+    DOCLING_EXTENSIONS,
+    LLM_MEDIA_TYPES,
+    PANDOC_EXTENSIONS,
+    PLAIN_TEXT_EXTENSIONS,
+    match_file_extension,
 )
 from .video import VIDEO_MEDIA_TYPES, is_video_suffix
 
@@ -41,6 +40,7 @@ __all__ = [
     "ConversionSpec",
     "DocumentConverter",
     "EntryProjection",
+    "get_conversion_pipeline_config",
     "get_conversion_pipelines_info",
     "get_converter",
     "is_tabular",
@@ -97,96 +97,333 @@ class ConversionPipelineInfo:
     label: str
     description: str
     extensions: list[str]
-    config_schema: dict[str, Any] = field(default_factory=dict)
-    config_defaults: dict[str, Any] = field(default_factory=dict)
 
 
-class _LlmOptions(Protocol):
-    """Subset of LLM options needed to instantiate the LLM converter."""
+@dataclass(slots=True, frozen=True)
+class _ConverterRegistration(PipelineRegistration[DocumentConverter]):
+    """Static converter metadata used without importing its implementation."""
 
-    model: str
-    api_key: str
-    base_url: str | None
+    extensions: frozenset[str] | None
+    """Extensions the converter accepts, or ``None`` when it accepts any file.
+
+    A hard capability: :func:`get_converter` refuses a file outside it.
+    """
+
+    auto_extensions: frozenset[str] = frozenset()
+    """Extensions AUTO prefers this converter for; set only on `_AUTO_PRIORITY`.
+
+    Kept apart from :attr:`extensions` because the two answer different
+    questions.  Plain text accepts every file but should only *win* AUTO for
+    the raw-text formats a richer converter would otherwise claim.
+    """
+
+    @property
+    def advertised_extensions(self) -> frozenset[str]:
+        """Extensions the API lists this pipeline under."""
+        return self.extensions if self.extensions is not None else self.auto_extensions
 
 
-# Lazy "module:Class" references so heavy imports (marker, docling, mineru, ...)
-# only run when the pipeline is actually used.
-_CONVERTERS: dict[ConversionPipeline, str] = {
-    ConversionPipeline.LLM: "hivegent.converters.llm:LLMConverter",
-    ConversionPipeline.PANDOC: "hivegent.converters.pandoc:PandocConverter",
-    ConversionPipeline.MARKER: "hivegent.converters.marker:MarkerConverter",
-    ConversionPipeline.DOCLING: "hivegent.converters.docling:DoclingConverter",
-    ConversionPipeline.MINERU: "hivegent.converters.mineru:MinerUConverter",
-    ConversionPipeline.MARKITDOWN: "hivegent.converters.markitdown:MarkItDownConverter",
-    ConversionPipeline.KREUZBERG: "hivegent.converters.kreuzberg:KreuzbergConverter",
-    ConversionPipeline.ANYDOC: "hivegent.converters.anydoc:AnydocConverter",
-    ConversionPipeline.PDF_INSPECTOR: (
-        "hivegent.converters.pdf_inspector:PdfInspectorConverter"
+def _load_llm() -> PipelineImplementation[DocumentConverter]:
+    from .llm import LLMConverter, LlmConverterConfig
+
+    return PipelineImplementation(LLMConverter, LlmConverterConfig)
+
+
+def _load_pandoc() -> PipelineImplementation[DocumentConverter]:
+    from .pandoc import PandocConverter, PandocConverterConfig
+
+    return PipelineImplementation(PandocConverter, PandocConverterConfig)
+
+
+def _load_marker() -> PipelineImplementation[DocumentConverter]:
+    from .marker import MarkerConverter, MarkerConverterConfig
+
+    return PipelineImplementation(MarkerConverter, MarkerConverterConfig)
+
+
+def _load_docling() -> PipelineImplementation[DocumentConverter]:
+    from .docling import DoclingConverter, DoclingConverterConfig
+
+    return PipelineImplementation(DoclingConverter, DoclingConverterConfig)
+
+
+def _load_mineru() -> PipelineImplementation[DocumentConverter]:
+    from .mineru import MinerUConverter, MinerUConverterConfig
+
+    return PipelineImplementation(MinerUConverter, MinerUConverterConfig)
+
+
+def _load_markitdown() -> PipelineImplementation[DocumentConverter]:
+    from .markitdown import MarkItDownConverter, MarkItDownConverterConfig
+
+    return PipelineImplementation(MarkItDownConverter, MarkItDownConverterConfig)
+
+
+def _load_kreuzberg() -> PipelineImplementation[DocumentConverter]:
+    from .kreuzberg import KreuzbergConverter, KreuzbergConverterConfig
+
+    return PipelineImplementation(KreuzbergConverter, KreuzbergConverterConfig)
+
+
+def _load_anydoc() -> PipelineImplementation[DocumentConverter]:
+    from .anydoc import AnydocConverter
+
+    return PipelineImplementation(AnydocConverter)
+
+
+def _load_pdf_inspector() -> PipelineImplementation[DocumentConverter]:
+    from .pdf_inspector import PdfInspectorConverter, PdfInspectorConverterConfig
+
+    return PipelineImplementation(PdfInspectorConverter, PdfInspectorConverterConfig)
+
+
+def _load_pdf_oxide() -> PipelineImplementation[DocumentConverter]:
+    from .pdf_oxide import PdfOxideConverter, PdfOxideConverterConfig
+
+    return PipelineImplementation(PdfOxideConverter, PdfOxideConverterConfig)
+
+
+def _load_table_chef() -> PipelineImplementation[DocumentConverter]:
+    from .chonkie_table import ChonkieTableConverter
+
+    return PipelineImplementation(ChonkieTableConverter)
+
+
+def _load_plain_text() -> PipelineImplementation[DocumentConverter]:
+    from .plain_text import PlainTextConverter
+
+    return PipelineImplementation(PlainTextConverter)
+
+
+# Static metadata keeps routing dependency-free. Implementations load only when
+# selected for conversion or inspected for their configuration schema.
+_CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
+    ConversionPipeline.LLM: _ConverterRegistration(
+        loader=_load_llm,
+        label="LLM",
+        description="Uses vision model for all files",
+        extensions=frozenset(LLM_MEDIA_TYPES),
     ),
-    ConversionPipeline.PDF_OXIDE: "hivegent.converters.pdf_oxide:PdfOxideConverter",
-    ConversionPipeline.TABLE_CHEF: "hivegent.converters.chonkie_table:ChonkieTableConverter",
-    ConversionPipeline.PLAIN_TEXT: "hivegent.converters.plain_text:PlainTextConverter",
+    ConversionPipeline.PANDOC: _ConverterRegistration(
+        loader=_load_pandoc,
+        label="Pandoc",
+        description=(
+            "Universal converter for ODT, RST, RTF, EPUB, LaTeX, Org, "
+            "DocBook, Typst, and more"
+        ),
+        extensions=PANDOC_EXTENSIONS,
+        auto_extensions=PANDOC_EXTENSIONS,
+    ),
+    # Marker only converts PDFs. The provider registry lives in
+    # marker.providers.registry but has no public format listing API.
+    # https://github.com/VikParuchuri/marker
+    ConversionPipeline.MARKER: _ConverterRegistration(
+        loader=_load_marker,
+        label="Marker",
+        description="Best for PDF documents",
+        extensions=frozenset({".pdf"}),
+        dependencies=("marker",),
+    ),
+    ConversionPipeline.DOCLING: _ConverterRegistration(
+        loader=_load_docling,
+        label="Docling",
+        description="Best for Office documents",
+        extensions=DOCLING_EXTENSIONS,
+        auto_extensions=DOCLING_EXTENSIONS,
+        dependencies=("docling", "tesserocr"),
+    ),
+    # MinerU has no public format listing API.
+    # https://github.com/opendatalab/MinerU#supported-file-types
+    ConversionPipeline.MINERU: _ConverterRegistration(
+        loader=_load_mineru,
+        label="MinerU",
+        description="High-quality PDF parsing (no XLSX)",
+        extensions=frozenset({".pdf", ".docx", ".pptx", ".png", ".jpg", ".jpeg"}),
+        dependencies=("mineru",),
+    ),
+    # MarkItDown has no public format listing API. Each converter in
+    # markitdown.converters defines its own ACCEPTED_FILE_EXTENSIONS constant.
+    # https://github.com/microsoft/markitdown/tree/main/packages/markitdown/src/markitdown/converters
+    ConversionPipeline.MARKITDOWN: _ConverterRegistration(
+        loader=_load_markitdown,
+        label="MarkItDown",
+        description="Microsoft's converter for Office, PDF, images, and more",
+        extensions=frozenset(
+            {
+                ".pdf",
+                ".docx",
+                ".xlsx",
+                ".xls",
+                ".pptx",
+                ".html",
+                ".htm",
+                ".csv",
+                ".json",
+                ".jsonl",
+                ".ndjson",
+                ".xml",
+                ".rss",
+                ".atom",
+                ".epub",
+                ".ipynb",
+                ".zip",
+                ".txt",
+                ".md",
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".wav",
+                ".mp3",
+                ".m4a",
+                ".msg",
+            }
+        ),
+        dependencies=("markitdown",),
+    ),
+    # Kreuzberg exposes get_extensions_for_mime() per MIME type but has no
+    # API to enumerate all supported types at once.
+    # https://docs.kreuzberg.dev/features/supported-formats/
+    ConversionPipeline.KREUZBERG: _ConverterRegistration(
+        loader=_load_kreuzberg,
+        label="Kreuzberg",
+        description="Text extraction from 75+ formats with OCR support",
+        extensions=frozenset(
+            {
+                ".pdf",
+                ".docx",
+                ".xlsx",
+                ".pptx",
+                ".doc",
+                ".xls",
+                ".ppt",
+                ".odt",
+                ".ods",
+                ".html",
+                ".htm",
+                ".xml",
+                ".json",
+                ".csv",
+                ".epub",
+                ".rtf",
+                ".txt",
+                ".md",
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".gif",
+                ".webp",
+                ".tiff",
+                ".tif",
+                ".bmp",
+                ".svg",
+                ".ico",
+                ".msg",
+                ".eml",
+                ".zip",
+                ".tar",
+                ".gz",
+                ".7z",
+            }
+        ),
+        dependencies=("kreuzberg",),
+    ),
+    # https://github.com/firecrawl/anydoc#supported-formats, minus ``.pdf``
+    # (see AnydocConverter's docstring for why).
+    ConversionPipeline.ANYDOC: _ConverterRegistration(
+        loader=_load_anydoc,
+        label="anydoc",
+        description=(
+            "Fast structural converter for Office, OpenDocument, RTF, EPUB, and CSV"
+        ),
+        extensions=frozenset(
+            {
+                ".doc",
+                ".docx",
+                ".docm",
+                ".ppt",
+                ".pps",
+                ".pot",
+                ".pptx",
+                ".pptm",
+                ".ppsx",
+                ".ppsm",
+                ".xls",
+                ".xlsx",
+                ".xlsm",
+                ".xlsb",
+                ".odt",
+                ".ods",
+                ".odp",
+                ".rtf",
+                ".epub",
+                ".csv",
+            }
+        ),
+    ),
+    ConversionPipeline.PDF_INSPECTOR: _ConverterRegistration(
+        loader=_load_pdf_inspector,
+        label="pdf-inspector",
+        description="Fast layout-aware PDF to markdown converter, no OCR",
+        extensions=frozenset({".pdf"}),
+    ),
+    ConversionPipeline.PDF_OXIDE: _ConverterRegistration(
+        loader=_load_pdf_oxide,
+        label="pdf_oxide",
+        description="High-performance Rust-based PDF to markdown converter",
+        extensions=frozenset({".pdf"}),
+        dependencies=("pdf_oxide",),
+    ),
+    ConversionPipeline.TABLE_CHEF: _ConverterRegistration(
+        loader=_load_table_chef,
+        label="Table Chef",
+        description="CSV/Excel to markdown tables via pandas",
+        extensions=frozenset({".csv", ".xls", ".xlsx"}),
+    ),
+    # A routing preference, not a capability: these overlap richer converters
+    # and so need an explicit AUTO priority, while every other suffix reaches
+    # plain text through AUTO's default.  That is what ``accepts_any_extension``
+    # expresses, waiving the extension check so the converter decides from the
+    # content.
+    ConversionPipeline.PLAIN_TEXT: _ConverterRegistration(
+        loader=_load_plain_text,
+        label="Plain Text",
+        description="Text, configuration, data-serialization, and source files as-is",
+        extensions=None,
+        auto_extensions=PLAIN_TEXT_EXTENSIONS,
+    ),
 }
 
 
-# AUTO routing preference: plain-text claims raw-text formats (read as-is),
-# docling claims every binary/office format it can handle, and pandoc covers
-# the rest.  Routing is derived from each converter's own ``extensions`` (see
-# ``_auto_mapping``) so it can never drift from what the converters declare;
-# an extension none of them declares falls back to plain-text as well, which
-# decides from the content instead of the name (see
-# :func:`resolve_auto_pipeline`).
 _AUTO_PRIORITY: tuple[ConversionPipeline, ...] = (
     ConversionPipeline.PLAIN_TEXT,
     ConversionPipeline.DOCLING,
     ConversionPipeline.PANDOC,
 )
+_AUTO_EXTENSIONS = frozenset(
+    extension
+    for pipeline in _AUTO_PRIORITY
+    for extension in _CONVERTERS[pipeline].auto_extensions
+)
 
 
-@cache
-def _load_converter(spec: str) -> type[DocumentConverter]:
-    """Import and return the converter class for a ``module:Class`` spec."""
-    module_name, _, class_name = spec.partition(":")
-    return getattr(importlib.import_module(module_name), class_name)
+def _auto_candidates(filename: str) -> tuple[ConversionPipeline, ...]:
+    """Return deterministic AUTO candidates in preference order.
 
-
-def _config_model(cls: type[DocumentConverter]) -> type[BaseModel] | None:
-    """Derive a converter's Pydantic config model from its ``config`` field."""
-    annotation = get_type_hints(cls).get("config")
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return annotation
-    return None
-
-
-def _available_converters() -> dict[ConversionPipeline, type[DocumentConverter]]:
-    """Return converters whose modules and dependencies can be imported."""
-    result: dict[ConversionPipeline, type[DocumentConverter]] = {}
-    for pipeline, spec in _CONVERTERS.items():
-        try:
-            result[pipeline] = _load_converter(spec)
-        except ImportError:
-            continue
-    return result
-
-
-@cache
-def _auto_mapping() -> dict[str, ConversionPipeline]:
-    """Map file extensions to pipelines, preferring docling over pandoc.
-
-    Built from each available converter's declared ``extensions`` in
-    :data:`_AUTO_PRIORITY` order: docling claims every format it handles,
-    pandoc fills the gaps, and unavailable converters are skipped (so if
-    docling is not installed, pandoc transparently takes over its formats).
+    Filtered on declared dependencies so ``resolve_auto_pipeline`` never names a
+    pipeline :func:`get_converter` would skip; the ``ImportError`` loop there
+    stays as a backstop for a dependency that imports but fails.
     """
-    mapping: dict[str, ConversionPipeline] = {}
-    for pipeline in _AUTO_PRIORITY:
-        try:
-            cls = _load_converter(_CONVERTERS[pipeline])
-        except ImportError:
-            continue
-        for ext in cls.extensions:
-            mapping.setdefault(ext, pipeline)
-    return mapping
+    extension = match_file_extension(filename, _AUTO_EXTENSIONS)
+    candidates = tuple(
+        pipeline
+        for pipeline in _AUTO_PRIORITY
+        if extension in _CONVERTERS[pipeline].auto_extensions
+        and _CONVERTERS[pipeline].available
+    )
+    if ConversionPipeline.PLAIN_TEXT in candidates:
+        return candidates
+
+    return (*candidates, ConversionPipeline.PLAIN_TEXT)
 
 
 def resolve_auto_pipeline(filename: str) -> ConversionPipeline:
@@ -203,9 +440,7 @@ def resolve_auto_pipeline(filename: str) -> ConversionPipeline:
     Returns:
         The resolved conversion pipeline.
     """
-    return _auto_mapping().get(
-        Path(filename).suffix.lower(), ConversionPipeline.PLAIN_TEXT
-    )
+    return _auto_candidates(filename)[0]
 
 
 class EntryProjection(StrEnum):
@@ -329,11 +564,49 @@ def projects_verbatim(filename: str) -> bool:
     )
 
 
+def _reject_unsupported_extension(
+    pipeline: ConversionPipeline,
+    registration: _ConverterRegistration,
+    filename: str,
+) -> None:
+    """Refuse a file the named pipeline cannot read.
+
+    Answered from the static metadata, so a mismatch costs nothing beyond the
+    lookup: the backend is never imported for a file it would reject.
+    """
+    if registration.extensions is None:
+        return
+
+    extension = match_file_extension(filename, registration.extensions)
+    if extension and extension not in registration.extensions:
+        raise ValueError(
+            f"Conversion pipeline '{pipeline.value}' does not support "
+            f"{extension}. Supported: {', '.join(sorted(registration.extensions))}"
+        )
+
+
+def _instantiate(
+    pipeline: ConversionPipeline,
+    implementation: PipelineImplementation[DocumentConverter],
+    config: dict[str, Any] | None,
+    llm_options: LlmConfig | None,
+    detect_asset_roles: bool,
+) -> DocumentConverter:
+    """Construct the loaded converter with its parsed config."""
+    kwargs: dict[str, Any] = {}
+    if config and implementation.config is not None:
+        kwargs["config"] = implementation.config(**config)
+    if pipeline is ConversionPipeline.LLM and llm_options is not None:
+        kwargs["llm_options"] = llm_options
+
+    return implementation.cls(detect_asset_roles=detect_asset_roles, **kwargs)
+
+
 def get_converter(
     pipeline: ConversionPipeline,
     filename: str = "",
     config: dict[str, Any] | None = None,
-    llm_options: _LlmOptions | None = None,
+    llm_options: LlmConfig | None = None,
     detect_asset_roles: bool = False,
 ) -> DocumentConverter:
     """Get a converter instance for the specified pipeline.
@@ -356,65 +629,81 @@ def get_converter(
         ValueError: If the pipeline is not recognized or the file extension
             is not supported by the chosen pipeline.
     """
-    if pipeline == ConversionPipeline.AUTO:
-        pipeline = resolve_auto_pipeline(filename)
+    if pipeline is not ConversionPipeline.AUTO:
+        registration = _CONVERTERS.get(pipeline)
+        if registration is None:
+            raise ValueError(f"Unknown conversion pipeline: {pipeline}")
 
-    spec = _CONVERTERS.get(pipeline)
-    if spec is None:
-        raise ValueError(f"Unknown conversion pipeline: {pipeline}")
-    try:
-        cls = _load_converter(spec)
-    except ImportError as exc:
-        raise ImportError(
-            f"Conversion pipeline '{pipeline.value}' is not available. "
-            "Install its dependencies to enable it."
-        ) from exc
+        _reject_unsupported_extension(pipeline, registration, filename)
+        try:
+            implementation = registration.load(pipeline.value)
+        except ImportError as exc:
+            raise ImportError(
+                f"Conversion pipeline '{pipeline.value}' is not available. "
+                "Install its dependencies to enable it."
+            ) from exc
 
-    suffix = Path(filename).suffix.lower()
-    if (
-        suffix
-        and cls.extensions
-        and not cls.accepts_any_extension
-        and suffix not in cls.extensions
-    ):
-        raise ValueError(
-            f"Conversion pipeline '{pipeline.value}' does not support "
-            f"{suffix}. Supported: {', '.join(sorted(cls.extensions))}"
+        return _instantiate(
+            pipeline, implementation, config, llm_options, detect_asset_roles
         )
 
-    kwargs: dict[str, Any] = {}
-    if config and (model := _config_model(cls)) is not None:
-        kwargs["config"] = model(**config)
-    if pipeline == ConversionPipeline.LLM and llm_options is not None:
-        kwargs["llm_options"] = llm_options
+    # AUTO candidates are already chosen by extension and declared availability,
+    # so the only thing left to discover is a dependency that fails to import.
+    unavailable: ImportError | None = None
+    for candidate in _auto_candidates(filename):
+        try:
+            implementation = _CONVERTERS[candidate].load(candidate.value)
+        except ImportError as exc:
+            unavailable = exc
+            continue
 
-    return cls(detect_asset_roles=detect_asset_roles, **kwargs)
+        return _instantiate(
+            candidate, implementation, config, llm_options, detect_asset_roles
+        )
+
+    raise ImportError("No AUTO conversion pipeline is available") from unavailable
 
 
 def get_conversion_pipelines_info() -> list[ConversionPipelineInfo]:
-    """Get metadata for all conversion pipelines."""
-    available = _available_converters()
+    """Get dependency-free metadata for installed conversion pipelines."""
+    available = {
+        pipeline: registration
+        for pipeline, registration in _CONVERTERS.items()
+        if registration.available
+    }
     all_extensions = sorted(
-        {ext for cls in available.values() for ext in cls.extensions}
+        {
+            extension
+            for registration in available.values()
+            for extension in registration.advertised_extensions
+        }
     )
-    infos = [
+    return [
         ConversionPipelineInfo(
             value=ConversionPipeline.AUTO.value,
             label="Auto",
             description="Automatically selects the best pipeline for each file",
             extensions=all_extensions,
         ),
-    ]
-    for pipeline, cls in available.items():
-        model = _config_model(cls)
-        infos.append(
+        *(
             ConversionPipelineInfo(
                 value=pipeline.value,
-                label=cls.label,
-                description=cls.description,
-                extensions=sorted(cls.extensions),
-                config_schema=model.model_json_schema() if model else {},
-                config_defaults=model().model_dump() if model else {},
+                label=registration.label,
+                description=registration.description,
+                extensions=sorted(registration.advertised_extensions),
             )
-        )
-    return infos
+            for pipeline, registration in available.items()
+        ),
+    ]
+
+
+@cache
+def get_conversion_pipeline_config(
+    pipeline: ConversionPipeline,
+) -> PipelineConfigInfo:
+    """Get configuration metadata for one selected conversion pipeline."""
+    registration = _CONVERTERS.get(pipeline)
+    if registration is None or not registration.available:
+        raise ValueError(f"Conversion pipeline '{pipeline.value}' is not available")
+
+    return registration.config_info(pipeline.value)

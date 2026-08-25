@@ -76,9 +76,7 @@ async def _sync_verbatim_projection(workspace_dir: Path, resolved: EntryPaths) -
     Anything else, a binary or a format needing a converter or vision model,
     is left alone.
 
-    The classification stays on the event loop because its first call imports
-    the converter registry, and docling only imports cleanly on the main thread.
-    Only the file work is offloaded.
+    The classification is dependency-free, while the file work is offloaded.
     """
     original = resolved.original_path
     if original is None or not is_projectable_original(original):

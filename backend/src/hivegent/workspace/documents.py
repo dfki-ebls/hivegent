@@ -27,9 +27,10 @@ from ..entries import (
     stem_path_from_reference,
 )
 from ..humanize import pluralize
+from ..llm_config import LlmConfig
 from ..store import Casebase
 from ..text import NOT_TEXT_REASON, DecodedText, read_text_file
-from ..types import LlmConfig, PipelineSpec
+from ..types import PipelineSpec
 from .commit import (
     _delete_single_locked,
     _ensure_upload_slot_locked,

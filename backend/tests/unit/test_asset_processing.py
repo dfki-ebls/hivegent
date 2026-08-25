@@ -11,7 +11,8 @@ from hivegent.converters.asset_processing import (
     perceptual_key,
 )
 from hivegent.converters.base import AssetRole, ExtractedImage
-from hivegent.types import AssetProcessingMode, LlmConfig
+from hivegent.llm_config import LlmConfig
+from hivegent.types import AssetProcessingMode
 
 
 def _png(img: Image.Image) -> bytes:

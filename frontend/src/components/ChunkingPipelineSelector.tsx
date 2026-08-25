@@ -1,8 +1,13 @@
 import { Scissors } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { listChunkingPipelines } from "@/lib/api";
-import { ChunkingPipeline, type ChunkingPipelineInfo, ChunkingPipelineSchema } from "@/lib/types";
+import { getChunkingPipelineConfig, listChunkingPipelines } from "@/lib/api";
+import {
+  ChunkingPipeline,
+  type ChunkingPipelineInfo,
+  ChunkingPipelineSchema,
+} from "@/lib/types";
+import { usePipelineConfig } from "@/hooks/use-pipeline-config";
 import { useSettingsStore } from "@/stores/settings-store";
 import { PipelineConfigDialog } from "@/components/PipelineConfigDialog";
 import { Label } from "@/components/ui/label";
@@ -40,7 +45,10 @@ export function ChunkingPipelineSelector({
   }, []);
 
   const selectedPipeline = pipelines.find((p) => p.value === value);
-  const isAuto = value === ChunkingPipeline.AUTO;
+  const pipelineConfig = usePipelineConfig(
+    value === ChunkingPipeline.AUTO ? null : value,
+    getChunkingPipelineConfig,
+  );
 
   return (
     <div className="flex items-center gap-2">
@@ -70,12 +78,12 @@ export function ChunkingPipelineSelector({
           ))}
         </SelectContent>
       </Select>
-      {selectedPipeline && !isAuto && (
+      {selectedPipeline && pipelineConfig && (
         <PipelineConfigDialog
           pipelineLabel={selectedPipeline.label}
           pipelineType="chunking"
-          configSchema={selectedPipeline.config_schema ?? {}}
-          configDefaults={selectedPipeline.config_defaults ?? {}}
+          configSchema={pipelineConfig.schema}
+          configDefaults={pipelineConfig.defaults}
           currentConfig={chunkingConfigs[value] ?? {}}
           onSave={(config) => setChunkingConfig(value, config)}
           onReset={() => resetChunkingConfig(value)}

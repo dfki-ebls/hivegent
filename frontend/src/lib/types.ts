@@ -239,8 +239,6 @@ export const ConversionPipelineInfoSchema = z.object({
   label: z.string(),
   description: z.string(),
   extensions: z.array(z.string()),
-  config_schema: z.record(z.string(), z.unknown()).optional(),
-  config_defaults: z.record(z.string(), z.unknown()).optional(),
 });
 export type ConversionPipelineInfo = z.infer<typeof ConversionPipelineInfoSchema>;
 
@@ -249,10 +247,15 @@ export const ChunkingPipelineInfoSchema = z.object({
   value: z.string(),
   label: z.string(),
   description: z.string(),
-  config_schema: z.record(z.string(), z.unknown()).optional(),
-  config_defaults: z.record(z.string(), z.unknown()).optional(),
 });
 export type ChunkingPipelineInfo = z.infer<typeof ChunkingPipelineInfoSchema>;
+
+/** Configuration metadata loaded only for the selected pipeline. */
+export const PipelineConfigInfoSchema = z.object({
+  schema: z.record(z.string(), z.unknown()),
+  defaults: z.record(z.string(), z.unknown()),
+});
+export type PipelineConfigInfo = z.infer<typeof PipelineConfigInfoSchema>;
 
 /** A single chunk within a chunked document. */
 export const ChunkInfoSchema = z.object({

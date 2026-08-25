@@ -69,8 +69,6 @@ class SemanticDocumentChunker(DocumentChunker):
     """
 
     name = "semantic"
-    label = "Semantic"
-    description = "Splits by semantic similarity using embeddings"
     config: SemanticChunkerConfig = field(default_factory=SemanticChunkerConfig)
 
     def _split_sync(self, text: str) -> list[ChunkData]:

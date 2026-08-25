@@ -10,11 +10,11 @@ from pathlib import Path
 import pytest
 
 from hivegent.config import settings
+from hivegent.llm_config import LlmConfig
 from hivegent.store import Casebase
 from hivegent.types import (
     CollectionCompleteEvent,
     CollectionProgressEvent,
-    LlmConfig,
     PipelineSpec,
 )
 from hivegent.workspace import collections

@@ -26,9 +26,6 @@ class ChonkieTableConverter(DocumentConverter):
     """
 
     name: ClassVar[str] = "table-chef"
-    label: ClassVar[str] = "Table Chef"
-    description: ClassVar[str] = "CSV/Excel to markdown tables via pandas"
-    extensions: ClassVar[frozenset[str]] = frozenset({".csv", ".xls", ".xlsx"})
 
     def _convert_sync(self, path: Path, /) -> ConversionResult:
         doc = _build_chef().process(path)

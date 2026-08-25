@@ -36,9 +36,6 @@ def _build_converter(device: str) -> PdfConverter:
     return PdfConverter(artifact_dict=artifacts)
 
 
-# Marker only converts PDFs. The provider registry lives in
-# marker.providers.registry but has no public format listing API.
-# https://github.com/VikParuchuri/marker
 @dataclass(slots=True, frozen=True)
 class MarkerConverter(DocumentConverter):
     """PDF converter using the Marker library.
@@ -48,9 +45,6 @@ class MarkerConverter(DocumentConverter):
     """
 
     name = "marker"
-    label = "Marker"
-    description = "Best for PDF documents"
-    extensions = frozenset({".pdf"})
     config: MarkerConverterConfig = field(default_factory=MarkerConverterConfig)
     device: str = field(default="auto", kw_only=True)
     """Compute device for the models (``"auto"`` self-detects); code-level, not a setting."""

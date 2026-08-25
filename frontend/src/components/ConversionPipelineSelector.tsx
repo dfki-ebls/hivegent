@@ -1,12 +1,13 @@
 import { FileType } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { listConversionPipelines } from "@/lib/api";
+import { getConversionPipelineConfig, listConversionPipelines } from "@/lib/api";
 import {
   ConversionPipeline,
   type ConversionPipelineInfo,
   ConversionPipelineSchema,
 } from "@/lib/types";
+import { usePipelineConfig } from "@/hooks/use-pipeline-config";
 import { useSettingsStore } from "@/stores/settings-store";
 import { PipelineConfigDialog } from "@/components/PipelineConfigDialog";
 import { Label } from "@/components/ui/label";
@@ -44,7 +45,10 @@ export function ConversionPipelineSelector({
   }, []);
 
   const selectedPipeline = pipelines.find((p) => p.value === value);
-  const isAuto = value === ConversionPipeline.AUTO;
+  const pipelineConfig = usePipelineConfig(
+    value === ConversionPipeline.AUTO ? null : value,
+    getConversionPipelineConfig,
+  );
 
   return (
     <div className="flex items-center gap-2">
@@ -74,12 +78,12 @@ export function ConversionPipelineSelector({
           ))}
         </SelectContent>
       </Select>
-      {selectedPipeline && !isAuto && (
+      {selectedPipeline && pipelineConfig && (
         <PipelineConfigDialog
           pipelineLabel={selectedPipeline.label}
           pipelineType="conversion"
-          configSchema={selectedPipeline.config_schema ?? {}}
-          configDefaults={selectedPipeline.config_defaults ?? {}}
+          configSchema={pipelineConfig.schema}
+          configDefaults={pipelineConfig.defaults}
           currentConfig={conversionConfigs[value] ?? {}}
           onSave={(config) => setConversionConfig(value, config)}
           onReset={() => resetConversionConfig(value)}

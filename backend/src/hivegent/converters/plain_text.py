@@ -26,21 +26,11 @@ def convert_plain_text(content: bytes, suffix: str) -> ConversionResult | None:
 class PlainTextConverter(DocumentConverter):
     """Converter that reads supported Unicode and Western text verbatim.
 
-    Its extensions define AUTO routing priority, while
-    :attr:`accepts_any_extension` lets explicit uses handle any filename.
-    Unsupported or binary-looking bytes raise.
+    AUTO routing prefers it for common raw-text formats and uses it as the
+    content-aware fallback for every unclaimed extension.
     """
 
     name: ClassVar[str] = "plain-text"
-    label: ClassVar[str] = "Plain Text"
-    description: ClassVar[str] = (
-        "Text, configuration, data-serialization, and source files as-is"
-    )
-    # These overlap richer converters and therefore need an explicit AUTO
-    # priority.  Every other suffix already reaches plain text through AUTO's
-    # default.
-    extensions: ClassVar[frozenset[str]] = frozenset({".json", ".text", ".txt", ".xml"})
-    accepts_any_extension: ClassVar[bool] = True
 
     def _convert_sync(self, path: Path, /) -> ConversionResult:
         result = convert_plain_text(path.read_bytes(), path.suffix)

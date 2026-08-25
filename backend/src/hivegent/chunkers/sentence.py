@@ -58,8 +58,6 @@ class SentenceDocumentChunker(DocumentChunker):
     """
 
     name = "sentence"
-    label = "Sentence"
-    description = "Respects sentence boundaries, good for prose and plain text"
     config: SentenceChunkerConfig = field(default_factory=SentenceChunkerConfig)
 
     def _split_sync(self, text: str) -> list[ChunkData]:

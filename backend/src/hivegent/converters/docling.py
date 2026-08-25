@@ -10,7 +10,7 @@ import PIL.Image
 import PIL.PngImagePlugin
 from docling.backend.msword_backend import MsWordDocumentBackend
 from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
-from docling.datamodel.base_models import FormatToExtensions, InputFormat
+from docling.datamodel.base_models import InputFormat
 from docling.datamodel.document import InputDocument
 from docling.datamodel.pipeline_options import (
     ConvertPipelineOptions,
@@ -22,10 +22,8 @@ from docling_core.types.doc import DoclingDocument, PictureItem
 from docling_core.types.doc.labels import PictureClassificationLabel
 from pydantic import BaseModel, Field
 
-# Imported eagerly so a missing tesserocr keeps the whole converter out of the
-# registry (see ``_available_converters``) rather than failing mid-OCR.  Its
-# main-thread constraint is settled by the cysignals import in the package
-# ``__init__``, which runs before any lazy load of this module.
+# Selected converters are loaded before their work is offloaded, so this import
+# initializes tesserocr and cysignals on the process main thread.
 import tesserocr  # noqa: F401  # isort: skip
 
 from ..config import settings
@@ -188,8 +186,6 @@ def _build_converter(config: DoclingConverterConfig) -> DoclingDocumentConverter
     return converter
 
 
-# Derived from docling.datamodel.base_models.FormatToExtensions.
-# https://github.com/docling-project/docling/blob/main/docling/datamodel/base_models.py
 @dataclass(slots=True, frozen=True)
 class DoclingConverter(DocumentConverter):
     """Document converter using the Docling library.
@@ -199,11 +195,6 @@ class DoclingConverter(DocumentConverter):
     """
 
     name = "docling"
-    label = "Docling"
-    description = "Best for Office documents"
-    extensions = frozenset(
-        f".{ext}" for exts in FormatToExtensions.values() for ext in exts
-    )
     config: DoclingConverterConfig = field(default_factory=DoclingConverterConfig)
     device: str = field(default="auto", kw_only=True)
     """Compute device for the models (``"auto"`` self-detects); code-level, not a setting."""

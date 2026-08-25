@@ -21,9 +21,10 @@ from ..entries import (
     description_path_for_stem,
     stem_path_from_reference,
 )
+from ..llm_config import LlmConfig
 from ..store import Casebase
 from ..text import read_text_file
-from ..types import AssetEntry, LlmConfig
+from ..types import AssetEntry
 from .describe import _build_image_description
 from .indexing import chunk_and_index_document, delete_chunked_document
 from .locks import _locked_for

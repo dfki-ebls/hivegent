@@ -31,9 +31,6 @@ class KreuzbergConverterConfig(BaseModel):
     )
 
 
-# Kreuzberg exposes get_extensions_for_mime() per MIME type but has no
-# API to enumerate all supported types at once.
-# https://docs.kreuzberg.dev/features/supported-formats/
 @dataclass(slots=True, frozen=True)
 class KreuzbergConverter(DocumentConverter):
     """Document converter using the Kreuzberg text extraction library.
@@ -44,46 +41,6 @@ class KreuzbergConverter(DocumentConverter):
     """
 
     name = "kreuzberg"
-    label = "Kreuzberg"
-    description = "Text extraction from 75+ formats with OCR support"
-    extensions = frozenset(
-        {
-            ".pdf",
-            ".docx",
-            ".xlsx",
-            ".pptx",
-            ".doc",
-            ".xls",
-            ".ppt",
-            ".odt",
-            ".ods",
-            ".html",
-            ".htm",
-            ".xml",
-            ".json",
-            ".csv",
-            ".epub",
-            ".rtf",
-            ".txt",
-            ".md",
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".gif",
-            ".webp",
-            ".tiff",
-            ".tif",
-            ".bmp",
-            ".svg",
-            ".ico",
-            ".msg",
-            ".eml",
-            ".zip",
-            ".tar",
-            ".gz",
-            ".7z",
-        }
-    )
     config: KreuzbergConverterConfig = field(default_factory=KreuzbergConverterConfig)
 
     async def _convert(self, path: Path, /) -> ConversionResult:

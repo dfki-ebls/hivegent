@@ -4,15 +4,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import BaseModel, Field
-from pydantic_ai import BinaryContent
+from pydantic_ai import Agent, BinaryContent
+from pydantic_ai.settings import ModelSettings
 
-from ..agents.app import base_agent
+from ..config import settings
 from ..llm import model_from_config, thinking_model_settings
-from ..types import LlmConfig
+from ..llm_config import LlmConfig
 from .base import ConversionResult, DocumentConverter
+from .formats import LLM_MEDIA_TYPES
 from .images import sanitize_image_bytes
 
 __all__ = ["LLMConverter", "LlmConverterConfig"]
+
+
+# Deliberately not ``agents.app.base_agent``: importing it here would close the
+# cycle converters.llm -> agents.app -> agents.common -> types -> converters.
+# The defaults it would bring beyond these two are inapplicable anyway, since
+# this run is a single tool-free completion: ``tool_timeout`` has nothing to
+# bound and ``IncompleteToolCallGuard`` no tool call to catch.
+_conversion_agent: Agent[None, str] = Agent(
+    retries=settings.llm.retries,
+    model_settings=ModelSettings(timeout=settings.llm.request_timeout_seconds),
+)
 
 
 class LlmConverterConfig(BaseModel):
@@ -30,22 +43,6 @@ class LlmConverterConfig(BaseModel):
     )
 
 
-MEDIA_TYPES: dict[str, str] = {
-    ".pdf": "application/pdf",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".bmp": "image/bmp",
-    ".tiff": "image/tiff",
-    ".tif": "image/tiff",
-}
-
-
 @dataclass(slots=True, frozen=True)
 class LLMConverter(DocumentConverter):
     """Document converter using vision-capable LLMs.
@@ -55,21 +52,18 @@ class LLMConverter(DocumentConverter):
     """
 
     name = "llm"
-    label = "LLM"
-    description = "Uses vision model for all files"
-    extensions = frozenset(MEDIA_TYPES)
     config: LlmConverterConfig = field(default_factory=LlmConverterConfig)
-    llm_options: LlmConfig = field(default_factory=LlmConfig)
+    llm_options: LlmConfig | None = None
 
     async def _convert(self, path: Path, /) -> ConversionResult:
-        if not self.llm_options.model:
+        if self.llm_options is None or not self.llm_options.model:
             raise ValueError(
                 "No auxiliary model configured. "
                 "Set HIVEGENT_LLM__AUX_MODEL to a small, fast, vision-capable model."
             )
 
         suffix = path.suffix.lower()
-        media_type = MEDIA_TYPES.get(suffix)
+        media_type = LLM_MEDIA_TYPES.get(suffix)
         if media_type is None:
             raise ValueError(f"Unsupported extension: {suffix!r}")
 
@@ -82,7 +76,7 @@ class LLMConverter(DocumentConverter):
         # `thinking=False` is layered on top of the agent's default
         # ``model_settings`` (request timeout) via pydantic-ai's
         # ``merge_model_settings``; no need to restate the timeout here.
-        result = await base_agent.run(
+        result = await _conversion_agent.run(
             [self.config.prompt, content],
             model=model_from_config(self.llm_options),
             model_settings=thinking_model_settings(False, self.llm_options),

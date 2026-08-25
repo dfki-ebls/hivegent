@@ -45,8 +45,6 @@ class NeuralDocumentChunker(DocumentChunker):
     """
 
     name = "neural"
-    label = "Neural"
-    description = "Neural model-based chunk boundary detection"
     config: NeuralChunkerConfig = field(default_factory=NeuralChunkerConfig)
     device: str = field(default="auto", kw_only=True)
     """Compute device for the model (``"auto"`` self-detects); code-level, not a setting."""

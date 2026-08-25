@@ -9,14 +9,22 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ...agents import collect_tool_schemas
 from ...auth import User, get_current_user
-from ...chunkers import ChunkingPipelineInfo, get_chunking_pipelines_info
+from ...chunkers import (
+    ChunkingPipeline,
+    ChunkingPipelineInfo,
+    get_chunking_pipeline_config,
+    get_chunking_pipelines_info,
+)
 from ...config import settings
 from ...converters import (
     INGESTIBLE_IMAGE_MEDIA_TYPES,
+    ConversionPipeline,
     ConversionPipelineInfo,
+    get_conversion_pipeline_config,
     get_conversion_pipelines_info,
 )
 from ...mcp import build_mcp_toolset, validate_mcp_servers
+from ...pipeline_registry import PipelineConfigInfo
 from ...types import (
     AttachmentLimits,
     McpServerConfig,
@@ -96,7 +104,36 @@ async def list_conversion_pipelines() -> list[ConversionPipelineInfo]:
     return get_conversion_pipelines_info()
 
 
+@router.get("/pipelines/conversion/{pipeline}/config")
+def get_conversion_config(
+    pipeline: ConversionPipeline,
+) -> PipelineConfigInfo:
+    """Get configuration metadata for one conversion pipeline.
+
+    Synchronous so FastAPI runs it in the threadpool: the first request for a
+    pipeline imports its backend, which must not block the event loop.
+    """
+    try:
+        return get_conversion_pipeline_config(pipeline)
+    except (ImportError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/pipelines/chunking")
 async def list_chunking_pipelines() -> list[ChunkingPipelineInfo]:
     """Get metadata for all chunking pipelines."""
     return get_chunking_pipelines_info()
+
+
+@router.get("/pipelines/chunking/{pipeline}/config")
+def get_chunking_config(
+    pipeline: ChunkingPipeline,
+) -> PipelineConfigInfo:
+    """Get configuration metadata for one chunking pipeline.
+
+    Synchronous for the same reason as the conversion route above.
+    """
+    try:
+        return get_chunking_pipeline_config(pipeline)
+    except (ImportError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

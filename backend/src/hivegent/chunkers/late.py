@@ -52,8 +52,6 @@ class LateDocumentChunker(DocumentChunker):
     """
 
     name = "late"
-    label = "Late"
-    description = "Late-interaction embedding-aware chunk boundaries"
     config: LateChunkerConfig = field(default_factory=LateChunkerConfig)
     device: str = field(default="auto", kw_only=True)
     """Compute device for the model (``"auto"`` self-detects); code-level, not a setting."""

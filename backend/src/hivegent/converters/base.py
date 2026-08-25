@@ -250,18 +250,6 @@ class DocumentConverter(ABC):
     """
 
     name: ClassVar[str]
-    label: ClassVar[str]
-    description: ClassVar[str]
-    extensions: ClassVar[frozenset[str]]
-
-    accepts_any_extension: ClassVar[bool] = False
-    """Whether the converter can attempt an input outside :attr:`extensions`.
-
-    For such a converter (today only the plain-text pipeline) ``extensions``
-    expresses AUTO's routing *preference* rather than a hard capability, so
-    :func:`~hivegent.converters.get_converter` skips the extension check and
-    lets the converter itself decide from the content.
-    """
 
     detect_asset_roles: bool = field(default=False, kw_only=True)
     """Whether to compute :class:`AssetRole` signals for extracted assets.
