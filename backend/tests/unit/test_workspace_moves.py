@@ -144,9 +144,7 @@ class TestMoveDocument:
         (workspace_dir / "archive").mkdir()
         repo.docs["report"] = _doc("report", original_suffix=".pdf")
 
-        await workspace.move_document(
-            user_store, user_store, "report.md", "archive"
-        )
+        await workspace.move_document(user_store, user_store, "report.md", "archive")
 
         assert (workspace_dir / "archive/report.md").is_file()
         assert (workspace_dir / "archive/report.pdf").is_file()
@@ -217,9 +215,7 @@ class TestMoveDirectory:
         (workspace_dir / "images/x.md").write_text("x")
         (workspace_dir / "archive").mkdir()
 
-        await workspace.move_directory(
-            user_store, user_store, "images", "archive"
-        )
+        await workspace.move_directory(user_store, user_store, "images", "archive")
 
         assert (workspace_dir / "archive/images/x.md").is_file()
         assert repo.calls == [("move_subtree", "images", "archive/images")]
@@ -285,9 +281,7 @@ class TestCrossStoreMove:
         doc = _doc("report", original_suffix=".pdf")
         repo.docs["report"] = doc.model_copy(update={"assets_dir": "report.assets"})
 
-        await workspace.move_document(
-            user_store, group_store, "report.md", "report.md"
-        )
+        await workspace.move_document(user_store, group_store, "report.md", "report.md")
 
         assert (group_dir / "report.md").is_file()
         assert (group_dir / "report.pdf").is_file()
@@ -335,9 +329,7 @@ class TestCrossStoreMove:
         (workspace_dir / "shared").mkdir()
         (workspace_dir / "shared/x.md").write_text("x")
 
-        await workspace.move_directory(
-            user_store, group_store, "shared", "shared"
-        )
+        await workspace.move_directory(user_store, group_store, "shared", "shared")
 
         assert (group_dir / "shared/x.md").is_file()
         assert not (workspace_dir / "shared").exists()

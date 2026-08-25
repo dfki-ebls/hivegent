@@ -1003,7 +1003,9 @@ export function DocumentDialog({
                   <Badge variant="secondary">Chunking: {contentModel.metadata.pipeline}</Badge>
                   <Badge variant="secondary">{contentModel.chunks.length} chunks</Badge>
                   {contentModel.metadata.size_bytes != null && (
-                    <Badge variant="outline">{formatFileSize(contentModel.metadata.size_bytes)}</Badge>
+                    <Badge variant="outline">
+                      {formatFileSize(contentModel.metadata.size_bytes)}
+                    </Badge>
                   )}
                   <Badge variant="outline">
                     Created: {formatDate(contentModel.metadata.created_at)}

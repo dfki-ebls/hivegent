@@ -23,11 +23,7 @@ import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
 import { ToolApprovalProvider, type ToolApprovalGate } from "@/hooks/chat/use-tool-approval";
 import { getServerConversation, importConversation, transcribeAudio } from "@/lib/api";
 import { downloadJson } from "@/lib/download";
-import {
-  activeChatError,
-  getLastUserMessage,
-  recordChatError,
-} from "@/lib/chat/chat-utils";
+import { activeChatError, getLastUserMessage, recordChatError } from "@/lib/chat/chat-utils";
 import { type AgentMode, type ConversationArchive, type ReasoningEffort } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";

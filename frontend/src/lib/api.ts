@@ -119,7 +119,11 @@ async function responseError(res: Response, fallback: string): Promise<Error> {
   const body = (await res.json().catch(() => null)) as {
     detail?: string | { code?: string; message?: string };
   } | null;
-  if (res.status === 503 && typeof body?.detail === "object" && body.detail.code === "maintenance") {
+  if (
+    res.status === 503 &&
+    typeof body?.detail === "object" &&
+    body.detail.code === "maintenance"
+  ) {
     return new MaintenanceError(body.detail.message);
   }
 
@@ -274,7 +278,11 @@ export function requiresConversion(filename: string): boolean {
 
 /** Fetch server-side LLM settings. */
 export async function getSettings(): Promise<BackendSettings> {
-  return requestJson(`${API_BASE_URL}/api/settings`, "Failed to fetch settings", BackendSettingsSchema);
+  return requestJson(
+    `${API_BASE_URL}/api/settings`,
+    "Failed to fetch settings",
+    BackendSettingsSchema,
+  );
 }
 
 /** Transcribe recorded audio via the backend STT endpoint. */
@@ -1000,10 +1008,7 @@ export async function deleteDirectory(dirpath: string): Promise<void> {
   );
 }
 
-export async function moveDirectory(
-  source: string,
-  destination: string,
-): Promise<void> {
+export async function moveDirectory(source: string, destination: string): Promise<void> {
   return requestVoid(
     `${API_BASE_URL}/api/directories/move`,
     "Failed to move directory",
@@ -1011,10 +1016,7 @@ export async function moveDirectory(
   );
 }
 
-export async function moveDocument(
-  filepath: string,
-  destination: string,
-): Promise<void> {
+export async function moveDocument(filepath: string, destination: string): Promise<void> {
   return requestVoid(
     `${API_BASE_URL}/api/documents/move/${encodeFilePath(filepath)}`,
     "Move failed",

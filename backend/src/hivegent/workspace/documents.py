@@ -504,6 +504,7 @@ async def _move_document_locked(
             src_store, metadata.assets_dir, dst_store, assets_dir_for_stem(dst_stem)
         )
 
+
 async def move_document(
     src_store: Casebase, dst_store: Casebase, src: str, dst: str
 ) -> None:
@@ -516,4 +517,6 @@ async def move_document(
     cancellation cannot leave the renamed files pointing at stale SQL rows.
     """
     async with _locked_for(src_store, src, dst_store=dst_store):
-        await shield_to_completion(_move_document_locked(src_store, dst_store, src, dst))
+        await shield_to_completion(
+            _move_document_locked(src_store, dst_store, src, dst)
+        )

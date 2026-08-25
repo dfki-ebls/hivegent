@@ -141,10 +141,7 @@ function ComposerContent({
         <PromptInputTools>
           <FileSelectButton />
           {showSpeechInput && (
-            <ComposerSpeechInput
-              disabled={status !== "ready"}
-              onAudioRecorded={onAudioRecorded}
-            />
+            <ComposerSpeechInput disabled={status !== "ready"} onAudioRecorded={onAudioRecorded} />
           )}
           <SettingsDialog />
           <ReasoningEffortSelector value={reasoningEffort} onChange={onReasoningEffortChange} />

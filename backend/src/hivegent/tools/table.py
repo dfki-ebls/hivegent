@@ -68,9 +68,7 @@ class _Coercion:
 
 def _numeric(dtype: pl.DataType) -> _Coercion:
     """Build the coercion to *dtype*, a plain parse of every value."""
-    return _Coercion(
-        dtype, lambda text: text.cast(dtype, strict=False), numeric=True
-    )
+    return _Coercion(dtype, lambda text: text.cast(dtype, strict=False), numeric=True)
 
 
 _COERCIONS = (
@@ -560,8 +558,7 @@ class QueryTableTool(AsyncPathTool[TableResult]):
         """
         retyped = [column.name for column in columns if column.complete]
         mixed = [
-            f"{column.name} ({column.parsed} of {column.total} parse as "
-            f"{column.dtype})"
+            f"{column.name} ({column.parsed} of {column.total} parse as {column.dtype})"
             for column in columns
             if not column.complete
         ]

@@ -106,6 +106,7 @@ async def _move_directory_locked(
     # lives outside the directory and keeps its row.
     await db_documents.move_subtree(src_store, src, dst_store, dst)
 
+
 async def prune_empty_dirs(store: Casebase, sources: Iterable[str]) -> None:
     """Remove directories left empty after their entries moved away.
 
@@ -141,7 +142,9 @@ async def move_directory(
     its rows cannot drift apart.
     """
     async with _locked_for(src_store, scope=src, dst_store=dst_store):
-        await shield_to_completion(_move_directory_locked(src_store, dst_store, src, dst))
+        await shield_to_completion(
+            _move_directory_locked(src_store, dst_store, src, dst)
+        )
 
 
 async def _delete_directory_locked(store: Casebase, path: str) -> None:
@@ -159,6 +162,8 @@ async def _delete_directory_locked(store: Casebase, path: str) -> None:
     # Children-only: a same-named sibling document (stem equal to *path*)
     # lives outside the directory and keeps its row.
     await db_documents.delete_subtree(store, path)
+
+
 async def delete_directory(store: Casebase, path: str) -> None:
     """Delete a workspace directory; matching SQL documents cascade out.
 

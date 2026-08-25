@@ -21,10 +21,7 @@ export function ComposerSelect<T extends string>({
   options,
 }: ComposerSelectProps<T>) {
   return (
-    <PromptInputSelect
-      value={value}
-      onValueChange={(v) => onChange(v as T)}
-    >
+    <PromptInputSelect value={value} onValueChange={(v) => onChange(v as T)}>
       <PromptInputSelectTrigger className="h-8 w-auto min-w-20">
         <Icon className="h-4 w-4" />
         <PromptInputSelectValue />

@@ -2,11 +2,7 @@ import { Scissors } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { getChunkingPipelineConfig, listChunkingPipelines } from "@/lib/api";
-import {
-  ChunkingPipeline,
-  type ChunkingPipelineInfo,
-  ChunkingPipelineSchema,
-} from "@/lib/types";
+import { ChunkingPipeline, type ChunkingPipelineInfo, ChunkingPipelineSchema } from "@/lib/types";
 import { usePipelineConfig } from "@/hooks/use-pipeline-config";
 import { useSettingsStore } from "@/stores/settings-store";
 import { PipelineConfigDialog } from "@/components/PipelineConfigDialog";

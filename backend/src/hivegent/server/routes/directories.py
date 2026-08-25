@@ -47,6 +47,8 @@ async def create_directory(
     store, safe = resolve_workspace_path(user, request.path, write=True)
     await workspace.create_directory(store, safe)
     notify_workspace_change(user.id, store, client)
+
+
 @router.post("/directories/move", status_code=status.HTTP_204_NO_CONTENT)
 async def move_directory(
     request: MoveDirectoryRequest,
@@ -68,6 +70,8 @@ async def move_directory(
     notify_workspace_change(user.id, src_store, client)
     if dst_store != src_store:
         notify_workspace_change(user.id, dst_store, client)
+
+
 @router.delete("/directories", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_directory(
     request: DeleteDirectoryRequest,

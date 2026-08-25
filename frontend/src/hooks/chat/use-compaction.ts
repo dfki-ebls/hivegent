@@ -14,12 +14,7 @@ interface UseCompactionArgs {
   onRetry: (text: string, files?: FileUIPart[]) => void;
 }
 
-export function useCompaction({
-  id,
-  messages,
-  isLoadingHistory,
-  onRetry,
-}: UseCompactionArgs) {
+export function useCompaction({ id, messages, isLoadingHistory, onRetry }: UseCompactionArgs) {
   const navigate = useNavigate();
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const overrides = useSettingsStore((state) => state.overrides);
