@@ -1,5 +1,8 @@
 """Tests for AUTO conversion routing of plain-text formats."""
 
+import subprocess
+import sys
+from importlib.util import find_spec
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -37,6 +40,20 @@ from hivegent.workspace import prepare
 )
 def test_auto_routes_plain_text(filename: str, expected: ConversionPipeline) -> None:
     assert resolve_auto_pipeline(filename) is expected
+
+
+@pytest.mark.skipif(find_spec("cysignals") is None, reason="docling extra absent")
+def test_converters_package_preimports_cysignals() -> None:
+    # cysignals installs signal handlers at import time and so imports cleanly
+    # only on the main thread.  The package has to pull it in during its own
+    # import, or the lazy docling load raises in the reconcile walk's worker
+    # thread.  A subprocess is the only place the side effect is observable.
+    code = "import sys, hivegent.converters; print('cysignals' in sys.modules)"
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+
+    assert result.stdout.strip() == "True"
 
 
 def test_auto_accepts_undeclared_extension() -> None:

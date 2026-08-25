@@ -22,12 +22,10 @@ from docling_core.types.doc import DoclingDocument, PictureItem
 from docling_core.types.doc.labels import PictureClassificationLabel
 from pydantic import BaseModel, Field
 
-# Imported eagerly: tesserocr pulls in cysignals, which installs signal
-# handlers at import time and therefore only imports cleanly on the main
-# thread.  Docling's lazy import inside the OCR model would run
-# off the main thread (a worker process, or an ``asyncio.to_thread``
-# fallback; see :meth:`_convert_sync`) and crash with
-# "signal only works in main thread of the main interpreter".
+# Imported eagerly so a missing tesserocr keeps the whole converter out of the
+# registry (see ``_available_converters``) rather than failing mid-OCR.  Its
+# main-thread constraint is settled by the cysignals import in the package
+# ``__init__``, which runs before any lazy load of this module.
 import tesserocr  # noqa: F401  # isort: skip
 
 from ..config import settings

@@ -1,6 +1,7 @@
 """Document conversion infrastructure for Hivegent."""
 
 import importlib
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cache
@@ -8,6 +9,18 @@ from pathlib import Path
 from typing import Any, Protocol, get_type_hints
 
 from pydantic import BaseModel
+
+# cysignals installs signal handlers at import time and therefore imports
+# cleanly only on the main thread.  It arrives with tesserocr, which the docling
+# converter imports, and converter modules are loaded lazily: the first load can
+# happen off the main thread (the reconcile walk resolves extensions through
+# ``asyncio.to_thread``, and conversion itself does when ``worker_processes`` is
+# 1), where that import raises.  Pulling it up into the package every one of
+# those paths goes through runs it while the process is still importing, on its
+# main thread; the lazy imports then hit ``sys.modules``.  It ships with the
+# optional docling extra, so its absence is not an error.
+with suppress(ImportError):
+    import cysignals  # noqa: F401
 
 from .base import (
     IMAGE_MEDIA_TYPES,
