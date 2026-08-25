@@ -4,7 +4,7 @@ import { ToolError, ToolParameters } from "@/components/ToolDisplay";
 import { parseJson, type ToolPart } from "@/lib/chat/tool-part";
 import { snakeCaseToTitleCase } from "@/lib/utils";
 
-type CollapsibleProps = Pick<ComponentProps<typeof Tool>, "open" | "defaultOpen" | "onOpenChange">;
+type CollapsibleProps = Pick<ComponentProps<typeof Tool>, "open" | "onOpenChange">;
 
 interface ToolCardProps extends CollapsibleProps {
   toolName: string;
@@ -25,14 +25,13 @@ export function ToolCard({
   title,
   children,
   open,
-  defaultOpen,
   onOpenChange,
 }: ToolCardProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
   const input = parseJson<Record<string, unknown>>(part.input);
 
   const awaitingApproval = state === "approval-requested";
-  const [selfOpen, setSelfOpen] = useState(defaultOpen ?? false);
+  const [selfOpen, setSelfOpen] = useState(false);
 
   const handleOpenChange = (next: boolean) => {
     setSelfOpen(next);

@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 
 import { BootstrapGate } from "@/components/BootstrapGate";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { OidcInitializationGate } from "@/oidc";
 import { routeTree } from "@/routeTree.gen";
 
@@ -46,11 +47,13 @@ if (rootElement && !rootElement.innerHTML) {
   root.render(
     <StrictMode>
       <ThemeProvider>
-        <BootstrapGate>
-          <OidcInitializationGate>
-            <RouterProvider router={router} />
-          </OidcInitializationGate>
-        </BootstrapGate>
+        <TooltipProvider>
+          <BootstrapGate>
+            <OidcInitializationGate>
+              <RouterProvider router={router} />
+            </OidcInitializationGate>
+          </BootstrapGate>
+        </TooltipProvider>
       </ThemeProvider>
     </StrictMode>,
   );
