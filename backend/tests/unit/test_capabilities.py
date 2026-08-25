@@ -38,7 +38,7 @@ def _callables(spec: ToolsSpec) -> list[object]:
     """Every dynamic instruction the composed capabilities contribute."""
     return [
         part
-        for capability in build_capabilities(spec)
+        for capability in build_capabilities(spec, mode="interactive")
         for part in _dynamic_parts(capability.get_instructions() or [])
     ]
 
@@ -47,7 +47,7 @@ def _instructions(spec: ToolsSpec) -> str:
     """Every static instruction the composed capabilities contribute."""
     return "\n".join(
         text
-        for capability in build_capabilities(spec)
+        for capability in build_capabilities(spec, mode="interactive")
         for text in _static_texts(capability.get_instructions())
     )
 
@@ -63,7 +63,7 @@ def test_grounding_rides_with_the_retrieval_tools() -> None:
 def test_shared_block_survives_on_its_remaining_feature() -> None:
     """Path guidance is owned by explore *and* write, so write alone keeps it."""
     disabled = ToolsSpec(disabled_tools=sorted(_EXPLORE.tool_names))
-    ids = {capability.id for capability in build_capabilities(disabled)}
+    ids = {capability.id for capability in build_capabilities(disabled, mode="interactive")}
     assert "workspace-paths" in ids
 
 

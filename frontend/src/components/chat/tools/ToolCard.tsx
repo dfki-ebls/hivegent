@@ -1,4 +1,4 @@
-import { type ComponentProps, type ReactNode, useEffect, useState } from "react";
+import { type ComponentProps, type ReactNode, useState } from "react";
 import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
 import { ToolError, ToolParameters } from "@/components/ToolDisplay";
 import { parseJson, type ToolPart } from "@/lib/chat/tool-part";
@@ -32,11 +32,7 @@ export function ToolCard({
   const input = parseJson<Record<string, unknown>>(part.input);
 
   const awaitingApproval = state === "approval-requested";
-  const [selfOpen, setSelfOpen] = useState(defaultOpen ?? awaitingApproval);
-
-  useEffect(() => {
-    if (awaitingApproval) setSelfOpen(true);
-  }, [awaitingApproval]);
+  const [selfOpen, setSelfOpen] = useState(defaultOpen ?? false);
 
   const handleOpenChange = (next: boolean) => {
     setSelfOpen(next);
@@ -44,7 +40,11 @@ export function ToolCard({
   };
 
   return (
-    <Tool open={open ?? selfOpen} className="mb-0" onOpenChange={handleOpenChange}>
+    <Tool
+      open={open ?? (selfOpen || awaitingApproval)}
+      className="mb-0"
+      onOpenChange={handleOpenChange}
+    >
       <ToolHeader
         title={title ?? snakeCaseToTitleCase(toolName)}
         type={`tool-${toolName}`}

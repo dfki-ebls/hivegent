@@ -12,7 +12,7 @@ from ..llm_config import LlmConfig
 from ..prompts import format_document_scope
 from ..store import Casebase, build_search_paths
 from ..tools.base import SearchPath
-from ..types import DocumentFilter
+from ..types import AUTO_APPROVED_MODES, MUTATING_MODES, DocumentFilter, Mode
 from .subagent_events import SubagentUpdate
 
 __all__ = [
@@ -38,6 +38,7 @@ class UserDeps:
 
     user_id: str
     store: Casebase
+    mode: Mode
     group_stores: tuple[Casebase, ...] = ()
     # The subset of `group_stores` the user may write to; the mutating tools
     # search these instead of every readable one, so a document the user can
@@ -59,6 +60,16 @@ class UserDeps:
     def writable_stores(self) -> tuple[Casebase, ...]:
         """The stores the user may mutate (personal + writable groups)."""
         return (self.store, *self.write_group_stores)
+
+    @property
+    def can_write(self) -> bool:
+        """Whether this run may mutate workspace content."""
+        return self.mode in MUTATING_MODES
+
+    @property
+    def needs_approval(self) -> bool:
+        """Whether a state-changing tool call must be confirmed by the user."""
+        return self.mode not in AUTO_APPROVED_MODES
 
     def search_paths(self, *, writable: bool = False) -> tuple[SearchPath, ...]:
         """Workspace roots for this run's document tools, filters applied.

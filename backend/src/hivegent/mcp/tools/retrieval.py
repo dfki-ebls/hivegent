@@ -62,6 +62,7 @@ async def explore_documents(
         deps=UserDeps(
             user_id=user_id,
             store=store,
+            mode="read",
             group_stores=group_stores,
         ),
         capabilities=[SUBAGENT_CAPABILITIES["documents"]],

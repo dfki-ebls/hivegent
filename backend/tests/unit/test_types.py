@@ -183,6 +183,7 @@ class TestDescribeDocumentScope:
         return UserDeps(
             user_id="u",
             store=Casebase.for_user("u"),
+            mode="interactive",
             group_stores=(Casebase.for_group("team"),),
             document_filter=document_filter,
             group_filters=group_filters or {},

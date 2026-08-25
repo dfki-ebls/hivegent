@@ -50,6 +50,7 @@ async def run_tool(
     deps = UserDeps(
         user_id=user.id,
         store=user_store(user),
+        mode="write",
         group_stores=group_stores(user),
         write_group_stores=group_stores(user, writable=True),
     )

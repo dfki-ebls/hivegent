@@ -24,7 +24,9 @@ from .security import (
 )
 
 __all__ = [
+    "AUTO_APPROVED_MODES",
     "MODE_VALUES",
+    "MUTATING_MODES",
     "REASONING_EFFORT_VALUES",
     "AdminFactoryResetResponse",
     "AdminGroupInfo",
@@ -316,6 +318,18 @@ instead of acting.
 
 MODE_VALUES: frozenset[Mode] = frozenset(get_args(Mode.__value__))
 """Valid mode strings, used to validate untrusted request input."""
+
+MUTATING_MODES: frozenset[Mode] = frozenset({"interactive", "write"})
+"""Modes in which workspace mutations are available."""
+
+AUTO_APPROVED_MODES: frozenset[Mode] = frozenset({"write"})
+"""Modes that run a state-changing tool without pausing for confirmation.
+
+The one table behind both halves of the gate: the capability that downgrades
+every tool registered as approval-requiring, and a tool that decides per call
+whether this one changes state.  Two literals would let a new mode lift the gate
+for one and not the other.
+"""
 
 
 class ChatRequestConfig(BaseModel):

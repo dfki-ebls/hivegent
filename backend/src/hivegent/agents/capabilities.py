@@ -44,7 +44,14 @@ from ..prompts import (
     WRITE_INSTRUCTIONS,
 )
 from ..tools.pydantic_ai import capability_tools, invoke_tool
-from ..types import MODE_VALUES, Mode, ToolSchema, ToolsSpec
+from ..types import (
+    AUTO_APPROVED_MODES,
+    MODE_VALUES,
+    MUTATING_MODES,
+    Mode,
+    ToolSchema,
+    ToolsSpec,
+)
 from .common import UserDeps, scope_instructions
 from .guards import IterationLimitWarner, ToolOutputLimit
 from .tools import (
@@ -68,9 +75,6 @@ __all__ = [
     "invoke_agent_tool",
 ]
 
-
-_MUTATING: frozenset[Mode] = frozenset({"interactive", "write"})
-"""Modes that offer the features whose tools change state."""
 
 _PLAN: frozenset[Mode] = frozenset({"plan"})
 
@@ -149,13 +153,13 @@ FEATURES: tuple[Feature, ...] = (
     Feature.build("compute", compute_toolset, instructions=PYTHON_INSTRUCTIONS),
     Feature.build("subagent", subagent_toolset),
     Feature.build(
-        "write", write_toolset, instructions=WRITE_INSTRUCTIONS, modes=_MUTATING
+        "write", write_toolset, instructions=WRITE_INSTRUCTIONS, modes=MUTATING_MODES
     ),
     Feature.build(
         "memory",
         memory_toolset,
         instructions=_memory_instructions,
-        modes=_MUTATING,
+        modes=MUTATING_MODES,
     ),
     Feature.build("web", web_toolset),
     Feature.build("conversation", conversation_toolset),
@@ -186,7 +190,7 @@ class SharedInstructions:
 SHARED_INSTRUCTIONS: tuple[SharedInstructions, ...] = (
     SharedInstructions(
         "workspace-paths",
-        frozenset({"explore", "write"}),
+        frozenset({"compute", "explore", "write"}),
         WORKSPACE_PATH_INSTRUCTIONS,
     ),
     SharedInstructions(
@@ -242,7 +246,7 @@ def build_capabilities(
     tools_spec: ToolsSpec,
     *,
     extra: Sequence[AbstractToolset[UserDeps]] = (),
-    mode: Mode = "interactive",
+    mode: Mode,
 ) -> Sequence[AbstractCapability[UserDeps]]:
     """Compose the capabilities for an agent run.
 
@@ -285,7 +289,7 @@ def build_capabilities(
     if disabled:
         result.append(_filter_disabled(disabled))
 
-    if mode == "write":
+    if mode in AUTO_APPROVED_MODES:
         result.append(_auto_approve())
 
     result.extend(Capability(toolsets=[toolset]) for toolset in extra)

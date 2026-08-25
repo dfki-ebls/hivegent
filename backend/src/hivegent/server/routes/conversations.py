@@ -548,6 +548,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     deps = UserDeps(
         user_id=user.id,
         store=store,
+        mode=config.mode,
         group_stores=user_group_stores,
         write_group_stores=writable_group_stores,
         document_filter=document_filter,
@@ -558,7 +559,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     capabilities = build_capabilities(
         config.tools,
         extra=[build_mcp_server(server) for server in config.tools.mcp_servers],
-        mode=config.mode,
+        mode=deps.mode,
     )
 
     # History is server-authoritative: load the active-path prefix up to the

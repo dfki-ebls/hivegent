@@ -69,6 +69,7 @@ class TestDocumentScopePrompt:
         return UserDeps(
             user_id="u1",
             store=Casebase.for_user("u1"),
+            mode="interactive",
             document_filter=document_filter,
             group_filters=group_filters,
         )

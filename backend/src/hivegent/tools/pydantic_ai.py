@@ -10,6 +10,7 @@ from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ArgsValidatorFunc
 from pydantic_ai.tools import Tool as PydanticTool
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 from pydantic_ai.usage import RunUsage
@@ -27,6 +28,7 @@ __all__ = [
     "capability_tools",
     "for_pydantic_ai",
     "invoke_tool",
+    "register_agent_tool",
     "register_agent_tools",
     "unwrap_tool_output",
     "wrap_tool_output",
@@ -188,6 +190,36 @@ def for_pydantic_ai[D](
     return wrapper
 
 
+def register_agent_tool[D](
+    toolset: FunctionToolset[D],
+    deps_type: type[D],
+    factory: Callable[[D], Tool[Any]],
+    *,
+    args_validator: ArgsValidatorFunc[D, ...] | None = None,
+    requires_approval: bool | None = None,
+) -> None:
+    """Register one Tool factory on a FunctionToolset.
+
+    The factory's return type annotation must be a ``Tool`` subclass.
+    The tool name and description are derived from the annotated class.
+
+    Args:
+        toolset: The target toolset.
+        deps_type: The RunContext deps type.
+        factory: Factory callable for the tool.
+        args_validator: Optional validator for this tool's arguments.
+        requires_approval: Whether tool calls need user approval.
+    """
+    fn = for_pydantic_ai(factory, deps_type)
+    toolset.add_function(
+        fn,
+        name=factory_tool_name(fn),
+        description=fn.__doc__,
+        args_validator=args_validator,
+        requires_approval=requires_approval,
+    )
+
+
 def register_agent_tools[D](
     toolset: FunctionToolset[D],
     deps_type: type[D],
@@ -207,11 +239,10 @@ def register_agent_tools[D](
         requires_approval: Whether tool calls need user approval.
     """
     for factory in factories:
-        fn = for_pydantic_ai(factory, deps_type)
-        toolset.add_function(
-            fn,
-            name=factory_tool_name(fn),
-            description=fn.__doc__,
+        register_agent_tool(
+            toolset,
+            deps_type,
+            factory,
             requires_approval=requires_approval,
         )
 

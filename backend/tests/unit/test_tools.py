@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic_monty import AsyncMonty
 
+from hivegent.config import content_hash
 from hivegent.converters import VISION_MEDIA_TYPES
 from hivegent.store import WorkspaceScope
 from hivegent.tools.base import SearchPath, ToolRetry, scope_paths
@@ -960,3 +961,184 @@ class TestRunPythonTool:
         result = await capped("print('x' * 100)")
         assert result.data.stdout == "x" * 19 + "…"
         assert result.data.truncated
+
+    async def test_temporary_files_are_private_to_one_run(
+        self, tool: RunPythonTool
+    ) -> None:
+        result = await tool(
+            "from pathlib import Path\n"
+            'temp = Path("/tmp/work.txt")\n'
+            "temp.parent.mkdir(parents=True)\n"
+            'temp.write_text("intermediate")\n'
+            "temp.read_text()"
+        )
+        next_run = await tool(
+            'from pathlib import Path\nPath("/tmp/work.txt").exists()'
+        )
+
+        assert result.data.result == "'intermediate'"
+        assert next_run.data.result == "False"
+
+    async def test_stored_script_reads_and_writes_scoped_files(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        (tmp_path / "script.py").write_text(
+            'from pathlib import Path\n'
+            'text = Path("/workspace/~/input.txt").read_text()\n'
+            'output = Path("/workspace/~/output.txt")\n'
+            'assert not output.exists()\n'
+            'output.write_text(text.upper())\n'
+            "len(text)"
+        )
+        (tmp_path / "input.txt").write_text("hello")
+        calls: list[tuple[str, str, str, str | None]] = []
+
+        async def mutate(
+            path: str, content: str, mode: str, expected_hash: str | None
+        ) -> str:
+            calls.append((path, content, mode, expected_hash))
+            return f"Created '{path}'."
+
+        scoped = SearchPath(path=tmp_path, scope=WorkspaceScope())
+        workspace_tool = replace(
+            tool,
+            paths=(scoped,),
+            writer=WriteDocumentTool(paths=(scoped,), mutator=mutate),
+        )
+        result = await workspace_tool(
+            script_path="~/script.py",
+            input_paths=("~/input.txt",),
+            output_path="~/output.txt",
+        )
+
+        assert result.data == PythonResult(
+            result="5",
+            script_path="~/script.py",
+            written_file="~/output.txt",
+        )
+        assert calls == [("~/output.txt", "HELLO", "create", None)]
+
+    async def test_stored_script_is_reloaded_after_an_edit(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        script = tmp_path / "script.py"
+        scoped = SearchPath(path=tmp_path, scope=WorkspaceScope())
+        workspace_tool = replace(tool, paths=(scoped,))
+
+        script.write_text("1 + 1")
+        first = await workspace_tool(script_path="~/script.py")
+        script.write_text("1 + 2")
+        second = await workspace_tool(script_path="~/script.py")
+
+        assert first.data.result == "2"
+        assert second.data.result == "3"
+
+    async def test_input_change_is_discarded_without_a_declared_output(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "source.txt"
+        source.write_text("old")
+        scoped = SearchPath(path=tmp_path, scope=WorkspaceScope())
+        workspace_tool = replace(tool, paths=(scoped,))
+
+        await workspace_tool(
+            code=(
+                'from pathlib import Path\n'
+                'Path("/workspace/~/source.txt").write_text("new")'
+            ),
+            input_paths=("~/source.txt",),
+        )
+
+        assert source.read_text() == "old"
+
+    async def test_existing_output_uses_its_content_hash(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "output.txt"
+        output.write_text("old")
+        calls: list[tuple[str, str, str, str | None]] = []
+
+        async def mutate(
+            path: str, content: str, mode: str, expected_hash: str | None
+        ) -> str:
+            calls.append((path, content, mode, expected_hash))
+            return f"Wrote '{path}'."
+
+        scoped = SearchPath(path=tmp_path, scope=WorkspaceScope())
+        workspace_tool = replace(
+            tool,
+            paths=(scoped,),
+            writer=WriteDocumentTool(paths=(scoped,), mutator=mutate),
+        )
+        await workspace_tool(
+            code=(
+                'from pathlib import Path\n'
+                'Path("/workspace/~/output.txt").write_text("new")'
+            ),
+            output_path="~/output.txt",
+        )
+
+        assert calls == [
+            ("~/output.txt", "new", "replace", content_hash("old"))
+        ]
+
+    async def test_a_path_given_as_both_input_and_output_is_staged_once(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        (tmp_path / "notes.txt").write_text("old")
+        calls: list[tuple[str, str, str, str | None]] = []
+
+        async def mutate(
+            path: str, content: str, mode: str, expected_hash: str | None
+        ) -> str:
+            calls.append((path, content, mode, expected_hash))
+            return f"Wrote '{path}'."
+
+        scoped = SearchPath(path=tmp_path, scope=WorkspaceScope())
+        workspace_tool = replace(
+            tool,
+            paths=(scoped,),
+            writer=WriteDocumentTool(paths=(scoped,), mutator=mutate),
+        )
+        result = await workspace_tool(
+            code=(
+                "from pathlib import Path\n"
+                'note = Path("/workspace/~/notes.txt")\n'
+                'note.write_text(note.read_text() + " new")\n'
+                "note.read_text()"
+            ),
+            input_paths=("~/notes.txt",),
+            output_path="~/notes.txt",
+        )
+
+        assert result.data.result == "'old new'"
+        assert calls == [("~/notes.txt", "old new", "replace", content_hash("old"))]
+
+    async def test_failed_program_does_not_persist_output(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        calls: list[str] = []
+
+        async def mutate(
+            path: str, _content: str, _mode: str, _expected_hash: str | None
+        ) -> str:
+            calls.append(path)
+            return "written"
+
+        scoped = SearchPath(path=tmp_path, scope=WorkspaceScope())
+        workspace_tool = replace(
+            tool,
+            writer=WriteDocumentTool(paths=(scoped,), mutator=mutate),
+        )
+
+        with pytest.raises(ToolRetry, match="ZeroDivisionError"):
+            await workspace_tool(
+                code=(
+                    'from pathlib import Path\n'
+                    'Path("/workspace/~/output.txt").write_text("new")\n'
+                    "1 / 0"
+                ),
+                output_path="~/output.txt",
+            )
+
+        assert calls == []

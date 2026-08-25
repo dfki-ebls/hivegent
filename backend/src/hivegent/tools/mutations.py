@@ -2,7 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal, override
 
 from fastapi import HTTPException
@@ -30,6 +30,7 @@ __all__ = [
     "WriteDocumentTool",
     "WriteModeArg",
     "WriteMutation",
+    "resolve_mutation_target",
 ]
 
 DocumentTargetPathArg = Annotated[
@@ -82,11 +83,12 @@ ExpectedHashArg = Annotated[
     ),
 ]
 WriteModeArg = Annotated[
-    Literal["prepend", "append", "replace"],
+    Literal["prepend", "append", "replace", "create"],
     Field(
         description=(
             "Write mode: `replace` overwrites or creates the file, `append` "
-            "adds to the end, and `prepend` adds to the start."
+            "adds to the end, `prepend` adds to the start, and `create` "
+            "refuses to overwrite an existing file."
         ),
     ),
 ]
@@ -108,20 +110,24 @@ def _mutation_detail(exc: HTTPException | ValueError) -> str:
     return exc.detail if isinstance(exc, HTTPException) else str(exc)
 
 
-def _resolve_target(paths: tuple[SearchPath, ...], file_path: str) -> tuple[str, str]:
+def resolve_mutation_target(
+    paths: tuple[SearchPath, ...], file_path: str
+) -> tuple[str, str, Path]:
     """Resolve *file_path* for a mutation, or raise a correctable refusal.
 
     Returns the path rendered under the root that claimed it (what the mutator
-    routes on) and the local path (what a glob is matched against).  Unlike a
-    read, the document need not exist: a mutation may create it.
+    routes on), the local path (what a glob is matched against), and the file
+    on disk.  Unlike a read, the document need not exist: a mutation may create
+    it.  The one place a write target is resolved, so every surface that stages
+    a mutation refuses an unreachable path in the same words.
     """
     resolved = resolve_accessible_file(paths, file_path)
     if resolved is None:
         hint = workspace_root_hint(paths, file_path)
         raise ToolRetry(f"'{file_path}' is not accessible.{hint}")
-    sp, local, _absolute = resolved
+    sp, local, absolute = resolved
 
-    return sp.prefixed(local), local
+    return sp.prefixed(local), local, absolute
 
 
 @dataclass(slots=True, frozen=True)
@@ -158,7 +164,9 @@ class EditDocumentTool(AsyncPathTool[str]):
         document, image, video) cannot be edited — replace it by
         uploading a new version instead.
         """
-        target, _local = _resolve_target(self.resolved_paths, file_path)
+        target, _local, _absolute = resolve_mutation_target(
+            self.resolved_paths, file_path
+        )
         try:
             data = await self.mutator(
                 target, old_string, new_string, replace_all, expected_hash
@@ -170,7 +178,7 @@ class EditDocumentTool(AsyncPathTool[str]):
 
 @dataclass(slots=True, frozen=True)
 class WriteDocumentTool(AsyncPathTool[str]):
-    """Write content to a document using prepend, append, or replace mode.
+    """Write content to a document using the requested write mode.
 
     Resolves and access-checks the path (optionally enforcing :attr:`glob`),
     then delegates the mutation to :attr:`mutator` — the canonical workspace
@@ -202,7 +210,9 @@ class WriteDocumentTool(AsyncPathTool[str]):
         markdown or as a plain-text format; any other format has to be
         uploaded.
         """
-        target, local = _resolve_target(self.resolved_paths, file_path)
+        target, local, _absolute = resolve_mutation_target(
+            self.resolved_paths, file_path
+        )
         if self.glob and not PurePosixPath(local).match(self.glob):
             raise ToolRetry(f"'{file_path}' does not match pattern '{self.glob}'.")
         try:

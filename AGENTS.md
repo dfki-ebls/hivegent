@@ -45,8 +45,13 @@
   Every budget is applied before the `TableResult` is built, and only the row lines are budgeted, so the count the rows are trimmed by is exactly a row count.
   Rows are cut on both channels, while column and cell width bind the rendering only, matching how a read trims to the lines it showed but keeps each one whole in `content`.
   The read tools still serve the markdown projection, which is what retrieval and citation line anchors are built on.
-- The model computes with `run_python`, a Monty sandbox that reaches nothing outside itself: no network, no filesystem, no host functions, and a budget on execution time and memory that surfaces to the model as a plain `TimeoutError` or `MemoryError`.
-  Whatever a program works on is passed in as a literal, deliberately, since an `external_lookup` entry or a mount would be an unconstrained filesystem primitive written here, next to the read tools that already do that job under their own path and scope checks.
+- The model computes with `run_python`, a Monty sandbox with no network or host filesystem access and a budget on execution time and memory that surfaces to the model as a plain `TimeoutError` or `MemoryError`.
+  A program comes from either inline `code` or one scoped workspace `.py` `script_path`, which is reloaded on every call so the model can repair it with the document edit tool and rerun it.
+  Each explicitly named text path in `input_paths` is resolved through the same scope, filter, symlink, and decoding checks as the read tools, then copied into an in-memory `OSAccess` filesystem under `/workspace/<canonical path>`.
+  A program may create other temporary files in that private filesystem, and the fresh filesystem disappears after the call.
+  Monty may change those private copies, but every change is discarded except one declared `output_path`.
+  That output is committed only after successful execution through `write_document_text`, with an expected hash for an existing file or create-only semantics for a new one, so indexing, workspace locks, and SSE notifications remain on the canonical mutation path.
+  An interactive output write requires approval, write mode approves it automatically, and read or plan mode refuses it.
   The worker pool is owned by the FastAPI lifespan (`sandbox.py`), like the HTTP clients, because a tool instance is built per call and a pool per call would spawn and reap a worker every time.
   Every call takes a fresh session out of it: `max_duration_secs` counts cumulatively per session, so a reused session that once ran long would fail every later call with a timeout it did not cause.
 - A chat turn attaches images and nothing else, gated on `converters.INGESTIBLE_IMAGE_MEDIA_TYPES`, the media types every vision backend ingests identically, so no `BinaryContentMode` policy and no conversion runs on the chat's latency budget.
