@@ -1,7 +1,7 @@
 import type { ToolUIPart } from "ai";
 import { ApprovalRequest } from "@/components/chat/tools/ApprovalRequest";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
-import { ToolResult } from "@/components/ToolDisplay";
+import { ToolPre, ToolResult } from "@/components/ToolDisplay";
 import { prettyPrint, type ToolPart } from "@/lib/chat/tool-part";
 
 interface ToolFallbackProps {
@@ -19,9 +19,7 @@ export function ToolFallback({ toolName, part, formatted }: ToolFallbackProps) {
       {approval && <ApprovalRequest toolName={toolName} approval={approval} state={state} />}
       {part.output !== undefined && (
         <ToolResult>
-          <pre className="whitespace-pre-wrap text-xs font-mono">
-            {formatted ?? prettyPrint(part.output)}
-          </pre>
+          <ToolPre>{formatted ?? prettyPrint(part.output)}</ToolPre>
         </ToolResult>
       )}
     </ToolCard>

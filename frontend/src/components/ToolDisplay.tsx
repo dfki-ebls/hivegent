@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { parseJson } from "@/lib/chat/tool-part";
 import { cn } from "@/lib/utils";
 
 interface ToolSectionProps {
@@ -31,50 +32,57 @@ export function ToolSection({
   );
 }
 
-interface ToolKeyValueProps {
-  label: string;
-  value: ReactNode;
-  indent?: boolean;
+interface ToolPreProps {
+  children: string;
+  className?: string;
 }
 
-function ToolKeyValue({ label, value, indent = false }: ToolKeyValueProps) {
+/** Pre-formatted block for values that carry their own line breaks. */
+export function ToolPre({ children, className }: ToolPreProps) {
   return (
-    <div className={cn(indent && "pl-4")}>
-      <span className="text-muted-foreground">{label}:</span>{" "}
-      <span className="font-medium">{value}</span>
+    <pre className={cn("whitespace-pre-wrap break-words font-mono text-xs", className)}>
+      {children}
+    </pre>
+  );
+}
+
+/**
+ * Text for values that need a block of their own: objects, JSON-encoded
+ * strings, and any multi-line string such as an edit's ``old_string``.
+ * ``null`` for scalars, which stay inline next to their label.
+ */
+function blockText(value: unknown): string | null {
+  const parsed = typeof value === "string" ? parseJson<unknown>(value) : value;
+  if (typeof parsed === "object" && parsed !== null) {
+    return JSON.stringify(parsed, null, 2);
+  }
+
+  return typeof value === "string" && value.includes("\n") ? value : null;
+}
+
+interface ToolParameterProps {
+  label: string;
+  value: unknown;
+}
+
+function ToolParameter({ label, value }: ToolParameterProps) {
+  const block = blockText(value);
+  const inline = typeof value === "string" ? `"${value}"` : String(value);
+
+  return (
+    <div>
+      <span className="text-muted-foreground">{label}:</span>
+      {block === null ? (
+        <span className="font-medium"> {inline}</span>
+      ) : (
+        <ToolPre className="mt-1">{block}</ToolPre>
+      )}
     </div>
   );
 }
 
 interface ToolParametersProps {
   params: Record<string, unknown>;
-}
-
-function formatValue(value: unknown): ReactNode {
-  if (typeof value === "string") {
-    // Try parsing as JSON for pretty-printing
-    try {
-      const parsed = JSON.parse(value);
-      if (typeof parsed === "object" && parsed !== null) {
-        return (
-          <pre className="mt-1 whitespace-pre-wrap text-xs font-mono">
-            {JSON.stringify(parsed, null, 2)}
-          </pre>
-        );
-      }
-    } catch {
-      // Not JSON, display as quoted string
-    }
-    return `"${value}"`;
-  }
-  if (typeof value === "object" && value !== null) {
-    return (
-      <pre className="mt-1 whitespace-pre-wrap text-xs font-mono">
-        {JSON.stringify(value, null, 2)}
-      </pre>
-    );
-  }
-  return String(value);
 }
 
 export function ToolParameters({ params }: ToolParametersProps) {
@@ -85,7 +93,7 @@ export function ToolParameters({ params }: ToolParametersProps) {
   return (
     <ToolSection title="Parameters">
       {Object.entries(params).map(([key, value]) => (
-        <ToolKeyValue key={key} label={key} value={formatValue(value)} />
+        <ToolParameter key={key} label={key} value={value} />
       ))}
     </ToolSection>
   );
@@ -110,7 +118,7 @@ interface ToolErrorProps {
 export function ToolError({ message }: ToolErrorProps) {
   return (
     <ToolSection title="Error" variant="error" border>
-      {message}
+      <ToolPre>{message}</ToolPre>
     </ToolSection>
   );
 }

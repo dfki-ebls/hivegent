@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought";
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
-import { ToolResult, ToolSection } from "@/components/ToolDisplay";
+import { ToolPre, ToolResult, ToolSection } from "@/components/ToolDisplay";
 import type { SubagentStep } from "@/lib/chat/subagent";
 import { prettyPrint, type ToolPart } from "@/lib/chat/tool-part";
 import { snakeCaseToTitleCase } from "@/lib/utils";
@@ -75,7 +75,7 @@ export function SubagentTool({ toolName, part, steps }: SubagentToolProps) {
           {typeof part.output === "string" ? (
             <MarkdownText>{part.output}</MarkdownText>
           ) : (
-            <pre className="whitespace-pre-wrap text-xs font-mono">{prettyPrint(part.output)}</pre>
+            <ToolPre>{prettyPrint(part.output)}</ToolPre>
           )}
         </ToolResult>
       )}
