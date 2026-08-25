@@ -48,7 +48,7 @@
 - The model computes with `run_python`, a Monty sandbox with no network or host filesystem access and a budget on execution time and memory that surfaces to the model as a plain `TimeoutError` or `MemoryError`.
   A program comes from either inline `code` or one scoped workspace `.py` `script_path`, which is reloaded on every call so the model can repair it with the document edit tool and rerun it.
   Each explicitly named text path in `input_paths` is resolved through the same scope, filter, symlink, and decoding checks as the read tools, then copied into an in-memory `OSAccess` filesystem under `/workspace/<canonical path>`.
-  A program may create other temporary files in that private filesystem, and the fresh filesystem disappears after the call.
+  A program parks intermediates in `/tmp`, created before the run and named by `TMPDIR`, because Monty has no `tempfile` module and no working directory, so a bare write to an absent directory fails; the fresh filesystem disappears after the call.
   Monty may change those private copies, but every change is discarded except one declared `output_path`.
   That output is committed only after successful execution through `write_document_text`, with an expected hash for an existing file or create-only semantics for a new one, so indexing, workspace locks, and SSE notifications remain on the canonical mutation path.
   An interactive output write requires approval, write mode approves it automatically, and read or plan mode refuses it.

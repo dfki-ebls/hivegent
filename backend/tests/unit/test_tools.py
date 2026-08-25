@@ -966,9 +966,9 @@ class TestRunPythonTool:
         self, tool: RunPythonTool
     ) -> None:
         result = await tool(
+            "import os\n"
             "from pathlib import Path\n"
-            'temp = Path("/tmp/work.txt")\n'
-            "temp.parent.mkdir(parents=True)\n"
+            'temp = Path(os.getenv("TMPDIR")) / "work.txt"\n'
             'temp.write_text("intermediate")\n'
             "temp.read_text()"
         )

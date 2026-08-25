@@ -35,6 +35,7 @@ from .formatting import cap_lines, hint_suffix, truncate_line
 from .mutations import WriteDocumentTool, resolve_mutation_target
 
 __all__ = [
+    "SCRATCH_DIR",
     "CodeArg",
     "PythonInputPathsArg",
     "PythonOutputPathArg",
@@ -202,6 +203,19 @@ def _virtual_path(canonical_path: str) -> str:
     return str(PurePosixPath("/workspace") / canonical_path)
 
 
+SCRATCH_DIR = PurePosixPath("/tmp")
+"""Scratch directory every run starts with, also named by ``TMPDIR``.
+
+Monty has no ``tempfile`` module and no working directory, so a program with an
+intermediate to park has nowhere to put it unless the directory already exists:
+a bare write to ``/tmp`` fails with ``FileNotFoundError``.  Creating it here and
+naming it in the environment makes ``os.getenv("TMPDIR")`` the one answer, the
+way the workspace prefix is the one answer for a document.  It is part of the
+private filesystem, so it is discarded with everything else a run did not
+declare as its output.
+"""
+
+
 @dataclass(slots=True, frozen=True)
 class RunPythonTool(AsyncPathTool[PythonResult]):
     """Run a Python program in a sandbox that reaches nothing outside itself.
@@ -241,10 +255,10 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         supports only a subset of Python and its standard library, it is not a
         CPython environment. The program has no network or host filesystem
         access. Inputs can be literals or explicitly named workspace text files,
-        which are private in-memory copies under ``/workspace``. The program
-        may create temporary files in that private filesystem while it runs.
-        Only the declared output file can persist, and only after the program
-        succeeds. Only ``asyncio``, ``collections``, ``dataclasses``,
+        which are private in-memory copies under ``/workspace``. Intermediates
+        belong in ``/tmp`` (also ``TMPDIR``), which exists from the start and
+        is discarded when the call ends. Only the declared output file can
+        persist, and only after the program succeeds. Only ``asyncio``, ``collections``, ``dataclasses``,
         ``datetime``, ``functools``, ``itertools``, ``json``, ``math``, ``os``,
         ``pathlib``, ``re``, ``sys``, ``typing``, and ``unicodedata`` can be
         imported. There is no numpy or pandas, and classes cannot inherit. End
@@ -411,8 +425,10 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
                 MemoryFile(_virtual_path(item.canonical_path), item.original)
                 for item in staged
                 if item.original is not None
-            ]
+            ],
+            environ={"TMPDIR": str(SCRATCH_DIR)},
         )
+        filesystem.path_mkdir(SCRATCH_DIR, parents=True, exist_ok=True)
         if output is not None and output.original is None:
             filesystem.path_mkdir(
                 PurePosixPath(_virtual_path(output.canonical_path)).parent,
