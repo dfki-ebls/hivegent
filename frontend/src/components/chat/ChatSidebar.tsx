@@ -23,7 +23,12 @@ import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
 import { ToolApprovalProvider, type ToolApprovalGate } from "@/hooks/chat/use-tool-approval";
 import { getServerConversation, importConversation, transcribeAudio } from "@/lib/api";
 import { downloadJson } from "@/lib/download";
-import { activeChatError, getLastUserMessage, recordChatError } from "@/lib/chat/chat-utils";
+import {
+  activeChatError,
+  getLastUserMessage,
+  isChatBusy,
+  recordChatError,
+} from "@/lib/chat/chat-utils";
 import { type AgentMode, type ConversationArchive, type ReasoningEffort } from "@/lib/types";
 import { useConversationsStore } from "@/stores/conversations-store";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
@@ -158,7 +163,12 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   });
 
   // One condition behind both compact buttons, the header's and the banner's.
-  const compactDisabled = status !== "ready" || isCompacting;
+  //
+  // Gated on *busy*, not on `ready`: compaction snapshots the transcript and
+  // navigates away, so it has to wait out an in-flight turn, but `error` is a
+  // settled state and it is the only one the context-limit banner ever renders
+  // in, so treating it as unready disabled that banner's own recovery action.
+  const compactDisabled = isChatBusy(status) || isCompacting;
 
   // Reset the fetched-documents panel whenever the chat identity changes —
   // this covers every navigation path, including plain links like the header
