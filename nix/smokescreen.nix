@@ -18,7 +18,11 @@ buildGoModule (finalAttrs: {
   tags = [ "nointegration" ];
   checkPhase = ''
     runHook preCheck
-    go test -tags=${lib.concatStringsSep "," finalAttrs.tags} -p "$NIX_BUILD_CORES" ./...
+    # TestInvalidHost asserts on the "no such host" resolver error, which needs a
+    # DNS server answering NXDOMAIN, while the sandbox has none and refuses the
+    # connection instead.
+    go test -tags=${lib.concatStringsSep "," finalAttrs.tags} \
+      -skip '^TestInvalidHost$' -p "$NIX_BUILD_CORES" ./...
     runHook postCheck
   '';
   passthru = {
