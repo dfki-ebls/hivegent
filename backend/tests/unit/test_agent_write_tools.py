@@ -18,9 +18,11 @@ import hivegent.agents.tools.compute as compute_tools
 from hivegent import workspace
 from hivegent.agents.common import UserDeps
 from hivegent.agents.tools.write import (
+    validate_document_write,
     validate_output_path,
     validate_output_write,
     write_document,
+    write_toolset,
 )
 from hivegent.store import Casebase
 from hivegent.tools.base import ToolRetry
@@ -86,15 +88,15 @@ async def test_refuses_a_group_the_user_may_only_read(
     assert routed == []
 
 
-def test_working_paths_are_lazy_and_keep_scratch_outside_document_filters(
+def test_run_python_paths_are_lazy_and_never_hide_scratch(
     deps: UserDeps, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     filtered = replace(
         deps,
-        document_filter=DocumentFilter(included=frozenset({"report.md"})),
+        document_filter=DocumentFilter(excluded=frozenset({"other.md"})),
         group_filters={
-            "team": DocumentFilter(included=frozenset({"report.md"})),
-            "archive": DocumentFilter(included=frozenset({"report.md"})),
+            "team": DocumentFilter(excluded=frozenset({"other.md"})),
+            "archive": DocumentFilter(excluded=frozenset({"other.md"})),
         },
     )
     pool = object()
@@ -153,3 +155,41 @@ def test_run_python_output_accepts_arbitrary_text_suffix(deps: UserDeps) -> None
     )
     validate_output_write(context, output_path="~/result.csv")
     validate_output_write(context, output_path="~/report.md")
+
+
+def test_scratch_writes_skip_approval_without_lifting_the_mode_gate(
+    deps: UserDeps,
+) -> None:
+    """Run state is the run's own, so only a document write asks the user."""
+
+    def context(mode: str) -> RunContext[UserDeps]:
+        return RunContext(
+            deps=replace(deps, mode=mode), model=TestModel(), usage=RunUsage()
+        )
+
+    validate_document_write(context("interactive"), file_path="~/.scratch/state.json")
+    validate_document_write(
+        context("interactive"), file_path="@team/notes/.scratch/run.py"
+    )
+    validate_output_write(context("interactive"), output_path="~/.scratch/rows.json")
+
+    with pytest.raises(ApprovalRequired):
+        validate_document_write(context("interactive"), file_path="~/notes/report.md")
+
+    # A traversal cannot carry a document out of the scratch spelling it hides behind.
+    with pytest.raises(ApprovalRequired):
+        validate_document_write(
+            context("interactive"), file_path="~/.scratch/../report.md"
+        )
+
+    with pytest.raises(ModelRetry, match="unavailable"):
+        validate_document_write(context("read"), file_path="~/.scratch/state.json")
+
+    validate_document_write(context("write"), file_path="~/notes/report.md")
+
+
+def test_write_tools_gate_every_call_rather_than_the_tool() -> None:
+    for name in ("write_document", "edit_document"):
+        tool = write_toolset.tools[name]
+        assert tool.args_validator is validate_document_write
+        assert tool.requires_approval is False

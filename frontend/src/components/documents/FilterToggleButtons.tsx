@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 export type FilterEntryState = "included" | "excluded" | undefined;
 
 interface FilterToggleButtonsProps {
-  /** Whether the entry is currently part of the chat document filter. */
+  /** Whether the entry is currently part of the chat document selection. */
   state: FilterEntryState;
   onInclude: () => void;
   onExclude: () => void;
@@ -16,9 +16,10 @@ interface FilterToggleButtonsProps {
 }
 
 /**
- * The Eye/EyeOff pair toggling an entry in the chat document filter. The
- * active direction stays visible and tinted so the filter state is readable
- * directly in document listings.
+ * The Eye/EyeOff pair toggling an entry in the chat document selection. The
+ * active direction stays visible and tinted so the state is readable directly
+ * in document listings. Eye points the chat at an entry, EyeOff hides it: only
+ * the latter restricts what the agent's tools return.
  */
 export function FilterToggleButtons({
   state,
@@ -37,7 +38,7 @@ export function FilterToggleButtons({
         variant="ghost"
         size="icon"
         className={cn(compact && "h-6 w-6", state === "included" ? "text-primary" : hidden)}
-        title={state === "included" ? "Stop including in chat" : "Include in chat"}
+        title={state === "included" ? "Stop pointing chat at this" : "Point chat at this"}
         onClick={(e) => {
           e.stopPropagation();
           onInclude();

@@ -80,7 +80,7 @@ from ...types import (
 from ..cancellation import run_until_disconnect
 from ..common import (
     group_stores,
-    parse_document_filters,
+    parse_document_scope,
     prepare_llm_config,
     user_store,
 )
@@ -495,7 +495,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    document_filter, group_filters = parse_document_filters(
+    relevant_documents, document_filter, group_filters = parse_document_scope(
         config.included_documents,
         config.excluded_documents,
         user.all_groups,
@@ -553,6 +553,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         write_group_stores=writable_group_stores,
         document_filter=document_filter,
         group_filters=group_filters,
+        relevant_documents=relevant_documents,
         llm=config.llm,
         subagent_sink=subagent_sink,
     )

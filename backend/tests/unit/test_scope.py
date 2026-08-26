@@ -3,7 +3,7 @@
 import pytest
 
 from hivegent.agents.common import UserDeps
-from hivegent.server.common import parse_document_filters
+from hivegent.server.common import parse_document_scope
 from hivegent.store import Casebase, WorkspaceScope, scoped_operation
 
 
@@ -57,13 +57,13 @@ class TestScopedOperation:
 class TestDocumentScopePrompt:
     """The selection the user makes with the eye toggle must reach the model.
 
-    Nothing else ties a bare "in der Tabelle" to a file: the tools are pruned
-    to the selection, so an unmentioned scope leaves the model exploring a
-    workspace that silently no longer holds what it is looking for.
+    Nothing else ties a bare "in der Tabelle" to a file: the included half of
+    the selection prunes no tool, so an unmentioned scope leaves the model with
+    no idea which of the workspace's documents the question was about.
     """
 
     def _deps(self, included: list[str], excluded: list[str]) -> UserDeps:
-        document_filter, group_filters = parse_document_filters(
+        relevant, document_filter, group_filters = parse_document_scope(
             included, excluded, frozenset()
         )
         return UserDeps(
@@ -72,6 +72,7 @@ class TestDocumentScopePrompt:
             mode="interactive",
             document_filter=document_filter,
             group_filters=group_filters,
+            relevant_documents=relevant,
         )
 
     def test_included_documents_are_named(self) -> None:

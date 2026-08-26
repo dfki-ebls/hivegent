@@ -187,24 +187,26 @@ def build_search_paths(
     group_stores: Sequence[Casebase],
     data_dir: Path,
     *,
-    dir_fn: Callable[[Casebase, Path], Path] = Casebase.workspace_dir,
     filter_for_store: Callable[[Casebase], SearchPathFilterFunc] | None = None,
 ) -> tuple[SearchPath, ...]:
     """Build :class:`SearchPath` entries for a user store and its groups.
+
+    Nothing is created: a mutation makes its own destination downstream and a
+    read of a workspace nobody has written to yet finds nothing, so handing a
+    tool its roots must not materialise an empty directory for every group the
+    caller can reach.
 
     Args:
         store: The user's personal casebase.
         group_stores: Group casebases the user can access.
         data_dir: Application data root directory.
-        dir_fn: Method to obtain the directory path from each store
-            (default :meth:`Casebase.workspace_dir`).
         filter_for_store: Optional callable returning a file filter for
             each store.
     """
     get_filter = filter_for_store or (lambda _: None)
     return tuple(
         SearchPath(
-            path=dir_fn(s, data_dir),
+            path=s.workspace_path(data_dir),
             scope=s.scope,
             filter_func=get_filter(s),
         )

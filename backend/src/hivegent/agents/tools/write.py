@@ -5,17 +5,25 @@ account are wired: the ``output_path`` a tool redirects into and the one the
 sandbox declares. Both commit through the same gateway the write tools use and
 answer to the same gate, so a run can never persist by a side door what the
 mode forbids it to write outright.
+
+That gate is applied per call rather than declared per tool, because whether a
+write needs a human is a property of the path it names: a document is the
+user's and asks, a `.scratch/` file is the run's own working state and does
+not.  The mode still decides the rest — ``read`` and ``plan`` refuse every
+write, ``write`` approves every one of them.
 """
 
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, Concatenate
 
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 
 from ... import workspace
-from ...store import scoped_operation
+from ...entries import is_scratch_path
+from ...store import Casebase, scoped_operation
 from ...tools import EditDocumentTool, WriteDocumentTool
-from ...tools.base import SearchPath, translate_tool_retry
+from ...tools.base import resolve_accessible_file, translate_tool_retry
 from ...tools.pydantic_ai import register_agent_tools
 from ...tools.sink import OutputPathArg, output_format
 from ...workspace_events import announcing_mutator
@@ -23,6 +31,7 @@ from ..common import UserDeps
 
 __all__ = [
     "output_sink",
+    "validate_document_write",
     "validate_output_path",
     "validate_output_write",
     "write_document",
@@ -30,33 +39,37 @@ __all__ = [
 ]
 
 
-def _edit_document(deps: UserDeps) -> EditDocumentTool:
-    return EditDocumentTool(
-        paths=deps.search_paths(writable=True),
-        mutator=announcing_mutator(
-            scoped_operation(workspace.edit_document_text, deps.writable_stores),
-            deps.user_id,
-        ),
+def _mutator[**P, R](
+    deps: UserDeps,
+    operation: Callable[Concatenate[Casebase, str, P], Awaitable[R]],
+) -> Callable[Concatenate[str, P], Awaitable[R]]:
+    """Front *operation* with the canonical path and the notification it owes.
+
+    The one place the writable-store span is bound, so every tool built here
+    reaches exactly the workspaces the gate below was applied against.
+    """
+    return announcing_mutator(
+        scoped_operation(operation, deps.writable_stores), deps.user_id
     )
 
 
-def write_document(
-    deps: UserDeps, paths: tuple[SearchPath, ...] | None = None
-) -> WriteDocumentTool:
+def _edit_document(deps: UserDeps) -> EditDocumentTool:
+    return EditDocumentTool(
+        paths=deps.search_paths(writable=True),
+        mutator=_mutator(deps, workspace.edit_document_text),
+    )
+
+
+def write_document(deps: UserDeps) -> WriteDocumentTool:
     """Build the canonical scoped document writer for one agent run.
 
-    Public because ``run_python`` composes it to commit its declared output,
-    passing its own writable roots so the output it writes is scoped exactly
-    like the files it read.  Registration ignores the extra parameter: the
-    adapter reads the return annotation and calls the factory with the deps
-    alone.
+    Public because ``run_python`` composes it through :func:`output_sink` to
+    commit its declared output, so the output it writes is scoped exactly like
+    the files it read.
     """
     return WriteDocumentTool(
-        paths=deps.search_paths(writable=True) if paths is None else paths,
-        mutator=announcing_mutator(
-            scoped_operation(workspace.write_document_text, deps.writable_stores),
-            deps.user_id,
-        ),
+        paths=deps.search_paths(writable=True),
+        mutator=_mutator(deps, workspace.write_document_text),
     )
 
 
@@ -64,19 +77,57 @@ def output_sink(deps: UserDeps) -> WriteDocumentTool | None:
     """Build the writer a tool's ``output_path`` redirect commits through.
 
     ``None`` in a mode that may not write, so the redirect is refused in words
-    the model can act on rather than silently dropped. The roots are the
-    working ones, which keeps `.scratch/` reachable even while the conversation
-    is narrowed to a handful of documents.
+    the model can act on rather than silently dropped.
     """
     if not deps.can_write:
         return None
 
-    return write_document(deps, deps.working_paths(writable=True))
+    return write_document(deps)
 
 
-# The validator is called with the whole argument mapping, so naming only the
-# one argument it decides on keeps it from restating signatures the adapter
+def _is_scratch_target(deps: UserDeps, file_path: str) -> bool:
+    """Whether *file_path* names run state rather than one of the user's documents.
+
+    Decided on the canonical path the write would land on, not the spelling it
+    was addressed by, so neither a ``..`` segment nor a symlink can carry a
+    ``.scratch`` part onto an ordinary document and skip the approval with it.
+    An unresolvable path is not scratch: the tool refuses it downstream in its
+    own words, and until then it is treated like any other document.
+    """
+    resolved = resolve_accessible_file(deps.search_paths(writable=True), file_path)
+
+    return resolved is not None and is_scratch_path(resolved[1])
+
+
+def _gate_write(ctx: RunContext[UserDeps], argument: str, path: str) -> None:
+    """Apply the mode and approval gate to one workspace write.
+
+    *argument* names the parameter carrying *path*, which is what the approval
+    request shows the user.
+    """
+    if not ctx.deps.can_write:
+        raise ModelRetry("Workspace writes are unavailable in this chat mode.")
+
+    if (
+        ctx.deps.needs_approval
+        and not ctx.tool_call_approved
+        and not _is_scratch_target(ctx.deps, path)
+    ):
+        raise ApprovalRequired({argument: path})
+
+
+# The validators are called with the whole argument mapping, so naming only the
+# one argument each decides on keeps them from restating signatures the adapter
 # layer otherwise derives from each tool's `__call__`.
+def validate_document_write(
+    ctx: RunContext[UserDeps],
+    file_path: str,
+    **_rest: Any,
+) -> None:
+    """Apply the mode and approval gate to a document mutation."""
+    _gate_write(ctx, "file_path", file_path)
+
+
 def validate_output_write(
     ctx: RunContext[UserDeps],
     output_path: str | None = None,
@@ -86,11 +137,7 @@ def validate_output_write(
     if output_path is None:
         return
 
-    if not ctx.deps.can_write:
-        raise ModelRetry("Workspace writes are unavailable in this chat mode.")
-
-    if ctx.deps.needs_approval and not ctx.tool_call_approved:
-        raise ApprovalRequired({"output_path": output_path})
+    _gate_write(ctx, "output_path", output_path)
 
 
 def validate_output_path(
@@ -115,5 +162,5 @@ register_agent_tools(
         _edit_document,
         write_document,
     ],
-    requires_approval=True,
+    args_validator=validate_document_write,
 )

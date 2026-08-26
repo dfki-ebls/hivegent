@@ -196,19 +196,22 @@ def register_agent_tool[D](
     factory: Callable[[D], Tool[Any]],
     *,
     args_validator: ArgsValidatorFunc[D, ...] | None = None,
-    requires_approval: bool | None = None,
 ) -> None:
     """Register one Tool factory on a FunctionToolset.
 
     The factory's return type annotation must be a ``Tool`` subclass.
     The tool name and description are derived from the annotated class.
 
+    Approval is not offered here: pydantic-ai's registration-time gate marks
+    every call of a tool as needing a human, while what a run has to ask about
+    is a property of the arguments one call carries, so *args_validator* is the
+    only gate a tool registered through this seam has.
+
     Args:
         toolset: The target toolset.
         deps_type: The RunContext deps type.
         factory: Factory callable for the tool.
         args_validator: Optional validator for this tool's arguments.
-        requires_approval: Whether tool calls need user approval.
     """
     fn = for_pydantic_ai(factory, deps_type)
     toolset.add_function(
@@ -216,7 +219,6 @@ def register_agent_tool[D](
         name=factory_tool_name(fn),
         description=fn.__doc__,
         args_validator=args_validator,
-        requires_approval=requires_approval,
     )
 
 
@@ -226,7 +228,6 @@ def register_agent_tools[D](
     factories: Sequence[Callable[[D], Tool[Any]]],
     *,
     args_validator: ArgsValidatorFunc[D, ...] | None = None,
-    requires_approval: bool | None = None,
 ) -> None:
     """Register multiple Tool factories on a FunctionToolset.
 
@@ -238,16 +239,9 @@ def register_agent_tools[D](
         deps_type: The RunContext deps type.
         factories: Sequence of factory callables.
         args_validator: Optional validator applied to every tool's arguments.
-        requires_approval: Whether tool calls need user approval.
     """
     for factory in factories:
-        register_agent_tool(
-            toolset,
-            deps_type,
-            factory,
-            args_validator=args_validator,
-            requires_approval=requires_approval,
-        )
+        register_agent_tool(toolset, deps_type, factory, args_validator=args_validator)
 
 
 def capability_tools[D](capability: Capability[D]) -> dict[str, PydanticTool[D]]:

@@ -29,7 +29,7 @@ def _run_python(deps: UserDeps) -> RunPythonTool:
     return RunPythonTool(
         pool=get_monty_pool(),
         limits=_limits,
-        paths=deps.working_paths(),
+        paths=deps.search_paths(),
         writer=output_sink(deps),
     )
 

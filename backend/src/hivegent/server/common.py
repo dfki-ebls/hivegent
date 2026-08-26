@@ -1,5 +1,6 @@
 """Shared helpers for server routes and operations."""
 
+from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import Header, HTTPException
@@ -22,7 +23,7 @@ __all__ = [
     "ClientId",
     "group_store",
     "group_stores",
-    "parse_document_filters",
+    "parse_document_scope",
     "parse_pipeline_spec",
     "prepare_llm_config",
     "require_group_member",
@@ -67,58 +68,60 @@ def prepare_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:
     return resolve_llm_config(llm, tier=tier)
 
 
-def parse_document_filters(
+def parse_document_scope(
     included_documents: list[str],
     excluded_documents: list[str],
     user_groups: frozenset[str],
-) -> tuple[DocumentFilter | None, dict[str, DocumentFilter]]:
-    """Parse include and exclude lists into per-store document filters.
+) -> tuple[frozenset[str], DocumentFilter | None, dict[str, DocumentFilter]]:
+    """Parse the request's document selection into its two halves.
 
     Entries are canonical workspace paths; a bare scope root selects the
-    whole workspace (local ``/``). Unparseable entries and groups the
-    caller cannot address (``user_groups``, i.e. :attr:`User.all_groups`)
-    are skipped.  Every entry is folded to NFC, so a filter captured from a
-    workspace tree before the paths were canonicalized still selects its
-    document instead of silently matching nothing.
+    whole workspace (local ``/``). Unparseable entries and groups the caller
+    cannot address (``user_groups``, i.e. :attr:`User.all_groups`) are
+    skipped from both halves.  Every entry is folded to NFC, so a selection
+    captured from a workspace tree before the paths were canonicalized still
+    names its document instead of silently matching nothing.
 
-    The include list is a whitelist over the whole corpus: as soon as any
-    include entry exists, every store gets a filter, so a store without
-    include entries of its own is hidden entirely rather than left
-    unrestricted.
+    The halves are not symmetric.  The included list restricts nothing: it is
+    re-rendered as canonical paths for the prompt to name, so a conversation
+    pointed at two files still reaches the whole workspace.  Only the excluded
+    list becomes a :class:`DocumentFilter`, and only for the stores it names —
+    every other store stays unfiltered.
+
+    Returns:
+        The canonical paths to name to the model, the personal store's filter
+        (``None`` when it hides nothing), and one filter per named group.
     """
 
-    def partition(entries: list[str]) -> dict[str | None, list[str]]:
-        by_store: dict[str | None, list[str]] = {}
+    def scoped(entries: list[str]) -> Iterator[tuple[WorkspaceScope, str]]:
+        """Yield each addressable entry as its scope and its local path."""
         for entry in entries:
             try:
                 scope, local = WorkspaceScope.parse(normalize_unicode(entry))
             except ValueError:
                 continue
-            group_id = scope.group_id
-            if group_id is None or group_id in user_groups:
-                by_store.setdefault(group_id, []).append(local or "/")
-        return by_store
 
-    included = partition(included_documents)
-    excluded = partition(excluded_documents)
-    # Whitelist intent is judged on the raw request, not the surviving
-    # entries: a list whose entries were all skipped fails closed (every
-    # store gets an empty include set) instead of granting full access.
-    whitelisting = bool(included_documents)
-    store_ids: set[str | None] = (
-        {None, *user_groups} if whitelisting else set(included) | set(excluded)
+            if scope.group_id is None or scope.group_id in user_groups:
+                yield scope, local or "/"
+
+    relevant = frozenset(
+        scope.render_filter_entry(local) for scope, local in scoped(included_documents)
     )
 
+    hidden: dict[str | None, set[str]] = {}
+    for scope, local in scoped(excluded_documents):
+        hidden.setdefault(scope.group_id, set()).add(local)
+
     filters = {
-        store_id: DocumentFilter(
-            included=frozenset(included.get(store_id, [])) if whitelisting else None,
-            excluded=frozenset(excluded.get(store_id, [])),
-        )
-        for store_id in store_ids
+        store_id: DocumentFilter(excluded=frozenset(locals_))
+        for store_id, locals_ in hidden.items()
     }
-    return filters.pop(None, None), {
-        group_id: f for group_id, f in filters.items() if group_id is not None
-    }
+
+    return (
+        relevant,
+        filters.pop(None, None),
+        {group_id: f for group_id, f in filters.items() if group_id is not None},
+    )
 
 
 def user_store(user: User) -> Casebase:

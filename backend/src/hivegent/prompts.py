@@ -41,69 +41,61 @@ def join_instructions(parts: Iterable[str]) -> str:
     return "\n\n".join(part.strip() for part in parts)
 
 
-def format_document_scope(
-    included: frozenset[str] | None, excluded: frozenset[str]
-) -> str:
+def format_document_scope(relevant: frozenset[str], hidden: frozenset[str]) -> str:
     """Render the active document scope as a prompt block for the agent.
 
-    *included* and *excluded* are canonical workspace paths (``~/...`` for the
-    personal workspace, ``@<group>/...`` for a shared group). Mirroring
-    :class:`~hivegent.types.DocumentFilter`, ``included=None`` means no
-    whitelist is in force (every document is available), while an empty set is
-    a whitelist that currently matches nothing (every document is hidden).
-    Returns an empty string when nothing is scoped so the caller can drop it
-    entirely. Entries are sorted so the rendered block stays byte-identical
-    between turns when the selection is unchanged, keeping the prompt cacheable.
+    Both sets hold canonical workspace paths (``~/...`` for the personal
+    workspace, ``@<group>/...`` for a shared group), and they are not
+    symmetric: *relevant* is what the user pointed the conversation at, which
+    only this block enforces by telling the model where to start, while
+    *hidden* is what the document tools will not return at all.  Returns an
+    empty string when nothing is selected so the caller can drop the block
+    entirely.  Entries are sorted so the rendered block stays byte-identical
+    between turns when the selection is unchanged, keeping the prompt
+    cacheable.
 
-    >>> format_document_scope(None, frozenset())
+    >>> format_document_scope(frozenset(), frozenset())
     ''
     >>> "~/a.md" in format_document_scope(frozenset({"~/a.md"}), frozenset())
     True
     """
-    if included is None and not excluded:
+    if not relevant and not hidden:
         return ""
 
     lines = ["<document_scope>"]
 
-    if included is not None:
+    if relevant:
         lines.append(
-            "The user has scoped this conversation to a specific set of "
-            "documents. Your document tools (list_documents, glob_documents, "
-            "grep, read_document, query_table, search) only see what is "
-            "listed here, and everything else in the workspace is hidden. "
-            "Treat this selection as the documents the user is referring to "
-            "with phrases like "
-            '"these documents" or "the two files".'
+            "The user has pointed this conversation at a specific set of "
+            "documents. Treat them as what the user means by phrases like "
+            '"these documents" or "the two files", and start your work there. '
+            "They are a hint, not a restriction: your document tools still "
+            "reach the whole workspace, so follow a reference out of them or "
+            "search wider when the answer is not in them."
         )
         lines.append("")
+        lines.append("Most relevant:")
+        lines.extend(f"- {path}" for path in sorted(relevant))
 
-        if included:
-            lines.append("In scope:")
-            lines.extend(f"- {path}" for path in sorted(included))
-        else:
-            lines.append("No documents are currently in scope.")
-
-        if excluded:
+    if hidden:
+        if relevant:
             lines.append("")
-            lines.append("Carved out of the documents above:")
-            lines.extend(f"- {path}" for path in sorted(excluded))
-    else:
         lines.append(
             "The user has hidden some documents from this conversation. Every "
-            "document in the workspace is available to your tools except the "
-            "ones listed here, which your tools will not return."
+            "other document in the workspace is available to your tools, but "
+            "these will not be returned by any of them."
         )
         lines.append("")
         lines.append("Hidden from this conversation:")
-        lines.extend(f"- {path}" for path in sorted(excluded))
+        lines.extend(f"- {path}" for path in sorted(hidden))
 
     lines.append("")
     lines.append(
-        "The user controls this scope live and may change it between turns, so "
-        "it can differ from what was visible earlier in the conversation. Rely "
-        "on the current scope above rather than on documents seen in earlier "
-        "turns, and if something you accessed before is now out of scope, tell "
-        "the user it is no longer selected instead of guessing."
+        "The user controls this selection live and may change it between "
+        "turns, so it can differ from what was visible earlier in the "
+        "conversation. Rely on the current selection above rather than on "
+        "documents seen in earlier turns, and if something you accessed "
+        "before is now hidden, tell the user instead of guessing."
     )
     lines.append("</document_scope>")
     return "\n".join(lines)

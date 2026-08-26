@@ -1,19 +1,21 @@
 import { create } from "zustand";
 
 /**
- * Per-conversation include/exclude filter restricting which workspace
- * documents the chat agent may access. Entries are canonical paths
- * (`~/docs/report.md`, `@team/notes/`): a trailing slash marks a directory,
- * a bare scope (`~`, `@team`) a whole workspace. The filter rides along with
- * every request and survives between messages of the same conversation;
- * starting or switching conversations clears it.
+ * Per-conversation document selection for the chat agent. Entries are
+ * canonical paths (`~/docs/report.md`, `@team/notes/`): a trailing slash marks
+ * a directory, a bare scope (`~`, `@team`) a whole workspace. The two halves
+ * are not symmetric: `included` points the agent at the documents a question
+ * is about and restricts nothing, while `excluded` is the only half its tools
+ * enforce. The selection rides along with every request and survives between
+ * messages of the same conversation; starting or switching conversations
+ * clears it.
  */
 interface DocumentFilterState {
   included: string[];
   excluded: string[];
-  /** Add to the include list, or remove when already included (toggle). */
+  /** Add to the relevant list, or remove when already there (toggle). */
   toggleInclude: (path: string) => void;
-  /** Add to the exclude list, or remove when already excluded (toggle). */
+  /** Add to the hidden list, or remove when already there (toggle). */
   toggleExclude: (path: string) => void;
   /** Drop the entry from both lists (badge dismissal). */
   remove: (path: string) => void;

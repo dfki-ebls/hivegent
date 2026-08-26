@@ -14,7 +14,7 @@ from .chunkers import ChunkingSpec
 from .config import ADMIN_ROLE
 from .converters import ConversionSpec
 from .db.conversations import ConversationSummary
-from .entries import entry_owns, stem_path_from_reference
+from .entries import entry_owns, is_scratch_path, stem_path_from_reference
 from .llm_config import LlmConfig, ReasoningEffort
 from .prompts import Personality
 from .security import (
@@ -103,7 +103,7 @@ class ProgressReporter(Protocol):
 
 @dataclass(slots=True, frozen=True)
 class DocumentFilter:
-    """Include and exclude filter applied to document-level operations.
+    """The documents a conversation hides from its document operations.
 
     Entries use the workspace UI's conventions: ``dir/`` (trailing slash)
     selects a directory subtree including the directory itself, ``/``
@@ -112,18 +112,18 @@ class DocumentFilter:
     its ``.assets`` payload, mirroring how the inventory groups files into
     entries.
 
-    When both an included and an excluded entry select a path, the most
-    specific entry (the longest one) wins, with include winning ties — so
-    a child document can be re-included from an excluded directory and a
-    file can be excluded from an included directory.  Ancestor
-    directories of an included entry count as include matches so listings
-    can traverse into included subtrees.  Without any matching entry a
-    path passes unless an include list is set: ``included=None`` means no
-    include restriction, while an empty set hides the whole store — the
-    store was not part of a non-empty whitelist.
+    Only the hidden half of the user's selection is enforced.  The documents
+    the user points at are advisory and reach the model as prompt text
+    (:func:`~hivegent.prompts.format_document_scope`), so naming the two files
+    a question is about steers the run without cutting the rest of the
+    workspace out from under it — the model can still follow a reference out
+    of them, and no write is refused for landing outside the selection.
+
+    A ``.scratch/`` path is never hidden: it is the run's own working state
+    rather than one of the user's documents, so a selection made for the chat
+    cannot strand a computation halfway through its own state.
     """
 
-    included: frozenset[str] | None = None
     excluded: frozenset[str] = field(default_factory=frozenset)
 
     @staticmethod
@@ -139,23 +139,9 @@ class DocumentFilter:
 
     def __call__(self, path: str) -> bool:
         """Return whether the file or directory *path* passes the filter."""
-        include_match = max(
-            (
-                len(entry)
-                for entry in self.included or ()
-                if self._selects(entry, path) or entry.startswith(f"{path}/")
-            ),
-            default=-1,
-        )
-        exclude_match = max(
-            (len(entry) for entry in self.excluded if self._selects(entry, path)),
-            default=-1,
-        )
-        if include_match >= 0 and include_match >= exclude_match:
-            return True
-        if exclude_match >= 0:
-            return False
-        return self.included is None
+        hidden = any(self._selects(entry, path) for entry in self.excluded)
+
+        return not hidden or is_scratch_path(path)
 
 
 @dataclass(slots=True, frozen=True)

@@ -373,12 +373,11 @@ async def resolve_accessible_document_ids(
     Used at search time to scope the cbrkit vector query without
     denormalising owner columns onto the chunks table.
 
-    *filters* applies the conversation's document scope here rather
-    than to the ranked results.  Pruning after the scan leaves a whitelist
-    competing against the whole corpus for the top-k, so a chat scoped to two
-    files could search them and be handed nothing; pruned at the SQL level the
-    scan never ranks anything else to begin with.  With no store actually
-    scoped the ids alone are selected, since every row would be admitted.
+    *filters* hides the conversation's excluded documents here rather than
+    from the ranked results.  Pruning after the scan spends the top-k on rows
+    the user hid and hands back fewer than were asked for; pruned at the SQL
+    level the scan never ranks them to begin with.  With no store actually
+    filtered the ids alone are selected, since every row would be admitted.
     """
     if not stores:
         return []
