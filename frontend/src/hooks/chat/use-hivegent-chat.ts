@@ -6,7 +6,12 @@ import {
 } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getAuthHeaders } from "@/lib/api";
-import { type ChatMessage, adoptMessageNodeId, isChatBusy } from "@/lib/chat/chat-utils";
+import {
+  type ChatMessage,
+  adoptMessageNodeId,
+  declineAbandonedApprovals,
+  isChatBusy,
+} from "@/lib/chat/chat-utils";
 import { API_BASE_URL } from "@/lib/health";
 import type { SubagentSteps, SubagentUpdate } from "@/lib/chat/subagent";
 
@@ -189,11 +194,16 @@ export function useHivegentChat(
     await regenerate({ headers: await getAuthHeaders() });
   }, [regenerate]);
 
+  // An approval the user overtook with another message is dead: the next
+  // request closes it as a denial server-side, so the transcript every consumer
+  // reads says so too, instead of leaving live buttons on a settled decision.
+  const messages = useMemo(() => declineAbandonedApprovals(chat.messages), [chat.messages]);
+
   const isStreaming = isChatBusy(chat.status);
 
   // Belt-and-suspenders behind StreamingNavGuard: abort the run on a teardown
   // that isn't a navigation (e.g. an error boundary), so it never outlives its UI.
   useStopOnUnmount(isStreaming, chat.stop);
 
-  return { ...chat, sendUserMessage, regenerateTurn, isStreaming, subagentSteps };
+  return { ...chat, messages, sendUserMessage, regenerateTurn, isStreaming, subagentSteps };
 }

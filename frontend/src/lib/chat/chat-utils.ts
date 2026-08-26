@@ -1,5 +1,5 @@
 import type { UIMessage } from "@ai-sdk/react";
-import type { ChatStatus, FileUIPart } from "ai";
+import type { ChatStatus, DynamicToolUIPart, FileUIPart, ToolUIPart } from "ai";
 
 /** Whether a chat request is waiting for or receiving model output. */
 export function isChatBusy(status: ChatStatus): boolean {
@@ -149,4 +149,57 @@ export function recordChatError(messages: ChatMessage[], error: Error | undefine
     ...message,
     metadata: { ...message.metadata, chatError: error.message },
   });
+}
+
+/**
+ * Whether a part is an approval request nobody has answered yet.
+ *
+ * `approval` is carried by the tool parts alone, so the `in` check is what
+ * narrows the part union before the state is read.
+ */
+type PendingApproval = Extract<DynamicToolUIPart | ToolUIPart, { state: "approval-requested" }>;
+
+function isPendingApproval(part: ChatMessage["parts"][number]): part is PendingApproval {
+  return "approval" in part && part.state === "approval-requested";
+}
+
+/** The same part as the denial it has become, matching a reloaded one. */
+function declineApproval(part: ChatMessage["parts"][number]): ChatMessage["parts"][number] {
+  if (!isPendingApproval(part)) return part;
+
+  return {
+    ...part,
+    state: "output-denied",
+    approval: { ...part.approval, approved: false },
+  };
+}
+
+/**
+ * Close the approval requests the user walked away from by sending another
+ * message, so they read as the denials they have become.
+ *
+ * The backend does the same to the stored history on the next request
+ * (`decline_pending_approvals` in `backend/src/hivegent/server/vercel.py`): a
+ * dangling call that a new prompt has overtaken can never be answered, so it is
+ * closed as a denial. Deriving that here rather than recording a second
+ * decision keeps the live tab showing what a reload already shows, and stops
+ * the card offering buttons for a decision the server has made. Only the last
+ * message can hold a live request — the run that asked is the end of the
+ * transcript until the next turn appends to it — so anything before it is
+ * abandoned by construction.
+ *
+ * Returns *messages* itself when nothing dangles, allocating nothing, so the
+ * common case re-renders nothing on a transcript that grows with every chunk.
+ */
+export function declineAbandonedApprovals(messages: ChatMessage[]): ChatMessage[] {
+  const isAbandoned = (message: ChatMessage, index: number) =>
+    index < messages.length - 1 && message.parts.some(isPendingApproval);
+
+  if (!messages.some(isAbandoned)) return messages;
+
+  return messages.map((message, index) =>
+    isAbandoned(message, index)
+      ? { ...message, parts: message.parts.map(declineApproval) }
+      : message,
+  );
 }

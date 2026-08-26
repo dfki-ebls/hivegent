@@ -4,6 +4,7 @@ import {
   type ChatMessage,
   activeChatError,
   adoptMessageNodeId,
+  declineAbandonedApprovals,
   getLastUserMessage,
   isContextLengthError,
   recordChatError,
@@ -153,5 +154,38 @@ describe("getLastUserMessage", () => {
   it("has nothing to resend for an empty message", () => {
     expect(getLastUserMessage([{ id: "u1", role: "user", parts: [] }])).toBeUndefined();
     expect(getLastUserMessage([])).toBeUndefined();
+  });
+});
+
+describe("declineAbandonedApprovals", () => {
+  const pending = (): ChatMessage => ({
+    id: "a1",
+    role: "assistant",
+    parts: [
+      {
+        type: "dynamic-tool",
+        toolName: "write_document",
+        toolCallId: "call-1",
+        state: "approval-requested",
+        input: {},
+        approval: { id: "call-1" },
+      },
+    ],
+  });
+
+  it("leaves a request the user can still answer alone", () => {
+    const messages = [msg("user", "q"), pending()];
+
+    expect(declineAbandonedApprovals(messages)).toBe(messages);
+  });
+
+  it("closes a request the next message overtook, as the backend does", () => {
+    const messages = [msg("user", "q"), pending(), msg("user", "never mind, do this instead")];
+    const declined = declineAbandonedApprovals(messages);
+    const part = declined[1].parts[0];
+
+    expect(part).toMatchObject({ state: "output-denied", approval: { approved: false } });
+    // Untouched messages keep their identity, so nothing else re-renders.
+    expect(declined[0]).toBe(messages[0]);
   });
 });
