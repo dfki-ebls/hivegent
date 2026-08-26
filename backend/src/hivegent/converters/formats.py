@@ -137,6 +137,7 @@ DOCLING_EXTENSIONS = frozenset(
         ".otp",
         ".ots",
         ".ott",
+        ".pages",
         ".pdf",
         ".png",
         ".pot",
