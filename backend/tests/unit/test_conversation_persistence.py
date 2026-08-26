@@ -93,6 +93,16 @@ def _tool_states(messages: Sequence[ModelMessage]) -> list[str | None]:
     ]
 
 
+def _tool_approvals(messages: Sequence[ModelMessage]) -> list[bool | None]:
+    """Approval decisions the tool cards a message list projects to carry."""
+    return [
+        getattr(getattr(part, "approval", None), "approved", None)
+        for message in _ui_messages(messages)
+        for part in message.parts
+        if str(getattr(part, "type", "")).startswith("tool-")
+    ]
+
+
 def _adapter(
     ui_messages: list[UIMessage],
     *,
@@ -295,6 +305,32 @@ async def test_answered_approval_resolves_the_stored_call_once(
     assert len(returns) == 1
     assert returns[0].tool_call_id == calls[0].tool_call_id
     assert str(returns[0].content) == ("written" if approved else _TOOL_DENIED_REASON)
+
+
+@pytest.mark.parametrize("approved", [True, False])
+async def test_a_settled_approval_reloads_with_its_decision(approved: bool) -> None:
+    """Both decisions survive a reload, not just the denial.
+
+    A denial is self-describing: its return carries ``outcome='denied'`` and the
+    reason, so it projects straight back.  An approved call runs and stores an
+    ordinary successful return, so nothing in the message list says it was ever
+    gated and the decision has to be recorded at persist time for the
+    projection to put it back.
+    """
+    pending, _ = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        tool_needs_approval=True,
+    )
+    recorded, _ = await _run_turn(
+        [_answer_approval(pending[0], approved=approved)],
+        message_history=pending[0],
+        tool_needs_approval=True,
+    )
+
+    assert _tool_states(recorded[0]) == [
+        "output-available" if approved else "output-denied"
+    ]
+    assert _tool_approvals(recorded[0]) == [approved]
 
 
 async def test_abandoned_approval_is_declined_for_the_next_turn() -> None:

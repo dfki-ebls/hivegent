@@ -24,6 +24,8 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Container,
+    Iterable,
     Mapping,
     Sequence,
 )
@@ -41,8 +43,14 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.tools import DeferredToolResults
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
-from pydantic_ai.ui.vercel_ai.request_types import UIMessage
+from pydantic_ai.ui.vercel_ai.request_types import (
+    DynamicToolUIPart,
+    ToolApprovalResponded,
+    ToolUIPart,
+    UIMessage,
+)
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk, ErrorChunk
 from starlette.responses import Response
 
@@ -52,6 +60,7 @@ from ..db.conversations import is_user_request
 from ..llm import is_context_overflow
 
 __all__ = [
+    "APPROVED_CALLS_KEY",
     "CONTEXT_LENGTH_EXCEEDED",
     "SDK_VERSION",
     "SUBAGENT_CHUNK_TYPE",
@@ -61,6 +70,7 @@ __all__ = [
     "close_orphan_tool_calls",
     "decline_pending_approvals",
     "dump_messages_with_ids",
+    "record_approvals",
     "record_turn_error",
     "run_and_persist",
 ]
@@ -99,6 +109,10 @@ ABANDONED_APPROVAL_DENIAL = (
 # the chat error banner from reloaded history (a stream error is otherwise a
 # transient chunk, not a message part, and is lost on reload).
 CHAT_ERROR_KEY = "chatError"
+
+# Message metadata key listing the tool calls a user approval released, set on
+# the request that carries their returns (see `record_approvals`).
+APPROVED_CALLS_KEY = "approvedToolCalls"
 
 type PersistTurn = Callable[[Sequence[ModelMessage]], Awaitable[None]]
 
@@ -228,6 +242,68 @@ async def _persist_safely(
         logger.exception("Failed to persist conversation turn")
 
 
+def record_approvals(
+    messages: Sequence[ModelMessage], results: DeferredToolResults | None
+) -> None:
+    """Store which of this turn's calls a user approval released, for reload.
+
+    A denial is self-describing: its return carries ``outcome='denied'`` and the
+    reason, so it projects back to the refusal the user saw.  An approval is
+    not.  The call simply runs and stores an ordinary successful return, so
+    nothing in the message list says it was ever gated, and the "Approved" line
+    that was on screen live is gone on reload while a denial's survives.
+
+    The decision is recorded on the request carrying the released call's return,
+    which is UI-owned metadata that never reaches the provider, like the
+    reasoning durations and the turn error beside it.  The return part's own
+    ``metadata`` would be the closer home but is already the tool-output chunk
+    channel (see ``tools.pydantic_ai.wrap_tool_output``).
+    :func:`dump_messages_with_ids` reads it back.  Mutates in place.
+    """
+    approved = {
+        call_id
+        for call_id, decision in (results.approvals if results else {}).items()
+        if decision is True
+    }
+    if not approved:
+        return
+
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+
+        released = [
+            part.tool_call_id
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_call_id in approved
+        ]
+        if released:
+            message.metadata = {
+                **(message.metadata or {}),
+                APPROVED_CALLS_KEY: released,
+            }
+
+
+def _attach_approvals(messages: Iterable[UIMessage], approved: Container[str]) -> None:
+    """Re-attach the approval decision to the parts of *approved* calls.
+
+    The counterpart of :func:`record_approvals`: what the run does not record,
+    the projection puts back, so an approved call reloads with the same chip a
+    denied one does.  The approval id is not a match key (``tool_call_id`` is),
+    so it is derived rather than minted, as upstream does for a pending one.
+    """
+    for message in messages:
+        for part in message.parts:
+            if (
+                isinstance(part, ToolUIPart | DynamicToolUIPart)
+                and part.approval is None
+                and part.tool_call_id in approved
+            ):
+                part.approval = ToolApprovalResponded(
+                    id=part.tool_call_id, approved=True
+                )
+
+
 def dump_messages_with_ids(
     pairs: Sequence[tuple[str, ModelMessage]],
     *,
@@ -245,7 +321,8 @@ def dump_messages_with_ids(
     rather than raising.  When given, *siblings* maps a forking node to its
     ordered sibling ids; its :class:`BranchInfo` is merged under a ``branch``
     metadata key (leaving the framework key intact) so the frontend can render
-    branch navigation.
+    branch navigation.  Calls released by an approval are re-annotated with the
+    decision the run itself does not record (see :func:`record_approvals`).
     """
     node_by_obj = {id(msg): node_id for node_id, msg in pairs}
     if siblings:
@@ -263,11 +340,21 @@ def dump_messages_with_ids(
     def assign_id(msg: ModelMessage, _role: str, _index: int) -> str:
         return node_by_obj.get(id(msg)) or new_id()
 
-    return ChatAdapter.dump_messages(
+    ui_messages = ChatAdapter.dump_messages(
         [msg for _, msg in pairs],
         generate_message_id=assign_id,
         sdk_version=SDK_VERSION,
     )
+    _attach_approvals(
+        ui_messages,
+        frozenset(
+            call_id
+            for _, msg in pairs
+            if isinstance(released := (msg.metadata or {}).get(APPROVED_CALLS_KEY), list)
+            for call_id in released
+        ),
+    )
+    return ui_messages
 
 
 async def _merge_subagent_events(
@@ -470,7 +557,14 @@ async def run_and_persist[DepsT, OutputT](
     a failed write hard-fails the turn: on a clean drain the failure surfaces as
     a trailing error chunk; on a client disconnect the write is shielded and a
     failure can only be logged.
+
+    Every write goes through :func:`record_approvals` first, so a call the user
+    released is stored with that fact whichever way the turn ended.
     """
+
+    async def persist_turn(messages: Sequence[ModelMessage]) -> None:
+        record_approvals(messages, adapter.deferred_tool_results)
+        await persist(messages)
 
     async def drain() -> AsyncIterator[BaseChunk]:
         if subagent_sink is None:
@@ -506,7 +600,7 @@ async def run_and_persist[DepsT, OutputT](
                 # logged) and propagate.
                 await asyncio.shield(
                     _persist_safely(
-                        persist,
+                        persist_turn,
                         close_orphan_tool_calls(list(captured), INTERRUPTED_TOOL_ERROR),
                     )
                 )
@@ -518,7 +612,7 @@ async def run_and_persist[DepsT, OutputT](
                 record_turn_error(messages, error_text)
 
             try:
-                await asyncio.shield(persist(messages))
+                await asyncio.shield(persist_turn(messages))
             except Exception:
                 logger.exception("Failed to persist conversation turn")
                 yield ErrorChunk(error_text="Failed to save the conversation.")

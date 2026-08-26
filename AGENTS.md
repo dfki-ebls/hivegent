@@ -35,6 +35,13 @@
   Snapshots collapse while the prompt is unchanged, so narrowing the document scope mid-conversation stays legible.
   `frontend` is what the tab held, including a turn that errored before it was persisted, which is the case the export was built for.
   Import restores `backend` when it has messages and falls back to `frontend`, so a draft and a failed turn both round-trip; the archived prompts are a record and are never replayed, since the imported conversation runs under the importing user's settings.
+- The Vercel AI request models forbid extra fields, so a part the AI SDK builds but pydantic-ai has not transcribed rejects the whole request with a 422 before the run starts, and it takes down every endpoint the browser hands messages to at once: the chat route on an approval continuation (which re-posts the assistant message), the import route on an archive exported mid-session, and the compaction a context overflow offers as its recovery.
+  That drift is an upstream bug, fixed there rather than worked around here (the `id` the adapter's own `reasoning-start` chunk emits and its `ReasoningUIPart` then refused, which 422'd every reasoning turn, needs pydantic-ai >= 2.34), so the floor is the lockfile and `tests/unit/test_client_messages.py` pins the shape a real client posts across all three.
+  Nothing may relax the strictness to accommodate a client: `extra='forbid'` is what stops a malformed `approval` object from re-matching the unanswered variant and releasing a gated call.
+- A tool approval round-trips symmetrically because the approved half is recorded deliberately.
+  A denial is self-describing, since its return carries `outcome='denied'` plus the reason, but an approved call just runs and stores an ordinary successful return, so nothing in the message list says it was ever gated and the decision the user saw live would vanish on reload.
+  `vercel.record_approvals` stamps the released call ids on the metadata of the request carrying their returns (UI-owned, never sent to the provider, like the reasoning durations and the turn error beside it) and `dump_messages_with_ids` puts the decision back on the projected part.
+  It rides on the request node rather than the closer `ToolReturnPart.metadata` because that field is already the tool-output chunk channel (`tools.pydantic_ai.wrap_tool_output`).
 - Citation line chips show only evidence captured in persisted read, grep, or search tool outputs from the conversation.
   The document name opens the current workspace path separately and never applies a historical line anchor to current content.
   Tool call IDs keep repeated reads distinct, and multiple captured versions are presented independently instead of guessing which one a citation meant.
