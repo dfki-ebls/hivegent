@@ -26,16 +26,21 @@ export function ContextDocuments() {
   // than tracking a parallel piece of state.
   const dialogImage = documents.get(selectedChunk?.filename ?? dialogFilename ?? "")?.image ?? null;
 
-  // Order documents lexically by filename; chunks within each group stay
-  // line-ordered via sortChunks in DocumentGroup.
-  const sortedDocs = useMemo(
-    () => Array.from(documents.values()).sort((a, b) => a.filename.localeCompare(b.filename)),
-    [documents],
-  );
-
   const getChunksForDoc = useCallback(
     (doc: FetchedDocument): FetchedChunk[] => chunksForDocument(doc, chunks),
     [chunks],
+  );
+
+  // Surface the most relevant documents first: most chunks wins, filename
+  // breaks ties. `chunkIds` is the count itself, since the store only ever
+  // appends an id alongside the chunk it names. Chunks within each group stay
+  // line-ordered via sortChunks in DocumentGroup.
+  const sortedDocs = useMemo(
+    () =>
+      Array.from(documents.values()).sort(
+        (a, b) => b.chunkIds.length - a.chunkIds.length || a.filename.localeCompare(b.filename),
+      ),
+    [documents],
   );
 
   // Open the dialog on a specific chunk (in chunk-context mode)
