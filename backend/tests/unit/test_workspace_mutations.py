@@ -605,3 +605,25 @@ class TestDeleteAssetDescription:
         with pytest.raises(HTTPException) as exc:
             await workspace.delete_asset_description(user_store, "doc.md", "img.png")
         assert exc.value.status_code == 404
+
+
+class TestClearScratch:
+    async def test_drops_nested_scratch_and_keeps_documents(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        (workspace_dir / ".scratch").mkdir()
+        (workspace_dir / ".scratch" / "state.json").write_text("{}")
+        (workspace_dir / "notes" / ".scratch").mkdir(parents=True)
+        (workspace_dir / "notes" / ".scratch" / "run.py").write_text("print(1)")
+        (workspace_dir / "notes" / "doc.md").write_text("content")
+
+        assert await workspace.clear_scratch(user_store) == 2
+
+        assert not (workspace_dir / ".scratch").exists()
+        assert not (workspace_dir / "notes" / ".scratch").exists()
+        assert (workspace_dir / "notes" / "doc.md").read_text() == "content"
+
+    async def test_empty_workspace_clears_nothing(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        assert await workspace.clear_scratch(user_store) == 0

@@ -127,6 +127,11 @@ export const UserResponseSchema = z.object({
 });
 export type UserResponse = z.infer<typeof UserResponseSchema>;
 
+export const ScratchClearedResponseSchema = z.object({
+  files_removed: z.number(),
+});
+export type ScratchClearedResponse = z.infer<typeof ScratchClearedResponseSchema>;
+
 // ============================================================
 // Admin response schemas
 // ============================================================

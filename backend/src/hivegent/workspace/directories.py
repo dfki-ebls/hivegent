@@ -29,6 +29,7 @@ from .paths import (
 
 __all__ = [
     "cleanup_scratch_dirs",
+    "clear_scratch",
     "create_directory",
     "delete_all",
     "delete_directory",
@@ -187,8 +188,14 @@ async def delete_all(store: Casebase) -> None:
         await asyncio.to_thread(_remove_tree, store.workspace_path(settings.data_dir))
 
 
-def _prune_scratch_dirs(root: Path) -> None:
-    """Remove every scratch directory under *root*, without descending into one."""
+def _prune_scratch_dirs(root: Path) -> int:
+    """Remove every scratch directory under *root*, without descending into one.
+
+    Returns the number of files dropped, which is all a caller can report on:
+    scratch leaves no rows behind and the tree never showed it, so the count is
+    the only evidence the sweep did anything.
+    """
+    removed = 0
     for dir_path, dir_names, _files in root.walk():
         if SCRATCH_DIR_NAME not in dir_names:
             continue
@@ -198,7 +205,10 @@ def _prune_scratch_dirs(root: Path) -> None:
         # A symlink by that name is not a scratch directory and `rmtree` refuses
         # one, so it is left alone rather than failing the boot.
         if not scratch.is_symlink():
+            removed += sum(len(files) for _, _, files in scratch.walk())
             _remove_tree(scratch)
+
+    return removed
 
 
 async def cleanup_scratch_dirs() -> None:
@@ -213,6 +223,22 @@ async def cleanup_scratch_dirs() -> None:
     await asyncio.to_thread(
         _prune_scratch_dirs, Casebase.workspace_root(settings.data_dir)
     )
+
+
+async def clear_scratch(store: Casebase) -> int:
+    """Drop one casebase's scratch state on request, returning the file count.
+
+    The same removal as the boot sweep, narrowed to a single workspace and taken
+    under its lock, since here it runs against a live server: a run parks scratch
+    through the ordinary locked write path, so the lock is what keeps a clear
+    from landing halfway through one.  Nothing indexes scratch, so no rows follow
+    the files out, and no client is notified for the reason `announcing_mutator`
+    stays quiet on a scratch write: the tree hides `.scratch/` either way.
+    """
+    async with store_lock(store):
+        return await asyncio.to_thread(
+            _prune_scratch_dirs, store.workspace_path(settings.data_dir)
+        )
 
 
 async def delete_workspace_root() -> None:

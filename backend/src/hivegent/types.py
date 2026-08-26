@@ -67,6 +67,7 @@ __all__ = [
     "OidcPublicConfig",
     "PipelineSpec",
     "ProgressReporter",
+    "ScratchClearedResponse",
     "ServerConversation",
     "SettingsResponse",
     "ToolInfo",
@@ -831,6 +832,12 @@ class McpTestResponse(BaseModel):
         default=None,
         description="Error message if the test failed",
     )
+
+
+class ScratchClearedResponse(BaseModel):
+    """Result of clearing the agent scratch state in the caller's workspaces."""
+
+    files_removed: int = Field(description="Number of scratch files deleted")
 
 
 # ─── Admin responses ───────────────────────────────────────────────────

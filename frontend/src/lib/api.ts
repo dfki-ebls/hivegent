@@ -46,6 +46,8 @@ import {
   type LlmConfig,
   type PipelineConfigInfo,
   PipelineConfigInfoSchema,
+  type ScratchClearedResponse,
+  ScratchClearedResponseSchema,
   type ToolInfo,
   ToolInfoSchema,
   type ToolRunResult,
@@ -1052,6 +1054,16 @@ export async function clearMemory(): Promise<void> {
   return requestVoid(`${API_BASE_URL}/api/memory`, "Failed to clear memory", {
     method: "DELETE",
   });
+}
+
+/** Drop the scratch state agent runs parked in the user's workspaces. */
+export async function clearScratch(): Promise<ScratchClearedResponse> {
+  return requestJson(
+    `${API_BASE_URL}/api/scratch`,
+    "Failed to clear scratch files",
+    ScratchClearedResponseSchema,
+    { method: "DELETE" },
+  );
 }
 
 /** Delete all user data (conversations, documents, tokens). */

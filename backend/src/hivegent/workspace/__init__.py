@@ -50,6 +50,7 @@ from .assets import (
 from .collections import process_collection, validate_collection_archive
 from .directories import (
     cleanup_scratch_dirs,
+    clear_scratch,
     create_directory,
     delete_all,
     delete_directory,
@@ -73,6 +74,7 @@ from .uploads import reconvert, replace_original, upload
 __all__ = [
     "NormalizeReport",
     "cleanup_scratch_dirs",
+    "clear_scratch",
     "create_directory",
     "delete_all",
     "delete_asset_description",

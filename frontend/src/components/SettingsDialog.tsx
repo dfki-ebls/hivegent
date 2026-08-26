@@ -1,5 +1,6 @@
 import {
   CheckIcon,
+  EraserIcon,
   LoaderIcon,
   LockIcon,
   PlugIcon,
@@ -10,7 +11,8 @@ import {
   XIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { clearMemory, listTools, type McpTestResult, testMcpServer } from "@/lib/api";
+import { toast } from "sonner";
+import { clearMemory, clearScratch, listTools, type McpTestResult, testMcpServer } from "@/lib/api";
 import { featureFlags } from "@/lib/feature-flags";
 import {
   PERSONALITY_OPTIONS,
@@ -19,6 +21,7 @@ import {
   type Personality,
   type ToolInfo,
 } from "@/lib/types";
+import { errorMessage } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings-store";
 import {
   AlertDialog,
@@ -72,6 +75,65 @@ function SettingsSection({ label, htmlFor, description, children }: SettingsSect
       {description && <p className="text-xs text-muted-foreground">{description}</p>}
     </div>
   );
+}
+
+// --- Footer confirm button ---
+
+interface ConfirmButtonProps {
+  icon: React.ReactNode;
+  label: string;
+  title: string;
+  description: string;
+  onConfirm: () => Promise<void> | void;
+}
+
+/**
+ * Footer action that runs behind a confirmation dialog.
+ *
+ * Awaiting *onConfirm* here is what keeps a failed request from being reported
+ * nowhere: every one of these goes through `requestJson`/`requestVoid`, which
+ * throw on a failed response, so the toast belongs at the one seam that runs
+ * all of them rather than in each action.
+ */
+function ConfirmButton({ icon, label, title, description, onConfirm }: ConfirmButtonProps) {
+  const run = async () => {
+    try {
+      await onConfirm();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+  };
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          {icon}
+          {label}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={() => void run()}>Clear</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+/**
+ * Clear the parked scratch files, reporting what the sweep removed. Scratch is
+ * hidden from the document tree, so the count is the only evidence the press
+ * did anything.
+ */
+async function clearScratchFiles() {
+  const { files_removed } = await clearScratch();
+  toast.success(`Cleared ${files_removed} scratch ${files_removed === 1 ? "file" : "files"}`);
 }
 
 // --- Auth mode types ---
@@ -534,27 +596,22 @@ export function SettingsDialog() {
         </div>
 
         <DialogFooter className="flex-row justify-between sm:justify-between">
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="outline" size="sm">
-                <TrashIcon className="h-4 w-4 mr-2" />
-                Clear Memory
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Clear memory?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will permanently delete all saved memory. The assistant will no longer
-                  remember information from previous conversations.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={() => void clearMemory()}>Clear</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <div className="flex gap-2">
+            <ConfirmButton
+              icon={<TrashIcon className="h-4 w-4 mr-2" />}
+              label="Clear Memory"
+              title="Clear memory?"
+              description="This will permanently delete all saved memory. The assistant will no longer remember information from previous conversations."
+              onConfirm={clearMemory}
+            />
+            <ConfirmButton
+              icon={<EraserIcon className="h-4 w-4 mr-2" />}
+              label="Clear Scratch"
+              title="Clear scratch files?"
+              description="This will delete the working files the assistant parks between tool calls, in your own workspace and every group you can write to. Your documents are untouched."
+              onConfirm={clearScratchFiles}
+            />
+          </div>
           {featureFlags.llmSpec && (
             <Button variant="outline" size="sm" onClick={reset}>
               <RotateCcwIcon className="h-4 w-4 mr-2" />
