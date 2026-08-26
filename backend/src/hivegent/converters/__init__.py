@@ -32,6 +32,7 @@ from .video import VIDEO_MEDIA_TYPES, is_video_suffix
 
 __all__ = [
     "INGESTIBLE_IMAGE_MEDIA_TYPES",
+    "JSON_SUFFIXES",
     "TABULAR_SUFFIXES",
     "VISION_MEDIA_TYPES",
     "ConversionPipeline",
@@ -43,6 +44,7 @@ __all__ = [
     "get_conversion_pipeline_config",
     "get_conversion_pipelines_info",
     "get_converter",
+    "is_json",
     "is_tabular",
     "projection_for",
     "projects_verbatim",
@@ -530,9 +532,29 @@ format that does earn a markdown projection is still better queried.
 """
 
 
+JSON_SUFFIXES: frozenset[str] = frozenset({".json"})
+"""Extensions a jq filter can be run against in place.
+
+The third table of its kind, and there for the same reason as
+:data:`TABULAR_SUFFIXES`: a document whose answer is one field of one record
+costs the whole file to read and nothing to filter, so the tool that filters
+these and the reader that would otherwise page through them have to agree on
+which files they are.
+
+Narrower than "text that happens to parse as JSON", deliberately: jq is handed
+one document, so a line-delimited ``.jsonl`` would fail on its second line, and
+a ``.json`` suffix is the only thing that promises a single value.
+"""
+
+
 def is_tabular(file_path: str) -> bool:
     """Return whether *file_path* names a table a SQL query can be run against."""
     return Path(file_path).suffix.lower() in TABULAR_SUFFIXES
+
+
+def is_json(file_path: str) -> bool:
+    """Return whether *file_path* names a document a jq filter can be run against."""
+    return Path(file_path).suffix.lower() in JSON_SUFFIXES
 
 
 def vision_media_type(file_path: str) -> str | None:

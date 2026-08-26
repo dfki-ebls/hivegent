@@ -11,6 +11,7 @@ from pydantic import AnyHttpUrl
 
 from ..auth import build_discovery_url, fetch_oidc_configuration
 from ..config import settings
+from ..prompts import WORKSPACE_PATH_INSTRUCTIONS
 
 __all__ = ["mcp_app"]
 
@@ -41,4 +42,9 @@ if settings.mcp.enable and settings.auth.enable:
             base_url=settings.mcp.base_url,
         )
 
-mcp_app = FastMCP("Hivegent", auth=mcp_auth)
+# The path grammar every document argument speaks is stated once here, the way
+# ``WORKSPACE_PATH_INSTRUCTIONS`` states it once for an agent run, rather than
+# repeated in the description of each of the eight arguments that name a path.
+mcp_app = FastMCP(
+    "Hivegent", auth=mcp_auth, instructions=WORKSPACE_PATH_INSTRUCTIONS.strip()
+)

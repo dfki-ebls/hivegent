@@ -104,23 +104,27 @@ class TestJqFilter:
     """Tests for ``jq_filter``."""
 
     async def test_identity(self) -> None:
-        result = await jq_filter(".", {"key": "value"})
+        result = await jq_filter(".", '{"key": "value"}')
         assert result == [{"key": "value"}]
 
     async def test_field_access(self) -> None:
-        result = await jq_filter(".name", {"name": "Alice", "age": 30})
+        result = await jq_filter(".name", '{"name": "Alice", "age": 30}')
         assert result == ["Alice"]
 
     async def test_array_iteration(self) -> None:
-        result = await jq_filter(".[].x", [{"x": 1}, {"x": 2}])
+        result = await jq_filter(".[].x", '[{"x": 1}, {"x": 2}]')
         assert result == [1, 2]
 
     async def test_invalid_expression_raises(self) -> None:
         with pytest.raises(ValueError, match="jq failed"):
-            await jq_filter("invalid [[[", {"x": 1})
+            await jq_filter("invalid [[[", '{"x": 1}')
+
+    async def test_malformed_document_raises(self) -> None:
+        with pytest.raises(ValueError, match="jq failed"):
+            await jq_filter(".", "{not json")
 
     async def test_empty_input(self) -> None:
-        result = await jq_filter(".", [])
+        result = await jq_filter(".", "[]")
         assert result == [[]]
 
 

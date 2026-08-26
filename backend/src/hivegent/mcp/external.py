@@ -76,13 +76,15 @@ def build_mcp_toolset(server_cfg: McpServerConfig) -> MCPToolset[Any]:
 def build_mcp_server(server_cfg: McpServerConfig) -> AbstractToolset[Any]:
     """Build an agent-ready toolset for an MCP server, applying its tool prefix.
 
-    Callers that hand the toolset to an agent should wrap the result with
-    ``.defer_loading()`` so its tools are hidden from the model's initial
-    context and discovered on demand via tool search. This keeps user-
-    supplied MCP servers (which can expose dozens of endpoints) from
-    bloating the prompt.
+    The result is deferred, so its tools are hidden from the model's initial
+    context and discovered on demand via tool search.  A user-supplied server
+    is the one part of the prompt this application does not size: it can expose
+    dozens of endpoints, each with its own schema, on every request of every
+    conversation that names it.  Deferring is applied here rather than left to
+    the caller because there is no agent for which the eager alternative is
+    right.
     """
     toolset = build_mcp_toolset(server_cfg)
     if server_cfg.tool_prefix:
-        return toolset.prefixed(server_cfg.tool_prefix)
-    return toolset
+        toolset = toolset.prefixed(server_cfg.tool_prefix)
+    return toolset.defer_loading()

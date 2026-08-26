@@ -25,7 +25,6 @@ from ..config import content_hash
 from ..humanize import pluralize
 from ..text import MAX_BYTES_PER_CHAR
 from .base import (
-    WORKSPACE_PATH_HINT,
     AsyncPathTool,
     ToolOutput,
     ToolRetry,
@@ -86,7 +85,7 @@ PythonScriptPathArg = Annotated[
         description=(
             "Full workspace path of a `.py` script to run instead of inline "
             "code. The current file is loaded on every call, so it can be "
-            f"repaired with `edit_document` and run again. {WORKSPACE_PATH_HINT}"
+            "repaired with `edit_document` and run again."
         ),
     ),
 ]
@@ -97,7 +96,7 @@ PythonInputPathsArg = Annotated[
             "Full workspace paths of text files to expose as private in-memory "
             "copies. A path such as `~/data.json` is available to the program "
             "at `/workspace/~/data.json`. Changes are discarded unless that "
-            f"path is also given as `output_path`. {WORKSPACE_PATH_HINT}"
+            "path is also given as `output_path`."
         ),
         max_length=20,
     ),
@@ -109,8 +108,7 @@ PythonOutputPathArg = Annotated[
             "One full workspace path whose in-memory file may be created or "
             "changed by the program and persisted after a successful run. It "
             "uses the same `/workspace/<full path>` virtual path as inputs. "
-            "Interactive calls require approval before this write. "
-            f"{WORKSPACE_PATH_HINT}"
+            "Interactive calls require approval before this write."
         ),
     ),
 ]

@@ -13,10 +13,9 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..config import content_hash, normalize_unicode
-from ..converters import is_tabular, vision_media_type
+from ..converters import is_json, is_tabular, vision_media_type
 from ..humanize import pluralize
 from .base import (
-    WORKSPACE_PATH_HINT,
     WORKSPACE_SCOPE_HINT,
     FullLinesArg,
     IncludeIgnoredArg,
@@ -109,7 +108,7 @@ class DocumentRange:
 
 DocumentFilePathArg = Annotated[
     str,
-    Field(description=f"Path of the document to operate on. {WORKSPACE_PATH_HINT}"),
+    Field(description="Full workspace path of the document to operate on."),
 ]
 DocumentPathArg = Annotated[
     str | None,
@@ -709,6 +708,14 @@ class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
             hints.append(
                 "this is a tabular file, query_table runs SQL over it and "
                 "returns only the rows you ask for"
+            )
+
+        # The same trade one format over: a JSON document read line by line
+        # spends the context on records the question never asked about.
+        if is_json(file_path):
+            hints.append(
+                "this is a JSON document, jq filters it and returns only the "
+                "values you select; call it without a filter for its shape"
             )
 
         if line_cap is not None and any(len(line) > line_cap for line in selected):

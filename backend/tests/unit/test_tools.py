@@ -29,7 +29,7 @@ from hivegent.tools.documents import (
     ReadDocumentTool,
 )
 from hivegent.tools.grep import GrepLine, GrepMatch, GrepTool
-from hivegent.tools.jq import JqTool
+from hivegent.tools.jq import JqResult, JqTool
 from hivegent.tools.mutations import EditDocumentTool, WriteDocumentTool
 from hivegent.tools.python import PythonResult, RunPythonTool
 from hivegent.tools.sink import RedirectedOutput
@@ -848,40 +848,65 @@ async def _unreachable_write(*_: object) -> str:
 class TestJqTool:
     """Tests for JqTool."""
 
-    async def test_single_file_query(self, tmp_path: Path) -> None:
-        data = {"title": "Hello", "count": 42}
-        (tmp_path / "item.json").write_text(json.dumps(data))
+    @staticmethod
+    def _result(output: JqResult | RedirectedOutput) -> JqResult:
+        assert isinstance(output, JqResult)
+        return output
+
+    async def test_filter_selects_values(self, tmp_path: Path) -> None:
+        (tmp_path / "item.json").write_text(json.dumps({"title": "Hello", "n": 42}))
         tool = JqTool(paths=tmp_path)
-        result = json.loads((await tool(".title", "item.json")).data)
-        assert result == ["Hello"]
+        result = self._result((await tool("item.json", ".title")).data)
+        assert result.values == ("Hello",)
+
+    async def test_missing_filter_reports_the_shape(self, tmp_path: Path) -> None:
+        """The cheap first call: keys and types, never the document itself."""
+        (tmp_path / "item.json").write_text(json.dumps({"title": "Hello", "n": 42}))
+        tool = JqTool(paths=tmp_path)
+        output = await tool("item.json")
+        result = self._result(output.data)
+        assert result.values == ({"title": "string", "n": "number"},)
+        assert "Hello" not in output.text
+
+    async def test_non_json_document_is_turned_away(self, tmp_path: Path) -> None:
+        """The suffix table decides, so the reader and the filter cannot disagree."""
+        (tmp_path / "notes.md").write_text("# notes")
+        tool = JqTool(paths=tmp_path)
+        with pytest.raises(ToolRetry, match="not a JSON document"):
+            await tool("notes.md", ".")
 
     async def test_invalid_jq_expression(self, tmp_path: Path) -> None:
         (tmp_path / "item.json").write_text(json.dumps({"x": 1}))
         tool = JqTool(paths=tmp_path)
         with pytest.raises(ToolRetry):
-            await tool("invalid [[[", "item.json")
+            await tool("item.json", "invalid [[[")
+
+    async def test_malformed_document_is_correctable(self, tmp_path: Path) -> None:
+        (tmp_path / "item.json").write_text("{not json")
+        tool = JqTool(paths=tmp_path)
+        with pytest.raises(ToolRetry, match="jq failed"):
+            await tool("item.json", ".")
 
     async def test_nonexistent_file_path(self, tmp_path: Path) -> None:
         tool = JqTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="not found"):
-            await tool(".", "missing.json")
+            await tool("missing.json", ".")
 
     async def test_path_traversal(self, tmp_path: Path) -> None:
         tool = JqTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="not found"):
-            await tool(".", "../etc/passwd")
+            await tool("../etc/passwd", ".")
 
-    async def test_large_output_truncated(self, tmp_path: Path) -> None:
-        data = {"items": ["x" * 100 for _ in range(50)]}
-        (tmp_path / "big.json").write_text(json.dumps(data))
-        tool = JqTool(paths=tmp_path, max_output_chars=100)
-        result = (await tool(".", "big.json")).data
+    async def test_output_budget_cuts_whole_values(self, tmp_path: Path) -> None:
+        """What the budget drops is values, so no JSON comes back cut mid-token."""
+        (tmp_path / "big.json").write_text(json.dumps(["x" * 100 for _ in range(50)]))
+        tool = JqTool(paths=tmp_path, max_formatted_chars=250)
+        output = await tool("big.json", ".[]")
+        result = self._result(output.data)
 
-        # The budget is a budget, marker included, and both ends of the JSON
-        # survive so the shape of the value is still readable.
-        assert len(result) == 100
-        assert "[truncated]" in result
-        assert result.startswith('[{"items":') and result.endswith("]}]")
+        assert result.truncated
+        assert 0 < len(result.values) < 50
+        assert all(value == "x" * 100 for value in result.values)
 
 
 class TestGrepSearch:

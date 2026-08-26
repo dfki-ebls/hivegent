@@ -22,7 +22,7 @@ from .documents import (
     ReadDocumentTool,
 )
 from .grep import GrepLine, GrepMatch, GrepTool
-from .jq import JqTool
+from .jq import JqResult, JqTool
 from .mutations import EditDocumentTool, WriteDocumentTool
 from .plan import CreatePlanTool
 from .python import PythonResult, RunPythonTool
@@ -45,6 +45,7 @@ __all__ = [
     "GrepLine",
     "GrepMatch",
     "GrepTool",
+    "JqResult",
     "JqTool",
     "ListDocumentsTool",
     "PythonResult",

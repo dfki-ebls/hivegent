@@ -8,6 +8,7 @@ from ...retrieval import build_search_tool
 from ...tools import (
     GlobDocumentsTool,
     GrepTool,
+    JqTool,
     ListDocumentsTool,
     QueryTableTool,
     ReadBinaryDocumentTool,
@@ -47,6 +48,10 @@ def _query_table(deps: UserDeps) -> QueryTableTool:
     return QueryTableTool(paths=deps.search_paths(), writer=output_sink(deps))
 
 
+def _jq(deps: UserDeps) -> JqTool:
+    return JqTool(paths=deps.search_paths(), writer=output_sink(deps))
+
+
 def _grep(deps: UserDeps) -> GrepTool:
     return GrepTool(paths=deps.search_paths(), writer=output_sink(deps))
 
@@ -71,10 +76,29 @@ register_agent_tools(
         _list_documents,
         _glob_documents,
         _read_document,
-        _read_binary_document,
-        _query_table,
         _grep,
         _search,
     ],
     args_validator=validate_output_path,
+    defer_loading=False,
+)
+
+# These answer a question the others cannot, but only for a document of a
+# particular shape, so most runs never reach one and every run would pay for
+# its schema.  They are deferred to tool search instead, which costs a
+# discovery call on the turns that need them.  That trade only works because
+# the model is handed the name at the moment it needs it rather than having to
+# guess: `read_document` refuses a binary by naming `read_binary_document`, and
+# points a read of a table at `query_table` and a read of JSON at `jq`, so the
+# discovery query is already written for it.
+register_agent_tools(
+    explore_toolset,
+    UserDeps,
+    [
+        _read_binary_document,
+        _query_table,
+        _jq,
+    ],
+    args_validator=validate_output_path,
+    defer_loading=True,
 )

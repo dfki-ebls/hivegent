@@ -9,7 +9,6 @@ from fastapi import HTTPException
 from pydantic import Field
 
 from .base import (
-    WORKSPACE_PATH_HINT,
     AsyncPathTool,
     SearchPath,
     ToolOutput,
@@ -37,9 +36,8 @@ DocumentTargetPathArg = Annotated[
     str,
     Field(
         description=(
-            f"Path of the document to mutate. {WORKSPACE_PATH_HINT} A document "
-            "you create needs a full path composed the same way; missing "
-            "subdirectories are created."
+            "Full workspace path of the document to mutate. A document you "
+            "create needs a full path too; missing subdirectories are created."
         ),
     ),
 ]

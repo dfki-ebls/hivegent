@@ -20,7 +20,11 @@ __all__ = [
     "list_conversations",
 ]
 
-conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=False)
+# Deferred to tool search: no instruction block names these, a chat turn about
+# the documents never reaches them, and the `explore` tool already offers the
+# same history under its `conversations` scope, so nothing here is load-bearing
+# enough to be worth a schema in every request.
+conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=True)
 
 
 @conversation_toolset.tool

@@ -27,7 +27,6 @@ from .scope import Scope
 
 __all__ = [
     "DEFAULT_EXCLUDE_DIRS",
-    "WORKSPACE_PATH_HINT",
     "WORKSPACE_SCOPE_HINT",
     "AsyncPathTool",
     "AsyncTool",
@@ -106,9 +105,8 @@ IncludeIgnoredArg = Annotated[
     bool,
     Field(
         description=(
-            "When true, include common build and vendor directories "
-            "(node_modules, .git, dist, build, .next, coverage, "
-            "__pycache__) that are skipped by default."
+            "When true, include the build and vendor directories "
+            "(node_modules, .git, dist, ...) skipped by default."
         ),
     ),
 ]
@@ -118,10 +116,9 @@ FullLinesArg = Annotated[
     Field(
         description=(
             "When true, return every line in full instead of clipping it to a "
-            "per-line character budget. Use it for content whose tail carries "
-            "meaning, such as a wide markdown table whose trailing columns "
-            "would otherwise be cut off. The whole-output budget still "
-            "applies, so expect fewer lines per call, not more text."
+            "per-line budget, for content whose tail carries meaning such as a "
+            "wide table. The whole-output budget still applies, so expect "
+            "fewer lines, not more text."
         ),
     ),
 ]
@@ -129,25 +126,18 @@ FullLinesArg = Annotated[
 SearchPathFilterFunc = Callable[[str], bool] | None
 """Optional predicate that decides whether a filename is accessible."""
 
-WORKSPACE_PATH_HINT = (
-    "Give the document's full path exactly as the listing, search, grep, and "
-    "read tools return it, including any leading scope prefix. A bare name with "
-    "its scope prefix stripped may not identify the document."
-)
-"""Shared guidance for arguments that name a single document.
-
-Reused across the file-path tool arguments so the model is told, in one
-consistent voice, to copy paths verbatim. The concrete scope-prefix grammar is
-the application's concern and lives in the system prompt, not here.
-"""
-
 WORKSPACE_SCOPE_HINT = (
-    "Lead with a scope prefix (exactly as shown in tool results) to restrict "
-    "the operation to that one scope; without a prefix it spans every scope you "
-    "can access."
+    "Lead with a scope prefix to restrict the operation to that one scope; "
+    "without a prefix it spans every scope you can access."
 )
 """Shared guidance for filter arguments (a subdirectory or glob) that may lead
-with a scope prefix to target a single search root."""
+with a scope prefix to target a single search root.
+
+Its counterpart -- copy a document's full path verbatim, prefix included -- is
+stated once per surface instead of once per argument: ``WORKSPACE_PATH_INSTRUCTIONS``
+carries it for an agent run, the FastMCP app instructions for the MCP one.  Eight
+arguments repeating it cost more on every request than the one sentence saves.
+"""
 
 
 @dataclass(slots=True, frozen=True)

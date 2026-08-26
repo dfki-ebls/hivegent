@@ -35,7 +35,6 @@ from ..converters.video import (
 )
 from ..multimodal import BinaryContentMode
 from .base import (
-    WORKSPACE_PATH_HINT,
     AsyncPathTool,
     BinaryAttachment,
     ToolOutput,
@@ -53,9 +52,7 @@ _MAX_BYTES = 20 * 1024 * 1024
 
 BinaryFilePathArg = Annotated[
     str,
-    Field(
-        description=f"Path of the image, PDF, or video to read. {WORKSPACE_PATH_HINT}"
-    ),
+    Field(description="Full workspace path of the image, PDF, or video to read."),
 ]
 PagesArg = Annotated[
     str | None,

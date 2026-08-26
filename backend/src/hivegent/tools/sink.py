@@ -53,9 +53,9 @@ OutputPathArg = Annotated[
     str | None,
     Field(
         description=(
-            "Full workspace path to write this call's result to instead of "
-            "returning it: `.json` for the structured result, `.txt` for the "
-            "text. You get back only a receipt."
+            "Workspace path to write this call's result to instead of "
+            "returning it (`.json` structured, `.txt` text). You get back "
+            "only a receipt."
         ),
     ),
 ]
