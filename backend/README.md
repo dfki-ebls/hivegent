@@ -288,13 +288,28 @@ The document reaches jq as the text it was read as rather than as a parsed objec
 The budget binds the rendered text alone and cuts whole values, so nothing comes back as JSON truncated mid-token, and a `.json` redirect stores the whole filter result rather than the slice that fit.
 That is the general redirect rule below rather than `query_table`'s exception: a row count is only true of the rows it counted, while a filter's values are each complete on their own.
 
-### Deferred tools
+### Registered or excluded, never deferred
 
-`query_table`, `jq`, and `read_binary_document` are the three tools registered with `defer_loading=True`, and every user-configured MCP server is deferred by `build_mcp_server` itself.
-Each answers a question the other read tools cannot, but only for a document of one particular shape, so most turns never reach one while every turn would otherwise pay for its schema.
-That trade only works because the model is handed the name at the moment it needs it rather than having to guess it: `read_document` refuses a binary by naming `read_binary_document`, and points a read of a table at `query_table` and a read of JSON at `jq`, so the tool-search query is already written for it.
-`query_hint` (`tools/base.py`) keys that pointer on the entry rather than on the path the read was addressed by, since an uploaded table is only ever served as its `<stem>.md` projection and asking the requested suffix alone left `query_table` invisible for exactly the file it exists for; `sidecar_hint` names the same tool on the refusal of the original, ahead of the extracted text it also names.
-Anything a turn normally reaches stays eager, since a discovery call costs more than the schema it saves.
+A tool is in the model's initial context or it is not registered for that run, and `defer_loading` is gone from the codebase.
+
+It had one user: `query_table`, `jq`, and `read_binary_document` each answer a question the other read tools cannot, but only for a document of one particular shape, so most turns never reach one while every turn pays for the schema.
+Deferral looked like the way out, because the pointer writes the tool-search query for the model: `read_document` refuses a binary by naming `read_binary_document`, and points a read of a table at `query_table` and a read of JSON at `jq`.
+Naming the tool is not enough.
+A model whose tool list does not contain the name reads the pointer as describing a tool it was not given, and works around it rather than searching for it: a run pointed at `query_table` for a spreadsheet instead probed for `pandas`, `openpyxl`, and `xlrd`, then hand-parsed the markdown projection, five failed calls to reach a worse answer than the first pointer offered.
+
+The saving was never collected either.
+Wire-level deferral, where the schema rides along and the provider unhides it, needs `supported_tool_deferral_modes`, which only `OpenAIResponsesModel` (gpt-5.4+) and `AnthropicModel` declare.
+`llm.py` builds `OpenAIChatModel` and nothing else, so `tool_deferral_mode` is `None` for every provider this application can be pointed at: a deferred tool was struck from the `tools` array outright and `search_tools` was injected in its place, which is a round-trip the model has to think to make on the exact turn it is already confused.
+
+What is left is `settings.tools.excluded`, an operator's list of tool names in the same namespace as a chat request's `disabled_tools`, unioned with it by `build_capabilities` into the one `PrepareTools` pass a run applies.
+The two differ only in who wrote them, so an operator exclusion retracts a feature's instruction block exactly as a user's does, and the pass covers `extra` as well, which is an operator's only reach over the tools a user-configured MCP server brings.
+It defaults to `jq` and the two conversation tools: a JSON filter earns its schema in a deployment whose documents are JSON, and past conversations are already reachable through the `explore` tool's `conversations` scope.
+`check_excluded_tools` runs before the lifespan opens anything, because an exclusion that matches nothing withholds nothing and its only symptom is a schema the operator believed was gone.
+
+MCP servers are added directly for the same reason (`build_mcp_server`).
+A user-supplied server is the one part of the prompt this application does not size, which is what deferring it was for, but a hidden server is a server the model cannot use; a user who configures one means to use it, and an operator who disagrees names its tools in the exclusion list.
+
+`query_hint` (`tools/base.py`) keys the pointer on the entry rather than on the path the read was addressed by, since an uploaded table is only ever served as its `<stem>.md` projection and asking the requested suffix alone left `query_table` invisible for exactly the file it exists for; `sidecar_hint` names the same tool on the refusal of the original, ahead of the extracted text it also names, and `PYTHON_INSTRUCTIONS` names it once more in the map from what a program lacks to the tool that has it.
 
 ### Redirecting bulk output
 

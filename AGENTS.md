@@ -79,8 +79,11 @@
   The pointer follows the entry, not the path in hand (`tools.base.query_hint`): an uploaded table is served as its `<stem>.md` projection, so the read that needs the hint most never names a tabular suffix, and `sidecar_hint` names the same tool ahead of the extracted text when the original itself is refused.
   The read tools still serve the markdown projection, which retrieval and citation anchors are built on.
 - Every bulk-output tool declares an `output_path` that stores the result in the workspace and returns a receipt, and that write answers to the same approval gate as the write tools.
-- `query_table`, `jq`, `read_binary_document`, and every user-configured MCP server are deferred (`defer_loading=True`), while everything a turn normally reaches stays eager.
-- See `backend/README.md` for the typing pass, the budgets, the redirect channels, and how a deferred tool is named to the model.
+- A tool is in the model's initial context or it is not registered: nothing is deferred, MCP servers included.
+  `defer_loading` hid a tool from the tool list and offered it back through tool search, which bought nothing here (`llm.py` builds only `OpenAIChatModel`, which renders no wire-level deferral) and cost a model that read a pointer at a hidden tool as naming one it was not given.
+- `settings.tools.excluded` is what replaces it: an operator's tool names, in the same namespace as a request's `disabled_tools` and unioned with it into the one `PrepareTools` pass, which reaches MCP tools too.
+  It defaults to `jq` and the two conversation tools, and `agents.check_excluded_tools` fails the boot on a name no tool has.
+- See `backend/README.md` for the typing pass, the budgets, the redirect channels, and why nothing is deferred.
 
 ### Python sandbox
 

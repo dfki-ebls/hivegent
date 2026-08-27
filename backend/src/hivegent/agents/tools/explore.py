@@ -69,6 +69,17 @@ explore_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 # Every tool here answers a question whose result can dwarf the answer, so each
 # takes the redirect argument — except the binary reader, whose result is an
 # attachment the model looks at rather than text a later step could process.
+#
+# None of them is deferred.  `query_table`, `jq`, and `read_binary_document`
+# were, on the reasoning that a document of that shape is rare enough that most
+# turns should not pay for the schema, and that `read_document` naming the tool
+# on its refusal writes the discovery query for the model.  Naming it is not
+# enough: a model that cannot see the name in its tool list reads the pointer as
+# describing a tool it was not given and works around it instead of searching,
+# which is how a spreadsheet run ends up parsing the markdown projection by
+# hand.  A tool is registered eagerly or not at all, and a deployment that
+# would rather not pay for one names it in `settings.tools.excluded`, which is
+# where `jq` sits by default.
 register_agent_tools(
     explore_toolset,
     UserDeps,
@@ -76,29 +87,11 @@ register_agent_tools(
         _list_documents,
         _glob_documents,
         _read_document,
+        _read_binary_document,
+        _query_table,
+        _jq,
         _grep,
         _search,
     ],
     args_validator=validate_output_path,
-    defer_loading=False,
-)
-
-# These answer a question the others cannot, but only for a document of a
-# particular shape, so most runs never reach one and every run would pay for
-# its schema.  They are deferred to tool search instead, which costs a
-# discovery call on the turns that need them.  That trade only works because
-# the model is handed the name at the moment it needs it rather than having to
-# guess: `read_document` refuses a binary by naming `read_binary_document`, and
-# points a read of a table at `query_table` and a read of JSON at `jq`, so the
-# discovery query is already written for it.
-register_agent_tools(
-    explore_toolset,
-    UserDeps,
-    [
-        _read_binary_document,
-        _query_table,
-        _jq,
-    ],
-    args_validator=validate_output_path,
-    defer_loading=True,
 )

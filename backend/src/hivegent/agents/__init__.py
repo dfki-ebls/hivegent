@@ -3,6 +3,7 @@
 from .app import base_agent, turn_usage_limits, user_agent
 from .capabilities import (
     build_capabilities,
+    check_excluded_tools,
     collect_tool_schemas,
     invoke_agent_tool,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "UserDeps",
     "base_agent",
     "build_capabilities",
+    "check_excluded_tools",
     "collect_tool_schemas",
     "conversation_toolset",
     "explore_toolset",

@@ -600,17 +600,33 @@ class SecuritySettings(BaseModel):
 
 
 class ToolsSettings(BaseModel):
-    """Feature flags toggling the agent's built-in tools.
+    """Operator control over which of the agent's tools reach the model.
 
-    Each flag is an operator master switch for one tool family, letting a
-    deployment narrow what the model can do.  ``enable_web`` gates the
-    ``web_search`` and ``web_fetch`` tools (which also need a
-    ``security.web_urls`` policy to take effect); it is off by default, so
-    the model answers from the indexed documents alone.  Add further
-    flags here as more tool families gain a toggle.
+    ``enable_web`` gates the ``web_search`` and ``web_fetch`` tools (which
+    also need a ``security.web_urls`` policy to take effect); it is off by
+    default, so the model answers from the indexed documents alone.
+
+    ``excluded`` names individual tools to withhold, in the same namespace and
+    with the same effect as a chat request's ``disabled_tools``: the schema
+    never reaches the model, and a feature whose every tool is named loses its
+    instruction block too.  It is what is left of ``defer_loading``, which hid
+    a tool from the initial request and offered it back through tool search.
+    Deferral bought nothing here — the only model class this application
+    builds is ``OpenAIChatModel``, which renders no wire-level deferral, so a
+    deferred tool was simply absent and a model handed a pointer to one worked
+    around it rather than searching.  A schema is either worth its tokens on
+    every request or it should not be registered, and which of the two a given
+    deployment thinks it is, is an operator's call.
+
+    The default withholds the two conversation tools, since past conversations
+    are already reachable through the ``explore`` tool's ``conversations``
+    scope.  Naming a tool the agent does not have is a startup error
+    (:func:`~hivegent.agents.check_excluded_tools`), so a typo fails loudly
+    instead of silently excluding nothing.
     """
 
     enable_web: bool = False
+    excluded: list[str] = ["list_conversations", "get_conversation"]
 
 
 class SandboxSettings(BaseModel):

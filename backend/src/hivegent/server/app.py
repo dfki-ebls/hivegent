@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from pydantic import ValidationError
 from starlette.responses import PlainTextResponse, Response
 
+from ..agents import check_excluded_tools
 from ..config import settings
 from ..db import apply_migrations, engine_lifespan
 from ..http_client import shared_http_client_lifespan
@@ -103,6 +104,9 @@ async def _verify_fts_config() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open shared resources and delegate to MCP."""
+    # Before anything is opened: a misspelled exclusion withholds nothing, and
+    # the boot that would have surfaced it is the cheapest place to say so.
+    check_excluded_tools()
     async with monty_pool_lifespan(), shared_http_client_lifespan(), engine_lifespan():
         await apply_migrations()
         await _verify_vector_dim()

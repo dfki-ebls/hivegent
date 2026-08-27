@@ -7,7 +7,7 @@ from ..common import MemoryContentArg, UserDeps
 
 __all__ = ["memory_toolset", "save_memory"]
 
-memory_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=False)
+memory_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
 @memory_toolset.tool

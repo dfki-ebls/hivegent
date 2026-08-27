@@ -181,7 +181,7 @@ def validate_output_path(
     validate_output_write(ctx, output_path)
 
 
-write_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=False)
+write_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 register_agent_tools(
     write_toolset,

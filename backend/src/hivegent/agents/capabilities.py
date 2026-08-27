@@ -72,6 +72,7 @@ __all__ = [
     "Feature",
     "SharedInstructions",
     "build_capabilities",
+    "check_excluded_tools",
     "collect_tool_schemas",
     "invoke_agent_tool",
 ]
@@ -240,6 +241,14 @@ def build_capabilities(
     :class:`PrepareTools` capability, and wraps each extra toolset (e.g. an MCP
     server) as its own capability.
 
+    A run withholds the union of two lists that differ only in who wrote them:
+    ``settings.tools.excluded``, the operator's standing choice, and the
+    request's own ``disabled_tools``, the user's per-turn one.  They are one
+    namespace and one mechanism, so an operator exclusion drops a feature's
+    instructions exactly as a user's does, and the :class:`PrepareTools` pass
+    covers *extra* as well, which is the only reach an operator has over the
+    tools a user-configured MCP server brings.
+
     The mode selects which features are offered at all (``read`` and ``plan``
     are handed none of the mutating ones); whether a write the remaining ones
     perform pauses for the user is decided per call by the gate in
@@ -253,7 +262,7 @@ def build_capabilities(
     Returns:
         Sequence of capabilities ready to pass to the agent.
     """
-    disabled = frozenset(tools_spec.disabled_tools or ())
+    disabled = frozenset(settings.tools.excluded).union(tools_spec.disabled_tools or ())
 
     features = [
         feature
@@ -281,6 +290,29 @@ def build_capabilities(
     result.append(IterationLimitWarner(max_requests=settings.llm.request_limit))
 
     return result
+
+
+def check_excluded_tools() -> None:
+    """Refuse to start when ``settings.tools.excluded`` names no such tool.
+
+    An exclusion that matches nothing withholds nothing, and the only symptom
+    is a schema the operator believed was gone, so the typo has to surface at
+    startup rather than on the first turn that pays for it.  Only the built-in
+    tools can be checked: an MCP server's names are not known until its
+    transport is opened, per user and per request.
+
+    Raises:
+        ValueError: If any excluded name is not a built-in tool.
+    """
+    known = {name for feature in FEATURES for name in feature.tool_names}
+    unknown = sorted(set(settings.tools.excluded) - known)
+    if not unknown:
+        return
+
+    raise ValueError(
+        f"tools.excluded names no such tool: {', '.join(unknown)}. "
+        f"Available: {', '.join(sorted(known))}"
+    )
 
 
 def collect_tool_schemas() -> list[ToolSchema]:

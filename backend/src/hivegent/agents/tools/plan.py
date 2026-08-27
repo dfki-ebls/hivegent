@@ -13,6 +13,6 @@ def _create_plan(deps: UserDeps) -> CreatePlanTool:
     return CreatePlanTool()
 
 
-plan_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=False)
+plan_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 register_agent_tools(plan_toolset, UserDeps, [_create_plan])

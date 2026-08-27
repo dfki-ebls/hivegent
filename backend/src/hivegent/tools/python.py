@@ -61,6 +61,7 @@ def is_python_script(file_path: str) -> bool:
     """
     return PurePosixPath(file_path).suffix.lower() == ".py"
 
+
 _VALUE_REPR = reprlib.Repr(
     maxlevel=6,
     maxtuple=1000,
@@ -87,10 +88,12 @@ CodeArg = Annotated[
     str | None,
     Field(
         description=(
-            "Inline throwaway program to run in Monty. Provide either this or "
-            "`script_path`, but not both. Anything past a few lines belongs in "
-            "a `.scratch/` `.py` file run by `script_path`, where a runtime "
-            "error costs one edit_document instead of a retyped program."
+            "The program itself, written inline, for a throwaway. Provide "
+            "either this or `script_path`, never both, and neither names the "
+            "data: a program opens the documents it reads by their workspace "
+            "path. Anything past a few lines belongs in a `.scratch/` `.py` "
+            "file run by `script_path`, where a runtime error costs one "
+            "edit_document instead of a retyped program."
         ),
     ),
 ]
@@ -98,8 +101,9 @@ PythonScriptPathArg = Annotated[
     str | None,
     Field(
         description=(
-            "Full workspace path of a `.py` script to run instead of inline "
-            "code. The current file is loaded on every call, so it can be "
+            "Full workspace path of a stored `.py` program to run instead of "
+            "inline `code`. The file named here is the program, never a "
+            "document it reads. It is loaded fresh on every call, so it can be "
             "repaired with `edit_document` and run again."
         ),
     ),
@@ -317,13 +321,20 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         permission to persist.
         """
         if (code is None) == (script_path is None):
-            raise ToolRetry("Provide exactly one of `code` or `script_path`.")
+            raise ToolRetry(
+                "Provide exactly one of `code`, the program written inline, or "
+                "`script_path`, a stored `.py` program to run. Neither names a "
+                "document the program reads: it opens those itself."
+            )
 
         source, canonical_script = code or "", None
         if script_path is not None:
             canonical_script, absolute = self._resolve_script(script_path)
             if not is_python_script(canonical_script):
-                raise ToolRetry(f"'{canonical_script}' is not a `.py` script.")
+                raise ToolRetry(
+                    f"'{canonical_script}' is not a `.py` script. `script_path` "
+                    "names the program to run, not a document it reads."
+                )
 
             source = self._read(canonical_script, absolute)
 

@@ -58,6 +58,11 @@ The most important settings:
 
 Common extras are `HIVEGENT_TOOLS__ENABLE_WEB=true` to allow web search, `HIVEGENT_EMBEDDING__MODEL` to change the embedding model, and `HIVEGENT_MCP__ENABLE=true` to expose the MCP endpoint.
 
+`tools.excluded` withholds individual tools from the model, by the names the admin tool console lists (`GET /api/debug/tools`).
+It defaults to `["jq", "list_conversations", "get_conversation"]`, which suits a deployment whose documents are documents rather than JSON.
+Every tool not named here reaches the model on every request, so the list is where you trade a capability for the context its schema costs.
+Naming a tool that does not exist stops the server at startup rather than silently excluding nothing.
+
 User-provided LLM and MCP server URLs are disabled until their hosts are listed under `[security.user_urls] allow_hosts`.
 An entry permits that domain and its subdomains, an empty list denies every host, and `"*"` permits any public host.
 These requests and all model-controlled web requests pass through the bundled Smokescreen proxy, which rejects private and reserved destinations after DNS resolution.

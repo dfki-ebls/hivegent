@@ -76,15 +76,19 @@ def build_mcp_toolset(server_cfg: McpServerConfig) -> MCPToolset[Any]:
 def build_mcp_server(server_cfg: McpServerConfig) -> AbstractToolset[Any]:
     """Build an agent-ready toolset for an MCP server, applying its tool prefix.
 
-    The result is deferred, so its tools are hidden from the model's initial
-    context and discovered on demand via tool search.  A user-supplied server
+    Its tools go into the model's initial context like every other tool.  They
+    were deferred to tool search, on the reasoning that a user-supplied server
     is the one part of the prompt this application does not size: it can expose
     dozens of endpoints, each with its own schema, on every request of every
-    conversation that names it.  Deferring is applied here rather than left to
-    the caller because there is no agent for which the eager alternative is
-    right.
+    conversation that names it.  But deferral only hides a schema on a model
+    that renders it, and the only model class this application builds
+    (``OpenAIChatModel``) renders none, so what deferral actually bought was a
+    server whose tools the model could not see and had to be told to search
+    for.  A user who configures a server means to use it; an operator who
+    disagrees names the tools in ``settings.tools.excluded``, which the run's
+    single filter applies to these as well.
     """
     toolset = build_mcp_toolset(server_cfg)
     if server_cfg.tool_prefix:
         toolset = toolset.prefixed(server_cfg.tool_prefix)
-    return toolset.defer_loading()
+    return toolset

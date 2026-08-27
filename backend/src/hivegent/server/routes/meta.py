@@ -64,13 +64,19 @@ async def get_settings(
 async def list_tools(
     _user: Annotated[User, Depends(get_current_user)],
 ) -> Sequence[ToolInfo]:
-    """Return metadata for all available agent tools.
+    """Return metadata for the agent tools a user may switch on and off.
 
     The ``ToolInfo`` response model drops the parameter schemas that
     :func:`collect_tool_schemas` also gathers; the debug console fetches
-    those separately.
+    those separately, unfiltered, since that is where an operator reads the
+    name to exclude.
+
+    Operator exclusions are dropped here, because this listing is what the
+    settings dialog renders a checkbox per: a tool the deployment withholds
+    must not offer the user a switch that does nothing.
     """
-    return collect_tool_schemas()
+    excluded = frozenset(settings.tools.excluded)
+    return [tool for tool in collect_tool_schemas() if tool.name not in excluded]
 
 
 @router.post("/mcp/test")

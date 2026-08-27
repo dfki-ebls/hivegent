@@ -20,11 +20,14 @@ __all__ = [
     "list_conversations",
 ]
 
-# Deferred to tool search: no instruction block names these, a chat turn about
-# the documents never reaches them, and the `explore` tool already offers the
-# same history under its `conversations` scope, so nothing here is load-bearing
-# enough to be worth a schema in every request.
-conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset(defer_loading=True)
+# Registered eagerly like every other tool, and withheld by
+# `settings.tools.excluded`, which lists both of these by default: no
+# instruction block names them, a chat turn about the documents never reaches
+# them, and the `explore` tool already offers the same history under its
+# `conversations` scope.  A deployment that wants them back drops them from
+# that list, which is a decision an operator can make and tool search could
+# not.
+conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
 @conversation_toolset.tool

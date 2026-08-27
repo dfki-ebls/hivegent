@@ -196,7 +196,6 @@ def register_agent_tool[D](
     factory: Callable[[D], Tool[Any]],
     *,
     args_validator: ArgsValidatorFunc[D, ...] | None = None,
-    defer_loading: bool | None = None,
 ) -> None:
     """Register one Tool factory on a FunctionToolset.
 
@@ -213,8 +212,6 @@ def register_agent_tool[D](
         deps_type: The RunContext deps type.
         factory: Factory callable for the tool.
         args_validator: Optional validator for this tool's arguments.
-        defer_loading: Hide the tool from the initial context until tool search
-            discovers it.  ``None`` inherits the toolset's own setting.
     """
     fn = for_pydantic_ai(factory, deps_type)
     toolset.add_function(
@@ -222,7 +219,6 @@ def register_agent_tool[D](
         name=factory_tool_name(fn),
         description=fn.__doc__,
         args_validator=args_validator,
-        defer_loading=defer_loading,
     )
 
 
@@ -232,7 +228,6 @@ def register_agent_tools[D](
     factories: Sequence[Callable[[D], Tool[Any]]],
     *,
     args_validator: ArgsValidatorFunc[D, ...] | None = None,
-    defer_loading: bool | None = None,
 ) -> None:
     """Register multiple Tool factories on a FunctionToolset.
 
@@ -244,7 +239,6 @@ def register_agent_tools[D](
         deps_type: The RunContext deps type.
         factories: Sequence of factory callables.
         args_validator: Optional validator applied to every tool's arguments.
-        defer_loading: Applied to every tool registered by this call.
     """
     for factory in factories:
         register_agent_tool(
@@ -252,7 +246,6 @@ def register_agent_tools[D](
             deps_type,
             factory,
             args_validator=args_validator,
-            defer_loading=defer_loading,
         )
 
 
