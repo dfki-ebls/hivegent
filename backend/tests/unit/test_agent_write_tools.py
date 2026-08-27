@@ -15,6 +15,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
 import hivegent.agents.tools.compute as compute_tools
+import hivegent.agents.tools.write as write_tools
 from hivegent import workspace
 from hivegent.agents.common import UserDeps
 from hivegent.agents.tools.write import (
@@ -258,3 +259,24 @@ def test_a_scratch_output_answers_to_no_format(deps: UserDeps) -> None:
     context = _context(deps, "interactive")
 
     validate_output_write(context, output_path="~/.scratch/state.parquet")
+
+
+def test_a_move_puts_both_ends_in_one_approval(deps: UserDeps) -> None:
+    context = _context(deps, "interactive")
+
+    with pytest.raises(ApprovalRequired) as exc:
+        write_tools.validate_document_move(
+            context, file_path="~/old.md", destination="~/notes/new.md"
+        )
+
+    assert exc.value.metadata == {
+        "file_path": "~/old.md",
+        "destination": "~/notes/new.md",
+    }
+
+
+def test_move_and_delete_are_registered_with_their_gates() -> None:
+    tools = write_tools.write_toolset.tools
+
+    assert tools["move_document"].args_validator is write_tools.validate_document_move
+    assert tools["delete_document"].args_validator is validate_document_write

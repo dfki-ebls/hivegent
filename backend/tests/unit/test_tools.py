@@ -4,6 +4,7 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -31,7 +32,9 @@ from hivegent.tools.documents import (
 from hivegent.tools.grep import GrepLine, GrepMatch, GrepTool
 from hivegent.tools.jq import JqResult, JqTool
 from hivegent.tools.mutations import (
+    DeleteDocumentTool,
     EditDocumentTool,
+    MoveDocumentTool,
     WriteDocumentTool,
 )
 from hivegent.tools.python import PythonResult, RunPythonTool
@@ -815,7 +818,7 @@ class TestEditDocumentTool:
         assert calls == [("doc.md", "hello", "goodbye", True, "h")]
 
     async def test_rejects_inaccessible_path(self, tmp_path: Path) -> None:
-        tool = EditDocumentTool(paths=tmp_path, mutator=_unreachable_edit)
+        tool = EditDocumentTool(paths=tmp_path, mutator=_unreachable)
         with pytest.raises(ToolRetry, match="not accessible"):
             await tool("../escape.md", "a", "b")
 
@@ -859,7 +862,7 @@ class TestWriteDocumentTool:
         assert calls == [("doc.md", "content", "append", "h")]
 
     async def test_rejects_non_matching_glob(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(paths=tmp_path, glob="*.md", mutator=_unreachable_write)
+        tool = WriteDocumentTool(paths=tmp_path, glob="*.md", mutator=_unreachable)
         with pytest.raises(ToolRetry, match="does not match pattern"):
             await tool("doc.txt", "content")
 
@@ -879,7 +882,7 @@ class TestWriteDocumentTool:
     async def test_binary_format_is_refused_before_the_mutator_runs(
         self, tmp_path: Path
     ) -> None:
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_unreachable_write)
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_unreachable)
         with pytest.raises(ToolRetry, match="binary format"):
             await tool("sheet.xlsx", "a,b")
 
@@ -894,11 +897,95 @@ class TestWriteDocumentTool:
         """Scratch is bytes the run owns, so the format seam never reaches it."""
         tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
         assert (await tool(".scratch/state.parquet", "x")).data.endswith("parquet")
-async def _unreachable_edit(*_: object) -> str:
-    raise AssertionError("mutator must not run when the path is rejected")
 
 
-async def _unreachable_write(*_: object) -> str:
+class TestMoveDocumentTool:
+    """The tool resolves both ends, then delegates to its two-path mutator."""
+
+    async def test_delegates_both_ends(self, tmp_path: Path) -> None:
+        calls: list[tuple[str, str]] = []
+
+        async def _move(src: str, dst: str) -> None:
+            calls.append((src, dst))
+
+        (tmp_path / "old.md").write_text("x")
+        tool = MoveDocumentTool(paths=tmp_path, mutator=_move)
+        result = (await tool("old.md", "notes/new.md")).data
+
+        assert calls == [("old.md", "notes/new.md")]
+        assert result == "Moved 'old.md' to 'notes/new.md'."
+
+    async def test_a_directory_destination_is_a_move_into_it(
+        self, tmp_path: Path
+    ) -> None:
+        """``mv`` semantics: every other mutation refuses a directory, this one does not."""
+        calls: list[tuple[str, str]] = []
+
+        async def _move(src: str, dst: str) -> None:
+            calls.append((src, dst))
+
+        (tmp_path / "old.md").write_text("x")
+        (tmp_path / "notes").mkdir()
+        tool = MoveDocumentTool(paths=tmp_path, mutator=_move)
+
+        await tool("old.md", "notes")
+
+        assert calls == [("old.md", "notes")]
+
+    async def test_refuses_a_scratch_source(self, tmp_path: Path) -> None:
+        """A scratch file has no entry, so the gateway's bare 404 says nothing."""
+        (tmp_path / ".scratch").mkdir()
+        (tmp_path / ".scratch/state.csv").write_text("a")
+        tool = MoveDocumentTool(paths=tmp_path, mutator=_unreachable)
+
+        with pytest.raises(ToolRetry, match="working state"):
+            await tool(".scratch/state.csv", "rows.csv")
+
+    async def test_translates_mutator_error(self, tmp_path: Path) -> None:
+        async def _move(*_: object) -> None:
+            raise HTTPException(status_code=409, detail="Destination already exists")
+
+        (tmp_path / "old.md").write_text("x")
+        tool = MoveDocumentTool(paths=tmp_path, mutator=_move)
+        with pytest.raises(ToolRetry, match="Destination already exists"):
+            await tool("old.md", "new.md")
+
+
+class TestDeleteDocumentTool:
+    """The tool resolves an existing path, then delegates to its mutator."""
+
+    async def test_delegates_to_mutator(self, tmp_path: Path) -> None:
+        calls: list[str] = []
+
+        async def _delete(path: str) -> None:
+            calls.append(path)
+
+        (tmp_path / "doc.md").write_text("x")
+        tool = DeleteDocumentTool(paths=tmp_path, mutator=_delete)
+
+        assert (await tool("doc.md")).data == "Deleted 'doc.md'."
+        assert calls == ["doc.md"]
+
+    async def test_reaches_scratch(self, tmp_path: Path) -> None:
+        """A run that can create its own working state can clear it away."""
+
+        async def _delete(path: str) -> None:
+            return None
+
+        (tmp_path / ".scratch").mkdir()
+        (tmp_path / ".scratch/state.json").write_text("{}")
+        tool = DeleteDocumentTool(paths=tmp_path, mutator=_delete)
+
+        assert (await tool(".scratch/state.json")).data.endswith("state.json'.")
+
+    async def test_rejects_a_missing_document(self, tmp_path: Path) -> None:
+        tool = DeleteDocumentTool(paths=tmp_path, mutator=_unreachable)
+        with pytest.raises(ToolRetry):
+            await tool("gone.md")
+
+
+async def _unreachable(*_: object) -> Any:
+    """Every mutator a path-rejection test hands its tool: it must not run."""
     raise AssertionError("mutator must not run when the path is rejected")
 
 

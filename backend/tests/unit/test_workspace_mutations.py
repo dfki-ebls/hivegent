@@ -679,3 +679,26 @@ class TestClearScratch:
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         assert await workspace.clear_scratch(user_store) == 0
+
+
+class TestDeleteScratch:
+    """A run that can create its own working state can clear it away again."""
+
+    async def test_delete_unlinks_a_scratch_file(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        (workspace_dir / ".scratch").mkdir()
+        (workspace_dir / ".scratch/state.json").write_text("{}")
+
+        await workspace.delete_document(user_store, ".scratch/state.json")
+
+        assert not (workspace_dir / ".scratch/state.json").exists()
+        assert (workspace_dir / ".scratch").is_dir()
+
+    async def test_delete_reports_a_scratch_file_that_was_never_there(
+        self, user_store: Casebase
+    ) -> None:
+        with pytest.raises(HTTPException) as exc:
+            await workspace.delete_document(user_store, ".scratch/gone.json")
+
+        assert exc.value.status_code == 404

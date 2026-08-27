@@ -1,4 +1,4 @@
-"""Document mutation tool callables — edit and write."""
+"""Document mutation tool callables — edit, write, move, and delete."""
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -9,25 +9,32 @@ from fastapi import HTTPException
 from pydantic import Field
 
 from ..converters import BINARY_WRITE_REASON, writes_as_text
-from ..entries import is_scratch_path
+from ..entries import SCRATCH_DIR_NAME, is_scratch_path
 from .base import (
     AsyncPathTool,
     SearchPath,
     ToolOutput,
     ToolRetry,
     resolve_accessible_file,
+    resolve_file_or_retry,
     workspace_root_hint,
 )
 
 __all__ = [
+    "DeleteDocumentTool",
+    "DeleteMutation",
     "DocumentContentArg",
+    "DocumentDestinationArg",
     "DocumentTargetPathArg",
     "EditDocumentTool",
     "EditMutation",
     "EditNewStringArg",
     "EditOldStringArg",
     "EditReplaceAllArg",
+    "ExistingDocumentPathArg",
     "ExpectedHashArg",
+    "MoveDocumentTool",
+    "MoveMutation",
     "MutationHint",
     "WriteDocumentTool",
     "WriteModeArg",
@@ -84,6 +91,26 @@ ExpectedHashArg = Annotated[
         ),
     ),
 ]
+ExistingDocumentPathArg = Annotated[
+    str,
+    Field(
+        description=(
+            "Full workspace path of the document to act on, which must already exist."
+        ),
+    ),
+]
+DocumentDestinationArg = Annotated[
+    str,
+    Field(
+        description=(
+            "Full workspace path to move the document to, which renames it "
+            "when only the last segment differs and re-homes it in another "
+            "workspace when the prefix does. The extension follows the "
+            "document and cannot be changed by moving; a path naming an "
+            "existing directory moves the document into it."
+        ),
+    ),
+]
 WriteModeArg = Annotated[
     Literal["prepend", "append", "replace", "create"],
     Field(
@@ -115,6 +142,17 @@ WriteMutation = Callable[[str, str, WriteModeArg, str | None], Awaitable[str]]
 """Canonical write operation for a resolved document path, rendered as for
 :data:`EditMutation`."""
 
+MoveMutation = Callable[[str, str], Awaitable[None]]
+"""Canonical move operation, taking both ends as canonical paths.
+
+Two paths rather than one because the ends may name different workspaces, which
+is what makes a move the one mutation that can cross from the personal
+workspace into a group's.
+"""
+
+DeleteMutation = Callable[[str], Awaitable[None]]
+"""Canonical delete operation for a resolved document path."""
+
 
 def _mutation_detail(exc: HTTPException | ValueError) -> str:
     """Extract the human-readable detail from a failed-mutation exception."""
@@ -143,8 +181,11 @@ def resolve_mutation_target(
     Returns the path rendered under the root that claimed it (what the mutator
     routes on), the local path (what a glob is matched against), and the file
     on disk.  Unlike a read, the document need not exist: a mutation may create
-    it, and it may name a directory, which :func:`resolve_text_target`
-    refuses for a text write.
+    it, and it may name a directory, which for a move destination means moving
+    into it (the ``mv`` semantics
+    :func:`~hivegent.workspace.paths._resolve_move_destination` applies).  What
+    a directory cannot be is the target of a *text write*, which is where
+    :func:`resolve_text_target` refuses it.
     """
     resolved = resolve_accessible_file(paths, file_path)
     if resolved is None:
@@ -153,6 +194,25 @@ def resolve_mutation_target(
     sp, local, absolute = resolved
 
     return sp.prefixed(local), local, absolute
+
+
+def _check_not_scratch(canonical: str, local: str) -> None:
+    """Refuse a `.scratch/` move source, which has no entry to relocate.
+
+    A move relocates an entry — its description, its original, its assets, and
+    its rows — and a scratch file is bytes with none of those, so the gateway
+    would answer with a bare "not found" that says nothing about why.  Only the
+    source needs this: a scratch *destination* is a reserved path the gateway
+    already refuses by name, in one voice with `.assets`
+    (:func:`~hivegent.workspace.paths._check_not_reserved_path`), and writing
+    and deleting reach scratch freely.
+    """
+    if is_scratch_path(local):
+        raise ToolRetry(
+            f"'{canonical}' is under `{SCRATCH_DIR_NAME}/`, which holds working "
+            "state rather than entries, so there is no document to move. Read "
+            "it and write the text to a document path instead."
+        )
 
 
 def resolve_text_target(
@@ -276,3 +336,69 @@ class WriteDocumentTool(AsyncPathTool[str]):
         except (HTTPException, ValueError) as exc:
             raise ToolRetry(_mutation_detail(exc)) from exc
         return ToolOutput(data=_hinted(self.hint, data, target, local))
+
+
+@dataclass(slots=True, frozen=True)
+class MoveDocumentTool(AsyncPathTool[str]):
+    """Move or rename a document, its original, and its child assets.
+
+    Both ends are resolved against the writable span, so a cross-workspace
+    move is allowed exactly when the run may write the source and the
+    destination, and :attr:`mutator` routes each end back to its own store.
+    """
+
+    mutator: MoveMutation = field(kw_only=True)
+
+    @override
+    async def __call__(
+        self,
+        file_path: ExistingDocumentPathArg,
+        destination: DocumentDestinationArg,
+    ) -> ToolOutput[str]:
+        """Move a document to another path, renaming it when the name differs.
+
+        This is how a document is renamed or re-filed: the entry keeps its
+        content, its extension, its original, and its extracted assets, and
+        nothing is re-converted or re-indexed, so it costs far less than
+        writing the content out at a new path and deleting the old one.  A
+        destination in another workspace re-homes the document there.
+        """
+        sp, local, _absolute = resolve_file_or_retry(self.resolved_paths, file_path)
+        target = sp.prefixed(local)
+        _check_not_scratch(target, local)
+        moved_to, _local, _dst = resolve_mutation_target(
+            self.resolved_paths, destination
+        )
+        try:
+            await self.mutator(target, moved_to)
+        except (HTTPException, ValueError) as exc:
+            raise ToolRetry(_mutation_detail(exc)) from exc
+
+        return ToolOutput(data=f"Moved '{target}' to '{moved_to}'.")
+
+
+@dataclass(slots=True, frozen=True)
+class DeleteDocumentTool(AsyncPathTool[str]):
+    """Delete a document with everything derived from it."""
+
+    mutator: DeleteMutation = field(kw_only=True)
+
+    @override
+    async def __call__(self, file_path: ExistingDocumentPathArg) -> ToolOutput[str]:
+        """Delete a document and everything belonging to it.
+
+        The searchable markdown, the original it was projected from, its
+        extracted assets, and its index entries all go with it, so the
+        document stops being reachable by search, read, or path.  A `.scratch/`
+        file is removed too, which is how a run clears working state it no
+        longer needs.  This cannot be undone: ask the user before deleting
+        anything they did not name.
+        """
+        sp, local, _absolute = resolve_file_or_retry(self.resolved_paths, file_path)
+        target = sp.prefixed(local)
+        try:
+            await self.mutator(target)
+        except (HTTPException, ValueError) as exc:
+            raise ToolRetry(_mutation_detail(exc)) from exc
+
+        return ToolOutput(data=f"Deleted '{target}'.")

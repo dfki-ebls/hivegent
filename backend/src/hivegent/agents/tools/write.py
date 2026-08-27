@@ -21,18 +21,24 @@ from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 
 from ... import workspace
 from ...entries import is_scratch_path
-from ...store import Casebase, scoped_operation
-from ...tools import EditDocumentTool, WriteDocumentTool
+from ...store import Casebase, scoped_operation, scoped_pair_operation
+from ...tools import (
+    DeleteDocumentTool,
+    EditDocumentTool,
+    MoveDocumentTool,
+    WriteDocumentTool,
+)
 from ...tools.base import resolve_accessible_file, translate_tool_retry
 from ...tools.mutations import MutationHint, resolve_text_target
-from ...tools.pydantic_ai import register_agent_tools
+from ...tools.pydantic_ai import register_agent_tool, register_agent_tools
 from ...tools.python import is_python_script
 from ...tools.sink import OutputPathArg, output_format
-from ...workspace_events import announcing_mutator
+from ...workspace_events import announce_paths, announcing_mutator
 from ..common import UserDeps
 
 __all__ = [
     "output_sink",
+    "validate_document_move",
     "validate_document_write",
     "validate_output_path",
     "validate_output_write",
@@ -193,6 +199,16 @@ def validate_output_write(
     _gate_write(ctx, {"output_path": output_path})
 
 
+def validate_document_move(
+    ctx: RunContext[UserDeps],
+    file_path: str,
+    destination: str,
+    **_rest: Any,
+) -> None:
+    """Apply the mode and approval gate to both ends of a move."""
+    _gate_write(ctx, {"file_path": file_path, "destination": destination})
+
+
 def validate_output_path(
     ctx: RunContext[UserDeps],
     output_path: OutputPathArg = None,
@@ -206,6 +222,30 @@ def validate_output_path(
     validate_output_write(ctx, output_path)
 
 
+def _move_document(deps: UserDeps) -> MoveDocumentTool:
+    """Build the mover, which routes each end back to the store it names.
+
+    The one mutation whose ends may sit in different workspaces, so it takes
+    the two-path router rather than :func:`_mutator`, and announces both ends
+    itself: :func:`announcing_mutator` sees one path and a cross-workspace move
+    changes two.
+    """
+    move = scoped_pair_operation(workspace.move_document, deps.writable_stores)
+
+    async def announcing(src: str, dst: str) -> None:
+        await move(src, dst)
+        announce_paths(deps.user_id, src, dst)
+
+    return MoveDocumentTool(paths=deps.search_paths(writable=True), mutator=announcing)
+
+
+def _delete_document(deps: UserDeps) -> DeleteDocumentTool:
+    return DeleteDocumentTool(
+        paths=deps.search_paths(writable=True),
+        mutator=_mutator(deps, workspace.delete_document),
+    )
+
+
 write_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 register_agent_tools(
@@ -214,6 +254,16 @@ register_agent_tools(
     [
         _edit_document,
         _write_document,
+        _delete_document,
     ],
     args_validator=validate_document_write,
+)
+
+# The move is the one mutation with two ends, so it carries the validator that
+# puts both in front of the user as a single decision.
+register_agent_tool(
+    write_toolset,
+    UserDeps,
+    _move_document,
+    args_validator=validate_document_move,
 )

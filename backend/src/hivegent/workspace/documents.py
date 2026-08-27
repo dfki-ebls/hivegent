@@ -411,12 +411,35 @@ async def write_document_text(
 async def delete_document(store: Casebase, safe: str) -> None:
     """Delete a logical entry and all of its files.
 
-    The file + SQL removal runs to completion under the lock even on a cancel
+    Location decides first, as it does for a text mutation: a scratch file is
+    bytes the run owns, with no entry and no rows, so removing it is the
+    unlink and nothing else, and a run that can create its own working state
+    can clear it away again.  Everything else is an entry, whose file + SQL
+    removal runs to completion under the lock even on a cancel
     (:func:`shield_to_completion`) so it cannot leave files without their rows
     or rows without their files.
     """
+    safe = sanitize_document_path(safe)
     async with _locked_for(store, safe):
+        if is_scratch_path(safe):
+            _remove_scratch_file(store, safe)
+            return
+
         await shield_to_completion(_delete_single_locked(store, safe))
+
+
+def _remove_scratch_file(store: Casebase, safe: str) -> None:
+    """Unlink one scratch file, or say it was never there.
+
+    Non-creating, like the move's destination resolution: a delete has nothing
+    to make, so a workspace nobody has written to must not gain a directory as
+    a side effect of a 404.
+    """
+    path = store.workspace_path(settings.data_dir) / safe
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    path.unlink()
 
 
 async def _move_document_locked(

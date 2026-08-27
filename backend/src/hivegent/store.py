@@ -25,6 +25,7 @@ __all__ = [
     "WorkspaceScope",
     "build_search_paths",
     "scoped_operation",
+    "scoped_pair_operation",
 ]
 
 CasebaseKind = Literal["user", "group"]
@@ -214,6 +215,16 @@ def build_search_paths(
     )
 
 
+def _route(stores: Sequence[Casebase], path: str) -> tuple[Casebase, str]:
+    """Split a canonical path into the store it names and the path local to it."""
+    scope, local = WorkspaceScope.parse(path)
+    store = next((s for s in stores if s.scope == scope), None)
+    if store is None:
+        raise ValueError(f"No accessible workspace for {path!r}")
+
+    return store, local
+
+
 def scoped_operation[**P, R](
     operation: Callable[Concatenate[Casebase, str, P], Awaitable[R]],
     stores: Sequence[Casebase],
@@ -230,11 +241,30 @@ def scoped_operation[**P, R](
     """
 
     async def run(path: str, *args: P.args, **kwargs: P.kwargs) -> R:
-        scope, local = WorkspaceScope.parse(path)
-        store = next((s for s in stores if s.scope == scope), None)
-        if store is None:
-            raise ValueError(f"No accessible workspace for {path!r}")
+        store, local = _route(stores, path)
 
         return await operation(store, local, *args, **kwargs)
+
+    return run
+
+
+def scoped_pair_operation[**P, R](
+    operation: Callable[Concatenate[Casebase, Casebase, str, str, P], Awaitable[R]],
+    stores: Sequence[Casebase],
+) -> Callable[Concatenate[str, str, P], Awaitable[R]]:
+    """Route a ``(src_store, dst_store, src, dst, ...)`` operation by two paths.
+
+    :func:`scoped_operation` for the one mutation whose two ends may name
+    different workspaces: each canonical path is resolved on its own, so the
+    same call renames within one workspace and migrates between two.
+    """
+
+    async def run(src: str, dst: str, *args: P.args, **kwargs: P.kwargs) -> R:
+        src_store, src_local = _route(stores, src)
+        dst_store, dst_local = _route(stores, dst)
+
+        return await operation(
+            src_store, dst_store, src_local, dst_local, *args, **kwargs
+        )
 
     return run

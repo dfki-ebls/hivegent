@@ -175,6 +175,9 @@ There is no working directory and no default workspace, so a path without one of
 WRITE_INSTRUCTIONS = """
 When you create a document, you decide where it goes and the path is the only thing that says so.
 Choose the workspace and the folder it belongs in, keep it beside related documents unless the user asked for somewhere else, and tell the user the full path you wrote to.
+Any text format can be created this way, `.csv` and `.html` as much as `.md`; only a binary one (PDF, Office document, spreadsheet, image, video) has to be uploaded instead.
+Rename or re-file an existing document with move_document rather than writing its content out at the new path and deleting the old one, which loses the original it was projected from and everything extracted from it.
+delete_document cannot be undone and removes the document with its original, its assets, and its index entries, so ask the user before deleting anything they did not name.
 """
 
 CITATION_INSTRUCTIONS = """

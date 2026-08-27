@@ -13,7 +13,7 @@ from .entries import is_scratch_path
 from .jobs import manager
 from .store import Casebase, WorkspaceScope
 
-__all__ = ["announcing_mutator", "notify_workspace_change"]
+__all__ = ["announce_paths", "announcing_mutator", "notify_workspace_change"]
 
 
 def notify_workspace_change(
@@ -29,6 +29,26 @@ def notify_workspace_change(
     )
 
 
+def announce_paths(owner: str, *paths: str) -> None:
+    """Tell *owner*'s clients that the workspaces *paths* name have changed.
+
+    Deduplicated by workspace, so a move whose two ends share one announces
+    once and one crossing between two announces both.
+
+    A scratch path is the one that stays quiet: the tree hides `.scratch/`, so
+    the refresh it would trigger costs every other tab a re-read of a workspace
+    that looks exactly as it did.  A run parking its own state there is the
+    common case, not the rare one, which is what makes the difference worth
+    drawing.
+    """
+    for prefix in {
+        scope.prefix
+        for scope, local in map(WorkspaceScope.parse, paths)
+        if not is_scratch_path(local)
+    }:
+        manager.notify_scope_changed(owner, prefix)
+
+
 def announcing_mutator[**P, R](
     mutator: Callable[Concatenate[str, P], Awaitable[R]],
     owner: str,
@@ -39,19 +59,13 @@ def announcing_mutator[**P, R](
     narrowest place that sees both the path and the fact that the write
     succeeded — the layers below hold a :class:`Casebase`, whose id is the
     *group* for a shared workspace, so none of them can name the user to tell.
-
-    A scratch write is the one that stays quiet: the tree hides `.scratch/`, so
-    the refresh it would trigger costs every other tab a re-read of a workspace
-    that looks exactly as it did.  A run parking its own state there is the
-    common case, not the rare one, which is what makes the difference worth
-    drawing.
+    A mutation with more than one end announces through :func:`announce_paths`
+    itself, since only it knows how many paths it changed.
     """
 
     async def run(path: str, *args: P.args, **kwargs: P.kwargs) -> R:
         result = await mutator(path, *args, **kwargs)
-        scope, local = WorkspaceScope.parse(path)
-        if not is_scratch_path(local):
-            manager.notify_scope_changed(owner, scope.prefix)
+        announce_paths(owner, path)
         return result
 
     return run

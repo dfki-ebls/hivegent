@@ -23,7 +23,12 @@ from .documents import (
 )
 from .grep import GrepLine, GrepMatch, GrepTool
 from .jq import JqResult, JqTool
-from .mutations import EditDocumentTool, WriteDocumentTool
+from .mutations import (
+    DeleteDocumentTool,
+    EditDocumentTool,
+    MoveDocumentTool,
+    WriteDocumentTool,
+)
 from .plan import CreatePlanTool
 from .python import PythonResult, RunPythonTool
 from .retrieval import SearchResult, SearchType, VectorSearchTool
@@ -37,6 +42,7 @@ __all__ = [
     "BinaryAttachment",
     "BinaryReadResult",
     "CreatePlanTool",
+    "DeleteDocumentTool",
     "DocumentRange",
     "DocumentSummary",
     "DocumentTreeNode",
@@ -48,6 +54,7 @@ __all__ = [
     "JqResult",
     "JqTool",
     "ListDocumentsTool",
+    "MoveDocumentTool",
     "PythonResult",
     "QueryTableTool",
     "ReadBinaryDocumentTool",
