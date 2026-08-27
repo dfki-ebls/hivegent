@@ -109,6 +109,8 @@ def cap_lines(
     lines: Iterable[str],
     max_chars: int | None = None,
     sep: str = "\n",
+    *,
+    keep_oversized_first: bool = True,
 ) -> tuple[str, int]:
     """Join *lines* with *sep* while the total stays within *max_chars*.
 
@@ -116,8 +118,10 @@ def cap_lines(
     budget is reached every remaining line is dropped, so what is kept is a
     contiguous prefix rather than whichever later lines happened to fit, and
     a caller can resume from exactly where the output stops.  The first line
-    is always kept, however long it is: a lone oversized line tells the
-    reader more than an empty result with a notice.
+    is kept by default, however long it is, since a lone oversized line can
+    tell the reader more than an empty result with a notice.  Set
+    *keep_oversized_first* to false when items must remain whole and the budget
+    is strict.
 
     This is a different axis from :func:`truncate_line`.  That one bounds a
     single runaway line; this one bounds what a whole tool return spends of
@@ -128,6 +132,8 @@ def cap_lines(
     ('ab\\ncd', 1)
     >>> cap_lines(["abcdef"], 3)
     ('abcdef', 0)
+    >>> cap_lines(["abcdef"], 3, keep_oversized_first=False)
+    ('', 1)
     >>> cap_lines(["ab", "cd"])
     ('ab\\ncd', 0)
     """
@@ -138,7 +144,8 @@ def cap_lines(
     for line in iterator:
         extra = len(line) + (len(sep) if kept else 0)
 
-        if kept and max_chars is not None and total + extra > max_chars:
+        over_budget = max_chars is not None and total + extra > max_chars
+        if over_budget and (kept or not keep_oversized_first):
             return sep.join(kept), 1 + sum(1 for _ in iterator)
 
         kept.append(line)

@@ -904,9 +904,45 @@ class TestJqTool:
         output = await tool("big.json", ".[]")
         result = self._result(output.data)
 
-        assert result.truncated
-        assert 0 < len(result.values) < 50
-        assert all(value == "x" * 100 for value in result.values)
+        rendered = [line for line in output.text.splitlines() if line.startswith('"')]
+
+        assert 0 < len(rendered) < 50
+        assert all(line == '"' + "x" * 100 + '"' for line in rendered)
+        assert result.values == tuple("x" * 100 for _ in range(50))
+
+    async def test_output_budget_omits_one_oversized_value(self, tmp_path: Path) -> None:
+        """One value cannot bypass the jq-specific output budget."""
+        (tmp_path / "big.json").write_text(json.dumps({"body": "x" * 500}))
+        tool = JqTool(paths=tmp_path, max_formatted_chars=100)
+        output = await tool("big.json", ".")
+        result = self._result(output.data)
+
+        assert "(no values)" in output.text
+        assert len(output.text) < 200
+        assert result.values == ({"body": "x" * 500},)
+
+    async def test_json_redirect_preserves_values_omitted_from_display(
+        self, tmp_path: Path
+    ) -> None:
+        """The structured redirect stores all jq values, not the display slice."""
+        written: dict[str, str] = {}
+
+        async def mutate(
+            path: str, content: str, mode: str, expected_hash: str | None
+        ) -> str:
+            _ = mode, expected_hash
+            written[path] = content
+            return f"wrote {path}"
+
+        (tmp_path / "big.json").write_text(json.dumps(list(range(100))))
+        writer = WriteDocumentTool(paths=tmp_path, mutator=mutate)
+        tool = JqTool(paths=tmp_path, writer=writer, max_formatted_chars=20)
+
+        output = await tool("big.json", ".[]", output_path="result.json")
+        stored = json.loads(written["result.json"])
+
+        assert isinstance(output.data, RedirectedOutput)
+        assert stored["values"] == list(range(100))
 
 
 class TestGrepSearch:

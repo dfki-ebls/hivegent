@@ -93,6 +93,12 @@ async def test_mcp_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
     )
 
 
+async def test_mcp_exposes_jq_named_by_the_document_reader() -> None:
+    tool = await mcp_app.get_tool("jq")
+
+    assert tool is not None
+
+
 async def test_mcp_search_tool_uses_consistent_search_type_name() -> None:
     tool = await mcp_app.get_tool("search")
     assert tool is not None

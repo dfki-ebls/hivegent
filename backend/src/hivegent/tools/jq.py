@@ -52,12 +52,17 @@ JqFilterArg = Annotated[
 
 @dataclass(slots=True, frozen=True)
 class JqResult:
-    """The values a filter produced, one entry per output jq emitted."""
+    """The values a filter produced, one entry per output jq emitted.
+
+    ``values`` is every value, never the slice the output budget left room to
+    render, so a ``.json`` redirect stores the whole filter result the way a
+    grep count stores every match.  What the budget dropped is stated in the
+    rendered text alone.
+    """
 
     file_path: str
     filter: str
     values: tuple[JsonValue, ...] = ()
-    truncated: bool = False
     source_encoding: str | None = None
 
 
@@ -111,19 +116,22 @@ class JqTool(RedirectingPathTool[JqResult]):
     ) -> ToolOutput[JqResult]:
         """Budget the outputs and render them one compact JSON value per line.
 
-        The budget is applied before the result is built, so what a redirect
-        stores is what the model would have been shown, and what it trims is
-        whole values rather than a JSON document cut mid-token.
+        The structured result keeps every value for the frontend and JSON
+        redirects.  Only the model-facing text is budgeted, and it drops whole
+        values rather than cutting a JSON token.
         """
         lines = [json.dumps(value, default=str) for value in values]
-        body, dropped = cap_lines(lines, self.max_formatted_chars)
-        kept = values[: len(values) - dropped]
+        body, dropped = cap_lines(
+            lines,
+            self.max_formatted_chars,
+            keep_oversized_first=False,
+        )
 
         hints: list[str] = []
         if dropped:
             hints.append(
                 f"{dropped} more {pluralize(dropped, 'value')} cut by the "
-                "output budget, narrow the filter or pass an output_path"
+                "output budget, narrow the filter or pass a `.json` output_path"
             )
         if filter is None:
             hints.append("shape only, pass a filter to select values")
@@ -132,8 +140,7 @@ class JqTool(RedirectingPathTool[JqResult]):
             data=JqResult(
                 file_path=file_path,
                 filter=filter or SHAPE_FILTER,
-                values=tuple(kept),
-                truncated=bool(dropped),
+                values=tuple(values),
                 source_encoding=source_encoding,
             ),
             formatted=(body or "(no values)") + hint_suffix(hints),
