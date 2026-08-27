@@ -14,7 +14,7 @@ from ..chunkers import ChunkingSpec
 from ..chunkers.base import DocumentMetadata
 from ..concurrency import shield_to_completion
 from ..config import content_hash, sanitize_document_path, settings
-from ..converters import vision_media_type
+from ..converters import BINARY_WRITE_REASON, vision_media_type, writes_as_text
 from ..db import documents as db_documents
 from ..entries import (
     SCRATCH_DIR_NAME,
@@ -23,7 +23,6 @@ from ..entries import (
     description_path_for_stem,
     entry_exists,
     is_description_file,
-    is_projectable_original,
     is_scratch_path,
     repoint_asset_refs,
     stem_path_from_reference,
@@ -283,13 +282,9 @@ async def _rewrite_original(
         # Mutating first lets an operation that needs the document to exist say
         # so, rather than being answered with a rule about creating one.
         content, message = mutate(current)
-        if current is None and not is_projectable_original(safe):
+        if current is None and not writes_as_text(safe):
             raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"'{shown}' cannot be created by writing text; only markdown "
-                    "and plain-text formats can be, so upload it instead"
-                ),
+                status_code=400, detail=f"'{shown}' {BINARY_WRITE_REASON}"
             )
         # Creating an original claims the whole stem: requiring a free one keeps
         # the write from superseding another entry's description or original.

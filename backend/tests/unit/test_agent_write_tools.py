@@ -170,14 +170,21 @@ def test_run_python_paths_are_lazy_and_never_hide_scratch(
         assert not path.filter_func("other.md")
 
 
+def _context(
+    deps: UserDeps, mode: str, *, approved: bool = False
+) -> RunContext[UserDeps]:
+    """A run context in *mode*, which is all any validator here reads."""
+    return RunContext(
+        deps=replace(deps, mode=mode),
+        model=TestModel(),
+        usage=RunUsage(),
+        tool_call_approved=approved,
+    )
+
+
 def test_agent_output_write_approval_depends_on_mode(deps: UserDeps) -> None:
     def context(mode: str, *, approved: bool = False) -> RunContext[UserDeps]:
-        return RunContext(
-            deps=replace(deps, mode=mode),
-            model=TestModel(),
-            usage=RunUsage(),
-            tool_call_approved=approved,
-        )
+        return _context(deps, mode, approved=approved)
 
     with pytest.raises(ApprovalRequired):
         validate_output_path(context("interactive"), output_path="~/output.txt")
@@ -192,11 +199,7 @@ def test_agent_output_write_approval_depends_on_mode(deps: UserDeps) -> None:
 
 
 def test_run_python_output_accepts_arbitrary_text_suffix(deps: UserDeps) -> None:
-    context = RunContext(
-        deps=replace(deps, mode="write"),
-        model=TestModel(),
-        usage=RunUsage(),
-    )
+    context = _context(deps, "write")
 
     assert (
         compute_tools.compute_toolset.tools["run_python"].args_validator
@@ -212,9 +215,7 @@ def test_scratch_writes_skip_approval_without_lifting_the_mode_gate(
     """Run state is the run's own, so only a document write asks the user."""
 
     def context(mode: str) -> RunContext[UserDeps]:
-        return RunContext(
-            deps=replace(deps, mode=mode), model=TestModel(), usage=RunUsage()
-        )
+        return _context(deps, mode)
 
     validate_document_write(context("interactive"), file_path="~/.scratch/state.json")
     validate_document_write(
@@ -242,3 +243,18 @@ def test_write_tools_gate_every_call_rather_than_the_tool() -> None:
         tool = write_toolset.tools[name]
         assert tool.args_validator is validate_document_write
         assert tool.requires_approval is False
+
+
+def test_a_binary_output_is_refused_before_the_approval(deps: UserDeps) -> None:
+    """The suffix decides first, so no approval and no run is spent on it."""
+    context = _context(deps, "interactive")
+
+    with pytest.raises(ModelRetry, match="binary format"):
+        validate_output_write(context, output_path="~/sheet.xlsx")
+
+
+def test_a_scratch_output_answers_to_no_format(deps: UserDeps) -> None:
+    """Scratch is the run's own bytes, so neither the format nor the user gates it."""
+    context = _context(deps, "interactive")
+
+    validate_output_write(context, output_path="~/.scratch/state.parquet")

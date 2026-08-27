@@ -30,7 +30,10 @@ from hivegent.tools.documents import (
 )
 from hivegent.tools.grep import GrepLine, GrepMatch, GrepTool
 from hivegent.tools.jq import JqResult, JqTool
-from hivegent.tools.mutations import EditDocumentTool, WriteDocumentTool
+from hivegent.tools.mutations import (
+    EditDocumentTool,
+    WriteDocumentTool,
+)
 from hivegent.tools.python import PythonResult, RunPythonTool
 from hivegent.tools.sink import RedirectedOutput
 from hivegent.types import DocumentFilter
@@ -825,6 +828,13 @@ class TestEditDocumentTool:
             await tool("doc.md", "a", "b")
 
 
+async def _echo_write(
+    filename: str, content: str, mode: str, expected_hash: str | None
+) -> str:
+    """A write mutator that names the document it was given."""
+    return f"wrote {filename}"
+
+
 class TestWriteDocumentTool:
     """The tool resolves, access-checks, and glob-filters the path, then delegates.
 
@@ -849,19 +859,12 @@ class TestWriteDocumentTool:
         assert calls == [("doc.md", "content", "append", "h")]
 
     async def test_rejects_non_matching_glob(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(
-            paths=tmp_path, glob="*.md", mutator=_unreachable_write
-        )
+        tool = WriteDocumentTool(paths=tmp_path, glob="*.md", mutator=_unreachable_write)
         with pytest.raises(ToolRetry, match="does not match pattern"):
             await tool("doc.txt", "content")
 
     async def test_none_glob_allows_any(self, tmp_path: Path) -> None:
-        async def _mutate(
-            filename: str, content: str, mode: str, expected_hash: str | None
-        ) -> str:
-            return f"wrote {filename}"
-
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_mutate)
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
         result = (await tool("data.txt", "content")).data
         assert result == "wrote data.txt"
 
@@ -873,7 +876,24 @@ class TestWriteDocumentTool:
         with pytest.raises(ToolRetry, match="Unsupported write mode"):
             await tool("doc.md", "content")
 
+    async def test_binary_format_is_refused_before_the_mutator_runs(
+        self, tmp_path: Path
+    ) -> None:
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_unreachable_write)
+        with pytest.raises(ToolRetry, match="binary format"):
+            await tool("sheet.xlsx", "a,b")
 
+    async def test_text_formats_a_converter_claims_are_writable(
+        self, tmp_path: Path
+    ) -> None:
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
+        for name in ("rows.csv", "page.html", "diagram.svg"):
+            assert (await tool(name, "x")).data == f"wrote {name}"
+
+    async def test_scratch_answers_to_no_format(self, tmp_path: Path) -> None:
+        """Scratch is bytes the run owns, so the format seam never reaches it."""
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
+        assert (await tool(".scratch/state.parquet", "x")).data.endswith("parquet")
 async def _unreachable_edit(*_: object) -> str:
     raise AssertionError("mutator must not run when the path is rejected")
 

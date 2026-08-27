@@ -31,7 +31,7 @@ from pydantic_core import to_json
 
 from ..humanize import pluralize
 from .base import AsyncPathTool, AsyncTool, ToolOutput, ToolRetry
-from .mutations import WriteDocumentTool, resolve_mutation_target
+from .mutations import WriteDocumentTool, resolve_text_target
 
 __all__ = [
     "NO_WRITER_REFUSAL",
@@ -101,15 +101,16 @@ def resolve_output_target(
     """Resolve one writable output, which need not exist yet.
 
     Routed through the resolver the commit itself runs through, so a path the
-    write would turn away — a directory included — is turned away here, in the
-    same words.  A missing *writer* is the tool saying it was not built to
-    write at all, and the writer comes back with the resolved path so a caller
-    has it in hand rather than re-proving it.
+    write would turn away — a directory or a binary format included — is turned
+    away here, in the same words, and before the tool has done its work.  A
+    missing *writer* is the tool saying it was not built to write at all, and
+    the writer comes back with the resolved path so a caller has it in hand
+    rather than re-proving it.
     """
     if writer is None:
         raise ToolRetry(NO_WRITER_REFUSAL)
 
-    canonical, _local, absolute = resolve_mutation_target(
+    canonical, _local, absolute = resolve_text_target(
         writer.resolved_paths, output_path
     )
 

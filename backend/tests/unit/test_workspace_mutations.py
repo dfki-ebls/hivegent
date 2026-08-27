@@ -297,15 +297,32 @@ class TestTextOriginals:
         assert original.read_bytes() == b"city = Berlin\n"
         assert f"transcoded from {encoding} to UTF-8" in result
 
-    async def test_image_original_is_not_editable_as_text(
+    async def test_svg_is_created_as_the_markup_it_is(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
-        """An SVG is text but the uploader captions it, so it is not verbatim."""
+        """An SVG is text, so it is written and indexed rather than captioned."""
+        await workspace.write_document_text(user_store, "diagram.svg", "<svg/>")
+
+        assert (workspace_dir / "diagram.svg").read_text() == "<svg/>"
+        assert "<svg/>" in (workspace_dir / "diagram.md").read_text()
+
+    async def test_csv_is_created_and_projected(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        """A converter claiming the format does not make it unwritable."""
+        await workspace.write_document_text(user_store, "data/rows.csv", "a,b\n1,2\n")
+
+        assert (workspace_dir / "data/rows.csv").read_text() == "a,b\n1,2\n"
+        assert (workspace_dir / "data/rows.md").exists()
+
+    async def test_binary_format_cannot_be_created_by_writing_text(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
         with pytest.raises(HTTPException) as exc:
-            await workspace.write_document_text(user_store, "diagram.svg", "<svg/>")
+            await workspace.write_document_text(user_store, "sheet.xlsx", "a,b")
 
         assert exc.value.status_code == 400
-        assert not (workspace_dir / "diagram.svg").exists()
+        assert not (workspace_dir / "sheet.xlsx").exists()
 
     async def test_write_creates_the_entry_and_its_projection(
         self, user_store: Casebase, workspace_dir: Path

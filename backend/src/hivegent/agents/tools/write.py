@@ -24,7 +24,7 @@ from ...entries import is_scratch_path
 from ...store import Casebase, scoped_operation
 from ...tools import EditDocumentTool, WriteDocumentTool
 from ...tools.base import resolve_accessible_file, translate_tool_retry
-from ...tools.mutations import MutationHint
+from ...tools.mutations import MutationHint, resolve_text_target
 from ...tools.pydantic_ai import register_agent_tools
 from ...tools.python import is_python_script
 from ...tools.sink import OutputPathArg, output_format
@@ -127,21 +127,33 @@ def _is_scratch_target(deps: UserDeps, file_path: str) -> bool:
     return resolved is not None and is_scratch_path(resolved[1])
 
 
-def _gate_write(ctx: RunContext[UserDeps], argument: str, path: str) -> None:
-    """Apply the mode and approval gate to one workspace write.
+def _check_mode(ctx: RunContext[UserDeps]) -> None:
+    """Refuse every mutation in a mode that may not write at all.
 
-    *argument* names the parameter carrying *path*, which is what the approval
-    request shows the user.
+    Split from :func:`_gate_write` because it is the refusal that has to come
+    first: a run that may not write should be told so rather than told its path
+    is wrong, whatever else a validator checks in between.
     """
     if not ctx.deps.can_write:
         raise ModelRetry("Workspace writes are unavailable in this chat mode.")
 
+
+def _gate_write(ctx: RunContext[UserDeps], targets: dict[str, str]) -> None:
+    """Apply the mode and approval gate to one workspace mutation.
+
+    *targets* maps each parameter to the path it carries, which is what the
+    approval request shows the user: a move names both of its ends, so one
+    decision covers the whole mutation rather than two in a row.  A mutation
+    entirely within `.scratch/` is the run's own state and asks nobody.
+    """
+    _check_mode(ctx)
+
     if (
         ctx.deps.needs_approval
         and not ctx.tool_call_approved
-        and not _is_scratch_target(ctx.deps, path)
+        and not all(_is_scratch_target(ctx.deps, path) for path in targets.values())
     ):
-        raise ApprovalRequired({argument: path})
+        raise ApprovalRequired(targets)
 
 
 # The validators are called with the whole argument mapping, so naming only the
@@ -153,7 +165,7 @@ def validate_document_write(
     **_rest: Any,
 ) -> None:
     """Apply the mode and approval gate to a document mutation."""
-    _gate_write(ctx, "file_path", file_path)
+    _gate_write(ctx, {"file_path": file_path})
 
 
 def validate_output_write(
@@ -161,11 +173,24 @@ def validate_output_write(
     output_path: str | None = None,
     **_rest: Any,
 ) -> None:
-    """Apply the mode and approval gate to an optional workspace output."""
+    """Apply the mode and approval gate to an optional workspace output.
+
+    The path is settled through :func:`resolve_text_target`, the very resolver
+    the commit runs through, so the redirect is refused in one voice with the
+    write tools and no clause of that rule is ever stated twice.  It runs
+    before the gate rather than after the call, since a path the commit would
+    turn away would otherwise cost the user an approval and the run a whole
+    program before anything said no, and after the mode check, since a run that
+    may not write at all should hear that first.
+    """
     if output_path is None:
         return
 
-    _gate_write(ctx, "output_path", output_path)
+    _check_mode(ctx)
+    with translate_tool_retry(ModelRetry):
+        _ = resolve_text_target(ctx.deps.search_paths(writable=True), output_path)
+
+    _gate_write(ctx, {"output_path": output_path})
 
 
 def validate_output_path(

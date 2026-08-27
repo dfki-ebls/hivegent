@@ -176,7 +176,7 @@ def is_projectable_original(rel_path: str) -> bool:
     True
     >>> is_projectable_original("docs/report.md")
     False
-    >>> is_projectable_original("docs/diagram.svg")
+    >>> is_projectable_original("docs/photo.png")
     False
     >>> is_projectable_original("docs/report.assets/notes.txt")
     False

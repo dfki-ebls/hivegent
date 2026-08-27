@@ -34,9 +34,9 @@ from hivegent.entries import (
         ("docs/report.md", False),
         ("docs/report.pdf", False),
         ("docs/table.csv", False),
-        # Text, and claimed by no converter — but the uploader captions it with
-        # a vision model, so deriving it verbatim would disagree with an upload.
-        ("docs/diagram.svg", False),
+        # Markup, and claimed by no converter: an SVG is the one image format
+        # whose own text is the better index, so it derives verbatim.
+        ("docs/diagram.svg", True),
         ("docs/report.assets/notes.txt", False),
         ("docs/.DS_Store", False),
     ],

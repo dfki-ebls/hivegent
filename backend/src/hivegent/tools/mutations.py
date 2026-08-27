@@ -8,6 +8,8 @@ from typing import Annotated, Literal, override
 from fastapi import HTTPException
 from pydantic import Field
 
+from ..converters import BINARY_WRITE_REASON, writes_as_text
+from ..entries import is_scratch_path
 from .base import (
     AsyncPathTool,
     SearchPath,
@@ -31,6 +33,7 @@ __all__ = [
     "WriteModeArg",
     "WriteMutation",
     "resolve_mutation_target",
+    "resolve_text_target",
 ]
 
 DocumentTargetPathArg = Annotated[
@@ -140,20 +143,48 @@ def resolve_mutation_target(
     Returns the path rendered under the root that claimed it (what the mutator
     routes on), the local path (what a glob is matched against), and the file
     on disk.  Unlike a read, the document need not exist: a mutation may create
-    it.  It may not be a directory, though, which is the one way an unwritable
-    path still resolves, refused here rather than at each surface, so a write,
-    an edit, and a redirect all say the same thing.  The one place a write
-    target is resolved, so every surface that stages a mutation refuses an
-    unreachable path in the same words.
+    it, and it may name a directory, which :func:`resolve_text_target`
+    refuses for a text write.
     """
     resolved = resolve_accessible_file(paths, file_path)
     if resolved is None:
         hint = workspace_root_hint(paths, file_path)
         raise ToolRetry(f"'{file_path}' is not accessible.{hint}")
     sp, local, absolute = resolved
-    canonical = sp.prefixed(local)
+
+    return sp.prefixed(local), local, absolute
+
+
+def resolve_text_target(
+    paths: tuple[SearchPath, ...], file_path: str
+) -> tuple[str, str, Path]:
+    """Resolve *file_path* for a mutation that writes text at it.
+
+    :func:`resolve_mutation_target` answers where the path is; this adds the
+    two questions every text write shares and a move or a delete does not, so
+    the surfaces that write text — the write tool, the edit tool, and a
+    redirected ``output_path`` — refuse a directory and a binary target in the
+    same words the gateway would, before an approval is asked for or a program
+    is run.
+
+    The format question is asked of a *new* document only, which is the
+    gateway's own condition (``current is None and not writes_as_text``): a
+    file that already exists is answered from its bytes by the decoder, the
+    same question the read tools ask, and a name table has no business
+    overruling it.  ``is_scratch_path`` comes before both, here as in the
+    gateway, since a scratch file is bytes the run owns with no entry, no
+    projection, and no converter to hand them to.
+    """
+    canonical, local, absolute = resolve_mutation_target(paths, file_path)
     if absolute.is_dir():
         raise ToolRetry(f"'{canonical}' is a directory.")
+
+    if (
+        not is_scratch_path(local)
+        and not absolute.is_file()
+        and not writes_as_text(canonical)
+    ):
+        raise ToolRetry(f"'{canonical}' {BINARY_WRITE_REASON}.")
 
     return canonical, local, absolute
 
@@ -187,15 +218,13 @@ class EditDocumentTool(AsyncPathTool[str]):
         prior read to reject the edit if the document changed since.
 
         Anything ``read_document`` can read, this can edit: a markdown
-        document, and equally a plain-text original such as a config,
-        data, or source file, whose searchable markdown is regenerated
-        from the new content automatically.  A binary (PDF, Office
-        document, image, video) cannot be edited — replace it by
-        uploading a new version instead.
+        document, and equally an original such as a config, data
+        (``.csv``), markup, or source file, whose searchable markdown is
+        regenerated from the new content automatically.  A binary (PDF,
+        Office document, spreadsheet, image, video) cannot be edited —
+        replace it by uploading a new version instead.
         """
-        target, local, _absolute = resolve_mutation_target(
-            self.resolved_paths, file_path
-        )
+        target, local, _absolute = resolve_text_target(self.resolved_paths, file_path)
         try:
             data = await self.mutator(
                 target, old_string, new_string, replace_all, expected_hash
@@ -231,18 +260,15 @@ class WriteDocumentTool(AsyncPathTool[str]):
         Pass ``expected_hash`` from a prior read to reject the write if the
         document changed since.
 
-        Anything ``read_document`` can read, this can rewrite: a markdown
-        document, and equally a plain-text original such as a config,
-        data, or source file, whose searchable markdown is regenerated
-        from the new content automatically.  A binary (PDF, Office
-        document, image, video) cannot be written — replace it by
-        uploading a new version instead.  New documents can be created as
-        markdown or as a plain-text format; any other format has to be
-        uploaded.
+        Anything ``read_document`` can read, this can rewrite, and any
+        text format can be created: a markdown document, and equally an
+        original such as a config, data (``.csv``), markup, or source
+        file, whose searchable markdown is regenerated from the new
+        content automatically.  A binary (PDF, Office document,
+        spreadsheet, image, video) cannot be written — replace it by
+        uploading a new version instead.
         """
-        target, local, _absolute = resolve_mutation_target(
-            self.resolved_paths, file_path
-        )
+        target, local, _absolute = resolve_text_target(self.resolved_paths, file_path)
         if self.glob and not PurePosixPath(local).match(self.glob):
             raise ToolRetry(f"'{file_path}' does not match pattern '{self.glob}'.")
         try:

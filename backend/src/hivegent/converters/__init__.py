@@ -25,12 +25,16 @@ from .formats import (
     DOCLING_EXTENSIONS,
     LLM_MEDIA_TYPES,
     PANDOC_EXTENSIONS,
+    PANDOC_SANDBOX_INCOMPATIBLE,
     PLAIN_TEXT_EXTENSIONS,
     match_file_extension,
 )
 from .video import VIDEO_MEDIA_TYPES, is_video_suffix
 
 __all__ = [
+    "BINARY_SUFFIXES",
+    "BINARY_WRITE_REASON",
+    "DELIMITED_SUFFIXES",
     "INGESTIBLE_IMAGE_MEDIA_TYPES",
     "JSON_SUFFIXES",
     "TABULAR_SUFFIXES",
@@ -50,6 +54,7 @@ __all__ = [
     "projects_verbatim",
     "resolve_auto_pipeline",
     "vision_media_type",
+    "writes_as_text",
 ]
 
 
@@ -459,6 +464,16 @@ class EntryProjection(StrEnum):
     """Derived by a converter, or copied verbatim when that converter is plain text."""
 
 
+_TEXT_IMAGE_SUFFIXES: frozenset[str] = frozenset({".svg"})
+"""Image formats that are markup, so a text write does create one.
+
+The exemption :data:`IMAGE_MEDIA_TYPES` needs before it can stand for "not
+text": SVG is the one entry there that a reader already serves as the text it
+is (:data:`VISION_MEDIA_TYPES` leaves it out for exactly that reason), so the
+write gate has to admit it or the two would disagree about the same file.
+"""
+
+
 def projection_for(filename: str) -> EntryProjection:
     """Return which projection *filename* gets, by extension.
 
@@ -468,11 +483,20 @@ def projection_for(filename: str) -> EntryProjection:
     metadata reconstruction asks it what kind of entry a rediscovered file
     belongs to.  Keeping the three on one table is what stops them from
     answering differently for the same file.
+
+    An image whose format is markup is not one of them: a vision model cannot
+    be shown an SVG (:data:`VISION_MEDIA_TYPES` says so), so routing it there
+    spends a request to describe a file whose own text is the better index.
+
+    >>> projection_for("diagram.svg") is EntryProjection.CONVERTIBLE
+    True
+    >>> projection_for("photo.png") is EntryProjection.IMAGE
+    True
     """
     suffix = Path(filename).suffix.lower()
     if is_markdown_suffix(suffix):
         return EntryProjection.MARKDOWN
-    if is_image_suffix(suffix):
+    if is_image_suffix(suffix) and suffix not in _TEXT_IMAGE_SUFFIXES:
         return EntryProjection.IMAGE
     if is_video_suffix(suffix):
         return EntryProjection.VIDEO
@@ -531,6 +555,14 @@ the point: a columnar format no converter claims is still queryable, and a
 format that does earn a markdown projection is still better queried.
 """
 
+DELIMITED_SUFFIXES: frozenset[str] = frozenset({".csv", ".tsv"})
+"""The text half of :data:`TABULAR_SUFFIXES`.
+
+Two tools split on it and must not disagree: the loader retries one of these
+through the shared text decoder when it is not UTF-8, and the write gate lets
+one be created as the text it is while the columnar rest cannot be.
+"""
+
 
 JSON_SUFFIXES: frozenset[str] = frozenset({".json"})
 """Extensions a jq filter can be run against in place.
@@ -544,6 +576,40 @@ which files they are.
 Narrower than "text that happens to parse as JSON", deliberately: jq is handed
 one document, so a line-delimited ``.jsonl`` would fail on its second line, and
 a ``.json`` suffix is the only thing that promises a single value.
+"""
+
+
+BINARY_SUFFIXES: frozenset[str] = (
+    (frozenset(IMAGE_MEDIA_TYPES) - _TEXT_IMAGE_SUFFIXES)
+    | frozenset(VIDEO_MEDIA_TYPES)
+    | frozenset(LLM_MEDIA_TYPES)
+    | PANDOC_SANDBOX_INCOMPATIBLE
+    | (TABULAR_SUFFIXES - DELIMITED_SUFFIXES)
+)
+"""Extensions whose bytes are not text.
+
+The fourth table of its kind, and the one behind the write gate the way
+:data:`VISION_MEDIA_TYPES` is the one behind read/read_binary: a text write
+produces UTF-8, so it can create anything whose format *is* text and nothing
+whose format is a container the ingest would then open as bytes.
+
+Composed only from the tables that already name a binary format — what a vision
+model is shown, what is sent as bytes, what pandoc cannot read in its sandbox,
+what a query reads columnar — rather than from a list of every binary format
+there is.  A suffix no converter claims is not on it, and a text write does
+create such a file: what lands is the text that was written, indexed as the
+text it is, which is what the name promised as much as anything else could.
+"""
+
+BINARY_WRITE_REASON = (
+    "is a binary format, which a text write cannot create: write the text to a "
+    "'.md' path instead, or upload the file"
+)
+"""Shared wording for a rejected write, wrapped in each layer's own exception.
+
+The counterpart of :data:`~hivegent.text.NOT_TEXT_REASON` on the read side, and
+worded like it: a refusal that names an action the caller can take, since the
+tool surfaces reach this one and a model has no upload of its own.
 """
 
 
@@ -568,6 +634,31 @@ def vision_media_type(file_path: str) -> str | None:
     return VISION_MEDIA_TYPES.get(Path(file_path).suffix.lower())
 
 
+def writes_as_text(filename: str) -> bool:
+    """Return whether *filename* can be created by writing text at it.
+
+    The write gate, and the exact counterpart of the read one: a read decides
+    from the bytes (:func:`~hivegent.text.decode_bytes`), which a file that
+    does not exist yet has none of, so creation decides from the format's own
+    table instead.  Deliberately *not* :func:`projects_verbatim`, which answers
+    whether the ingest may derive a projection by copying the text: that is
+    false for every text format a converter claims, so gating a write on it
+    refused `.csv`, `.html`, and `.tex` while admitting `.parquet` and `.zip`.
+
+    >>> writes_as_text("report.csv")
+    True
+    >>> writes_as_text("notes/report.docx")
+    False
+    >>> writes_as_text("figure.svg")
+    True
+    >>> writes_as_text("figure.png")
+    False
+    >>> writes_as_text("Makefile")
+    True
+    """
+    return Path(filename).suffix.lower() not in BINARY_SUFFIXES
+
+
 def projects_verbatim(filename: str) -> bool:
     """Return whether *filename*'s projection is a copy of its own text.
 
@@ -577,7 +668,7 @@ def projects_verbatim(filename: str) -> bool:
 
     >>> projects_verbatim("settings.ini")
     True
-    >>> projects_verbatim("diagram.svg")
+    >>> projects_verbatim("report.csv")
     False
     """
     return (
