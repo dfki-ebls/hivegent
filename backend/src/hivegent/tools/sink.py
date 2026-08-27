@@ -139,7 +139,7 @@ def output_format(output_path: str) -> OutputFormat:
 def _render(result: ToolOutput[Any], fmt: OutputFormat) -> str:
     """Serialise the channel *fmt* names.
 
-    The JSON is unindented: its declared reader is ``json.load`` inside a
+    The JSON is unindented: its declared reader is ``json.loads`` inside a
     ``run_python`` sandbox, and indentation would inflate a nested result
     several times over in the bytes written, stored, and — outside a
     `.scratch/` directory — chunked and embedded.  Rendering for a human to
