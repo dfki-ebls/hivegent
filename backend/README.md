@@ -115,6 +115,40 @@ On pydantic-ai v2 that list also holds the partial messages of an interrupted ru
 A turn that never finished still has to be normalized before it is stored: `close_orphan_tool_calls` closes the call the error aborted (an unresolved call would otherwise reload as an approval request and make the history invalid to replay), and `record_turn_error` keeps the error text for the reloaded banner.
 A clean finish is stored untouched, so a genuinely approval-pending call stays dangling and reloads as the approval request it is.
 
+### Compaction is a turn of the conversation, not a request beside it
+
+`summarize_conversation` asks for a conversation's summary by appending `COMPACT_PROMPT` to that conversation's own message list and running it under the same `RunPrefix` the chat turns ran under.
+Everything ahead of the prompt is then byte-identical to the request the provider just served, so its KV prefix cache answers for it and only the prompt is prefilled; the request it replaced re-rendered the history as a flat transcript under different instructions and no tools, which shares nothing with that cache and pays a full prefill of a nearly-full window.
+That is what `AgentRunConfig` exists for: the compaction route posts the same body a chat turn posts, and `build_run_prefix` composes both, owning the two preconditions of an identical prefix (the MCP list is validated and `llm` resolved before the toolsets are built) so no caller can compose one that silently differs.
+
+The continuation is the *larger* request, though, and it is asked for exactly when a conversation has stopped fitting, so room has to be made.
+It is made by dropping messages from the **tail**, which is the whole reason there is one summarizer here and not two: cutting the head would throw away the block being reused, while cutting the tail leaves a shorter prefix of that same block, so a trimmed continuation is still a cache hit where a re-rendered transcript never was.
+Where to cut comes from the conversation itself: `ModelResponse.usage` records what each request carried, so input plus output on a response is exactly the size of the history up to it -- observed, not configured, which is why `_plan` needs no tokenizer, no model card, and no `context_window` setting.
+`_cut_points` offers only prefixes in which every tool call has been answered, since a provider rejects a history that ends on an open one, and not those ending on a fresh user prompt, which measure the same as the turn before them while keeping a message the provider never counted.
+That second rule is what makes the longest prefix the longest one the endpoint has actually *served*, which is where the first attempt starts: the whole history when the last turn succeeded, everything but the refused prompt when it did not.
+The endpoint is the cheaper judge of whether that fits, since an overflow is refused before anything is prefilled while a prefix trimmed on suspicion spends a full request to answer from less of the conversation than was available, so only a refusal sheds.
+
+That last rule is what lets the subagent recovery path (`_safe_summarize`) drop its separate flat-transcript summarizer and call this one: a crashed subagent's messages may end mid tool call, and trimming back to the last answered one is both what makes the request legal and what makes it fit.
+Its prefix is also the hottest cache in the system, having just run.
+`_COMPACT_RESERVE_TOKENS` is what the request needs beyond the history it keeps -- the prompt plus room to answer it -- and is the step each refusal sheds, walking the summary back a turn at a time rather than halving it (`_MAX_ATTEMPTS`, three).
+A conversation nothing ever reported a size for plans one attempt with everything, the endpoint being the only judge left.
+One `RunPrefix` carries the resolved model alongside the config it came from, because building one reaches for the lifespan's shared HTTP client: composing it where that is live means `summarize_conversation` takes no model of its own and cannot be handed one the prefix disagrees with.
+
+`SUMMARY_MAX_TOKENS` is 8192, between opencode's `SUMMARY_OUTPUT_TOKENS` of 4096 and pi's 80% of a 16384-token reserve, and clamped down to the request's own `max_tokens` where that is lower.
+`COMPACT_PROMPT` bounds the summary by structure rather than by a word count, which is what both of those harnesses settled on: a length cap makes the model drop sections instead of tightening them, and the summary is the only carrier of what the conversation established.
+`_COMPACT_LIMITS` bounds the run to one tool round trip rather than the chat turn's budget, since every request on this path carries a nearly full window.
+
+Compaction is offered when the provider has actually refused a turn, and never on a forecast that one is coming.
+`ContextLimitBanner` keys off `is_context_overflow`, the same rejection the chat route already classifies, so the trigger is an observed fact.
+Forecasting it would take three numbers the system does not reliably have: a window (a self-hosted endpoint's model card states one only sometimes, and the genai-prices table covers hosted models only), a reserve the continuation needs, and a share of the window to fire at, none of which the token counts of a *following* turn are known against.
+That is a lot of estimate for a banner the user still has to click, and being wrong in either direction is worse than being late: too eager throws away a conversation's context on a turn that would have fit, too shy adds a banner beside the one the refusal already shows.
+
+TODO: adopt pydantic-ai's `CompactionPart` as an in-conversation boundary instead of forking a new conversation.
+Upstream models compaction as a part inside one message list: `post_compaction_window` trims everything before it, and derived state such as the tool-search reveal set resets at it for free.
+That would keep one conversation id across a compaction (today `create_compacted_conversation` mints a new one and the client navigates, which is why compaction cannot be auto-fired without teleporting the user mid-flow) and would let a threshold trigger become automatic.
+Blocked on transport: `OpenAICompaction` refuses anything but `OpenAIResponsesModel` and `CompactionPart` round-trips provider-owned data, so neither reaches an `OpenAIChatModel` against vLLM or llama.cpp.
+Revisit when pydantic-ai gains a provider-agnostic compaction boundary (its own `messages.py` notes the same gap, upstream #7255).
+
 ## Filesystem as the source of truth for content
 
 The workspace tree under `data/workspace/<store_key>/` is authoritative for document content (markdown, originals, and assets), and the Postgres `documents` plus `chunks` rows are a derived index reconciled from it.

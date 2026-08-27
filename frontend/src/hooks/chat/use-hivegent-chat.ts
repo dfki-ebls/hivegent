@@ -4,6 +4,8 @@ import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithApprovalResponses,
 } from "ai";
+import type { BuildRequestBody } from "@/hooks/chat/use-build-request-body";
+import type { ChatRequestConfig } from "@/lib/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getAuthHeaders } from "@/lib/api";
 import {
@@ -49,7 +51,7 @@ export interface UseHivegentChatOptions {
   draft?: boolean;
   onConversationCreated?: (id: string) => void;
   /** The current chat settings, read afresh for every outgoing request. */
-  requestBody?: () => Record<string, unknown>;
+  requestBody?: BuildRequestBody;
 }
 
 export function useHivegentChat(
@@ -178,7 +180,7 @@ export function useHivegentChat(
   const { sendMessage, regenerate } = chat;
 
   const sendUserMessage = useCallback(
-    async (input: SendUserMessageInput, body?: Record<string, unknown>) => {
+    async (input: SendUserMessageInput, body?: ChatRequestConfig) => {
       const headers = await getAuthHeaders();
       // One payload shape for every send. An edit/retry addresses a node with
       // `messageId`, but it still submits a whole user message, so it carries

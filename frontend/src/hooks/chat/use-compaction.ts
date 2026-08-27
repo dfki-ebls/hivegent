@@ -2,22 +2,29 @@ import { useNavigate } from "@tanstack/react-router";
 import type { FileUIPart } from "ai";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { buildLlmConfig, compactConversation } from "@/lib/api";
+import { compactConversation } from "@/lib/api";
 import { type ChatMessage, type UserTurn, getLastUserMessage } from "@/lib/chat/chat-utils";
+import type { BuildRequestBody } from "@/hooks/chat/use-build-request-body";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
-import { useSettingsStore } from "@/stores/settings-store";
 
 interface UseCompactionArgs {
   id: string;
   messages: ChatMessage[];
   isLoadingHistory: boolean;
   onRetry: (text: string, files?: FileUIPart[]) => void;
+  /** The same body a chat turn posts, so compaction can continue that turn. */
+  buildRequestBody: BuildRequestBody;
 }
 
-export function useCompaction({ id, messages, isLoadingHistory, onRetry }: UseCompactionArgs) {
+export function useCompaction({
+  id,
+  messages,
+  isLoadingHistory,
+  onRetry,
+  buildRequestBody,
+}: UseCompactionArgs) {
   const navigate = useNavigate();
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
-  const overrides = useSettingsStore((state) => state.overrides);
   const [isCompacting, setIsCompacting] = useState(false);
   const pendingRetryRef = useRef<UserTurn | undefined>(undefined);
   const onRetryRef = useRef(onRetry);
@@ -43,7 +50,7 @@ export function useCompaction({ id, messages, isLoadingHistory, onRetry }: UseCo
       });
 
       try {
-        const result = await compactConversation(id, buildLlmConfig(overrides), messages);
+        const result = await compactConversation(id, buildRequestBody(), messages);
 
         if (activeIdRef.current !== id) {
           toast.success("Conversation compacted", {
@@ -76,7 +83,7 @@ export function useCompaction({ id, messages, isLoadingHistory, onRetry }: UseCo
         setIsCompacting(false);
       }
     },
-    [id, overrides, messages, clearAll, navigate],
+    [id, buildRequestBody, messages, clearAll, navigate],
   );
 
   useEffect(() => {

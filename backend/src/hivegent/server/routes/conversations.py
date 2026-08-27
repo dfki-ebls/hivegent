@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -23,13 +24,12 @@ from starlette.responses import Response
 from ...agents import (
     UserDeps,
     base_agent,
-    build_capabilities,
     turn_usage_limits,
     user_agent,
 )
 from ...agents.subagent_events import SubagentUpdate
 from ...auth import User, get_current_user
-from ...compaction import CompactionResult, compact_conversation
+from ...compaction import compact_conversation
 from ...config import settings
 from ...converters import INGESTIBLE_IMAGE_MEDIA_TYPES
 from ...converters.images import sanitize_image_bytes
@@ -51,20 +51,13 @@ from ...db.conversations import (
     set_conversation_title,
 )
 from ...humanize import format_bytes
-from ...llm import model_from_config, resolve_thinking, thinking_model_settings
-from ...llm_config import LlmConfig
-from ...mcp import build_mcp_server, validate_mcp_servers
-from ...prompts import (
-    LANGUAGE_INSTRUCTIONS,
-    MATH_INSTRUCTIONS,
-    PERSONALITY_TEMPLATES,
-    Personality,
-    join_instructions,
+from ...llm import (
+    model_from_config,
+    resolve_thinking,
+    thinking_model_settings,
 )
 from ...tools.formatting import BLOCK_SEP
 from ...types import (
-    MODE_VALUES,
-    REASONING_EFFORT_VALUES,
     ChatRequestConfig,
     CompactConversationRequest,
     CompactConversationResponse,
@@ -74,15 +67,12 @@ from ...types import (
     GenerateTitleResponse,
     InstructionsSnapshot,
     ServerConversation,
-    ToolsSpec,
     UpdateTitleRequest,
 )
 from ..cancellation import run_until_disconnect
 from ..common import (
-    group_stores,
-    parse_document_scope,
+    build_run_prefix,
     prepare_llm_config,
-    user_store,
 )
 from ..operations import attachment_disposition
 from ..vercel import (
@@ -242,15 +232,13 @@ async def create_conversation_compaction(
     """
 
     messages = ChatAdapter.load_messages(request.messages)
-
-    async def _compact() -> CompactionResult:
-        llm_config = prepare_llm_config(request.llm, tier="main")
-        return await compact_conversation(
-            user.id, conversation_id, messages, llm_config
-        )
+    run_prefix = build_run_prefix(request, user)
 
     try:
-        result = await run_until_disconnect(http_request, _compact())
+        result = await run_until_disconnect(
+            http_request,
+            compact_conversation(user.id, conversation_id, messages, run_prefix),
+        )
     except HTTPException:
         raise
     except ValueError as exc:
@@ -385,49 +373,6 @@ async def import_conversation_route(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-async def _parse_chat_config(request: Request) -> ChatRequestConfig:
-    """Parse chat configuration from the request body.
-
-    Defaults and the SSRF DNS check are applied later by
-    :func:`prepare_llm_config` at the request boundary.
-    """
-    body = await request.json()
-    llm = LlmConfig(**(body.get("llm") or {}))
-    try:
-        personality = Personality(body.get("personality", "default"))
-    except ValueError:
-        personality = Personality.DEFAULT
-
-    system_message: str = body.get("system_message") or ""
-    raw_effort = body.get("reasoning_effort", "auto")
-    reasoning_effort = raw_effort if raw_effort in REASONING_EFFORT_VALUES else "auto"
-    included_documents: list[str] = body.get("included_documents") or []
-    excluded_documents: list[str] = body.get("excluded_documents") or []
-    tools = ToolsSpec(**(body.get("tools") or {}))
-    raw_mode = body.get("mode", "interactive")
-    mode = raw_mode if raw_mode in MODE_VALUES else "interactive"
-    raw_trigger = body.get("trigger")
-    trigger = (
-        raw_trigger
-        if raw_trigger in ("submit-message", "regenerate-message")
-        else "submit-message"
-    )
-
-    return ChatRequestConfig(
-        conversation_id=body.get("conversation_id", ""),
-        personality=personality,
-        system_message=system_message,
-        reasoning_effort=reasoning_effort,
-        mode=mode,
-        llm=llm,
-        included_documents=included_documents,
-        excluded_documents=excluded_documents,
-        tools=tools,
-        trigger=trigger,
-        message_id=body.get("messageId") or None,
-    )
-
-
 def _accept_attachment(item: UserContent) -> None:
     """Admit one attached item, sanitising it in place, or reject it.
 
@@ -486,44 +431,15 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     ``X-Message-Id`` response header, under the same CORS constraint as
     ``X-Conversation-Id``.
     """
-    config = await _parse_chat_config(request)
+    # The body is the AI SDK's, with the run configuration spliced in beside
+    # its messages; extras are ignored, so one model validates both this and
+    # the compaction request that has to reproduce the same prefix.
+    config = ChatRequestConfig.model_validate(await request.json())
     config.conversation_id = conversation_id
 
-    config.llm = prepare_llm_config(config.llm, tier="main")
-    try:
-        validate_mcp_servers(config.tools.mcp_servers)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    relevant_documents, document_filter, group_filters = parse_document_scope(
-        config.included_documents,
-        config.excluded_documents,
-        user.all_groups,
-    )
-
-    if config.personality == Personality.CUSTOM and config.system_message:
-        parts = [config.system_message]
-    else:
-        parts = [
-            PERSONALITY_TEMPLATES.get(
-                config.personality,
-                PERSONALITY_TEMPLATES[Personality.DEFAULT],
-            )
-        ]
-
-    parts.extend([LANGUAGE_INSTRUCTIONS, MATH_INSTRUCTIONS])
-
-    # Only the guidance that is tied to no tool at all belongs here; everything
-    # describing what a tool does or returns rides on the capability that owns
-    # it, composed by mode and tool enablement in `build_capabilities`.
-    instructions = join_instructions(parts)
-
-    store = user_store(user)
-    user_group_stores = group_stores(user)
-    writable_group_stores = group_stores(user, writable=True)
-
+    run_prefix = build_run_prefix(config, user)
     thinking = resolve_thinking(config.reasoning_effort)
-    model_settings = thinking_model_settings(thinking, config.llm)
+    model_settings = thinking_model_settings(thinking, run_prefix.llm)
 
     try:
         # `from_request` is typed to return the base adapter with erased type
@@ -545,23 +461,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     # Live subagent transcript snapshots flow through this sink; the streaming
     # response drains it concurrently with the run (see `run_and_persist`).
     subagent_sink: asyncio.Queue[SubagentUpdate] = asyncio.Queue()
-    deps = UserDeps(
-        user_id=user.id,
-        store=store,
-        mode=config.mode,
-        group_stores=user_group_stores,
-        write_group_stores=writable_group_stores,
-        document_filter=document_filter,
-        group_filters=group_filters,
-        relevant_documents=relevant_documents,
-        llm=config.llm,
-        subagent_sink=subagent_sink,
-    )
-    capabilities = build_capabilities(
-        config.tools,
-        extra=[build_mcp_server(server) for server in config.tools.mcp_servers],
-        mode=deps.mode,
-    )
+    deps = replace(run_prefix.deps, subagent_sink=subagent_sink)
 
     # History is server-authoritative: load the active-path prefix up to the
     # fork point from the DB and replay it, ignoring the browser echo.  The
@@ -597,9 +497,9 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     stream = adapter.run_stream(
         deps=deps,
         output_type=[str, DeferredToolRequests],
-        model=model_from_config(config.llm),
-        capabilities=capabilities,
-        instructions=instructions,
+        model=run_prefix.model,
+        capabilities=run_prefix.capabilities,
+        instructions=run_prefix.instructions,
         model_settings=model_settings,
         message_history=prefix,
         usage_limits=turn_usage_limits,

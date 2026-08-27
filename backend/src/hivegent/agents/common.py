@@ -1,11 +1,14 @@
 """Shared helpers for the agents package."""
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Annotated
 
 from pydantic import Field
 from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import Model
 
 from ..config import settings
 from ..llm_config import LlmConfig
@@ -18,6 +21,7 @@ from .subagent_events import SubagentUpdate
 __all__ = [
     "ExploreTaskArg",
     "MemoryContentArg",
+    "RunPrefix",
     "UserDeps",
     "scope_instructions",
 ]
@@ -112,6 +116,32 @@ class UserDeps:
         )
 
         return format_document_scope(self.relevant_documents, hidden)
+
+
+@dataclass(slots=True, frozen=True)
+class RunPrefix:
+    """The inputs that compose a run's prompt prefix.
+
+    Kept together because compaction has to reproduce a chat turn's prefix
+    exactly, down to the document scope ``deps`` renders into the prompt via
+    :func:`scope_instructions` and the resolved ``llm`` it is sent under, or
+    the provider's cached prefix is thrown away.
+    Named for what it is rather than ``AgentRun``, which is a different thing
+    in pydantic-ai.
+    """
+
+    deps: UserDeps
+    capabilities: Sequence[AbstractCapability[UserDeps]]
+    # ``None`` where the run states none of its own, as a subagent does: its
+    # whole prompt comes from the capability it is composed from.
+    instructions: str | None
+    # Carried rather than left to the caller because the prefix and the model
+    # go together: a different model has a different cache entirely.  The
+    # resolved `model` rides along because building one reaches for the
+    # lifespan's shared HTTP client, so it is composed once where that is live
+    # rather than wherever a prefix happens to be used.
+    llm: LlmConfig
+    model: Model
 
 
 def scope_instructions(ctx: RunContext[UserDeps]) -> str | None:

@@ -21,6 +21,7 @@ __all__ = [
     "WORKSPACE_PATH_INSTRUCTIONS",
     "WRITE_INSTRUCTIONS",
     "Personality",
+    "compose_instructions",
     "format_document_scope",
     "join_instructions",
 ]
@@ -39,6 +40,24 @@ class Personality(StrEnum):
 def join_instructions(parts: Iterable[str]) -> str:
     """Join instruction parts into a single prompt, separated by blank lines."""
     return "\n\n".join(part.strip() for part in parts)
+
+
+def compose_instructions(personality: Personality, system_message: str) -> str:
+    """The agent-level system prompt a run's configuration composes.
+
+    Only the guidance tied to no tool at all belongs here; everything
+    describing what a tool does or returns rides on the capability that owns
+    it (``agents.capabilities.build_capabilities``).
+    """
+    base = (
+        system_message
+        if personality is Personality.CUSTOM and system_message
+        else PERSONALITY_TEMPLATES.get(
+            personality, PERSONALITY_TEMPLATES[Personality.DEFAULT]
+        )
+    )
+
+    return join_instructions([base, LANGUAGE_INSTRUCTIONS, MATH_INSTRUCTIONS])
 
 
 def format_document_scope(relevant: frozenset[str], hidden: frozenset[str]) -> str:

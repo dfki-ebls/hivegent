@@ -1,7 +1,13 @@
 import type { ChatMessage } from "@/lib/chat/chat-utils";
 import { z } from "zod";
 
-import type { AgentMode, McpServerEntry, ToolsSpec } from "@/lib/types";
+import type {
+  AgentMode,
+  AgentRunConfig,
+  McpServerEntry,
+  ToolsPayload,
+  ToolsSpec,
+} from "@/lib/types";
 import {
   type AdminFactoryResetResponse,
   AdminFactoryResetResponseSchema,
@@ -413,7 +419,7 @@ export function buildModePayload(mode: AgentMode): AgentMode {
  * a frontend-only feature, so disabling it implicitly removes the data
  * from every outgoing request without touching the backend.
  */
-export function buildToolsPayload(spec: ToolsSpec): Record<string, unknown> {
+export function buildToolsPayload(spec: ToolsSpec): ToolsPayload {
   if (!featureFlags.toolsSpec) {
     return { disabled_tools: [], mcp_servers: [] };
   }
@@ -708,16 +714,24 @@ export async function generateConversationTitle(
   );
 }
 
+/**
+ * Compact a conversation.
+ *
+ * `runConfig` is the very body a chat turn posts (see `useBuildRequestBody`):
+ * the server asks for the summary as one more turn of this conversation, and
+ * that only reuses the provider's cached prefix while every prefix-composing
+ * field matches the turns before it.
+ */
 export async function compactConversation(
   conversationId: string,
-  llm: LlmConfig,
+  runConfig: AgentRunConfig,
   messages: ChatMessage[],
 ): Promise<CompactConversationResponse> {
   return requestJson(
     `${API_BASE_URL}/api/conversations/${conversationId}/compaction`,
     "Compaction failed",
     CompactConversationResponseSchema,
-    jsonRequest("POST", { llm, messages }),
+    jsonRequest("POST", { ...runConfig, messages }),
   );
 }
 

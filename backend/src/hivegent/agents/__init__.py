@@ -6,7 +6,7 @@ from .capabilities import (
     collect_tool_schemas,
     invoke_agent_tool,
 )
-from .common import ExploreTaskArg, MemoryContentArg, UserDeps
+from .common import ExploreTaskArg, MemoryContentArg, RunPrefix, UserDeps
 from .tools import (
     SUBAGENT_CAPABILITIES,
     SubagentName,
@@ -23,6 +23,7 @@ __all__ = [
     "SUBAGENT_CAPABILITIES",
     "ExploreTaskArg",
     "MemoryContentArg",
+    "RunPrefix",
     "SubagentName",
     "UserDeps",
     "base_agent",

@@ -10,14 +10,13 @@ from dataclasses import dataclass
 
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 
-from .agents.summarize import summarize_messages
+from .agents import RunPrefix
+from .agents.summarize import summarize_conversation
 from .db.conversations import (
     conversation_exists,
     create_compacted_conversation,
     extract_title,
 )
-from .llm import model_from_config, summary_model_settings
-from .llm_config import LlmConfig
 
 __all__ = [
     "CompactionResult",
@@ -39,7 +38,7 @@ async def compact_conversation(
     user_id: str,
     conversation_id: str,
     messages: Sequence[ModelMessage],
-    llm_config: LlmConfig,
+    run: RunPrefix,
 ) -> CompactionResult:
     """Compact a conversation by summarizing it into a new conversation.
 
@@ -50,6 +49,11 @@ async def compact_conversation(
     The messages come from the client rather than the database so the summary
     reflects the exact branch and partial turn visible to the user.
 
+    *run* is the prompt prefix the conversation's own turns ran under, which
+    is what lets the summary be asked for as one more of them rather than as
+    a fresh request the provider has cached nothing for (see
+    :func:`~hivegent.agents.summarize.summarize_conversation`).
+
     The new conversation links back to the original via ``compacted_from``
     only when the original is a persisted row — a freshly minted draft has
     no row to reference yet.
@@ -58,7 +62,7 @@ async def compact_conversation(
         user_id: The user who owns the conversation.
         conversation_id: The conversation being compacted.
         messages: The conversation messages to summarize.
-        llm_config: LLM configuration for the summarization model.
+        run: The prompt prefix the conversation's turns ran under.
 
     Returns:
         A CompactionResult with the new conversation ID and summary.
@@ -69,11 +73,7 @@ async def compact_conversation(
     if not messages:
         raise ValueError(f"Conversation {conversation_id} not found or empty")
 
-    summary = await summarize_messages(
-        messages,
-        model_from_config(llm_config),
-        summary_model_settings(llm_config),
-    )
+    summary = await summarize_conversation(messages, run)
 
     base_title = extract_title(messages) or "Untitled"
     summary_message = ModelResponse(parts=[TextPart(content=summary)])

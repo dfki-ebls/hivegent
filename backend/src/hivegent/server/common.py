@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import Header, HTTPException
 from pydantic import ValidationError
 
+from ..agents import RunPrefix, UserDeps, build_capabilities
 from ..auth import User
 from ..config import (
     normalize_unicode,
@@ -13,14 +14,18 @@ from ..config import (
     sanitize_group_id,
     settings,
 )
+from ..llm import model_from_config
 from ..llm_config import LlmConfig, LlmTier, resolve_llm_config
+from ..mcp import build_mcp_server, validate_mcp_servers
+from ..prompts import compose_instructions
 from ..security import require_safe_external_url
 from ..store import Casebase, WorkspaceScope
-from ..types import DocumentFilter
+from ..types import AgentRunConfig, DocumentFilter
 from .models import PipelineSpec
 
 __all__ = [
     "ClientId",
+    "build_run_prefix",
     "group_store",
     "group_stores",
     "parse_document_scope",
@@ -144,6 +149,56 @@ def group_stores(user: User, *, writable: bool = False) -> tuple[Casebase, ...]:
     """
     groups = user.write_groups if writable else user.all_groups
     return tuple(group_store(group_id) for group_id in groups)
+
+
+def build_run_prefix(config: AgentRunConfig, user: User) -> RunPrefix:
+    """Compose the prompt prefix *config* describes, for chat or compaction.
+
+    One builder for both callers on purpose: a compaction request asks for its
+    summary as one more turn of the conversation, and that only pays off while
+    its instructions, tool schemas, and document scope match the chat turn
+    before it token for token.
+
+    It also owns the two preconditions of that match, so no caller can compose
+    a prefix that differs by forgetting one: the LLM config is resolved (and
+    returned on the result, since prefix and model go together), and the MCP
+    list is validated before its toolsets are built.
+    """
+    try:
+        validate_mcp_servers(config.tools.mcp_servers)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    llm = prepare_llm_config(config.llm, tier="main")
+    relevant_documents, document_filter, group_filters = parse_document_scope(
+        config.included_documents,
+        config.excluded_documents,
+        user.all_groups,
+    )
+
+    deps = UserDeps(
+        user_id=user.id,
+        store=user_store(user),
+        mode=config.mode,
+        group_stores=group_stores(user),
+        write_group_stores=group_stores(user, writable=True),
+        document_filter=document_filter,
+        group_filters=group_filters,
+        relevant_documents=relevant_documents,
+        llm=llm,
+    )
+
+    return RunPrefix(
+        deps=deps,
+        capabilities=build_capabilities(
+            config.tools,
+            extra=[build_mcp_server(server) for server in config.tools.mcp_servers],
+            mode=deps.mode,
+        ),
+        instructions=compose_instructions(config.personality, config.system_message),
+        llm=llm,
+        model=model_from_config(llm),
+    )
 
 
 def parse_pipeline_spec(raw: str) -> PipelineSpec:

@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { buildLlmConfig, buildModePayload, buildToolsPayload } from "@/lib/api";
-import { type AgentMode, type ReasoningEffort } from "@/lib/types";
+import type { AgentMode, ChatRequestConfig, ReasoningEffort } from "@/lib/types";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { useSettingsStore } from "@/stores/settings-store";
 
@@ -9,7 +9,7 @@ export interface BuildRequestBodyArgs {
   reasoningEffort: ReasoningEffort;
 }
 
-export type BuildRequestBody = (modeOverride?: AgentMode) => Record<string, unknown>;
+export type BuildRequestBody = (modeOverride?: AgentMode) => ChatRequestConfig;
 
 export function useBuildRequestBody({
   agentMode,

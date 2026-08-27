@@ -10,10 +10,9 @@ from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelMessage, ToolReturn
-from pydantic_ai.models import Model
 
 from ...config import settings
-from ...llm import is_context_overflow, model_from_config, summary_model_settings
+from ...llm import is_context_overflow, model_from_config
 from ...llm_config import LlmConfig, resolve_llm_config
 from ...prompts import (
     EXPLORE_INSTRUCTIONS,
@@ -23,9 +22,9 @@ from ...prompts import (
 from ...tools.base import ToolOutput
 from ...tools.pydantic_ai import wrap_tool_output
 from ..app import turn_usage_limits, user_agent
-from ..common import ExploreTaskArg, UserDeps, scope_instructions
+from ..common import ExploreTaskArg, RunPrefix, UserDeps, scope_instructions
 from ..subagent_events import SubagentTranscriptBuilder, SubagentUpdate
-from ..summarize import summarize_messages
+from ..summarize import summarize_conversation
 from .conversation import conversation_toolset
 from .explore import explore_toolset
 from .web import web_enabled, web_toolset
@@ -128,18 +127,25 @@ def _failure_reason(exc: Exception) -> str:
 
 
 async def _safe_summarize(
-    messages: Sequence[ModelMessage], model: Model, llm_config: LlmConfig
+    messages: Sequence[ModelMessage], run: RunPrefix
 ) -> str | None:
     """Summarize the partial transcript, returning ``None`` if even that fails.
+
+    Asked for as the next turn of the subagent's own run, the same way a
+    conversation is compacted: the prefix it just ran under is the one the
+    provider still holds, and a run that died on a context overflow is trimmed
+    back to a prefix that fits rather than re-rendered whole.
 
     A subagent crash can stem from the model endpoint itself, so the
     recovery summary (another call to the same model) may fail too; a bare
     note then stands in for it rather than escalating the failure.
     """
     try:
-        return await summarize_messages(
-            messages, model, summary_model_settings(llm_config)
-        )
+        # The recovery runs after the timeout above has expired, so it carries
+        # its own: a summary is worth a wait, but not an unbounded one on a
+        # chat turn that is already over its subagent budget.
+        async with asyncio.timeout(settings.llm.subagent_timeout_seconds):
+            return await summarize_conversation(messages, run)
 
     except Exception:
         logger.warning("Subagent recovery summary failed", exc_info=True)
@@ -171,7 +177,16 @@ async def run_subagent(
     summarised and returned instead of aborting the whole chat turn.
     """
     llm_config = _subagent_llm_config(ctx.deps)
-    model = model_from_config(llm_config)
+    # One prefix drives the run and the summary that recovers it: composed
+    # twice, a capability or instruction added to either would silently stop
+    # the recovery from continuing the very run it is recovering.
+    prefix = RunPrefix(
+        deps=ctx.deps,
+        capabilities=[capability],
+        instructions=None,
+        llm=llm_config,
+        model=model_from_config(llm_config),
+    )
     tool_call_id = ctx.tool_call_id or ""
     builder = SubagentTranscriptBuilder(tool_call_id)
     sink = ctx.deps.subagent_sink
@@ -184,9 +199,9 @@ async def run_subagent(
 
     async with user_agent.iter(
         task,
-        model=model,
-        deps=ctx.deps,
-        capabilities=[capability],
+        model=prefix.model,
+        deps=prefix.deps,
+        capabilities=prefix.capabilities,
         usage=ctx.usage,
         usage_limits=turn_usage_limits,
     ) as run:
@@ -221,16 +236,15 @@ async def run_subagent(
             # A subagent that overflows, times out, or crashes has still done
             # useful work — its transcript is on the run.  Summarise the partial
             # findings and hand them back instead of failing the tool call, so
-            # the main thread keeps them and continues.  Transcript fidelity
-            # follows `settings.summarization`, the same config every
-            # summarization consumer uses; the summary reuses the model that
-            # just ran, so `_safe_summarize` degrades to a bare note if that
-            # model is itself the cause of the failure.
+            # the main thread keeps them and continues.  The summary is the
+            # subagent's own run continued by one turn, so it reuses the model
+            # and the prefix that just ran -- and `_safe_summarize` degrades to
+            # a bare note if that model is itself the cause of the failure.
             reason = _failure_reason(exc)
             logger.warning(
                 "Subagent %s; recovering partial findings", reason, exc_info=exc
             )
-            summary = await _safe_summarize(run.all_messages(), model, llm_config)
+            summary = await _safe_summarize(run.all_messages(), prefix)
             findings = (
                 f"Summary of the findings so far:\n\n{summary}"
                 if summary is not None

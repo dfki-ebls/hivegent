@@ -780,6 +780,50 @@ export interface LlmConfig {
   base_url?: string | null;
 }
 
+/**
+ * The half of a chat request that composes the model's prompt prefix, mirroring
+ * `AgentRunConfig` on the backend.
+ *
+ * Compaction posts exactly this beside its messages, because the summary is
+ * asked for as one more turn of the conversation and only reuses the provider's
+ * cached prefix while every field here matches the turns before it.
+ */
+export interface AgentRunConfig {
+  personality: Personality;
+  system_message?: string;
+  mode: AgentMode;
+  llm: LlmConfig;
+  included_documents: string[];
+  excluded_documents: string[];
+  tools: ToolsPayload;
+}
+
+/** The snake_case wire form of {@link ToolsSpec}, built by `buildToolsPayload`. */
+export interface ToolsPayload {
+  disabled_tools: string[];
+  mcp_servers: {
+    url: string;
+    headers: Record<string, string>;
+    tool_prefix: string | null;
+    oauth2: {
+      client_id: string;
+      client_secret: string;
+      scopes: string | null;
+    } | null;
+  }[];
+}
+
+/**
+ * {@link AgentRunConfig} plus the model setting only a chat turn carries.
+ *
+ * Narrower than the backend class of the same name, which also holds
+ * `conversation_id`, `trigger`, and `message_id`: those address a turn rather
+ * than configure it, and `useHivegentChat` splices them into the body itself.
+ */
+export interface ChatRequestConfig extends AgentRunConfig {
+  reasoning_effort: ReasoningEffort;
+}
+
 // ============================================================
 // Display constants
 // ============================================================

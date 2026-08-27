@@ -1,3 +1,4 @@
+import type { BuildRequestBody } from "@/hooks/chat/use-build-request-body";
 import type { UIMessage } from "@ai-sdk/react";
 import { useEffect, useRef } from "react";
 
@@ -10,7 +11,7 @@ export function useChatErrorLogger(
   error: Error | undefined,
   conversationId: string,
   messages: UIMessage[],
-  getBody: () => Record<string, unknown>,
+  getBody: BuildRequestBody,
 ) {
   const loggedErrorRef = useRef<unknown>(null);
   const messagesRef = useRef(messages);

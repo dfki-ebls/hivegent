@@ -362,23 +362,28 @@ def thinking_model_settings(
     return settings
 
 
-# Completion cap for a one-shot summary request.  The summary instructions
-# bound the output to a few hundred words, so this generous ceiling only
-# guards against a reasoning model spending the whole (provider-default)
-# budget on thinking and returning a length-truncated empty response.
-SUMMARY_MAX_TOKENS = 2048
+# Completion cap for a one-shot summary request: a ceiling that fits a
+# structured handover rather than a paragraph, sized against what other
+# harnesses budget (see `backend/README.md`).  Its other job is to stop a
+# reasoning model from spending the whole provider-default budget on thinking
+# and returning a length-truncated empty response.
+SUMMARY_MAX_TOKENS = 8192
 
 
 def summary_model_settings(config: LlmConfig) -> ModelSettings:
     """Bounded, reasoning-off settings for a one-shot summary request.
 
     Summarization renders a large (near-overflowing) transcript into a
-    short digest, so reasoning adds little and risks the model emitting
+    structured digest, so reasoning adds little and risks the model emitting
     only thinking until it hits the completion limit — a length-truncated
     empty response the server reports as success.  Disabling thinking and
     capping the completion keeps the whole output budget available for the
-    summary itself.
+    summary itself.  The cap never rises above what the request is already
+    configured for: a ``max_tokens`` the endpoint would reject is not made
+    acceptable by the summary being the one asking for it.
     """
-    settings = thinking_model_settings(False, config)
-    settings["max_tokens"] = SUMMARY_MAX_TOKENS
-    return settings
+    model_settings = thinking_model_settings(False, config)
+    model_settings["max_tokens"] = min(
+        SUMMARY_MAX_TOKENS, model_settings.get("max_tokens", SUMMARY_MAX_TOKENS)
+    )
+    return model_settings

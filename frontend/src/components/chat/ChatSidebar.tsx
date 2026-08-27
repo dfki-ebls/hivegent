@@ -160,6 +160,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     messages,
     isLoadingHistory,
     onRetry: handleSendMessage,
+    buildRequestBody,
   });
 
   // One condition behind both compact buttons, the header's and the banner's.

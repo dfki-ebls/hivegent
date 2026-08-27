@@ -316,26 +316,6 @@ class LlmSettings(BaseModel):
     retries: int = 2
 
 
-class SummarizationSettings(BaseModel):
-    """Transcript fidelity for conversation summarization.
-
-    Applies to every summarization consumer — conversation compaction
-    and subagent overflow recovery — so both produce summaries from the
-    same view of a transcript.  The defaults include everything for
-    maximum summary fidelity.  Summarization carries no token budget:
-    the conversation just (nearly) fit the model's context window, and
-    the short summary instructions usually leave enough headroom even
-    for a full transcript.  Disabling the toggles shrinks the request
-    when a deployment sees residual overflow errors instead.
-    """
-
-    include_tools: bool = True
-    """Whether transcripts carry tool calls and their results."""
-
-    include_reasoning: bool = True
-    """Whether transcripts carry the assistant's reasoning parts."""
-
-
 class MultimodalSettings(BaseModel):
     """How binary content reaches the chat model.
 
@@ -867,7 +847,6 @@ class Settings(BaseSettings):
         )
 
     llm: LlmSettings = LlmSettings()
-    summarization: SummarizationSettings = SummarizationSettings()
     multimodal: MultimodalSettings = MultimodalSettings()
     embedding: EmbeddingSettings = EmbeddingSettings()
     rerank: RerankSettings = RerankSettings()

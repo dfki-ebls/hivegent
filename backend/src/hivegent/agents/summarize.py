@@ -1,183 +1,242 @@
 """Conversation summarization for compaction and subagent recovery.
 
-The input carries no token budgeting or truncation.  The conversation being
-summarized just (nearly) fit the model's context window — overflow
-happens on the latest turn — and the summarization instructions are
-far shorter than the chat system prompt, so rendering that same
-conversation as a plain transcript usually keeps the request within
-the window even with tool and reasoning parts included.  Transcript
-fidelity for the first attempt is governed by ``settings.summarization``
-for every consumer alike.  The completion, by contrast, is bounded and
-reasoning is disabled (``summary_model_settings``): the digest is short,
-and an unbounded reasoning model would otherwise spend the whole
-provider-default budget thinking and return a length-truncated empty
-response the server reports as success.
+A summary is asked for as one more turn of the conversation being summarized:
+:data:`COMPACT_PROMPT` is appended to that conversation's own message list and
+run under the prefix its turns already ran under, so everything ahead of the
+prompt is the block the provider just cached and only the prompt is prefilled.
+Re-rendering the same history as a flat transcript under different instructions
+would share nothing with that cache and pay a full prefill of a nearly-full
+window, which is what this path exists to avoid.
 
-Should that full-fidelity request still overflow — the server rejects it,
-or leaves too little room for the bounded completion — it is retried once
-with the heavy parts shed: tool results and reasoning go, while tool calls
-stay so the summary keeps the document filenames it references.  Those
-parts are the bulk of an agentic conversation's tokens, so the reduced
-transcript falls well below what the model already served.  A rejection
-that is not a context overflow, or an overflow that persists with nothing
-left to shed, propagates to the caller.
+The catch is that the continuation is the *larger* request, and summarization
+is reached exactly when a conversation has stopped fitting.  Room is made by
+dropping messages from the **tail**: the head is the cached prefix, so cutting
+there throws away the very thing being reused, while cutting the tail leaves a
+shorter prefix of the same block.  Where to cut comes from the conversation
+itself -- ``ModelResponse.usage`` records what each request carried, and the
+largest one the endpoint accepted is a floor on its context window -- so no
+tokenizer, model card, or configured window enters here.  A cut lands only
+where every tool call has been answered, since a provider rejects a history
+ending on an open one; that is also what makes this usable for a subagent that
+crashed mid-call.
+
+An estimate can still be wrong, since the provider counts a prompt its own way
+and a turn's report describes the request before it, so a refusal is not fatal:
+each one sheds another :data:`_COMPACT_RESERVE_TOKENS` and asks again.
 """
 
+import logging
 from collections.abc import Sequence
+from typing import NamedTuple
 
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
-    TextPart,
-    ThinkingPart,
+    ModelResponse,
+    RetryPromptPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
-from pydantic_ai.models import Model
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import UsageLimits
 
-from ..config import settings
-from ..llm import is_context_overflow
-from .app import base_agent
+from ..llm import SUMMARY_MAX_TOKENS, is_context_overflow, summary_model_settings
+from .app import user_agent
+from .common import RunPrefix
 
-__all__ = ["summarize_messages"]
+__all__ = ["COMPACT_PROMPT", "summarize_conversation"]
 
-SUMMARY_INSTRUCTIONS = """\
-Summarize this conversation concisely.
-Include:
-- Main topics discussed and questions asked
-- Key findings, conclusions, and decisions
-- Important document references (filenames)
-- Any open questions or action items
+logger = logging.getLogger(__name__)
 
-Keep the summary under 500 words but comprehensive enough to continue the conversation.
-Return ONLY the summary, no extra commentary."""
+COMPACT_PROMPT = """\
+Summarize the conversation as a handover note for continuing the work in a fresh context.
+
+Use this exact structure, keeping every heading even where a section is empty:
+
+## Goal
+[What the user is trying to accomplish, in one or two sentences.]
+
+## Constraints and decisions
+- [Preferences, requirements, and choices made, each with its reason; otherwise "(none)"]
+
+## Progress
+### Done
+- [Finished work and established findings; otherwise "(none)"]
+### In progress
+- [Work underway or partially applied; otherwise "(none)"]
+### Blocked
+- [Blockers, failures, and unknowns; otherwise "(none)"]
+
+## Documents
+- [Full workspace path: why it matters; otherwise "(none)"]
+
+## Next steps
+1. [The immediate concrete action; otherwise "(none)"]
+
+Keep every section to terse bullets rather than prose, and reproduce workspace paths, quoted passages, names, and figures exactly as they appeared.
+Answer from the conversation above alone, and do not call any tools.
+Return only the summary, with no commentary around it."""
+"""The request, appended to the live conversation as its last user turn.
+
+Bounded by structure rather than by a word count, which would make the model
+drop sections instead of tightening them.  The tools stay declared, so the
+closing sentences are the only thing holding the model back from calling one:
+withdrawing them, or sending ``tool_choice='none'``, would rewrite the block
+that sits ahead of the messages and throw away the prefix this path exists for.
+"""
+
+# One tool round trip still yields a summary; a second would mean the model is
+# working rather than answering, and every request on this path carries a
+# nearly full context window.
+_COMPACT_LIMITS = UsageLimits(request_limit=2, tool_calls_limit=1)
+
+_COMPACT_RESERVE_TOKENS = SUMMARY_MAX_TOKENS + 1024
+"""How much a refused attempt sheds before asking again: what the request needs
+on top of the history it keeps, being the prompt and room to answer it.
+
+The thousand over the completion cap covers the prompt itself and the drift
+between the count one request reported and what the provider measures for the
+next.  Shedding by what the request needs rather than by a share of the history
+is what keeps the summary whole: the tail is the most recent work, and a
+conversation that overflowed did so by one turn, not by half of itself.
+"""
+
+_MAX_ATTEMPTS = 3
+"""How many prefixes to offer before giving up.
+
+An overflow is refused before the endpoint prefills anything, so a spare
+attempt is cheap, but a fourth would mean the reported counts bear no relation
+to what the provider measures and no amount of shedding will land.
+"""
 
 
-async def summarize_messages(
-    messages: Sequence[ModelMessage],
-    model: Model,
-    model_settings: ModelSettings,
-) -> str:
-    """Summarize *messages* into a concise digest.
+class _Cut(NamedTuple):
+    """A prefix of a conversation, and what it measured when last sent."""
 
-    The first attempt renders the transcript at the fidelity configured by
-    ``settings.summarization``.  If that overflows the model's own context
-    window, it retries once with tool results and reasoning dropped — tool
-    calls stay, so the summary keeps the document filenames it references.
+    keep: int
+    size: int
 
-    Args:
-        messages: The conversation messages to summarize.
-        model: The model used for summarization.
-        model_settings: Bounded, reasoning-off settings for the request (see
-            :func:`hivegent.llm.summary_model_settings`); an unbounded request
-            lets a reasoning model exhaust the completion budget on thinking
-            and return a length-truncated empty response.
 
-    Returns:
-        A concise summary of the conversation.
+def _cut_points(messages: Sequence[ModelMessage]) -> list[_Cut]:
+    """The prefixes of *messages* the compact prompt can be appended to.
 
-    Raises:
-        ModelHTTPError | UnexpectedModelBehavior: If the model rejects the
-            request for a reason other than context overflow, or the reduced
-            transcript still overflows.
+    A prefix is continuable only where every tool call it makes has been
+    answered, since a provider rejects a history that ends on an open one.  Its
+    size is the count ``ModelResponse.usage`` already carries: input plus
+    output is exactly what the following request sent, so a prefix ending in
+    tool returns is measured by the response before them and understates by
+    those returns, which a refusal then corrects.  Ascending; a prefix no turn
+    ever reported a size for is not offered.
+
+    Neither is one ending on a fresh user prompt: it measures the same as the
+    turn before it while keeping a message the provider never counted, so it
+    sheds nothing.  Leaving those out is also what makes the longest prefix
+    here the longest one the endpoint has actually served -- the whole history
+    when the last turn succeeded, and everything but the refused prompt when it
+    did not.
     """
-    include_tools = settings.summarization.include_tools
-    include_reasoning = settings.summarization.include_reasoning
+    cuts: list[_Cut] = []
+    open_calls: set[str] = set()
+    size = 0
 
-    try:
-        return await _run_summary(
-            messages,
-            model,
-            model_settings,
-            include_tool_calls=include_tools,
-            include_tool_results=include_tools,
-            include_reasoning=include_reasoning,
+    for i, msg in enumerate(messages):
+        answered = False
+        for part in msg.parts:
+            if isinstance(part, ToolCallPart):
+                open_calls.add(part.tool_call_id)
+            elif isinstance(part, ToolReturnPart | RetryPromptPart):
+                open_calls.discard(part.tool_call_id)
+                answered = True
+
+        served = answered or isinstance(msg, ModelResponse)
+        if isinstance(msg, ModelResponse) and msg.usage.input_tokens:
+            size = msg.usage.input_tokens + msg.usage.output_tokens
+
+        if size and served and not open_calls:
+            cuts.append(_Cut(i + 1, size))
+
+    return cuts
+
+
+def _plan(messages: Sequence[ModelMessage]) -> list[int]:
+    """How many leading messages to keep, per attempt, longest first.
+
+    The first attempt keeps everything the endpoint has served, because it is
+    the cheaper judge of whether that still fits: an overflow is refused before
+    anything is prefilled, while a prefix trimmed on suspicion spends a full
+    request to answer from less of the conversation than was available.  Only a
+    refusal sheds, and it sheds what the request needs rather than a share of
+    the history, so the summary walks back one turn at a time.
+
+    A conversation nothing ever reported a size for gets that first attempt and
+    no more: with no measurement, there is no next prefix to name.
+    """
+    cuts = _cut_points(messages) or [_Cut(len(messages), 0)]
+    plan = [cuts[-1].keep]
+    budget = cuts[-1].size
+
+    for _ in range(_MAX_ATTEMPTS - 1):
+        smaller = next(
+            (c for c in reversed(cuts) if c.size + _COMPACT_RESERVE_TOKENS <= budget),
+            None,
         )
+        if smaller is None or smaller.keep >= plan[-1]:
+            break
 
-    except (ModelHTTPError, UnexpectedModelBehavior) as exc:
-        # A full transcript overflowing the model's own window — whether the
-        # server rejects it outright or leaves too little room to answer — is
-        # recoverable, but only while heavy parts remain to shed.
-        if not is_context_overflow(exc) or not (include_tools or include_reasoning):
-            raise
+        plan.append(smaller.keep)
+        budget = smaller.size
 
-    return await _run_summary(
-        messages,
-        model,
-        model_settings,
-        include_tool_calls=include_tools,
-        include_tool_results=False,
-        include_reasoning=False,
+    return plan
+
+
+async def _ask(messages: Sequence[ModelMessage], run: RunPrefix) -> str:
+    """Run the compact prompt as the next turn of *messages*."""
+    result = await user_agent.run(
+        COMPACT_PROMPT,
+        message_history=list(messages),
+        deps=run.deps,
+        model=run.model,
+        model_settings=summary_model_settings(run.llm),
+        capabilities=run.capabilities,
+        instructions=run.instructions,
+        usage_limits=_COMPACT_LIMITS,
     )
 
-
-async def _run_summary(
-    messages: Sequence[ModelMessage],
-    model: Model,
-    model_settings: ModelSettings,
-    *,
-    include_tool_calls: bool,
-    include_tool_results: bool,
-    include_reasoning: bool,
-) -> str:
-    """Render *messages* at the given fidelity and summarize them once."""
-    transcript = _format_messages_for_summary(
-        messages,
-        include_tool_calls=include_tool_calls,
-        include_tool_results=include_tool_results,
-        include_reasoning=include_reasoning,
-    )
-    result = await base_agent.run(
-        f"Conversation to summarize:\n\n{transcript}",
-        model=model,
-        model_settings=model_settings,
-        instructions=SUMMARY_INSTRUCTIONS,
-    )
     return result.output.strip()
 
 
-def _format_messages_for_summary(
-    messages: Sequence[ModelMessage],
-    *,
-    include_tool_calls: bool = True,
-    include_tool_results: bool = True,
-    include_reasoning: bool = True,
+async def summarize_conversation(
+    messages: Sequence[ModelMessage], run: RunPrefix
 ) -> str:
-    """Render messages as a plain labeled transcript, untruncated.
+    """Summarize *messages* as the next turn of the conversation they are.
 
-    User prompts and assistant text are always kept.  Tool calls, tool
-    results, and reasoning parts — the bulk of an agentic conversation's
-    tokens, with tool results (full document bodies) the heaviest — are
-    each kept only when their toggle is on.  Non-text user content
-    (attached binaries) is always omitted rather than letting a byte
-    payload leak into the transcript via its repr.
+    Args:
+        messages: The conversation to summarize, trimmed to fit as needed.
+        run: The prompt prefix these messages already ran under, model
+            included, which the request reproduces so the provider's cache
+            answers for it.
+
+    Returns:
+        A handover note for continuing the work in a fresh context.
+
+    Raises:
+        ModelHTTPError | UnexpectedModelBehavior: If the model rejects the
+            request for a reason other than context overflow, or still has no
+            room once there is nothing left to shed.
     """
-    lines: list[str] = []
-    for msg in messages:
-        for part in msg.parts:
-            match part:
-                case UserPromptPart():
-                    label = "User"
-                    content = part.content
-                    text = (
-                        content
-                        if isinstance(content, str)
-                        else " ".join(c for c in content if isinstance(c, str))
-                    )
-                case TextPart(content=text):
-                    label = "Assistant"
-                case ThinkingPart(content=text) if include_reasoning:
-                    label = "Reasoning"
-                case ToolCallPart(tool_name=tool_name) if include_tool_calls:
-                    label = f"Tool call ({tool_name})"
-                    text = part.args_as_json_str()
-                case ToolReturnPart(tool_name=tool_name) if include_tool_results:
-                    label = f"Tool result ({tool_name})"
-                    text = part.model_response_str()
-                case _:
-                    continue
-            if text := text.strip():
-                lines.append(f"{label}: {text}")
-    return "\n\n".join(lines)
+    *retries, final = _plan(messages)
+
+    for cut in retries:
+        try:
+            return await _ask(messages[:cut], run)
+
+        except (ModelHTTPError, UnexpectedModelBehavior) as exc:
+            if not is_context_overflow(exc):
+                raise
+
+            logger.info(
+                "Compaction overflowed at %d of %d messages, shedding",
+                cut,
+                len(messages),
+            )
+
+    return await _ask(messages[:final], run)

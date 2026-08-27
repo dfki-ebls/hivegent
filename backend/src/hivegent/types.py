@@ -6,8 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal, Protocol, Self, get_args
 
-from pydantic import BaseModel, Field, model_validator
-from pydantic_ai.settings import ThinkingEffort
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 
 from .chunkers import ChunkingSpec
@@ -27,7 +26,6 @@ __all__ = [
     "AUTO_APPROVED_MODES",
     "MODE_VALUES",
     "MUTATING_MODES",
-    "REASONING_EFFORT_VALUES",
     "AdminFactoryResetResponse",
     "AdminGroupInfo",
     "AdminListGroupsResponse",
@@ -36,6 +34,7 @@ __all__ = [
     "AdminReindexResponse",
     "AdminResetResponse",
     "AdminUserInfo",
+    "AgentRunConfig",
     "AssetProcessingMode",
     "AttachmentLimits",
     "ChatRequestConfig",
@@ -286,12 +285,6 @@ class ToolRunResult(BaseModel):
     elapsed_ms: float
 
 
-REASONING_EFFORT_VALUES: frozenset[str] = frozenset(
-    {"auto", "none", *get_args(ThinkingEffort)}
-)
-"""Valid reasoning effort strings, used to validate untrusted request input."""
-
-
 type Mode = Literal["interactive", "read", "write", "plan"]
 """Agent mode accepted from the API.
 
@@ -319,18 +312,23 @@ for one and not the other.
 """
 
 
-class ChatRequestConfig(BaseModel):
-    """Configuration for chat requests, passed via request body."""
+class AgentRunConfig(BaseModel):
+    """Everything a request states that composes the run's prompt prefix.
 
-    conversation_id: str = Field(default="", description="The conversation ID")
+    Split out from :class:`ChatRequestConfig` because compaction has to send
+    the same prefix a chat turn sends: the summary is asked for as one more
+    turn of the conversation, so the personality, mode, document scope, and
+    tool configuration all have to match or the provider's cached prefix is
+    lost (see ``backend/README.md``).  A field belongs here when changing it
+    changes the request's leading tokens; anything that only reaches the
+    request body or selects which history is replayed belongs below, since
+    compaction would accept and ignore it.
+    """
+
     personality: Personality = Field(default=Personality.DEFAULT)
     system_message: str = Field(
         default="",
         description="Custom system message (used when personality is 'custom')",
-    )
-    reasoning_effort: ReasoningEffort = Field(
-        default="auto",
-        description="Reasoning effort level ('auto' resolves to the deployed default effort, 'none' disables thinking)",
     )
     mode: Mode = Field(
         default="interactive",
@@ -340,12 +338,31 @@ class ChatRequestConfig(BaseModel):
     included_documents: list[str] = Field(default_factory=list)
     excluded_documents: list[str] = Field(default_factory=list)
     tools: ToolsSpec = Field(default_factory=ToolsSpec)
+
+
+class ChatRequestConfig(AgentRunConfig):
+    """What a chat turn adds to the prefix: model settings and history selection.
+
+    Validated straight off the chat body, which also carries the AI SDK's own
+    ``messages`` and ``id``; those are read by the adapter instead and ignored
+    here, since nothing on this model forbids extras.
+    """
+
+    conversation_id: str = Field(default="", description="The conversation ID")
+    reasoning_effort: ReasoningEffort = Field(
+        default="auto",
+        description="Reasoning effort level ('auto' resolves to the deployed default effort, 'none' disables thinking)",
+    )
     trigger: Literal["submit-message", "regenerate-message"] = Field(
         default="submit-message",
         description="Whether this turn submits a new/edited message or regenerates one",
     )
     message_id: str | None = Field(
         default=None,
+        # The AI SDK spells this one camelCase in the body it builds, unlike
+        # every field beside it, which the frontend adds in the wire's own
+        # snake_case.
+        validation_alias=AliasChoices("messageId", "message_id"),
         description="Target node id: the edited message (submit) or the regenerated one",
     )
 
@@ -475,15 +492,15 @@ class ConversationListResponse(BaseModel):
     total_count: int = Field(description="Total number of conversations")
 
 
-class CompactConversationRequest(BaseModel):
+class CompactConversationRequest(AgentRunConfig):
     """Request to compact a conversation.
 
     The client sends its in-memory message history so the summary reflects
     the exact branch and partial turn visible when the user requests
-    compaction.
+    compaction, and the same run configuration it sends with a chat turn so
+    the summarization request can be that turn's continuation.
     """
 
-    llm: LlmConfig = Field(default_factory=LlmConfig)
     messages: list[UIMessage] = Field(default_factory=list)
 
 
