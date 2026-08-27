@@ -124,6 +124,25 @@ PythonOutputPathArg = Annotated[
 ]
 
 
+_PROGRAM_SOURCES = (
+    "`code`, the program written inline, or `script_path`, a stored `.py` "
+    "program to run. Neither names a document the program reads: it opens "
+    "those itself."
+)
+"""The two ways a program arrives, named once for the two refusals about them."""
+
+
+def _given(argument: str | None) -> str | None:
+    """Read a blank argument as the absence a model meant it for.
+
+    >>> _given("  ") is None
+    True
+    >>> _given("x = 1")
+    'x = 1'
+    """
+    return argument if argument and argument.strip() else None
+
+
 def _default_limits() -> ResourceLimits:
     """The budget one program runs under when no caller sets one."""
     return {"max_duration_secs": 5.0, "max_memory": 256_000_000}
@@ -320,12 +339,16 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         this settles is which source runs and which document the run was given
         permission to persist.
         """
-        if (code is None) == (script_path is None):
-            raise ToolRetry(
-                "Provide exactly one of `code`, the program written inline, or "
-                "`script_path`, a stored `.py` program to run. Neither names a "
-                "document the program reads: it opens those itself."
-            )
+        # A blank string is a model spelling the argument it did not use, not
+        # a second program: folding it to absent is what keeps `code=""`
+        # alongside a `script_path` from reading as both, and what leaves an
+        # empty program answered by the emptiness rather than by the pairing.
+        code, script_path = _given(code), _given(script_path)
+        if code is not None and script_path is not None:
+            raise ToolRetry(f"Provide one of {_PROGRAM_SOURCES}")
+
+        if code is None and script_path is None:
+            raise ToolRetry(f"The program is empty. Provide {_PROGRAM_SOURCES}")
 
         source, canonical_script = code or "", None
         if script_path is not None:

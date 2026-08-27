@@ -1148,6 +1148,34 @@ class TestRunPythonTool:
         assert result.data == PythonResult(result="120", stdout="working")
         assert result.text == "working\nResult: 120"
 
+    async def test_blank_code_beside_a_script_runs_the_script(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        """An argument a model spelled empty is the one it did not use."""
+        (tmp_path / ".scratch").mkdir()
+        (tmp_path / ".scratch/run.py").write_text("print('from the script')\n7")
+        configured = replace(
+            tool, paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
+        )
+
+        result = await configured(code="", script_path="~/.scratch/run.py")
+
+        assert result.data.result == "7"
+        assert result.data.stdout == "from the script"
+
+    async def test_an_empty_program_says_so(self, tool: RunPythonTool) -> None:
+        with pytest.raises(ToolRetry, match="program is empty"):
+            await tool(code="   ")
+
+    async def test_two_programs_are_refused(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        configured = replace(
+            tool, paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
+        )
+        with pytest.raises(ToolRetry, match="Provide one of"):
+            await configured(code="1", script_path="~/run.py")
+
     async def test_statement_only_program_has_no_result(
         self, tool: RunPythonTool
     ) -> None:
