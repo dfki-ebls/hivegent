@@ -21,7 +21,7 @@ from ..store import Casebase
 from ..types import PipelineSpec, ProgressReporter, UploadCompleteEvent
 from .commit import _ensure_upload_slot_locked, _phased_upload
 from .metadata import _merge_entry_paths, resolve_entry
-from .paths import _check_not_reserved_path, _enforce_file_size
+from .paths import _check_not_reserved_path, _enforce_file_size, _shown
 from .prepare import _Reserved
 
 __all__ = [
@@ -122,7 +122,7 @@ async def replace_original(
         if not existing_original_rel:
             raise HTTPException(
                 status_code=404,
-                detail=f"No original file found for '{safe}'",
+                detail=f"No original file found for '{_shown(store, safe)}'",
             )
 
         existing_suffix = PurePosixPath(existing_original_rel).suffix
@@ -169,13 +169,13 @@ async def reconvert(
         if not metadata or not metadata.original_path:
             raise HTTPException(
                 status_code=404,
-                detail=f"No original file found for '{safe}'",
+                detail=f"No original file found for '{_shown(store, safe)}'",
             )
         original_full = store.workspace_dir(settings.data_dir) / metadata.original_path
         if not original_full.exists():
             raise HTTPException(
                 status_code=404,
-                detail=f"No original file found for '{safe}'",
+                detail=f"No original file found for '{_shown(store, safe)}'",
             )
 
         return _Reserved(

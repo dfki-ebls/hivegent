@@ -24,7 +24,9 @@ from ...entries import is_scratch_path
 from ...store import Casebase, scoped_operation
 from ...tools import EditDocumentTool, WriteDocumentTool
 from ...tools.base import resolve_accessible_file, translate_tool_retry
+from ...tools.mutations import MutationHint
 from ...tools.pydantic_ai import register_agent_tools
+from ...tools.python import is_python_script
 from ...tools.sink import OutputPathArg, output_format
 from ...workspace_events import announcing_mutator
 from ..common import UserDeps
@@ -53,24 +55,50 @@ def _mutator[**P, R](
     )
 
 
+def _run_python_pointer(target: str, local: str) -> str:
+    """Point a stored program at the tool that runs it.
+
+    A `.scratch/` `.py` is written in order to be run, and the mutation that
+    stored or repaired it is the one moment its canonical path is in hand, so
+    the pointer rides the receipt rather than waiting for the instructions to
+    be recalled a turn later: what it saves is the run that pastes the program
+    straight back in as inline ``code``.  Injected on this surface alone,
+    since the MCP one writes through the same tools and has no ``run_python``.
+    """
+    if not is_scratch_path(local) or not is_python_script(local):
+        return ""
+
+    return f"Run it with run_python's `script_path='{target}'`."
+
+
 def _edit_document(deps: UserDeps) -> EditDocumentTool:
     return EditDocumentTool(
         paths=deps.search_paths(writable=True),
+        hint=_run_python_pointer,
         mutator=_mutator(deps, workspace.edit_document_text),
     )
 
 
-def write_document(deps: UserDeps) -> WriteDocumentTool:
+def write_document(
+    deps: UserDeps, hint: MutationHint | None = None
+) -> WriteDocumentTool:
     """Build the canonical scoped document writer for one agent run.
 
     Public because ``run_python`` composes it through :func:`output_sink` to
     commit its declared output, so the output it writes is scoped exactly like
-    the files it read.
+    the files it read.  That path passes no *hint*: a commit the model asked
+    for by declaring an ``output_path`` is not a program it just stored.
     """
     return WriteDocumentTool(
         paths=deps.search_paths(writable=True),
+        hint=hint,
         mutator=_mutator(deps, workspace.write_document_text),
     )
+
+
+def _write_document(deps: UserDeps) -> WriteDocumentTool:
+    """The agent's own writer, which points a stored program at ``run_python``."""
+    return write_document(deps, _run_python_pointer)
 
 
 def output_sink(deps: UserDeps) -> WriteDocumentTool | None:
@@ -160,7 +188,7 @@ register_agent_tools(
     UserDeps,
     [
         _edit_document,
-        write_document,
+        _write_document,
     ],
     args_validator=validate_document_write,
 )

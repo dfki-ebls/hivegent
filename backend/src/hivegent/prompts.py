@@ -1,6 +1,6 @@
 """System prompt templates for different assistant personalities."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from enum import StrEnum
 
 __all__ = [
@@ -60,22 +60,29 @@ def compose_instructions(personality: Personality, system_message: str) -> str:
     return join_instructions([base, LANGUAGE_INSTRUCTIONS, MATH_INSTRUCTIONS])
 
 
-def format_document_scope(relevant: frozenset[str], hidden: frozenset[str]) -> str:
+def format_document_scope(relevant: Mapping[str, str], hidden: frozenset[str]) -> str:
     """Render the active document scope as a prompt block for the agent.
 
-    Both sets hold canonical workspace paths (``~/...`` for the personal
+    Both halves hold canonical workspace paths (``~/...`` for the personal
     workspace, ``@<group>/...`` for a shared group), and they are not
     symmetric: *relevant* is what the user pointed the conversation at, which
     only this block enforces by telling the model where to start, while
-    *hidden* is what the document tools will not return at all.  Returns an
-    empty string when nothing is selected so the caller can drop the block
-    entirely.  Entries are sorted so the rendered block stays byte-identical
-    between turns when the selection is unchanged, keeping the prompt
-    cacheable.
+    *hidden* is what the document tools will not return at all.  A relevant
+    path maps to the hint that follows it in parentheses, empty for the
+    ordinary document that needs none: a spreadsheet is selected under the
+    markdown it was projected to, and this block is the first place the run
+    can learn the original is there to be queried.  Returns an empty string
+    when nothing is selected so the caller can drop the block entirely.
+    Entries are sorted so the rendered block stays byte-identical between
+    turns when the selection is unchanged, keeping the prompt cacheable.
 
-    >>> format_document_scope(frozenset(), frozenset())
+    >>> format_document_scope({}, frozenset())
     ''
-    >>> "~/a.md" in format_document_scope(frozenset({"~/a.md"}), frozenset())
+    >>> "- ~/a.md" in format_document_scope({"~/a.md": ""}, frozenset())
+    True
+    >>> "- ~/t.md (jq filters it)" in format_document_scope(
+    ...     {"~/t.md": "jq filters it"}, frozenset()
+    ... )
     True
     """
     if not relevant and not hidden:
@@ -94,7 +101,10 @@ def format_document_scope(relevant: frozenset[str], hidden: frozenset[str]) -> s
         )
         lines.append("")
         lines.append("Most relevant:")
-        lines.extend(f"- {path}" for path in sorted(relevant))
+        lines.extend(
+            f"- {path} ({hint})" if hint else f"- {path}"
+            for path, hint in sorted(relevant.items())
+        )
 
     if hidden:
         if relevant:
@@ -232,7 +242,8 @@ Write anything past a few lines to a `.scratch/` `.py` file and run its `script_
 Monty is a subset of Python, not a CPython environment: no numpy or pandas, no class inheritance, no `glob` or `fnmatch` (recurse with `iterdir`, which returns entries in path order), and only part of the standard library, which names a module it lacks in the error, so try the import rather than working around one that would have worked.
 A program calls no tools: `open` and `iterdir` are the read tools, `re` is grep, `json` is jq, and there is no retrieval, so search first and let the program work from the paths it named.
 A leading slash is the run's own filesystem and nothing of the user's: park intermediates in `/tmp`, thrown away when the call ends, and write state that outlives the call to a `.scratch/` path a later program opens directly.
-To persist a document, name where it goes as `output_path` and write it under that name or as `/output`, two names for the one file the call commits after the program succeeds, while a write to any other document is refused, since it needs the user's say-so before the program starts.
+To persist a document, name where it goes as `output_path` and have the program write the text to `/output`, the one file the call commits there after the program succeeds, while a write to any other document is refused, since it needs the user's say-so before the program starts.
+`output_path` captures nothing on its own: a program that prints its result or ends on it has written no document, so write to `/output` yourself whenever the point of the call is a file.
 """
 """No module list, deliberately.
 
@@ -249,6 +260,7 @@ Where a tool takes an `output_path`, that call writes its result to the workspac
 Reach for it when a call would return far more than you need to read but a later step can work from the whole of it, then read or process the file instead of the result.
 The suffix decides what is stored: `.json` keeps the structured result in full, `.txt` keeps the text you would otherwise have been shown.
 Put the file under a `.scratch/` directory unless the user asked for the file itself.
+run_python is the exception: its `output_path` commits the `/output` file its program wrote, never the result the call returned.
 """
 
 SCRATCH_INSTRUCTIONS = """

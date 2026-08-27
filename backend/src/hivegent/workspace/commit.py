@@ -41,6 +41,7 @@ from .paths import (
     _check_destination_parents,
     _remove_tree,
     _replace_workspace_paths,
+    _shown,
     _WorkspaceChange,
     _write_markdown_file,
     _write_workspace_file,
@@ -249,12 +250,13 @@ def _ensure_upload_slot_locked(
     never destroy the prior entry.
     """
     workspace_dir = store.workspace_dir(settings.data_dir)
-    _check_destination_parents(workspace_dir, reference)
+    _check_destination_parents(store, reference)
     stem_path = stem_path_from_reference(reference)
     for rel in {reference, description_path_for_stem(stem_path)}:
         if (workspace_dir / rel).is_dir():
             raise HTTPException(
-                status_code=409, detail=f"'{rel}' is an existing directory"
+                status_code=409,
+                detail=f"'{_shown(store, rel)}' is an existing directory",
             )
     if entry_exists(workspace_dir, reference) and not overwrite:
         raise HTTPException(status_code=409, detail="Document already exists")

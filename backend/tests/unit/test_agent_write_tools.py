@@ -18,6 +18,9 @@ import hivegent.agents.tools.compute as compute_tools
 from hivegent import workspace
 from hivegent.agents.common import UserDeps
 from hivegent.agents.tools.write import (
+    _edit_document,
+    _write_document,
+    output_sink,
     validate_document_write,
     validate_output_path,
     validate_output_write,
@@ -63,6 +66,52 @@ async def test_writes_to_the_addressed_workspace(
     assert (await tool("@team/notes/a.md", "hi")).data == "written"
     assert (await tool("~/notes/a.md", "hi")).data == "written"
     assert routed == [("group:team", "notes/a.md"), ("user:u", "notes/a.md")]
+
+
+async def test_stored_program_is_pointed_at_run_python(
+    deps: UserDeps, routed: list[tuple[str, str]]
+) -> None:
+    """A `.scratch/` `.py` is written to be run, so the receipt says how."""
+    tool = _write_document(deps)
+
+    program = (await tool("~/.scratch/report.py", "print(1)")).data
+    document = (await tool("~/.scratch/rows.json", "[]")).data
+
+    assert (
+        program
+        == "written Run it with run_python's `script_path='~/.scratch/report.py'`."
+    )
+    assert document == "written"
+    assert len(routed) == 2
+
+
+async def test_the_pointer_survives_the_edit_that_repairs_the_program(
+    deps: UserDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rerun is the point of the edit, so the same hint rides both tools."""
+
+    async def _edit(_store: Casebase, _safe: str, *_a: object, **_kw: object) -> str:
+        return "edited"
+
+    monkeypatch.setattr(workspace, "edit_document_text", _edit)
+    tool = _edit_document(deps)
+
+    result = (await tool("~/.scratch/report.py", "1", "2")).data
+
+    assert result.endswith(
+        "Run it with run_python's `script_path='~/.scratch/report.py'`."
+    )
+
+
+async def test_a_declared_output_is_not_a_stored_program(
+    deps: UserDeps, routed: list[tuple[str, str]]
+) -> None:
+    """run_python's own commit carries no pointer back to run_python."""
+    sink = output_sink(deps)
+    assert sink is not None
+
+    assert (await sink("~/.scratch/report.py", "print(1)")).data == "written"
+    assert len(routed) == 1
 
 
 async def test_unprefixed_path_is_refused_with_the_roots_named(

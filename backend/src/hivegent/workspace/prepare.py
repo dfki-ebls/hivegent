@@ -57,6 +57,7 @@ from ..text import NOT_TEXT_REASON, decode_bytes
 from ..types import AssetProcessingMode, PipelineSpec, ProgressReporter
 from .describe import _build_image_description, _build_video_description
 from .metadata import _build_entry_metadata
+from .paths import _shown
 
 __all__: list[str] = []
 
@@ -244,7 +245,7 @@ def _prepare_markdown(
     if decoded is None:
         raise HTTPException(
             status_code=422,
-            detail=f"'{filepath}' {NOT_TEXT_REASON}",
+            detail=f"'{_shown(store, filepath)}' {NOT_TEXT_REASON}",
         )
     text = decoded.text
     stem_path = stem_path_from_reference(filepath)

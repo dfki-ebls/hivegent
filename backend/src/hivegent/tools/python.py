@@ -41,7 +41,25 @@ __all__ = [
     "PythonResult",
     "PythonScriptPathArg",
     "RunPythonTool",
+    "is_python_script",
 ]
+
+
+def is_python_script(file_path: str) -> bool:
+    """Return whether *file_path* names a program this tool will run.
+
+    The one table behind the two halves of the stored-program flow, for the
+    same reason :func:`~hivegent.converters.is_tabular` is one behind the
+    read/query split: the write that points a file at ``script_path`` and the
+    run that accepts it have to agree on which files those are, or a receipt
+    promises a rerun the tool then refuses.
+
+    >>> is_python_script("~/.scratch/run.PY")
+    True
+    >>> is_python_script("~/notes.md")
+    False
+    """
+    return PurePosixPath(file_path).suffix.lower() == ".py"
 
 _VALUE_REPR = reprlib.Repr(
     maxlevel=6,
@@ -69,8 +87,10 @@ CodeArg = Annotated[
     str | None,
     Field(
         description=(
-            "Inline program to run in Monty. Provide either this or "
-            "`script_path`, but not both."
+            "Inline throwaway program to run in Monty. Provide either this or "
+            "`script_path`, but not both. Anything past a few lines belongs in "
+            "a `.scratch/` `.py` file run by `script_path`, where a runtime "
+            "error costs one edit_document instead of a retyped program."
         ),
     ),
 ]
@@ -90,8 +110,11 @@ PythonOutputPathArg = Annotated[
         description=(
             "Full workspace path to persist the program's `/output` file to "
             "after a successful run. The mounted workspace is read-only, so "
-            "this is how a program writes a document. Interactive calls "
-            "require approval before this write."
+            "this is how a program writes a document. Unlike `output_path` on "
+            "other tools, it captures nothing by itself: the program must "
+            "write the text to `/output`, and printed output and the trailing "
+            "value are never it. Interactive calls require approval before "
+            "this write."
         ),
     ),
 ]
@@ -299,7 +322,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         source, canonical_script = code or "", None
         if script_path is not None:
             canonical_script, absolute = self._resolve_script(script_path)
-            if PurePosixPath(canonical_script).suffix.lower() != ".py":
+            if not is_python_script(canonical_script):
                 raise ToolRetry(f"'{canonical_script}' is not a `.py` script.")
 
             source = self._read(canonical_script, absolute)
@@ -417,6 +440,11 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         never changed is the same silence: the document is already what the
         commit would write, so saying so beats a version that only bumps the
         mtime and re-indexes.
+
+        The sentence about the missing file also says what to write instead,
+        since ``output_path`` captures the result on every other tool and a
+        model carrying that meaning over computes the document, returns it, and
+        is told only that nothing happened.
         """
         if prepared.output is None:
             return None, None
@@ -424,7 +452,9 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         if not filesystem.inner.path_is_file(SANDBOX_OUTPUT_FILE):
             return None, (
                 f"Nothing was committed to '{prepared.output}': the program "
-                f"wrote no {SANDBOX_OUTPUT_FILE} file."
+                f"wrote no {SANDBOX_OUTPUT_FILE} file. Only what a program "
+                f"writes to {SANDBOX_OUTPUT_FILE} is committed, never what it "
+                "printed or returned."
             )
 
         content = filesystem.inner.path_read_text(SANDBOX_OUTPUT_FILE)

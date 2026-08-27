@@ -16,8 +16,10 @@ from typing import Annotated, Any, Self, get_type_hints, override
 from pydantic import BaseModel, Field
 
 from ..config import normalize_unicode
+from ..converters import is_json, is_tabular
 from ..entries import (
     description_path_for_stem,
+    find_original_for_stem,
     is_description_file,
     is_inside_assets_dir,
     stem_path_from_reference,
@@ -53,6 +55,7 @@ __all__ = [
     "is_in_excluded_dir",
     "match_scope",
     "near_miss_hint",
+    "query_hint",
     "read_text_or_retry",
     "resolve_accessible_file",
     "resolve_file_or_retry",
@@ -511,6 +514,27 @@ def resolve_file_or_retry(
     return resolved
 
 
+def _query_phrase(file_path: str) -> str:
+    """How a query tool answers *file_path* in place, without reading it.
+
+    The wording both hints share, so the tool a caller is pointed at is named
+    the same whether it addressed the original and was refused or addressed
+    the description and was served.  Empty for a format no query tool claims.
+    The identifiers lead the sentence uncapitalised, since they are the names
+    the caller has to type.
+    """
+    if is_tabular(file_path):
+        return "query_table runs SQL over it and returns only the rows you ask for"
+
+    if is_json(file_path):
+        return (
+            "jq filters it and returns only the values you select; call it "
+            "without a filter for its shape"
+        )
+
+    return ""
+
+
 def sidecar_hint(file_path: str) -> str:
     """Nudge a refused read toward the entry's extracted text, when it has one.
 
@@ -518,12 +542,51 @@ def sidecar_hint(file_path: str) -> str:
     tool is never sent to the other one to be turned away again: whatever the
     format, a converted entry's text is reachable at its ``<stem>.md``.  Empty
     for a description, which is that text.
+
+    A table or a JSON document is refused here too, and its extracted text is
+    the worst of the three answers, so the tool that queries the original
+    without reading it leads and the sidecar follows.
     """
     if is_description_file(file_path):
         return ""
     sidecar = description_path_for_stem(stem_path_from_reference(file_path))
+    query = _query_phrase(file_path)
+    lead = f" {query}." if query else ""
 
-    return f" To read its extracted text, request '{sidecar}' instead."
+    return f"{lead} To read its extracted text, request '{sidecar}' instead."
+
+
+def query_hint(sp: SearchPath, local: str) -> str:
+    """Name the tool that queries the entry *local* belongs to, if one does.
+
+    Keyed on the entry rather than on the path the caller addressed: an
+    uploaded table is served as its ``<stem>.md`` projection, so the path a
+    read or a selection has in hand is never the one ``query_table`` takes,
+    and asking the suffix alone left the tool invisible for exactly the file
+    it exists for.  A table dropped in as text (a bare ``.csv``) is its own
+    original and answers the same question directly.
+
+    One sentence for both surfaces that need it, the read that was served the
+    projection and the document scope that named it, so the run is told the
+    same thing whichever of the two reaches it first.  Both resolve a path
+    before they get here for their own reasons, so this takes what they hold
+    rather than resolving it a second time.
+
+    Empty when the entry has no original, when no query tool claims its
+    format, or when the filter hides it — the same predicate the reader
+    answers to, so a hint can never name a document its reader would refuse.
+    """
+    original = (
+        find_original_for_stem(sp.path, stem_path_from_reference(local))
+        if is_description_file(local)
+        else local
+    )
+    if original is None or not file_allowed(sp.filter_func, original):
+        return ""
+
+    phrase = _query_phrase(original)
+
+    return f"{phrase}, on '{sp.prefixed(original)}'" if phrase else ""
 
 
 def read_text_or_retry(path: Path, file_path: str, hint: str = "") -> DecodedText:

@@ -47,6 +47,7 @@ from .paths import (
     _is_blocked_by_other,
     _is_same_file,
     _resolve_move_destination,
+    _shown,
     _write_workspace_file,
 )
 from .prepare import _Reserved
@@ -60,7 +61,7 @@ __all__ = [
 ]
 
 
-def _decode_existing(file_path: Path) -> DecodedText:
+def _decode_existing(file_path: Path, shown: str) -> DecodedText:
     """Decode an existing workspace file, rejecting content that is not text.
 
     Reads go through the shared decoder so a legacy-encoded file is editable
@@ -71,12 +72,12 @@ def _decode_existing(file_path: Path) -> DecodedText:
     if decoded is None:
         raise HTTPException(
             status_code=422,
-            detail=f"'{file_path.name}' {NOT_TEXT_REASON}",
+            detail=f"'{shown}' {NOT_TEXT_REASON}",
         )
     return decoded
 
 
-def _editable_text(workspace_dir: Path, safe: str) -> DecodedText | None:
+def _editable_text(file_path: Path, shown: str) -> DecodedText | None:
     """Return a document's decoded text, or ``None`` when it does not exist.
 
     The gate on every text mutation, not merely a read: it raises for anything
@@ -86,18 +87,17 @@ def _editable_text(workspace_dir: Path, safe: str) -> DecodedText | None:
     is readable, rather than merely being described that way in two tool
     descriptions.
     """
-    file_path = workspace_dir / safe
     if file_path.is_dir():
-        raise HTTPException(status_code=409, detail=f"'{safe}' is a directory")
-    if (media_type := vision_media_type(safe)) is not None:
+        raise HTTPException(status_code=409, detail=f"'{shown}' is a directory")
+    if (media_type := vision_media_type(file_path.name)) is not None:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"'{safe}' is a {media_type} binary and cannot be written as "
+                f"'{shown}' is a {media_type} binary and cannot be written as "
                 "text; upload a replacement instead"
             ),
         )
-    return _decode_existing(file_path) if file_path.is_file() else None
+    return _decode_existing(file_path, shown) if file_path.is_file() else None
 
 
 def _transcode_note(source_encoding: str | None) -> str:
@@ -109,7 +109,7 @@ def _transcode_note(source_encoding: str | None) -> str:
 
 
 def _check_expected_hash(
-    safe: str, current: str | None, expected_hash: str | None
+    shown: str, current: str | None, expected_hash: str | None
 ) -> None:
     """Reject the mutation unless *current* still matches *expected_hash*.
 
@@ -124,7 +124,7 @@ def _check_expected_hash(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"'{safe}' does not exist, so it could not have been read "
+                f"'{shown}' does not exist, so it could not have been read "
                 f"(expected hash {expected_hash}); omit expected_hash to create it"
             ),
         )
@@ -132,7 +132,7 @@ def _check_expected_hash(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"'{safe}' changed since it was read "
+                f"'{shown}' changed since it was read "
                 f"(expected hash {expected_hash}, found {actual}); "
                 "re-read it and retry with the new hash"
             ),
@@ -149,7 +149,7 @@ the persistence paths' quite different moments.
 
 
 def _edit_mutation(
-    safe: str, old_string: str, new_string: str, replace_all: bool
+    shown: str, old_string: str, new_string: str, replace_all: bool
 ) -> _TextMutation:
     """Build the exact-string replacement behind :func:`edit_document_text`."""
 
@@ -160,45 +160,48 @@ def _edit_mutation(
         if count == 0:
             raise HTTPException(
                 status_code=422,
-                detail=f"old_string not found in '{safe}'",
+                detail=f"old_string not found in '{shown}'",
             )
         if count > 1 and not replace_all:
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"old_string appears {count} times in '{safe}'; "
+                    f"old_string appears {count} times in '{shown}'; "
                     "must be unique or call with replace_all=True"
                 ),
             )
         replaced = count if replace_all else 1
         return (
             current.replace(old_string, new_string, -1 if replace_all else 1),
-            f"Replaced {replaced} {pluralize(replaced, 'occurrence')} in '{safe}'.",
+            f"Replaced {replaced} {pluralize(replaced, 'occurrence')} in '{shown}'.",
         )
 
     return mutate
 
 
-def _write_mutation(safe: str, content: str, mode: str) -> _TextMutation:
+def _write_mutation(shown: str, content: str, mode: str) -> _TextMutation:
     """Build the write-mode composition behind :func:`write_document_text`."""
     if mode not in ("replace", "create", "append", "prepend"):
         raise HTTPException(status_code=400, detail=f"Unsupported write mode: {mode}")
 
     def mutate(current: str | None) -> tuple[str, str]:
         if mode == "replace":
-            return content, f"Wrote {len(content)} characters to '{safe}'."
+            return content, f"Wrote {len(content)} characters to '{shown}'."
         if mode == "create":
             if current is not None:
-                raise HTTPException(status_code=409, detail=f"'{safe}' already exists")
-            return content, f"Created '{safe}' with {len(content)} characters."
+                raise HTTPException(status_code=409, detail=f"'{shown}' already exists")
+            return content, f"Created '{shown}' with {len(content)} characters."
         if current is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"'{safe}' does not exist (use mode='replace' to create)",
+                detail=f"'{shown}' does not exist (use mode='replace' to create)",
             )
         if mode == "append":
-            return current + content, f"Appended {len(content)} characters to '{safe}'."
-        return content + current, f"Prepended {len(content)} characters to '{safe}'."
+            return (
+                current + content,
+                f"Appended {len(content)} characters to '{shown}'.",
+            )
+        return content + current, f"Prepended {len(content)} characters to '{shown}'."
 
     return mutate
 
@@ -226,13 +229,14 @@ async def _rewrite_in_place(
     """
     async with _locked_for(store, safe):
         workspace_dir = store.workspace_dir(settings.data_dir)
-        decoded = _editable_text(workspace_dir, safe)
+        shown = _shown(store, safe)
+        decoded = _editable_text(workspace_dir / safe, shown)
         current = decoded.text if decoded is not None else None
-        _check_expected_hash(safe, current, expected_hash)
+        _check_expected_hash(shown, current, expected_hash)
         content, message = mutate(current)
         data = content.encode("utf-8")
         _enforce_file_size(data)
-        _check_destination_parents(workspace_dir, safe)
+        _check_destination_parents(store, safe)
         written = _write_workspace_file(workspace_dir, safe, data)
         # Scratch stops here: no rows, and so no fingerprint to stamp them with.
         if not is_scratch_path(safe):
@@ -272,9 +276,10 @@ async def _rewrite_original(
 
     async def reserve() -> _Reserved:
         workspace_dir = store.workspace_dir(settings.data_dir)
-        decoded = _editable_text(workspace_dir, safe)
+        shown = _shown(store, safe)
+        decoded = _editable_text(workspace_dir / safe, shown)
         current = decoded.text if decoded is not None else None
-        _check_expected_hash(safe, current, expected_hash)
+        _check_expected_hash(shown, current, expected_hash)
         # Mutating first lets an operation that needs the document to exist say
         # so, rather than being answered with a rule about creating one.
         content, message = mutate(current)
@@ -282,7 +287,7 @@ async def _rewrite_original(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"'{safe}' cannot be created by writing text; only markdown "
+                    f"'{shown}' cannot be created by writing text; only markdown "
                     "and plain-text formats can be, so upload it instead"
                 ),
             )
@@ -309,8 +314,8 @@ async def _rewrite_original(
     )
     description = description_path_for_stem(stem_path_from_reference(safe))
     return (
-        f"{report[0]} Its searchable markdown '{description}' was regenerated "
-        f"from the new content."
+        f"{report[0]} Its searchable markdown '{_shown(store, description)}' was "
+        f"regenerated from the new content."
     )
 
 
@@ -330,7 +335,10 @@ async def _apply_text_mutation(
     if PurePosixPath(safe).name == SCRATCH_DIR_NAME:
         raise HTTPException(
             status_code=400,
-            detail=f"'{safe}' names a scratch directory, not a writable file",
+            detail=(
+                f"'{_shown(store, safe)}' names a scratch directory, not a "
+                "writable file"
+            ),
         )
 
     if is_scratch_path(safe) or is_description_file(safe):
@@ -354,7 +362,7 @@ async def rechunk(
     async with _locked_for(store, safe):
         workspace_dir = store.workspace_dir(settings.data_dir)
         file_path = workspace_dir / safe
-        decoded = _editable_text(workspace_dir, safe)
+        decoded = _editable_text(file_path, _shown(store, safe))
         if decoded is None:
             raise HTTPException(status_code=404, detail="Document not found")
         return await shield_to_completion(
@@ -381,7 +389,7 @@ async def edit_document_text(
     return await _apply_text_mutation(
         store,
         safe,
-        _edit_mutation(safe, old_string, new_string, replace_all),
+        _edit_mutation(_shown(store, safe), old_string, new_string, replace_all),
         expected_hash,
     )
 
@@ -399,7 +407,7 @@ async def write_document_text(
     return await _apply_text_mutation(
         store,
         safe,
-        _write_mutation(safe, content, mode),
+        _write_mutation(_shown(store, safe), content, mode),
         expected_hash,
         chunking,
     )
@@ -483,7 +491,7 @@ async def _move_document_locked(
     if moved_assets is not None:
         renames.append((moved_assets, assets_dir_for_stem(dst_stem)))
 
-    _check_destination_parents(dst_workspace, dst_stem)
+    _check_destination_parents(dst_store, dst_stem)
     # A destination occupied by the entry itself is a case-only rename on a
     # case-insensitive filesystem, which a plain rename handles fine.  A
     # cross-store destination lives in a different tree and never aliases the
@@ -496,7 +504,8 @@ async def _move_document_locked(
     for source, target in renames:
         if _is_blocked_by_other(dst_workspace / target, src_workspace / source):
             raise HTTPException(
-                status_code=409, detail=f"Destination already exists: {target}"
+                status_code=409,
+                detail=f"Destination already exists: {_shown(dst_store, target)}",
             )
 
     for source, target in renames:
@@ -510,7 +519,7 @@ async def _move_document_locked(
         # The markdown references its assets as ``<stem>.assets/...``; rewrite
         # those references when the stem's basename changed.
         description_full = dst_workspace / dst_description
-        body = _decode_existing(description_full)
+        body = _decode_existing(description_full, _shown(dst_store, dst_description))
         updated = repoint_asset_refs(body.text, src_name, dst_name)
         description_full.write_text(updated, encoding="utf-8")
 

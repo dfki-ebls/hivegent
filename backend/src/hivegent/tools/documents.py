@@ -13,7 +13,7 @@ from typing import Annotated, override
 from pydantic import Field
 
 from ..config import content_hash, normalize_unicode
-from ..converters import is_json, is_tabular, vision_media_type
+from ..converters import vision_media_type
 from ..humanize import pluralize
 from .base import (
     WORKSPACE_SCOPE_HINT,
@@ -26,6 +26,7 @@ from .base import (
     entry_stat,
     entry_visible,
     excluded_dirs,
+    query_hint,
     read_text_or_retry,
     resolve_file_or_retry,
     sidecar_hint,
@@ -614,7 +615,7 @@ class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
         full_lines: bool,
     ) -> ToolOutput[DocumentRange]:
         """Decode the file and render the requested window of lines."""
-        _sp, _local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
+        sp, local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
 
         # Reads are uniform: the requested file is read as text and never
         # silently swapped for another.  Non-markdown inputs are redirected only
@@ -702,21 +703,12 @@ class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
 
         # Reading a table one line at a time is what query_table exists to
         # avoid, and this is the only place the caller finds that out at the
-        # moment it matters. The same table gates both tools, so neither can
-        # start disagreeing about which files these are.
-        if is_tabular(file_path):
-            hints.append(
-                "this is a tabular file, query_table runs SQL over it and "
-                "returns only the rows you ask for"
-            )
-
-        # The same trade one format over: a JSON document read line by line
-        # spends the context on records the question never asked about.
-        if is_json(file_path):
-            hints.append(
-                "this is a JSON document, jq filters it and returns only the "
-                "values you select; call it without a filter for its shape"
-            )
+        # moment it matters -- a JSON document read line by line spends the
+        # context on records the question never asked about the same way.  The
+        # entry decides, not the path in hand, since the table this read was
+        # served is the projection of the file those tools take.
+        if query := query_hint(sp, local):
+            hints.append(query)
 
         if line_cap is not None and any(len(line) > line_cap for line in selected):
             hints.append(

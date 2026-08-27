@@ -1,5 +1,9 @@
 """Unit tests for the document scope: what it hides and what it only names."""
 
+from pathlib import Path
+
+import pytest
+
 from hivegent.agents.common import UserDeps
 from hivegent.prompts import format_document_scope
 from hivegent.server.common import parse_document_scope
@@ -82,32 +86,37 @@ class TestFormatDocumentScope:
     """Tests for the prompt-block renderer."""
 
     def test_nothing_selected_returns_empty(self) -> None:
-        assert format_document_scope(frozenset(), frozenset()) == ""
+        assert format_document_scope({}, frozenset()) == ""
 
     def test_relevant_paths_are_named_as_a_hint(self) -> None:
-        text = format_document_scope(frozenset({"~/a.md", "~/b.md"}), frozenset())
+        text = format_document_scope(
+            {"~/a.md": "", "~/lab.md": "query_table runs SQL over it"}, frozenset()
+        )
         assert "Most relevant:" in text
-        assert "- ~/a.md" in text
-        assert "- ~/b.md" in text
+        assert "- ~/a.md\n" in text
+        assert "- ~/lab.md (query_table runs SQL over it)" in text
         assert "not a restriction" in text
         assert "Hidden from this conversation:" not in text
 
     def test_hidden_paths_are_named_as_unavailable(self) -> None:
-        text = format_document_scope(frozenset(), frozenset({"~/secret.md"}))
+        text = format_document_scope({}, frozenset({"~/secret.md"}))
         assert "Hidden from this conversation:" in text
         assert "- ~/secret.md" in text
         assert "Most relevant:" not in text
 
     def test_both_halves_render_together(self) -> None:
-        text = format_document_scope(
-            frozenset({"~/docs/"}), frozenset({"~/docs/secret.md"})
-        )
+        text = format_document_scope({"~/docs/": ""}, frozenset({"~/docs/secret.md"}))
         assert "Most relevant:" in text
         assert "Hidden from this conversation:" in text
 
 
 class TestDescribeDocumentScope:
     """Tests for UserDeps rendering its live selection to canonical paths."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated(self, data_dir: Path) -> None:
+        """Resolve the selection under a temporary workspace, never a real one."""
+        _ = data_dir
 
     @staticmethod
     def _deps(
@@ -134,6 +143,26 @@ class TestDescribeDocumentScope:
         ).describe_document_scope()
         assert "- ~/a/r.md" in text
         assert "- @team/docs/" in text
+
+    def test_selected_projection_names_the_original_it_came_from(
+        self, data_dir: Path
+    ) -> None:
+        # A spreadsheet is only ever selected under the markdown it was
+        # projected to, so the block is where the run learns query_table has
+        # the original to work from.
+        workspace = Casebase.for_user("u").workspace_dir(data_dir)
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "lab.md").write_text("| a |\n|---|\n")
+        (workspace / "lab.xlsx").write_bytes(b"PK\x03\x04")
+        (workspace / "notes.md").write_text("prose")
+
+        text = self._deps(
+            relevant_documents=frozenset({"~/lab.md", "~/notes.md"})
+        ).describe_document_scope()
+
+        assert "- ~/lab.md (query_table runs SQL over it" in text
+        assert "'~/lab.xlsx'" in text
+        assert "- ~/notes.md\n" in text
 
     def test_group_excludes_render_with_group_prefix(self) -> None:
         text = self._deps(

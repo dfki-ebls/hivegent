@@ -122,6 +122,41 @@ class TestEditDocumentText:
         assert exc.value.status_code == 409
 
 
+class TestCanonicalPathsInMessages:
+    """Every message names the path a tool and a route take back, not the local one."""
+
+    async def test_receipt_and_refusals_carry_the_scope_prefix(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        receipt = await workspace.write_document_text(user_store, "a/b.md", "hi")
+        assert "'~/a/b.md'" in receipt
+
+        with pytest.raises(HTTPException, match=r"'~/a/b\.md' changed since"):
+            await workspace.write_document_text(
+                user_store, "a/b.md", "x", expected_hash="0" * 12
+            )
+
+        (workspace_dir / "blocker.md").write_text("in the way")
+        with pytest.raises(HTTPException, match=r"parent '~/blocker\.md' is a file"):
+            await workspace.write_document_text(
+                user_store, "blocker.md/child.md", "nope"
+            )
+
+    async def test_a_group_message_carries_the_group_prefix(
+        self, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def _noop(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        monkeypatch.setattr(workspace.documents, "chunk_and_index_document", _noop)
+        store = Casebase.for_group("team")
+        store.workspace_dir(data_dir).mkdir(parents=True, exist_ok=True)
+
+        receipt = await workspace.write_document_text(store, "notes.md", "hi")
+
+        assert "'@team/notes.md'" in receipt
+
+
 class TestWriteDocumentText:
     async def test_rejects_scratch_directory_as_a_file(
         self, user_store: Casebase, workspace_dir: Path
@@ -246,7 +281,7 @@ class TestTextOriginals:
 
         assert (workspace_dir / "settings.ini").read_text() == "[db]\nhost = new\n"
         assert "host = new" in (workspace_dir / "settings.md").read_text()
-        assert "'settings.md' was regenerated" in result
+        assert "'~/settings.md' was regenerated" in result
 
     @pytest.mark.parametrize("encoding", ["cp1252", "utf-16"])
     async def test_edit_reports_legacy_encoding_transcode(

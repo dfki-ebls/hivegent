@@ -26,6 +26,7 @@ __all__ = [
     "EditOldStringArg",
     "EditReplaceAllArg",
     "ExpectedHashArg",
+    "MutationHint",
     "WriteDocumentTool",
     "WriteModeArg",
     "WriteMutation",
@@ -91,6 +92,15 @@ WriteModeArg = Annotated[
     ),
 ]
 
+MutationHint = Callable[[str, str], str]
+"""Guidance to append to a mutation's receipt, from its canonical and local paths.
+
+Injected by the surface that has something to say rather than baked in, the way
+``filter_func`` and ``mutator`` are: the agent points a stored program at
+``run_python``, which the MCP surface has no tool for.  Empty for the document
+it has nothing to say about, which is most of them.
+"""
+
 EditMutation = Callable[[str, str, str, bool, str | None], Awaitable[str]]
 """Canonical edit operation for a resolved document path.
 
@@ -106,6 +116,20 @@ WriteMutation = Callable[[str, str, WriteModeArg, str | None], Awaitable[str]]
 def _mutation_detail(exc: HTTPException | ValueError) -> str:
     """Extract the human-readable detail from a failed-mutation exception."""
     return exc.detail if isinstance(exc, HTTPException) else str(exc)
+
+
+def _hinted(hint: MutationHint | None, report: str, target: str, local: str) -> str:
+    """Append the surface's pointer for this document, when it has one.
+
+    Applied here rather than inside the mutator because this is where both
+    spellings are already in hand: *local* is what a path predicate answers to
+    (`.scratch/` is a location, and a canonical path is not what
+    :func:`~hivegent.entries.is_scratch_path` takes), while *target* is what
+    the model has to type back.
+    """
+    extra = hint(target, local) if hint is not None else ""
+
+    return f"{report} {extra}" if extra else report
 
 
 def resolve_mutation_target(
@@ -144,6 +168,7 @@ class EditDocumentTool(AsyncPathTool[str]):
     """
 
     mutator: EditMutation = field(kw_only=True)
+    hint: MutationHint | None = None
 
     @override
     async def __call__(
@@ -168,7 +193,7 @@ class EditDocumentTool(AsyncPathTool[str]):
         document, image, video) cannot be edited — replace it by
         uploading a new version instead.
         """
-        target, _local, _absolute = resolve_mutation_target(
+        target, local, _absolute = resolve_mutation_target(
             self.resolved_paths, file_path
         )
         try:
@@ -177,7 +202,7 @@ class EditDocumentTool(AsyncPathTool[str]):
             )
         except (HTTPException, ValueError) as exc:
             raise ToolRetry(_mutation_detail(exc)) from exc
-        return ToolOutput(data=data)
+        return ToolOutput(data=_hinted(self.hint, data, target, local))
 
 
 @dataclass(slots=True, frozen=True)
@@ -190,6 +215,7 @@ class WriteDocumentTool(AsyncPathTool[str]):
     """
 
     glob: str | None = None
+    hint: MutationHint | None = None
     mutator: WriteMutation = field(kw_only=True)
 
     @override
@@ -223,4 +249,4 @@ class WriteDocumentTool(AsyncPathTool[str]):
             data = await self.mutator(target, content, mode, expected_hash)
         except (HTTPException, ValueError) as exc:
             raise ToolRetry(_mutation_detail(exc)) from exc
-        return ToolOutput(data=data)
+        return ToolOutput(data=_hinted(self.hint, data, target, local))

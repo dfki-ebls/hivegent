@@ -29,6 +29,7 @@
   Hand-dropped markdown and plain text is ingested on startup (a plain-text original gets its `<stem>.md`), files needing a converter stay inert on disk until uploaded or reconverted, and reconciliation never deletes workspace files.
 - There is no working directory: a document path is always full and prefixed, missing subdirectories are created, and a path naming no known root is refused with the roots named (`tools.base.workspace_root_hint`).
   The grammar is stated once per surface, `WORKSPACE_PATH_INSTRUCTIONS` for an agent run and the FastMCP `instructions` for MCP, so no argument description repeats it.
+  It binds what comes back too: a message naming a path renders it through `workspace.paths._shown` (`store.scope.render` outside the package), since a store-local spelling names a path no tool and no route accepts, and the `workspace` mutations take the store rather than its directory wherever that is what it costs to say which workspace a path is in.
 - The mutating tools span the personal workspace plus the groups the user may write to, the read tools every readable one, and `store.scoped_operation` routes each path back to the workspace its `~` / `@<group>` prefix names.
 - A group is identified by the ID from its OIDC groups claim and nothing else (the `groups` row, `documents.owner_group_id`, the `group:<id>` directory, the `@<id>` prefix).
   `auth.parse_group_claims` is the one place that knows how a provider spells that claim, and a display name is a client label only (`GroupInfo`, `User.group_labels`).
@@ -46,6 +47,9 @@
 - The approval gate is per path, not per tool (`agents/tools/write.py`): an interactive run writes to scratch without asking, read and plan modes refuse it like any write, write mode approves everything.
 - It is cleared by `workspace.cleanup_scratch_dirs` from the lifespan and, while running, by `DELETE /api/scratch` ("Clear Scratch"), which sweeps the caller's workspace plus every writable group under its lock and notifies no client.
 - `SCRATCH_INSTRUCTIONS` is shared between the `compute` and `write` features, and `PYTHON_INSTRUCTIONS` names `.scratch/` as the home of a rerunnable `.py`, since a `.py` elsewhere is an original and gets chunked.
+  The mutation receipt says the rest at the one moment the path is in hand: it spells the prefixed path a tool takes back and points a `.scratch/` `.py` at `run_python`'s `script_path`.
+  That pointer is a `MutationHint` the write and edit tools take like `filter_func`, injected by `agents/tools/write.py` alone, since the MCP surface writes through the same tools and has no `run_python`, and applied where the tool holds both spellings: `local` answers `is_scratch_path`, `target` is what the model types back.
+  `run_python`'s own `output_sink` composes the writer without it, since a commit the model asked for by declaring an `output_path` is not a program it just stored.
 
 ### Notifications
 
@@ -72,6 +76,7 @@
   `.scratch/` is exempt inside `DocumentFilter.__call__`, which lets `UserDeps` offer a single `search_paths`.
 - A document is writable exactly when it is readable as text: the write tools take markdown descriptions and plain-text originals (regenerating the projection through the upload pipeline) and reject binaries, which are replaced by uploading.
 - Tables are queried (`query_table`, Polars SQL) and JSON filtered (`jq`) against the original file, never read, and `converters.TABULAR_SUFFIXES` / `converters.JSON_SUFFIXES` are the one table behind each split, which `read_document` points at.
+  The pointer follows the entry, not the path in hand (`tools.base.query_hint`): an uploaded table is served as its `<stem>.md` projection, so the read that needs the hint most never names a tabular suffix, and `sidecar_hint` names the same tool ahead of the extracted text when the original itself is refused.
   The read tools still serve the markdown projection, which retrieval and citation anchors are built on.
 - Every bulk-output tool declares an `output_path` that stores the result in the workspace and returns a receipt, and that write answers to the same approval gate as the write tools.
 - `query_table`, `jq`, `read_binary_document`, and every user-configured MCP server are deferred (`defer_loading=True`), while everything a turn normally reaches stays eager.
@@ -80,7 +85,8 @@
 ### Python sandbox
 
 - `run_python` is a Monty sandbox with no network or host filesystem: the workspace is a read-only mount (`tools/workspace_os.py`, routing through the same seams as the read tools so the `DocumentFilter` stays one predicate), `.scratch/` is the only writable path, and a document is written only by committing `/output` through the canonical write path after the program succeeds.
-  The declared `output_path` is a second name for `/output` inside the program (`WorkspaceOS.output`, seeded with the document as it stands), since the model writes where it was just told the result goes, so the two names are one file and not a conflict, while a write to any other document stays refused.
+  The declared `output_path` is a second name for `/output` inside the program (`WorkspaceOS.output`, seeded with the document as it stands), so the two names are one file and not a conflict, while a write to any other document stays refused.
+  Only `/output` is ever named to the model, though, since `output_path` captures the call's result on every other tool (`REDIRECT_INSTRUCTIONS`) and a model carrying that meaning over declares a path, returns the document it computed, and writes nothing: the arg description, `PYTHON_INSTRUCTIONS`, the mount's refusal, and the sentence for a run that committed nothing all say the program writes `/output` itself.
   There is one path grammar and the sandbox does not add to it: a program opens `~/notes.md`, the path every tool result, citation, and argument spells, while a leading slash is the run's own files (`/tmp`, `/output`).
   `WORKSPACE_MOUNT` (`/workspace/~/notes.md`) is recognised inside a program but never produced, since a model brings the convention from elsewhere; a tool argument keeps the one grammar, so the approval gate and the commit never read a path differently.
   Nothing else is injected as a host function, since `open` is the read tools, `re` is grep, and `json` is jq.

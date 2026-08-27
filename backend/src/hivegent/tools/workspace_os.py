@@ -441,10 +441,11 @@ class WorkspaceOS(AbstractOS):
         if not is_scratch_path(resolved[1]):
             raise PermissionError(
                 f"'{canonical}' is one of the user's documents, and the mounted "
-                "workspace is read-only. Name it as this call's `output_path`, "
-                "which the program may then write under that very name or as "
-                "/output, or use the document write tools. A path under "
-                "`.scratch/` can be written from here directly."
+                "workspace is read-only. Name it as this call's `output_path` "
+                f"and write the text to {SANDBOX_OUTPUT_FILE}, which is "
+                "committed there once the program succeeds, or use the document "
+                "write tools. A path under `.scratch/` can be written from here "
+                "directly."
             )
 
         return resolved[2]

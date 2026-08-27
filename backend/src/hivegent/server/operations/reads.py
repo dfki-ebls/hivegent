@@ -43,7 +43,7 @@ async def find_original(store: Casebase, safe: str) -> Path:
     if full_path is None or not full_path.exists():
         raise HTTPException(
             status_code=404,
-            detail=f"No original file found for '{safe}'",
+            detail=f"No original file found for '{store.scope.render(safe)}'",
         )
     return full_path
 

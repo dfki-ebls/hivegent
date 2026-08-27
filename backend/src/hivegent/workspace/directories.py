@@ -49,7 +49,7 @@ async def create_directory(store: Casebase, path: str) -> None:
         directory_path = workspace_dir / path
         if directory_path.exists():
             raise HTTPException(status_code=409, detail="Path already exists")
-        _check_destination_parents(workspace_dir, path)
+        _check_destination_parents(store, path)
         directory_path.mkdir(parents=True, exist_ok=True)
 
 
@@ -98,7 +98,7 @@ async def _move_directory_locked(
             raise HTTPException(
                 status_code=400, detail="Cannot move a directory into itself"
             )
-    _check_destination_parents(dst_workspace, dst)
+    _check_destination_parents(dst_store, dst)
     if _is_blocked_by_other(dst_dir, src_dir):
         raise HTTPException(status_code=409, detail="Destination already exists")
 

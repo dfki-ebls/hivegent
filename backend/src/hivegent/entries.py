@@ -269,18 +269,25 @@ def find_original_for_stem(workspace_dir: Path, stem_path: str) -> str | None:
     (``a.tar`` from ``a.tar.gz``), so re-deriving it here via
     :func:`stem_path_from_reference` would strip part of the name and miss
     the entry's sibling files.
+
+    The two name tests run before ``is_file``, which is the only predicate
+    that costs a syscall: they reject every entry but the handful sharing the
+    stem, so the scan is one directory listing rather than one ``stat`` per
+    file in it.  Read tools reach this now, where a folder of a few thousand
+    documents was paying milliseconds per read to answer ``None``.
     """
     stem_pure = PurePosixPath(stem_path)
     parent_dir = workspace_dir / stem_pure.parent
     if not parent_dir.exists():
         return None
 
+    description = f"{stem_pure.name}{DOCUMENT_EXTENSION}"
     candidates = sorted(
         candidate
         for candidate in parent_dir.iterdir()
-        if candidate.is_file()
-        and candidate.name != f"{stem_pure.name}{DOCUMENT_EXTENSION}"
+        if candidate.name != description
         and candidate.stem == stem_pure.name
+        and candidate.is_file()
     )
     if not candidates:
         return None

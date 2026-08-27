@@ -17,8 +17,25 @@ from fastapi import HTTPException
 from ..config import settings
 from ..entries import SCRATCH_DIR_NAME, ContentStat, is_assets_dir, is_scratch_path
 from ..humanize import format_bytes
+from ..store import Casebase
 
 __all__: list[str] = []
+
+
+def _shown(store: Casebase, local: str) -> str:
+    """The canonical path a message names, not the one local to the store.
+
+    Every string this package hands back is read by a model or a client that
+    addresses a document by its full ``~`` / ``@<group>`` path, so a message
+    spelling the store-local one names a path no tool and no route accepts: a
+    program written to `~/.scratch/run.py` came back as `.scratch/run.py` and
+    was pasted into the next call as inline code rather than run by its
+    `script_path`.
+
+    Here rather than beside any one mutation because the rule is the package's,
+    not one module's: every message that names a path renders it through this.
+    """
+    return store.scope.render(local)
 
 
 def _remove_tree(directory: Path) -> None:
@@ -146,8 +163,14 @@ def _resolve_move_destination(
     return dst
 
 
-def _check_destination_parents(workspace_dir: Path, target: str) -> None:
-    """Reject a destination path whose parent chain is blocked by an existing file."""
+def _check_destination_parents(store: Casebase, target: str) -> None:
+    """Reject a destination path whose parent chain is blocked by an existing file.
+
+    Takes the store rather than its directory because the blocker has to be
+    named back in the caller's own grammar, and the directory alone cannot say
+    which workspace it is.
+    """
+    workspace_dir = store.workspace_dir(settings.data_dir)
     blocker = next(
         (
             parent
@@ -158,7 +181,8 @@ def _check_destination_parents(workspace_dir: Path, target: str) -> None:
     )
     if blocker is not None:
         raise HTTPException(
-            status_code=409, detail=f"Destination parent '{blocker}' is a file"
+            status_code=409,
+            detail=f"Destination parent '{_shown(store, str(blocker))}' is a file",
         )
 
 

@@ -509,6 +509,43 @@ class TestReadDocumentTool:
         with pytest.raises(ToolRetry, match="report.md"):
             await tool("report.docx")
 
+    async def test_projection_of_a_table_names_query_table(
+        self, tmp_path: Path
+    ) -> None:
+        # The read that matters: an uploaded spreadsheet is only ever addressed
+        # by its markdown projection, so keying the hint on the requested
+        # suffix left query_table invisible for exactly the file it exists for.
+        (tmp_path / "lab.xlsx").write_bytes(b"PK\x03\x04\xec\xec binary")
+        (tmp_path / "lab.md").write_text("| a | b |\n|---|---|\n| 1 | 2 |")
+        tool = ReadDocumentTool(paths=SearchPath(path=tmp_path, scope=WorkspaceScope()))
+
+        result = await tool("~/lab.md")
+
+        assert result.formatted is not None
+        assert "query_table" in result.formatted
+        assert "'~/lab.xlsx'" in result.formatted
+
+    async def test_plain_markdown_names_no_query_tool(self, tmp_path: Path) -> None:
+        (tmp_path / "notes.md").write_text("prose")
+        tool = ReadDocumentTool(paths=tmp_path)
+
+        result = await tool("notes.md")
+
+        assert result.formatted is not None
+        assert "query_table" not in result.formatted
+
+    async def test_binary_table_is_refused_naming_query_table(
+        self, tmp_path: Path
+    ) -> None:
+        # Both halves of the seam: the tool that answers without reading leads,
+        # and the extracted text stays named behind it.
+        (tmp_path / "lab.xlsx").write_bytes(b"PK\x03\x04\xec\xec binary")
+        (tmp_path / "lab.md").write_text("extracted text")
+        tool = ReadDocumentTool(paths=tmp_path)
+
+        with pytest.raises(ToolRetry, match=r"query_table.*'lab\.md'"):
+            await tool("lab.xlsx")
+
     @pytest.mark.parametrize("suffix", sorted(VISION_MEDIA_TYPES))
     async def test_supported_binary_directs_to_binary_tool(
         self, tmp_path: Path, suffix: str

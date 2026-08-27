@@ -14,7 +14,7 @@ from ..config import settings
 from ..llm_config import LlmConfig
 from ..prompts import format_document_scope
 from ..store import Casebase, build_search_paths
-from ..tools.base import SearchPath
+from ..tools.base import SearchPath, query_hint, resolve_accessible_file
 from ..types import AUTO_APPROVED_MODES, MUTATING_MODES, DocumentFilter, Mode
 from .subagent_events import SubagentUpdate
 
@@ -106,7 +106,10 @@ class UserDeps:
         The hidden half is rendered back from the very :class:`DocumentFilter`
         objects the document tools enforce, so what the model is told cannot
         drift from what its tools return.  The relevant half enforces nothing
-        and already arrives canonical, so it passes straight through.
+        and already arrives canonical, so it carries only what the selection
+        cannot say for itself: a selected spreadsheet is named by the markdown
+        it was projected to, so the block is the first and cheapest place the
+        run can learn that the original is there to be queried instead.
         """
         hidden = frozenset(
             store.scope.render_filter_entry(entry)
@@ -114,8 +117,17 @@ class UserDeps:
             if (document_filter := self.filter_for_store(store)) is not None
             for entry in document_filter.excluded
         )
+        paths = self.search_paths()
+        resolved = (
+            (file_path, resolve_accessible_file(paths, file_path))
+            for file_path in self.relevant_documents
+        )
+        relevant = {
+            file_path: query_hint(entry[0], entry[1]) if entry else ""
+            for file_path, entry in resolved
+        }
 
-        return format_document_scope(self.relevant_documents, hidden)
+        return format_document_scope(relevant, hidden)
 
 
 @dataclass(slots=True, frozen=True)
