@@ -1,7 +1,7 @@
 """LLM client construction helpers, including the quirk compensation that
 self-hosted OpenAI-compatible endpoints need."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import override
 
 from openai import AsyncOpenAI
@@ -13,8 +13,15 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import ModelResponseStreamEvent, PartStartEvent
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIStreamedResponse
-from pydantic_ai.profiles import ModelProfileSpec, merge_profile
+from pydantic_ai.profiles import ModelProfile, ModelProfileSpec, merge_profile
+from pydantic_ai.profiles.cohere import cohere_model_profile
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.harmony import harmony_model_profile
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings, ThinkingEffort, ThinkingLevel
 
@@ -157,32 +164,75 @@ def create_openai_client(
     ).client
 
 
-def _self_hosted_profile(*, qwen3_xml_parser: bool) -> ModelProfileSpec:
-    """Profile overrides a self-hosted runtime needs on top of pydantic-ai's.
+# Model families a self-hosted runtime serves, borrowed from
+# https://github.com/pydantic/pydantic-ai/pull/6153.  pydantic-ai ships the same
+# map in ``OllamaProvider.model_profile``, which is not reusable here: it merges
+# Ollama's own server quirks on top of it.
+_FAMILY_PROFILES: Mapping[str, Callable[[str], ModelProfile | None]] = {
+    "llama": meta_model_profile,
+    "gemma": google_model_profile,
+    "qwen": qwen_model_profile,
+    "qwq": qwen_model_profile,
+    "deepseek": deepseek_model_profile,
+    "mistral": mistral_model_profile,
+    "command": cohere_model_profile,
+    "gpt-oss": harmony_model_profile,
+}
 
-    ``supports_thinking``: these endpoints serve reasoning models pydantic-ai
-    does not recognise, so its name-based inference would say ``False`` and
-    silently strip the unified ``thinking`` setting from every request.
-    ``ignore_streamed_leading_whitespace``: what pydantic-ai's own Qwen
-    profile sets, which the OpenAI provider never resolves — it describes the
-    model rather than the server, so every self-hosted runtime gets it.
 
-    *qwen3_xml_parser* adds the one override that parser forces: the Qwen chat
-    template as vLLM applies it rejects a second ``system`` message with
-    "System message must be at the beginning.", and per-capability
-    instructions render as one each, so the leading ones are merged into one.
+def _bare_model_name(model: str) -> str:
+    """The served model name without any ``<org>/`` prefix, casefolded."""
+    return model.rsplit("/", maxsplit=1)[-1].casefold()
 
-    The returned callback receives the provider's already-resolved profile as
-    the base to layer these on top of.
+
+def _match_prefix[T](bare_name: str, table: Mapping[str, T]) -> T | None:
+    """The value of the first *table* key that prefixes *bare_name*."""
+    return next(
+        (value for prefix, value in table.items() if bare_name.startswith(prefix)),
+        None,
+    )
+
+
+def _family_profile(model: str) -> ModelProfile | None:
+    """pydantic-ai's profile for the family *model* belongs to, if any."""
+    bare_name = _bare_model_name(model)
+    family = _match_prefix(bare_name, _FAMILY_PROFILES)
+
+    return family(bare_name) if family else None
+
+
+def _self_hosted_profile(
+    model: str, *, merge_system_messages: bool
+) -> ModelProfileSpec:
+    """Profile a self-hosted runtime needs on top of the provider's.
+
+    Three layers with three owners: the OpenAI provider profiles by served
+    name, so it hands every self-hosted model the OpenAI family's, which keeps
+    the ``$ref``/``$defs`` a local runtime's guided decoding wants inlined;
+    :func:`_family_profile` puts the real family back; ours goes on top of
+    both.  ``supports_thinking`` because these endpoints serve reasoning models
+    pydantic-ai cannot name-infer, so its ``False`` would silently strip the
+    unified ``thinking`` setting from every request, and
+    ``ignore_streamed_leading_whitespace`` because the whitespace is what the
+    local chat templates emit around a tool call, whatever a family measured
+    against its own hosted endpoint.
+
+    *merge_system_messages* answers the Qwen chat template as vLLM applies it,
+    which rejects a second ``system`` message with "System message must be at
+    the beginning.", while per-capability instructions render as one each.  It
+    is keyed on the runtime rather than the family because a vLLM deployment
+    applies that template whether or not the served name carries ``qwen``.
     """
     overrides = OpenAIModelProfile(
         supports_thinking=True,
         ignore_streamed_leading_whitespace=True,
     )
-    if qwen3_xml_parser:
+    if merge_system_messages:
         overrides["openai_chat_supports_multiple_system_messages"] = False
 
-    return lambda profile: merge_profile(profile, overrides)
+    family = _family_profile(model)
+
+    return lambda profile: merge_profile(profile, family, overrides)
 
 
 def create_openai_chat_model(
@@ -219,14 +269,14 @@ def create_openai_chat_model(
             return OpenAIChatModel(
                 model,
                 provider=provider,
-                profile=_self_hosted_profile(qwen3_xml_parser=False),
+                profile=_self_hosted_profile(model, merge_system_messages=False),
             )
 
         case InferenceProvider.VLLM:
             return _SegmentedOpenAIChatModel(
                 model,
                 provider=provider,
-                profile=_self_hosted_profile(qwen3_xml_parser=True),
+                profile=_self_hosted_profile(model, merge_system_messages=True),
             )
 
 
@@ -294,12 +344,9 @@ _REASONING_EFFORT_OVERRIDES: Mapping[str, Mapping[ThinkingEffort, ThinkingEffort
 
 
 def _map_reasoning_effort(model: str, effort: ThinkingEffort) -> ThinkingEffort:
-    model_name = model.rsplit("/", maxsplit=1)[-1].casefold()
-    for prefix, overrides in _REASONING_EFFORT_OVERRIDES.items():
-        if model_name.startswith(prefix):
-            return overrides.get(effort, effort)
+    overrides = _match_prefix(_bare_model_name(model), _REASONING_EFFORT_OVERRIDES)
 
-    return effort
+    return overrides.get(effort, effort) if overrides else effort
 
 
 def _reasoning_extra_body(

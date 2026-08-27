@@ -12,6 +12,8 @@ from openai.types.chat.chat_completion_chunk import (
 from pydantic_ai.messages import PartStartEvent, TextPart, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 import hivegent.llm as llm_module
 from hivegent.config import InferenceProvider
@@ -127,18 +129,20 @@ def test_openai_endpoint_gets_no_self_hosted_quirks(
     assert _openai_model("gpt-4o").profile.get("supports_thinking") is False
 
 
-def test_only_vllm_gets_the_qwen3_xml_parser_workarounds(
+def test_only_vllm_merges_leading_system_messages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Segmentation and the system-message merge answer vLLM's parser alone.
+    """Segmentation and the system-message merge answer vLLM alone.
 
     llama.cpp orders messages correctly and accepts several system messages,
-    so it takes the shared self-hosted profile without either workaround.
+    so it takes the shared self-hosted profile without either workaround.  The
+    shared half is asserted on a name no family claims, so it witnesses our own
+    layer rather than a family that happens to agree with it.
     """
     monkeypatch.setattr(llm_module, "get_user_http_client", lambda: None)
 
-    vllm = _model("qwen", InferenceProvider.VLLM)
-    llama_cpp = _model("qwen", InferenceProvider.LLAMA_CPP)
+    vllm = _model("some-local-model", InferenceProvider.VLLM)
+    llama_cpp = _model("some-local-model", InferenceProvider.LLAMA_CPP)
 
     assert type(vllm) is llm_module._SegmentedOpenAIChatModel
     assert type(llama_cpp) is OpenAIChatModel
@@ -150,3 +154,29 @@ def test_only_vllm_gets_the_qwen3_xml_parser_workarounds(
     for self_hosted in (vllm, llama_cpp):
         assert self_hosted.profile.get("supports_thinking") is True
         assert self_hosted.profile.get("ignore_streamed_leading_whitespace") is True
+
+    # ``deepseek_model_profile`` states the whitespace flag as ``False`` for
+    # anything but R1, and our layer sits above the family for exactly this:
+    # the whitespace belongs to the local chat template, not to the model.
+    non_r1 = _model("deepseek-ai/DeepSeek-V3", InferenceProvider.LLAMA_CPP)
+    assert non_r1.profile.get("ignore_streamed_leading_whitespace") is True
+
+
+def test_self_hosted_models_resolve_their_own_family_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The served name picks the family profile, not the OpenAI provider's.
+
+    The schema transformer is the sharpest witness: the OpenAI family keeps the
+    ``$ref``/``$defs`` a local runtime wants inlined, so seeing the Qwen one
+    resolved through an ``<org>/`` prefix is proof the family won.
+    """
+    monkeypatch.setattr(llm_module, "get_user_http_client", lambda: None)
+
+    qwen = _model("Qwen/Qwen3-32B", InferenceProvider.LLAMA_CPP)
+    unknown = _model("some-local-model", InferenceProvider.LLAMA_CPP)
+
+    assert (
+        qwen.profile.get("json_schema_transformer") is InlineDefsJsonSchemaTransformer
+    )
+    assert unknown.profile.get("json_schema_transformer") is OpenAIJsonSchemaTransformer
