@@ -43,7 +43,7 @@
 
 - A `.scratch/` directory is content and never a document: `entries.is_scratch_path` is checked before the format seam, so the reconcile walk skips it, a write lands as plain bytes with no projection or stem claim, and the tree hides it.
   That is where a run parks state between `run_python` calls.
-- The path tools still list, glob, and grep it, since a run has to find its own state back, while `_check_not_reserved_path` keeps the upload, move, and directory API out of it as it does `.assets`.
+- The path tools still list, glob, and grep it, since a run has to find its own state back, and `delete_document` removes one file from it, while `_check_not_reserved_path` keeps the upload, move, and directory API out of it as it does `.assets`.
 - The approval gate is per path, not per tool (`agents/tools/write.py`): an interactive run writes to scratch without asking, read and plan modes refuse it like any write, write mode approves everything.
 - It is cleared by `workspace.cleanup_scratch_dirs` from the lifespan and, while running, by `DELETE /api/scratch` ("Clear Scratch"), which sweeps the caller's workspace plus every writable group under its lock and notifies no client.
 - `SCRATCH_INSTRUCTIONS` is shared between the `compute` and `write` features, and `PYTHON_INSTRUCTIONS` names `.scratch/` as the home of a rerunnable `.py`, since a `.py` elsewhere is an original and gets chunked.
@@ -74,7 +74,14 @@
 - The chat's document selection is asymmetric: `included_documents` is advisory and only named in the prompt (`parse_document_scope`, `format_document_scope`), never a filter, so a run can follow a reference out of the selection.
   Only `excluded_documents` becomes a `DocumentFilter`, enforced by the path tools through `SearchPath.filter_func` and by retrieval in `resolve_accessible_document_ids`, staying one predicate.
   `.scratch/` is exempt inside `DocumentFilter.__call__`, which lets `UserDeps` offer a single `search_paths`.
-- A document is writable exactly when it is readable as text: the write tools take markdown descriptions and plain-text originals (regenerating the projection through the upload pipeline) and reject binaries, which are replaced by uploading.
+- A document is writable exactly when it is readable as text: the write tools take markdown descriptions and text originals of any format (regenerating the projection through the upload pipeline) and reject binaries, which are replaced by uploading.
+  Creation asks the same question from the name alone, since a file that does not exist has no bytes to decode: `converters.writes_as_text` refuses a suffix on `converters.BINARY_SUFFIXES` and admits every other, so `.csv`, `.html`, and `.svg` are created as the text they are.
+  Not `is_projectable_original`, which answers whether the ingest may derive a projection by copying and so refused every text format a converter claims while admitting binary ones no converter does.
+  `converters.BINARY_WRITE_REASON` is the one refusal, shared by the gateway and by `tools.mutations.resolve_text_target`, which every text-writing surface resolves through so the refusal lands before the approval prompt rather than after the run.
+  `.scratch/` answers to no format at all, checked before the seam here as everywhere else.
+- `move_document` and `delete_document` are the agent's other two mutations, wired in `agents/tools/write.py` like the write tools.
+  A move is the one mutation with two ends, so it routes through `store.scoped_pair_operation`, announces both scopes with `workspace_events.announce_paths`, and puts both paths in a single `ApprovalRequired`; it relocates an entry, so neither end may be `.scratch/`.
+  A delete does reach `.scratch/`, where it is the unlink and nothing else, so a run can clear the state it created.
 - Tables are queried (`query_table`, Polars SQL) and JSON filtered (`jq`) against the original file, never read, and `converters.TABULAR_SUFFIXES` / `converters.JSON_SUFFIXES` are the one table behind each split, which `read_document` points at.
   The pointer follows the entry, not the path in hand (`tools.base.query_hint`): an uploaded table is served as its `<stem>.md` projection, so the read that needs the hint most never names a tabular suffix, and `sidecar_hint` names the same tool ahead of the extracted text when the original itself is refused.
   The read tools still serve the markdown projection, which retrieval and citation anchors are built on.
@@ -82,7 +89,7 @@
 - A tool is in the model's initial context or it is not registered: nothing is deferred, MCP servers included.
   `defer_loading` hid a tool from the tool list and offered it back through tool search, which bought nothing here (`llm.py` builds only `OpenAIChatModel`, which renders no wire-level deferral) and cost a model that read a pointer at a hidden tool as naming one it was not given.
 - `settings.tools.excluded` is what replaces it: an operator's tool names, in the same namespace as a request's `disabled_tools` and unioned with it into the one `PrepareTools` pass, which reaches MCP tools too.
-  It defaults to `jq` and the two conversation tools, and `agents.check_excluded_tools` fails the boot on a name no tool has.
+  It defaults to the two conversation tools, and `agents.check_excluded_tools` fails the boot on a name no tool has.
 - See `backend/README.md` for the typing pass, the budgets, the redirect channels, and why nothing is deferred.
 
 ### Python sandbox

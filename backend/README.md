@@ -205,13 +205,13 @@ Reconciliation never deletes workspace files: they are the authoritative content
 `entries.is_description_file` and `entries.is_projectable_original` are the scratch-versus-document policy seam.
 Markdown files are descriptions and become document entries directly.
 A non-markdown file becomes one when its markdown projection is a verbatim copy of its own text (a config, data-serialization, or source file): the ingest pass writes the missing `<stem>.md` for it and indexes it, so a file dropped into the workspace by hand is a real entry rather than content the search index cannot see.
-Everything else stays on disk and is never chunked on its own — a binary because nothing textual can be derived from it at all, and a converter- or vision-backed format (`.csv`, `.html`, `.svg`) because that work has no place in a sweep that blocks the server from accepting traffic.
+Everything else stays on disk and is never chunked on its own — a binary because nothing textual can be derived from it at all, and a converter- or vision-backed format (`.csv`, `.html`) because that work has no place in a sweep that blocks the server from accepting traffic.
 Both stay reachable: they are listed in the tree, can be deleted, and become entries as soon as they are uploaded or reconverted explicitly.
 Deriving a description is idempotent and content-addressed like every other ingest, so it costs one decode on the boot that discovers the file and nothing on the ones after.
 
 "Verbatim" is not decided here, and that matters more than it looks: `converters.projection_for` is the one routing table saying which projection a filename gets (markdown, image, video, or convertible), and `workspace.prepare._prepare_upload` dispatches on the very same table.
 Three things have to agree about a file — what an upload makes of it, what the ingest pass may derive for it, and what kind of entry a row rebuilt from disk claims it is (`workspace.metadata._REDISCOVERED_KINDS`) — and asking one table is what stops them from drifting.
-Deriving that answer separately is exactly how `.svg` ends up projected verbatim by one path and captioned by a vision model in another, for the same bytes.
+Deriving that answer separately is exactly how `.svg` ended up projected verbatim by one path and captioned by a vision model in another, for the same bytes; the table now answers once, and answers "markup" — a vision model cannot be shown an SVG (`VISION_MEDIA_TYPES` leaves it out), so its own text is the only index it can have.
 The corollary is that deleting only an entry's `<stem>.md` by hand does not retire the entry when its original is a text file: the next ingest derives the description again, and deleting the entry means deleting its files (which is what the delete API does).
 
 Every read of user-supplied bytes goes through `text.decode_bytes` / `text.read_text_file`, never `Path.read_text`.
@@ -230,8 +230,14 @@ So a text file is editable and a binary is not, and the file's _name_ only decid
   The projection it leaves behind is byte-for-byte the one uploading that file produces, stale assets are cleared with it, and a failed conversion leaves the previous entry intact.
   The read, the hash check, and the mutation all happen inside the reserve, under the lock, so `expected_hash` guards this path exactly as it guards the other.
 
-Creating a file is the one place the name still constrains the write: a new document may be markdown or a plain-text format (`is_projectable_original`), because those are the ones whose projection can be derived without a converter, and a new original must claim a free stem so a write can never silently supersede another entry's description or original.
-Everything else is uploaded, which is also the way to replace a binary.
+Creating a file asks the same question one more time, from the name alone, because a file that does not exist yet has no bytes to decode: `converters.writes_as_text` refuses a suffix on `converters.BINARY_SUFFIXES` and admits every other, so a `.csv`, an `.html`, or an `.svg` is created as the text it is and its projection derived by the converter that owns it.
+That table is composed only from the ones that already name a binary format — what a vision model is shown, what is sent as bytes, what pandoc cannot read in its sandbox, what a query reads columnar — rather than from a list of every binary format there is, so a suffix no converter claims is not on it and a write there lands as the text it was.
+It is deliberately not `is_projectable_original`, which answers whether the *ingest pass* may derive a projection by copying: gating a write on that refused every text format a converter claims (`.csv`, `.html`, `.tex`) while admitting binary ones no converter does (`.parquet`, `.xlsb`).
+A new original must still claim a free stem so a write can never silently supersede another entry's description or original, and a binary is uploaded, which is also the way to replace one.
+
+The refusal is one sentence (`converters.BINARY_WRITE_REASON`, the write-side counterpart of `text.NOT_TEXT_REASON`) shared by the gateway and by `tools.mutations.resolve_text_target`, which every text-writing tool surface resolves through.
+That is what puts the refusal in front of the approval prompt rather than behind it: `run_python`'s declared `output_path` used to be checked only at the commit, so a bad suffix cost the user an approval and the run a whole program before anything said no.
+`.scratch/` answers to none of it — `is_scratch_path` is checked before the format seam here as everywhere else, since a scratch file has no entry, no projection, and no converter to hand its bytes to.
 
 ### Scratch directories
 
@@ -242,7 +248,7 @@ It is cleared by `workspace.directories.cleanup_scratch_dirs` from the lifespan,
 Two properties of that design are deliberate for now and are the places to revisit first if scratch grows load-bearing.
 
 - TODO(scratch): scratch state is workspace-wide rather than conversation-scoped, so one conversation can read another's scratch files by guessing the path, and so can any member of a readable group workspace. That is acceptable while scratch holds a run's own intermediates and the accepted architecture, but a `.scratch/<conversation-id>/` namespace with only the current one in scope is the fix when scratch starts carrying anything a document filter would have hidden.
-- TODO(scratch): scratch has no aggregate quota and is pruned only at startup, and the delete API deliberately cannot reach it, so a long-lived server writing unique output paths can fill the disk between boots. Add a per-owner byte quota enforced at write time, an age-based sweep, or deletion of a conversation's namespace when it settles.
+- TODO(scratch): scratch has no aggregate quota and is pruned only at startup, and the HTTP delete API deliberately cannot reach it (`delete_document` does, so a run can clear its own state, but a client cannot reach in), so a long-lived server writing unique output paths can fill the disk between boots. Add a per-owner byte quota enforced at write time, an age-based sweep, or deletion of a conversation's namespace when it settles.
 
 ### Preparing for a read-write shell tool
 
@@ -274,6 +280,12 @@ What limits a query is less the dialect than a column typed `String`, which turn
 The conversion is applied only where it loses nothing, so no cell silently becomes null, and one zero-padded value marks the column an identifier (a zip code, an EAN) and vetoes numeric typing for the whole of it.
 A column that falls short is reported by the schema call as a `TextColumn` with the share that did parse, which is what lets the first query wrap it in `TRY_CAST` rather than the second, and a dtype error names the text columns the query itself mentioned.
 
+The schema listing is the only place a model ever sees a column name, so it spells each one the way a query has to type it: `_quoted` wraps anything that is not a bare SQL identifier in double quotes, which is the norm rather than the exception in an exported sheet (`"Zulaufmenge (D)"`), and a listing that spelled it bare handed the model a syntax error it had already done the cheap call to avoid.
+A parser error answers with the same rule and one of the file's own quoted columns as the example, since that failure has nothing else to correct itself from — the schema call it would otherwise be sent back to is the one the query came from.
+
+A second cheap call is worth as much: an exported sheet routinely spreads its header over two rows, and the loader can only take the first, which leaves the second as data row 1 and every column the first row left blank as `__UNNAMED__n`.
+Those placeholder names are the signal, so the schema call counts them and says the header may span more than one row, which is what stops a label row from being averaged in with the values under it.
+
 Excel is read through `fastexcel` (calamine), which covers `.xlsx`, `.xlsb`, and `.xls` with no extension download, and a delimited file in a legacy encoding is retried once through `read_text_or_retry`, gated on `ComputeError` plus a delimited suffix, since a lazy scan only meets the offending bytes when it reaches them.
 That retry belongs to the load phase alone, which the typing pass makes reliable by reading every text column there: the offending bytes are met before the query runs, so a dtype error is never mistaken for an encoding one and paid for with a second full pass over the file.
 Every budget is applied before the `TableResult` is built, and only the row lines are budgeted, so the count the rows are trimmed by is exactly a row count.
@@ -303,7 +315,7 @@ Wire-level deferral, where the schema rides along and the provider unhides it, n
 
 What is left is `settings.tools.excluded`, an operator's list of tool names in the same namespace as a chat request's `disabled_tools`, unioned with it by `build_capabilities` into the one `PrepareTools` pass a run applies.
 The two differ only in who wrote them, so an operator exclusion retracts a feature's instruction block exactly as a user's does, and the pass covers `extra` as well, which is an operator's only reach over the tools a user-configured MCP server brings.
-It defaults to `jq` and the two conversation tools: a JSON filter earns its schema in a deployment whose documents are JSON, and past conversations are already reachable through the `explore` tool's `conversations` scope.
+It defaults to the two conversation tools, since past conversations are already reachable through the `explore` tool's `conversations` scope.
 `check_excluded_tools` runs before the lifespan opens anything, because an exclusion that matches nothing withholds nothing and its only symptom is a schema the operator believed was gone.
 
 MCP servers are added directly for the same reason (`build_mcp_server`).
@@ -341,6 +353,7 @@ Which of the two filesystems answers an operation is decided once, in the `dispa
 Routed once, a method the mount does not implement is simply an operation the mount does not offer, and the run's own files keep answering it.
 
 Nothing is handed to a program as a host function, retrieval included: `open` and `iterdir` are the read tools, `re` is grep, and `json` is jq, so anything injected beside the mount would be a second way to do what the mount already does, and ranking a chunk against a question is a `search` call the model makes before it writes the program.
+Monty's `json` has `loads` and `dumps` and no file-reading `load`, which `PYTHON_INSTRUCTIONS` says outright rather than leaving to a failed call: `run_python` is the only reader the `.json` redirect channel has, so the one function the redirect is written for has to be the one that exists.
 Monty has no `glob`, `rglob`, or `fnmatch`, which is why `PYTHON_INSTRUCTIONS` shows the `iterdir` walk rather than leaving the model to discover the gap mid-program, and `path_iterdir` returns its entries sorted, since Monty cannot compare two `Path` values and a program therefore cannot impose an order on what it is handed.
 Which modules a program may import is left for the model to find out, since Monty implements a subset only it knows, documents no list of it, and offers no `importlib`, `sys.modules`, `__import__`, or `dir` to enumerate one from inside: any list written down here is a copy that goes stale on the next release, and the one that used to stand in `PYTHON_INSTRUCTIONS` advertised `functools`, which Monty does not have, for as long as nobody tried it.
 A failed import raises `ModuleNotFoundError` naming the module, which is the correction a stale list would have needed anyway, so the prompt says the standard library is partial and to try the import.
@@ -358,7 +371,7 @@ Only `/output` is named to the model, though, since `output_path` captures the c
 That is what makes them one file rather than one path shadowing another: a read returns what the document holds, an append appends to it, a second write replaces it, and the alias needs no list of which Monty operations write, which nothing would keep complete.
 The alias is only ever the path the call already approved, so every other document stays refused, and the commit runs once after the program succeeds, skipped with a sentence when the buffer came back exactly as it was seeded.
 That leaves nothing about the workspace staged: what the program sees is what is on disk, so the mounted view cannot drift from what the call commits, and a rejected commit cannot leave a program's result resting on a change that never landed.
-A move or a delete of a document is deliberately not reachable from a program: both are capabilities the agent has no tool for at all, and granting them as a side effect of a replayed mutation log would put them beyond the per-call gate every other write answers to.
+A move or a delete of a document is deliberately not reachable from a program: the agent has `move_document` and `delete_document` as tools of its own, each behind the per-call gate every other write answers to, and granting them as a side effect of a replayed mutation log would put them beyond it.
 
 The read budget is per document (`max_document_chars`) and deliberately not a running total, since a decoded document is the only thing the host holds and it holds one at a time: `read_text_file` reads a file whole and decodes it in one go, then the string crosses into the interpreter and is dropped, so reading a 2000-document, 100 MB workspace moved the server's peak RSS by a megabyte and took half a second.
 A running total would have bounded nothing the host spends while capping the very thing the mount exists for, and it did: the 5M default refused a walk of that workspace a third of the way through.
