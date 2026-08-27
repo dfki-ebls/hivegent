@@ -33,11 +33,9 @@ from .base import (
 from .formatting import cap_lines, hint_suffix, truncate_line, truncate_middle
 from .mutations import WriteDocumentTool
 from .sink import resolve_output_target
-from .workspace_os import WorkspaceOS
+from .workspace_os import SANDBOX_OUTPUT_FILE, SANDBOX_TMP_DIR, WorkspaceOS
 
 __all__ = [
-    "SANDBOX_OUTPUT_FILE",
-    "SANDBOX_TMP_DIR",
     "CodeArg",
     "PythonOutputPathArg",
     "PythonResult",
@@ -67,35 +65,12 @@ caps sit well above that budget, so what a clip would have kept is unaffected
 and only the runaway case is cut, before the string is built rather than after.
 """
 
-SANDBOX_TMP_DIR = PurePosixPath("/tmp")
-"""Scratch directory every run starts with, also named by ``TMPDIR``.
-
-Monty has no ``tempfile`` module and no working directory, so a program with an
-intermediate to park has nowhere to put it unless the directory already exists:
-a bare write to ``/tmp`` fails with ``FileNotFoundError``.  Creating it here and
-naming it in the environment makes ``os.getenv("TMPDIR")`` the one answer, the
-way the workspace prefix is the one answer for a document.  It is discarded
-when the call ends, whether the program succeeded or not.
-"""
-
-SANDBOX_OUTPUT_FILE = PurePosixPath("/output")
-"""Where a program writes the one document the call may persist.
-
-The mounted workspace is read-only outside `.scratch/`, because committing a
-document runs the async mutation gateway and needs a human's answer, neither of
-which a synchronous filesystem callback can reach.  So the program writes here
-instead and the tool commits it afterwards, which is also what makes the commit
-conditional on the program having succeeded.  Named by ``OUTPUT`` in the
-environment, the way ``/tmp`` is named by ``TMPDIR``.
-"""
-
 CodeArg = Annotated[
     str | None,
     Field(
         description=(
             "Inline program to run in Monty. Provide either this or "
-            "`script_path`, but not both. Its trailing expression is the value "
-            "returned to you, and whatever it prints comes back alongside."
+            "`script_path`, but not both."
         ),
     ),
 ]
@@ -200,6 +175,13 @@ class _PreparedRun:
     source: str
     script_path: str | None
     output: str | None = None
+    standing: str | None = None
+    """The output document's text as the run found it, seeded into ``/output``.
+
+    ``None`` when nothing stood there, which is also the case where the buffer
+    starts absent and its absence is what says the program wrote nothing.
+    """
+
     expected_hash: str | None = None
     """Fingerprint of the output document as it stood before the run.
 
@@ -247,23 +229,18 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
     ) -> ToolOutput[PythonResult]:
         """Run a short program in the Monty interpreter.
 
-        Reach for it whenever an answer turns on arithmetic, dates, sorting,
-        counting, or reading more documents than an answer needs quoting from.
-        Monty supports only a subset of Python and its standard library, it is
-        not a CPython environment, and the program has no network or host
-        filesystem access. The whole workspace is mounted read-only at
-        ``/workspace``, so a document is ``/workspace`` plus its full path and
-        the program may open a path it discovers while running. Intermediates
-        belong in ``/tmp`` (also ``TMPDIR``), which exists from the start and
-        is discarded when the call ends, while state that has to outlive the
-        call is written straight to a `.scratch/` path in the workspace. To
-        persist a document, write ``/output`` (also ``OUTPUT``) and name where
-        it goes as ``output_path``, which is committed only after the program
-        succeeds. Only part of the standard library is implemented and a
-        missing import says so by name, so try one rather than assuming: there
-        is no ``glob`` or ``fnmatch``, no numpy or pandas, and classes cannot
-        inherit. End the program with the expression whose value you want back,
-        and print anything else worth seeing.
+        Reach for it when an answer turns on arithmetic, dates, sorting, or
+        counting, and when one spans more documents than it could quote from:
+        one program reads them all and returns the little the answer needs.
+
+        Monty runs a subset of Python and its standard library rather than a
+        CPython environment, so an import it lacks says so by name and is
+        worth trying rather than working around, and the program reaches
+        nothing outside itself but the workspace: no network, no host
+        filesystem, and no tools of its own.
+
+        End the program with the expression whose value you want back, and
+        print anything else worth seeing.
         """
         prepared = await asyncio.to_thread(
             self._prepare,
@@ -271,7 +248,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
             script_path,
             output_path,
         )
-        filesystem = self._filesystem()
+        filesystem = self._filesystem(prepared)
         printed = CollectString()
 
         async with self.pool.checkout(
@@ -332,27 +309,31 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
             return _PreparedRun(source, canonical_script)
 
         _sink, canonical, absolute = resolve_output_target(self.writer, output_path)
+        standing = self._standing(canonical, absolute)
 
         return _PreparedRun(
-            source, canonical_script, canonical, self._basis(canonical, absolute)
+            source,
+            canonical_script,
+            canonical,
+            standing,
+            None if standing is None else content_hash(standing),
         )
 
-    def _basis(self, canonical_path: str, absolute_path: Path) -> str | None:
-        """Fingerprint the output document as it stands before the run.
+    def _standing(self, canonical_path: str, absolute_path: Path) -> str | None:
+        """The output document as it stands before the run, or ``None`` if absent.
 
-        The guard the write tools take from a prior read, taken here from the
-        state the program is about to work from: the commit lands after the
-        program ends, so a version that arrives in between would otherwise be
-        overwritten without a word.  ``None`` when the file is not there, where
-        ``create`` is the guard instead.
+        It is both what the program starts from, since ``/output`` is seeded
+        with it, and what the commit is guarded by once hashed: the commit
+        lands after the program ends, so a version arriving in between would
+        otherwise be overwritten without a word, and ``create`` is the guard
+        instead when there was nothing here.
 
-        The text is dropped as soon as it is hashed, so what it costs is the
-        decode, bounded like every other.
+        One read answers both, bounded like every other.
         """
         if not absolute_path.is_file():
             return None
 
-        return content_hash(self._read(canonical_path, absolute_path))
+        return self._read(canonical_path, absolute_path)
 
     def _resolve_script(self, file_path: str) -> tuple[str, Path]:
         """Resolve the stored program, which must already exist."""
@@ -391,12 +372,18 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
             f"characters, maximum {self.max_document_chars})."
         )
 
-    def _filesystem(self) -> WorkspaceOS:
+    def _filesystem(self, prepared: _PreparedRun) -> WorkspaceOS:
         """Build the filesystem: the workspace mounted, the run's own beside it.
 
         ``inner`` owns ``/tmp`` and ``/output``, both of which exist from the
         start so a bare write to either lands rather than failing on a missing
         parent, and both of which disappear with the session.
+
+        ``/output`` is seeded with the declared document as it stands, which is
+        what makes it the same file as the path that names it: a program opens
+        either one, reads what is there, appends to it or replaces it, and gets
+        what any filesystem would give it.  Seeded from the read the basis was
+        taken from, so being able to start from the document costs nothing.
         """
         inner = OSAccess(
             [],
@@ -406,11 +393,14 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
             },
         )
         inner.path_mkdir(SANDBOX_TMP_DIR, parents=True, exist_ok=True)
+        if prepared.standing is not None:
+            _ = inner.path_write_text(SANDBOX_OUTPUT_FILE, prepared.standing)
 
         return WorkspaceOS(
             paths=self.resolved_paths,
             inner=inner,
             writable=() if self.writer is None else self.writer.resolved_paths,
+            output=prepared.output,
             max_document_chars=self.max_document_chars,
         )
 
@@ -423,7 +413,10 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         inability to await buys back: a program that fails halfway leaves the
         workspace exactly as it found it, `.scratch/` aside.  A declared output
         the program never wrote is worth a sentence, since silence would leave
-        the model believing the request was honoured.
+        the model believing the request was honoured, and a seeded buffer it
+        never changed is the same silence: the document is already what the
+        commit would write, so saying so beats a version that only bumps the
+        mtime and re-indexes.
         """
         if prepared.output is None:
             return None, None
@@ -435,6 +428,12 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
             )
 
         content = filesystem.inner.path_read_text(SANDBOX_OUTPUT_FILE)
+        if content == prepared.standing:
+            return None, (
+                f"Nothing was committed to '{prepared.output}': the program "
+                "left it exactly as it was."
+            )
+
         self._check_budget(len(content), "The program's output")
 
         assert self.writer is not None

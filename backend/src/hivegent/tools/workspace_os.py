@@ -9,6 +9,16 @@ injected beside it: a host function would be a second way to do what the mount
 already does, and ranking a chunk against a question is a ``search`` call the
 model makes before it writes the program.
 
+A program addresses a document the way everything else does, by its full
+workspace path (``~/reports/q1.md``, ``@team/notes.md``), so the path a tool
+result spells, a citation carries, and a program opens are one string with no
+prefix to add or drop.  A leading slash is the run's own filesystem instead:
+``/tmp`` for intermediates and ``/output`` for the one document the call may
+persist, which is the whole rule a program needs.  :data:`WORKSPACE_MOUNT`
+stays behind it as a second spelling for the same documents, since it is the
+only way to reach a root that carries no scope prefix and since a model that
+has met other sandboxes reaches for it unprompted.
+
 Every operation routes through :func:`~hivegent.tools.base.resolve_accessible_file`
 and :func:`~hivegent.tools.base.entry_visible`, the same seams the read tools
 use, which is what keeps the ``DocumentFilter`` a single predicate rather than
@@ -47,6 +57,7 @@ from ..text import NOT_TEXT_REASON, read_text_file
 from .base import (
     DEFAULT_EXCLUDE_DIRS,
     SearchPath,
+    addressable_roots,
     check_read_budget,
     entry_stat,
     entry_visible,
@@ -57,16 +68,44 @@ from .base import (
 )
 
 __all__ = [
+    "SANDBOX_OUTPUT_FILE",
+    "SANDBOX_TMP_DIR",
     "WORKSPACE_MOUNT",
     "WorkspaceOS",
 ]
 
+SANDBOX_TMP_DIR = PurePosixPath("/tmp")
+"""Scratch directory every run starts with, also named by ``TMPDIR``.
+
+Monty has no ``tempfile`` module and no working directory, so a program with an
+intermediate to park has nowhere to put it unless the directory already exists:
+a bare write to ``/tmp`` fails with ``FileNotFoundError``.  Creating it here and
+naming it in the environment makes ``os.getenv("TMPDIR")`` the one answer, the
+way the workspace prefix is the one answer for a document.  It is discarded
+when the call ends, whether the program succeeded or not.
+"""
+
+SANDBOX_OUTPUT_FILE = PurePosixPath("/output")
+"""Where a program writes the one document the call may persist.
+
+The mounted workspace is read-only outside `.scratch/`, because committing a
+document runs the async mutation gateway and needs a human's answer, neither of
+which a synchronous filesystem callback can reach.  So the program writes here
+instead and the tool commits it afterwards, which is also what makes the commit
+conditional on the program having succeeded.  Named by ``OUTPUT`` in the
+environment, the way ``/tmp`` is named by ``TMPDIR``.
+"""
+
 WORKSPACE_MOUNT = PurePosixPath("/workspace")
-"""Where the workspace appears inside the sandbox.
+"""The second spelling of every workspace path, under one absolute root.
 
 A canonical path keeps its scope prefix under it, so ``~/reports/q1.md`` is
-``/workspace/~/reports/q1.md`` and the path a program prints is the path every
-tool result spells, minus one constant prefix.
+also ``/workspace/~/reports/q1.md``.  A listing, a refusal, and the
+instructions all spell a document the way every tool result does, so the model
+never meets this one here; it is recognised because a model carrying another
+sandbox's habits opens ``/workspace/...`` before it has read a word of the
+prompt.  A search root with no scope prefix has no other addressing at all,
+which is the one case :func:`_rendered` still spells this way.
 """
 
 _MOUNT_ROOT = str(WORKSPACE_MOUNT)
@@ -77,8 +116,8 @@ type VirtualPath = PurePosixPath | str | MontyFileHandle
 
 A ``MontyFileHandle`` arrives when the program opened the file rather than
 reading it in one call; it is a plain data holder naming the same path, so
-every method funnels through :func:`_canonical` and none of them has to care
-which of the three it was handed.
+every method funnels through :meth:`WorkspaceOS._canonical` and none of them
+has to care which of the three it was handed.
 """
 
 
@@ -91,15 +130,41 @@ class Entry(NamedTuple):
     stat: os.stat_result
 
 
-def _canonical(path: VirtualPath) -> str | None:
-    """The canonical workspace path a virtual one names, or ``None`` if outside.
+def _root_hint(paths: tuple[SearchPath, ...]) -> str:
+    """Name the roots in *paths*, which is what a path here has to lead with.
 
-    ``"."`` is the mount root itself, which is a directory listing the
-    workspaces rather than a path any of them claims.
+    :func:`~hivegent.tools.base.workspace_root_hint` in the sandbox's own
+    words, over the roots that function names: only the closing clause differs,
+    since a leading slash means something here that it means nowhere else.
+    Given the span the refusal came from, so a write is sent to the roots it may
+    land in rather than every one it can read.
+    """
+    roots = addressable_roots(paths)
+    if not roots:
+        return ""
 
-    A string test rather than ``PurePosixPath.is_relative_to``, which rebuilds
-    the path twice and scans its parents: this runs once per filesystem
-    operation and a walk performs one per entry.
+    return (
+        f" A document is addressed by its full workspace path "
+        f"({', '.join(roots)}), the same path every tool result spells; a "
+        "leading slash names this run's own files."
+    )
+
+
+def _rendered(sp: SearchPath, local: str) -> PurePosixPath:
+    """How a listing spells one entry of *sp*: the path every tool result does.
+
+    A root with no scope prefix has nothing to lead with, so its entries keep
+    :data:`WORKSPACE_MOUNT`, which is the only spelling that can address them.
+    """
+    prefixed = sp.prefixed(local)
+
+    return (
+        PurePosixPath(prefixed) if sp.scope is not None else WORKSPACE_MOUNT / prefixed
+    )
+
+
+def _text(path: VirtualPath) -> str:
+    """The path as one string, whichever of the three spellings it arrived in.
 
     The fold to NFC is the same one :func:`~hivegent.tools.base.resolve_search_path`
     applies to every other inbound tool path, and it has to happen here too,
@@ -107,33 +172,8 @@ def _canonical(path: VirtualPath) -> str | None:
     precomposed ones.
     """
     located = path.path if isinstance(path, MontyFileHandle) else path
-    text = normalize_unicode(str(located))
-    if text == _MOUNT_ROOT:
-        return "."
 
-    return text[len(_MOUNT_PREFIX) :] if text.startswith(_MOUNT_PREFIX) else None
-
-
-def _mounted(arg: object) -> bool:
-    """Whether one dispatched argument addresses the workspace.
-
-    Typed rather than duck-tested so a mode string (``open(path, "w")``) can
-    never be read as a path, and so an argument that is no path at all -- a
-    flag, a timezone -- answers no rather than raising.
-    """
-    return (
-        isinstance(arg, PurePosixPath | MontyFileHandle) and _canonical(arg) is not None
-    )
-
-
-def _at_root(path: VirtualPath) -> bool:
-    """Whether *path* is the mount itself, the directory listing the workspaces."""
-    return _canonical(path) == "."
-
-
-def _named(path: VirtualPath) -> str:
-    """How a refusal spells *path*: the canonical name every tool result uses."""
-    return _canonical(path) or str(path)
+    return normalize_unicode(str(located))
 
 
 @dataclass(slots=True)
@@ -178,6 +218,20 @@ class WorkspaceOS(AbstractOS):
     interpreter's duration budget does not count time spent in a host callback.
     """
 
+    output: str | None = None
+    """The canonical document this call may persist, as ``output_path`` named it.
+
+    Inside the program that path is :data:`SANDBOX_OUTPUT_FILE` under another
+    name, since the model that has just been told where its result goes writes
+    it there rather than to a second path it has to remember.  One file and not
+    two copies, so writing both names is not a conflict to resolve: the later
+    write wins, an append appends, and a read comes back with what the
+    document held before the run, exactly as a filesystem would answer.
+
+    ``None`` when the call declared no output, where a write to any document is
+    refused as it always was.
+    """
+
     max_scratch_chars: int = 20_000_000
     written: int = 0
     """Cap on what one program may write to ``.scratch/``, and its running total.
@@ -187,6 +241,91 @@ class WorkspaceOS(AbstractOS):
     same megabyte a thousand times spends a gigabyte of it, which no other
     budget here bounds.
     """
+
+    # -- addressing -----------------------------------------------------
+
+    def _canonical(self, path: VirtualPath) -> str | None:
+        """The canonical workspace path a virtual one names, or ``None`` if outside.
+
+        A workspace path never leads with a slash and the run's own files
+        always do, so one character sends each to the test that can answer it
+        and ``/tmp`` never pays the scope scan.  Under the slash lives
+        :data:`WORKSPACE_MOUNT`, for a root with no scope prefix to lead with
+        and for a model that reached for another sandbox's convention; ``"."``
+        is that root itself, a directory listing the workspaces rather than a
+        path any of them claims.
+
+        String tests rather than ``PurePosixPath.is_relative_to``, which
+        rebuilds the path twice and scans its parents: this runs once per
+        filesystem operation and a walk performs one per entry.
+        """
+        text = _text(path)
+        if not text.startswith("/"):
+            return text if match_scope(self.paths, text) is not None else None
+
+        if text == _MOUNT_ROOT:
+            return "."
+
+        return text[len(_MOUNT_PREFIX) :] if text.startswith(_MOUNT_PREFIX) else None
+
+    def _as_buffer(self, arg: object) -> object:
+        """Rename the declared output to the run's own file, leaving the rest alone.
+
+        Both spellings of that one path are compared against directly rather
+        than resolved, which keeps the workspace's scope scan off every
+        operation the run makes, and leaves a ``..`` segment naming a document
+        like any other: it is refused like any other rather than redirected on
+        a spelling the call never approved.
+
+        A handle is rebuilt rather than reused, so every later operation on it
+        names the buffer too and none of them has to ask again.
+        """
+        if self.output is None or not isinstance(arg, PurePosixPath | MontyFileHandle):
+            return arg
+
+        if _text(arg).removeprefix(_MOUNT_PREFIX) != self.output:
+            return arg
+
+        if isinstance(arg, MontyFileHandle):
+            return MontyFileHandle(str(SANDBOX_OUTPUT_FILE), arg.mode)
+
+        return SANDBOX_OUTPUT_FILE
+
+    def _mounted(self, arg: object) -> bool:
+        """Whether one dispatched argument addresses the workspace.
+
+        Typed rather than duck-tested so a mode string (``open(path, "w")``)
+        can never be read as a path, and so an argument that is no path at all,
+        a flag or a timezone, answers no rather than raising.
+        """
+        return (
+            isinstance(arg, PurePosixPath | MontyFileHandle)
+            and self._canonical(arg) is not None
+        )
+
+    def _at_root(self, path: VirtualPath) -> bool:
+        """Whether *path* is the mount itself, the directory listing the workspaces."""
+        return self._canonical(path) == "."
+
+    def _named(self, path: VirtualPath) -> str:
+        """How a refusal spells *path*: the canonical name every tool result uses."""
+        return self._canonical(path) or _text(path)
+
+    def _missing(self, path: VirtualPath) -> NoReturn:
+        """Refuse a path that resolves to nothing, as the program spelled it.
+
+        A path leading with no workspace root at all (``/workspace/notes.md``,
+        the mount prefix and a document name with the scope dropped in between)
+        is the one miss the failure itself cannot correct, so it ends in
+        :meth:`_root_hint` the way every tool argument ends in
+        :func:`~hivegent.tools.base.workspace_root_hint`.
+        """
+        canonical = self._canonical(path)
+        known = canonical is not None and match_scope(self.paths, canonical) is not None
+        hint = "" if known else _root_hint(self.paths)
+        message = f"[Errno 2] No such file or directory: {_text(path)!r}"
+
+        raise FileNotFoundError(f"{message}.{hint}" if hint else message)
 
     # -- routing --------------------------------------------------------
 
@@ -211,11 +350,18 @@ class WorkspaceOS(AbstractOS):
         belongs to the run, so it routes by the same rule with nothing to
         match.  A rename with one end mounted is the mount's, since the half
         that touches the workspace is what decides.
-        """
-        if any(_mounted(arg) for arg in args):
-            return super().dispatch(function_name, args, kwargs)
 
-        return self.inner.dispatch(function_name, args, kwargs)
+        The declared output is renamed before either of them sees it, since it
+        is :data:`SANDBOX_OUTPUT_FILE` under another name and the run owns that
+        file: one rename here answers every operation, where asking what each
+        one does to it would be a list of Monty's write functions that nothing
+        keeps complete.
+        """
+        renamed = tuple(self._as_buffer(arg) for arg in args)
+        if any(self._mounted(arg) for arg in renamed):
+            return super().dispatch(function_name, renamed, kwargs)
+
+        return self.inner.dispatch(function_name, renamed, kwargs)
 
     def _root(self, canonical: str) -> SearchPath | None:
         """The search path *canonical* names bare, if it names one at all.
@@ -239,7 +385,7 @@ class WorkspaceOS(AbstractOS):
         ``None``, since it is a directory of workspaces rather than an entry in
         any of them, and every caller has its own answer for that case.
         """
-        canonical = _canonical(path)
+        canonical = self._canonical(path)
         if canonical is None or canonical == ".":
             return None
 
@@ -274,7 +420,7 @@ class WorkspaceOS(AbstractOS):
         rather than the spelling it was addressed by, so neither a ``..``
         segment nor a symlink can carry a ``.scratch`` part onto a document.
         """
-        canonical = _canonical(path) or str(path)
+        canonical = self._named(path)
         if not self.writable:
             raise PermissionError(
                 f"'{canonical}' cannot be written in this chat mode. Park "
@@ -289,14 +435,16 @@ class WorkspaceOS(AbstractOS):
         if resolved is None:
             raise PermissionError(
                 f"'{canonical}' names no workspace this run may write to."
+                f"{_root_hint(self.writable)}"
             )
 
         if not is_scratch_path(resolved[1]):
             raise PermissionError(
                 f"'{canonical}' is one of the user's documents, and the mounted "
-                "workspace is read-only. Name it as this call's `output_path` "
-                "and write /output instead, or use the document write tools. A "
-                "path under `.scratch/` can be written from here directly."
+                "workspace is read-only. Name it as this call's `output_path`, "
+                "which the program may then write under that very name or as "
+                "/output, or use the document write tools. A path under "
+                "`.scratch/` can be written from here directly."
             )
 
         return resolved[2]
@@ -305,7 +453,7 @@ class WorkspaceOS(AbstractOS):
 
     @override
     def path_exists(self, path: PurePosixPath) -> bool:
-        return _at_root(path) or self._entry(path) is not None
+        return self._at_root(path) or self._entry(path) is not None
 
     @override
     def path_is_file(self, path: PurePosixPath) -> bool:
@@ -315,7 +463,7 @@ class WorkspaceOS(AbstractOS):
 
     @override
     def path_is_dir(self, path: PurePosixPath) -> bool:
-        if _at_root(path):
+        if self._at_root(path):
             return True
 
         entry = self._entry(path)
@@ -330,12 +478,12 @@ class WorkspaceOS(AbstractOS):
 
     @override
     def path_iterdir(self, path: PurePosixPath) -> list[PurePosixPath]:
-        if _at_root(path):
-            return [WORKSPACE_MOUNT / sp.prefixed("") for sp in self.paths]
+        if self._at_root(path):
+            return [_rendered(sp, "") for sp in self.paths]
 
         entry = self._entry(path)
         if entry is None:
-            raise FileNotFoundError(f"[Errno 2] No such directory: {str(path)!r}")
+            self._missing(path)
 
         if not S_ISDIR(entry.stat.st_mode):
             raise NotADirectoryError(f"[Errno 20] Not a directory: {str(path)!r}")
@@ -354,18 +502,16 @@ class WorkspaceOS(AbstractOS):
                 )
             ]
 
-        return [WORKSPACE_MOUNT / sp.prefixed(rel) for rel in sorted(visible)]
+        return [_rendered(sp, rel) for rel in sorted(visible)]
 
     @override
     def path_stat(self, path: PurePosixPath) -> StatResult:
-        if _at_root(path):
+        if self._at_root(path):
             return StatResult.dir_stat()
 
         entry = self._entry(path)
         if entry is None:
-            raise FileNotFoundError(
-                f"[Errno 2] No such file or directory: {str(path)!r}"
-            )
+            self._missing(path)
 
         st = entry.stat
         if S_ISDIR(st.st_mode):
@@ -385,16 +531,14 @@ class WorkspaceOS(AbstractOS):
         """
         handle = MontyFileHandle(str(path), mode)
         if handle.binary:
-            self._refuse_bytes(_named(path))
+            self._refuse_bytes(self._named(path))
 
         if not handle.writable:
             if self.path_is_dir(path):
                 raise IsADirectoryError(f"[Errno 21] Is a directory: {str(path)!r}")
 
             if not self.path_is_file(path):
-                raise FileNotFoundError(
-                    f"[Errno 2] No such file or directory: {str(path)!r}"
-                )
+                self._missing(path)
 
             return handle
 
@@ -402,9 +546,7 @@ class WorkspaceOS(AbstractOS):
         absolute.parent.mkdir(parents=True, exist_ok=True)
         action = handle.mode[0]
         if action == "r" and not absolute.is_file():
-            raise FileNotFoundError(
-                f"[Errno 2] No such file or directory: {str(path)!r}"
-            )
+            self._missing(path)
 
         if action == "w" or not absolute.exists():
             _ = absolute.write_text("", encoding="utf-8")
@@ -415,15 +557,15 @@ class WorkspaceOS(AbstractOS):
     def path_read_text(self, path: PurePosixPath | MontyFileHandle) -> str:
         entry = self._entry(path)
         if entry is None:
-            if _at_root(path):
-                raise IsADirectoryError(f"[Errno 21] Is a directory: {_named(path)}")
+            if self._at_root(path):
+                raise IsADirectoryError(
+                    f"[Errno 21] Is a directory: {self._named(path)}"
+                )
 
-            raise FileNotFoundError(
-                f"[Errno 2] No such file or directory: {_named(path)}"
-            )
+            self._missing(path)
 
         if not S_ISREG(entry.stat.st_mode):
-            raise IsADirectoryError(f"[Errno 21] Is a directory: {_named(path)}")
+            raise IsADirectoryError(f"[Errno 21] Is a directory: {self._named(path)}")
 
         return self._decoded(
             entry.search_path.prefixed(entry.local), entry.absolute, entry.stat.st_size
@@ -431,7 +573,7 @@ class WorkspaceOS(AbstractOS):
 
     @override
     def path_read_bytes(self, path: PurePosixPath | MontyFileHandle) -> bytes:
-        self._refuse_bytes(_named(path))
+        self._refuse_bytes(self._named(path))
 
     def _refuse_bytes(self, canonical: str) -> NoReturn:
         """Refuse a byte channel, whatever the document turns out to be.
@@ -493,7 +635,7 @@ class WorkspaceOS(AbstractOS):
     @override
     def path_write_text(self, path: PurePosixPath | MontyFileHandle, data: str) -> int:
         absolute = self._scratch_target(path)
-        self._charge_write(_named(path), data)
+        self._charge_write(self._named(path), data)
         absolute.parent.mkdir(parents=True, exist_ok=True)
         _ = absolute.write_text(data, encoding="utf-8")
 
@@ -505,14 +647,14 @@ class WorkspaceOS(AbstractOS):
     ) -> int:
         _ = self._scratch_target(path)
         raise ValueError(
-            f"'{_named(path)}' can only be written as text, since the "
+            f"'{self._named(path)}' can only be written as text, since the "
             "workspace stores UTF-8."
         )
 
     @override
     def path_append_text(self, path: PurePosixPath | MontyFileHandle, data: str) -> int:
         absolute = self._scratch_target(path)
-        self._charge_write(_named(path), data)
+        self._charge_write(self._named(path), data)
         absolute.parent.mkdir(parents=True, exist_ok=True)
         with absolute.open("a", encoding="utf-8") as handle:
             return handle.write(data)
@@ -537,7 +679,7 @@ class WorkspaceOS(AbstractOS):
     def path_rmdir(self, path: PurePosixPath) -> None:
         _ = self._scratch_target(path)
         raise PermissionError(
-            f"'{_named(path)}' is a directory, which the sandbox does not "
+            f"'{self._named(path)}' is a directory, which the sandbox does not "
             "remove. Remove the files it holds instead."
         )
 
@@ -546,7 +688,7 @@ class WorkspaceOS(AbstractOS):
         # Reached only when one end is mounted, and a rename with an end in the
         # workspace is a write of that end however it is spelled.
         raise PermissionError(
-            f"'{_named(target)}' cannot be renamed into or out of the mounted "
+            f"'{self._named(target)}' cannot be renamed into or out of the mounted "
             "workspace. Read the source and write the target instead."
         )
 

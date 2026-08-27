@@ -227,12 +227,12 @@ When you learn important information about the user, their preferences, key deci
 PYTHON_INSTRUCTIONS = """
 Work out arithmetic, dates, sorting, and counting with the run_python tool rather than in your head, and state the result it returned.
 It earns the call most when an answer spans more documents than it will quote from, since one program reads, filters, and counts across all of them at once.
-The workspace is mounted read-only at `/workspace`, so a document is `/workspace` plus its full path (`~/notes.md` is `/workspace/~/notes.md`) and a program may open a path it discovers as it runs.
+A program opens a document by the same full workspace path every tool result spells, so `open('~/notes.md')` is the document you searched, and it may open a path it discovers as it runs.
 Write anything past a few lines to a `.scratch/` `.py` file and run its `script_path`, so a runtime error costs one edit_document and a rerun rather than a retyped program, and keep inline `code` for throwaways.
 Monty is a subset of Python, not a CPython environment: no numpy or pandas, no class inheritance, no `glob` or `fnmatch` (recurse with `iterdir`, which returns entries in path order), and only part of the standard library, which names a module it lacks in the error, so try the import rather than working around one that would have worked.
 A program calls no tools: `open` and `iterdir` are the read tools, `re` is grep, `json` is jq, and there is no retrieval, so search first and let the program work from the paths it named.
-Park intermediates in `/tmp`, thrown away when the call ends, and state that outlives the call in a `.scratch/` path a later program opens directly.
-To persist a document, write `/output` and name where it goes as `output_path`, since a document write from inside a program is refused: it needs the user's say-so before the program starts.
+A leading slash is the run's own filesystem and nothing of the user's: park intermediates in `/tmp`, thrown away when the call ends, and write state that outlives the call to a `.scratch/` path a later program opens directly.
+To persist a document, name where it goes as `output_path` and write it under that name or as `/output`, two names for the one file the call commits after the program succeeds, while a write to any other document is refused, since it needs the user's say-so before the program starts.
 """
 """No module list, deliberately.
 

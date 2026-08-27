@@ -1179,7 +1179,7 @@ class TestRunPythonTool:
         result = await bounded(
             "from pathlib import Path\n"
             "try:\n"
-            '    Path("/workspace/~/big.txt").read_text()\n'
+            '    Path("~/big.txt").read_text()\n'
             "except MemoryError as exc:\n"
             "    refusal = str(exc)\n"
             "refusal"
@@ -1193,7 +1193,7 @@ class TestRunPythonTool:
         (tmp_path / "script.py").write_text(
             "import os\n"
             "from pathlib import Path\n"
-            'text = Path("/workspace/~/input.txt").read_text()\n'
+            'text = Path("~/input.txt").read_text()\n'
             'Path(os.getenv("OUTPUT")).write_text(text.upper())\n'
             "len(text)"
         )
@@ -1239,7 +1239,7 @@ class TestRunPythonTool:
 
         result = await workspace_tool(
             "from pathlib import Path\n"
-            'sorted(p.read_text() for p in Path("/workspace/~/notes").iterdir())'
+            'sorted(p.read_text() for p in Path("~/notes").iterdir())'
         )
 
         assert result.data.result == "['alpha', 'beta']"
@@ -1254,7 +1254,7 @@ class TestRunPythonTool:
         with pytest.raises(ToolRetry, match="output_path"):
             await workspace_tool(
                 "from pathlib import Path\n"
-                'Path("/workspace/~/source.txt").write_text("new")'
+                'Path("~/source.txt").write_text("new")'
             )
 
         assert source.read_text() == "old"
@@ -1267,13 +1267,13 @@ class TestRunPythonTool:
 
         written = await workspace_tool(
             "from pathlib import Path\n"
-            'state = Path("/workspace/~/.scratch/run/state.json")\n'
+            'state = Path("~/.scratch/run/state.json")\n'
             'state.write_text("{}")\n'
             "state.read_text()"
         )
         later = await workspace_tool(
             "from pathlib import Path\n"
-            'Path("/workspace/~/.scratch/run/state.json").read_text()'
+            'Path("~/.scratch/run/state.json").read_text()'
         )
 
         assert written.data.result == later.data.result == "'{}'"
@@ -1291,7 +1291,7 @@ class TestRunPythonTool:
         with pytest.raises(ToolRetry, match="chat mode"):
             await workspace_tool(
                 "from pathlib import Path\n"
-                'Path("/workspace/~/.scratch/state.json").write_text("{}")'
+                'Path("~/.scratch/state.json").write_text("{}")'
             )
 
         assert not (tmp_path / ".scratch").exists()
@@ -1304,12 +1304,62 @@ class TestRunPythonTool:
 
         await workspace_tool(
             "from pathlib import Path\n"
-            'source = Path("/workspace/~/output.txt").read_text()\n'
+            'source = Path("~/output.txt").read_text()\n'
             'Path("/output").write_text(source + " new")',
             output_path="~/output.txt",
         )
 
         assert calls == [("~/output.txt", "old new", "replace", content_hash("old"))]
+
+    async def test_the_declared_output_is_writable_under_its_own_name(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        # Where the result goes is what the model was just told, so it writes
+        # there.  The document underneath still answers a read until the
+        # program has written one, which is what lets it rewrite in place.
+        source = tmp_path / "output.txt"
+        source.write_text("old")
+        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
+
+        await workspace_tool(
+            'old = open("~/output.txt").read()\n'
+            'open("~/output.txt", "w").write(old.upper())',
+            output_path="~/output.txt",
+        )
+
+        assert calls == [("~/output.txt", "OLD", "replace", content_hash("old"))]
+        assert source.read_text() == "old"
+
+    async def test_an_append_to_the_output_starts_from_the_document(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        # /output is seeded with the document it will become, so an append is
+        # an append rather than a silent truncation of what was already there.
+        (tmp_path / "output.txt").write_text("EXISTING")
+        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
+
+        await workspace_tool(
+            'open("~/output.txt", "a").write(" more")',
+            output_path="~/output.txt",
+        )
+
+        assert calls == [
+            ("~/output.txt", "EXISTING more", "replace", content_hash("EXISTING"))
+        ]
+
+    async def test_both_names_of_the_output_are_one_file(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        # So writing both is not a conflict to resolve: an append appends to
+        # what the other name wrote, and a second write replaces it.
+        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
+
+        await workspace_tool(
+            'open("/output", "w").write("a")\nopen("~/output.txt", "a").write("b")',
+            output_path="~/output.txt",
+        )
+
+        assert calls == [("~/output.txt", "ab", "create", None)]
 
     async def test_unwritten_output_is_reported_rather_than_committed(
         self, tool: RunPythonTool, tmp_path: Path

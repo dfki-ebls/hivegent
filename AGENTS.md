@@ -80,6 +80,9 @@
 ### Python sandbox
 
 - `run_python` is a Monty sandbox with no network or host filesystem: the workspace is a read-only mount (`tools/workspace_os.py`, routing through the same seams as the read tools so the `DocumentFilter` stays one predicate), `.scratch/` is the only writable path, and a document is written only by committing `/output` through the canonical write path after the program succeeds.
+  The declared `output_path` is a second name for `/output` inside the program (`WorkspaceOS.output`, seeded with the document as it stands), since the model writes where it was just told the result goes, so the two names are one file and not a conflict, while a write to any other document stays refused.
+  There is one path grammar and the sandbox does not add to it: a program opens `~/notes.md`, the path every tool result, citation, and argument spells, while a leading slash is the run's own files (`/tmp`, `/output`).
+  `WORKSPACE_MOUNT` (`/workspace/~/notes.md`) is recognised inside a program but never produced, since a model brings the convention from elsewhere; a tool argument keeps the one grammar, so the approval gate and the commit never read a path differently.
   Nothing else is injected as a host function, since `open` is the read tools, `re` is grep, and `json` is jq.
   See `backend/README.md` for the mount, the budgets, and what a program may import.
 

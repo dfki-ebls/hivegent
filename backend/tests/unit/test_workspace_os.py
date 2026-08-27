@@ -40,15 +40,16 @@ def _mount(workspace: Path, *, writable: bool = False) -> WorkspaceOS:
 
 
 def _virtual(local: str) -> PurePosixPath:
-    return WORKSPACE_MOUNT / f"~/{local}"
+    """A document as every tool result spells it, which is how a program opens it."""
+    return PurePosixPath(f"~/{local}")
 
 
 def test_mount_root_lists_the_workspaces(workspace: Path) -> None:
     mount = _mount(workspace)
 
     assert mount.path_is_dir(WORKSPACE_MOUNT)
-    assert mount.path_iterdir(WORKSPACE_MOUNT) == [WORKSPACE_MOUNT / "~"]
-    assert mount.path_iterdir(WORKSPACE_MOUNT / "~") == [
+    assert mount.path_iterdir(WORKSPACE_MOUNT) == [PurePosixPath("~")]
+    assert mount.path_iterdir(PurePosixPath("~")) == [
         _virtual("notes.md"),
         _virtual("picture.png"),
         _virtual("reports"),
@@ -175,3 +176,35 @@ def test_scratch_write_needs_a_writable_span(workspace: Path) -> None:
         _ = mount.path_write_text(_virtual(".scratch/state.json"), "{}")
 
     assert not (workspace / ".scratch").exists()
+
+
+def test_the_mounted_spelling_reaches_the_same_document(workspace: Path) -> None:
+    # Nothing here produces it, but a root with no scope prefix has no other
+    # addressing and a model carrying another sandbox's habits reaches for it,
+    # so it names the document rather than a private file the run would lose.
+    mount = _mount(workspace, writable=True)
+    mounted = WORKSPACE_MOUNT / "~/notes.md"
+
+    assert mount.path_read_text(mounted) == "alpha\n"
+    assert mount.dispatch("Path.read_text", (mounted,)) == "alpha\n"
+    _ = mount.dispatch(
+        "Path.write_text", (WORKSPACE_MOUNT / "~/.scratch/s.txt", "{}")
+    )
+
+    assert (workspace / ".scratch" / "s.txt").read_text() == "{}"
+    with pytest.raises(PermissionError):
+        _ = mount.dispatch("Path.write_text", (mounted, "new"))
+
+
+def test_a_path_leading_with_no_workspace_names_the_roots(workspace: Path) -> None:
+    # Dropping the scope between the mount and the document is the one miss the
+    # failure cannot correct on its own, so the refusal spells the roots out.
+    mount = _mount(workspace)
+
+    with pytest.raises(FileNotFoundError, match=r"full workspace path \(~\)"):
+        _ = mount.path_read_text(WORKSPACE_MOUNT / "notes.md")
+
+    # A path that does lead with a root missed for another reason, and listing
+    # roots would only muddle that.
+    with pytest.raises(FileNotFoundError, match=r"^(?!.*full workspace path)"):
+        _ = mount.path_read_text(_virtual("missing.md"))

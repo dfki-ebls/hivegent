@@ -41,6 +41,7 @@ __all__ = [
     "Tool",
     "ToolOutput",
     "ToolRetry",
+    "addressable_roots",
     "canonical_local_path",
     "check_read_budget",
     "coerce_paths",
@@ -422,6 +423,16 @@ def resolve_accessible_file(
     return sp, local, absolute
 
 
+def addressable_roots(paths: tuple[SearchPath, ...]) -> list[str]:
+    """The prefixes a path may lead with, which is what a refusal has to name.
+
+    Empty for an unscoped root, which has no prefix to give and therefore
+    nothing to offer a caller that led with the wrong one.  One definition, so
+    the sandbox's own refusal names the same roots this one does.
+    """
+    return [root for sp in paths if (root := sp.prefixed(""))]
+
+
 def workspace_root_hint(paths: tuple[SearchPath, ...], file_path: str) -> str:
     """Name the addressable roots when *file_path* leads with none of them.
 
@@ -436,7 +447,7 @@ def workspace_root_hint(paths: tuple[SearchPath, ...], file_path: str) -> str:
     if resolve_search_path(paths, file_path) is not None:
         return ""
 
-    roots = [root for sp in paths if (root := sp.prefixed(""))]
+    roots = addressable_roots(paths)
     if not roots:
         return ""
 
