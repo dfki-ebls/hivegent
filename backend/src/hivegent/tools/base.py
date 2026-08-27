@@ -22,7 +22,7 @@ from ..entries import (
     is_inside_assets_dir,
     stem_path_from_reference,
 )
-from ..text import NOT_TEXT_REASON, DecodedText, read_text_file
+from ..text import MAX_BYTES_PER_CHAR, NOT_TEXT_REASON, DecodedText, read_text_file
 from .scope import Scope
 
 __all__ = [
@@ -42,6 +42,7 @@ __all__ = [
     "ToolOutput",
     "ToolRetry",
     "canonical_local_path",
+    "check_read_budget",
     "coerce_paths",
     "entry_stat",
     "entry_visible",
@@ -49,6 +50,7 @@ __all__ = [
     "factory_tool_name",
     "file_allowed",
     "is_in_excluded_dir",
+    "match_scope",
     "near_miss_hint",
     "read_text_or_retry",
     "resolve_accessible_file",
@@ -140,7 +142,13 @@ arguments repeating it cost more on every request than the one sentence saves.
 """
 
 
-@dataclass(slots=True, frozen=True)
+# Not frozen, alone among the value types here, because it normalises its own
+# input: a root has to be resolved before anything can be contained in it, and
+# a frozen dataclass can only assign in `__post_init__` by reaching around its
+# own immutability with `object.__setattr__`.  Nothing mutates an instance
+# after construction, and nothing hashes one, so the guarantee that is given up
+# was never being used.
+@dataclass(slots=True)
 class SearchPath:
     """A labeled directory path with optional filter.
 
@@ -151,7 +159,7 @@ class SearchPath:
     visible.
 
     Attributes:
-        path: Filesystem path to the directory to search.
+        path: Directory to search, folded to its real location on construction.
         scope: Addressing scope whose prefix tags filenames from this path.
             ``None`` means the path carries no prefix (a single bare root).
         filter_func: Optional predicate controlling file visibility.
@@ -160,6 +168,22 @@ class SearchPath:
     path: Path
     scope: Scope | None = None
     filter_func: SearchPathFilterFunc = None
+
+    def __post_init__(self) -> None:
+        """Fold the root once, here, rather than once per path resolved under it.
+
+        Every containment check needs the root's real location, so the
+        resolution is not optional, only its frequency is, and a root does not
+        move for the length of a call.  It belongs on the type rather than on
+        the callers because several of them hand a root straight to
+        :func:`resolve_accessible_file` without passing through
+        :func:`coerce_paths`, and a root that missed the fold would not be
+        wrong in a corner: every document under it would simply cease to exist.
+        A root that has not been created yet folds to itself, which is what a
+        workspace nobody has written to needs, since handing a tool its roots
+        must not create one.
+        """
+        self.path = self.path.resolve()
 
     def prefixed(self, filename: str) -> str:
         """Return *filename* rendered under this path's scope."""
@@ -181,7 +205,7 @@ def coerce_paths(
     return raw
 
 
-def _match_scope(
+def match_scope(
     paths: tuple[SearchPath, ...],
     raw: str,
 ) -> tuple[SearchPath, str] | None:
@@ -190,6 +214,10 @@ def _match_scope(
     The shared scope-prefix scan behind :func:`resolve_search_path` and
     :func:`scope_paths`. A non-``None`` local is the prefix-stripped remainder
     (empty for a bare scope root); ``None`` means no scoped path matched.
+
+    Public for the one caller that wants the case the two resolvers drop: a
+    bare scope root is a directory the sandbox mount lists, where it is a path
+    argument no document tool takes.
     """
     for sp in paths:
         if sp.scope is not None:
@@ -221,7 +249,7 @@ def resolve_search_path(
         or ``None`` if no path matches.
     """
     filename = normalize_unicode(filename)
-    match = _match_scope(paths, filename)
+    match = match_scope(paths, filename)
     if match is not None and match[1]:
         return match
     return next(((sp, filename) for sp in paths if sp.scope is None), None)
@@ -256,7 +284,7 @@ def scope_paths(
     if not raw:
         return paths, raw
     raw = normalize_unicode(raw)
-    match = _match_scope(paths, raw)
+    match = match_scope(paths, raw)
     if match is not None:
         sp, local = match
         return (sp,), local or None
@@ -304,6 +332,34 @@ def entry_visible(sp: SearchPath, rel_path: str, exclude_dirs: tuple[str, ...]) 
     if exclude_dirs and is_inside_assets_dir(rel_path):
         return False
     return file_allowed(sp.filter_func, rel_path)
+
+
+def check_read_budget(canonical: str, size: int, limit: int) -> None:
+    """Refuse a file too large to decode into a caller's character budget.
+
+    Sized before it is decoded, so a file that cannot fit whatever it decodes
+    to is refused without ever being read into memory: anything above
+    :data:`~hivegent.text.MAX_BYTES_PER_CHAR` times the limit is over it for
+    certain, and anything smaller is left to the exact check the caller runs on
+    the decoded text.
+
+    The bound is per file rather than per run, because one decoded file is what
+    a reader actually holds: :func:`read_text_file` reads the whole thing and
+    decodes it in one go, so an unbounded file is one unbounded allocation in
+    the server process, while reading a thousand bounded ones in turn is not.
+
+    Shared because a ``run_python`` call applies the same rule from three
+    places, the script it loads before the sandbox starts, the output document
+    it fingerprints, and every document the mounted workspace hands the
+    program, and three copies of it would be three budgets wearing one name.
+    """
+    if size <= limit * MAX_BYTES_PER_CHAR:
+        return
+
+    raise ToolRetry(
+        f"'{canonical}' is too large to read here ({size} bytes, and one "
+        f"document may hold at most {limit} characters)."
+    )
 
 
 def entry_stat(path: Path) -> stat_result | None:
@@ -356,7 +412,7 @@ def resolve_accessible_file(
     if resolved is None:
         return None
     sp, local = resolved
-    canonical = canonical_local_path(sp.path.resolve(), local)
+    canonical = canonical_local_path(sp.path, local)
     if canonical is None:
         return None
     local, absolute = canonical

@@ -4,14 +4,12 @@ import asyncio
 import reprlib
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from stat import S_ISREG
 from typing import Annotated, override
 
 from pydantic import Field
 from pydantic_monty import (
     AsyncMonty,
     CollectString,
-    MemoryFile,
     MontyDisconnectError,
     MontyError,
     MontyRuntimeError,
@@ -23,12 +21,11 @@ from pydantic_monty import (
 
 from ..config import content_hash
 from ..humanize import pluralize
-from ..text import MAX_BYTES_PER_CHAR
 from .base import (
     AsyncPathTool,
     ToolOutput,
     ToolRetry,
-    entry_stat,
+    check_read_budget,
     read_text_or_retry,
     resolve_file_or_retry,
     sidecar_hint,
@@ -36,11 +33,12 @@ from .base import (
 from .formatting import cap_lines, hint_suffix, truncate_line, truncate_middle
 from .mutations import WriteDocumentTool
 from .sink import resolve_output_target
+from .workspace_os import WorkspaceOS
 
 __all__ = [
+    "SANDBOX_OUTPUT_FILE",
     "SANDBOX_TMP_DIR",
     "CodeArg",
-    "PythonInputPathsArg",
     "PythonOutputPathArg",
     "PythonResult",
     "PythonScriptPathArg",
@@ -69,6 +67,28 @@ caps sit well above that budget, so what a clip would have kept is unaffected
 and only the runaway case is cut, before the string is built rather than after.
 """
 
+SANDBOX_TMP_DIR = PurePosixPath("/tmp")
+"""Scratch directory every run starts with, also named by ``TMPDIR``.
+
+Monty has no ``tempfile`` module and no working directory, so a program with an
+intermediate to park has nowhere to put it unless the directory already exists:
+a bare write to ``/tmp`` fails with ``FileNotFoundError``.  Creating it here and
+naming it in the environment makes ``os.getenv("TMPDIR")`` the one answer, the
+way the workspace prefix is the one answer for a document.  It is discarded
+when the call ends, whether the program succeeded or not.
+"""
+
+SANDBOX_OUTPUT_FILE = PurePosixPath("/output")
+"""Where a program writes the one document the call may persist.
+
+The mounted workspace is read-only outside `.scratch/`, because committing a
+document runs the async mutation gateway and needs a human's answer, neither of
+which a synchronous filesystem callback can reach.  So the program writes here
+instead and the tool commits it afterwards, which is also what makes the commit
+conditional on the program having succeeded.  Named by ``OUTPUT`` in the
+environment, the way ``/tmp`` is named by ``TMPDIR``.
+"""
+
 CodeArg = Annotated[
     str | None,
     Field(
@@ -89,26 +109,14 @@ PythonScriptPathArg = Annotated[
         ),
     ),
 ]
-PythonInputPathsArg = Annotated[
-    tuple[str, ...],
-    Field(
-        description=(
-            "Full workspace paths of text files to expose as private in-memory "
-            "copies. A path such as `~/data.json` is available to the program "
-            "at `/workspace/~/data.json`. Changes are discarded unless that "
-            "path is also given as `output_path`."
-        ),
-        max_length=20,
-    ),
-]
 PythonOutputPathArg = Annotated[
     str | None,
     Field(
         description=(
-            "One full workspace path whose in-memory file may be created or "
-            "changed by the program and persisted after a successful run. It "
-            "uses the same `/workspace/<full path>` virtual path as inputs. "
-            "Interactive calls require approval before this write."
+            "Full workspace path to persist the program's `/output` file to "
+            "after a successful run. The mounted workspace is read-only, so "
+            "this is how a program writes a document. Interactive calls "
+            "require approval before this write."
         ),
     ),
 ]
@@ -181,35 +189,23 @@ class PythonResult:
 
 @dataclass(slots=True, frozen=True)
 class _PreparedRun:
-    """Resolved source and private files for one sandbox execution.
+    """The program to run and the one document approved before it starts.
 
-    ``files`` holds the text of every path that exists.  The one path that may
-    be absent is the declared ``output``, which a program is allowed to create,
-    so its absence is simply a missing key.
+    Nothing is staged: the workspace is mounted, so the program reads it where
+    it lies.  ``output`` is the path ``/output`` will be committed to, resolved
+    and fingerprinted here so a version landing while the program runs is
+    refused by the gateway rather than silently overwritten.
     """
 
     source: str
     script_path: str | None
-    files: dict[str, str]
-    output: str | None
+    output: str | None = None
+    expected_hash: str | None = None
+    """Fingerprint of the output document as it stood before the run.
 
-
-def _virtual_path(canonical_path: str) -> str:
-    """Map a canonical workspace path into Monty's isolated filesystem."""
-    return str(PurePosixPath("/workspace") / canonical_path)
-
-
-SANDBOX_TMP_DIR = PurePosixPath("/tmp")
-"""Scratch directory every run starts with, also named by ``TMPDIR``.
-
-Monty has no ``tempfile`` module and no working directory, so a program with an
-intermediate to park has nowhere to put it unless the directory already exists:
-a bare write to ``/tmp`` fails with ``FileNotFoundError``.  Creating it here and
-naming it in the environment makes ``os.getenv("TMPDIR")`` the one answer, the
-way the workspace prefix is the one answer for a document.  It is part of the
-private filesystem, so it is discarded with everything else a run did not
-declare as its output.
-"""
+    ``None`` when nothing stood there, which is also what makes the commit a
+    ``create`` that refuses to absorb a document appearing in between.
+    """
 
 
 @dataclass(slots=True, frozen=True)
@@ -224,16 +220,22 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
 
     pool: AsyncMonty = field(kw_only=True)
     writer: WriteDocumentTool | None = field(default=None, kw_only=True)
+    """Commits the declared output, and names the span a program may write.
+
+    ``None`` in a mode that may not write, which is what makes a `.scratch/`
+    write from inside a program refuse exactly where ``write_document`` does.
+    """
+
     limits: ResourceLimits = field(default_factory=_default_limits)
     max_output_chars: int = 20_000
-    max_workspace_chars: int = 5_000_000
-    """Host memory one run may spend on workspace text, in and out.
+    max_document_chars: int = 5_000_000
+    """Cap on any one document this run reads or commits.
 
-    The private copies are built here, in the server process, before they are
-    handed to the sandbox, so :attr:`limits`' memory budget does not cover
-    them: that one counts what the interpreter allocates inside itself.  A
-    read tool holds one file at a time, but a run stages up to twenty at once,
-    which is the exposure this bounds.
+    Decoding happens here, in the server process, before the text is handed to
+    the sandbox, so :attr:`limits`' memory budget does not cover it: that one
+    counts what the interpreter allocates inside itself.  What the host holds
+    is one document at a time, so that is what this bounds, and the mount
+    applies the same cap to every document the program opens.
     """
 
     @override
@@ -241,36 +243,35 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         self,
         code: CodeArg = None,
         script_path: PythonScriptPathArg = None,
-        input_paths: PythonInputPathsArg = (),
         output_path: PythonOutputPathArg = None,
     ) -> ToolOutput[PythonResult]:
         """Run a short program in the Monty interpreter.
 
-        Reach for it whenever an answer turns on arithmetic, dates, sorting, or
-        counting, rather than working the result out in your head. Monty
-        supports only a subset of Python and its standard library, it is not a
-        CPython environment. The program has no network or host filesystem
-        access. Inputs can be literals or explicitly named workspace text files,
-        which are private in-memory copies under ``/workspace``. Intermediates
-        belong in ``/tmp`` (also ``TMPDIR``), which exists from the start and is
-        discarded when the call ends. Only the declared output file can persist,
-        and only after the program succeeds; name it under a `.scratch/`
-        directory to carry state to a later call without adding a document. Only ``asyncio``,
-        ``collections``, ``dataclasses``,
-        ``datetime``, ``functools``, ``itertools``, ``json``, ``math``, ``os``,
-        ``pathlib``, ``re``, ``sys``, ``typing``, and ``unicodedata`` can be
-        imported. There is no numpy or pandas, and classes cannot inherit. End
-        the program with the expression whose value you want back, and print
-        anything else worth seeing.
+        Reach for it whenever an answer turns on arithmetic, dates, sorting,
+        counting, or reading more documents than an answer needs quoting from.
+        Monty supports only a subset of Python and its standard library, it is
+        not a CPython environment, and the program has no network or host
+        filesystem access. The whole workspace is mounted read-only at
+        ``/workspace``, so a document is ``/workspace`` plus its full path and
+        the program may open a path it discovers while running. Intermediates
+        belong in ``/tmp`` (also ``TMPDIR``), which exists from the start and
+        is discarded when the call ends, while state that has to outlive the
+        call is written straight to a `.scratch/` path in the workspace. To
+        persist a document, write ``/output`` (also ``OUTPUT``) and name where
+        it goes as ``output_path``, which is committed only after the program
+        succeeds. Only part of the standard library is implemented and a
+        missing import says so by name, so try one rather than assuming: there
+        is no ``glob`` or ``fnmatch``, no numpy or pandas, and classes cannot
+        inherit. End the program with the expression whose value you want back,
+        and print anything else worth seeing.
         """
         prepared = await asyncio.to_thread(
             self._prepare,
             code,
             script_path,
-            input_paths,
             output_path,
         )
-        filesystem = self._filesystem(prepared)
+        filesystem = self._filesystem()
         printed = CollectString()
 
         async with self.pool.checkout(
@@ -307,155 +308,141 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         self,
         code: str | None,
         script_path: str | None,
-        input_paths: tuple[str, ...],
         output_path: str | None,
     ) -> _PreparedRun:
-        """Resolve and decode all workspace material outside the event loop."""
+        """Resolve the program and the approved output, off the event loop.
+
+        Nothing is staged: the mount reads the workspace where it lies, so all
+        this settles is which source runs and which document the run was given
+        permission to persist.
+        """
         if (code is None) == (script_path is None):
             raise ToolRetry("Provide exactly one of `code` or `script_path`.")
 
         source, canonical_script = code or "", None
         if script_path is not None:
-            canonical_script, absolute = self._resolve_input(script_path)
+            canonical_script, absolute = self._resolve_script(script_path)
             if PurePosixPath(canonical_script).suffix.lower() != ".py":
                 raise ToolRetry(f"'{canonical_script}' is not a `.py` script.")
 
-            source = self._read(canonical_script, absolute, 0) or ""
+            source = self._read(canonical_script, absolute)
 
-        subject = "The script and workspace inputs are"
-        staged = len(source)
-        self._check_budget(staged, subject)
+        self._check_budget(len(source), "The program")
+        if output_path is None:
+            return _PreparedRun(source, canonical_script)
 
-        # Every path is resolved before any file is read, so one path serving as
-        # both an input and the output is read, decoded, and budgeted once.
-        output: tuple[str, Path] | None = None
-        if output_path is not None:
-            _sink, canonical, absolute = resolve_output_target(self.writer, output_path)
-            output = (canonical, absolute)
-        targets = [self._resolve_input(raw) for raw in input_paths]
-        if output is not None:
-            targets.append(output)
-
-        # The budget is charged file by file rather than once at the end: it
-        # bounds host memory, which a check that runs only after every input has
-        # already been decoded no longer does.
-        files: dict[str, str] = {}
-        for canonical, absolute in targets:
-            if canonical in files:
-                continue
-
-            text = self._read(canonical, absolute, staged)
-            if text is None:
-                continue
-
-            files[canonical] = text
-            staged += len(text)
-            self._check_budget(staged, subject)
+        _sink, canonical, absolute = resolve_output_target(self.writer, output_path)
 
         return _PreparedRun(
-            source=source,
-            script_path=canonical_script,
-            files=files,
-            output=None if output is None else output[0],
+            source, canonical_script, canonical, self._basis(canonical, absolute)
         )
 
-    def _resolve_input(self, file_path: str) -> tuple[str, Path]:
-        """Resolve one readable workspace file, which must already exist."""
+    def _basis(self, canonical_path: str, absolute_path: Path) -> str | None:
+        """Fingerprint the output document as it stands before the run.
+
+        The guard the write tools take from a prior read, taken here from the
+        state the program is about to work from: the commit lands after the
+        program ends, so a version that arrives in between would otherwise be
+        overwritten without a word.  ``None`` when the file is not there, where
+        ``create`` is the guard instead.
+
+        The text is dropped as soon as it is hashed, so what it costs is the
+        decode, bounded like every other.
+        """
+        if not absolute_path.is_file():
+            return None
+
+        return content_hash(self._read(canonical_path, absolute_path))
+
+    def _resolve_script(self, file_path: str) -> tuple[str, Path]:
+        """Resolve the stored program, which must already exist."""
         sp, local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
         return sp.prefixed(local), absolute
 
-    def _read(
-        self, canonical_path: str, absolute_path: Path, staged: int
-    ) -> str | None:
-        """Decode a resolved workspace file, or ``None`` when it does not exist.
+    def _read(self, canonical_path: str, absolute_path: Path) -> str:
+        """Decode one workspace document, bounded as the mount bounds its own.
 
-        Only the declared output can be missing: an input is resolved through
-        the reader, which refuses a path naming no file.
-
-        *staged* is the character count already charged to the run. A file is
-        sized before it is decoded, so one that cannot fit whatever it decodes
-        to is refused without ever being read into memory: a file above
-        :data:`~hivegent.text.MAX_BYTES_PER_CHAR` times the remaining budget is
-        over it for certain, while anything smaller is left to the exact check
-        on the decoded text.
+        Sized before it is decoded, so a file that cannot fit whatever it
+        decodes to is refused without ever being read into memory.  The two
+        documents a call reads for itself, the stored script and the output it
+        fingerprints, answer to the same cap the program's own reads do.
         """
-        st = entry_stat(absolute_path)
-        if st is None or not S_ISREG(st.st_mode):
-            return None
-
-        remaining = self.max_workspace_chars - staged
-        if st.st_size > remaining * MAX_BYTES_PER_CHAR:
-            raise ToolRetry(
-                f"'{canonical_path}' is too large for one Python run "
-                f"(the script and workspace inputs may total "
-                f"{self.max_workspace_chars} characters)."
-            )
+        check_read_budget(
+            canonical_path, absolute_path.stat().st_size, self.max_document_chars
+        )
 
         return read_text_or_retry(
             absolute_path, canonical_path, sidecar_hint(canonical_path)
         ).text
 
     def _check_budget(self, total_chars: int, subject: str) -> None:
-        """Refuse text too large to stage into, or commit out of, one run."""
-        if total_chars <= self.max_workspace_chars:
+        """Refuse text too large to run inside, or commit out of, one run.
+
+        The exact counterpart of :func:`check_read_budget`, which bounds a file
+        before it is decoded: this is the same cap checked on text already in
+        hand, which covers inline ``code`` and the committed output, neither of
+        which any read ever sizes.
+        """
+        if total_chars <= self.max_document_chars:
             return
 
         raise ToolRetry(
-            f"{subject} too large for one Python run ({total_chars} characters, "
-            f"maximum {self.max_workspace_chars})."
+            f"{subject} is too large for one Python run ({total_chars} "
+            f"characters, maximum {self.max_document_chars})."
         )
 
-    @staticmethod
-    def _filesystem(prepared: _PreparedRun) -> OSAccess:
-        """Create the private filesystem, preserving a missing output as missing."""
-        filesystem = OSAccess(
-            [
-                MemoryFile(_virtual_path(path), text)
-                for path, text in prepared.files.items()
-            ],
-            environ={"TMPDIR": str(SANDBOX_TMP_DIR)},
-        )
-        filesystem.path_mkdir(SANDBOX_TMP_DIR, parents=True, exist_ok=True)
-        if prepared.output is not None and prepared.output not in prepared.files:
-            filesystem.path_mkdir(
-                PurePosixPath(_virtual_path(prepared.output)).parent,
-                parents=True,
-                exist_ok=True,
-            )
+    def _filesystem(self) -> WorkspaceOS:
+        """Build the filesystem: the workspace mounted, the run's own beside it.
 
-        return filesystem
+        ``inner`` owns ``/tmp`` and ``/output``, both of which exist from the
+        start so a bare write to either lands rather than failing on a missing
+        parent, and both of which disappear with the session.
+        """
+        inner = OSAccess(
+            [],
+            environ={
+                "TMPDIR": str(SANDBOX_TMP_DIR),
+                "OUTPUT": str(SANDBOX_OUTPUT_FILE),
+            },
+        )
+        inner.path_mkdir(SANDBOX_TMP_DIR, parents=True, exist_ok=True)
+
+        return WorkspaceOS(
+            paths=self.resolved_paths,
+            inner=inner,
+            writable=() if self.writer is None else self.writer.resolved_paths,
+            max_document_chars=self.max_document_chars,
+        )
 
     async def _persist_output(
-        self, prepared: _PreparedRun, filesystem: OSAccess
+        self, prepared: _PreparedRun, filesystem: WorkspaceOS
     ) -> tuple[str | None, str | None]:
-        """Commit one changed text output through the workspace mutation gateway."""
+        """Commit the program's output through the workspace mutation gateway.
+
+        Only after the program succeeded, which is what an OS callback's
+        inability to await buys back: a program that fails halfway leaves the
+        workspace exactly as it found it, `.scratch/` aside.  A declared output
+        the program never wrote is worth a sentence, since silence would leave
+        the model believing the request was honoured.
+        """
         if prepared.output is None:
             return None, None
 
-        original = prepared.files.get(prepared.output)
-        virtual_path = PurePosixPath(_virtual_path(prepared.output))
-        if not filesystem.path_is_file(virtual_path):
-            if original is None:
-                return None, "The declared workspace output was not created."
+        if not filesystem.inner.path_is_file(SANDBOX_OUTPUT_FILE):
+            return None, (
+                f"Nothing was committed to '{prepared.output}': the program "
+                f"wrote no {SANDBOX_OUTPUT_FILE} file."
+            )
 
-            raise ToolRetry("The declared output cannot be deleted or renamed.")
-
-        try:
-            content = filesystem.path_read_text(virtual_path)
-        except UnicodeDecodeError as exc:
-            raise ToolRetry("The declared output must contain UTF-8 text.") from exc
-
-        self._check_budget(len(content), "The declared workspace output is")
-
-        if content == original:
-            return None, "The declared workspace output was unchanged."
+        content = filesystem.inner.path_read_text(SANDBOX_OUTPUT_FILE)
+        self._check_budget(len(content), "The program's output")
 
         assert self.writer is not None
         result = await self.writer(
             prepared.output,
             content,
-            "replace" if original is not None else "create",
-            content_hash(original) if original is not None else None,
+            "replace" if prepared.expected_hash is not None else "create",
+            prepared.expected_hash,
         )
 
         return prepared.output, result.text

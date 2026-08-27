@@ -225,12 +225,23 @@ When you learn important information about the user, their preferences, key deci
 """
 
 PYTHON_INSTRUCTIONS = """
-Work out arithmetic, dates, sorting, and counting with the run_python tool instead of in your head, and state the result it returned rather than one you estimated.
-When write_document and edit_document are available, write a longer program that may need correction to a `.py` file under `.scratch/`, then edit and rerun its `script_path` after a small error.
-Pass only the workspace text files the program needs as `input_paths`, and use `output_path` only for a file the program should persist.
-Park intermediates within one program in `/tmp`, which exists from the start and is thrown away with the rest of the private filesystem when the call ends.
-To carry state to a later call, name the `output_path` under `.scratch/` too, and pass it back as an `input_path` next time.
-A file another tool wrote through its own `output_path` is an ordinary workspace file, so name it in `input_paths` to work from it here.
+Work out arithmetic, dates, sorting, and counting with the run_python tool rather than in your head, and state the result it returned.
+It earns the call most when an answer spans more documents than it will quote from, since one program reads, filters, and counts across all of them at once.
+The workspace is mounted read-only at `/workspace`, so a document is `/workspace` plus its full path (`~/notes.md` is `/workspace/~/notes.md`) and a program may open a path it discovers as it runs.
+Write anything past a few lines to a `.scratch/` `.py` file and run its `script_path`, so a runtime error costs one edit_document and a rerun rather than a retyped program, and keep inline `code` for throwaways.
+Monty is a subset of Python, not a CPython environment: no numpy or pandas, no class inheritance, no `glob` or `fnmatch` (recurse with `iterdir`, which returns entries in path order), and only part of the standard library, which names a module it lacks in the error, so try the import rather than working around one that would have worked.
+A program calls no tools: `open` and `iterdir` are the read tools, `re` is grep, `json` is jq, and there is no retrieval, so search first and let the program work from the paths it named.
+Park intermediates in `/tmp`, thrown away when the call ends, and state that outlives the call in a `.scratch/` path a later program opens directly.
+To persist a document, write `/output` and name where it goes as `output_path`, since a document write from inside a program is refused: it needs the user's say-so before the program starts.
+"""
+"""No module list, deliberately.
+
+Monty implements a subset of the standard library that only Monty knows, and it
+offers no ``importlib``, ``sys.modules``, or ``dir`` to enumerate it from
+inside, so any list here is a copy that goes stale on the next release: the one
+that used to stand here advertised ``functools``, which Monty does not have, for
+as long as nobody tried it.  A failed import names the module it wanted, which
+is the same correction a stale list would have needed anyway.
 """
 
 REDIRECT_INSTRUCTIONS = """

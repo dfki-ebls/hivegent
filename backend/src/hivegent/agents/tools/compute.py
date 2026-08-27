@@ -24,7 +24,10 @@ _limits: ResourceLimits = {
 
 
 # A factory runs per tool call, so it only wires up fields.  The worker pool
-# comes from the lifespan.
+# comes from the lifespan.  `paths` mounts the same roots the read tools span,
+# filters applied, so a program reaches what the read tools reach and no more,
+# while the writer both commits the declared output and names the narrower span
+# whose `.scratch/` state a program may write in place.
 def _run_python(deps: UserDeps) -> RunPythonTool:
     return RunPythonTool(
         pool=get_monty_pool(),

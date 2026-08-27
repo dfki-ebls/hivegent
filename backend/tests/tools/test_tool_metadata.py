@@ -12,7 +12,6 @@ from hivegent.tools.documents import (
 from hivegent.tools.grep import GrepContextArg, GrepPatternArg, GrepTool
 from hivegent.tools.python import (
     CodeArg,
-    PythonInputPathsArg,
     PythonOutputPathArg,
     PythonScriptPathArg,
     RunPythonTool,
@@ -70,10 +69,6 @@ def test_agent_python_tool_describes_monty_constraints() -> None:
     assert schema["properties"]["code"]["description"] == _description(CodeArg)
     assert schema["properties"]["script_path"]["description"] == _description(
         PythonScriptPathArg
-    )
-    assert schema["properties"]["input_paths"]["maxItems"] == 20
-    assert schema["properties"]["input_paths"]["description"] == _description(
-        PythonInputPathsArg
     )
     assert schema["properties"]["output_path"]["description"] == _description(
         PythonOutputPathArg

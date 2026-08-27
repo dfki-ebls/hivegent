@@ -4,7 +4,8 @@ A tool whose answer can dwarf the question is worth calling anyway when a
 later step, not the model's own reading, is what turns the result into an
 answer.  ``output_path`` is what makes that call affordable: the result is
 committed through the canonical mutation gateway and the model gets back a
-receipt naming the file, which a ``run_python`` call takes as an input.
+receipt naming the file, which a ``run_python`` program then opens on the
+mounted workspace.
 
 The suffix picks the channel, because the two a tool returns are not
 interchangeable: ``.json`` writes the structured ``data`` — every grep match,
@@ -13,9 +14,9 @@ model would otherwise have been shown.
 
 The argument is declared by each tool that offers it, next to a ``writer``
 field, the way :class:`~hivegent.tools.python.RunPythonTool` already declares
-the output its programs persist.  Nothing injects it: where a result may land
-is a property of the tool as it was built for a run, so a surface that hands
-out no writer leaves it out of what it builds
+the one document its programs persist.  Nothing injects it: where a result
+may land is a property of the tool as it was built for a run, so a surface
+that hands out no writer leaves it out of what it builds
 (:meth:`~hivegent.tools.base.CallInfo.without`) rather than advertising an
 argument it could only refuse.
 """
@@ -33,6 +34,7 @@ from .base import AsyncPathTool, AsyncTool, ToolOutput, ToolRetry
 from .mutations import WriteDocumentTool, resolve_mutation_target
 
 __all__ = [
+    "NO_WRITER_REFUSAL",
     "OutputFormat",
     "OutputPathArg",
     "RedirectedOutput",
@@ -81,28 +83,35 @@ class RedirectedOutput:
     """Top-level entries when the payload is a sequence, ``None`` otherwise."""
 
 
+NO_WRITER_REFUSAL = (
+    "Writing to the workspace is not available in this chat mode, so "
+    "`output_path` cannot be used."
+)
+"""The one refusal a path cannot explain: this run may not write at all.
+
+Shared because ``run_python`` reaches the same wall for its own declared
+output, and a mode that cannot write should not answer two different ways
+depending on which argument asked.
+"""
+
+
 def resolve_output_target(
     writer: WriteDocumentTool | None, output_path: str
 ) -> tuple[WriteDocumentTool, str, Path]:
     """Resolve one writable output, which need not exist yet.
 
     Routed through the resolver the commit itself runs through, so a path the
-    write would turn away is turned away here, in the same words.  A missing
-    *writer* is the tool saying it was not built to write at all, the one
-    refusal the path cannot explain, and the writer comes back with the
-    resolved path so a caller has it in hand rather than re-proving it.
+    write would turn away — a directory included — is turned away here, in the
+    same words.  A missing *writer* is the tool saying it was not built to
+    write at all, and the writer comes back with the resolved path so a caller
+    has it in hand rather than re-proving it.
     """
     if writer is None:
-        raise ToolRetry(
-            "Writing to the workspace is not available to this tool, so "
-            "`output_path` cannot be used."
-        )
+        raise ToolRetry(NO_WRITER_REFUSAL)
 
     canonical, _local, absolute = resolve_mutation_target(
         writer.resolved_paths, output_path
     )
-    if absolute.is_dir():
-        raise ToolRetry(f"'{canonical}' is a directory.")
 
     return writer, canonical, absolute
 

@@ -228,7 +228,7 @@ def _walk_entries(
     that stat and nothing about the entry can have moved in between.
     """
     for sp in resolved_paths:
-        base = sp.path.resolve()
+        base = sp.path
         root = base
         if root_subpath:
             resolved_root = canonical_local_path(base, root_subpath)

@@ -116,16 +116,22 @@ def resolve_mutation_target(
     Returns the path rendered under the root that claimed it (what the mutator
     routes on), the local path (what a glob is matched against), and the file
     on disk.  Unlike a read, the document need not exist: a mutation may create
-    it.  The one place a write target is resolved, so every surface that stages
-    a mutation refuses an unreachable path in the same words.
+    it.  It may not be a directory, though, which is the one way an unwritable
+    path still resolves, refused here rather than at each surface, so a write,
+    an edit, and a redirect all say the same thing.  The one place a write
+    target is resolved, so every surface that stages a mutation refuses an
+    unreachable path in the same words.
     """
     resolved = resolve_accessible_file(paths, file_path)
     if resolved is None:
         hint = workspace_root_hint(paths, file_path)
         raise ToolRetry(f"'{file_path}' is not accessible.{hint}")
     sp, local, absolute = resolved
+    canonical = sp.prefixed(local)
+    if absolute.is_dir():
+        raise ToolRetry(f"'{canonical}' is a directory.")
 
-    return sp.prefixed(local), local, absolute
+    return canonical, local, absolute
 
 
 @dataclass(slots=True, frozen=True)
