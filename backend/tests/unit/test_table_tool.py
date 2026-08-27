@@ -204,3 +204,70 @@ class TestQueryTableTool:
 
         with pytest.raises(ToolRetry, match="region"):
             await tool("sales.csv", "SELECT nope FROM t")
+
+
+def _quoted_dir(tmp_path: Path) -> Path:
+    """A table whose first column name is not a bare SQL identifier."""
+    (tmp_path / "t.csv").write_text("Zulaufmenge (D),amount\n1,2\n")
+
+    return tmp_path
+
+
+def _exported_dir(tmp_path: Path) -> Path:
+    """A sheet whose header spans two rows, as an export routinely does."""
+    book = openpyxl.Workbook()
+    sheet = book.active
+    assert sheet is not None
+    sheet.append(["Datum", None, "Zulaufmenge (D)"])
+    sheet.append(["Einstellung", "Meiches", "Zaehlwert"])
+    sheet.append(["2023-01-01", "0.4", "9362"])
+    book.save(tmp_path / "export.xlsx")
+
+    return tmp_path
+
+
+class TestColumnSpelling:
+    """The schema listing is the only place a model sees a column name."""
+
+    async def test_a_name_that_is_not_an_identifier_is_listed_quoted(
+        self, tmp_path: Path
+    ) -> None:
+        tool = QueryTableTool(paths=_quoted_dir(tmp_path))
+
+        formatted = (await returned(tool("t.csv"))).formatted
+        assert formatted is not None
+        assert '"Zulaufmenge (D)": Int64' in formatted
+        assert "\namount: Int64" in formatted
+
+    async def test_a_parse_error_names_the_quoting_rule(self, tmp_path: Path) -> None:
+        tool = QueryTableTool(paths=_quoted_dir(tmp_path))
+
+        with pytest.raises(ToolRetry, match="double-quoted") as exc:
+            await tool("t.csv", "SELECT Zulaufmenge (D) FROM t")
+
+        assert '"Zulaufmenge (D)"' in str(exc.value)
+
+    async def test_the_quoted_spelling_is_the_one_that_runs(
+        self, tmp_path: Path
+    ) -> None:
+        tool = QueryTableTool(paths=_quoted_dir(tmp_path))
+
+        out = await returned(tool("t.csv", 'SELECT "Zulaufmenge (D)" FROM t'))
+        assert out.data.rows == (("1",),)
+
+    async def test_unnamed_columns_warn_about_a_multi_row_header(
+        self, tmp_path: Path
+    ) -> None:
+        tool = QueryTableTool(paths=_exported_dir(tmp_path))
+
+        formatted = (await returned(tool("export.xlsx"))).formatted
+        assert formatted is not None
+        assert "no header name" in formatted
+        assert "more than one row" in formatted
+
+    async def test_a_clean_header_says_nothing_about_one(self, tmp_path: Path) -> None:
+        tool = QueryTableTool(paths=_sales_dir(tmp_path))
+
+        formatted = (await returned(tool("sales.csv"))).formatted
+        assert formatted is not None
+        assert "no header name" not in formatted

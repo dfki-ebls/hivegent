@@ -1,6 +1,7 @@
 """Query tabular documents with SQL instead of reading projected rows."""
 
 import asyncio
+import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
@@ -12,7 +13,7 @@ import fastexcel
 import polars as pl
 from pydantic import Field
 
-from ..converters import TABULAR_SUFFIXES, is_tabular
+from ..converters import DELIMITED_SUFFIXES, TABULAR_SUFFIXES, is_tabular
 from ..humanize import pluralize
 from .base import (
     ToolOutput,
@@ -34,9 +35,6 @@ __all__ = [
     "TextColumn",
 ]
 
-_DELIMITED_SUFFIXES = frozenset({".csv", ".tsv"})
-"""Formats that can be retried through the shared text decoder."""
-
 _RELATION = "t"
 """Fixed query relation name, which avoids interpolating a file path."""
 
@@ -48,6 +46,72 @@ _DATETIME = r"^\d{4}-\d{1,2}-\d{1,2}[ T]\d"
 
 _DEFAULT_ROW_LIMIT = 100
 _MAX_ROW_LIMIT = 1000
+
+_BARE_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+"""What SQL takes unquoted; anything else has to be spelled in double quotes."""
+
+_UNNAMED_PREFIX = "__UNNAMED__"
+"""What Polars calls a column the sheet left without a header cell."""
+
+
+def _quoted(name: str) -> str:
+    """Spell a column the way a query has to type it.
+
+    The schema listing is the only place a model ever sees a column name, so it
+    has to be the spelling that parses: a header carrying a space, a unit, or a
+    parenthesis is the norm in an exported spreadsheet and is a syntax error
+    unquoted.
+
+    >>> _quoted("amount")
+    'amount'
+    >>> _quoted("Zulaufmenge (D)")
+    '"Zulaufmenge (D)"'
+    """
+    if _BARE_IDENTIFIER.fullmatch(name):
+        return name
+
+    escaped = name.replace('"', '""')
+
+    return f'"{escaped}"'
+
+
+def _quoting_hint(columns: Sequence[str]) -> str:
+    """Say how a column name that is not a bare identifier has to be typed.
+
+    Spelled with one of the file's own columns, since a parse error has nothing
+    else to correct itself from: the schema call it would otherwise be sent
+    back to is the one the query came from.
+    """
+    example = next((name for name in columns if _quoted(name) != name), None)
+    if example is None:
+        return ""
+
+    return (
+        " A column name that is not a bare identifier must be double-quoted, "
+        f"as in `SELECT {_quoted(example)} FROM {_RELATION}`."
+    )
+
+
+def _header_hint(columns: Sequence[str]) -> str:
+    """Warn when the header the loader took is only half of one.
+
+    An exported sheet routinely spreads its header over two rows — the name
+    above, the unit or the aggregation below — and the loader can only take the
+    first, which leaves the second as data row 1 and every column the first row
+    left blank without a name.  Those placeholder names are the signal, and
+    saying so once is what stops the label row from being averaged in with the
+    values under it.
+    """
+    unnamed = sum(1 for name in columns if name.startswith(_UNNAMED_PREFIX))
+    if not unnamed:
+        return ""
+
+    return (
+        f"{unnamed} of {len(columns)} columns have no header name "
+        f"({_UNNAMED_PREFIX}...), so this sheet's header may span more than one "
+        "row: check whether row 1 carries labels rather than values and exclude "
+        "it in the WHERE if it does"
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -185,6 +249,11 @@ class _Source:
     strings: tuple[str, ...] = ()
     """Columns still text after coercion, the ones a query has to cast."""
 
+    @property
+    def columns(self) -> tuple[str, ...]:
+        """Every column name, as the loaded frame declares them."""
+        return tuple(self.frame.collect_schema().names())
+
 
 def _column_counts(name: str) -> Iterator[pl.Expr]:
     """The value counts one text column is judged by, in a fixed order."""
@@ -299,7 +368,7 @@ def _load(path: Path, file_path: str, sheet: str | None, *, decode: bool) -> _So
     if suffix == ".parquet":
         return _Source(frame=pl.scan_parquet(path))
 
-    if suffix not in _DELIMITED_SUFFIXES:
+    if suffix not in DELIMITED_SUFFIXES:
         return _load_excel(path, file_path, sheet)
 
     separator = "\t" if suffix == ".tsv" else ","
@@ -419,7 +488,7 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
             # Invalid UTF-8 is reached only once a column is read, and every
             # other read failure uses a different PolarsError subclass.
             except pl.exceptions.ComputeError:
-                if absolute.suffix.lower() not in _DELIMITED_SUFFIXES:
+                if absolute.suffix.lower() not in DELIMITED_SUFFIXES:
                     raise
 
                 return _coerce(_load(absolute, file_path, sheet, decode=True))
@@ -436,9 +505,17 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
             "without a query to see its columns and their types."
         )
 
+        # A parse error is almost always an unquoted header, since an exported
+        # sheet names its columns with spaces, units, and parentheses; the
+        # schema listing already spells them quoted, so name one of its own.
+        if isinstance(
+            exc, pl.exceptions.SQLInterfaceError | pl.exceptions.SQLSyntaxError
+        ):
+            return detail + _quoting_hint(source.columns)
+
         # A dtype error over a column the coercion pass had to leave as text
         # is that text, so name it rather than leaving the cast to guesswork.
-        named = [name for name in source.strings if query and name in query]
+        named = [_quoted(name) for name in source.strings if query and name in query]
 
         if named and isinstance(
             exc, pl.exceptions.InvalidOperationError | pl.exceptions.ComputeError
@@ -586,7 +663,7 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
         # point of this call, and a vertical list of it is never too wide.
         lines += ["", "columns:"]
         lines += [
-            f"{name}: {dtype}"
+            f"{_quoted(name)}: {dtype}"
             for name, dtype in zip(columns, dtypes, strict=True)
         ]
 
@@ -620,6 +697,8 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
             )
 
         if query is None:
+            if header := _header_hint(result.columns):
+                hints.append(header)
             hints += self._typing_hints(result.text_columns)
             hints.append(f"pass a SQL query over '{_RELATION}' to filter or aggregate")
 
@@ -632,9 +711,10 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
         the share that parses is what lets the first query wrap it in
         ``TRY_CAST``, instead of learning it from a failure.
         """
-        retyped = [column.name for column in columns if column.complete]
+        retyped = [_quoted(column.name) for column in columns if column.complete]
         mixed = [
-            f"{column.name} ({column.parsed} of {column.total} parse as {column.dtype})"
+            f"{_quoted(column.name)} ({column.parsed} of {column.total} parse "
+            f"as {column.dtype})"
             for column in columns
             if not column.complete
         ]
