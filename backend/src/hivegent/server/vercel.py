@@ -325,6 +325,7 @@ def dump_messages_with_ids(
     decision the run itself does not record (see :func:`record_approvals`).
     """
     node_by_obj = {id(msg): node_id for node_id, msg in pairs}
+
     if siblings:
         for node_id, msg in pairs:
             sibs = siblings.get(node_id)

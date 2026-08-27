@@ -600,15 +600,14 @@ async def import_conversation(
 
 async def create_compacted_conversation(
     user_id: str,
-    original_conversation_id: str | None,
+    original_conversation_id: str,
     summary_message: ModelMessage,
     title: str,
 ) -> str:
     """Persist a fresh conversation seeded with one summary message as its root.
 
-    ``original_conversation_id`` is ``None`` when the source conversation
-    was never persisted (e.g. a draft compacted before its first turn
-    committed), in which case there is no ``compacted_from`` link to set.
+    The source is always a persisted row, since its messages are what was
+    summarized, so the ``compacted_from`` link is never absent.
     """
     conversation_id = new_id()
     node_id = new_id()

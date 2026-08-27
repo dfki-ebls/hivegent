@@ -41,7 +41,6 @@ __all__ = [
     "ClientConversation",
     "CollectionCompleteEvent",
     "CollectionProgressEvent",
-    "CompactConversationRequest",
     "CompactConversationResponse",
     "ConversationArchive",
     "ConversationListResponse",
@@ -348,7 +347,6 @@ class ChatRequestConfig(AgentRunConfig):
     here, since nothing on this model forbids extras.
     """
 
-    conversation_id: str = Field(default="", description="The conversation ID")
     reasoning_effort: ReasoningEffort = Field(
         default="auto",
         description="Reasoning effort level ('auto' resolves to the deployed default effort, 'none' disables thinking)",
@@ -490,18 +488,6 @@ class ConversationListResponse(BaseModel):
         description="List of conversation summaries",
     )
     total_count: int = Field(description="Total number of conversations")
-
-
-class CompactConversationRequest(AgentRunConfig):
-    """Request to compact a conversation.
-
-    The client sends its in-memory message history so the summary reflects
-    the exact branch and partial turn visible when the user requests
-    compaction, and the same run configuration it sends with a chat turn so
-    the summarization request can be that turn's continuation.
-    """
-
-    messages: list[UIMessage] = Field(default_factory=list)
 
 
 class InstructionsSnapshot(BaseModel):

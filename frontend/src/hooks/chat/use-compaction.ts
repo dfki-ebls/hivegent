@@ -50,7 +50,7 @@ export function useCompaction({
       });
 
       try {
-        const result = await compactConversation(id, buildRequestBody(), messages);
+        const result = await compactConversation(id, buildRequestBody());
 
         if (activeIdRef.current !== id) {
           toast.success("Conversation compacted", {

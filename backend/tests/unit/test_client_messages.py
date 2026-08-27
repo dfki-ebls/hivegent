@@ -5,10 +5,12 @@ pydantic-ai has not transcribed rejects the whole request.  That happened twice
 (``providerExecuted``/``title`` on ``DynamicToolUIPart``, then the ``id`` the
 adapter itself streams on every reasoning part, fixed upstream in
 pydantic-ai 2.34), and each time it took down every endpoint the browser hands
-messages to: the chat route on an approval continuation, the import route on an
-archive exported mid-session, and the compaction a context overflow offers as
-its recovery.  These pin the shape the client actually posts, so the next such
-drift fails here rather than as a 422 in production.
+messages to: the chat route on an approval continuation and the import route on
+an archive exported mid-session.  These pin the shape the client actually posts,
+so the next such drift fails here rather than as a 422 in production.
+
+Compaction used to be a third such endpoint; it now summarizes the persisted
+active path and takes no messages from the browser at all.
 """
 
 import json
@@ -20,7 +22,7 @@ from pydantic import ValidationError
 from pydantic_ai.messages import ModelMessage, ThinkingPart
 
 from hivegent.server.vercel import ChatAdapter
-from hivegent.types import CompactConversationRequest, ConversationArchive
+from hivegent.types import ConversationArchive
 
 # An assistant turn exactly as the SDK holds it after an OpenAI-compatible
 # endpoint streamed reasoning and asked for approval, the case that 422'd: the
@@ -56,12 +58,7 @@ def _via_import(message: dict[str, Any]) -> list[ModelMessage]:
     return ChatAdapter.load_messages(archive.active_path()[0])
 
 
-def _via_compaction(message: dict[str, Any]) -> list[ModelMessage]:
-    request = CompactConversationRequest.model_validate({"messages": [message]})
-    return ChatAdapter.load_messages(request.messages)
-
-
-_SURFACES = [_via_chat, _via_import, _via_compaction]
+_SURFACES = [_via_chat, _via_import]
 
 
 @pytest.mark.parametrize("surface", _SURFACES, ids=lambda fn: fn.__name__)

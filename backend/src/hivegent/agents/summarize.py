@@ -22,7 +22,8 @@ crashed mid-call.
 
 An estimate can still be wrong, since the provider counts a prompt its own way
 and a turn's report describes the request before it, so a refusal is not fatal:
-each one sheds another :data:`_COMPACT_RESERVE_TOKENS` and asks again.
+each one sheds the summary's actual output cap plus a small prompt reserve and
+asks again.
 """
 
 import logging
@@ -37,6 +38,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
 from ..llm import SUMMARY_MAX_TOKENS, is_context_overflow, summary_model_settings
@@ -84,14 +86,13 @@ withdrawing them, or sending ``tool_choice='none'``, would rewrite the block
 that sits ahead of the messages and throw away the prefix this path exists for.
 """
 
-# One tool round trip still yields a summary; a second would mean the model is
-# working rather than answering, and every request on this path carries a
-# nearly full context window.
-_COMPACT_LIMITS = UsageLimits(request_limit=2, tool_calls_limit=1)
+# Keep the chat turn's tools declared so the provider prefix stays identical,
+# but reject every call before it can execute.
+_COMPACT_LIMITS = UsageLimits(request_limit=1, tool_calls_limit=0)
 
-_COMPACT_RESERVE_TOKENS = SUMMARY_MAX_TOKENS + 1024
+_COMPACT_PROMPT_RESERVE_TOKENS = 1024
 """How much a refused attempt sheds before asking again: what the request needs
-on top of the history it keeps, being the prompt and room to answer it.
+on top of its actual completion cap, covering the prompt and counting drift.
 
 The thousand over the completion cap covers the prompt itself and the drift
 between the count one request reported and what the provider measures for the
@@ -148,8 +149,8 @@ def _cut_points(messages: Sequence[ModelMessage]) -> list[_Cut]:
                 answered = True
 
         served = answered or isinstance(msg, ModelResponse)
-        if isinstance(msg, ModelResponse) and msg.usage.input_tokens:
-            size = msg.usage.input_tokens + msg.usage.output_tokens
+        if isinstance(msg, ModelResponse) and msg.usage.total_tokens:
+            size = msg.usage.total_tokens
 
         if size and served and not open_calls:
             cuts.append(_Cut(i + 1, size))
@@ -157,7 +158,10 @@ def _cut_points(messages: Sequence[ModelMessage]) -> list[_Cut]:
     return cuts
 
 
-def _plan(messages: Sequence[ModelMessage]) -> list[int]:
+def _plan(
+    messages: Sequence[ModelMessage],
+    max_output_tokens: int = SUMMARY_MAX_TOKENS,
+) -> list[int]:
     """How many leading messages to keep, per attempt, longest first.
 
     The first attempt keeps everything the endpoint has served, because it is
@@ -173,10 +177,11 @@ def _plan(messages: Sequence[ModelMessage]) -> list[int]:
     cuts = _cut_points(messages) or [_Cut(len(messages), 0)]
     plan = [cuts[-1].keep]
     budget = cuts[-1].size
+    reserve = max_output_tokens + _COMPACT_PROMPT_RESERVE_TOKENS
 
     for _ in range(_MAX_ATTEMPTS - 1):
         smaller = next(
-            (c for c in reversed(cuts) if c.size + _COMPACT_RESERVE_TOKENS <= budget),
+            (c for c in reversed(cuts) if c.size + reserve <= budget),
             None,
         )
         if smaller is None or smaller.keep >= plan[-1]:
@@ -188,14 +193,18 @@ def _plan(messages: Sequence[ModelMessage]) -> list[int]:
     return plan
 
 
-async def _ask(messages: Sequence[ModelMessage], run: RunPrefix) -> str:
+async def _ask(
+    messages: Sequence[ModelMessage],
+    run: RunPrefix,
+    model_settings: ModelSettings,
+) -> str:
     """Run the compact prompt as the next turn of *messages*."""
     result = await user_agent.run(
         COMPACT_PROMPT,
         message_history=list(messages),
         deps=run.deps,
         model=run.model,
-        model_settings=summary_model_settings(run.llm),
+        model_settings=model_settings,
         capabilities=run.capabilities,
         instructions=run.instructions,
         usage_limits=_COMPACT_LIMITS,
@@ -223,11 +232,14 @@ async def summarize_conversation(
             request for a reason other than context overflow, or still has no
             room once there is nothing left to shed.
     """
-    *retries, final = _plan(messages)
+    model_settings = summary_model_settings(run.llm)
+    *retries, final = _plan(
+        messages, model_settings.get("max_tokens", SUMMARY_MAX_TOKENS)
+    )
 
     for cut in retries:
         try:
-            return await _ask(messages[:cut], run)
+            return await _ask(messages[:cut], run, model_settings)
 
         except (ModelHTTPError, UnexpectedModelBehavior) as exc:
             if not is_context_overflow(exc):
@@ -239,4 +251,4 @@ async def summarize_conversation(
                 len(messages),
             )
 
-    return await _ask(messages[:final], run)
+    return await _ask(messages[:final], run, model_settings)

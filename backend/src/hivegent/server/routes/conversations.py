@@ -58,8 +58,8 @@ from ...llm import (
 )
 from ...tools.formatting import BLOCK_SEP
 from ...types import (
+    AgentRunConfig,
     ChatRequestConfig,
-    CompactConversationRequest,
     CompactConversationResponse,
     ConversationArchive,
     ConversationListResponse,
@@ -220,24 +220,25 @@ async def delete_all_conversations_route(
 @router.post("/conversations/{conversation_id}/compaction")
 async def create_conversation_compaction(
     conversation_id: str,
-    request: CompactConversationRequest,
+    request: AgentRunConfig,
     http_request: Request,
     user: Annotated[User, Depends(get_current_user)],
 ) -> CompactConversationResponse:
     """Compact a conversation by summarizing it into a new conversation.
 
-    Summarization defaults to the regular chat model, not ``aux_model``:
-    it spans the whole (typically overflowing) conversation, which needs
-    the full context window rather than a small scoped-task model.
+    The body carries the run configuration only: the messages are the
+    conversation's own persisted active path, the same history a chat turn
+    replays.  Summarization defaults to the regular chat model, not
+    ``aux_model``: it spans the whole (typically overflowing) conversation,
+    which needs the full context window rather than a small scoped-task model.
     """
 
-    messages = ChatAdapter.load_messages(request.messages)
     run_prefix = build_run_prefix(request, user)
 
     try:
         result = await run_until_disconnect(
             http_request,
-            compact_conversation(user.id, conversation_id, messages, run_prefix),
+            compact_conversation(user.id, conversation_id, run_prefix),
         )
     except HTTPException:
         raise
@@ -435,7 +436,6 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     # its messages; extras are ignored, so one model validates both this and
     # the compaction request that has to reproduce the same prefix.
     config = ChatRequestConfig.model_validate(await request.json())
-    config.conversation_id = conversation_id
 
     run_prefix = build_run_prefix(config, user)
     thinking = resolve_thinking(config.reasoning_effort)

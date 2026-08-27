@@ -1,10 +1,11 @@
 """Tests for conversation summarization."""
 
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 from pydantic_ai import models
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -18,8 +19,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
+from hivegent import compaction
 from hivegent.agents import RunPrefix, UserDeps, build_capabilities, capabilities
 from hivegent.agents.summarize import COMPACT_PROMPT, _plan, summarize_conversation
+from hivegent.db.conversations import ConversationData
 from hivegent.llm_config import LlmConfig
 from hivegent.store import Casebase
 from hivegent.types import ToolsSpec
@@ -144,6 +147,17 @@ def test_plan_offers_everything_first_then_sheds_a_reserve_at_a_time() -> None:
     assert _plan(_MEASURED) == [6, 4, 2]
 
 
+def test_plan_reserves_the_configured_summary_output_cap() -> None:
+    """A smaller completion cap keeps recent turns that still fit."""
+    close_turns = [
+        *_turn("first", input_tokens=100_000),
+        *_turn("second", input_tokens=105_000),
+        *_turn("third", input_tokens=110_000),
+    ]
+
+    assert _plan(close_turns, max_output_tokens=1_024) == [6, 4, 2]
+
+
 async def test_compaction_sheds_again_when_the_trimmed_turn_still_overflows(
     run_prefix: RunPrefix,
 ) -> None:
@@ -188,3 +202,76 @@ def test_plan_never_cuts_on_an_unanswered_tool_call() -> None:
 def test_plan_falls_back_to_everything_when_no_turn_reported_a_size() -> None:
     """Nothing to plan from means one attempt, with the endpoint as the judge."""
     assert _plan(_MESSAGES) == [len(_MESSAGES)]
+
+
+async def test_compaction_rejects_tool_calls_before_execution(
+    run_prefix: RunPrefix,
+) -> None:
+    """Compaction preserves tool schemas but permits no tool execution."""
+    calls: list[None] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(None)
+        assert info.function_tools
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="write_document",
+                    args={"file_path": "~/notes.md", "content": "mutated"},
+                    tool_call_id="write-1",
+                )
+            ]
+        )
+
+    write_run = replace(
+        run_prefix,
+        deps=replace(run_prefix.deps, mode="write"),
+        capabilities=build_capabilities(ToolsSpec(), mode="write"),
+        model=FunctionModel(respond),
+    )
+
+    with pytest.raises(UsageLimitExceeded, match="tool_calls_limit of 0"):
+        await summarize_conversation(_MESSAGES, write_run)
+
+    assert len(calls) == 1
+
+
+async def test_compaction_summarizes_the_persisted_path_not_a_posted_one(
+    run_prefix: RunPrefix, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The messages come from SQL, so the sized history reaches the planner."""
+    seen: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return ModelResponse(parts=[TextPart(content="summary text")])
+
+    async def _load(user_id: str, conversation_id: str) -> ConversationData:
+        assert (user_id, conversation_id) == ("u", "c1")
+        return ConversationData(
+            id=conversation_id,
+            title="Manual questions",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            messages=_MESSAGES,
+        )
+
+    created: dict[str, object] = {}
+
+    async def _create(user_id: str, **kwargs: object) -> str:
+        created.update(kwargs)
+        return "c2"
+
+    monkeypatch.setattr(compaction, "load_conversation", _load)
+    monkeypatch.setattr(compaction, "create_compacted_conversation", _create)
+
+    result = await compaction.compact_conversation(
+        "u", "c1", replace(run_prefix, model=FunctionModel(respond))
+    )
+
+    assert result == compaction.CompactionResult(
+        new_conversation_id="c2", summary="summary text"
+    )
+    assert seen[0][:-1] == _MESSAGES
+    assert created["original_conversation_id"] == "c1"
+    assert created["title"] == "Manual questions (continued)"

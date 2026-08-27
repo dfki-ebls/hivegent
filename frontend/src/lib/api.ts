@@ -725,13 +725,12 @@ export async function generateConversationTitle(
 export async function compactConversation(
   conversationId: string,
   runConfig: AgentRunConfig,
-  messages: ChatMessage[],
 ): Promise<CompactConversationResponse> {
   return requestJson(
     `${API_BASE_URL}/api/conversations/${conversationId}/compaction`,
     "Compaction failed",
     CompactConversationResponseSchema,
-    jsonRequest("POST", { ...runConfig, messages }),
+    jsonRequest("POST", runConfig),
   );
 }
 

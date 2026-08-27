@@ -119,24 +119,30 @@ A clean finish is stored untouched, so a genuinely approval-pending call stays d
 
 `summarize_conversation` asks for a conversation's summary by appending `COMPACT_PROMPT` to that conversation's own message list and running it under the same `RunPrefix` the chat turns ran under.
 Everything ahead of the prompt is then byte-identical to the request the provider just served, so its KV prefix cache answers for it and only the prompt is prefilled; the request it replaced re-rendered the history as a flat transcript under different instructions and no tools, which shares nothing with that cache and pays a full prefill of a nearly-full window.
-That is what `AgentRunConfig` exists for: the compaction route posts the same body a chat turn posts, and `build_run_prefix` composes both, owning the two preconditions of an identical prefix (the MCP list is validated and `llm` resolved before the toolsets are built) so no caller can compose one that silently differs.
+That is what `AgentRunConfig` exists for: the compaction route posts the run configuration a chat turn posts, and `build_run_prefix` composes both, owning the two preconditions of an identical prefix (the MCP list is validated and `llm` resolved before the toolsets are built) so no caller can compose one that silently differs.
+The other half of that prefix is the message list, and it is read where the chat route reads it -- `compact_conversation` calls `load_conversation` for the persisted active path -- rather than accepted from the browser.
+The tab's copy is that same history projected into Vercel UI parts and back, so it matches only as far as the adapter transcribes, and `load_messages` rebuilds each `ModelResponse` from its parts with an empty `RequestUsage`, which is exactly the measurement the retry plan below is sized from.
+Reading SQL also spares the wire a near-full context window on the one request that exists because a near-full context window stopped fitting.
+The browser is not the better witness here either: an errored turn is persisted like any other, the failed prompt is re-sent into the new conversation by the retry, and the tab is only ever shown the active path.
 
 The continuation is the *larger* request, though, and it is asked for exactly when a conversation has stopped fitting, so room has to be made.
 It is made by dropping messages from the **tail**, which is the whole reason there is one summarizer here and not two: cutting the head would throw away the block being reused, while cutting the tail leaves a shorter prefix of that same block, so a trimmed continuation is still a cache hit where a re-rendered transcript never was.
-Where to cut comes from the conversation itself: `ModelResponse.usage` records what each request carried, so input plus output on a response is exactly the size of the history up to it -- observed, not configured, which is why `_plan` needs no tokenizer, no model card, and no `context_window` setting.
+Where to cut comes from the conversation itself: `ModelResponse.usage` records what each request carried, so `total_tokens` on a response is exactly the size of the history up to it -- observed, not configured, which is why `_plan` needs no tokenizer, no model card, and no `context_window` setting.
+This is the measurement that only survives in SQL, and the reason compaction reads its messages from there.
 `_cut_points` offers only prefixes in which every tool call has been answered, since a provider rejects a history that ends on an open one, and not those ending on a fresh user prompt, which measure the same as the turn before them while keeping a message the provider never counted.
 That second rule is what makes the longest prefix the longest one the endpoint has actually *served*, which is where the first attempt starts: the whole history when the last turn succeeded, everything but the refused prompt when it did not.
 The endpoint is the cheaper judge of whether that fits, since an overflow is refused before anything is prefilled while a prefix trimmed on suspicion spends a full request to answer from less of the conversation than was available, so only a refusal sheds.
 
 That last rule is what lets the subagent recovery path (`_safe_summarize`) drop its separate flat-transcript summarizer and call this one: a crashed subagent's messages may end mid tool call, and trimming back to the last answered one is both what makes the request legal and what makes it fit.
 Its prefix is also the hottest cache in the system, having just run.
-`_COMPACT_RESERVE_TOKENS` is what the request needs beyond the history it keeps -- the prompt plus room to answer it -- and is the step each refusal sheds, walking the summary back a turn at a time rather than halving it (`_MAX_ATTEMPTS`, three).
+The compaction reserve is the summary request's own resolved completion cap plus `_COMPACT_PROMPT_RESERVE_TOKENS` for the prompt and counting drift, taken off the `ModelSettings` the request will actually run under rather than off `SUMMARY_MAX_TOKENS`, which a lower configured `max_tokens` clamps.
+Each refusal sheds that reserve, walking the summary back a turn at a time rather than halving it (`_MAX_ATTEMPTS`, three).
 A conversation nothing ever reported a size for plans one attempt with everything, the endpoint being the only judge left.
 One `RunPrefix` carries the resolved model alongside the config it came from, because building one reaches for the lifespan's shared HTTP client: composing it where that is live means `summarize_conversation` takes no model of its own and cannot be handed one the prefix disagrees with.
 
 `SUMMARY_MAX_TOKENS` is 8192, between opencode's `SUMMARY_OUTPUT_TOKENS` of 4096 and pi's 80% of a 16384-token reserve, and clamped down to the request's own `max_tokens` where that is lower.
 `COMPACT_PROMPT` bounds the summary by structure rather than by a word count, which is what both of those harnesses settled on: a length cap makes the model drop sections instead of tightening them, and the summary is the only carrier of what the conversation established.
-`_COMPACT_LIMITS` bounds the run to one tool round trip rather than the chat turn's budget, since every request on this path carries a nearly full window.
+`_COMPACT_LIMITS` keeps the request budget to one and the tool call budget at zero, since every request on this path carries a nearly full window and compaction must not execute tools.
 
 Compaction is offered when the provider has actually refused a turn, and never on a forecast that one is coming.
 `ContextLimitBanner` keys off `is_context_overflow`, the same rejection the chat route already classifies, so the trigger is an observed fact.

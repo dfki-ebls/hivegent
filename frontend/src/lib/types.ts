@@ -816,9 +816,9 @@ export interface ToolsPayload {
 /**
  * {@link AgentRunConfig} plus the model setting only a chat turn carries.
  *
- * Narrower than the backend class of the same name, which also holds
- * `conversation_id`, `trigger`, and `message_id`: those address a turn rather
- * than configure it, and `useHivegentChat` splices them into the body itself.
+ * Narrower than the backend class of the same name, which also holds `trigger`
+ * and `message_id`. Those address a turn rather than configure it, and
+ * `useHivegentChat` splices them into the body itself.
  */
 export interface ChatRequestConfig extends AgentRunConfig {
   reasoning_effort: ReasoningEffort;

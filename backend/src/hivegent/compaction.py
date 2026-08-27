@@ -5,18 +5,13 @@ as initial context, linking back to the original.
 """
 
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelResponse, TextPart
 
 from .agents import RunPrefix
 from .agents.summarize import summarize_conversation
-from .db.conversations import (
-    conversation_exists,
-    create_compacted_conversation,
-    extract_title,
-)
+from .db.conversations import create_compacted_conversation, load_conversation
 
 __all__ = [
     "CompactionResult",
@@ -37,55 +32,50 @@ class CompactionResult:
 async def compact_conversation(
     user_id: str,
     conversation_id: str,
-    messages: Sequence[ModelMessage],
     run: RunPrefix,
 ) -> CompactionResult:
     """Compact a conversation by summarizing it into a new conversation.
 
-    Generates a summary of the supplied messages with the regular chat
-    model (the conversation being compacted typically overflows a small
-    model's context) and creates a new conversation with the summary as
+    Generates a summary of the conversation's persisted active path with the
+    regular chat model (the conversation being compacted typically overflows a
+    small model's context) and creates a new conversation with the summary as
     the initial context.
-    The messages come from the client rather than the database so the summary
-    reflects the exact branch and partial turn visible to the user.
 
-    *run* is the prompt prefix the conversation's own turns ran under, which
-    is what lets the summary be asked for as one more of them rather than as
-    a fresh request the provider has cached nothing for (see
-    :func:`~hivegent.agents.summarize.summarize_conversation`).
+    The messages are read from SQL rather than posted by the browser, for the
+    same reason a chat turn replays them from SQL: that history is what the
+    provider was sent and therefore what it cached, and the summary is asked
+    for as one more turn of it (see
+    :func:`~hivegent.agents.summarize.summarize_conversation`).  A projection
+    through the Vercel UI message shapes and back would reproduce it only as
+    faithfully as the adapter transcribes, and would arrive stripped of the
+    per-turn usage the retry plan is sized from.
 
-    The new conversation links back to the original via ``compacted_from``
-    only when the original is a persisted row — a freshly minted draft has
-    no row to reference yet.
+    *run* is the prompt prefix the conversation's own turns ran under, which is
+    the other half of that prefix.
 
     Args:
         user_id: The user who owns the conversation.
         conversation_id: The conversation being compacted.
-        messages: The conversation messages to summarize.
         run: The prompt prefix the conversation's turns ran under.
 
     Returns:
         A CompactionResult with the new conversation ID and summary.
 
     Raises:
-        ValueError: If no messages are supplied.
+        ValueError: If the conversation is missing, not owned, or empty.
     """
-    if not messages:
+    conversation = await load_conversation(user_id, conversation_id)
+    if conversation is None or not conversation.messages:
         raise ValueError(f"Conversation {conversation_id} not found or empty")
 
-    summary = await summarize_conversation(messages, run)
+    summary = await summarize_conversation(conversation.messages, run)
 
-    base_title = extract_title(messages) or "Untitled"
     summary_message = ModelResponse(parts=[TextPart(content=summary)])
     new_id = await create_compacted_conversation(
         user_id,
-        original_conversation_id=(
-            conversation_id
-            if await conversation_exists(user_id, conversation_id)
-            else None
-        ),
+        original_conversation_id=conversation_id,
         summary_message=summary_message,
-        title=f"{base_title} (continued)",
+        title=f"{conversation.title or 'Untitled'} (continued)",
     )
 
     logger.info(
