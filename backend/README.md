@@ -155,6 +155,42 @@ That would keep one conversation id across a compaction (today `create_compacted
 Blocked on transport: `OpenAICompaction` refuses anything but `OpenAIResponsesModel` and `CompactionPart` round-trips provider-owned data, so neither reaches an `OpenAIChatModel` against vLLM or llama.cpp.
 Revisit when pydantic-ai gains a provider-agnostic compaction boundary (its own `messages.py` notes the same gap, upstream #7255).
 
+### Client-posted messages are validated strictly
+
+The Vercel AI request models forbid extra fields, so a part the AI SDK builds but pydantic-ai has not transcribed rejects the whole request with a 422 before the run starts.
+That takes down every endpoint the browser hands messages to at once: the chat route on an approval continuation (which re-posts the assistant message) and the import route on an archive exported mid-session.
+Compaction was a third such endpoint until it began summarizing the persisted active path, which is the incidental half of that change: the recovery a context overflow offers can no longer be refused for a message shape, because it is handed no messages.
+That drift is an upstream bug and is fixed there rather than worked around here (the `id` the adapter's own `reasoning-start` chunk emits and its `ReasoningUIPart` then refused, which 422'd every reasoning turn, needs pydantic-ai >= 2.34), so the floor is the lockfile and `tests/unit/test_client_messages.py` pins the shape a real client posts across both routes.
+Nothing may relax the strictness to accommodate a client: `extra='forbid'` is what stops a malformed `approval` object from re-matching the unanswered variant and releasing a gated call.
+
+### Tool approvals round-trip symmetrically
+
+A denial is self-describing, since its return carries `outcome='denied'` plus the reason, but an approved call just runs and stores an ordinary successful return, so nothing in the message list says it was ever gated and the decision the user saw live would vanish on reload.
+`vercel.record_approvals` stamps the released call ids on the metadata of the request carrying their returns, and `dump_messages_with_ids` puts the decision back on the projected part.
+That metadata is UI-owned and never sent to the provider, like the reasoning durations and the turn error beside it.
+It rides on the request node rather than the closer `ToolReturnPart.metadata` because that field is already the tool-output chunk channel (`tools.pydantic_ai.wrap_tool_output`).
+An approval the user overtook by sending another message is a denial on both sides, and neither side stores that decision: `vercel.decline_pending_approvals` closes the dangling call in the history on the next request, and `chat-utils.declineAbandonedApprovals` derives the same denial over the live transcript, since only the last message can hold a request that is still answerable.
+So the buttons disappear the moment the prompt is sent rather than on the reload that would have shown them settled, and the tab never offers a decision the server has already made.
+
+### Export carries both copies of a conversation
+
+A conversation export is a `ConversationArchive` with two halves, since the conversation exists in two places that can disagree.
+`backend` is the persisted active path plus the system prompts each turn actually ran under, read back off `ModelRequest.instructions` rather than recomposed, because recomposing would describe today's settings and not the ones the turn ran under, and because the Vercel AI stream never carries instructions to the browser at all.
+Snapshots collapse while the prompt is unchanged, so narrowing the document scope mid-conversation stays legible.
+`frontend` is what the tab held, including a turn that errored before it was persisted, which is the case the export was built for.
+Import restores `backend` when it has messages and falls back to `frontend`, so a draft and a failed turn both round-trip, and the archived prompts are a record that is never replayed, since the imported conversation runs under the importing user's settings.
+
+### Citations and attachments
+
+Citation line chips show only evidence captured in persisted read, grep, or search tool outputs from the conversation.
+The document name opens the current workspace path separately and never applies a historical line anchor to current content.
+Tool call IDs keep repeated reads distinct, and multiple captured versions are presented independently instead of guessing which one a citation meant.
+A line chip with no supporting tool output is disabled.
+
+A chat turn attaches images and nothing else, gated on `converters.INGESTIBLE_IMAGE_MEDIA_TYPES`, the media types every vision backend ingests identically, so no `BinaryContentMode` policy and no conversion runs on the chat's latency budget.
+Anything else belongs in a workspace, whose upload pipeline converts, chunks, and indexes it once for retrieval rather than spending context on it every turn, since an attachment is stored once but re-sent to the model on each later turn of the conversation.
+`/settings` serves the same table and the size cap to the client as `AttachmentLimits`, so the file picker refuses what the chat route would refuse and a rejection costs no round trip.
+
 ## Filesystem as the source of truth for content
 
 The workspace tree under `data/workspace/<store_key>/` is authoritative for document content (markdown, originals, and assets), and the Postgres `documents` plus `chunks` rows are a derived index reconciled from it.
@@ -222,6 +258,92 @@ The following pieces still need to be built before that tool ships, and none of 
 - TODO(shell): keep an entry whose synchronization failed out of retrieval rather than serving stale chunks, retain its dirty state for retry, and report the checkpoint as unsettled until every affected indexable entry succeeds.
 - TODO(shell): decide which shell-created binaries and converter-backed formats become entries at fold-back. A shell-created plain-text file can use `is_projectable_original`, a changed existing original must refresh its projection, and a new `.pdf` or `.csv` may either run the upload conversion pipeline or remain explicitly inert on disk.
 - TODO(shell): keep all workspace access behind `Casebase.workspace_dir(data_dir)` so the working-copy root can be injected in one place. Do not hardcode the workspace path elsewhere.
+
+## Document tools
+
+The read tools serve the markdown projection, which is what retrieval and citation line anchors are built on.
+Two document shapes are deliberately not served that way, and `converters.TABULAR_SUFFIXES` and `converters.JSON_SUFFIXES` are the one table behind each split, for the same reason `VISION_MEDIA_TYPES` is the one table behind read/read_binary: the specialised tool gates on it and `read_document` points at that tool when a read lands on one of these, so the reader cannot silently spend the context on a document that could have been queried.
+
+### Tables are queried, not read
+
+`query_table` runs Polars SQL against the original CSV/TSV/Parquet/Excel file in `data/workspace/`, which is the same trade `jq` makes for JSON.
+A spreadsheet's markdown projection is one very long line per row, so a line read spends the context on rows the question does not need and the per-line clip silently drops the trailing columns of the rows it does return.
+The table is always addressed as `t`, so no path is interpolated into the SQL, and omitting the query returns the columns, their types, and the row count as the cheap first call.
+
+What limits a query is less the dialect than a column typed `String`, which turns a plain `SUM` or `WHERE` into a dtype error and a `TRY_CAST` retry, so schema inference runs over the whole file rather than Polars' 100-row window and every text column whose values all parse as a number or an ISO date is retyped before the query runs.
+The conversion is applied only where it loses nothing, so no cell silently becomes null, and one zero-padded value marks the column an identifier (a zip code, an EAN) and vetoes numeric typing for the whole of it.
+A column that falls short is reported by the schema call as a `TextColumn` with the share that did parse, which is what lets the first query wrap it in `TRY_CAST` rather than the second, and a dtype error names the text columns the query itself mentioned.
+
+Excel is read through `fastexcel` (calamine), which covers `.xlsx`, `.xlsb`, and `.xls` with no extension download, and a delimited file in a legacy encoding is retried once through `read_text_or_retry`, gated on `ComputeError` plus a delimited suffix, since a lazy scan only meets the offending bytes when it reaches them.
+That retry belongs to the load phase alone, which the typing pass makes reliable by reading every text column there: the offending bytes are met before the query runs, so a dtype error is never mistaken for an encoding one and paid for with a second full pass over the file.
+Every budget is applied before the `TableResult` is built, and only the row lines are budgeted, so the count the rows are trimmed by is exactly a row count.
+Rows are cut on both channels, while column and cell width bind the rendering only, matching how a read trims to the lines it showed but keeps each one whole in `content`.
+
+### JSON is filtered, not read
+
+`jq` runs a filter expression against the original `.json` file.
+Omitting the filter answers with the top-level keys and their types (for an array, its length and the shape of its first element), which is `query_table`'s schema call one format over: a document's own filter cannot be written without knowing its keys, and the only other way to learn them is `.`, which returns the whole file.
+The suffix table is narrower than "text that parses as JSON" on purpose, since jq is handed one document and a line-delimited `.jsonl` would fail on its second line.
+The document reaches jq as the text it was read as rather than as a parsed object, so a large file is never held twice and a malformed one is reported in jq's own words as a correctable `ToolRetry`.
+The budget binds the rendered text alone and cuts whole values, so nothing comes back as JSON truncated mid-token, and a `.json` redirect stores the whole filter result rather than the slice that fit.
+That is the general redirect rule below rather than `query_table`'s exception: a row count is only true of the rows it counted, while a filter's values are each complete on their own.
+
+### Deferred tools
+
+`query_table`, `jq`, and `read_binary_document` are the three tools registered with `defer_loading=True`, and every user-configured MCP server is deferred by `build_mcp_server` itself.
+Each answers a question the other read tools cannot, but only for a document of one particular shape, so most turns never reach one while every turn would otherwise pay for its schema.
+That trade only works because the model is handed the name at the moment it needs it rather than having to guess it: `read_document` refuses a binary by naming `read_binary_document`, and points a read of a table at `query_table` and a read of JSON at `jq`, so the tool-search query is already written for it.
+Anything a turn normally reaches stays eager, since a discovery call costs more than the schema it saves.
+
+### Redirecting bulk output
+
+Every bulk-output tool (`list_documents`, `glob_documents`, `read_document`, `query_table`, `jq`, `grep`, `search`, and the two web tools) declares an `output_path`, which writes that call's result to a workspace file and hands the model a receipt instead of the result, so a call whose answer dwarfs the question is worth making when a later `run_python` step, not the model's own reading, is what turns it into an answer.
+The suffix picks the channel, since the two a tool returns are not interchangeable: `.json` stores the structured `data`, which for a grep count, a file listing, or a jq filter is every match rather than the first `max_results` of them, while `.txt` stores the very text the model would have been shown.
+
+It is declared by each tool next to a `writer` field, the way `run_python` already declares the one document its programs persist, rather than injected into every tool's schema by the framework adapter: where a result may land is a property of the tool as it was built for a run.
+The MCP surface hands out no writer, so it leaves the argument out of the signature it builds (`register_mcp_tools(..., omit=(OutputPathArg,))` via `CallInfo.without`, which addresses the parameter by the shared `Annotated` alias it is declared with rather than by a copy of its spelling) instead of advertising one it could only refuse on every call.
+That is not schema surgery: both adapters synthesize a signature rather than edit one, the FastMCP adapter already appending a `_tool_` parameter no `__call__` declares, so leaving an argument out is the same act as putting one in.
+A read or plan mode still advertises it and refuses at call time, deliberately, since there the argument is dead for this run and live for the next one, which a schema fixed at registration cannot express.
+
+The write is the same one the write tools perform, so it answers to the same gate (`agents/tools/write.py` owns both `output_sink` and the shared `validate_output_path`): read and plan modes refuse it, an interactive call asks for approval unless the path lands in `.scratch/`, write mode approves it.
+What a redirect is worth saying about is a paragraph, and a paragraph restated in eight tool schemas costs more context on every request than the feature saves on the calls that use it, so the argument's own description states only the mechanism and `REDIRECT_INSTRUCTIONS` carries the rest once, shared between the `explore` and `web` features and composed only in a mode that can actually write.
+
+## The Python sandbox
+
+The model computes with `run_python`, a Monty sandbox with no network or host filesystem access and a budget on execution time and memory that surfaces to the model as a plain `TimeoutError` or `MemoryError`.
+A program comes from either inline `code` or one scoped workspace `.py` `script_path`, which is reloaded on every call so the model can repair it with the document edit tool and rerun it, which is why `PYTHON_INSTRUCTIONS` sends anything past a few lines to a `.scratch/` script first and keeps inline `code` for a throwaway.
+
+The workspace is mounted read-only at `/workspace`, so a document is `/workspace` plus its canonical path and a program may open one it only discovers while running, which private copies of paths named in advance could not.
+`tools/workspace_os.py` is that mount: an `AbstractOS` whose every operation routes through `resolve_accessible_file` and `entry_visible`, the seams the read tools use, so the `DocumentFilter` stays one predicate instead of gaining a third enforcement surface, a hidden document reads as absent rather than as refused, and a legacy encoding is decoded rather than served as mojibake.
+`pydantic_monty.MountDir` would have been less code and none of that, since it maps a host directory in whole: no filter, no decoding, no `.assets` payload hidden.
+Which of the two filesystems answers an operation is decided once, in the `dispatch` override `AbstractOS` offers for it, rather than by a delegate-to-`inner` prologue at the head of every method: asking per method made forgetting one a silent bug in the other filesystem, which is exactly what an unimplemented `path_open` did when it refused `/tmp` as well as the workspace.
+Routed once, a method the mount does not implement is simply an operation the mount does not offer, and the run's own files keep answering it.
+
+Nothing is handed to a program as a host function, retrieval included: `open` and `iterdir` are the read tools, `re` is grep, and `json` is jq, so anything injected beside the mount would be a second way to do what the mount already does, and ranking a chunk against a question is a `search` call the model makes before it writes the program.
+Monty has no `glob`, `rglob`, or `fnmatch`, which is why `PYTHON_INSTRUCTIONS` shows the `iterdir` walk rather than leaving the model to discover the gap mid-program, and `path_iterdir` returns its entries sorted, since Monty cannot compare two `Path` values and a program therefore cannot impose an order on what it is handed.
+Which modules a program may import is left for the model to find out, since Monty implements a subset only it knows, documents no list of it, and offers no `importlib`, `sys.modules`, `__import__`, or `dir` to enumerate one from inside: any list written down here is a copy that goes stale on the next release, and the one that used to stand in `PYTHON_INSTRUCTIONS` advertised `functools`, which Monty does not have, for as long as nobody tried it.
+A failed import raises `ModuleNotFoundError` naming the module, which is the correction a stale list would have needed anyway, so the prompt says the standard library is partial and to try the import.
+A program parks intermediates in `/tmp`, created before the run and named by `TMPDIR`, because Monty has no `tempfile` module and no working directory, so a bare write to an absent directory fails, and the fresh filesystem disappears after the call.
+Bytes are refused on the mount in either direction, so there is one answer to what a program can open, and a document with no text form stays `read_binary_document`'s.
+
+The mount is read-only but for `.scratch/`, which is content rather than a document: no `documents` row, no chunking, no projection, and no notification, so a write there is a file written and nothing else, and it needs neither the async mutation gateway a filesystem callback cannot await nor an approval a running program cannot stop to ask for.
+It lands on disk as it happens, which is what lets the program read its own state back, and it is the run's own state rather than the user's, so nothing is lost by its surviving a program that later fails.
+The span is the writable one, taken off the tool's `writer` and narrower than the roots it reads, so a program cannot park state in a group the user may only read, and a mode with no writer at all refuses a scratch write exactly where `write_document` does.
+
+A document is written the one way a human can answer for in advance: the program writes `/output` (named by `OUTPUT`, beside `TMPDIR`) and the call commits it to `output_path` after the program succeeds, through `write_document_text`, with the fingerprint the document had before the run or create-only semantics when it had none, so indexing, workspace locks, and SSE notifications remain on the canonical mutation path.
+An interactive output write requires approval unless it lands in `.scratch/`, write mode approves it automatically, and read or plan mode refuses it.
+That leaves nothing about the workspace staged: what the program sees is what is on disk, so the mounted view cannot drift from what the call commits, and a rejected commit cannot leave a program's result resting on a change that never landed.
+A move or a delete of a document is deliberately not reachable from a program: both are capabilities the agent has no tool for at all, and granting them as a side effect of a replayed mutation log would put them beyond the per-call gate every other write answers to.
+
+The read budget is per document (`max_document_chars`) and deliberately not a running total, since a decoded document is the only thing the host holds and it holds one at a time: `read_text_file` reads a file whole and decodes it in one go, then the string crosses into the interpreter and is dropped, so reading a 2000-document, 100 MB workspace moved the server's peak RSS by a megabyte and took half a second.
+A running total would have bounded nothing the host spends while capping the very thing the mount exists for, and it did: the 5M default refused a walk of that workspace a third of the way through.
+The per-document cap is enforced twice, since a byte count only bounds a character count from above: `check_read_budget` refuses a file by size before it is decoded, then the exact length is checked once the text is in hand.
+Inline `code`, the stored script, and the committed output answer to the same cap, each being one text the host holds whole.
+
+What a program retains is `max_memory`, the interpreter's own budget, and how long it spends retaining it is `request_timeout_seconds` and the agent's `tool_timeout_seconds`, since `max_duration_secs` counts bytecode alone and not the time a host callback takes (measured: five 0.4 s host reads complete under a 0.5 s limit).
+The one cap that is cumulative is `max_scratch_chars`, because written characters are a different resource: they land on disk and stay there, so a loop writing the same megabyte a thousand times spends a gigabyte of disk that nothing else here bounds.
+The worker pool is owned by the FastAPI lifespan (`sandbox.py`), like the HTTP clients, because a tool instance is built per call and a pool per call would spawn and reap a worker every time.
+Every call takes a fresh session out of it: `max_duration_secs` counts cumulatively per session, so a reused session that once ran long would fail every later call with a timeout it did not cause.
 
 ## Video and animated-media pipeline
 
