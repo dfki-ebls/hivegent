@@ -1,15 +1,18 @@
 """Document mutation tool callables — edit, write, move, and delete."""
 
+import csv
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from io import StringIO
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal, override
 
 from fastapi import HTTPException
 from pydantic import Field
 
-from ..converters import BINARY_WRITE_REASON, writes_as_text
+from ..converters import BINARY_WRITE_REASON, DELIMITERS, writes_as_text
 from ..entries import SCRATCH_DIR_NAME, is_scratch_path
+from ..humanize import pluralize
 from .base import (
     AsyncPathTool,
     SearchPath,
@@ -39,6 +42,7 @@ __all__ = [
     "WriteDocumentTool",
     "WriteModeArg",
     "WriteMutation",
+    "check_delimited_rows",
     "resolve_mutation_target",
     "resolve_text_target",
 ]
@@ -215,6 +219,74 @@ def _check_not_scratch(canonical: str, local: str) -> None:
         )
 
 
+_NOT_A_VALUE = frozenset({"None", "nan", "NaN", "NaT", "null", "undefined"})
+"""How a language spells a missing value when a cell was interpolated, not rendered.
+
+Every one of these reaches a delimited file the same way — an f-string handed
+the value rather than the text for it — and reads downstream as the four-letter
+word it is rather than as the gap it means.  Deliberately not `NA` or `N/A`,
+which a lab writes on purpose.
+"""
+
+
+def check_delimited_rows(canonical_path: str, content: str) -> None:
+    """Refuse a delimited file whose rows are not all the header's width.
+
+    A table built a row at a time is one f-string away from a row with a field
+    too many or too few, and nothing downstream reports it: every value on that
+    row lands under the wrong heading, where it reads as a measurement of
+    something it is not.  The header decides the width, since it is the one row
+    whose shape is a statement about the file, and the suffix decides the
+    separator through :data:`~hivegent.converters.DELIMITERS`, the same table
+    the query tool's loader reads — so the surface that writes a `.csv` and the
+    surface that reads one back can never disagree about what its fields are.
+
+    Read as a stream rather than a list, so the bad row this exists to catch
+    stops the scan where it is, and so a newline inside a quoted cell stays
+    inside it, which splitting the text into lines first would not.
+
+    Only whole writes are checked, which is where a generated table arrives:
+    the write tool, a program's committed output, and a redirect (whose suffix
+    is always `.json` or `.txt`, so this is a no-op there).  An edit replaces a
+    string inside a file it did not build and is left alone.  It stays at the
+    tool layer rather than in the gateway, unlike ``writes_as_text``: a binary
+    write is impossible, while a ragged row is only probably a mistake, and a
+    person typing in the document editor is entitled to save one.
+    """
+    delimiter = DELIMITERS.get(PurePosixPath(canonical_path).suffix.lower())
+
+    if delimiter is None:
+        return
+
+    rows = csv.reader(StringIO(content), delimiter=delimiter)
+    width = len(next(rows, ()))
+
+    # One column has no width to disagree with, which is also what a file that
+    # is not really delimited looks like here — and not ours to judge further.
+    if width < 2:
+        return
+
+    for number, row in enumerate(rows, start=2):
+        if len(row) != width and any(cell.strip() for cell in row):
+            raise ToolRetry(
+                f"'{canonical_path}' line {number} has {len(row)} "
+                f"{pluralize(len(row), 'field')} where the header has {width}, "
+                "so every value on it lands under the wrong column. Build each "
+                "row as a list of cells, one per header, and join them once, "
+                "rather than writing the separators by hand; a row carrying "
+                "only a summary still needs the empty cells around it."
+            )
+
+        if placeholder := next((c for c in row if c.strip() in _NOT_A_VALUE), None):
+            raise ToolRetry(
+                f"'{canonical_path}' line {number} carries the cell "
+                f"'{placeholder}', which is a language's name for a missing "
+                "value rather than one a reader of this file can use. A missing "
+                "cell is the empty string: render each cell yourself instead of "
+                "interpolating whatever the value happens to be."
+            )
+
+
 def resolve_text_target(
     paths: tuple[SearchPath, ...], file_path: str
 ) -> tuple[str, str, Path]:
@@ -331,6 +403,9 @@ class WriteDocumentTool(AsyncPathTool[str]):
         target, local, _absolute = resolve_text_target(self.resolved_paths, file_path)
         if self.glob and not PurePosixPath(local).match(self.glob):
             raise ToolRetry(f"'{file_path}' does not match pattern '{self.glob}'.")
+
+        check_delimited_rows(target, content)
+
         try:
             data = await self.mutator(target, content, mode, expected_hash)
         except (HTTPException, ValueError) as exc:

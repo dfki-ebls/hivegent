@@ -675,18 +675,20 @@ class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
         window = all_lines[start - 1 : end]
         _text, over_budget = cap_lines(window, self.max_chars)
         selected = window[: len(window) - over_budget]
-        # Render before building the result: the formatted budget decides how
-        # many of the selected lines the model actually sees, and the range
-        # reported has to be the one it was shown, or the follow-up offset
-        # would skip whatever did not fit.
+        # `max_chars` is the read: it decides how much of the file this call
+        # took, and cuts the result with it.  `max_formatted_chars` is only the
+        # display, and cuts the text alone — it used to trim `selected` too, so
+        # a `.json` redirect wrote fewer lines than the call had read while
+        # reporting itself as the whole of it.  What the text stopped at is
+        # said in a hint instead, so a follow-up offset can still resume from
+        # the last line actually shown.
         line_cap = None if full_lines else self.max_line_chars
         body, dropped = cap_lines(
             iter_annotated(selected, start, line_cap), self.max_formatted_chars
         )
-        if dropped:
-            selected = selected[: len(selected) - dropped]
 
         end = start + len(selected) - 1
+        shown_end = end - dropped
 
         result = DocumentRange(
             start_line=start,
@@ -714,6 +716,13 @@ class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
             hints.append(
                 f"lines clipped at {line_cap} chars, "
                 "pass full_lines=true to read them whole"
+            )
+
+        if dropped:
+            hints.append(
+                f"the text above stops at line {shown_end}, but the result "
+                f"holds through {end}: read on from offset={shown_end + 1}, or "
+                "pass an output_path to keep every line of it"
             )
 
         remaining = total - end

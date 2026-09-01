@@ -35,6 +35,7 @@ __all__ = [
     "BINARY_SUFFIXES",
     "BINARY_WRITE_REASON",
     "DELIMITED_SUFFIXES",
+    "DELIMITERS",
     "INGESTIBLE_IMAGE_MEDIA_TYPES",
     "JSON_SUFFIXES",
     "TABULAR_SUFFIXES",
@@ -555,12 +556,24 @@ the point: a columnar format no converter claims is still queryable, and a
 format that does earn a markdown projection is still better queried.
 """
 
-DELIMITED_SUFFIXES: frozenset[str] = frozenset({".csv", ".tsv"})
+DELIMITERS: dict[str, str] = {".csv": ",", ".tsv": "\t"}
+"""What separates the fields of each delimited format, by its suffix.
+
+The suffix decides it and nothing else does: a `.csv` is comma-separated by
+the name it was given, so a semicolon export saved under that name is one
+column and reads as one, rather than being guessed at by one surface and not
+the other.  Sniffing was the alternative and is worse twice over — it needs
+the very row-width consistency the write gate is checking for, and a reader
+and a writer sniffing separately can disagree about the same file.
+"""
+
+DELIMITED_SUFFIXES: frozenset[str] = frozenset(DELIMITERS)
 """The text half of :data:`TABULAR_SUFFIXES`.
 
-Two tools split on it and must not disagree: the loader retries one of these
-through the shared text decoder when it is not UTF-8, and the write gate lets
-one be created as the text it is while the columnar rest cannot be.
+Three tools split on it and must not disagree: the loader retries one of these
+through the shared text decoder when it is not UTF-8, the write gate lets one
+be created as the text it is while the columnar rest cannot be, and the same
+gate checks its rows against its header.
 """
 
 

@@ -1,6 +1,7 @@
 """Unit tests for shared tool classes and ToolFactory."""
 
 import json
+import re
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
@@ -39,6 +40,7 @@ from hivegent.tools.mutations import (
 )
 from hivegent.tools.python import PythonResult, RunPythonTool
 from hivegent.tools.sink import RedirectedOutput
+from hivegent.tools.table import QueryTableTool
 from hivegent.types import DocumentFilter
 from tests.helpers import returned
 
@@ -713,21 +715,27 @@ class TestReadDocumentTool:
         assert "col199" in whole
         assert "full_lines=true" not in whole
 
-    async def test_formatted_budget_shrinks_range_and_continuation(
+    async def test_formatted_budget_binds_the_text_and_not_the_result(
         self, tmp_path: Path
     ) -> None:
-        # The rendered budget decides what the model actually saw, so both the
-        # reported range and the follow-up offset track it; otherwise the next
-        # call resumes past the lines that never fit.
+        # The rendered budget decides what the model saw, not what the call
+        # read: trimming the result to it wrote fewer lines to a `.json`
+        # redirect than the read had taken, under a receipt for the whole of
+        # it.  Where the text stopped is said instead, so a follow-up offset
+        # can still resume from the last line actually shown.
         (tmp_path / "doc.md").write_text("\n".join(f"line{i}" for i in range(100)))
         tool = ReadDocumentTool(paths=tmp_path, max_formatted_chars=40)
         out = await tool("doc.md")
 
         assert isinstance(out.data, DocumentRange)
-        assert 0 < out.data.end_line < 100
+        assert out.data.end_line == 100
+        assert out.data.content.splitlines() == [f"line{i}" for i in range(100)]
         assert out.formatted is not None
-        assert f"offset={out.data.end_line + 1}" in out.formatted
-        assert out.data.content.splitlines()[-1] == f"line{out.data.end_line - 1}"
+
+        shown = re.search(r"the text above stops at line (\d+)", out.formatted)
+        assert shown is not None
+        assert 0 < int(shown[1]) < 100
+        assert f"offset={int(shown[1]) + 1}" in out.formatted
 
     # --- offset / limit tests ---
 
@@ -865,6 +873,58 @@ class TestWriteDocumentTool:
         tool = WriteDocumentTool(paths=tmp_path, glob="*.md", mutator=_unreachable)
         with pytest.raises(ToolRetry, match="does not match pattern"):
             await tool("doc.txt", "content")
+
+    async def test_a_row_of_the_wrong_width_is_refused(self, tmp_path: Path) -> None:
+        # A summary row written with the separators counted by hand puts its
+        # value under the wrong heading, which nothing downstream reports.
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_unreachable)
+
+        with pytest.raises(ToolRetry, match="line 3 has 2 fields"):
+            await tool("t.csv", "date,load,ew\n2023-01-01,1,2\n,mean: 3\n")
+
+    async def test_an_even_table_is_written(self, tmp_path: Path) -> None:
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
+
+        result = await tool("t.csv", "date,load,ew\n2023-01-01,1,2\n,,3\n")
+
+        assert result.data
+
+    async def test_the_separator_comes_from_the_suffix(self, tmp_path: Path) -> None:
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_unreachable)
+
+        with pytest.raises(ToolRetry, match="line 2 has 4 fields"):
+            await tool("t.tsv", "a\tb\tc\n1\t2\t3\t4\n")
+
+    async def test_a_semicolon_file_named_csv_is_one_column(
+        self, tmp_path: Path
+    ) -> None:
+        # A `.csv` is comma-separated by the name it was given, so this is one
+        # column with no width to disagree with — and query_table reads it back
+        # the same way, which is the point of sharing one separator table.
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
+
+        assert (await tool("t.csv", "a;b;c\n1;2;3;4\n")).data
+
+    async def test_a_languages_word_for_missing_is_not_a_cell(
+        self, tmp_path: Path
+    ) -> None:
+        # An f-string handed the value rather than the text for it, and the gap
+        # reads downstream as the four-letter word instead.
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_unreachable)
+
+        with pytest.raises(ToolRetry, match="'None'"):
+            await tool("t.csv", "date,load\n2023-01-01,1\n2023-01-02,None\n")
+
+    async def test_a_lab_sentinel_is_left_alone(self, tmp_path: Path) -> None:
+        # `N/A` is written on purpose; `None` never is.
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
+
+        assert (await tool("t.csv", "date,load\n2023-01-01,N/A\n")).data
+
+    async def test_prose_is_not_a_table(self, tmp_path: Path) -> None:
+        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
+
+        assert (await tool("notes.md", "a line\nand, another\n")).data
 
     async def test_none_glob_allows_any(self, tmp_path: Path) -> None:
         tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
@@ -1090,6 +1150,48 @@ class TestJqTool:
         assert isinstance(output.data, RedirectedOutput)
         assert stored["values"] == list(range(100))
 
+    async def test_a_receipt_says_when_what_it_wrote_was_already_cut(
+        self, tmp_path: Path
+    ) -> None:
+        # A redirect hands back a size and nothing else, so a cut the tool knew
+        # about dies in the receipt unless it is carried: a run that redirected
+        # a capped query and computed from the file could not tell.
+        async def mutate(
+            path: str, content: str, mode: str, expected_hash: str | None
+        ) -> str:
+            _ = path, content, mode, expected_hash
+            return "wrote it"
+
+        rows = "\n".join(f"r{i},{i}" for i in range(50))
+        (tmp_path / "t.csv").write_text(f"name,val\n{rows}")
+        writer = WriteDocumentTool(paths=tmp_path, mutator=mutate)
+        tool = QueryTableTool(paths=tmp_path, writer=writer, max_rows=10)
+
+        output = await tool(
+            "t.csv", "SELECT * FROM t", row_limit=10, output_path="out.json"
+        )
+
+        assert isinstance(output.data, RedirectedOutput)
+        assert output.data.truncated
+        assert "cut short of what you asked for" in output.text
+
+    async def test_a_whole_result_is_not_called_partial(self, tmp_path: Path) -> None:
+        async def mutate(
+            path: str, content: str, mode: str, expected_hash: str | None
+        ) -> str:
+            _ = path, content, mode, expected_hash
+            return "wrote it"
+
+        (tmp_path / "t.csv").write_text("name,val\na,1\nb,2\n")
+        writer = WriteDocumentTool(paths=tmp_path, mutator=mutate)
+        tool = QueryTableTool(paths=tmp_path, writer=writer)
+
+        output = await tool("t.csv", "SELECT * FROM t", output_path="out.json")
+
+        assert isinstance(output.data, RedirectedOutput)
+        assert not output.data.truncated
+        assert "cut short" not in output.text
+
 
 class TestGrepSearch:
     """Tests for GrepTool against real files on disk."""
@@ -1111,6 +1213,22 @@ class TestGrepSearch:
         result = await GrepTool(paths=tmp_path)("name=")
         assert self._filenames(result.data) == {"legacy.xml", "modern.xml"}
         assert "Leitfähigkeit" in result.text
+
+    async def test_a_glob_naming_a_binary_format_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        # ripgrep skips a binary file without a word, so this search answers
+        # "(no matches)" — a clean negative that is really a file never opened,
+        # and one a run reasonably takes for proof that the term is absent.
+        with pytest.raises(ToolRetry, match="query_table"):
+            await GrepTool(paths=tmp_path)("TKN", glob="*.xlsx")
+
+    async def test_a_text_glob_still_searches(self, tmp_path: Path) -> None:
+        (tmp_path / "notes.md").write_text("TKN appears here\n")
+
+        result = await GrepTool(paths=tmp_path)("TKN", glob="*.md")
+
+        assert self._filenames(result.data) == {"notes.md"}
 
     async def test_original_dropped_when_description_matches(
         self, tmp_path: Path
@@ -1260,7 +1378,9 @@ class TestRunPythonTool:
         configured = replace(
             tool, paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
         )
-        with pytest.raises(ToolRetry, match="Provide one of"):
+        # Named apart from the empty case, since a model told to "provide one
+        # of" what it just provided both of looks for the fault elsewhere.
+        with pytest.raises(ToolRetry, match="both given"):
             await configured(code="1", script_path="~/run.py")
 
     async def test_statement_only_program_has_no_result(

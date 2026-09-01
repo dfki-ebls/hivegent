@@ -62,6 +62,15 @@ class RedirectedOutput:
     entries: int | None = None
     """Top-level entries when the payload is a sequence, ``None`` otherwise."""
 
+    truncated: bool = False
+    """Whether the result written was already a cut of what was asked for.
+
+    A redirect hands back a size and nothing else, so a cut the tool knew about
+    dies here unless it is carried: a query capped at its row limit wrote a
+    partial table under a receipt that read like a whole one, and the run
+    computed from the file believing it had everything.
+    """
+
 
 OutputPathArg = Annotated[
     str | None,
@@ -169,6 +178,17 @@ def _receipt[T](
     """
     entries = len(data) if isinstance(data, list | tuple) else None
     counted = f", {entries} {pluralize(entries, 'entry', 'entries')}" if entries else ""
+    # Duck-typed rather than narrowed to one result: every payload that knows
+    # it was cut spells it the same way, and a receipt that drops the fact is
+    # the one place the model cannot recover it from.
+    truncated = bool(getattr(data, "truncated", False))
+    partial = (
+        " It is what the call returned, which was already cut short of what "
+        "you asked for — raise the limit or narrow the request if you need "
+        "the rest."
+        if truncated
+        else ""
+    )
 
     return ToolOutput(
         data=RedirectedOutput(
@@ -176,10 +196,11 @@ def _receipt[T](
             format=fmt,
             characters=len(content),
             entries=entries,
+            truncated=truncated,
         ),
         formatted=(
             f"{report} It holds this call's result as {fmt}{counted}, "
-            "and is not repeated here."
+            f"and is not repeated here.{partial}"
         ),
     )
 

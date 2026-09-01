@@ -330,6 +330,13 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         nothing outside itself but the workspace and the functions declared to
         it: no network of its own, and no host filesystem.
 
+        The declared functions are the tools themselves, awaited inside the
+        program — `rows = await query_table(file_path=..., query=...)` reads a
+        spreadsheet the interpreter cannot decode and hands the program every
+        row of the result. Reach for one directly rather than staging its
+        output through a file: a tool called here needs no `output_path`, no
+        read back, and no guessing at the shape of what was written.
+
         End the program with the expression whose value you want back, and
         print anything else worth seeing.
         """
@@ -393,8 +400,16 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         # alongside a `script_path` from reading as both, and what leaves an
         # empty program answered by the emptiness rather than by the pairing.
         code, script_path = _given(code), _given(script_path)
+        # Named apart from the empty case below, because the two are opposite
+        # mistakes and one sentence for both is read as the other: a model told
+        # to "provide one of" what it just provided both of goes looking for the
+        # fault in a third argument.
         if code is not None and script_path is not None:
-            raise ToolRetry(f"Provide one of {_PROGRAM_SOURCES}")
+            raise ToolRetry(
+                f"`code` and `script_path` were both given, and a call runs one "
+                f"program. Drop `code` to run the stored '{script_path}', or "
+                "drop `script_path` to run the inline program."
+            )
 
         if code is None and script_path is None:
             raise ToolRetry(f"The program is empty. Provide {_PROGRAM_SOURCES}")

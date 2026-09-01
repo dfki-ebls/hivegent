@@ -13,7 +13,7 @@ import fastexcel
 import polars as pl
 from pydantic import Field
 
-from ..converters import DELIMITED_SUFFIXES, TABULAR_SUFFIXES, is_tabular
+from ..converters import DELIMITED_SUFFIXES, DELIMITERS, TABULAR_SUFFIXES, is_tabular
 from ..humanize import pluralize
 from .base import (
     ToolOutput,
@@ -22,12 +22,13 @@ from .base import (
     resolve_file_or_retry,
     sidecar_hint,
 )
-from .documents import DocumentFilePathArg
 from .formatting import hint_suffix, truncate_line
 from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
 
 __all__ = [
+    "QueriedTable",
     "QueryTableTool",
+    "TableFilePathArg",
     "TableQueryArg",
     "TableResult",
     "TableRowLimitArg",
@@ -36,7 +37,18 @@ __all__ = [
 ]
 
 _RELATION = "t"
-"""Fixed query relation name, which avoids interpolating a file path."""
+"""Fixed name of the first relation, which avoids interpolating a file path."""
+
+
+def _relation(index: int) -> str:
+    """Name the *index*-th table a query addresses: ``t``, ``t2``, ``t3``, ...
+
+    Positional rather than derived from the filename, which in an exported
+    workbook is a sentence with spaces in it and would need quoting in every
+    query that named it.
+    """
+    return _RELATION if not index else f"{_RELATION}{index + 1}"
+
 
 _LEADING_ZERO = r"^[+-]?0\d"
 """Zero-padded digits are an identifier (a zip code, an EAN), not a number."""
@@ -47,11 +59,11 @@ _DATETIME = r"^\d{4}-\d{1,2}-\d{1,2}[ T]\d"
 _DEFAULT_ROW_LIMIT = 100
 _MAX_ROW_LIMIT = 1000
 
+_UNPARSED_SAMPLE = 3
+"""Distinct unparsable values named per column, enough to say what they are."""
+
 _BARE_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 """What SQL takes unquoted; anything else has to be spelled in double quotes."""
-
-_UNNAMED_PREFIX = "__UNNAMED__"
-"""What Polars calls a column the sheet left without a header cell."""
 
 
 def _quoted(name: str) -> str:
@@ -92,26 +104,19 @@ def _quoting_hint(columns: Sequence[str]) -> str:
     )
 
 
-def _header_hint(columns: Sequence[str]) -> str:
-    """Warn when the header the loader took is only half of one.
+def _naming(values: Sequence[str]) -> str:
+    """Spell the values a column could not parse, when any were sampled.
 
-    An exported sheet routinely spreads its header over two rows — the name
-    above, the unit or the aggregation below — and the loader can only take the
-    first, which leaves the second as data row 1 and every column the first row
-    left blank without a name.  Those placeholder names are the signal, and
-    saying so once is what stops the label row from being averaged in with the
-    values under it.
+    The count says a column is mixed; the values say what it is mixed with,
+    which is what the answer turns on.  Naming them is what lets that be
+    decided before a program crashes on one, or worse, quietly coerces it.
     """
-    unnamed = sum(1 for name in columns if name.startswith(_UNNAMED_PREFIX))
-    if not unnamed:
+    if not values:
         return ""
 
-    return (
-        f"{unnamed} of {len(columns)} columns have no header name "
-        f"({_UNNAMED_PREFIX}...), so this sheet's header may span more than one "
-        "row: check whether row 1 carries labels rather than values and exclude "
-        "it in the WHERE if it does"
-    )
+    spelled = ", ".join(f'"{truncate_line(value, 40)}"' for value in values)
+
+    return f"; unparsed: {spelled}"
 
 
 @dataclass(slots=True, frozen=True)
@@ -167,6 +172,8 @@ class TextColumn:
     """Non-empty values that parse as *dtype*, of *total* that were tried."""
 
     total: int
+    unparsed: tuple[str, ...] = ()
+    """A few distinct values that did not parse, as they appear in the file."""
 
     @property
     def complete(self) -> bool:
@@ -174,18 +181,33 @@ class TextColumn:
         return self.parsed == self.total
 
 
+TableFilePathArg = Annotated[
+    str | list[str],
+    Field(
+        description=(
+            "Full workspace path of the table to query, or a list of paths to "
+            f"query together. The first is addressed as '{_RELATION}', the "
+            f"second '{_RELATION}2', the third '{_RELATION}3', so a join reads "
+            f"\"FROM {_RELATION} JOIN {_RELATION}2 ON ...\"."
+        ),
+    ),
+]
+
 TableQueryArg = Annotated[
     str | None,
     Field(
         description=(
-            f"SQL SELECT over the table, which is always named '{_RELATION}', "
+            f"Polars SQL SELECT over the tables, the first named '{_RELATION}', "
             f'e.g. "SELECT region, SUM(amount) AS total FROM {_RELATION} '
             'GROUP BY region ORDER BY total DESC". Supports the usual '
-            "aggregates, WHERE, HAVING, ORDER BY, CTEs, window functions, and "
-            "self-joins. Omit it to get the columns, their types, the row "
-            "count, and a few sample rows, which is the cheap first call. "
-            "Numbers and dates are already typed as such, so cast only a "
-            "column the schema still shows as String."
+            "aggregates, WHERE, HAVING, ORDER BY, CTEs, window functions, "
+            "joins, and `SHOW TABLES`. It is Polars' dialect and not a "
+            "database's, so a function it refuses is named in the error and "
+            "may exist under another spelling worth trying. Omit the query to "
+            "get the columns, their types, the row count, and a few sample "
+            "rows, which is the cheap first call. Numbers and dates are "
+            "already typed as such, so cast only a column still shown as "
+            "String."
         ),
     ),
 ]
@@ -194,8 +216,9 @@ TableSheetArg = Annotated[
     str | None,
     Field(
         description=(
-            "Worksheet to query in a spreadsheet that has more than one. "
-            "Defaults to the first sheet; omit the query to see them all."
+            "Worksheet to query in a spreadsheet that has more than one, "
+            "applied to every spreadsheet given. Defaults to the first sheet; "
+            "omit the query to see them all."
         ),
     ),
 ]
@@ -214,14 +237,33 @@ TableRowLimitArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class TableResult:
-    """The rows a query returned, with the schema they came from."""
+class QueriedTable:
+    """One file the query was run against, under the SQL name it took."""
+
+    name: str
+    """What the query addresses it as: ``t``, then ``t2``, ``t3``, ..."""
 
     file_path: str
     sheet: str | None = None
     sheets: tuple[str, ...] = ()
     """Every sheet in the workbook, so a follow-up can name a different one."""
 
+    source_encoding: str | None = None
+    text_columns: tuple[TextColumn, ...] = ()
+    """Text columns that hold numbers or dates, retyped where every value did."""
+
+
+@dataclass(slots=True, frozen=True)
+class TableResult:
+    """The rows a query returned, with the tables they came from.
+
+    The two halves are kept apart because they answer different questions and
+    no longer stand one to one: ``tables`` describes each file that was
+    registered, while the columns and rows describe what the query made of
+    them, which for a join belongs to no single file.
+    """
+
+    tables: tuple[QueriedTable, ...] = ()
     columns: tuple[str, ...] = ()
     dtypes: tuple[str, ...] = ()
     rows: tuple[tuple[str, ...], ...] = ()
@@ -231,10 +273,19 @@ class TableResult:
     """Rows in the source table, or ``None`` when a query decided the count."""
 
     truncated: bool = False
-    source_encoding: str | None = None
 
-    text_columns: tuple[TextColumn, ...] = ()
-    """Text columns that hold numbers or dates, retyped where every value did."""
+    @property
+    def text_columns(self) -> tuple[TextColumn, ...]:
+        """Every registered table's text columns, under their own names.
+
+        Unqualified, because a column belongs to the table that holds it and
+        :attr:`tables` already says which that is.  Where the two have to be
+        spelled as one — a hint a join would have to type back — they are
+        joined at the point that holds both.
+        """
+        return tuple(
+            column for table in self.tables for column in table.text_columns
+        )
 
 
 @dataclass(slots=True, frozen=True)
@@ -242,6 +293,7 @@ class _Source:
     """A loaded table, with what the loading discovered about it."""
 
     frame: pl.LazyFrame
+    file_path: str = ""
     sheet: str | None = None
     sheets: tuple[str, ...] = ()
     source_encoding: str | None = None
@@ -253,6 +305,17 @@ class _Source:
     def columns(self) -> tuple[str, ...]:
         """Every column name, as the loaded frame declares them."""
         return tuple(self.frame.collect_schema().names())
+
+    def queried(self, name: str) -> QueriedTable:
+        """Describe this table as the result reports it, under its SQL name."""
+        return QueriedTable(
+            name=name,
+            file_path=self.file_path,
+            sheet=self.sheet,
+            sheets=self.sheets,
+            source_encoding=self.source_encoding,
+            text_columns=self.text_columns,
+        )
 
 
 def _column_counts(name: str) -> Iterator[pl.Expr]:
@@ -266,6 +329,45 @@ def _column_counts(name: str) -> Iterator[pl.Expr]:
         yield (filled & coercion.matches(text)).sum()
 
 
+def _with_unparsed(
+    frame: pl.LazyFrame, typed: Sequence[tuple[TextColumn, _Coercion]]
+) -> tuple[tuple[TextColumn, _Coercion], ...]:
+    """Attach a sample of the values each mixed column could not parse.
+
+    One collect for all of them rather than one apiece, and only for the
+    columns that fell short: a column every value parsed in has nothing to
+    sample.  Sorted so the same file always names the same values.
+    """
+    mixed = [pair for pair in typed if not pair[0].complete]
+
+    if not mixed:
+        return tuple(typed)
+
+    # One column per frame, aliased so the filter and the read address it by a
+    # name no source column can shadow.
+    sample = "value"
+    value = pl.col(sample)
+    sampled = pl.collect_all(
+        [
+            frame.select(_text(column.name).alias(sample))
+            .filter(value.is_not_null() & value.ne("") & ~coercion.matches(value))
+            .unique()
+            .sort(sample)
+            .head(_UNPARSED_SAMPLE)
+            for column, coercion in mixed
+        ]
+    )
+    values = {
+        column.name: tuple(collected[sample].to_list())
+        for (column, _), collected in zip(mixed, sampled, strict=True)
+    }
+
+    return tuple(
+        (replace(column, unparsed=values.get(column.name, ())), coercion)
+        for column, coercion in typed
+    )
+
+
 def _coerce(source: _Source) -> _Source:
     """Retype every text column whose values all parse as one other dtype.
 
@@ -277,8 +379,9 @@ def _coerce(source: _Source) -> _Source:
     never mistaken for a number.  An empty cell reads as a missing value,
     which is what it means in every format here.
 
-    A column that falls short is recorded with the count that did parse, so a
-    genuinely mixed one is reported before a query fails over it, not after.
+    A column that falls short is recorded with the count that did parse and a
+    sample of what did not, so a genuinely mixed one is reported before a query
+    fails over it, not after.
     """
     frame = source.frame
     names = [
@@ -288,7 +391,6 @@ def _coerce(source: _Source) -> _Source:
     if not names:
         return source
 
-    stride = 2 + len(_COERCIONS)
     counts = (
         frame.select(
             expr.alias(str(position))
@@ -299,6 +401,7 @@ def _coerce(source: _Source) -> _Source:
         .collect()
         .row(0)
     )
+    stride = 2 + len(_COERCIONS)
     typed: list[tuple[TextColumn, _Coercion]] = []
 
     for index, name in enumerate(names):
@@ -313,6 +416,10 @@ def _coerce(source: _Source) -> _Source:
         # ``max`` keeps the first of equal counts, so a whole number stays one.
         rank = max(range(len(hits)), key=hits.__getitem__)
 
+        # Nothing parsing is a column of text, which is not a typing problem
+        # to report: a name, a note, and a `1,5` decimal comma are one thing
+        # to every test here, and flagging all three to catch the last would
+        # put a hint on every string column of every table.
         if not hits[rank]:
             continue
 
@@ -325,16 +432,18 @@ def _coerce(source: _Source) -> _Source:
         )
         typed.append((column, coercion))
 
-    converted = {column.name for column, _ in typed if column.complete}
+    sampled = _with_unparsed(frame, typed)
+    converted = {column.name for column, _ in sampled if column.complete}
+    text_columns = tuple(column for column, _ in sampled)
 
     return replace(
         source,
         frame=frame.with_columns(
             coercion.convert(_text(column.name)).alias(column.name)
-            for column, coercion in typed
+            for column, coercion in sampled
             if column.complete
         ),
-        text_columns=tuple(column for column, _ in typed),
+        text_columns=text_columns,
         strings=tuple(name for name in names if name not in converted),
     )
 
@@ -356,6 +465,7 @@ def _load_excel(path: Path, file_path: str, sheet: str | None) -> _Source:
     # numbers back to an integer, which Excel stores as a double either way.
     return _Source(
         frame=pl.read_excel(path, sheet_name=name, infer_schema_length=None).lazy(),
+        file_path=file_path,
         sheet=name,
         sheets=sheets,
     )
@@ -366,12 +476,10 @@ def _load(path: Path, file_path: str, sheet: str | None, *, decode: bool) -> _So
     suffix = path.suffix.lower()
 
     if suffix == ".parquet":
-        return _Source(frame=pl.scan_parquet(path))
+        return _Source(frame=pl.scan_parquet(path), file_path=file_path)
 
     if suffix not in DELIMITED_SUFFIXES:
         return _load_excel(path, file_path, sheet)
-
-    separator = "\t" if suffix == ".tsv" else ","
 
     # Inferring over the whole file rather than the default 100-row window:
     # a column typed by its first rows reads a late "N/A" as a broken number
@@ -379,20 +487,21 @@ def _load(path: Path, file_path: str, sheet: str | None, *, decode: bool) -> _So
     # onto the frame that gets queried, since leaving `infer_schema_length` at
     # None re-runs that whole-file pass on every later collect.
     if not decode:
-        scan = partial(pl.scan_csv, path, separator=separator)
+        scan = partial(pl.scan_csv, path, separator=DELIMITERS[suffix])
         schema = scan(infer_schema_length=None, try_parse_dates=True).collect_schema()
 
-        return _Source(frame=scan(schema=schema))
+        return _Source(frame=scan(schema=schema), file_path=file_path)
 
     decoded = read_text_or_retry(path, file_path)
 
     return _Source(
         frame=pl.read_csv(
             decoded.text.encode(),
-            separator=separator,
+            separator=DELIMITERS[suffix],
             infer_schema_length=None,
             try_parse_dates=True,
         ).lazy(),
+        file_path=file_path,
         source_encoding=decoded.source_encoding,
     )
 
@@ -427,55 +536,74 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
     @override
     async def __call__(
         self,
-        file_path: DocumentFilePathArg,
+        file_path: TableFilePathArg,
         query: TableQueryArg = None,
         sheet: TableSheetArg = None,
         row_limit: TableRowLimitArg = _DEFAULT_ROW_LIMIT,
         output_path: OutputPathArg = None,
     ) -> ToolOutput[TableResult | RedirectedOutput]:
-        """Query a spreadsheet or delimited document with SQL.
+        """Query one or more spreadsheets or delimited documents with SQL.
 
-        Runs a SQL SELECT against the file, which is always addressed as ``t``,
-        and returns the resulting rows.  Prefer this over reading a table
+        Runs a Polars SQL SELECT against the files and returns the resulting
+        rows.  One file is addressed as ``t``; give a list to query several
+        together, where the first is ``t``, the second ``t2``, and so on, so a
+        join reads ``FROM t JOIN t2 ON ...``.  Prefer this over reading a table
         document: filtering and aggregating in the query costs a fraction of
         the context that reading the rows would, and it cannot silently lose
         the trailing columns of a wide row the way a line read does.  Call it
         without a query first to learn the columns, their types, and the row
         count.
-        """
-        _sp, _local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
 
-        if not is_tabular(file_path):
-            raise ToolRetry(
-                f"'{file_path}' is not a tabular file. Queryable formats: "
-                f"{', '.join(sorted(TABULAR_SUFFIXES))}. Read anything else "
-                f"with read_document.{sidecar_hint(file_path)}"
-            )
+        The dialect is Polars SQL, not a database's: it covers the usual
+        aggregates, WHERE, GROUP BY, HAVING, ORDER BY, CTEs, window functions,
+        and joins, but a function it lacks is refused by name and often exists
+        under another, so read the refusal and try Polars' spelling rather than
+        abandoning the query.  ``SHOW TABLES`` lists what is registered.
+        """
+        paths = [file_path] if isinstance(file_path, str) else list(file_path)
+
+        if not paths:
+            raise ToolRetry("Name at least one table to query.")
+
+        resolved: list[tuple[str, Path]] = []
+
+        for path in paths:
+            _sp, _local, absolute = resolve_file_or_retry(self.resolved_paths, path)
+
+            if not is_tabular(path):
+                raise ToolRetry(
+                    f"'{path}' is not a tabular file. Queryable formats: "
+                    f"{', '.join(sorted(TABULAR_SUFFIXES))}. Read anything else "
+                    f"with read_document.{sidecar_hint(path)}"
+                )
+
+            resolved.append((path, absolute))
 
         # Polars releases the GIL, but the call still blocks, so it stays off
         # the event loop.
         result = await asyncio.to_thread(
-            self._run, file_path, absolute, query, sheet, row_limit
+            self._run, tuple(resolved), query, sheet, row_limit
         )
 
         return await self.redirect(result, output_path)
 
     def _run(
         self,
-        file_path: str,
-        absolute: Path,
+        resolved: tuple[tuple[str, Path], ...],
         query: str | None,
         sheet: str | None,
         row_limit: int,
     ) -> ToolOutput[TableResult]:
-        """Load the file, then run the query against what it turned out to be."""
-        source = self._open(file_path, absolute, sheet)
+        """Load every file, then run the query against what they turned out to be."""
+        sources = tuple(
+            self._open(file_path, absolute, sheet) for file_path, absolute in resolved
+        )
 
         try:
-            return self._query(file_path, source, query, row_limit)
+            return self._query(sources, query, row_limit)
 
         except pl.exceptions.PolarsError as exc:
-            raise ToolRetry(self._failure(exc, source, query)) from exc
+            raise ToolRetry(self._failure(exc, sources, query)) from exc
 
     def _open(self, file_path: str, absolute: Path, sheet: str | None) -> _Source:
         """Load and retype the file, retrying once for one that is not UTF-8.
@@ -500,58 +628,90 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
             raise ToolRetry(f"could not read the table: {exc}") from exc
 
     def _failure(
-        self, exc: pl.exceptions.PolarsError, source: _Source, query: str | None
+        self,
+        exc: pl.exceptions.PolarsError,
+        sources: tuple[_Source, ...],
+        query: str | None,
     ) -> str:
         """Explain a failed query, naming the columns a cast would rescue."""
         detail = (
-            f"query failed: {exc} The table is named '{_RELATION}'; call "
-            "without a query to see its columns and their types."
+            f"query failed: {exc} The tables are named "
+            f"{', '.join(_relation(index) for index in range(len(sources)))}; "
+            "call without a query to see their columns and types, or run "
+            "`SHOW TABLES`."
         )
 
         # A parse error is almost always an unquoted header, since an exported
         # sheet names its columns with spaces, units, and parentheses; the
         # schema listing already spells them quoted, so name one of its own.
+        # A refused *function* is the dialect instead, and worth saying so:
+        # Polars SQL is not a database's, and a run that reads "unsupported
+        # function" as "SQL cannot do this" leaves for Python over a spelling.
         if isinstance(
             exc, pl.exceptions.SQLInterfaceError | pl.exceptions.SQLSyntaxError
         ):
-            return detail + _quoting_hint(source.columns)
+            dialect = (
+                " This is the Polars SQL dialect rather than a database's, so a "
+                "function it refuses may exist under another name — try Polars' "
+                "own spelling before giving up on the query."
+                if "unsupported function" in str(exc).lower()
+                else ""
+            )
+
+            return (
+                detail
+                + dialect
+                + _quoting_hint([name for s in sources for name in s.columns])
+            )
 
         # A dtype error over a column the coercion pass had to leave as text
         # is that text, so name it rather than leaving the cast to guesswork.
-        named = [_quoted(name) for name in source.strings if query and name in query]
+        named = [
+            _quoted(name)
+            for source in sources
+            for name in source.strings
+            if query and name in query
+        ]
 
         if named and isinstance(
             exc, pl.exceptions.InvalidOperationError | pl.exceptions.ComputeError
         ):
             detail += (
-                " These columns hold text that is not a number or a date: "
-                f"{', '.join(named[: self.max_named_columns])}. Wrap one in "
-                "TRY_CAST(col AS DOUBLE) to compare or aggregate it, which "
-                "reads a value that does not parse as NULL."
+                " "
+                + self._named(
+                    "These columns hold text that is not a number or a date",
+                    named,
+                )
+                + ". Wrap one in TRY_CAST(col AS DOUBLE) to compare or "
+                "aggregate it, which reads a value that does not parse as NULL."
             )
 
         return detail
 
     def _query(
         self,
-        file_path: str,
-        source: _Source,
+        sources: tuple[_Source, ...],
         query: str | None,
         row_limit: int,
     ) -> ToolOutput[TableResult]:
-        """Run the query over the loaded frame and render what it returned."""
+        """Run the query over the loaded frames and render what it returned.
+
+        Every file is registered whether or not the query names it, so a join
+        needs nothing but the SQL, and ``SHOW TABLES`` answers from the same
+        context the query runs in.  Without a query the first table is the
+        subject, since a schema call has no join to describe.
+        """
         limit = self.preview_rows if query is None else min(row_limit, self.max_rows)
-        frame = (
-            source.frame
-            if query is None
-            else pl.SQLContext({_RELATION: source.frame}).execute(query)
+        context = pl.SQLContext(
+            {_relation(index): source.frame for index, source in enumerate(sources)}
         )
+        frame = sources[0].frame if query is None else context.execute(query)
 
         # One row past the limit is what separates "all of it" from "the first
         # N", without collecting the rest to find out.
         collected = frame.head(limit + 1).collect()
         total = (
-            int(source.frame.select(pl.len()).collect().item())
+            int(sources[0].frame.select(pl.len()).collect().item())
             if query is None
             else None
         )
@@ -560,26 +720,27 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
         columns = tuple(frame_rows.columns)
         dtypes = tuple(str(dtype) for dtype in frame_rows.dtypes)
         preamble = self._preamble(
-            file_path=file_path,
-            source=source,
+            sources=sources,
             columns=columns,
             dtypes=dtypes,
             total_rows=total,
             query=query,
         )
-        rows, body, output_truncated = self._render(frame_rows, columns, preamble)
+        rows, body, display_cut = self._render(frame_rows, columns, preamble)
 
+        # The two cuts are different facts and no longer share a flag: `rows`
+        # holds everything the row limit allowed, so `truncated` says only that
+        # the limit bound, while what the display dropped rides the hint.
         result = TableResult(
-            file_path=file_path,
-            sheet=source.sheet,
-            sheets=source.sheets,
+            tables=tuple(
+                source.queried(_relation(index))
+                for index, source in enumerate(sources)
+            ),
             columns=columns,
             dtypes=dtypes,
             rows=rows,
             total_rows=total,
-            truncated=collected.height > limit or output_truncated,
-            source_encoding=source.source_encoding,
-            text_columns=source.text_columns,
+            truncated=collected.height > limit,
         )
 
         return ToolOutput(
@@ -589,11 +750,8 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
                 self._hints(
                     result,
                     query,
-                    can_increase_rows=(
-                        not output_truncated
-                        and collected.height > limit
-                        and limit < self.max_rows
-                    ),
+                    display_cut=display_cut,
+                    can_increase_rows=result.truncated and limit < self.max_rows,
                 )
             ),
         )
@@ -604,7 +762,18 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
         columns: tuple[str, ...],
         lines: list[str],
     ) -> tuple[tuple[tuple[str, ...], ...], str, bool]:
-        """Budget rows while rendering them, without converting a dropped tail."""
+        """Render rows under the display budget, keeping every one of them.
+
+        The budget binds what the model is shown and nothing else.  It used to
+        end the loop, so the rows past it never reached ``TableResult.rows``
+        either — and a redirect, which writes that structured result to a file
+        and reports only its size, then wrote a truncated table while promising
+        the whole of it.  A run that redirected 1000 rows to `.json` and
+        computed from the file was working from 262 of them and could not tell.
+
+        What the display drops is a rendering fact, reported as a hint; how
+        many rows there are is a data fact, and both channels now agree on it.
+        """
         if frame.is_empty():
             return (), "\n".join([*lines, "(no rows)"]), False
 
@@ -616,48 +785,50 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
         spent = sum(len(line) + 1 for line in lines)
         kept: list[tuple[str, ...]] = []
         rendered: list[str] = []
+        display_full = True
 
         for values in frame.iter_rows():
             row = tuple(_cell(value) for value in values)
-            line = (
-                f"| {' | '.join(truncate_line(cell, self.max_cell_chars) for cell in row[:width])} |"
-            )
+            kept.append(row)
+
+            if not display_full:
+                continue
+
+            line = f"| {' | '.join(truncate_line(cell, self.max_cell_chars) for cell in row[:width])} |"
             extra = len(line) + (1 if rendered else 0)
 
             if rendered and spent + extra > self.max_formatted_chars:
-                return tuple(kept), "\n".join([*lines, *rendered]), True
+                display_full = False
+                continue
 
-            kept.append(row)
             rendered.append(line)
             spent += extra
 
-        return tuple(kept), "\n".join([*lines, *rendered]), False
+        return tuple(kept), "\n".join([*lines, *rendered]), not display_full
 
     def _preamble(
         self,
-        file_path: str,
-        source: _Source,
+        sources: tuple[_Source, ...],
         columns: tuple[str, ...],
         dtypes: tuple[str, ...],
         total_rows: int | None,
         query: str | None,
     ) -> list[str]:
-        """Render the summary line, plus the schema when it was asked for."""
-        parts = [file_path]
+        """Render a summary line per table, plus the schema when asked for.
 
-        if source.sheet is not None:
-            parts.append(f"sheet '{source.sheet}'")
-
-        if total_rows is not None:
-            parts.append(f"{total_rows} {pluralize(total_rows, 'row')}")
-
-        if source.source_encoding is not None:
-            parts.append(f"decoded from {source.source_encoding}")
-
-        lines = [", ".join(parts)]
+        Every table is named on its own line, since a query that can join them
+        has to know what each one is called and a list of paths says nothing
+        about which took which name.
+        """
+        lines = [
+            self._summary(source, _relation(index), total_rows if not index else None)
+            for index, source in enumerate(sources)
+        ]
 
         if query is not None:
             return lines
+
+        source = sources[0]
 
         if len(source.sheets) > 1:
             lines += ["", f"sheets: {', '.join(source.sheets)}"]
@@ -672,11 +843,27 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
 
         return [*lines, "", "sample:"]
 
+    def _summary(self, source: _Source, name: str, total_rows: int | None) -> str:
+        """Say what one registered table is, and what a query addresses it as."""
+        parts = [f"{name}: {source.file_path}"]
+
+        if source.sheet is not None:
+            parts.append(f"sheet '{source.sheet}'")
+
+        if total_rows is not None:
+            parts.append(f"{total_rows} {pluralize(total_rows, 'row')}")
+
+        if source.source_encoding is not None:
+            parts.append(f"decoded from {source.source_encoding}")
+
+        return ", ".join(parts)
+
     def _hints(
         self,
         result: TableResult,
         query: str | None,
         *,
+        display_cut: bool,
         can_increase_rows: bool,
     ) -> list[str]:
         """Name every cut, so a partial table cannot read as a complete one."""
@@ -695,38 +882,99 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
                 else ""
             )
             hints.append(
-                f"{len(result.rows)} rows shown{increase}, narrow with WHERE, "
+                f"{len(result.rows)} rows returned{increase}, narrow with WHERE, "
                 "or aggregate with GROUP BY"
             )
 
+        # Said apart from the row cut above, because only the rendering was
+        # bound: every row is in the result, and an `output_path` writes all
+        # of them however few of them are printed here.
+        if display_cut:
+            hints.append(
+                f"all {len(result.rows)} rows are in the result; the table above "
+                "stops at the display budget, so redirect with output_path or "
+                "aggregate if you need the rest of them read"
+            )
+
+        # What is wrong with the data rides every call, not only the schema
+        # call: the query that most needs to hear it is the one that named the
+        # column, and a run that opens with a SELECT never asks for the schema
+        # afterwards.
+        hints += self._typing_hints(result, query)
+
         if query is None:
-            if header := _header_hint(result.columns):
-                hints.append(header)
-            hints += self._typing_hints(result.text_columns)
             hints.append(f"pass a SQL query over '{_RELATION}' to filter or aggregate")
 
         return hints
 
-    def _typing_hints(self, columns: Sequence[TextColumn]) -> list[str]:
+    def _typing_hints(self, result: TableResult, query: str | None) -> list[str]:
         """Say which text columns were retyped, and which a cast has to reach.
 
-        A mixed column is the one worth spending a hint on: naming it with
-        the share that parses is what lets the first query wrap it in
-        ``TRY_CAST``, instead of learning it from a failure.
-        """
-        retyped = [_quoted(column.name) for column in columns if column.complete]
-        mixed = [
-            f"{_quoted(column.name)} ({column.parsed} of {column.total} parse "
-            f"as {column.dtype})"
-            for column in columns
-            if not column.complete
-        ]
+        A mixed column is the one worth spending a hint on, named with the
+        share that parses and the values that did not.  The values are what
+        make this one hint enough for every shape of table: a repeated label
+        says the header spilled a row into the data, a `<100` says a reading
+        past a measurement limit, a `0,05` says a decimal comma, and each
+        wants a different answer that is not this tool's to pick.  Reporting
+        the values and asking generalises where a rule per shape does not —
+        a two-row header and a three-row header read the same here.
 
-        return [
-            f"{label}: {', '.join(spelled[: self.max_named_columns])}"
-            for label, spelled in (
-                ("stored as text, queryable as the type shown", retyped),
-                ("mixed text, wrap in TRY_CAST to compare", mixed),
-            )
-            if spelled
+        The worst shortfall leads, so the cap can only ever cut the columns
+        least worth reading about.  Scoped to the columns this call touched,
+        since a warning about a column the query never named is noise read
+        past, and it was the cap on that noise that once cut the only column
+        a query was about from behind nine it was not.  A column counts as
+        touched when the result carries it or the query spells it, and it
+        takes both: ``SELECT *`` names no column at all, while a column
+        filtered on but not selected reaches the result under no name.
+        """
+        qualify = len(result.tables) > 1
+        columns = [
+            # Spelled as a query would have to type it: bare against one table,
+            # and `t2."Menge (D)"` against several, which is the qualified name
+            # SQL takes and not the quoted `"t2.Menge (D)"` that spelling the
+            # two halves as one identifier would produce.
+            (f"{table.name}.{_quoted(column.name)}" if qualify else _quoted(column.name), column)
+            for table in result.tables
+            for column in table.text_columns
+            if query is None
+            or column.name in result.columns
+            or column.name in query
         ]
+        retyped = [name for name, column in columns if column.complete]
+        mixed = sorted(
+            ((name, column) for name, column in columns if not column.complete),
+            key=lambda pair: pair[1].total - pair[1].parsed,
+            reverse=True,
+        )
+        spelled = [
+            f"{name} ({column.parsed} of {column.total} parse "
+            f"as {column.dtype}{_naming(column.unparsed)})"
+            for name, column in mixed
+        ]
+        hints: list[str] = []
+
+        if retyped:
+            hints.append(
+                self._named("stored as text, queryable as the type shown", retyped)
+            )
+
+        if spelled:
+            hints.append(
+                self._named("mixed text, wrap in TRY_CAST to compare", spelled)
+                + ". The values named are not numbers, so ask the user how each "
+                "should be treated rather than substituting or skipping one, "
+                "which changes every total drawn from that column"
+            )
+
+        return hints
+
+    def _named(self, label: str, values: Sequence[str]) -> str:
+        """Spell a capped list without letting the cap pass for the whole of it."""
+        rest = len(values) - self.max_named_columns
+        spelled = ", ".join(values[: self.max_named_columns])
+
+        if rest <= 0:
+            return f"{label}: {spelled}"
+
+        return f"{label}: {spelled}, and {rest} more {pluralize(rest, 'column')}"

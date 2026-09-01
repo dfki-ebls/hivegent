@@ -274,22 +274,49 @@ Two document shapes are deliberately not served that way, and `converters.TABULA
 
 `query_table` runs Polars SQL against the original CSV/TSV/Parquet/Excel file in `data/workspace/`, which is the same trade `jq` makes for JSON.
 A spreadsheet's markdown projection is one very long line per row, so a line read spends the context on rows the question does not need and the per-line clip silently drops the trailing columns of the rows it does return.
-The table is always addressed as `t`, so no path is interpolated into the SQL, and omitting the query returns the columns, their types, and the row count as the cheap first call.
+`file_path` takes one path or a list, and the tables are addressed positionally as `t`, `t2`, `t3` — so no path is interpolated into the SQL, a join needs nothing but the query, and the name a model types is never the exported workbook's filename, which is a sentence with spaces in it.
+Every file given is registered whether or not the query names it, so `SHOW TABLES` answers from the same context the query runs in; omitting the query returns the first table's columns, their types, and the row count as the cheap first call, with one summary line per registered table saying which took which name.
+`TableResult` splits accordingly: `tables` describes each file, while the columns and rows describe what the query made of them, which for a join belongs to no single file.
+
+The dialect is Polars SQL and is named as such in the argument description and in the failure, because the gap that matters is discoverability rather than capability.
+The motivating task — a mean and an 85th percentile over a computed load — is one query, but its ANSI spelling `PERCENTILE_CONT(...) WITHIN GROUP (ORDER BY ...)` is unsupported while Polars' own `QUANTILE_CONT(col, 0.85)` is not, and a run that reads `unsupported function` as "SQL cannot do this" leaves for Python over a spelling.
+So an `unsupported function` refusal says the dialect is Polars' and that another name may exist, and no function list is vendored anywhere: `SHOW FUNCTIONS` parses but is unimplemented upstream and `SQLContext` exposes no registry, so any list would be a hand-maintained copy going stale the way the Monty module list did.
 
 What limits a query is less the dialect than a column typed `String`, which turns a plain `SUM` or `WHERE` into a dtype error and a `TRY_CAST` retry, so schema inference runs over the whole file rather than Polars' 100-row window and every text column whose values all parse as a number or an ISO date is retyped before the query runs.
 The conversion is applied only where it loses nothing, so no cell silently becomes null, and one zero-padded value marks the column an identifier (a zip code, an EAN) and vetoes numeric typing for the whole of it.
-A column that falls short is reported by the schema call as a `TextColumn` with the share that did parse, which is what lets the first query wrap it in `TRY_CAST` rather than the second, and a dtype error names the text columns the query itself mentioned.
+A column that falls short is reported as a `TextColumn` with the share that did parse and a sample of the values that did not, which is what lets the first query wrap it in `TRY_CAST` rather than the second, and a dtype error names the text columns the query itself mentioned.
+The values matter as much as the share: the count says a column is mixed, the values say what with, and a label row, a censored reading, and a typo each call for a different answer.
+
+That report rides every call rather than the schema call alone, and is scoped to the columns the query named — the two halves of one fix.
+A run that opens with a `SELECT` never asks for the schema afterwards, so gating the diagnosis on the query-less call left the query that most needed to hear it as the one that never did; and the cap that keeps the list from becoming noise itself cut by column position, so a sheet with 36 mixed columns named the first ten and silently dropped the only one the query was about.
+The list now leads with the worst shortfall and names what the cap cut (`and 26 more`), so a cut can never pass for the whole of it.
+
+The values carry the whole diagnosis, which is why there is one hint and not a rule per shape.
+A repeated label says the header spilled a row into the data; a `<100` says a lab measured the sample, found it past its limit of quantification, and declined to put a number on it; a `0,05` says a decimal comma.
+Each wants a different answer and none of them is this tool's to pick, so the hint names the values and says to ask — the limit overstates, zero understates, dropping the row changes the count, and no substitution is the neutral default.
+
+Two earlier versions of this reported the shapes instead: a `LabelRow` type that fired when a column's one unparsable value sat in row 1, and a `censored` count keyed on a `<`/`>` regex.
+Both were narrower than the values they were derived from — a header spanning three rows made every column short by three and the label-row rule saw nothing, while the same three labels appear in `unparsed` either way — and each cost a public field, a stub entry, and in the label row's case a third Polars collect.
+Reporting the values and asking generalises where a rule per shape does not.
 
 The schema listing is the only place a model ever sees a column name, so it spells each one the way a query has to type it: `_quoted` wraps anything that is not a bare SQL identifier in double quotes, which is the norm rather than the exception in an exported sheet (`"Zulaufmenge (D)"`), and a listing that spelled it bare handed the model a syntax error it had already done the cheap call to avoid.
 A parser error answers with the same rule and one of the file's own quoted columns as the example, since that failure has nothing else to correct itself from — the schema call it would otherwise be sent back to is the one the query came from.
 
-A second cheap call is worth as much: an exported sheet routinely spreads its header over two rows, and the loader can only take the first, which leaves the second as data row 1 and every column the first row left blank as `__UNNAMED__n`.
-Those placeholder names are the signal, so the schema call counts them and says the header may span more than one row, which is what stops a label row from being averaged in with the values under it.
+An exported sheet routinely spreads its header over two rows, and the loader can only take the first, which leaves the second as data row 1.
+That one row is enough to hold every numeric column in the sheet as text, so nothing aggregates and the labels average in with the values beneath them — which is why a real workbook of 41 columns arrived with all 36 of its text columns "mixed", 35 of them short by exactly that one value.
+The `__UNNAMED__n` placeholders used to be the signal, but naming them only said the header *may* span two rows and left the work where it started.
+`_label_row` asks the sharper question instead: a column votes when row 1 holds its one unparsable value, and two columns agreeing is already past coincidence, since a genuine outlier lands in one column and not in the same row of several.
+
+Nothing is dropped on the strength of that vote.
+Row 1 may be labels or it may be data, only the sheet's author knows which, and discarding a row to make the rest type would be the tool answering a question that is not its own — the same reason a censored reading is handed back rather than substituted.
+It is reported instead, with the count of columns that voted and the values that gave it away, and with the clause that excludes it.
 
 Excel is read through `fastexcel` (calamine), which covers `.xlsx`, `.xlsb`, and `.xls` with no extension download, and a delimited file in a legacy encoding is retried once through `read_text_or_retry`, gated on `ComputeError` plus a delimited suffix, since a lazy scan only meets the offending bytes when it reaches them.
 That retry belongs to the load phase alone, which the typing pass makes reliable by reading every text column there: the offending bytes are met before the query runs, so a dtype error is never mistaken for an encoding one and paid for with a second full pass over the file.
 Every budget is applied before the `TableResult` is built, and only the row lines are budgeted, so the count the rows are trimmed by is exactly a row count.
-Rows are cut on both channels, while column and cell width bind the rendering only, matching how a read trims to the lines it showed but keeps each one whole in `content`.
+The row limit is the only cut that reaches the data; the display budget, like column and cell width, binds the rendering alone, matching how a read trims to the lines it showed but keeps each one whole in `content`.
+It used to end the row loop, so rows past it never reached `TableResult.rows` either, and a redirect wrote that partial table to `.json` under a receipt reporting only its size — a run that redirected 1000 rows and computed from the file was working from 262 of them, could not tell, and answered with statistics drawn from 41% of the table.
+Two facts had been sharing one flag: `truncated` now says the row limit bound, what the display dropped rides a hint, and both channels agree on how many rows there are.
 
 ### JSON is filtered, not read
 
@@ -336,8 +363,16 @@ That is why the wrapping FastMCP does for a raw value is mirrored in `wrap_tool_
 
 ### Redirecting bulk output
 
-Every bulk-output tool (`list_documents`, `glob_documents`, `read_document`, `query_table`, `jq`, `grep`, `search`, and the two web tools) declares an `output_path`, which writes that call's result to a workspace file and hands the model a receipt instead of the result, so a call whose answer dwarfs the question is worth making when a later `run_python` step, not the model's own reading, is what turns it into an answer.
+Every bulk-output tool (`list_documents`, `glob_documents`, `read_document`, `query_table`, `jq`, `grep`, `search`, and the two web tools) declares an `output_path`, which writes that call's result to a workspace file and hands the model a receipt instead of the result, so a call whose answer dwarfs the question is worth making when a later *tool call*, not the model's own reading, is what turns it into an answer.
+
+Not a later program, which is where this and the injected surface used to claim the same trigger in the same words: `SANDBOX_API_INSTRUCTIONS` said calling a tool inside `run_python` pays whenever a later step of the program uses the result, and `REDIRECT_INSTRUCTIONS` said to reach for `output_path` when a later step can work from the whole of it.
+A model reading both followed the second, and a spreadsheet question that is one `await query_table(...)` became a redirect to `.scratch/*.json`, a `read_document` of it, and a `json.loads` — three calls and a file for what the injected call returns entire.
+The boundary is now stated once on each side: `output_path` is for a result a later tool call consumes, and when the next step is a program the tool is called inside the program.
 The suffix picks the channel, since the two a tool returns are not interchangeable: `.json` stores the structured `data`, which for a grep count, a file listing, or a jq filter is every match rather than the first `max_results` of them, while `.txt` stores the very text the model would have been shown.
+
+`read_document` had the same split for the same reason and now answers it the same way: `max_chars` is the read and bounds `DocumentRange.content`, `max_formatted_chars` is the display and bounds only the text, which names the line it stopped at so a follow-up `offset` still resumes from what was actually shown.
+
+A receipt names a cut it inherited, since it is the one place the model could still learn of one: `RedirectedOutput.truncated` is read off the payload by duck-typing, so every result that knows it was cut short says so the same way, and a capped query can no longer be written to a file under a sentence that reads like the whole of it.
 
 It is declared by each tool next to a `writer` field, the way `run_python` already declares the one document its programs persist, rather than injected into every tool's schema by the framework adapter: where a result may land is a property of the tool as it was built for a run.
 The MCP surface hands out no writer, so it leaves the argument out of the signature it builds (`register_mcp_tools(..., omit=(OutputPathArg,))` via `ToolSpec.without`, which addresses the parameter by the shared `Annotated` alias it is declared with rather than by a copy of its spelling) instead of advertising one it could only refuse on every call.

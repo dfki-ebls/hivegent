@@ -9,6 +9,7 @@ from typing import Annotated, Literal, override
 
 from pydantic import Field
 
+from ..converters import BINARY_SUFFIXES
 from ..entries import is_description_file, stem_path_from_reference
 from ..subprocesses import rg_search
 from .base import (
@@ -17,8 +18,10 @@ from .base import (
     IncludeIgnoredArg,
     SearchPath,
     ToolOutput,
+    ToolRetry,
     entry_visible,
     excluded_dirs,
+    sidecar_hint,
 )
 from .formatting import BLOCK_SEP, GROUP_SEP, cap_lines, number_line, truncate_line
 from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
@@ -118,6 +121,29 @@ GrepOutputModeArg = Annotated[
         ),
     ),
 ]
+
+
+def _binary_glob(glob: str | None) -> str:
+    """Refuse a search whose glob can only ever match what nothing reads.
+
+    ripgrep skips a binary file without a word, so a search globbed to one
+    answers "(no matches)" — a clean negative that is really a file never
+    opened, and one a run reasonably takes for proof that the term is absent.
+    The glob is the only place that intent is visible before the search, so
+    that is where it is refused.
+
+    The way out is :func:`sidecar_hint`'s and not a second copy of it: a glob
+    is a path shape, so its ``<stem>.md`` is the glob that reaches the same
+    entries' extracted text, and the tool that reads the original in place is
+    named there once for every refusal in the codebase rather than here again.
+    """
+    if not glob or Path(glob).suffix.lower() not in BINARY_SUFFIXES:
+        return ""
+
+    return (
+        f"'{glob}' matches only files whose bytes are not text, which a search "
+        f"never opens, so it can only ever report no matches.{sidecar_hint(glob)}"
+    )
 
 
 def _local_name(sp: SearchPath, path: str) -> str | None:
@@ -240,6 +266,9 @@ class GrepTool(RedirectingPathTool[list[GrepMatch]]):
         original file it was projected from is reported once, under the
         description.
         """
+        if refusal := _binary_glob(glob):
+            raise ToolRetry(refusal)
+
         # Context is wasted work when the formatted output discards it.
         effective_context = context if output_mode == "content" else 0
         exclude = excluded_dirs(include_ignored)

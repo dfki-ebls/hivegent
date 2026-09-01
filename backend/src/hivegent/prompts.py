@@ -146,6 +146,9 @@ Answer from the user's material, not from what you already know.
 - When the material does not cover the question, say so plainly instead of filling the gap silently.
   You may add what you know once the gap is stated and the addition is marked as unsourced, for example "Your documents do not cover this. In general, ...".
 - When sources disagree or are ambiguous, give the alternatives with their citations rather than picking one and smoothing over the difference.
+- A number you computed has no passage to cite, so account for it instead: name the document and the column it came from, the rows you selected and the rule that selected them, and every value you had to decide about along the way.
+  That account is what a citation is for a quoted fact, and a computed answer without one is the sentence you would not have written.
+  Say the same about what you left out: a filter that dropped rows, a value you could not parse, a column you chose between two that both matched.
 """
 
 VERSION_INSTRUCTIONS = """
@@ -178,6 +181,9 @@ WRITE_INSTRUCTIONS = """
 When you create a document, you decide where it goes and the path is the only thing that says so.
 Choose the workspace and the folder it belongs in, keep it beside related documents unless the user asked for somewhere else, and tell the user the full path you wrote to.
 Any text format can be created this way, `.csv` and `.html` as much as `.md`; only a binary one (PDF, Office document, spreadsheet, image, video) has to be uploaded instead.
+A table you produce is a `.csv`, including one computed from a spreadsheet you cannot write back: it is the format that says it is a table, query_table reads it so you can check what you wrote, and it opens in a spreadsheet. Say in your answer that the source was a workbook and the result is a CSV beside it.
+Build each row as a list of cells, one per column of the header, and join them once; counting separators by hand is what puts a summary under the column beside the one it belongs to, which is the right width and still wrong.
+Render a cell yourself rather than letting a value render itself: a missing one is the empty string and never the word `None`, and a column of numbers carries the same number of decimals all the way down.
 Rename or re-file an existing document with move_document rather than writing its content out at the new path and deleting the old one, which loses the original it was projected from and everything extracted from it.
 delete_document cannot be undone and removes the document with its original, its assets, and its index entries, so ask the user before deleting anything they did not name.
 """
@@ -250,6 +256,13 @@ Anything beyond that a program can call is declared to you as a function, and th
 A leading slash is the run's own filesystem and nothing of the user's: park intermediates in `/tmp`, thrown away when the call ends, and write state that outlives the call to a `.scratch/` path a later program opens directly.
 To persist a document, name where it goes as `commit_path` and have the program write the text to `/out`, the one file the call commits there after the program succeeds, while a write to any other document is refused, since it needs the user's say-so before the program starts.
 A program that prints its result or ends on it has written no document, so write to `/out` yourself whenever the point of the call is a file.
+
+A value a source records as `<100` or `>1000` is censored, not a number: the instrument or the lab measured the sample, found it past a limit, and is declining to say where past it.
+Every way of turning one into a number moves every total computed from it, and in a different direction — the limit overstates, zero understates, dropping the row changes the count — so there is no neutral default for you to pick.
+Say which values you found, ask the user how they want them treated, and compute nothing from that column until they answer.
+Never strip the operator and use the digits, which is the one choice that leaves no trace of having been made.
+The same holds for any value you cannot parse: report it and ask, rather than skipping the row, substituting a zero, or reading past it.
+You do not have to notice these yourself, and a program should not trust that it did: query_table reports every column it could not fully parse, with a sample of the values, in the result it hands back (`text_columns`, on each entry of `tables`). Read that field before computing from a column and stop on what it names, the same way you would check a row count — a `try/except` that turns an unparsable value into `None` is a decision about the user's measurements, silently made and invisible in the output.
 """
 """No module list, deliberately.
 
@@ -267,8 +280,9 @@ Call them directly and do not redefine or import them. All parameters are keywor
 Every one is async, so invoke it with `await`, as in `res = await query_table(file_path='~/sales.xlsx', query='SELECT region, SUM(amount) FROM t GROUP BY region')`; calling one without `await` gives you an unresolved future rather than the value.
 For concurrent calls use `await asyncio.gather(...)` with positional awaitables, which is the only task API Monty offers.
 Each returns plain dicts and lists, so read a field as `hit['filename']` and never as an attribute.
-One that is also in your tool list you may call either way; one that is not is reachable only by writing a program, which is the whole reason to write one here.
-Calling one here rather than as a tool pays whenever a later step of the same program uses the result: the program receives the whole of it, where the tool call would have shown you only as much as its output budget allowed.
+One that is not in your tool list is reachable only by writing a program, which is the whole reason to write one here.
+One that is in both you call here whenever a later step of the same program uses the result, and as a tool only when reading it yourself is the whole point: the program receives the result entire, where the tool call would have shown you as much of it as its output budget allowed and no more.
+That decides it on its own. Never route a result to an `output_path` file so that a program can read it back, since calling the tool inside the program is the same result in one call rather than three.
 
 {declarations}
 """
@@ -285,7 +299,8 @@ guidance either way.
 
 REDIRECT_INSTRUCTIONS = """
 Where a tool takes an `output_path`, that call writes its result to the workspace file you name and hands you back only a receipt for it.
-Reach for it when a call would return far more than you need to read but a later step can work from the whole of it, then read or process the file instead of the result.
+Reach for it when a call would return far more than you need to read and the whole of it is what a later *tool call* works from.
+When the next step is a program, call the tool inside run_python instead: the program is handed the whole result directly, where a file written only to be read back again is three calls that buy nothing over one.
 The suffix decides what is stored: `.json` keeps the structured result in full, `.txt` keeps the text you would otherwise have been shown.
 Put the file under a `.scratch/` directory unless the user asked for the file itself.
 """
