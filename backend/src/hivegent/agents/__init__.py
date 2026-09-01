@@ -3,9 +3,10 @@
 from .app import base_agent, turn_usage_limits, user_agent
 from .capabilities import (
     build_capabilities,
-    check_excluded_tools,
+    check_tool_settings,
     collect_tool_schemas,
     invoke_agent_tool,
+    unlisted_tool_names,
 )
 from .common import ExploreTaskArg, MemoryContentArg, RunPrefix, UserDeps
 from .tools import (
@@ -29,7 +30,7 @@ __all__ = [
     "UserDeps",
     "base_agent",
     "build_capabilities",
-    "check_excluded_tools",
+    "check_tool_settings",
     "collect_tool_schemas",
     "conversation_toolset",
     "explore_toolset",
@@ -38,6 +39,7 @@ __all__ = [
     "plan_toolset",
     "subagent_toolset",
     "turn_usage_limits",
+    "unlisted_tool_names",
     "user_agent",
     "web_toolset",
     "write_toolset",

@@ -58,7 +58,7 @@ Die wichtigsten Einstellungen:
 
 Häufige Ergänzungen sind `HIVEGENT_TOOLS__ENABLE_WEB=true` für die Websuche, `HIVEGENT_EMBEDDING__MODEL` zum Wechseln des Embedding-Modells und `HIVEGENT_MCP__ENABLE=true` zum Bereitstellen des MCP-Endpunkts.
 
-`tools.excluded` hält einzelne Werkzeuge vom Modell fern, benannt so, wie die Admin-Werkzeugkonsole sie auflistet (`GET /api/debug/tools`).
+`tools.disabled` hält einzelne Werkzeuge vom Modell fern, benannt so, wie die Admin-Werkzeugkonsole sie auflistet (`GET /api/debug/tools`).
 Voreingestellt ist `["jq", "list_conversations", "get_conversation"]`, was zu einer Installation passt, deren Dokumente Dokumente sind und kein JSON.
 Jedes hier nicht genannte Werkzeug erreicht das Modell bei jeder Anfrage, diese Liste ist also der Ort, an dem Sie eine Fähigkeit gegen den Kontext ihres Schemas abwägen.
 Wird ein Werkzeug genannt, das es nicht gibt, startet der Server nicht, statt stillschweigend nichts auszuschließen.

@@ -185,6 +185,7 @@ def build_run_prefix(config: AgentRunConfig, user: User) -> RunPrefix:
         document_filter=document_filter,
         group_filters=group_filters,
         relevant_documents=relevant_documents,
+        disabled_tools=frozenset(config.tools.disabled_tools),
         llm=llm,
     )
 

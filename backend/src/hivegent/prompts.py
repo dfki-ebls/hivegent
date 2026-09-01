@@ -16,6 +16,8 @@ __all__ = [
     "PLAN_INSTRUCTIONS",
     "PYTHON_INSTRUCTIONS",
     "REDIRECT_INSTRUCTIONS",
+    "SANDBOX_API_INSTRUCTIONS",
+    "SANDBOX_TYPE_CHECK_INSTRUCTION",
     "SCRATCH_INSTRUCTIONS",
     "VERSION_INSTRUCTIONS",
     "WORKSPACE_PATH_INSTRUCTIONS",
@@ -243,10 +245,11 @@ It earns the call most when an answer spans more documents than it will quote fr
 A program opens a document by the same full workspace path every tool result spells, so `open('~/notes.md')` is the document you searched, and it may open a path it discovers as it runs.
 Write anything past a few lines to a `.scratch/` `.py` file and run its `script_path`, so a runtime error costs one edit_document and a rerun rather than a retyped program, and keep inline `code` for throwaways.
 Monty is a subset of Python, not a CPython environment: no numpy or pandas, no class inheritance, no `glob` or `fnmatch` (recurse with `iterdir`, which returns entries in path order), and only part of the standard library, which names a module it lacks in the error, so try the import rather than working around one that would have worked.
-A program calls no tools: `open` and `iterdir` are the read tools, `re` is grep, `json` is jq (parse with `json.loads(open(path).read())`, since the module has `loads` and `dumps` and no file-reading `load`), a spreadsheet is `query_table` (nothing in here decodes one), and there is no retrieval, so search first and let the program work from the paths it named.
+The mount is most of what a program needs, so reach for it rather than for a tool: `open` and `iterdir` are the read tools, `re` is grep, and `json` is jq (parse with `json.loads(open(path).read())`, since the module has `loads` and `dumps` and no file-reading `load`).
+Anything beyond that a program can call is declared to you as a function, and there is nothing else: what is not declared and not in the list above, the program does without.
 A leading slash is the run's own filesystem and nothing of the user's: park intermediates in `/tmp`, thrown away when the call ends, and write state that outlives the call to a `.scratch/` path a later program opens directly.
-To persist a document, name where it goes as `output_path` and have the program write the text to `/output`, the one file the call commits there after the program succeeds, while a write to any other document is refused, since it needs the user's say-so before the program starts.
-`output_path` captures nothing on its own: a program that prints its result or ends on it has written no document, so write to `/output` yourself whenever the point of the call is a file.
+To persist a document, name where it goes as `commit_path` and have the program write the text to `/out`, the one file the call commits there after the program succeeds, while a write to any other document is refused, since it needs the user's say-so before the program starts.
+A program that prints its result or ends on it has written no document, so write to `/out` yourself whenever the point of the call is a file.
 """
 """No module list, deliberately.
 
@@ -258,12 +261,33 @@ as long as nobody tried it.  A failed import names the module it wanted, which
 is the same correction a stale list would have needed anyway.
 """
 
+SANDBOX_API_INSTRUCTIONS = """
+The following functions are available inside run_python, and they are the ones a program cannot work out for itself: retrieval reaches the database, the web reaches the network, and a spreadsheet needs a decoder the interpreter does not have.
+Call them directly and do not redefine or import them. All parameters are keyword-only.
+Every one is async, so invoke it with `await`, as in `res = await query_table(file_path='~/sales.xlsx', query='SELECT region, SUM(amount) FROM t GROUP BY region')`; calling one without `await` gives you an unresolved future rather than the value.
+For concurrent calls use `await asyncio.gather(...)` with positional awaitables, which is the only task API Monty offers.
+Each returns plain dicts and lists, so read a field as `hit['filename']` and never as an attribute.
+One that is also in your tool list you may call either way; one that is not is reachable only by writing a program, which is the whole reason to write one here.
+Calling one here rather than as a tool pays whenever a later step of the same program uses the result: the program receives the whole of it, where the tool call would have shown you only as much as its output budget allowed.
+
+{declarations}
+"""
+
+SANDBOX_TYPE_CHECK_INSTRUCTION = """
+Your program is type-checked against these declarations before it runs, so a misspelled field or a forgotten `await` costs you a diagnostic rather than a wasted run.
+"""
+"""Added only where the checker is actually on, since it is an operator's choice.
+
+A run that promised a check it does not perform teaches the model to trust a
+correction that never comes, which is worse than saying nothing: the stub is
+guidance either way.
+"""
+
 REDIRECT_INSTRUCTIONS = """
 Where a tool takes an `output_path`, that call writes its result to the workspace file you name and hands you back only a receipt for it.
 Reach for it when a call would return far more than you need to read but a later step can work from the whole of it, then read or process the file instead of the result.
 The suffix decides what is stored: `.json` keeps the structured result in full, `.txt` keeps the text you would otherwise have been shown.
 Put the file under a `.scratch/` directory unless the user asked for the file itself.
-run_python is the exception: its `output_path` commits the `/output` file its program wrote, never the result the call returned.
 """
 
 SCRATCH_INSTRUCTIONS = """

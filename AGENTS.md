@@ -49,7 +49,7 @@
 - `SCRATCH_INSTRUCTIONS` is shared between the `compute` and `write` features, and `PYTHON_INSTRUCTIONS` names `.scratch/` as the home of a rerunnable `.py`, since a `.py` elsewhere is an original and gets chunked.
   The mutation receipt says the rest at the one moment the path is in hand: it spells the prefixed path a tool takes back and points a `.scratch/` `.py` at `run_python`'s `script_path`.
   That pointer is a `MutationHint` the write and edit tools take like `filter_func`, injected by `agents/tools/write.py` alone, since the MCP surface writes through the same tools and has no `run_python`, and applied where the tool holds both spellings: `local` answers `is_scratch_path`, `target` is what the model types back.
-  `run_python`'s own `output_sink` composes the writer without it, since a commit the model asked for by declaring an `output_path` is not a program it just stored.
+  `run_python`'s own `output_sink` composes the writer without it, since a commit the model asked for by declaring a `commit_path` is not a program it just stored.
 
 ### Notifications
 
@@ -88,19 +88,26 @@
 - Every bulk-output tool declares an `output_path` that stores the result in the workspace and returns a receipt, and that write answers to the same approval gate as the write tools.
 - A tool is in the model's initial context or it is not registered: nothing is deferred, MCP servers included.
   `defer_loading` hid a tool from the tool list and offered it back through tool search, which bought nothing here (`llm.py` builds only `OpenAIChatModel`, which renders no wire-level deferral) and cost a model that read a pointer at a hidden tool as naming one it was not given.
-- `settings.tools.excluded` is what replaces it: an operator's tool names, in the same namespace as a request's `disabled_tools` and unioned with it into the one `PrepareTools` pass, which reaches MCP tools too.
-  It defaults to the two conversation tools, and `agents.check_excluded_tools` fails the boot on a name no tool has.
+- `settings.tools.disabled` is what replaces it: an operator's tool names, in the same namespace as a request's `disabled_tools` and unioned with it into the one `PrepareTools` pass, which reaches MCP tools too.
+  It defaults to the two conversation tools, and `agents.check_tool_settings` fails the boot on a name no tool has.
 - See `backend/README.md` for the typing pass, the budgets, the redirect channels, and why nothing is deferred.
 
 ### Python sandbox
 
-- `run_python` is a Monty sandbox with no network or host filesystem: the workspace is a read-only mount (`tools/workspace_os.py`, routing through the same seams as the read tools so the `DocumentFilter` stays one predicate), `.scratch/` is the only writable path, and a document is written only by committing `/output` through the canonical write path after the program succeeds.
-  The declared `output_path` is a second name for `/output` inside the program (`WorkspaceOS.output`, seeded with the document as it stands), so the two names are one file and not a conflict, while a write to any other document stays refused.
-  Only `/output` is ever named to the model, though, since `output_path` captures the call's result on every other tool (`REDIRECT_INSTRUCTIONS`) and a model carrying that meaning over declares a path, returns the document it computed, and writes nothing: the arg description, `PYTHON_INSTRUCTIONS`, the mount's refusal, and the sentence for a run that committed nothing all say the program writes `/output` itself.
-  There is one path grammar and the sandbox does not add to it: a program opens `~/notes.md`, the path every tool result, citation, and argument spells, while a leading slash is the run's own files (`/tmp`, `/output`).
+- `run_python` is a Monty sandbox with no network or host filesystem: the workspace is a read-only mount (`tools/workspace_os.py`, routing through the same seams as the read tools so the `DocumentFilter` stays one predicate), `.scratch/` is the only writable path, and a document is written only by committing `/out` through the canonical write path after the program succeeds.
+  The declared `commit_path` is a second name for `/out` inside the program (`WorkspaceOS.output`, seeded with the document as it stands), so the two names are one file and not a conflict, while a write to any other document stays refused.
+  It is named `commit_path` and not `output_path` because the redirect argument of that name on every other tool captures the call's result, and a model carrying that meaning over declares a path, returns the document it computed, and writes nothing: the two mean different things, so they are spelled differently rather than disambiguated in prose on every request.
+  There is one path grammar and the sandbox does not add to it: a program opens `~/notes.md`, the path every tool result, citation, and argument spells, while a leading slash is the run's own files (`/tmp`, `/out`).
   `WORKSPACE_MOUNT` (`/workspace/~/notes.md`) is recognised inside a program but never produced, since a model brings the convention from elsewhere; a tool argument keeps the one grammar, so the approval gate and the commit never read a path differently.
-  Nothing else is injected as a host function, since `open` is the read tools, `re` is grep, and `json` is jq.
-  See `backend/README.md` for the mount, the budgets, and what a program may import.
+  The mount is why `open` is the read tools, `re` is grep, and `json` is jq, so a host function must never be a second way to do one of those.
+  What is injected (`tools/monty.py`, gated in `agents/tools/compute.py`) is only what a program cannot do itself, and a tool says so with `Tool.injectable`: the set is filtered from the very lists that register the tools, so it cannot drift from them, and each is injected exactly when the tool of the same name is live, since a withheld tool must not come back as a function.
+  Nothing that mutates is injected and nothing can be, since a running program cannot stop for approval.
+  A program gets the structured `data` channel as the objects `to_jsonable_python` makes of it, the same serialiser a `.json` `output_path` writes with, and the declarations come from pydantic-ai's `FunctionSignature`: once for the model (`declarations`), once as `type_check_stubs` (`stubs`), which `settings.sandbox.type_check` enforces.
+- `settings.tools.sandbox_only` is the third answer to where a tool lives: injected as a function and withheld from the tool list, limited to `agents.tools.INJECTABLE_TOOL_NAMES`, and overridden by `disabled`.
+  `unlisted_tool_names` answers what the schema pass drops; what the sandbox withholds is a different question, answered in `sandbox_surface` itself rather than published beside it under a near-twin name.
+  A tool suits it when its schema dwarfs its declaration and its result is nearly always an input to further work, and is ruled out either by a consumer of its tool part (a citation source is registered off one, and a call inside a program emits none) or by a pointer naming it, since following a pointer to a name carrying no schema leaves the model one indirection short of the call, which is what `defer_loading` was removed for.
+  A tool clearing all three is registered and injected both.
+  See `backend/README.md` for the mount, the budgets, what a program may import, and why the type checker needs `open` declared.
 
 ## Testing
 

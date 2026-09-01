@@ -1319,7 +1319,11 @@ class TestRunPythonTool:
         result = await tool(
             "import os\n"
             "from pathlib import Path\n"
-            'temp = Path(os.getenv("TMPDIR")) / "work.txt"\n'
+            # Narrowed, since the run is type-checked: `getenv` is `str | None`
+            # whatever the sandbox seeds, and the assert is what proves it seeded.
+            'tmpdir = os.getenv("TMPDIR")\n'
+            "assert tmpdir is not None\n"
+            'temp = Path(tmpdir) / "work.txt"\n'
             'temp.write_text("intermediate")\n'
             "temp.read_text()"
         )
@@ -1366,7 +1370,9 @@ class TestRunPythonTool:
             "import os\n"
             "from pathlib import Path\n"
             'text = Path("~/input.txt").read_text()\n'
-            'Path(os.getenv("OUTPUT")).write_text(text.upper())\n'
+            'output = os.getenv("OUTPUT")\n'
+            "assert output is not None\n"
+            "Path(output).write_text(text.upper())\n"
             "len(text)"
         )
         (tmp_path / "input.txt").write_text("hello")
@@ -1374,7 +1380,7 @@ class TestRunPythonTool:
 
         result = await workspace_tool(
             script_path="~/script.py",
-            output_path="~/output.txt",
+            commit_path="~/output.txt",
         )
 
         assert result.data == PythonResult(
@@ -1423,7 +1429,7 @@ class TestRunPythonTool:
         source.write_text("old")
         workspace_tool, calls = _recording_python_tool(tool, tmp_path)
 
-        with pytest.raises(ToolRetry, match="output_path"):
+        with pytest.raises(ToolRetry, match="commit_path"):
             await workspace_tool(
                 "from pathlib import Path\n"
                 'Path("~/source.txt").write_text("new")'
@@ -1477,8 +1483,8 @@ class TestRunPythonTool:
         await workspace_tool(
             "from pathlib import Path\n"
             'source = Path("~/output.txt").read_text()\n'
-            'Path("/output").write_text(source + " new")',
-            output_path="~/output.txt",
+            'Path("/out").write_text(source + " new")',
+            commit_path="~/output.txt",
         )
 
         assert calls == [("~/output.txt", "old new", "replace", content_hash("old"))]
@@ -1496,7 +1502,7 @@ class TestRunPythonTool:
         await workspace_tool(
             'old = open("~/output.txt").read()\n'
             'open("~/output.txt", "w").write(old.upper())',
-            output_path="~/output.txt",
+            commit_path="~/output.txt",
         )
 
         assert calls == [("~/output.txt", "OLD", "replace", content_hash("old"))]
@@ -1505,14 +1511,14 @@ class TestRunPythonTool:
     async def test_an_append_to_the_output_starts_from_the_document(
         self, tool: RunPythonTool, tmp_path: Path
     ) -> None:
-        # /output is seeded with the document it will become, so an append is
+        # /out is seeded with the document it will become, so an append is
         # an append rather than a silent truncation of what was already there.
         (tmp_path / "output.txt").write_text("EXISTING")
         workspace_tool, calls = _recording_python_tool(tool, tmp_path)
 
         await workspace_tool(
             'open("~/output.txt", "a").write(" more")',
-            output_path="~/output.txt",
+            commit_path="~/output.txt",
         )
 
         assert calls == [
@@ -1527,8 +1533,8 @@ class TestRunPythonTool:
         workspace_tool, calls = _recording_python_tool(tool, tmp_path)
 
         await workspace_tool(
-            'open("/output", "w").write("a")\nopen("~/output.txt", "a").write("b")',
-            output_path="~/output.txt",
+            'open("/out", "w").write("a")\nopen("~/output.txt", "a").write("b")',
+            commit_path="~/output.txt",
         )
 
         assert calls == [("~/output.txt", "ab", "create", None)]
@@ -1538,10 +1544,10 @@ class TestRunPythonTool:
     ) -> None:
         workspace_tool, calls = _recording_python_tool(tool, tmp_path)
 
-        result = await workspace_tool("1 + 1", output_path="~/output.txt")
+        result = await workspace_tool("1 + 1", commit_path="~/output.txt")
 
         assert calls == []
-        assert "no /output file" in result.text
+        assert "no /out file" in result.text
 
     async def test_failed_program_does_not_persist_output(
         self, tool: RunPythonTool, tmp_path: Path
@@ -1550,8 +1556,8 @@ class TestRunPythonTool:
 
         with pytest.raises(ToolRetry, match="ZeroDivisionError"):
             await workspace_tool(
-                'from pathlib import Path\nPath("/output").write_text("new")\n1 / 0',
-                output_path="~/output.txt",
+                'from pathlib import Path\nPath("/out").write_text("new")\n1 / 0',
+                commit_path="~/output.txt",
             )
 
         assert calls == []

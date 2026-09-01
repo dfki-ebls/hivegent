@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from itertools import chain
 from pathlib import Path
-from typing import Annotated, override
+from typing import Annotated, ClassVar, override
 
 import fastexcel
 import polars as pl
@@ -412,6 +412,9 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
     Row, column, cell, and rendered-output budgets bound the result, and every
     cut is named in the formatted output.
     """
+
+    injectable: ClassVar[bool] = True
+    """Monty decodes no spreadsheet, so a program can only be handed this."""
 
     max_rows: int = _MAX_ROW_LIMIT
     preview_rows: int = 5

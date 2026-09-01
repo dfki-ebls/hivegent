@@ -5,12 +5,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, cast, override
 
+import pytest
 from pydantic import Field
 from pydantic_ai import FunctionToolset
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
-from hivegent.tools.base import AsyncTool, SyncTool, ToolOutput, tool_description
+from hivegent.tools.base import (
+    AsyncTool,
+    CallInfo,
+    SyncTool,
+    ToolOutput,
+    tool_description,
+)
 from hivegent.tools.fastmcp import for_fastmcp
 from hivegent.tools.pydantic_ai import (
     for_pydantic_ai,
@@ -130,6 +137,37 @@ class TestForPydanticAI:
         fn = for_pydantic_ai(_tool_output_deps, _Deps)
         assert fn.__annotations__["return"] is ToolReturn
         assert inspect.signature(fn).return_annotation is ToolReturn
+
+
+class TestCallInfo:
+    """What every adapter is built from, and what it refuses to build from."""
+
+    def test_the_result_type_is_the_bound_tool_output(self) -> None:
+        """Concrete, so the sandbox can name the record its stub declares."""
+        assert CallInfo.from_factory(_tool_output_deps).returns is ToolOutput[list[str]]
+
+    def test_a_call_that_does_not_return_tool_output_is_refused(self) -> None:
+        """Caught at extraction, where every adapter shares the one message.
+
+        The base classes declare the envelope, so this is reachable only by
+        suppressing both checkers -- as a stand-in for the return annotation
+        that never resolves, which used to surface in the sandbox rather than
+        here at the tool that mis-declared itself.
+        """
+
+        @dataclass(slots=True, frozen=True)
+        class _Bare(SyncTool[str]):
+            """Return the payload without its envelope."""
+
+            @override
+            def __call__(self) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]  # ty: ignore[invalid-method-override]
+                return "no envelope"
+
+        def _bare(_d: _Deps) -> _Bare:
+            return _Bare()
+
+        with pytest.raises(TypeError, match="must return ToolOutput"):
+            _ = CallInfo.from_factory(_bare)
 
 
 # -- register_agent_tools -----------------------------------------------------

@@ -85,7 +85,7 @@ def build_mcp_server(server_cfg: McpServerConfig) -> AbstractToolset[Any]:
     (``OpenAIChatModel``) renders none, so what deferral actually bought was a
     server whose tools the model could not see and had to be told to search
     for.  A user who configures a server means to use it; an operator who
-    disagrees names the tools in ``settings.tools.excluded``, which the run's
+    disagrees names the tools in ``settings.tools.disabled``, which the run's
     single filter applies to these as well.
     """
     toolset = build_mcp_toolset(server_cfg)

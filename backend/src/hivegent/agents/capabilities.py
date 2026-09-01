@@ -56,11 +56,13 @@ from ..types import (
 from .common import UserDeps, scope_instructions
 from .guards import IterationLimitWarner, ToolOutputLimit
 from .tools import (
+    INJECTABLE_TOOL_NAMES,
     compute_toolset,
     conversation_toolset,
     explore_toolset,
     memory_toolset,
     plan_toolset,
+    sandbox_api_instructions,
     subagent_toolset,
     web_toolset,
     write_toolset,
@@ -72,9 +74,10 @@ __all__ = [
     "Feature",
     "SharedInstructions",
     "build_capabilities",
-    "check_excluded_tools",
+    "check_tool_settings",
     "collect_tool_schemas",
     "invoke_agent_tool",
+    "unlisted_tool_names",
 ]
 
 
@@ -152,7 +155,11 @@ FEATURES: tuple[Feature, ...] = (
             scope_instructions,
         ],
     ),
-    Feature.build("compute", compute_toolset, instructions=PYTHON_INSTRUCTIONS),
+    Feature.build(
+        "compute",
+        compute_toolset,
+        instructions=[PYTHON_INSTRUCTIONS, sandbox_api_instructions],
+    ),
     Feature.build("subagent", subagent_toolset),
     Feature.build(
         "write", write_toolset, instructions=WRITE_INSTRUCTIONS, modes=MUTATING_MODES
@@ -215,7 +222,7 @@ SHARED_INSTRUCTIONS: tuple[SharedInstructions, ...] = (
 """Guidance spanning several features, composed while any of them is live."""
 
 
-def _filter_disabled(disabled: frozenset[str]) -> AbstractCapability[UserDeps]:
+def _filter_unlisted(disabled: frozenset[str]) -> AbstractCapability[UserDeps]:
     """A capability that hides every disabled tool from the model, group-agnostic."""
 
     def prepare(
@@ -224,6 +231,26 @@ def _filter_disabled(disabled: frozenset[str]) -> AbstractCapability[UserDeps]:
         return [td for td in tool_defs if td.name not in disabled]
 
     return PrepareTools(prepare, id="disabled-tools")
+
+
+def unlisted_tool_names(tools_spec: ToolsSpec) -> frozenset[str]:
+    """The tool names that reach the model with no schema.
+
+    Three lists in one namespace: ``settings.tools.disabled`` is the operator's
+    standing choice, ``ToolsSpec.disabled_tools`` the user's per-turn one, and
+    ``settings.tools.sandbox_only`` the operator's placement choice.  The first
+    two withhold a tool outright; the third only unlists it, since it is still
+    injected as a function (``agents/tools/compute.py``).
+
+    One function, because the surfaces that must agree are the ones asking this
+    question — the :class:`PrepareTools` pass and the settings listing.  What
+    the sandbox withholds is a different question with a different answer, and
+    it is asked where it is used (``agents.tools.compute.sandbox_surface``)
+    rather than published here as a near-twin of this name.
+    """
+    return frozenset(settings.tools.disabled).union(
+        tools_spec.disabled_tools or (), settings.tools.sandbox_only
+    )
 
 
 def build_capabilities(
@@ -242,7 +269,7 @@ def build_capabilities(
     server) as its own capability.
 
     A run withholds the union of two lists that differ only in who wrote them:
-    ``settings.tools.excluded``, the operator's standing choice, and the
+    ``settings.tools.disabled``, the operator's standing choice, and the
     request's own ``disabled_tools``, the user's per-turn one.  They are one
     namespace and one mechanism, so an operator exclusion drops a feature's
     instructions exactly as a user's does, and the :class:`PrepareTools` pass
@@ -262,12 +289,12 @@ def build_capabilities(
     Returns:
         Sequence of capabilities ready to pass to the agent.
     """
-    disabled = frozenset(settings.tools.excluded).union(tools_spec.disabled_tools or ())
+    unlisted = unlisted_tool_names(tools_spec)
 
     features = [
         feature
         for feature in FEATURES
-        if mode in feature.modes and not feature.tool_names <= disabled
+        if mode in feature.modes and not feature.tool_names <= unlisted
     ]
     live = {feature.id for feature in features}
 
@@ -280,8 +307,8 @@ def build_capabilities(
         if shared.features & live and mode in shared.modes
     )
 
-    if disabled:
-        result.append(_filter_disabled(disabled))
+    if unlisted:
+        result.append(_filter_unlisted(unlisted))
 
     result.extend(Capability(toolsets=[toolset]) for toolset in extra)
 
@@ -292,27 +319,39 @@ def build_capabilities(
     return result
 
 
-def check_excluded_tools() -> None:
-    """Refuse to start when ``settings.tools.excluded`` names no such tool.
+def check_tool_settings() -> None:
+    """Refuse to start when the operator's tool lists name the wrong thing.
 
-    An exclusion that matches nothing withholds nothing, and the only symptom
+    A list entry that matches nothing withholds nothing, and the only symptom
     is a schema the operator believed was gone, so the typo has to surface at
     startup rather than on the first turn that pays for it.  Only the built-in
     tools can be checked: an MCP server's names are not known until its
     transport is opened, per user and per request.
 
+    ``sandbox_only`` is held to the narrower set, since a name outside it would
+    take a tool off the model's list and give it to no program either, which is
+    an exclusion the operator did not ask for.  That the injectable set is
+    itself registered needs no check: it is filtered from the lists that
+    register these tools rather than kept beside them.
+
     Raises:
-        ValueError: If any excluded name is not a built-in tool.
+        ValueError: If a name is not a built-in tool, or is not one the
+            sandbox can be given.
     """
     known = {name for feature in FEATURES for name in feature.tool_names}
-    unknown = sorted(set(settings.tools.excluded) - known)
-    if not unknown:
-        return
 
-    raise ValueError(
-        f"tools.excluded names no such tool: {', '.join(unknown)}. "
-        f"Available: {', '.join(sorted(known))}"
-    )
+    if unknown := sorted(set(settings.tools.disabled) - known):
+        raise ValueError(
+            f"tools.disabled names no such tool: {', '.join(unknown)}. "
+            f"Available: {', '.join(sorted(known))}"
+        )
+
+    if stranded := sorted(set(settings.tools.sandbox_only) - INJECTABLE_TOOL_NAMES):
+        raise ValueError(
+            f"tools.sandbox_only names a tool run_python cannot be given: "
+            f"{', '.join(stranded)}. Available: "
+            f"{', '.join(sorted(INJECTABLE_TOOL_NAMES))}"
+        )
 
 
 def collect_tool_schemas() -> list[ToolSchema]:

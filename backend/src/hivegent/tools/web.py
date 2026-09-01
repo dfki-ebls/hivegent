@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field
 from email.utils import parseaddr
 from importlib.metadata import metadata
-from typing import Annotated, override
+from typing import Annotated, ClassVar, override
 from urllib.parse import quote
 
 import httpx2
@@ -79,6 +79,9 @@ class WebSearch(RedirectingTool[list[dict[str, str]]]):
     ``client`` is the pooled, policy-checked web client; it is owned by the
     application lifespan, so this tool uses it without ever closing it.
     """
+
+    injectable: ClassVar[bool] = True
+    """The sandbox has no network, so a program can only be handed this."""
 
     client: httpx2.AsyncClient
     language: str = "en"
@@ -220,6 +223,9 @@ class WebFetch(RedirectingTool[WebPage]):
     limit are both client-level in HTTPX, so they are configured there.  The
     lifespan owns the client, so this tool uses it without ever closing it.
     """
+
+    injectable: ClassVar[bool] = True
+    """The sandbox has no network, so a program can only be handed this."""
 
     client: httpx2.AsyncClient
     timeout_seconds: float = 10.0

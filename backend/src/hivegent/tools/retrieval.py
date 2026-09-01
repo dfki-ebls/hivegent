@@ -9,7 +9,7 @@ the caller's scope never enter the candidate set.
 import logging
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, cast, override
+from typing import Annotated, Any, ClassVar, Literal, cast, override
 
 import cbrkit
 import logfire
@@ -96,6 +96,9 @@ class VectorSearchTool[R = SearchResult](RedirectingTool[list[R]]):
             dropping trailing results the per-line cap cannot bound: chunk
             size is a chunker setting, so N results have no ceiling here.
     """
+
+    injectable: ClassVar[bool] = True
+    """Retrieval reaches the database, which no program can do for itself."""
 
     storage_factory: Callable[[], Awaitable[VectorStorage]] | None = None
     filter_factory: Callable[[], Awaitable[cbrkit_filter.Filter | None]] | None = None

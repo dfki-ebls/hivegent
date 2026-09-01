@@ -20,7 +20,7 @@ from ...tools.pydantic_ai import register_agent_tools
 from ..common import UserDeps
 from .write import output_sink, validate_output_path
 
-__all__ = ["web_enabled", "web_toolset"]
+__all__ = ["WEB_FACTORIES", "web_enabled", "web_toolset"]
 
 _user_agent = build_user_agent(settings.network.contact_email)
 
@@ -58,13 +58,17 @@ def _web_fetch(deps: UserDeps) -> WebFetch:
 
 web_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
-if web_enabled:
+WEB_FACTORIES = (_web_search, _web_fetch) if web_enabled else ()
+"""Empty when the switch is off, which is what states the gate exactly once.
+
+Every consumer — the toolset below and the sandbox surface — then reads a list
+that is already correct, rather than re-deriving ``web_enabled`` for itself.
+"""
+
+if WEB_FACTORIES:
     register_agent_tools(
         web_toolset,
         UserDeps,
-        [
-            _web_search,
-            _web_fetch,
-        ],
+        WEB_FACTORIES,
         args_validator=validate_output_path,
     )

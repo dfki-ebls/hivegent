@@ -606,8 +606,8 @@ class ToolsSettings(BaseModel):
     also need a ``security.web_urls`` policy to take effect); it is off by
     default, so the model answers from the indexed documents alone.
 
-    ``excluded`` names individual tools to withhold, in the same namespace and
-    with the same effect as a chat request's ``disabled_tools``: the schema
+    ``disabled`` names individual tools to withhold, sharing both the word and
+    the effect with a chat request's ``disabled_tools``: the schema
     never reaches the model, and a feature whose every tool is named loses its
     instruction block too.  It is what is left of ``defer_loading``, which hid
     a tool from the initial request and offered it back through tool search.
@@ -621,12 +621,36 @@ class ToolsSettings(BaseModel):
     The default withholds the two conversation tools, since past conversations
     are already reachable through the ``explore`` tool's ``conversations``
     scope.  Naming a tool the agent does not have is a startup error
-    (:func:`~hivegent.agents.check_excluded_tools`), so a typo fails loudly
+    (:func:`~hivegent.agents.check_tool_settings`), so a typo fails loudly
     instead of silently excluding nothing.
+
+    ``sandbox_only`` moves a tool out of the model's tool list and leaves it
+    callable from inside ``run_python``, which is the third answer to the same
+    question the other two ask: a tool the model has, a tool it does not, and a
+    tool a program has on its behalf.  It buys back the schema a tool costs on
+    every request, and it costs the model the ability to make the call on its
+    own.  Only a tool the sandbox can actually be given may be named
+    (``agents.tools.INJECTABLE_TOOL_NAMES``), since anything else would
+    withhold a tool and hand it to nobody, and ``disabled`` wins over it: a
+    tool disabled outright reaches neither surface.
+
+    What suits a tool to it is a schema much larger than its declaration and a
+    result that is nearly always an input to further work rather than an answer
+    on its own.
+
+    Two things rule one out even where that arithmetic favours moving it.  The
+    first is a consumer of the tool part: a citation source is registered off a
+    tool result, with the line range and character offsets the document view
+    highlights from, and a call made inside a program emits no tool part for
+    that to read.  The second is a pointer, since a refusal or a hint that
+    names a tool has to name one the model can invoke; following a pointer to a
+    name carrying no schema leaves it one indirection short of the call, which
+    is the position ``defer_loading`` was removed for leaving it in.
     """
 
     enable_web: bool = False
-    excluded: list[str] = ["list_conversations", "get_conversation"]
+    disabled: list[str] = ["list_conversations", "get_conversation"]
+    sandbox_only: list[str] = []
 
 
 class SandboxSettings(BaseModel):
@@ -647,6 +671,14 @@ class SandboxSettings(BaseModel):
     correct its code from.  ``request_timeout_seconds`` is the parent-side
     backstop behind them: a worker that blows past it is killed and replaced,
     so it should sit comfortably above ``max_duration_seconds``.
+
+    ``type_check`` checks a program before running it, so a field the injected
+    tool stub does not declare, or a missing ``await`` on one of those tools,
+    costs a diagnostic naming it rather than a run that reads documents and
+    then fails.  It is a whole type checker and not a check of that stub, so it
+    also rejects unsound code that would have run — ``Path(os.getenv("TMPDIR"))``
+    for its ``str | None``, where the program should name ``/tmp`` outright —
+    and turning it off leaves the stub in the prompt as guidance.
     """
 
     min_processes: int = 1
@@ -655,6 +687,7 @@ class SandboxSettings(BaseModel):
     request_timeout_seconds: float | None = 60.0
     max_duration_seconds: float = 5.0
     max_memory_bytes: int = 256_000_000
+    type_check: bool = True
 
 
 class ComputeSettings(BaseModel):

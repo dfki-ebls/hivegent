@@ -3,17 +3,17 @@
 A ``run_python`` program used to see private copies of the files the model had
 named in advance, which meant a program could not open a path it discovered
 while running: the model had to know every answer's location before writing the
-question.  Mounting the workspace instead makes ``open``, ``iterdir``, ``re``,
-and ``json`` the equivalents of the read tools, which is why nothing at all is
-injected beside it: a host function would be a second way to do what the mount
-already does, and ranking a chunk against a question is a ``search`` call the
-model makes before it writes the program.
+question.  Mounting the workspace instead makes ``open``, ``iterdir``, ``re``, and
+``json`` the equivalents of the read tools, which is what bounds the host
+functions injected beside it (:mod:`hivegent.tools.monty`): a mounted
+equivalent is never one of them, so what is injected is only what no program
+can work out for itself, reaching the database or the network.
 
 A program addresses a document the way everything else does, by its full
 workspace path (``~/reports/q1.md``, ``@team/notes.md``), so the path a tool
 result spells, a citation carries, and a program opens are one string with no
 prefix to add or drop.  A leading slash is the run's own filesystem instead:
-``/tmp`` for intermediates and ``/output`` for the one document the call may
+``/tmp`` for intermediates and ``/out`` for the one document the call may
 persist, which is the whole rule a program needs.  :data:`WORKSPACE_MOUNT`
 stays behind it as a second spelling for the same documents, since it is the
 only way to reach a root that carries no scope prefix and since a model that
@@ -33,7 +33,7 @@ no notification, so a write there is a file written and nothing else, and it
 needs neither the async mutation gateway a filesystem callback cannot await nor
 the approval a running program cannot stop to ask for.  A document is written
 the one way a human can answer for in advance, by being named as the call's
-``output_path``.  Nothing else about the workspace changes while a program
+``commit_path``.  Nothing else about the workspace changes while a program
 runs, so what the program sees and what the call commits cannot disagree.
 """
 
@@ -68,11 +68,29 @@ from .base import (
 )
 
 __all__ = [
+    "MOUNT_STUB",
     "SANDBOX_OUTPUT_FILE",
     "SANDBOX_TMP_DIR",
     "WORKSPACE_MOUNT",
     "WorkspaceOS",
 ]
+
+MOUNT_STUB = "from typing import Any\n\ndef open(*args: Any, **kwargs: Any) -> Any: ..."
+"""What this mount adds to the interpreter, declared for the type checker.
+
+``open`` reaches :meth:`WorkspaceOS.path_open` rather than a Monty builtin, and
+sits in no module the checker can import, so without this line every program
+that reads a document is rejected before it runs.  Making the name resolve is
+the whole job, and it belongs here because this class is what provides it.
+
+Untyped on purpose.  Monty's own ``pathlib`` stub gives ``Path.open()`` the type
+``Unknown``, so there is no file type to reuse, and a spelled-out handle would
+be one this repo invented against a runtime it does not own: an earlier attempt
+was already wrong three ways, refusing an ``encoding=`` keyword, a third
+positional argument, and ``seek``, each of which the interpreter accepts.  A
+stub that rejects a working program is worse than one that checks nothing.
+Never shown to the model, which knows what ``open`` is.
+"""
 
 SANDBOX_TMP_DIR = PurePosixPath("/tmp")
 """Scratch directory every run starts with, also named by ``TMPDIR``.
@@ -85,7 +103,7 @@ way the workspace prefix is the one answer for a document.  It is discarded
 when the call ends, whether the program succeeded or not.
 """
 
-SANDBOX_OUTPUT_FILE = PurePosixPath("/output")
+SANDBOX_OUTPUT_FILE = PurePosixPath("/out")
 """Where a program writes the one document the call may persist.
 
 The mounted workspace is read-only outside `.scratch/`, because committing a
@@ -93,7 +111,9 @@ document runs the async mutation gateway and needs a human's answer, neither of
 which a synchronous filesystem callback can reach.  So the program writes here
 instead and the tool commits it afterwards, which is also what makes the commit
 conditional on the program having succeeded.  Named by ``OUTPUT`` in the
-environment, the way ``/tmp`` is named by ``TMPDIR``.
+environment, the way ``/tmp`` is named by ``TMPDIR``: the paths are short and
+the environment names describing them are not, which is the pairing a program
+reads either way round.
 """
 
 WORKSPACE_MOUNT = PurePosixPath("/workspace")
@@ -180,7 +200,7 @@ def _text(path: VirtualPath) -> str:
 class WorkspaceOS(AbstractOS):
     """Routes the workspace mount to real documents and the rest to ``inner``.
 
-    ``inner`` owns only what the run invents: ``/tmp``, the declared output,
+    ``inner`` owns only what the run invents: ``/tmp``, the commit target,
     and whatever a program parks in either.  The mount serves the workspace off
     disk as it lies, so there is no staged copy to keep consistent with it and
     a program's view cannot drift from what the call will commit.
@@ -218,8 +238,8 @@ class WorkspaceOS(AbstractOS):
     interpreter's duration budget does not count time spent in a host callback.
     """
 
-    output: str | None = None
-    """The canonical document this call may persist, as ``output_path`` named it.
+    commit_target: str | None = None
+    """The canonical document this call may persist, as ``commit_path`` named it.
 
     Inside the program that path is :data:`SANDBOX_OUTPUT_FILE` under another
     name, since the model that has just been told where its result goes writes
@@ -280,10 +300,12 @@ class WorkspaceOS(AbstractOS):
         A handle is rebuilt rather than reused, so every later operation on it
         names the buffer too and none of them has to ask again.
         """
-        if self.output is None or not isinstance(arg, PurePosixPath | MontyFileHandle):
+        if self.commit_target is None or not isinstance(
+            arg, PurePosixPath | MontyFileHandle
+        ):
             return arg
 
-        if _text(arg).removeprefix(_MOUNT_PREFIX) != self.output:
+        if _text(arg).removeprefix(_MOUNT_PREFIX) != self.commit_target:
             return arg
 
         if isinstance(arg, MontyFileHandle):
@@ -441,7 +463,7 @@ class WorkspaceOS(AbstractOS):
         if not is_scratch_path(resolved[1]):
             raise PermissionError(
                 f"'{canonical}' is one of the user's documents, and the mounted "
-                "workspace is read-only. Name it as this call's `output_path` "
+                "workspace is read-only. Name it as this call's `commit_path` "
                 f"and write the text to {SANDBOX_OUTPUT_FILE}, which is "
                 "committed there once the program succeeds, or use the document "
                 "write tools. A path under `.scratch/` can be written from here "

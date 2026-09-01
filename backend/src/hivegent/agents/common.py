@@ -53,6 +53,11 @@ class UserDeps:
     # Canonical paths the user pointed the conversation at.  Advisory: they are
     # named to the model and restrict no tool, so they never reach a filter.
     relevant_documents: frozenset[str] = frozenset()
+    # Tool names this *request* withheld.  Only the request's half: the
+    # operator's `settings.tools.disabled` is global and is unioned in where
+    # the surface is built, the way `web_enabled` already is, so a deps site
+    # that forgets this field still cannot hand a program an excluded tool.
+    disabled_tools: frozenset[str] = frozenset()
     llm: LlmConfig | None = None
     # Sink for live subagent transcript snapshots; set only on the chat path,
     # where the streaming response drains it (None elsewhere disables it).

@@ -22,9 +22,9 @@ from hivegent.agents.tools.write import (
     _edit_document,
     _write_document,
     output_sink,
+    validate_commit_path,
     validate_document_write,
     validate_output_path,
-    validate_output_write,
     write_document,
     write_toolset,
 )
@@ -204,10 +204,10 @@ def test_run_python_output_accepts_arbitrary_text_suffix(deps: UserDeps) -> None
 
     assert (
         compute_tools.compute_toolset.tools["run_python"].args_validator
-        is validate_output_write
+        is validate_commit_path
     )
-    validate_output_write(context, output_path="~/result.csv")
-    validate_output_write(context, output_path="~/report.md")
+    validate_commit_path(context, commit_path="~/result.csv")
+    validate_commit_path(context, commit_path="~/report.md")
 
 
 def test_scratch_writes_skip_approval_without_lifting_the_mode_gate(
@@ -222,7 +222,7 @@ def test_scratch_writes_skip_approval_without_lifting_the_mode_gate(
     validate_document_write(
         context("interactive"), file_path="@team/notes/.scratch/run.py"
     )
-    validate_output_write(context("interactive"), output_path="~/.scratch/rows.json")
+    validate_commit_path(context("interactive"), commit_path="~/.scratch/rows.json")
 
     with pytest.raises(ApprovalRequired):
         validate_document_write(context("interactive"), file_path="~/notes/report.md")
@@ -251,14 +251,14 @@ def test_a_binary_output_is_refused_before_the_approval(deps: UserDeps) -> None:
     context = _context(deps, "interactive")
 
     with pytest.raises(ModelRetry, match="binary format"):
-        validate_output_write(context, output_path="~/sheet.xlsx")
+        validate_commit_path(context, commit_path="~/sheet.xlsx")
 
 
 def test_a_scratch_output_answers_to_no_format(deps: UserDeps) -> None:
     """Scratch is the run's own bytes, so neither the format nor the user gates it."""
     context = _context(deps, "interactive")
 
-    validate_output_write(context, output_path="~/.scratch/state.parquet")
+    validate_commit_path(context, commit_path="~/.scratch/state.parquet")
 
 
 def test_a_move_puts_both_ends_in_one_approval(deps: UserDeps) -> None:

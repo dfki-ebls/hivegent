@@ -1,8 +1,8 @@
 """Write-oriented agent tool registrations.
 
 Also the one place the two workspace writes an agent performs on its own
-account are wired: the ``output_path`` a tool redirects into and the one the
-sandbox declares. Both commit through the same gateway the write tools use and
+account are wired: the ``output_path`` a tool redirects into and the
+``commit_path`` the sandbox declares. Both commit through the same gateway the write tools use and
 answer to the same gate, so a run can never persist by a side door what the
 mode forbids it to write outright.
 
@@ -31,17 +31,17 @@ from ...tools import (
 from ...tools.base import resolve_accessible_file, translate_tool_retry
 from ...tools.mutations import MutationHint, resolve_text_target
 from ...tools.pydantic_ai import register_agent_tool, register_agent_tools
-from ...tools.python import is_python_script
+from ...tools.python import CommitPathArg, is_python_script
 from ...tools.sink import OutputPathArg, output_format
 from ...workspace_events import announce_paths, announcing_mutator
 from ..common import UserDeps
 
 __all__ = [
     "output_sink",
+    "validate_commit_path",
     "validate_document_move",
     "validate_document_write",
     "validate_output_path",
-    "validate_output_write",
     "write_document",
     "write_toolset",
 ]
@@ -174,29 +174,31 @@ def validate_document_write(
     _gate_write(ctx, {"file_path": file_path})
 
 
-def validate_output_write(
-    ctx: RunContext[UserDeps],
-    output_path: str | None = None,
-    **_rest: Any,
+def _gate_declared_write(
+    ctx: RunContext[UserDeps], argument: str, path: str | None
 ) -> None:
-    """Apply the mode and approval gate to an optional workspace output.
+    """Apply the mode and approval gate to a path an argument declared.
 
     The path is settled through :func:`resolve_text_target`, the very resolver
-    the commit runs through, so the redirect is refused in one voice with the
-    write tools and no clause of that rule is ever stated twice.  It runs
-    before the gate rather than after the call, since a path the commit would
-    turn away would otherwise cost the user an approval and the run a whole
-    program before anything said no, and after the mode check, since a run that
-    may not write at all should hear that first.
+    the commit runs through, so it is refused in one voice with the write tools
+    and no clause of that rule is ever stated twice.  It runs before the gate
+    rather than after the call, since a path the commit would turn away would
+    otherwise cost the user an approval and the run a whole program before
+    anything said no, and after the mode check, since a run that may not write
+    at all should hear that first.
+
+    *argument* names the parameter that carried the path, because that is what
+    the approval request shows the user: two tools declare a write this way and
+    they call it different things.
     """
-    if output_path is None:
+    if path is None:
         return
 
     _check_mode(ctx)
     with translate_tool_retry(ModelRetry):
-        _ = resolve_text_target(ctx.deps.search_paths(writable=True), output_path)
+        _ = resolve_text_target(ctx.deps.search_paths(writable=True), path)
 
-    _gate_write(ctx, {"output_path": output_path})
+    _gate_write(ctx, {argument: path})
 
 
 def validate_document_move(
@@ -219,7 +221,21 @@ def validate_output_path(
         with translate_tool_retry(ModelRetry):
             _ = output_format(output_path)
 
-    validate_output_write(ctx, output_path)
+    _gate_declared_write(ctx, "output_path", output_path)
+
+
+def validate_commit_path(
+    ctx: RunContext[UserDeps],
+    commit_path: CommitPathArg = None,
+    **_rest: Any,
+) -> None:
+    """Validate the document a sandboxed program declared, before it runs.
+
+    No suffix check, unlike the redirect: a program writes whatever text the
+    document is, so the format question is the one every write tool asks and
+    :func:`resolve_text_target` has already asked it.
+    """
+    _gate_declared_write(ctx, "commit_path", commit_path)
 
 
 def _move_document(deps: UserDeps) -> MoveDocumentTool:

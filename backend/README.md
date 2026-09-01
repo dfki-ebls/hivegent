@@ -236,7 +236,7 @@ It is deliberately not `is_projectable_original`, which answers whether the *ing
 A new original must still claim a free stem so a write can never silently supersede another entry's description or original, and a binary is uploaded, which is also the way to replace one.
 
 The refusal is one sentence (`converters.BINARY_WRITE_REASON`, the write-side counterpart of `text.NOT_TEXT_REASON`) shared by the gateway and by `tools.mutations.resolve_text_target`, which every text-writing tool surface resolves through.
-That is what puts the refusal in front of the approval prompt rather than behind it: `run_python`'s declared `output_path` used to be checked only at the commit, so a bad suffix cost the user an approval and the run a whole program before anything said no.
+That is what puts the refusal in front of the approval prompt rather than behind it: `run_python`'s declared `commit_path` used to be checked only at the commit, so a bad suffix cost the user an approval and the run a whole program before anything said no.
 `.scratch/` answers to none of it — `is_scratch_path` is checked before the format seam here as everywhere else, since a scratch file has no entry, no projection, and no converter to hand its bytes to.
 
 ### Scratch directories
@@ -313,10 +313,10 @@ The saving was never collected either.
 Wire-level deferral, where the schema rides along and the provider unhides it, needs `supported_tool_deferral_modes`, which only `OpenAIResponsesModel` (gpt-5.4+) and `AnthropicModel` declare.
 `llm.py` builds `OpenAIChatModel` and nothing else, so `tool_deferral_mode` is `None` for every provider this application can be pointed at: a deferred tool was struck from the `tools` array outright and `search_tools` was injected in its place, which is a round-trip the model has to think to make on the exact turn it is already confused.
 
-What is left is `settings.tools.excluded`, an operator's list of tool names in the same namespace as a chat request's `disabled_tools`, unioned with it by `build_capabilities` into the one `PrepareTools` pass a run applies.
+What is left is `settings.tools.disabled`, an operator's list of tool names in the same namespace as a chat request's `disabled_tools`, unioned with it by `build_capabilities` into the one `PrepareTools` pass a run applies.
 The two differ only in who wrote them, so an operator exclusion retracts a feature's instruction block exactly as a user's does, and the pass covers `extra` as well, which is an operator's only reach over the tools a user-configured MCP server brings.
 It defaults to the two conversation tools, since past conversations are already reachable through the `explore` tool's `conversations` scope.
-`check_excluded_tools` runs before the lifespan opens anything, because an exclusion that matches nothing withholds nothing and its only symptom is a schema the operator believed was gone.
+`check_tool_settings` runs before the lifespan opens anything, because an exclusion that matches nothing withholds nothing and its only symptom is a schema the operator believed was gone.
 
 MCP servers are added directly for the same reason (`build_mcp_server`).
 A user-supplied server is the one part of the prompt this application does not size, which is what deferring it was for, but a hidden server is a server the model cannot use; a user who configures one means to use it, and an operator who disagrees names its tools in the exclusion list.
@@ -333,7 +333,7 @@ The MCP surface hands out no writer, so it leaves the argument out of the signat
 That is not schema surgery: both adapters synthesize a signature rather than edit one, the FastMCP adapter already appending a `_tool_` parameter no `__call__` declares, so leaving an argument out is the same act as putting one in.
 A read or plan mode still advertises it and refuses at call time, deliberately, since there the argument is dead for this run and live for the next one, which a schema fixed at registration cannot express.
 
-The write is the same one the write tools perform, so it answers to the same gate (`agents/tools/write.py` owns both `output_sink` and the shared `validate_output_path`): read and plan modes refuse it, an interactive call asks for approval unless the path lands in `.scratch/`, write mode approves it.
+The write is the same one the write tools perform, so it answers to the same gate (`agents/tools/write.py` owns `output_sink` and both validators, which share one `_gate_declared_write` and differ only in the argument they name to the user): read and plan modes refuse it, an interactive call asks for approval unless the path lands in `.scratch/`, write mode approves it.
 What a redirect is worth saying about is a paragraph, and a paragraph restated in eight tool schemas costs more context on every request than the feature saves on the calls that use it, so the argument's own description states only the mechanism and `REDIRECT_INSTRUCTIONS` carries the rest once, shared between the `explore` and `web` features and composed only in a mode that can actually write.
 
 ## The Python sandbox
@@ -343,9 +343,9 @@ A failed program is a `ModelRetry` and repairing it is how a run converges on Mo
 A program comes from either inline `code` or one scoped workspace `.py` `script_path`, which is reloaded on every call so the model can repair it with the document edit tool and rerun it, which is why `PYTHON_INSTRUCTIONS` sends anything past a few lines to a `.scratch/` script first and keeps inline `code` for a throwaway.
 
 The workspace is mounted read-only and a program opens a document by the path everything else in the turn uses (`~/reports/q1.md`), so the string a tool result returns, a citation carries, and a program opens is one string, and it may open a path it only discovers while running, which private copies of paths named in advance could not.
-A leading slash is the run's own filesystem instead, `/tmp` and `/output`, which is the whole grammar a program has to hold: no mount prefix to add on the way in and none to strip on the way out, and `path_iterdir` hands back the same spelling it takes.
+A leading slash is the run's own filesystem instead, `/tmp` and `/out`, which is the whole grammar a program has to hold: no mount prefix to add on the way in and none to strip on the way out, and `path_iterdir` hands back the same spelling it takes.
 `WORKSPACE_MOUNT` (`/workspace/~/reports/q1.md`) is still recognised inside a program, because a model that has met another sandbox opens `/workspace/...` before reading a word of the prompt and because a search root carrying no scope prefix has no other addressing at all.
-It stops at the mount: a tool argument is refused for it like any other path that leads with no root, since the approval gate resolves `output_path` before the tool sees it (`agents/tools/write.py`) and a spelling the tool rewrote afterwards would be gated and shown to the user as a different document than the one written.
+It stops at the mount: a tool argument is refused for it like any other path that leads with no root, since the approval gate resolves the declared path before the tool sees it (`agents/tools/write.py`) and a spelling the tool rewrote afterwards would be gated and shown to the user as a different document than the one written.
 A path that leads with neither (`/workspace/notes.md`, the scope dropped in between) is refused with the roots named, the sandbox's own spelling of `workspace_root_hint`, since that miss is the one a failure cannot correct on its own: the run that prompted this spent its whole retry budget alternating between a dropped scope and a dropped mount prefix.
 `tools/workspace_os.py` is that mount: an `AbstractOS` whose every operation routes through `resolve_accessible_file` and `entry_visible`, the seams the read tools use, so the `DocumentFilter` stays one predicate instead of gaining a third enforcement surface, a hidden document reads as absent rather than as refused, and a legacy encoding is decoded rather than served as mojibake.
 `pydantic_monty.MountDir` would have been less code and none of that, since it maps a host directory in whole: no filter, no decoding, no `.assets` payload hidden.
@@ -364,10 +364,66 @@ The mount is read-only but for `.scratch/`, which is content rather than a docum
 It lands on disk as it happens, which is what lets the program read its own state back, and it is the run's own state rather than the user's, so nothing is lost by its surviving a program that later fails.
 The span is the writable one, taken off the tool's `writer` and narrower than the roots it reads, so a program cannot park state in a group the user may only read, and a mode with no writer at all refuses a scratch write exactly where `write_document` does.
 
-A document is written the one way a human can answer for in advance: the program writes `/output` (named by `OUTPUT`, beside `TMPDIR`) and the call commits it to `output_path` after the program succeeds, through `write_document_text`, with the fingerprint the document had before the run or create-only semantics when it had none, so indexing, workspace locks, and SSE notifications remain on the canonical mutation path.
+A document is written the one way a human can answer for in advance: the program writes `/out` (named by `OUTPUT`, beside `TMPDIR`) and the call commits it to `commit_path` after the program succeeds, through `write_document_text`, with the fingerprint the document had before the run or create-only semantics when it had none, so indexing, workspace locks, and SSE notifications remain on the canonical mutation path.
 An interactive output write requires approval unless it lands in `.scratch/`, write mode approves it automatically, and read or plan mode refuses it.
-Inside the program that path and `/output` are two names for one file: `dispatch` renames the declared output to `/output` before either filesystem sees it, and `/output` is seeded with the document as it stands, from the read the commit's basis was taken from, so it costs nothing.
-Only `/output` is named to the model, though, since `output_path` captures the call's result on every other tool and a model carrying that meaning over declares a path, returns the document it computed, and writes nothing: the arg description, `PYTHON_INSTRUCTIONS`, the mount's own refusal, and the sentence for a run that committed nothing all say that the program writes `/output` itself, and the alias stays as the spelling a program reaches for anyway rather than as a second rule to hold.
+Inside the program that path and `/out` are two names for one file: `dispatch` renames the declared output to `/out` before either filesystem sees it, and `/out` is seeded with the document as it stands, from the read the commit's basis was taken from, so it costs nothing.
+The argument is `commit_path`, not `output_path`. Every other tool's `output_path` captures the call's own result, and a model carrying that meaning over declares a path, returns the document it computed, and writes nothing — which used to cost a sentence of `REDIRECT_INSTRUCTIONS` and one of `PYTHON_INSTRUCTIONS` on every request to undo. Two different acts now have two different names, and the arg description, the mount's refusal, and the sentence for a run that committed nothing all still say the program writes `/out` itself.
+
+### The sandbox's own tools
+
+The mount is why a program needs almost no tools: `open` and `iterdir` are the read tools, `re` is grep, `json` is jq.
+What it cannot be is the four whose answer lives somewhere the sandbox cannot reach, so those are injected as host functions by `tools/monty.py`: `search` needs the database, `web_search` and `web_fetch` need the network, and `query_table` decodes a spreadsheet the mount refuses as binary.
+Before them, a spreadsheet question cost a `query_table` call redirected to a `.scratch/*.json` and then a second call to open it, which is two turns and a file for what is now four lines of one program; in `read` and `plan` mode it cost the whole answer, since the redirect is a write those modes refuse.
+
+Nothing that mutates is injected and nothing can be: a running program cannot stop to ask for approval, which is the same constraint that makes `/out` the one document a call may persist.
+Every injected function is a read, so the mode gates none of them.
+What does gate them is whatever gates the tool of the same name, since the two are one namespace: `web_enabled` folds the operator's master switch and the host policy into one flag for the web pair, and `sandbox_surface` unions `settings.tools.disabled` with `deps.disabled_tools` itself.
+That union is computed there rather than carried on deps, so a `UserDeps` built without it — the debug console's, the MCP one's — still cannot hand a program a tool the operator disabled.
+A tool hidden from the model's tool list must not come back as a function it can call from a program.
+
+A program is handed the structured `data` channel as `to_jsonable_python` renders it: the same pydantic-core serialiser a `.json` `output_path` writes with, stopping at objects rather than going on to bytes a program would only have to parse back.
+So a program sees plain dicts and lists, reads a field as `hit['filename']`, and gets the whole result: the budgets, truncation, and hints on the `text` channel exist to fit a context window a program does not have, and a program that wants fewer rows says so in its query.
+
+The declarations `monty_surface` builds have two consumers: the model reads them as the API it may call (`SANDBOX_API_INSTRUCTIONS`, composed per run so it never names a function the gate withheld), and the sandbox takes them as `type_check_stubs`.
+The rendering itself is pydantic-ai's `FunctionSignature`, which is what `pydantic-ai-harness`'s code mode uses for the same job, so this module supplies two JSON schemas per tool and does no type rendering of its own.
+That is worth more than it looks. A hand-rolled renderer that stood here first marked every field required, dropped each field's own description, and — keyed on the bare class name — declared two tools whose result records share a name with the *first* one's fields, so the program that read its own result correctly was the one the type check turned away.
+`FunctionSignature` states a defaulted field as `NotRequired`, carries the descriptions through, and prefixes a conflicting record with its function's name (`search_Result`, `query_table_Result`).
+Arguments are keyword-only, as the harness renders them and as the injected functions accept them.
+The return schema is taken with `json_schema(mode="serialization")`, which is what makes a `tuple` field a list and a model a plain dict: the stub describes what actually arrives inside the program, not the Python type it left as.
+What the model reads (`MontySurface.declarations`) and what the checker gets (`MontySurface.stubs`) differ by one line, which makes `open` resolve.
+`open` is host-provided rather than a Monty builtin and sits in no module the checker can reach (there is no `io`, and `builtins` has no member for it), so without that line the checker rejects every program that reads a document.
+It declares no types, which is deliberate: Monty's own `pathlib` stub types `Path.open()` as `Unknown`, so there is no file type to reuse, and a spelled-out handle would be one this repo invented against a runtime it does not own — the first attempt was already wrong three ways, refusing an `encoding=` keyword, a third positional argument, and `seek`, each of which the interpreter accepts.
+A stub that rejects a working program is worse than one that checks nothing, and the checking that earns its keep is on the injected declarations, which are generated from real signatures and cannot drift.
+
+`settings.sandbox.type_check` is on by default: a misread field and a forgotten `await` are both caught before the program runs, with a diagnostic that names the field and points back at the declaration.
+It is a whole type checker rather than a check of the stub, so it also rejects unsound code that would have run — `Path(os.getenv("TMPDIR"))` for the `str | None` it is, where the program should name `/tmp` outright as `PYTHON_INSTRUCTIONS` already says.
+`SANDBOX_TYPE_CHECK_INSTRUCTION` is added to the prompt only where the check is actually on, so a run never promises a correction it will not make.
+
+### Where a tool lives
+
+`settings.tools.sandbox_only` is a third answer beside the model having a tool and not having it: the tool is injected as a function and dropped from the tool list.
+This is what `pydantic-ai-harness`'s code mode does for every sandboxed tool (its `ToolSelector` defaults to `tools='all'`), and for the same reason — a schema and a declaration of the same tool, both sent on every request, is one of them wasted.
+It costs the model the ability to make the call on its own, so it suits a tool whose result is nearly always an input to further work rather than an answer.
+The catalog lives in the agent instructions rather than in `run_python`'s description, which is the harness's `dynamic_catalog=True` shape: the tool-definitions block stays byte-stable across turns, so the prompt prefix keeps caching.
+
+What suits a tool to it is a schema much larger than its declaration and a result that is nearly always an input to further work rather than an answer on its own.
+
+Two things rule one out even where that arithmetic favours moving it.
+The first is a consumer of the tool part: `components/chat/tools/search.ts` and its neighbours read the `data-tool-output` part and call `addChunk` with the line range and character offsets the document view highlights from, and a call made inside a program emits no tool part, so those citations and that highlighting would simply stop.
+Moving a tool a citation handler reads would mean `run_python` carrying its injected calls' structured results out as citation sources, which is the real price of full code mode here.
+The second is a pointer: `query_hint` and `sidecar_hint` name a tool on a refusal, and a model that follows a pointer to a name carrying no schema is one indirection short of the call, which is the position `defer_loading` was removed for leaving it in.
+A pointer has to reach a name the model can invoke directly.
+
+Both tests have been run against a real candidate. `query_table` clears the arithmetic by a wide margin (~1.9k characters of schema against ~570 for its declaration) and is the one injectable tool no citation handler reads, so it was moved; it failed the second test, because `read_document` points a read of a table at it, and it was moved back.
+A tool that clears all three is registered and injected both: the turn that only wants the answer makes the call, and the program that has already loaded the file does not spend a turn to query it.
+
+What makes this different from the `defer_loading` this repo removed is that the name never disappears: a `sandbox_only` tool is declared in full, with its signature and result shape, in the sandbox API block, so `query_hint` and `sidecar_hint` still point somewhere the model can see and reach.
+Only a name in `agents.tools.INJECTABLE_TOOL_NAMES` may be listed — anything else would withhold a tool and hand it to no program either, which `check_tool_settings` refuses at boot — and `disabled` wins over it, so a tool disabled outright reaches neither surface.
+
+That set is not a list anyone maintains. A tool declares `injectable` on its class (`Tool.injectable`, default `False`), and `compute.py` filters the very tuples that register the tools (`EXPLORE_FACTORIES`, `WEB_FACTORIES`) by it.
+So a renamed factory moves both the tool list and the sandbox together, the web pair drops out because `WEB_FACTORIES` is already empty when the operator's switch is, and nothing has to check that an injectable name is registered.
+Adding a fifth is one line on its class; the question it answers is whether the mount could have done the job, which is why `grep` and `read_document` are not on it.
+There is one published set, `unlisted_tool_names`, which is what the schema pass and the settings listing both drop. What the sandbox withholds is a narrower question — the operator's `disabled` plus the request's, without the sandbox-only names — and it is answered inside `sandbox_surface`, where it is used, rather than exported as a near-twin of that name.
 That is what makes them one file rather than one path shadowing another: a read returns what the document holds, an append appends to it, a second write replaces it, and the alias needs no list of which Monty operations write, which nothing would keep complete.
 The alias is only ever the path the call already approved, so every other document stays refused, and the commit runs once after the program succeeds, skipped with a sentence when the buffer came back exactly as it was seeded.
 That leaves nothing about the workspace staged: what the program sees is what is on disk, so the mounted view cannot drift from what the call commits, and a rejected commit cannot leave a program's result resting on a change that never landed.

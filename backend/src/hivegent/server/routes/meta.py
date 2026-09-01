@@ -7,7 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ...agents import collect_tool_schemas
+from ...agents import collect_tool_schemas, unlisted_tool_names
 from ...auth import User, get_current_user
 from ...chunkers import (
     ChunkingPipeline,
@@ -31,6 +31,7 @@ from ...types import (
     McpTestResponse,
     SettingsResponse,
     ToolInfo,
+    ToolsSpec,
     UserResponse,
 )
 
@@ -71,12 +72,15 @@ async def list_tools(
     those separately, unfiltered, since that is where an operator reads the
     name to exclude.
 
-    Operator exclusions are dropped here, because this listing is what the
-    settings dialog renders a checkbox per: a tool the deployment withholds
-    must not offer the user a switch that does nothing.
+    Whatever the model's tool list withholds is dropped here, because this
+    listing is what the settings dialog renders a checkbox per: a tool the
+    deployment withholds must not offer the user a switch that does nothing.
+    That is :func:`unlisted_tool_names` and not the operator's exclusions alone,
+    since a ``sandbox_only`` tool has no schema to toggle either — it is
+    reachable from a program and from nowhere the user can switch.
     """
-    excluded = frozenset(settings.tools.excluded)
-    return [tool for tool in collect_tool_schemas() if tool.name not in excluded]
+    hidden = unlisted_tool_names(ToolsSpec())
+    return [tool for tool in collect_tool_schemas() if tool.name not in hidden]
 
 
 @router.post("/mcp/test")

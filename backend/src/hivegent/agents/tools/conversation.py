@@ -21,7 +21,7 @@ __all__ = [
 ]
 
 # Registered eagerly like every other tool, and withheld by
-# `settings.tools.excluded`, which lists both of these by default: no
+# `settings.tools.disabled`, which lists both of these by default: no
 # instruction block names them, a chat turn about the documents never reaches
 # them, and the `explore` tool already offers the same history under its
 # `conversations` scope.  A deployment that wants them back drops them from

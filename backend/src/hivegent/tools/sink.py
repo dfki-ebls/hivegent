@@ -144,6 +144,11 @@ def _render(result: ToolOutput[Any], fmt: OutputFormat) -> str:
     several times over in the bytes written, stored, and — outside a
     `.scratch/` directory — chunked and embedded.  Rendering for a human to
     read is what the `.txt` channel is for.
+
+    ``to_json`` and the ``to_jsonable_python`` the sandbox hands a program are
+    the same pydantic-core serialiser stopping at different points, bytes here
+    and objects there, so the two surfaces agree on the shape without either
+    passing through the other.
     """
     if fmt == "txt":
         return result.text

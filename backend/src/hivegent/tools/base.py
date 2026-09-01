@@ -5,13 +5,24 @@ import json
 import re
 import types
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from functools import cache
 from os import stat_result
 from pathlib import Path
 from stat import S_ISLNK
-from typing import Annotated, Any, Self, get_type_hints, override
+from typing import (
+    Annotated,
+    Any,
+    ClassVar,
+    Self,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+    override,
+)
 
 from pydantic import BaseModel, Field
 
@@ -659,6 +670,22 @@ class Tool[T](ABC):
     descriptions live in ``Annotated`` metadata on the signature itself.
     """
 
+    injectable: ClassVar[bool] = False
+    """Whether a sandboxed program may be handed this tool as a function.
+
+    True for the few whose answer no program can work out for itself: retrieval
+    reaches the database, the web tools the network, a spreadsheet a decoder
+    the interpreter does not have.  False for everything the workspace mount
+    already provides — ``open`` is the read tools, ``re`` is grep, ``json`` is
+    jq — and for everything that mutates, since a running program cannot stop
+    to ask for approval.
+
+    Declared here rather than listed elsewhere because it is a property of the
+    tool: whichever surface registers it, the same answer holds.  Only
+    :mod:`hivegent.agents.tools.compute` reads it, which is what keeps the
+    injectable set derived from the registered one instead of kept beside it.
+    """
+
     @abstractmethod
     def __call__(
         self, *args: Any, **kwargs: Any
@@ -746,11 +773,39 @@ def factory_tool_name(factory: Callable[..., Any]) -> str:
     return name.lstrip("_")
 
 
+def _bound_return(
+    factory: Callable[..., Tool[Any]], returns: type[ToolOutput[Any]]
+) -> type[ToolOutput[Any]]:
+    """Fill in the type parameters ``resolve_tool_cls`` drops.
+
+    A factory annotated ``-> VectorSearchTool[RetrievedChunk]`` names the record
+    its ``list[R]`` holds, and resolving the tool class discards it.  Binding it
+    here rather than at the one adapter that reads it keeps the field true
+    wherever it is read, and is the only place the parameterised annotation and
+    the resolved one are both in hand.
+    """
+    parameters = returns.__pydantic_generic_metadata__["parameters"]
+    if not parameters:
+        return returns
+
+    annotation = get_type_hints(factory)["return"]
+    bound = dict(
+        zip(get_origin(annotation).__type_params__, get_args(annotation), strict=True)
+    )
+
+    # Called rather than subscripted, which both checkers read as specialising
+    # an already specialised type; pydantic under-declares what comes back as a
+    # bare `type[BaseModel]`.
+    rebound = returns.__class_getitem__(tuple(bound[p] for p in parameters))
+
+    return cast(type[ToolOutput[Any]], rebound)
+
+
 def resolve_tool_cls(factory: Callable[..., Tool[Any]]) -> type[Tool[Any]]:
     """Extract the Tool subclass from a factory's return type annotation.
 
     Handles parameterized generics like ``VectorSearchTool[str]`` by
-    unwrapping via ``__origin__``.
+    unwrapping them to their origin.
 
     Args:
         factory: A callable whose return annotation is a ``Tool`` subclass.
@@ -761,11 +816,8 @@ def resolve_tool_cls(factory: Callable[..., Tool[Any]]) -> type[Tool[Any]]:
     Raises:
         TypeError: If the return annotation is missing or not a Tool subclass.
     """
-    hints = get_type_hints(factory)
-    tool_cls = hints.get("return")
-    origin = getattr(tool_cls, "__origin__", None)
-    if origin is not None:
-        tool_cls = origin
+    annotation = get_type_hints(factory).get("return")
+    tool_cls = get_origin(annotation) or annotation
     if not isinstance(tool_cls, type) or not issubclass(tool_cls, Tool):
         name = getattr(factory, "__qualname__", repr(factory))
         msg = (
@@ -794,6 +846,12 @@ class CallInfo:
         params: ``__call__`` parameters with ``self`` removed.
         annotations: Resolved type hints for ``__call__`` parameters
             (``self`` and ``return`` excluded).
+        returns: The ``ToolOutput`` subclass ``__call__`` returns, with the
+            tool class's own type parameters bound from the factory's
+            annotation, so a generic tool reports the concrete result it was
+            built for.  The two schema-building adapters ignore it (both
+            declare a framework type of their own); the sandbox one needs it,
+            since a stub has to name the result shape.
         is_async: Whether ``__call__`` is a coroutine function.
         source_module: Module name of the originating factory.
     """
@@ -801,7 +859,8 @@ class CallInfo:
     name: str
     description: str | None
     params: tuple[inspect.Parameter, ...]
-    annotations: dict[str, Any]
+    annotations: Mapping[str, Any]
+    returns: type[ToolOutput[Any]]
     is_async: bool
     source_module: str
 
@@ -860,11 +919,20 @@ class CallInfo:
         wrapper.__signature__ = sig  # type: ignore[attr-defined]  # pyright: ignore[reportFunctionMemberAccess]  # ty: ignore[unresolved-attribute]
 
     @classmethod
+    @cache
     def from_factory(cls, factory: Callable[..., Tool[Any]]) -> Self:
         """Extract call metadata from a Tool factory's return type.
 
         Resolves the Tool subclass from *factory*'s return annotation,
         then inspects its ``__call__`` method to build a :class:`CallInfo`.
+
+        Cached on the factory, which is what makes this affordable on the
+        sandbox path: the two schema-building adapters run it once at import,
+        but the sandbox rebuilds its surface on every model request, and
+        resolving type hints is the whole cost.  Safe to share because the
+        result is frozen through to its fields -- ``params`` is a tuple of
+        immutable parameters and ``annotations`` a mapping -- and every caller
+        derives a new one through :meth:`without` rather than editing this.
 
         Args:
             factory: A callable whose return annotation is a ``Tool``
@@ -875,22 +943,31 @@ class CallInfo:
 
         Raises:
             TypeError: If the factory's return annotation is not a Tool
-                subclass.
-            TypeError: If any ``__call__`` parameter (besides ``self``)
-                lacks a type annotation.
+                subclass, if any ``__call__`` parameter (besides ``self``)
+                lacks a type annotation, or if ``__call__`` does not return
+                a ``ToolOutput``.
         """
         tool_cls = resolve_tool_cls(factory)
         call = tool_cls.__call__
         sig = inspect.signature(call)
         hints = get_type_hints(call, include_extras=True)
+        cls_name = tool_cls.__qualname__
 
         params = tuple(p for name, p in sig.parameters.items() if name != "self")
 
         for p in params:
             if p.name not in hints:
-                cls_name = tool_cls.__qualname__
                 msg = f"{cls_name}.__call__ has unannotated parameter {p.name!r}"
                 raise TypeError(msg)
+
+        # `SyncTool`/`AsyncTool` already declare the envelope, so what this
+        # catches is the annotation that never resolved to one -- which used to
+        # leave `returns` as None and surface far away, in the sandbox, as a
+        # missing generic argument.
+        returns = hints.get("return")
+        if not (isinstance(returns, type) and issubclass(returns, ToolOutput)):
+            msg = f"{cls_name}.__call__ must return ToolOutput[...], got {returns!r}"
+            raise TypeError(msg)
 
         annotations = {
             name: hint for name, hint in hints.items() if name not in ("self", "return")
@@ -901,6 +978,7 @@ class CallInfo:
             description=tool_description(tool_cls),
             params=params,
             annotations=annotations,
+            returns=_bound_return(factory, returns),
             is_async=inspect.iscoroutinefunction(call),
             source_module=getattr(factory, "__module__", ""),
         )

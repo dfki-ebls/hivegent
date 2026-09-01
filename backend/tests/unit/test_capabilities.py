@@ -17,6 +17,7 @@ from hivegent.agents.capabilities import (
     collect_tool_schemas,
 )
 from hivegent.agents.common import UserDeps, scope_instructions
+from hivegent.agents.tools.compute import sandbox_surface
 from hivegent.auth import User
 from hivegent.prompts import GROUNDING_INSTRUCTIONS
 from hivegent.server.routes.meta import list_tools
@@ -152,28 +153,44 @@ def _tool_names(monkeypatch: pytest.MonkeyPatch) -> set[str]:
     return {tool.name for tool in params.function_tools}
 
 
-def test_the_shape_specific_readers_are_registered_not_deferred(
+def test_the_shape_specific_readers_are_never_merely_hinted_at(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A pointer is worth nothing when its target is not in the tool list.
+    """A pointer is worth nothing when its target is named nowhere the model looks.
 
-    ``query_table`` and ``read_binary_document`` were withheld until tool search
-    asked for them, on the reasoning that ``read_document`` names them on the
-    refusal that needs them.  A model that cannot see the name reads that
+    ``query_table`` and ``read_binary_document`` were once withheld until tool
+    search asked for them, on the reasoning that ``read_document`` names them on
+    the refusal that needs them.  A model that cannot see the name reads that
     pointer as describing a tool it was not given: one run answered the pointer
     at ``query_table`` by probing for ``pandas``, then hand-parsing the markdown
-    projection.  The pointer stands and the deferral is gone.
-    """
-    monkeypatch.setattr(capabilities.settings.tools, "excluded", [])
+    projection.
 
-    assert {"query_table", "jq", "read_binary_document"} <= _tool_names(monkeypatch)
+    What that cost was the name, not the schema, so this asks where the name
+    appears rather than which surface carries it.  A tool on neither is back to
+    being deferred under another word.
+
+    A tool a pointer names is therefore never moved to the sandbox alone, since
+    the pointer has to reach a name the model can call directly.  Being on both
+    surfaces is not a contradiction: the turn that only wants the answer makes
+    the call, and the program that has already loaded the file does not spend a
+    turn to query it.
+    """
+    monkeypatch.setattr(capabilities.settings.tools, "disabled", [])
+    names = _tool_names(monkeypatch)
+
+    assert {"jq", "read_binary_document", "query_table"} <= names
+
+    declared = sandbox_surface(
+        UserDeps(user_id="u", store=Casebase.for_user("u"), mode="interactive")
+    ).declarations
+    assert "async def query_table(" in declared
 
 
 def test_the_default_exclusions_never_reach_the_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """What deferral used to decide silently is now an operator's list."""
-    excluded = set(capabilities.settings.tools.excluded)
+    excluded = set(capabilities.settings.tools.disabled)
     assert excluded == {"list_conversations", "get_conversation"}
 
     assert not excluded & _tool_names(monkeypatch)
@@ -184,7 +201,7 @@ def test_an_operator_exclusion_retracts_the_feature_it_empties(
 ) -> None:
     """One namespace, one mechanism: it drops instructions as a user's does."""
     monkeypatch.setattr(
-        capabilities.settings.tools, "excluded", sorted(_EXPLORE.tool_names)
+        capabilities.settings.tools, "disabled", sorted(_EXPLORE.tool_names)
     )
 
     assert GROUNDING_INSTRUCTIONS not in _instructions(ToolsSpec())
@@ -226,7 +243,7 @@ def test_an_exclusion_reaches_the_tools_an_mcp_server_brought(
 
     assert "remote_thing" in names()
 
-    monkeypatch.setattr(capabilities.settings.tools, "excluded", ["remote_thing"])
+    monkeypatch.setattr(capabilities.settings.tools, "disabled", ["remote_thing"])
     assert "remote_thing" not in names()
 
 
@@ -239,7 +256,7 @@ async def test_an_excluded_tool_offers_the_user_no_switch(
     user-facing listing drops the exclusions while the admin console, which is
     where the name to exclude is read, keeps them.
     """
-    monkeypatch.setattr(capabilities.settings.tools, "excluded", ["query_table"])
+    monkeypatch.setattr(capabilities.settings.tools, "disabled", ["query_table"])
 
     assert "query_table" in {tool.name for tool in collect_tool_schemas()}
     assert "query_table" not in {tool.name for tool in await list_tools(User(id="u"))}
@@ -249,8 +266,8 @@ def test_a_misspelled_exclusion_is_a_startup_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """It would withhold nothing, and the only symptom is a schema still there."""
-    capabilities.check_excluded_tools()
+    capabilities.check_tool_settings()
 
-    monkeypatch.setattr(capabilities.settings.tools, "excluded", ["query_tables"])
+    monkeypatch.setattr(capabilities.settings.tools, "disabled", ["query_tables"])
     with pytest.raises(ValueError, match="query_tables"):
-        capabilities.check_excluded_tools()
+        capabilities.check_tool_settings()

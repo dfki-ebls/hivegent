@@ -19,7 +19,7 @@ from ...tools.pydantic_ai import register_agent_tools
 from ..common import UserDeps
 from .write import output_sink, validate_output_path
 
-__all__ = ["explore_toolset"]
+__all__ = ["EXPLORE_FACTORIES", "explore_toolset"]
 
 
 # Each of these builds with the writer its redirect commits through, which is
@@ -78,20 +78,27 @@ explore_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 # describing a tool it was not given and works around it instead of searching,
 # which is how a spreadsheet run ends up parsing the markdown projection by
 # hand.  A tool is registered eagerly or not at all, and a deployment that
-# would rather not pay for one names it in `settings.tools.excluded`, which is
-# where `jq` sits by default.
+# would rather not pay for one names it in `settings.tools.disabled`, which
+# holds the two conversation tools by default and none of these.
+EXPLORE_FACTORIES = (
+    _list_documents,
+    _glob_documents,
+    _read_document,
+    _read_binary_document,
+    _query_table,
+    _jq,
+    _grep,
+    _search,
+)
+"""Named rather than passed inline, so the sandbox can filter the same list.
+
+Which of these a program may also be handed is read off each tool's
+``injectable``, not restated here: one list, registered and filtered.
+"""
+
 register_agent_tools(
     explore_toolset,
     UserDeps,
-    [
-        _list_documents,
-        _glob_documents,
-        _read_document,
-        _read_binary_document,
-        _query_table,
-        _jq,
-        _grep,
-        _search,
-    ],
+    EXPLORE_FACTORIES,
     args_validator=validate_output_path,
 )

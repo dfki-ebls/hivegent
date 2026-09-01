@@ -15,6 +15,7 @@ from pydantic_monty import (
     MontyRuntimeError,
     MontyShutdown,
     MontySyntaxError,
+    MontyTypingError,
     OSAccess,
     ResourceLimits,
 )
@@ -31,13 +32,19 @@ from .base import (
     sidecar_hint,
 )
 from .formatting import cap_lines, hint_suffix, truncate_line, truncate_middle
+from .monty import MontySurface
 from .mutations import WriteDocumentTool
 from .sink import resolve_output_target
-from .workspace_os import SANDBOX_OUTPUT_FILE, SANDBOX_TMP_DIR, WorkspaceOS
+from .workspace_os import (
+    MOUNT_STUB,
+    SANDBOX_OUTPUT_FILE,
+    SANDBOX_TMP_DIR,
+    WorkspaceOS,
+)
 
 __all__ = [
     "CodeArg",
-    "PythonOutputPathArg",
+    "CommitPathArg",
     "PythonResult",
     "PythonScriptPathArg",
     "RunPythonTool",
@@ -108,17 +115,16 @@ PythonScriptPathArg = Annotated[
         ),
     ),
 ]
-PythonOutputPathArg = Annotated[
+CommitPathArg = Annotated[
     str | None,
     Field(
         description=(
-            "Full workspace path to persist the program's `/output` file to "
+            "Full workspace path to commit the program's `/out` file to "
             "after a successful run. The mounted workspace is read-only, so "
-            "this is how a program writes a document. Unlike `output_path` on "
-            "other tools, it captures nothing by itself: the program must "
-            "write the text to `/output`, and printed output and the trailing "
-            "value are never it. Interactive calls require approval before "
-            "this write."
+            "this is how a program writes a document. It names a destination "
+            "and captures nothing: the program must write the text to "
+            "`/out` itself, and printed output and the trailing value are "
+            "never it. Interactive calls require approval before this write."
         ),
     ),
 ]
@@ -173,14 +179,18 @@ def _diagnostic(exc: MontyError, printed: str, max_chars: int) -> str:
     """Render a sandbox failure as text the model can repair its program from.
 
     A traceback is the whole correction for a program the model wrote itself,
-    so the two error classes that carry one render it in full. Output printed
+    so the three error classes that carry one render it in full. Output printed
     before the failure leads, since a program that reports its own progress
     says more about where it went wrong than the frame the interpreter stopped
     in.
+
+    A typing error is the cheapest of the three, since it arrives before the
+    program ran at all: nothing was read, nothing was committed, and the
+    diagnostic names the field or argument the injected stub disagrees with.
     """
     detail = (
         exc.display()
-        if isinstance(exc, MontySyntaxError | MontyRuntimeError)
+        if isinstance(exc, MontySyntaxError | MontyRuntimeError | MontyTypingError)
         else str(exc)
     )
     diagnostic = detail
@@ -213,23 +223,25 @@ class _PreparedRun:
     """The program to run and the one document approved before it starts.
 
     Nothing is staged: the workspace is mounted, so the program reads it where
-    it lies.  ``output`` is the path ``/output`` will be committed to, resolved
+    it lies.  ``output`` is the path ``/out`` will be committed to, resolved
     and fingerprinted here so a version landing while the program runs is
     refused by the gateway rather than silently overwritten.
     """
 
     source: str
     script_path: str | None
-    output: str | None = None
+    commit_target: str | None = None
+    """The canonical document this call may commit, as ``commit_path`` named it."""
+
     standing: str | None = None
-    """The output document's text as the run found it, seeded into ``/output``.
+    """That document's text as the run found it, seeded into ``/out``.
 
     ``None`` when nothing stood there, which is also the case where the buffer
     starts absent and its absence is what says the program wrote nothing.
     """
 
     expected_hash: str | None = None
-    """Fingerprint of the output document as it stood before the run.
+    """Fingerprint of that document as it stood before the run.
 
     ``None`` when nothing stood there, which is also what makes the commit a
     ``create`` that refuses to absorb a document appearing in between.
@@ -254,6 +266,30 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
     write from inside a program refuse exactly where ``write_document`` does.
     """
 
+    surface: MontySurface = field(default=MontySurface(), kw_only=True)
+    """The tools a program may call, and the stub that declares them.
+
+    Empty by default, which is the sandbox as it was: the mount and nothing
+    else.  What is in it is decided where the tool is built, since whether a
+    tool is live is a property of the run rather than of the sandbox.  A frozen
+    empty surface is safe to share as the default, since nothing mutates one.
+    """
+
+    type_check: bool = field(default=True, kw_only=True)
+    """Whether a program is type-checked against :attr:`surface` before it runs.
+
+    A misread result shape costs a diagnostic that names the field rather than a
+    run that reads documents and then fails, and a forgotten ``await`` on an
+    injected tool is reported as such instead of as a coroutine that is not
+    subscriptable two lines later.
+
+    It is a whole type checker rather than a check of the stub, so it also
+    rejects unsound code that would have run: ``Path(os.getenv("TMPDIR"))``, for
+    the ``str | None`` that is, where the program should name ``/tmp`` outright
+    as the instructions already say.  That is the trade, and it is why the
+    surface declares the mount's ``open`` too.
+    """
+
     limits: ResourceLimits = field(default_factory=_default_limits)
     max_output_chars: int = 20_000
     max_document_chars: int = 5_000_000
@@ -266,12 +302,21 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
     applies the same cap to every document the program opens.
     """
 
+    def _stubs(self) -> str:
+        """What the checker is given: the mount's declarations and the surface's.
+
+        Joined here because this is where both are in hand, and the mount's
+        half stands whether or not a tool was injected: without it every
+        program that opens a document is rejected before it runs.
+        """
+        return "\n\n".join(filter(None, (MOUNT_STUB, self.surface.stubs)))
+
     @override
     async def __call__(
         self,
         code: CodeArg = None,
         script_path: PythonScriptPathArg = None,
-        output_path: PythonOutputPathArg = None,
+        commit_path: CommitPathArg = None,
     ) -> ToolOutput[PythonResult]:
         """Run a short program in the Monty interpreter.
 
@@ -282,8 +327,8 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         Monty runs a subset of Python and its standard library rather than a
         CPython environment, so an import it lacks says so by name and is
         worth trying rather than working around, and the program reaches
-        nothing outside itself but the workspace: no network, no host
-        filesystem, and no tools of its own.
+        nothing outside itself but the workspace and the functions declared to
+        it: no network of its own, and no host filesystem.
 
         End the program with the expression whose value you want back, and
         print anything else worth seeing.
@@ -292,7 +337,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
             self._prepare,
             code,
             script_path,
-            output_path,
+            commit_path,
         )
         filesystem = self._filesystem(prepared)
         printed = CollectString()
@@ -300,12 +345,16 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         async with self.pool.checkout(
             script_name=prepared.script_path or "script.py",
             limits=self.limits,
+            type_check=self.type_check,
+            type_check_stubs=self._stubs(),
+            type_check_format="concise",
         ) as session:
             try:
                 value = await session.feed_run(
                     prepared.source,
                     print_callback=printed,
                     os=filesystem,
+                    external_lookup=dict(self.surface.external_lookup),
                 )
 
             # The pool itself is gone, which no rewrite of the program fixes.
@@ -331,7 +380,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         self,
         code: str | None,
         script_path: str | None,
-        output_path: str | None,
+        commit_path: str | None,
     ) -> _PreparedRun:
         """Resolve the program and the approved output, off the event loop.
 
@@ -362,10 +411,10 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
             source = self._read(canonical_script, absolute)
 
         self._check_budget(len(source), "The program")
-        if output_path is None:
+        if commit_path is None:
             return _PreparedRun(source, canonical_script)
 
-        _sink, canonical, absolute = resolve_output_target(self.writer, output_path)
+        _sink, canonical, absolute = resolve_output_target(self.writer, commit_path)
         standing = self._standing(canonical, absolute)
 
         return _PreparedRun(
@@ -379,7 +428,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
     def _standing(self, canonical_path: str, absolute_path: Path) -> str | None:
         """The output document as it stands before the run, or ``None`` if absent.
 
-        It is both what the program starts from, since ``/output`` is seeded
+        It is both what the program starts from, since ``/out`` is seeded
         with it, and what the commit is guarded by once hashed: the commit
         lands after the program ends, so a version arriving in between would
         otherwise be overwritten without a word, and ``create`` is the guard
@@ -432,11 +481,11 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
     def _filesystem(self, prepared: _PreparedRun) -> WorkspaceOS:
         """Build the filesystem: the workspace mounted, the run's own beside it.
 
-        ``inner`` owns ``/tmp`` and ``/output``, both of which exist from the
+        ``inner`` owns ``/tmp`` and ``/out``, both of which exist from the
         start so a bare write to either lands rather than failing on a missing
         parent, and both of which disappear with the session.
 
-        ``/output`` is seeded with the declared document as it stands, which is
+        ``/out`` is seeded with the declared document as it stands, which is
         what makes it the same file as the path that names it: a program opens
         either one, reads what is there, appends to it or replaces it, and gets
         what any filesystem would give it.  Seeded from the read the basis was
@@ -457,7 +506,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
             paths=self.resolved_paths,
             inner=inner,
             writable=() if self.writer is None else self.writer.resolved_paths,
-            output=prepared.output,
+            commit_target=prepared.commit_target,
             max_document_chars=self.max_document_chars,
         )
 
@@ -476,16 +525,16 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         mtime and re-indexes.
 
         The sentence about the missing file also says what to write instead,
-        since ``output_path`` captures the result on every other tool and a
+        since a declared destination is not a captured result and a
         model carrying that meaning over computes the document, returns it, and
         is told only that nothing happened.
         """
-        if prepared.output is None:
+        if prepared.commit_target is None:
             return None, None
 
         if not filesystem.inner.path_is_file(SANDBOX_OUTPUT_FILE):
             return None, (
-                f"Nothing was committed to '{prepared.output}': the program "
+                f"Nothing was committed to '{prepared.commit_target}': the program "
                 f"wrote no {SANDBOX_OUTPUT_FILE} file. Only what a program "
                 f"writes to {SANDBOX_OUTPUT_FILE} is committed, never what it "
                 "printed or returned."
@@ -494,7 +543,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         content = filesystem.inner.path_read_text(SANDBOX_OUTPUT_FILE)
         if content == prepared.standing:
             return None, (
-                f"Nothing was committed to '{prepared.output}': the program "
+                f"Nothing was committed to '{prepared.commit_target}': the program "
                 "left it exactly as it was."
             )
 
@@ -502,13 +551,13 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
 
         assert self.writer is not None
         result = await self.writer(
-            prepared.output,
+            prepared.commit_target,
             content,
             "replace" if prepared.expected_hash is not None else "create",
             prepared.expected_hash,
         )
 
-        return prepared.output, result.text
+        return prepared.commit_target, result.text
 
     def _output(
         self,
