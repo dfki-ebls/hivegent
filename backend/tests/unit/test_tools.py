@@ -77,6 +77,14 @@ class TestScopePaths:
         assert scope_paths(self.PATHS, "@ghost/x") == (self.PATHS, "@ghost/x")
 
 
+def test_path_tool_caches_coercion_without_mutating_input(tmp_path: Path) -> None:
+    """A flexible constructor input becomes one lazily cached path tuple."""
+    tool = ReadDocumentTool(paths=tmp_path)
+
+    assert tool.resolved_paths is tool.resolved_paths
+    assert tool.paths == tmp_path
+
+
 class TestPathCanonicalization:
     """A filter must see the file an operation touches, not the alias it named."""
 

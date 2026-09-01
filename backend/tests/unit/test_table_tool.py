@@ -234,6 +234,17 @@ class TestQueryTableTool:
         assert out.formatted is not None
         assert "TRY_CAST" not in out.formatted
 
+    async def test_column_names_are_matched_as_sql_identifiers(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "mixed.csv").write_text("id,paid\n1,10\nN/A,20")
+        tool = QueryTableTool(paths=tmp_path)
+
+        out = await returned(tool("mixed.csv", "SELECT paid FROM t"))
+
+        assert out.formatted is not None
+        assert "TRY_CAST" not in out.formatted
+
     async def test_the_worst_shortfall_leads_and_the_cap_is_named(
         self, tmp_path: Path
     ) -> None:
@@ -281,6 +292,26 @@ class TestQueryTableTool:
         assert "unparsed" not in formatted
         assert "ask the user" not in formatted
 
+    async def test_integers_wider_than_int64_stay_exact(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "ids.csv").write_text("id\n99999999999999999999\n1")
+        tool = QueryTableTool(paths=tmp_path)
+
+        out = await returned(tool("ids.csv"))
+
+        assert out.data.dtypes == ("Int128",)
+        assert "99999999999999999999" in (out.formatted or "")
+
+    async def test_delimited_boolean_columns_keep_their_type(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "flags.csv").write_text("enabled\ntrue\nfalse")
+        tool = QueryTableTool(paths=tmp_path)
+
+        out = await returned(tool("flags.csv"))
+
+        assert out.data.dtypes == ("Boolean",)
 
     async def test_non_tabular_file_is_refused(self, tmp_path: Path) -> None:
         (tmp_path / "notes.md").write_text("plain prose")

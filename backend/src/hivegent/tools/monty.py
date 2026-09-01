@@ -55,19 +55,10 @@ from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.tools import ToolDefinition
 
 from ..converters.base import fenced_code_block
-from .base import AsyncTool, ToolSpec, translate_tool_retry
+from .base import AsyncTool, AsyncToolFactory, ToolSpec, translate_tool_retry
 from .sink import OutputPathArg
 
-__all__ = ["MontySurface", "monty_surface"]
-
-type _Factory[D] = Callable[[D], AsyncTool[Any]]
-"""What the surface takes: a factory whose tool a program can await.
-
-``AsyncTool`` and not ``Tool``, because the sandbox calls a host function with
-``await``: a synchronous tool would be handed over as a coroutine that never
-was one, and the mismatch belongs in the signature rather than in a runtime
-check inside the wrapper.
-"""
+__all__ = ["MontySurface", "monty_declarations", "monty_surface"]
 
 type _HostFunction = Callable[..., Awaitable[JsonValue]]
 """What one injected tool becomes, whose payload the rendered stub declares."""
@@ -108,7 +99,7 @@ class MontySurface:
 
 
 @cache
-def _sandbox_spec(factory: _Factory[Any]) -> ToolSpec:
+def _sandbox_spec(factory: AsyncToolFactory[Any]) -> ToolSpec:
     """One tool's call metadata as the sandbox takes it.
 
     The redirect is dropped, so the signature a program is declared and the
@@ -122,7 +113,7 @@ def _sandbox_spec(factory: _Factory[Any]) -> ToolSpec:
     return ToolSpec.from_factory(factory).without(OutputPathArg)
 
 
-def _definition(factory: _Factory[Any]) -> ToolDefinition:
+def _definition(factory: AsyncToolFactory[Any]) -> ToolDefinition:
     """Describe one tool the way the renderer wants it.
 
     A :class:`ToolDefinition` rather than a bare ``FunctionSignature``, since it
@@ -141,7 +132,7 @@ def _definition(factory: _Factory[Any]) -> ToolDefinition:
 
 
 @cache
-def _rendered(factories: tuple[_Factory[Any], ...]) -> tuple[str, str]:
+def _rendered(factories: tuple[AsyncToolFactory[Any], ...]) -> tuple[str, str]:
     """The catalog and the stubs for these tools, rendered once per process.
 
     Cached because rendering is a pure function of the tools: a factory is a
@@ -203,7 +194,22 @@ def _host_function(spec: ToolSpec, tool: AsyncTool[Any]) -> _HostFunction:
     return call
 
 
-def monty_surface[D](factories: Sequence[_Factory[D]], deps: D) -> MontySurface:
+def monty_declarations(factories: Sequence[AsyncToolFactory[Any]]) -> str:
+    """What the model is shown for *factories*, rendered without building one.
+
+    All the prompt needs, and asking for it never runs a factory: the rendering
+    is a pure function of the tools, while a built tool is bound to one run's
+    dependencies.
+    """
+    if not factories:
+        return ""
+
+    declarations, _ = _rendered(tuple(factories))
+
+    return declarations
+
+
+def monty_surface[D](factories: Sequence[AsyncToolFactory[D]], deps: D) -> MontySurface:
     """Build the host functions and both renderings for the tools *factories* name.
 
     Each tool is built once for the whole run rather than per call, since a

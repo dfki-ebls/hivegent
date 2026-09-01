@@ -17,7 +17,7 @@ from pydantic_ai.usage import RunUsage
 
 from .base import (
     BinaryAttachment,
-    Tool,
+    ToolFactory,
     ToolOutput,
     ToolSpec,
     factory_tool_name,
@@ -134,7 +134,7 @@ def unwrap_tool_output(result: Any) -> tuple[str | None, Any]:
 
 
 def for_pydantic_ai[D](
-    factory: Callable[[D], Tool[Any]],
+    factory: ToolFactory[D],
     deps_type: type[D],
 ) -> Callable[..., ToolReturn] | Callable[..., Awaitable[ToolReturn]]:
     """Build a wrapper function whose signature pydantic-ai can introspect.
@@ -193,7 +193,7 @@ def for_pydantic_ai[D](
 def register_agent_tool[D](
     toolset: FunctionToolset[D],
     deps_type: type[D],
-    factory: Callable[[D], Tool[Any]],
+    factory: ToolFactory[D],
     *,
     args_validator: ArgsValidatorFunc[D, ...] | None = None,
 ) -> None:
@@ -225,7 +225,7 @@ def register_agent_tool[D](
 def register_agent_tools[D](
     toolset: FunctionToolset[D],
     deps_type: type[D],
-    factories: Sequence[Callable[[D], Tool[Any]]],
+    factories: Sequence[ToolFactory[D]],
     *,
     args_validator: ArgsValidatorFunc[D, ...] | None = None,
 ) -> None:

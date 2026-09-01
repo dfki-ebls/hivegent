@@ -35,7 +35,7 @@ from hivegent.tools.base import (
     factory_tool_name,
     resolve_tool_cls,
 )
-from hivegent.tools.monty import monty_surface
+from hivegent.tools.monty import monty_declarations, monty_surface
 from hivegent.tools.python import RunPythonTool
 from hivegent.tools.sink import OutputPathArg, RedirectedOutput, RedirectingTool
 from hivegent.types import ToolsSpec
@@ -160,6 +160,15 @@ class TestHostFunction:
 
         with pytest.raises(ValidationError, match="greater than or equal to 1"):
             await call(query="invoices", limit=0)
+
+
+def test_declarations_are_rendered_without_building_runtime_tools() -> None:
+    """Prompt construction needs declarations but no dependency-bound tool."""
+
+    def unavailable(_deps: None) -> _Search:
+        raise AssertionError("a runtime tool was built")
+
+    assert "async def unavailable" in monty_declarations([unavailable])
 
 
 class TestGate:

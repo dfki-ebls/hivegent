@@ -4,7 +4,6 @@ import asyncio
 import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
-from functools import partial
 from itertools import chain
 from pathlib import Path
 from typing import Annotated, ClassVar, override
@@ -87,6 +86,25 @@ def _quoted(name: str) -> str:
     return f'"{escaped}"'
 
 
+def _query_mentions(query: str, name: str) -> bool:
+    """Return whether SQL *query* spells column *name* as an identifier.
+
+    >>> _query_mentions("SELECT id FROM t", "id")
+    True
+    >>> _query_mentions("SELECT paid FROM t", "id")
+    False
+    >>> _query_mentions('SELECT "Total cost" FROM t', "Total cost")
+    True
+    """
+    if not _BARE_IDENTIFIER.fullmatch(name):
+        return _quoted(name).casefold() in query.casefold()
+
+    escaped = re.escape(name)
+    pattern = rf'(?<![A-Za-z0-9_])(?:{escaped}|"{escaped}")(?![A-Za-z0-9_])'
+
+    return re.search(pattern, query, flags=re.IGNORECASE) is not None
+
+
 def _quoting_hint(columns: Sequence[str]) -> str:
     """Say how a column name that is not a bare identifier has to be typed.
 
@@ -144,8 +162,18 @@ def _numeric(dtype: pl.DataType) -> _Coercion:
     return _Coercion(dtype, lambda text: text.cast(dtype, strict=False), numeric=True)
 
 
+def _boolean(text: pl.Expr) -> pl.Expr:
+    """Parse the two boolean literals Polars infers from delimited files."""
+    return text.str.to_lowercase().replace_strict(
+        {"true": True, "false": False}, default=None, return_dtype=pl.Boolean
+    )
+
+
 _COERCIONS = (
     _numeric(pl.Int64()),
+    # Wider than an Int64 and still exact, tried before the float that would
+    # round it: a 20-digit identifier reaches a query as itself, not as 1e+20.
+    _numeric(pl.Int128()),
     _numeric(pl.Float64()),
     # An explicit format rejects an impossible day that a shape test would
     # wave through, and still reads a single-digit month.
@@ -153,6 +181,7 @@ _COERCIONS = (
     _Coercion(
         pl.Datetime(), lambda text: text.str.to_datetime(strict=False), guard=_DATETIME
     ),
+    _Coercion(pl.Boolean(), _boolean, guard=r"(?i)^(true|false)$"),
 )
 """Tried in order, so the narrowest dtype that fits every value wins."""
 
@@ -301,6 +330,9 @@ class _Source:
     strings: tuple[str, ...] = ()
     """Columns still text after coercion, the ones a query has to cast."""
 
+    report_complete: bool = True
+    """Whether losslessly converted text columns should be reported."""
+
     @property
     def columns(self) -> tuple[str, ...]:
         """Every column name, as the loaded frame declares them."""
@@ -434,7 +466,11 @@ def _coerce(source: _Source) -> _Source:
 
     sampled = _with_unparsed(frame, typed)
     converted = {column.name for column, _ in sampled if column.complete}
-    text_columns = tuple(column for column, _ in sampled)
+    text_columns = tuple(
+        column
+        for column, _ in sampled
+        if source.report_complete or not column.complete
+    )
 
     return replace(
         source,
@@ -481,16 +517,16 @@ def _load(path: Path, file_path: str, sheet: str | None, *, decode: bool) -> _So
     if suffix not in DELIMITED_SUFFIXES:
         return _load_excel(path, file_path, sheet)
 
-    # Inferring over the whole file rather than the default 100-row window:
-    # a column typed by its first rows reads a late "N/A" as a broken number
-    # instead of as text, which fails the scan outright.  The result is pinned
-    # onto the frame that gets queried, since leaving `infer_schema_length` at
-    # None re-runs that whole-file pass on every later collect.
     if not decode:
-        scan = partial(pl.scan_csv, path, separator=DELIMITERS[suffix])
-        schema = scan(infer_schema_length=None, try_parse_dates=True).collect_schema()
-
-        return _Source(frame=scan(schema=schema), file_path=file_path)
+        return _Source(
+            frame=pl.scan_csv(
+                path,
+                separator=DELIMITERS[suffix],
+                infer_schema=False,
+            ),
+            file_path=file_path,
+            report_complete=False,
+        )
 
     decoded = read_text_or_retry(path, file_path)
 
@@ -498,11 +534,11 @@ def _load(path: Path, file_path: str, sheet: str | None, *, decode: bool) -> _So
         frame=pl.read_csv(
             decoded.text.encode(),
             separator=DELIMITERS[suffix],
-            infer_schema_length=None,
-            try_parse_dates=True,
+            infer_schema=False,
         ).lazy(),
         file_path=file_path,
         source_encoding=decoded.source_encoding,
+        report_complete=False,
     )
 
 
@@ -670,7 +706,7 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
             _quoted(name)
             for source in sources
             for name in source.strings
-            if query and name in query
+            if query and _query_mentions(query, name)
         ]
 
         if named and isinstance(
@@ -939,7 +975,7 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
             for column in table.text_columns
             if query is None
             or column.name in result.columns
-            or column.name in query
+            or _query_mentions(query, column.name)
         ]
         retyped = [name for name, column in columns if column.complete]
         mixed = sorted(

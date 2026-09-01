@@ -16,8 +16,8 @@ from pydantic_monty import ResourceLimits
 from ...config import settings
 from ...prompts import SANDBOX_API_INSTRUCTIONS, SANDBOX_TYPE_CHECK_INSTRUCTION
 from ...sandbox import get_monty_pool
-from ...tools.base import factory_tool_name, resolve_tool_cls
-from ...tools.monty import MontySurface, monty_surface
+from ...tools.base import AsyncToolFactory, factory_tool_name, resolve_tool_cls
+from ...tools.monty import MontySurface, monty_declarations, monty_surface
 from ...tools.pydantic_ai import register_agent_tool
 from ...tools.python import RunPythonTool
 from ..common import UserDeps
@@ -37,7 +37,7 @@ _limits: ResourceLimits = {
 # and it is a property of the tool, so a factory renamed or a feature switched
 # off cannot leave the two out of step.  The web pair drops out because
 # `WEB_FACTORIES` is already empty when the operator's switch is.
-_INJECTABLE_FACTORIES = tuple(
+_INJECTABLE_FACTORIES: tuple[AsyncToolFactory[UserDeps], ...] = tuple(
     factory
     for factory in (*EXPLORE_FACTORIES, *WEB_FACTORIES)
     if resolve_tool_cls(factory).injectable
@@ -53,6 +53,17 @@ it (:func:`~hivegent.agents.check_tool_settings`).  That each of these is a
 registered tool needs no check, since the set is derived from what registers
 them.
 """
+
+
+def _sandbox_factories(deps: UserDeps) -> tuple[AsyncToolFactory[UserDeps], ...]:
+    """Return the injected factories that are live for this run."""
+    withheld = deps.disabled_tools.union(settings.tools.disabled)
+
+    return tuple(
+        factory
+        for factory in _INJECTABLE_FACTORIES
+        if factory_tool_name(factory) not in withheld
+    )
 
 
 def sandbox_surface(deps: UserDeps) -> MontySurface:
@@ -73,11 +84,7 @@ def sandbox_surface(deps: UserDeps) -> MontySurface:
     One builder for the prompt and for the call, so the stub the model was
     given and the stub the type checker enforces cannot come apart.
     """
-    withheld = deps.disabled_tools.union(settings.tools.disabled)
-
-    return monty_surface(
-        [f for f in _INJECTABLE_FACTORIES if factory_tool_name(f) not in withheld], deps
-    )
+    return monty_surface(_sandbox_factories(deps), deps)
 
 
 def sandbox_api_instructions(ctx: RunContext[UserDeps]) -> str:
@@ -91,12 +98,12 @@ def sandbox_api_instructions(ctx: RunContext[UserDeps]) -> str:
     checker, and showing the model a declaration of a builtin it already knows
     would spend context saying nothing.
     """
-    surface = sandbox_surface(ctx.deps)
+    declarations = monty_declarations(_sandbox_factories(ctx.deps))
 
-    if not surface:
+    if not declarations:
         return ""
 
-    declared = SANDBOX_API_INSTRUCTIONS.format(declarations=surface.declarations)
+    declared = SANDBOX_API_INSTRUCTIONS.format(declarations=declarations)
 
     if not settings.sandbox.type_check:
         return declared

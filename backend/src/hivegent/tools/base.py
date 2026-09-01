@@ -47,6 +47,7 @@ __all__ = [
     "WORKSPACE_SCOPE_HINT",
     "AsyncPathTool",
     "AsyncTool",
+    "AsyncToolFactory",
     "BinaryAttachment",
     "FullLinesArg",
     "IncludeIgnoredArg",
@@ -55,6 +56,7 @@ __all__ = [
     "SearchPathFilterFunc",
     "SyncTool",
     "Tool",
+    "ToolFactory",
     "ToolOutput",
     "ToolRetry",
     "ToolSpec",
@@ -632,7 +634,8 @@ class BinaryAttachment:
     identifier: str | None = None
 
 
-class ToolOutput[T](BaseModel):
+@dataclass(slots=True, frozen=True)
+class ToolOutput[T]:
     """Tool result carrying both structured data and a compact text form.
 
     The adapters route ``data`` to the frontend (via the Vercel AI
@@ -646,8 +649,6 @@ class ToolOutput[T](BaseModel):
     adapter converts to its framework's multimodal type and sends
     inline with the tool return.
     """
-
-    model_config = {"frozen": True, "arbitrary_types_allowed": True}
 
     data: T
     formatted: str | None = None
@@ -715,19 +716,26 @@ class AsyncTool[T](Tool[T], ABC):
     async def __call__(self, *args: Any, **kwargs: Any) -> ToolOutput[T]: ...
 
 
+type ToolFactory[D] = Callable[[D], Tool[Any]]
+"""Factory that builds a tool from one run's dependencies."""
+
+type AsyncToolFactory[D] = Callable[[D], AsyncTool[Any]]
+"""Factory restricted to tools that can be awaited."""
+
+
 @dataclass(slots=True, frozen=True)
 class PathTool[T](Tool[T], ABC):
     """Tool base that owns a ``paths`` field with lazy coercion.
 
     Accepts a bare :class:`~pathlib.Path`, a single :class:`SearchPath`,
-    or a tuple.  Use :attr:`resolved_paths` to obtain the normalised
-    tuple.  Concrete subclasses should inherit from
+    or a tuple. Use :attr:`resolved_paths` to obtain the normalized
+    tuple. Concrete subclasses should inherit from
     :class:`AsyncPathTool`.
     """
 
     paths: Path | SearchPath | tuple[SearchPath, ...] = ()
 
-    @property
+    @cached_property
     def resolved_paths(self) -> tuple[SearchPath, ...]:
         """Return *paths* normalised to a ``SearchPath`` tuple."""
         return coerce_paths(self.paths)
@@ -815,15 +823,6 @@ def _replace_typevars(annotation: Any, bindings: Mapping[TypeVar, Any]) -> Any:
     if isinstance(annotation, TypeVar):
         return bindings.get(annotation, annotation)
 
-    metadata = getattr(annotation, "__pydantic_generic_metadata__", None)
-    if metadata is not None and metadata["parameters"]:
-        origin = metadata["origin"] or annotation
-        replaced = tuple(
-            _replace_typevars(argument, bindings) for argument in metadata["args"]
-        )
-
-        return origin.__class_getitem__(replaced)
-
     origin = get_origin(annotation)
     arguments = get_args(annotation)
 
@@ -841,10 +840,6 @@ def _replace_typevars(annotation: Any, bindings: Mapping[TypeVar, Any]) -> Any:
 def _has_typevar(annotation: Any) -> bool:
     """Whether an annotation still contains an unresolved type parameter."""
     if isinstance(annotation, TypeVar):
-        return True
-
-    metadata = getattr(annotation, "__pydantic_generic_metadata__", None)
-    if metadata is not None and metadata["parameters"]:
         return True
 
     return any(_has_typevar(argument) for argument in get_args(annotation))
@@ -1110,7 +1105,7 @@ class ToolSpec:
         # leave `returns` as None and surface far away, in the sandbox, as a
         # missing generic argument.
         returns = hints.get("return")
-        if not (isinstance(returns, type) and issubclass(returns, ToolOutput)):
+        if get_origin(returns) is not ToolOutput:
             msg = f"{cls_name}.__call__ must return ToolOutput[...], got {returns!r}"
             raise TypeError(msg)
 
@@ -1124,18 +1119,18 @@ class ToolSpec:
         # Binding it here keeps every field concrete for whoever reads it, and
         # this is the only place the parameterised annotation and the resolved
         # one are both in hand.
-        envelope = cast(type[ToolOutput[Any]], _replace_typevars(returns, bindings))
+        envelope = _replace_typevars(returns, bindings)
         unresolved = [
             name for name, annotation in annotations.items() if _has_typevar(annotation)
         ]
-        if envelope.__pydantic_generic_metadata__["parameters"]:
+        if _has_typevar(envelope):
             unresolved.append("return")
         if unresolved:
             name = getattr(factory, "__qualname__", repr(factory))
             joined = ", ".join(unresolved)
             raise TypeError(f"{name!r} leaves tool parameters unresolved: {joined}")
 
-        (data_type,) = envelope.__pydantic_generic_metadata__["args"]
+        (data_type,) = get_args(envelope)
 
         return cls(
             name=factory_tool_name(factory),

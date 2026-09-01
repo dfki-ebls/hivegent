@@ -233,8 +233,8 @@ async def redirect_output[T](
 
 
 # The two bases repeat one field and one delegating method because a slotted
-# dataclass cannot be mixed into another one — their instance layouts conflict
-# — and what they actually share is `redirect_output`, a function both call.
+# dataclass cannot be mixed into another one, their instance layouts conflict,
+# and what they actually share is `redirect_output`, a function both call.
 @dataclass(slots=True, frozen=True)
 class RedirectingTool[T](AsyncTool[T | RedirectedOutput], ABC):
     """An async tool whose result may be written out instead of returned.
