@@ -86,7 +86,7 @@ def _async_lookup_deps(d: _Deps) -> AsyncLookupTool:
 
 
 @dataclass(slots=True, frozen=True)
-class ToolSpec:
+class PublicToolSnapshot:
     """Framework-agnostic snapshot of a tool's public metadata."""
 
     name: str
@@ -94,26 +94,26 @@ class ToolSpec:
     parameters: dict[str, Any]
 
 
-def fastmcp_spec(tool: Any) -> ToolSpec:
-    """Extract a ToolSpec from a FastMCP Tool object."""
-    return ToolSpec(
+def fastmcp_spec(tool: Any) -> PublicToolSnapshot:
+    """Extract public metadata from a FastMCP Tool object."""
+    return PublicToolSnapshot(
         name=tool.name,
         description=tool.description,
         parameters=tool.parameters,
     )
 
 
-def pydantic_ai_spec(tool: Any) -> ToolSpec:
-    """Extract a ToolSpec from a pydantic-ai Tool object."""
-    return ToolSpec(
+def pydantic_ai_spec(tool: Any) -> PublicToolSnapshot:
+    """Extract public metadata from a pydantic-ai Tool object."""
+    return PublicToolSnapshot(
         name=tool.name,
         description=tool.description,
         parameters=tool.function_schema.json_schema,
     )
 
 
-def assert_specs_equal(adapter: ToolSpec, direct: ToolSpec) -> None:
-    """Assert two ToolSpecs are identical, with clear per-field diagnostics."""
+def assert_specs_equal(adapter: PublicToolSnapshot, direct: PublicToolSnapshot) -> None:
+    """Assert two public snapshots are identical."""
     assert adapter.name == direct.name, (
         f"name mismatch: {adapter.name!r} != {direct.name!r}"
     )
@@ -190,6 +190,7 @@ class TestFastMCPSchemaEquivalence:
         assert adapter_tool is not None
         assert direct_tool is not None
         assert_specs_equal(fastmcp_spec(adapter_tool), fastmcp_spec(direct_tool))
+        assert adapter_tool.output_schema == direct_tool.output_schema
 
     async def test_async_tool_matches(
         self, adapter_app: FastMCP, direct_app: FastMCP
@@ -199,6 +200,7 @@ class TestFastMCPSchemaEquivalence:
         assert adapter_tool is not None
         assert direct_tool is not None
         assert_specs_equal(fastmcp_spec(adapter_tool), fastmcp_spec(direct_tool))
+        assert adapter_tool.output_schema == direct_tool.output_schema
 
 
 # -- Pydantic AI tests -------------------------------------------------------

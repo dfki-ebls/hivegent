@@ -8,7 +8,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from functools import cache
+from functools import cache, cached_property, reduce
+from operator import or_
 from os import stat_result
 from pathlib import Path
 from stat import S_ISLNK
@@ -16,7 +17,9 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    NoDefault,
     Self,
+    TypeVar,
     cast,
     get_args,
     get_origin,
@@ -24,7 +27,8 @@ from typing import (
     override,
 )
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, create_model
+from pydantic.json_schema import JsonSchemaValue
 
 from ..config import normalize_unicode
 from ..converters import is_json, is_tabular
@@ -44,7 +48,6 @@ __all__ = [
     "AsyncPathTool",
     "AsyncTool",
     "BinaryAttachment",
-    "CallInfo",
     "FullLinesArg",
     "IncludeIgnoredArg",
     "PathTool",
@@ -54,6 +57,8 @@ __all__ = [
     "Tool",
     "ToolOutput",
     "ToolRetry",
+    "ToolSpec",
+    "Unreachable",
     "addressable_roots",
     "canonical_local_path",
     "check_read_budget",
@@ -773,32 +778,76 @@ def factory_tool_name(factory: Callable[..., Any]) -> str:
     return name.lstrip("_")
 
 
-def _bound_return(
-    factory: Callable[..., Tool[Any]], returns: type[ToolOutput[Any]]
-) -> type[ToolOutput[Any]]:
-    """Fill in the type parameters ``resolve_tool_cls`` drops.
+def _typevar_bindings(annotation: Any) -> dict[TypeVar, Any]:
+    """Resolve a tool annotation's type variables through its generic bases."""
+    bindings: dict[TypeVar, Any] = {}
+    pending = [annotation]
 
-    A factory annotated ``-> VectorSearchTool[RetrievedChunk]`` names the record
-    its ``list[R]`` holds, and resolving the tool class discards it.  Binding it
-    here rather than at the one adapter that reads it keeps the field true
-    wherever it is read, and is the only place the parameterised annotation and
-    the resolved one are both in hand.
-    """
-    parameters = returns.__pydantic_generic_metadata__["parameters"]
-    if not parameters:
-        return returns
+    while pending:
+        current = pending.pop()
+        origin = get_origin(current) or current
+        parameters = getattr(origin, "__type_params__", ())
+        arguments = get_args(current)
 
-    annotation = get_type_hints(factory)["return"]
-    bound = dict(
-        zip(get_origin(annotation).__type_params__, get_args(annotation), strict=True)
-    )
+        if parameters and not arguments:
+            arguments = tuple(parameter.__default__ for parameter in parameters)
 
-    # Called rather than subscripted, which both checkers read as specialising
-    # an already specialised type; pydantic under-declares what comes back as a
-    # bare `type[BaseModel]`.
-    rebound = returns.__class_getitem__(tuple(bound[p] for p in parameters))
+        if parameters and NoDefault not in arguments:
+            bindings.update(
+                zip(
+                    parameters,
+                    (_replace_typevars(argument, bindings) for argument in arguments),
+                    strict=True,
+                )
+            )
 
-    return cast(type[ToolOutput[Any]], rebound)
+        for base in getattr(origin, "__orig_bases__", ()):
+            base_origin = get_origin(base) or base
+
+            if isinstance(base_origin, type) and issubclass(base_origin, Tool):
+                pending.append(_replace_typevars(base, bindings))
+
+    return bindings
+
+
+def _replace_typevars(annotation: Any, bindings: Mapping[TypeVar, Any]) -> Any:
+    """Apply known type variable bindings to a generic annotation."""
+    if isinstance(annotation, TypeVar):
+        return bindings.get(annotation, annotation)
+
+    metadata = getattr(annotation, "__pydantic_generic_metadata__", None)
+    if metadata is not None and metadata["parameters"]:
+        origin = metadata["origin"] or annotation
+        replaced = tuple(
+            _replace_typevars(argument, bindings) for argument in metadata["args"]
+        )
+
+        return origin.__class_getitem__(replaced)
+
+    origin = get_origin(annotation)
+    arguments = get_args(annotation)
+
+    if origin is None or not arguments:
+        return annotation
+
+    replaced = tuple(_replace_typevars(argument, bindings) for argument in arguments)
+
+    if origin is types.UnionType:
+        return reduce(or_, replaced)
+
+    return origin[replaced]
+
+
+def _has_typevar(annotation: Any) -> bool:
+    """Whether an annotation still contains an unresolved type parameter."""
+    if isinstance(annotation, TypeVar):
+        return True
+
+    metadata = getattr(annotation, "__pydantic_generic_metadata__", None)
+    if metadata is not None and metadata["parameters"]:
+        return True
+
+    return any(_has_typevar(argument) for argument in get_args(annotation))
 
 
 def resolve_tool_cls(factory: Callable[..., Tool[Any]]) -> type[Tool[Any]]:
@@ -834,24 +883,47 @@ def tool_description(tool: type[Tool[Any]]) -> str | None:
 
 
 @dataclass(slots=True, frozen=True)
-class CallInfo:
-    """Extracted metadata from a Tool's ``__call__`` method.
+class Unreachable:
+    """Marks the result branch an argument is the only way to reach.
 
-    Provides the information both framework adapters need to build
-    wrapper functions with correct signatures and type annotations.
+    Carried on the argument's own ``Annotated`` alias, so a surface dropping
+    the argument through :meth:`ToolSpec.without` drops the branch with it
+    rather than being asked to name both.
+    """
+
+    data_type: Any
+
+
+# `slots=True` is deliberately absent, and the derived members below are the
+# reason: `cached_property` stores into the instance `__dict__` a slotted class
+# does not have.  They have to be memoised somehow, since building one costs
+# ~250us and `argument_model` and `data_adapter` are read on every sandbox and
+# MCP call, and they have to be derived rather than stored, or `replace` in
+# `without` would carry a schema onto the narrowed spec it does not describe.
+# The slotted alternative is a `dict[str, Any]` memo field, which launders
+# every value through `Any` behind string keys no checker reads; slots buys
+# nothing against that here, since `from_factory` caches one spec per tool for
+# the life of the process.
+@dataclass(frozen=True)
+class ToolSpec:
+    """Framework-neutral contract for a tool's arguments and structured data.
+
+    Provides what the three surfaces built from a tool -- pydantic-ai, MCP, and
+    the sandbox -- need to build wrapper functions with correct signatures and
+    type annotations.
+
+    The six fields are what a tool declares.  Everything below them is a pure
+    function of those, derived once on first use rather than stored beside
+    them: a schema and the validator that has to agree with it are then built
+    one way for every surface, and a surface pays only for what it reads, which
+    for pydantic-ai is none of it.
 
     Attributes:
         name: Tool name derived from the factory function.
         description: Canonical tool description from the Tool class.
-        params: ``__call__`` parameters with ``self`` removed.
-        annotations: Resolved type hints for ``__call__`` parameters
-            (``self`` and ``return`` excluded).
-        returns: The ``ToolOutput`` subclass ``__call__`` returns, with the
-            tool class's own type parameters bound from the factory's
-            annotation, so a generic tool reports the concrete result it was
-            built for.  The two schema-building adapters ignore it (both
-            declare a framework type of their own); the sandbox one needs it,
-            since a stub has to name the result shape.
+        params: ``__call__`` parameters with ``self`` removed, each carrying
+            the resolved annotation.
+        data_type: Concrete type carried by :attr:`ToolOutput.data`.
         is_async: Whether ``__call__`` is a coroutine function.
         source_module: Module name of the originating factory.
     """
@@ -859,10 +931,60 @@ class CallInfo:
     name: str
     description: str | None
     params: tuple[inspect.Parameter, ...]
-    annotations: Mapping[str, Any]
-    returns: type[ToolOutput[Any]]
+    data_type: Any
     is_async: bool
     source_module: str
+
+    @cached_property
+    def annotations(self) -> Mapping[str, Any]:
+        """Resolved type hints for ``__call__`` parameters, keyed by name.
+
+        Read off :attr:`params`, which carry the resolved annotation, rather
+        than stored beside them: the two would otherwise be the same data in
+        two places, and a surface that drops a parameter would have to drop it
+        twice.
+        """
+        return types.MappingProxyType({p.name: p.annotation for p in self.params})
+
+    @cached_property
+    def argument_model(self) -> type[BaseModel]:
+        """Validator for one call's arguments, built from :attr:`params`."""
+        fields: dict[str, Any] = {
+            param.name: (
+                param.annotation,
+                ... if param.default is param.empty else param.default,
+            )
+            for param in self.params
+        }
+
+        return create_model(
+            f"{self.name}_arguments",
+            __config__=ConfigDict(extra="forbid"),
+            **fields,
+        )
+
+    @cached_property
+    def parameters_json_schema(self) -> JsonSchemaValue:
+        """JSON schema of the arguments :attr:`argument_model` validates."""
+        return self.argument_model.model_json_schema()
+
+    @cached_property
+    def data_adapter(self) -> TypeAdapter[Any]:
+        """Serialiser for :attr:`data_type`."""
+        return TypeAdapter(self.data_type)
+
+    @cached_property
+    def data_json_schema(self) -> JsonSchemaValue:
+        """Serialization-mode JSON schema of :attr:`data_type`."""
+        return self.data_adapter.json_schema(mode="serialization")
+
+    def validate_arguments(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        """Validate, convert, and default arguments before invoking a tool."""
+        return dict(self.argument_model.model_validate(arguments).__dict__)
+
+    def serialize_data(self, data: Any) -> JsonValue:
+        """Serialize a structured tool payload to plain JSON-compatible values."""
+        return cast(JsonValue, self.data_adapter.dump_python(data, mode="json"))
 
     def without(self, *annotations: Any) -> Self:
         """Drop the parameters carrying any of these annotations.
@@ -872,25 +994,46 @@ class CallInfo:
         that one, so a surface names the type it cannot honour instead of
         keeping a string of the spelling in step with it.
 
-        Both adapters synthesize a signature rather than edit one — the
-        FastMCP one already appends a ``_tool_`` parameter no ``__call__``
-        declares — so leaving an argument out is the same act as putting one
+        All three surfaces synthesize a signature rather than edit one, the
+        FastMCP one already appending a ``_tool_`` parameter no ``__call__``
+        declares, so leaving an argument out is the same act as putting one
         in, and no schema is rewritten after the fact.  It is what a surface
         uses for an argument it could only advertise and then refuse on every
         call, which is a defect in the schema rather than a mode.
+
+        A result branch reachable only through a dropped argument goes with it,
+        read off that argument's own :class:`Unreachable` metadata rather than
+        named a second time by the caller.  A surface that hands out no writer
+        has said so once and both halves follow from the one fact, where naming
+        them separately let the MCP surface drop the argument and go on
+        advertising the receipt it could no longer return.
         """
         dropped = {
             name for name, hint in self.annotations.items() if hint in annotations
         }
+        if not dropped:
+            return self
+
+        unreachable = {
+            meta.data_type
+            for hint in annotations
+            for meta in get_args(hint)
+            if isinstance(meta, Unreachable)
+        }
+        members = (
+            get_args(self.data_type)
+            if get_origin(self.data_type) is types.UnionType
+            else ()
+        )
+        remaining = tuple(member for member in members if member not in unreachable)
+        if members and not remaining:
+            msg = f"{self.name!r} has no result type once {sorted(dropped)} is dropped"
+            raise TypeError(msg)
 
         return replace(
             self,
             params=tuple(p for p in self.params if p.name not in dropped),
-            annotations={
-                name: hint
-                for name, hint in self.annotations.items()
-                if name not in dropped
-            },
+            data_type=reduce(or_, remaining) if remaining else self.data_type,
         )
 
     def apply_to(
@@ -924,7 +1067,7 @@ class CallInfo:
         """Extract call metadata from a Tool factory's return type.
 
         Resolves the Tool subclass from *factory*'s return annotation,
-        then inspects its ``__call__`` method to build a :class:`CallInfo`.
+        then inspects its ``__call__`` method to build a :class:`ToolSpec`.
 
         Cached on the factory, which is what makes this affordable on the
         sandbox path: the two schema-building adapters run it once at import,
@@ -939,7 +1082,7 @@ class CallInfo:
                 subclass.
 
         Returns:
-            Extracted call information.
+            Extracted tool contract.
 
         Raises:
             TypeError: If the factory's return annotation is not a Tool
@@ -948,6 +1091,8 @@ class CallInfo:
                 a ``ToolOutput``.
         """
         tool_cls = resolve_tool_cls(factory)
+        factory_annotation = get_type_hints(factory)["return"]
+        bindings = _typevar_bindings(factory_annotation)
         call = tool_cls.__call__
         sig = inspect.signature(call)
         hints = get_type_hints(call, include_extras=True)
@@ -970,15 +1115,35 @@ class CallInfo:
             raise TypeError(msg)
 
         annotations = {
-            name: hint for name, hint in hints.items() if name not in ("self", "return")
+            name: _replace_typevars(hint, bindings)
+            for name, hint in hints.items()
+            if name not in ("self", "return")
         }
+        # A factory annotated `-> VectorSearchTool[RetrievedChunk]` names the
+        # record its `list[R]` holds, and resolving the tool class discards it.
+        # Binding it here keeps every field concrete for whoever reads it, and
+        # this is the only place the parameterised annotation and the resolved
+        # one are both in hand.
+        envelope = cast(type[ToolOutput[Any]], _replace_typevars(returns, bindings))
+        unresolved = [
+            name for name, annotation in annotations.items() if _has_typevar(annotation)
+        ]
+        if envelope.__pydantic_generic_metadata__["parameters"]:
+            unresolved.append("return")
+        if unresolved:
+            name = getattr(factory, "__qualname__", repr(factory))
+            joined = ", ".join(unresolved)
+            raise TypeError(f"{name!r} leaves tool parameters unresolved: {joined}")
+
+        (data_type,) = envelope.__pydantic_generic_metadata__["args"]
 
         return cls(
             name=factory_tool_name(factory),
             description=tool_description(tool_cls),
-            params=params,
-            annotations=annotations,
-            returns=_bound_return(factory, returns),
+            params=tuple(
+                param.replace(annotation=annotations[param.name]) for param in params
+            ),
+            data_type=data_type,
             is_async=inspect.iscoroutinefunction(call),
             source_module=getattr(factory, "__module__", ""),
         )

@@ -10,9 +10,11 @@ mutates is injected and nothing needs to be: a program cannot stop to ask for
 approval, and every function here is a read.
 
 What crosses the boundary is the structured ``data`` channel, as the plain
-objects ``to_jsonable_python`` makes of it — the same pydantic-core serialiser
-a ``.json`` ``output_path`` writes with, stopping at objects rather than going
-on to bytes a program would only parse back.  The model-facing ``text`` channel
+objects the tool's declared result type serialises to.  That declared type is
+also what the rendered stub names and what ``return_schema`` publishes, so what
+a program receives and what it was told to expect are one description read
+twice, and it stops at objects rather than going on to the bytes a ``.json``
+``output_path`` writes and a program would only parse back.  The model-facing ``text`` channel
 stays behind, as its budgets, truncation, and hints exist to fit a context
 window a program does not have, and a program that wanted fewer rows can say so
 in the query.
@@ -45,18 +47,16 @@ import inspect
 import types
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from functools import cache, reduce
-from operator import or_
-from typing import Any, get_args
+from functools import cache
+from typing import Any
 
-from pydantic import TypeAdapter, create_model
+from pydantic import JsonValue
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.tools import ToolDefinition
-from pydantic_core import to_jsonable_python
 
 from ..converters.base import fenced_code_block
-from .base import AsyncTool, CallInfo, ToolOutput, translate_tool_retry
-from .sink import OutputPathArg, RedirectedOutput
+from .base import AsyncTool, ToolSpec, translate_tool_retry
+from .sink import OutputPathArg
 
 __all__ = ["MontySurface", "monty_surface"]
 
@@ -69,7 +69,7 @@ was one, and the mismatch belongs in the signature rather than in a runtime
 check inside the wrapper.
 """
 
-type _HostFunction = Callable[..., Awaitable[Any]]
+type _HostFunction = Callable[..., Awaitable[JsonValue]]
 """What one injected tool becomes, whose payload the rendered stub declares."""
 
 _STUB_HEADER = "import asyncio\nfrom typing import Any, Literal, NotRequired, TypedDict"
@@ -107,61 +107,19 @@ class MontySurface:
         return bool(self.declarations)
 
 
-def _result_type(info: CallInfo) -> Any:
-    """The payload a tool's ``ToolOutput[...]`` return annotation carries.
-
-    ``RedirectedOutput`` is dropped rather than described: the redirect argument
-    is not on the built signature, so the receipt branch it names is
-    unreachable from a program and declaring it would only invite a check for a
-    variant that never arrives.
-
-    Read off pydantic's generic metadata rather than :func:`get_args`, since
-    ``ToolOutput`` is a model: parameterising one builds a real subclass, and
-    the typing introspection that works on every other annotation reports no
-    arguments at all for it.  ``CallInfo`` has already bound the tool class's
-    own type parameters, so what comes out is concrete.
-
-    The receipt is looked for among the payload's arguments rather than behind
-    an origin test, which asks the question directly and leaves nothing to keep
-    in step with how a union is spelled.
-    """
-    (payload,) = info.returns.__pydantic_generic_metadata__["args"]
-    members = get_args(payload)
-
-    if RedirectedOutput not in members:
-        return payload
-
-    return reduce(or_, (member for member in members if member is not RedirectedOutput))
-
-
-def _parameters_schema(info: CallInfo) -> dict[str, Any]:
-    """The JSON schema of a tool's arguments, defaults and descriptions included.
-
-    Built through pydantic rather than read off the registered pydantic-ai tool:
-    a tool is built per run here and may be injected on a surface that never
-    registers it at all, and the ``Annotated`` metadata each argument already
-    carries is the same thing either route would read.
-    """
-    fields: dict[str, Any] = {
-        param.name: (
-            info.annotations[param.name],
-            ... if param.default is param.empty else param.default,
-        )
-        for param in info.params
-    }
-
-    return create_model(f"{info.name}_arguments", **fields).model_json_schema()
-
-
-def _sandbox_info(factory: _Factory[Any]) -> CallInfo:
+@cache
+def _sandbox_spec(factory: _Factory[Any]) -> ToolSpec:
     """One tool's call metadata as the sandbox takes it.
 
-    The redirect is dropped here and only here, so the signature a program is
-    declared and the signature it is given cannot come apart: a program already
-    holds the value, so a copy in the workspace is a write it did not need and
-    could not have had approved.
+    The redirect is dropped, so the signature a program is declared and the
+    signature it is given cannot come apart: a program already holds the value,
+    so a copy in the workspace is a write it did not need and could not have
+    had approved.  Dropping the argument drops the receipt branch it names with
+    it, which is why the rendered stub declares only the payload: the variant
+    is unreachable from a program, and declaring it would invite a check for
+    something that never arrives.
     """
-    return CallInfo.from_factory(factory).without(OutputPathArg)
+    return ToolSpec.from_factory(factory).without(OutputPathArg)
 
 
 def _definition(factory: _Factory[Any]) -> ToolDefinition:
@@ -172,15 +130,13 @@ def _definition(factory: _Factory[Any]) -> ToolDefinition:
     signature built from them, which is one invariant this module then does not
     have to keep by hand.
     """
-    info = _sandbox_info(factory)
+    spec = _sandbox_spec(factory)
 
     return ToolDefinition(
-        name=info.name,
-        parameters_json_schema=_parameters_schema(info),
-        description=info.description,
-        return_schema=TypeAdapter(_result_type(info)).json_schema(
-            mode="serialization"
-        ),
+        name=spec.name,
+        parameters_json_schema=spec.parameters_json_schema,
+        description=spec.description,
+        return_schema=spec.data_json_schema,
     )
 
 
@@ -217,13 +173,13 @@ def _rendered(factories: tuple[_Factory[Any], ...]) -> tuple[str, str]:
     return catalog, "\n\n".join([_STUB_HEADER, *declared, *rendered(_STUB_BODY)])
 
 
-def _host_function(info: CallInfo, tool: AsyncTool[Any]) -> _HostFunction:
+def _host_function(spec: ToolSpec, tool: AsyncTool[Any]) -> _HostFunction:
     """Wrap a tool as the coroutine the sandbox calls and awaits.
 
     Keyword-only, which is what the rendered signatures declare and what the
     harness's sandboxed tools are: an argument list a program spells out is
     also the one a reader of that program can follow.  The call metadata is
-    stamped through :meth:`CallInfo.apply_to`, as both sibling adapters do, so
+    stamped through :meth:`ToolSpec.apply_to`, as both sibling adapters do, so
     the object says what it accepts rather than leaving the docstring to.
 
     A :class:`ToolRetry` becomes a ``ValueError`` so it crosses as an ordinary
@@ -231,19 +187,17 @@ def _host_function(info: CallInfo, tool: AsyncTool[Any]) -> _HostFunction:
     nearest thing a running program has to the correction a tool call gets.
     """
 
-    async def call(**kwargs: Any) -> Any:
+    async def call(**kwargs: Any) -> JsonValue:
         with translate_tool_retry(ValueError):
-            result: ToolOutput[Any] = await tool(**kwargs)
+            result = await tool(**spec.validate_arguments(kwargs))
 
-        return to_jsonable_python(result.data)
+        return spec.serialize_data(result.data)
 
-    keyword_only = [
-        param.replace(kind=param.KEYWORD_ONLY) for param in info.params
-    ]
-    info.apply_to(
+    keyword_only = [param.replace(kind=param.KEYWORD_ONLY) for param in spec.params]
+    spec.apply_to(
         call,
         inspect.Signature(keyword_only, return_annotation=Any),
-        {**info.annotations, "return": Any},
+        {**spec.annotations, "return": Any},
     )
 
     return call
@@ -263,7 +217,7 @@ def monty_surface[D](factories: Sequence[_Factory[D]], deps: D) -> MontySurface:
     lookup: dict[str, _HostFunction] = {}
 
     for factory in factories:
-        info = _sandbox_info(factory)
-        lookup[info.name] = _host_function(info, factory(deps))
+        spec = _sandbox_spec(factory)
+        lookup[spec.name] = _host_function(spec, factory(deps))
 
     return MontySurface(external_lookup=lookup, declarations=declarations, stubs=stubs)

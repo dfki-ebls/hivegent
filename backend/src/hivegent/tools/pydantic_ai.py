@@ -17,9 +17,9 @@ from pydantic_ai.usage import RunUsage
 
 from .base import (
     BinaryAttachment,
-    CallInfo,
     Tool,
     ToolOutput,
+    ToolSpec,
     factory_tool_name,
     translate_tool_retry,
 )
@@ -136,7 +136,7 @@ def unwrap_tool_output(result: Any) -> tuple[str | None, Any]:
 def for_pydantic_ai[D](
     factory: Callable[[D], Tool[Any]],
     deps_type: type[D],
-) -> Callable[..., Any]:
+) -> Callable[..., ToolReturn] | Callable[..., Awaitable[ToolReturn]]:
     """Build a wrapper function whose signature pydantic-ai can introspect.
 
     The tool class is inferred from *factory*'s return type annotation.
@@ -149,7 +149,7 @@ def for_pydantic_ai[D](
     Returns:
         A callable with rewritten signature, annotations, and docstring.
     """
-    info = CallInfo.from_factory(factory)
+    spec = ToolSpec.from_factory(factory)
 
     # Build parameter list: RunContext first, then __call__ params.
     # Use getattr to build RunContext[D] at runtime without a subscript
@@ -161,32 +161,32 @@ def for_pydantic_ai[D](
         annotation=ctx_annotation,
     )
     new_sig = inspect.Signature(
-        parameters=[ctx_param, *info.params],
+        parameters=[ctx_param, *spec.params],
         return_annotation=ToolReturn,
     )
 
     new_annotations: dict[str, Any] = {
         "ctx": ctx_annotation,
-        **{n: Annotated[h, _DEQUOTE_VALIDATOR] for n, h in info.annotations.items()},
+        **{n: Annotated[h, _DEQUOTE_VALIDATOR] for n, h in spec.annotations.items()},
         "return": ToolReturn,
     }
 
     # Surface a ToolRetry as pydantic-ai's ModelRetry so the model can fix its
     # input and retry (any other exception would abort the whole run).
-    if info.is_async:
+    if spec.is_async:
 
-        async def wrapper(ctx: Any, **kwargs: Any) -> Any:
+        async def wrapper(ctx: RunContext[D], **kwargs: Any) -> ToolReturn:
             with translate_tool_retry(ModelRetry):
                 result = cast(Awaitable[ToolOutput[Any]], factory(ctx.deps)(**kwargs))
                 return wrap_tool_output(await result, tool_call_id=ctx.tool_call_id)
     else:
 
-        def wrapper(ctx: Any, **kwargs: Any) -> Any:
+        def wrapper(ctx: RunContext[D], **kwargs: Any) -> ToolReturn:
             with translate_tool_retry(ModelRetry):
                 result = cast(ToolOutput[Any], factory(ctx.deps)(**kwargs))
                 return wrap_tool_output(result, tool_call_id=ctx.tool_call_id)
 
-    info.apply_to(wrapper, new_sig, new_annotations)
+    spec.apply_to(wrapper, new_sig, new_annotations)
     return wrapper
 
 

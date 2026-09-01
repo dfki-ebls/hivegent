@@ -323,14 +323,27 @@ A user-supplied server is the one part of the prompt this application does not s
 
 `query_hint` (`tools/base.py`) keys the pointer on the entry rather than on the path the read was addressed by, since an uploaded table is only ever served as its `<stem>.md` projection and asking the requested suffix alone left `query_table` invisible for exactly the file it exists for; `sidecar_hint` names the same tool on the refusal of the original, ahead of the extracted text it also names, and `PYTHON_INSTRUCTIONS` names it once more in the map from what a program lacks to the tool that has it.
 
+### The MCP surface returns structured content
+
+An MCP client gets both channels of a `ToolOutput`: the `text` a model would have read as a content block, and the structured `data` as `structured_content`, against an `output_schema` registered with the tool.
+
+The schema is asked of FastMCP rather than assembled here (`tools/fastmcp.py`, `output_schema`).
+MCP requires an object at the top, so a payload that is not one has to be wrapped, and that wrapping is a convention with three parts: the `result` property, the `x-fastmcp-wrap-result` marker `convert_result` reads back, and a `$defs` block hoisted to the document root, which is where the `#/$defs/...` pointers inside it resolve.
+Assembling it by hand nested the definitions one level down and left every pointer in every model-shaped schema dangling, so the question goes to the one place that owns the answer, and the wrap flag is read back off what comes out rather than decided a second time by a weaker test of its own.
+
+The wrapper still returns a built `ToolResult`, since a raw return value would have FastMCP replace the text and the binary attachments with a rendering of the structured content.
+That is why the wrapping FastMCP does for a raw value is mirrored in `wrap_tool_output` instead of inherited, and why the payload is serialised through the spec's own adapter: it is the adapter the registered schema was derived from.
+
 ### Redirecting bulk output
 
 Every bulk-output tool (`list_documents`, `glob_documents`, `read_document`, `query_table`, `jq`, `grep`, `search`, and the two web tools) declares an `output_path`, which writes that call's result to a workspace file and hands the model a receipt instead of the result, so a call whose answer dwarfs the question is worth making when a later `run_python` step, not the model's own reading, is what turns it into an answer.
 The suffix picks the channel, since the two a tool returns are not interchangeable: `.json` stores the structured `data`, which for a grep count, a file listing, or a jq filter is every match rather than the first `max_results` of them, while `.txt` stores the very text the model would have been shown.
 
 It is declared by each tool next to a `writer` field, the way `run_python` already declares the one document its programs persist, rather than injected into every tool's schema by the framework adapter: where a result may land is a property of the tool as it was built for a run.
-The MCP surface hands out no writer, so it leaves the argument out of the signature it builds (`register_mcp_tools(..., omit=(OutputPathArg,))` via `CallInfo.without`, which addresses the parameter by the shared `Annotated` alias it is declared with rather than by a copy of its spelling) instead of advertising one it could only refuse on every call.
-That is not schema surgery: both adapters synthesize a signature rather than edit one, the FastMCP adapter already appending a `_tool_` parameter no `__call__` declares, so leaving an argument out is the same act as putting one in.
+The MCP surface hands out no writer, so it leaves the argument out of the signature it builds (`register_mcp_tools(..., omit=(OutputPathArg,))` via `ToolSpec.without`, which addresses the parameter by the shared `Annotated` alias it is declared with rather than by a copy of its spelling) instead of advertising one it could only refuse on every call.
+That is not schema surgery: all three surfaces synthesize a signature rather than edit one, the FastMCP adapter already appending a `_tool_` parameter no `__call__` declares, so leaving an argument out is the same act as putting one in.
+Dropping the argument drops the `RedirectedOutput` branch with it, read off the alias's own `Unreachable` metadata rather than named a second time at each call site: the receipt is reachable only through `output_path`, so a surface that hands out no writer has said so once and both halves follow.
+Naming them separately is what let the MCP surface drop the argument and go on advertising the receipt it could no longer return.
 A read or plan mode still advertises it and refuses at call time, deliberately, since there the argument is dead for this run and live for the next one, which a schema fixed at registration cannot express.
 
 The write is the same one the write tools perform, so it answers to the same gate (`agents/tools/write.py` owns `output_sink` and both validators, which share one `_gate_declared_write` and differ only in the argument they name to the user): read and plan modes refuse it, an interactive call asks for approval unless the path lands in `.scratch/`, write mode approves it.
@@ -381,7 +394,7 @@ What does gate them is whatever gates the tool of the same name, since the two a
 That union is computed there rather than carried on deps, so a `UserDeps` built without it — the debug console's, the MCP one's — still cannot hand a program a tool the operator disabled.
 A tool hidden from the model's tool list must not come back as a function it can call from a program.
 
-A program is handed the structured `data` channel as `to_jsonable_python` renders it: the same pydantic-core serialiser a `.json` `output_path` writes with, stopping at objects rather than going on to bytes a program would only have to parse back.
+A program is handed the structured `data` channel as the adapter for the tool's declared result type renders it: the same type the rendered stub names and `return_schema` publishes, so what a program receives and what it was told to expect are one description read twice, stopping at objects rather than going on to the bytes a `.json` `output_path` writes and a program would only have to parse back.
 So a program sees plain dicts and lists, reads a field as `hit['filename']`, and gets the whole result: the budgets, truncation, and hints on the `text` channel exist to fit a context window a program does not have, and a program that wants fewer rows says so in its query.
 
 The declarations `monty_surface` builds have two consumers: the model reads them as the API it may call (`SANDBOX_API_INSTRUCTIONS`, composed per run so it never names a function the gate withheld), and the sandbox takes them as `type_check_stubs`.

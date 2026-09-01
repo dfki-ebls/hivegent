@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Annotated, override
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -41,6 +41,7 @@ from hivegent.tools.sink import OutputPathArg, RedirectedOutput, RedirectingTool
 from hivegent.types import ToolsSpec
 
 QueryArg = Annotated[str, Field(description="What to look for.")]
+LimitArg = Annotated[int, Field(ge=1)]
 
 
 class Hit(BaseModel):
@@ -72,7 +73,7 @@ class _Search(RedirectingTool[list[Hit]]):
 
     @override
     async def __call__(
-        self, query: QueryArg, limit: int = 5, output_path: OutputPathArg = None
+        self, query: QueryArg, limit: LimitArg = 5, output_path: OutputPathArg = None
     ) -> ToolOutput[list[Hit] | RedirectedOutput]:
         """Find matching records.
 
@@ -153,6 +154,12 @@ class TestHostFunction:
 
         with pytest.raises(ValueError, match="give me a query"):
             await call(query="")
+
+    async def test_validates_constraints_before_calling_the_tool(self) -> None:
+        call = monty_surface([_search], None).external_lookup["search"]
+
+        with pytest.raises(ValidationError, match="greater than or equal to 1"):
+            await call(query="invoices", limit=0)
 
 
 class TestGate:

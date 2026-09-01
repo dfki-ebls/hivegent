@@ -17,7 +17,7 @@ field, the way :class:`~hivegent.tools.python.RunPythonTool` already declares
 the one document its programs persist.  Nothing injects it: where a result
 may land is a property of the tool as it was built for a run, so a surface
 that hands out no writer leaves it out of what it builds
-(:meth:`~hivegent.tools.base.CallInfo.without`) rather than advertising an
+(:meth:`~hivegent.tools.base.ToolSpec.without`) rather than advertising an
 argument it could only refuse.
 """
 
@@ -30,7 +30,7 @@ from pydantic import Field
 from pydantic_core import to_json
 
 from ..humanize import pluralize
-from .base import AsyncPathTool, AsyncTool, ToolOutput, ToolRetry
+from .base import AsyncPathTool, AsyncTool, ToolOutput, ToolRetry, Unreachable
 from .mutations import WriteDocumentTool, resolve_text_target
 
 __all__ = [
@@ -51,26 +51,6 @@ type OutputFormat = Literal["json", "txt"]
 _FORMATS: dict[str, OutputFormat] = {".json": "json", ".txt": "txt"}
 """The suffixes a redirect accepts, mapped to the channel each one names."""
 
-OutputPathArg = Annotated[
-    str | None,
-    Field(
-        description=(
-            "Workspace path to write this call's result to instead of "
-            "returning it (`.json` structured, `.txt` text). You get back "
-            "only a receipt."
-        ),
-    ),
-]
-"""The redirect argument, worded for the several tools that each declare it.
-
-It says what the argument does and nothing about when to reach for it: that
-guidance is worth a paragraph, and a paragraph restated once per tool costs
-more context on every request than the redirect saves on the calls that use
-it.  The paragraph is ``REDIRECT_INSTRUCTIONS``, composed once for the whole
-run, which is also why the shared workspace-path hint is left off here — the
-prompt already carries it.
-"""
-
 
 @dataclass(slots=True, frozen=True)
 class RedirectedOutput:
@@ -81,6 +61,28 @@ class RedirectedOutput:
     characters: int
     entries: int | None = None
     """Top-level entries when the payload is a sequence, ``None`` otherwise."""
+
+
+OutputPathArg = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Workspace path to write this call's result to instead of "
+            "returning it (`.json` structured, `.txt` text). You get back "
+            "only a receipt."
+        ),
+    ),
+    Unreachable(RedirectedOutput),
+]
+"""The redirect argument, worded for the several tools that each declare it.
+
+It says what the argument does and nothing about when to reach for it: that
+guidance is worth a paragraph, and a paragraph restated once per tool costs
+more context on every request than the redirect saves on the calls that use
+it.  The paragraph is ``REDIRECT_INSTRUCTIONS``, composed once for the whole
+run, which is also why the shared workspace-path hint is left off here — the
+prompt already carries it.
+"""
 
 
 NO_WRITER_REFUSAL = (
@@ -145,10 +147,10 @@ def _render(result: ToolOutput[Any], fmt: OutputFormat) -> str:
     `.scratch/` directory — chunked and embedded.  Rendering for a human to
     read is what the `.txt` channel is for.
 
-    ``to_json`` and the ``to_jsonable_python`` the sandbox hands a program are
-    the same pydantic-core serialiser stopping at different points, bytes here
-    and objects there, so the two surfaces agree on the shape without either
-    passing through the other.
+    This renders the payload as it stands, while the sandbox renders it through
+    the adapter for the result type the tool declares, so the two surfaces stop
+    at different points, bytes here and objects there, and agree on the shape
+    of a declared result without either passing through the other.
     """
     if fmt == "txt":
         return result.text
