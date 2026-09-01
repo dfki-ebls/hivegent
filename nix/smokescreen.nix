@@ -10,8 +10,8 @@ buildGoModule (finalAttrs: {
   src = fetchFromGitHub {
     owner = "stripe";
     repo = "smokescreen";
-    rev = "f03c477dc9f4fe3252ae96ad9274d53108b2c53c";
-    hash = "sha256-G06cIrhHYV/j+gbC5aqqMsuljUIU67EwzxiUqvZfk9w=";
+    rev = "d4da883a671475551d78da812db547341c8fe6c3";
+    hash = "sha256-wv+5OhpIdLX0qjSSPmxq5/Z4ecJVVxT8WSDTMPCYRug=";
   };
   vendorHash = null;
   subPackages = [ "." ];
