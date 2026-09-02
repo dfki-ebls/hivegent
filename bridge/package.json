@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "description": "Multi-platform chat bridge exposing the hivegent backend through the Vercel Chat SDK",
+  "license": "MIT",
   "bin": {
     "hivegent-bridge": "dist/index.js"
   },

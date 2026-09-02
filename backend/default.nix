@@ -21,6 +21,9 @@
   ripgrep,
   tessdata,
   ninja,
+  pkg-config,
+  leptonica,
+  tesseract,
   gcc,
   openssl,
   # Whether docling may wrap its torch models (picture classifier &c.) in
@@ -100,15 +103,30 @@ let
       # -U_FORTIFY_SOURCE, so it must be disabled at the wrapper level.
       hardeningDisable = [ "fortify" ];
     });
-    hivegent = prev.hivegent.overrideAttrs (old: {
+    # Built from the sdist (darwin, see `pyproject.toml`), tesserocr resolves the
+    # libraries it links through `pkg-config tesseract lept` rather than bundling
+    # them as the wheels do.  Gated on the source form, not the platform, since
+    # that is what varies, and a wheel build would otherwise hand these to
+    # `autoPatchelfHook` as RPATH candidates for libraries it already carries.
+    tesserocr = prev.tesserocr.overrideAttrs (
+      old:
+      lib.optionalAttrs (old.passthru.format == "pyproject") {
+        nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkg-config ];
+        buildInputs = (old.buildInputs or [ ]) ++ [
+          leptonica
+          tesseract
+        ];
+      }
+    );
+    hivegent-backend = prev.hivegent-backend.overrideAttrs (old: {
       passthru = lib.recursiveUpdate (old.passthru or { }) {
         tests.pytest = stdenv.mkDerivation {
-          name = "${final.hivegent.name}-pytest";
-          inherit (final.hivegent) src;
+          name = "${final.hivegent-backend.name}-pytest";
+          inherit (final.hivegent-backend) src;
           nativeBuildInputs = [
             cacert
             (mkVenv "hivegent-test-env" {
-              hivegent = [
+              hivegent-backend = [
                 "all"
                 "dev"
               ];
@@ -145,16 +163,26 @@ let
   );
   mkVenv =
     name: deps:
-    (pythonSet.mkVirtualEnv name deps).overrideAttrs (_: {
+    # The version belongs in the name: the venv reaches the closure only through
+    # the wrapper's string context, so bombon reads it back off the store path
+    # and skips what states no version, which would strand `python3` in the SBOM
+    # with nothing depending on it.
+    (pythonSet.mkVirtualEnv "${name}-${pythonSet.hivegent-backend.version}" deps).overrideAttrs (_: {
       venvIgnoreCollisions = [
         "${python313.sitePackages}/cv2/*"
       ];
     });
   inherit (callPackage pyproject-nix.build.util { }) mkApplication;
 
+  venv = mkVenv "hivegent-env" workspace.deps.optionals;
+
+  # Every Python dependency as its own uv2nix derivation, i.e. what the venv
+  # symlinks into.  Neither it nor `venv` is computable outside this scope.
+  venvPackages = pythonSet.resolveVirtualEnv workspace.deps.optionals;
+
   app = mkApplication {
-    venv = mkVenv "hivegent-env" workspace.deps.optionals;
-    package = pythonSet.hivegent;
+    inherit venv;
+    package = pythonSet.hivegent-backend;
   };
 
   # docling renders embedded VML/EMF/WMF images by shelling out to LibreOffice
@@ -209,6 +237,13 @@ let
 in
 app.overrideAttrs (oldAttrs: {
   nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ makeBinaryWrapper ];
+  # `project.license` in `pyproject.toml` does not reach here: pyproject-nix's
+  # meta renderer reads only the PEP 621 `license.text` table, not the PEP 639
+  # string, so the license is stated in both spellings.
+  meta = (oldAttrs.meta or { }) // {
+    license = lib.licenses.mit;
+    maintainers = with lib.maintainers; [ mirkolenz ];
+  };
   # tesserocr (docling OCR) and kreuzberg link their own libtesseract but
   # carry no language data; both resolve it from TESSDATA_PREFIX at runtime
   # (see `nix/tessdata.nix`) — the tesseract CLI itself is not shipped.
@@ -233,7 +268,15 @@ app.overrideAttrs (oldAttrs: {
       --set-default LOGFIRE_IGNORE_NO_CONFIG 1
   '';
   passthru = (oldAttrs.passthru or { }) // {
-    inherit runtimeInputs tessdata;
+    # `nix/sbom.nix` names the SBOM's root component from it, since a venv scan
+    # describes the dependencies and not the project they belong to.
+    pyproject = ./pyproject.toml;
+    inherit
+      runtimeInputs
+      tessdata
+      venv
+      venvPackages
+      ;
     enableTorchCompile = torchCompile;
   };
 })

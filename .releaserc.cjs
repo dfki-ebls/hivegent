@@ -54,11 +54,29 @@ module.exports = {
       },
     ],
     [
+      // Built during `prepare`, after the manifests are bumped and before
+      // anything is published: the document states the version being released,
+      // and a build that fails means no release is created at all.  A release
+      // that ships these artifacts has to build them regardless -- the SBOM is
+      // read off what was built, not produced independently of it.
+      "@semantic-release/exec",
+      {
+        prepareCmd: "nix build .#sbom --out-link sbom",
+      },
+    ],
+    [
       "@semantic-release/github",
       {
         failComment: false,
         successComment: false,
         addReleases: "bottom",
+        assets: [
+          {
+            path: "sbom/hivegent.cdx.json",
+            name: "hivegent-${nextRelease.version}.cdx.json",
+            label: "Software Bill of Materials (CycloneDX)",
+          },
+        ],
       },
     ],
     [

@@ -1497,7 +1497,7 @@ wheels = [
 ]
 
 [[package]]
-name = "hivegent"
+name = "hivegent-backend"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
@@ -1578,7 +1578,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=4.0.0b1,<5" },
     { name = "firecrawl-anydoc", specifier = ">=0.1,<0.2" },
     { name = "frozendict", specifier = ">=2.4.7" },
-    { name = "hivegent", extras = ["docling", "pdf-oxide", "semantic"], marker = "extra == 'all'" },
+    { name = "hivegent-backend", extras = ["docling", "pdf-oxide", "semantic"], marker = "extra == 'all'" },
     { name = "httpx2", specifier = ">=2,<3" },
     { name = "joserfc", specifier = ">=1,<2" },
     { name = "kreuzberg", marker = "extra == 'kreuzberg'", specifier = ">=4,<5" },

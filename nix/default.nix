@@ -49,13 +49,12 @@
         treefmt = config.treefmt.build.wrapper;
         inherit (config.packages) hivegent backend;
       };
-      checks = {
-        inherit (config.packages)
-          backend
-          frontend
-          bridge
-          smokescreen
-          ;
+      # Everything the flake builds is checked, derived from `packages` rather
+      # than listed beside it so the two cannot drift: a package added below is
+      # built by CI without anyone remembering to name it here.  That covers
+      # `sbom`, whose build is the release's, so the closure a release needs is
+      # already in the binary cache by the time it runs.
+      checks = config.packages // {
         inherit (config.packages.backend.passthru.tests) pytest;
       };
       packages = {
@@ -67,6 +66,19 @@
         bridge = pkgs.callPackage ../bridge { };
         docs = pkgs.callPackage ../docs { };
         smokescreen = pkgs.callPackage ./smokescreen.nix { };
+        sbom = pkgs.callPackage ./sbom.nix {
+          # bombon's own entry point, not its flake `lib`, which would evaluate a
+          # second nixpkgs instead of the one everything else here is built from.
+          bombon = import inputs.bombon { inherit pkgs; };
+          inherit (inputs) cyclonedx-spec;
+          inherit (config.packages)
+            backend
+            frontend
+            bridge
+            smokescreen
+            docs
+            ;
+        };
         tessdata = pkgs.callPackage ./tessdata.nix { };
         release-env = pkgs.buildEnv {
           name = "release-env";

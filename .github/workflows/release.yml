@@ -16,6 +16,7 @@ jobs:
       git-head: ${{ steps.semanticrelease.outputs.new_release_git_head }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: wimpysworld/nothing-but-nix@687c797a730352432950c707ab493fcc951818d7 # v10
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
         with:
           extra-conf: |
@@ -34,9 +35,11 @@ jobs:
           extra_plugins: |
             @cihelper/semanticrelease-plugin-uv@1
             @semantic-release/changelog@6
+            @semantic-release/exec@7
             @semantic-release/git@10
             semantic-release-major-tag@0.3
             conventional-changelog-conventionalcommits@9
+
   # Multi-arch container publish to GHCR. Disabled for now: to enable, add a
   # `docker-manifest` output to the flake (flocken's `mkDockerManifest` over the
   # x86_64/aarch64 `docker` image streams) and replace `if: false` with the
@@ -55,6 +58,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ needs.release.outputs.git-head }}
+      - uses: wimpysworld/nothing-but-nix@687c797a730352432950c707ab493fcc951818d7 # v10
       - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
         with:
           platforms: arm64

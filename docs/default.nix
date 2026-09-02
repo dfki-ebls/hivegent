@@ -13,7 +13,10 @@
   sitePath ? "/",
 }:
 stdenvNoCC.mkDerivation (finalAttrs: {
-  name = "book";
+  pname = "hivegent-docs";
+  # The one package with no manifest (`pyproject.toml`, `package.json`) to take
+  # its version from.
+  version = "0.0.1";
   nativeBuildInputs = [
     mdbook
     mdbook-mermaid
@@ -56,6 +59,12 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     cp assets/redirect.html $out/index.html
     runHook postInstall
   '';
+
+  meta = {
+    description = "Hivegent handbook";
+    license = lib.licenses.mit;
+    maintainers = with lib.maintainers; [ mirkolenz ];
+  };
 
   passthru.serve = writeShellApplication {
     name = "serve";

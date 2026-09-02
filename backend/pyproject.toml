@@ -1,9 +1,10 @@
 [project]
-name = "hivegent"
+name = "hivegent-backend"
 version = "0.0.1"
 description = "Agentic system for non-expert users to interact with LLMs guided by experience"
 readme = "README.md"
 requires-python = ">=3.13,<4"
+license = "MIT"
 authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
 dependencies = [
   "alembic>=1,<2",
@@ -40,7 +41,7 @@ dependencies = [
 hivegent = "hivegent.cli:app"
 
 [project.optional-dependencies]
-all = ["hivegent[docling,pdf-oxide,semantic]"]
+all = ["hivegent-backend[docling,pdf-oxide,semantic]"]
 # code = ["chonkie[code]>=1,<2"]
 # marker = ["marker-pdf[full]>=1,<2"]
 # mineru = ["mineru[all]>=3,<4"]
@@ -64,6 +65,11 @@ dev = [
 [build-system]
 requires = ["uv-build>=0.11,<1"]
 build-backend = "uv_build"
+
+# The distribution is named for the artifact it ships, the import package for
+# the system it belongs to, so the module has to be named rather than derived.
+[tool.uv.build-backend]
+module-name = "hivegent"
 
 [tool.alembic]
 script_location = "src/hivegent/migrations"
@@ -103,6 +109,11 @@ antlr4-python3-runtime = ["setuptools"]
 ebooklib = ["setuptools"]
 pylatexenc = ["setuptools"]
 cysignals = ["meson-python", "cython"]
+# No wheel matches nixpkgs' darwin SDK (tesserocr's macOS wheels are tagged
+# macosx_15_0, while `stdenv.hostPlatform.darwinSdkVersion` is 14.4), so darwin
+# builds the sdist, which declares no build backend at all and cythonizes
+# against cysignals' headers.
+tesserocr = ["setuptools", "cython", "cysignals"]
 
 [tool.uv.sources]
 # cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }

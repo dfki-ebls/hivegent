@@ -1,8 +1,9 @@
 {
-  "name": "hivegent",
+  "name": "hivegent-frontend",
   "version": "0.0.1",
   "private": true,
   "description": "Agentic system for non-expert users to interact with LLMs guided by experience",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite --port 3000",

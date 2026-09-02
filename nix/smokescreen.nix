@@ -27,6 +27,19 @@ buildGoModule (finalAttrs: {
   '';
   passthru = {
     defaultPort = 4750;
+    # `nix/sbom.nix` detects the module licenses, which means fetching each
+    # module: Go can serve neither its graph nor its licenses out of a `vendor/`
+    # tree, so this cache is the proxy that serves them offline.  Only
+    # `.goModules` is ever realised, so no second binary is built, and the
+    # shipped one still compiles from the `vendor/` directory upstream
+    # committed -- which the cache has to drop, `buildGoModule` refusing to
+    # combine the two.
+    goModuleCache =
+      (finalAttrs.finalPackage.overrideAttrs {
+        proxyVendor = true;
+        vendorHash = "sha256-IhKwjzoOzoe66Yh6dOX6MHQTEzjLmpEbVg9GL0NnUcQ=";
+        postPatch = "rm -rf vendor";
+      }).goModules;
     # The proxy must never be reachable off-host, and its listen address is
     # also the URL the backend dials, so both are derived here from one port
     # instead of being restated at each deployment.
@@ -46,7 +59,7 @@ buildGoModule (finalAttrs: {
   meta = {
     description = "HTTP CONNECT proxy that prevents SSRF";
     homepage = "https://github.com/stripe/smokescreen";
-    license = lib.licenses.asl20;
+    license = lib.licenses.mit;
     mainProgram = "smokescreen";
   };
 })
