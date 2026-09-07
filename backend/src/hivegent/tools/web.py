@@ -41,7 +41,7 @@ def build_user_agent(contact: str = "") -> str:
     advertised for traffic questions; it falls back to the package
     author when empty.
     """
-    meta = metadata("hivegent")
+    meta = metadata("hivegent-backend")
     contact = contact or parseaddr(meta.get("Author-email", ""))[1]
     suffix = f" (+mailto:{contact})" if contact else ""
     return f"{meta['Name']}/{meta['Version']}{suffix}"

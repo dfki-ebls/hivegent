@@ -13,11 +13,18 @@ from hivegent.security import (
     require_safe_external_url,
 )
 from hivegent.tools.base import ToolRetry
-from hivegent.tools.web import WebFetch, WebSearch
+from hivegent.tools.web import WebFetch, WebSearch, build_user_agent
 from tests.helpers import returned
 
 #: Permits every host, so a fetch test opts out of policy enforcement.
 _ANY_HOST = UrlPolicy(allow_hosts=("*",))
+
+
+def test_user_agent_uses_backend_distribution_metadata() -> None:
+    user_agent = build_user_agent("test@example.com")
+
+    assert user_agent.startswith("hivegent-backend/")
+    assert user_agent.endswith(" (+mailto:test@example.com)")
 
 
 def _web_client(
