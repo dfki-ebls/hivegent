@@ -146,14 +146,6 @@ def _binary_glob(glob: str | None) -> str:
     )
 
 
-def _local_name(sp: SearchPath, path: str) -> str | None:
-    """Return *path* relative to the search root, or ``None`` if it escaped it."""
-    try:
-        return Path(path).relative_to(sp.path).as_posix()
-    except ValueError:
-        return None
-
-
 def _drop_shadowed_originals(matches: list[GrepMatch]) -> list[GrepMatch]:
     """Drop original hits whose own markdown description matched as well.
 
@@ -188,7 +180,13 @@ async def _search_path(
     literal: bool,
     exclude_dirs: tuple[str, ...],
 ) -> list[GrepMatch]:
-    """Run ripgrep against a single search path."""
+    """Run ripgrep against a single search path.
+
+    One run per workspace, each anchored in its own root, so an unprefixed
+    ``reports/*.txt`` names that subdirectory of every workspace the call
+    spans, which is what a glob without a scope prefix promises, while a
+    prefixed one has already narrowed the paths to the workspace it names.
+    """
     if not sp.path.exists():
         return []
     try:
@@ -209,8 +207,9 @@ async def _search_path(
 
     matches: list[GrepMatch] = []
     for rg_match in rg_matches:
-        filename = _local_name(sp, rg_match.path)
-        if filename is None or not entry_visible(sp, filename, exclude_dirs):
+        # ripgrep runs inside the root, so what it reports is already local.
+        filename = rg_match.path
+        if not entry_visible(sp, filename, exclude_dirs):
             continue
         matches.append(
             GrepMatch(

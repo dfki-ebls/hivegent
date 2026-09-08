@@ -12,7 +12,7 @@ from functools import cache, cached_property, reduce
 from operator import or_
 from os import stat_result
 from pathlib import Path
-from stat import S_ISLNK
+from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import (
     Annotated,
     Any,
@@ -519,9 +519,22 @@ def resolve_file_or_retry(
 
     The mutating tools resolve through their own gateway instead: a mutation
     may legitimately create the file, so absence is not a refusal there.
+
+    A directory is turned away in its own words rather than as a missing
+    file: it exists, so "not found" is false and sends the caller looking for
+    a respelling of a path that was right, and the correction it needs is the
+    tool that opens a directory instead of the one that opens a document.
     """
     resolved = resolve_accessible_file(paths, file_path)
-    if resolved is None or not resolved[2].is_file():
+    st = entry_stat(resolved[2]) if resolved is not None else None
+
+    if st is not None and S_ISDIR(st.st_mode):
+        raise ToolRetry(
+            f"'{file_path}' is a directory, not a document. "
+            "Use list_documents to see the documents in it."
+        )
+
+    if resolved is None or st is None or not S_ISREG(st.st_mode):
         hint = (
             workspace_root_hint(paths, file_path)
             if resolved is None

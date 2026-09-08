@@ -659,6 +659,16 @@ class TestReadDocumentTool:
         with pytest.raises(ToolRetry, match="not found"):
             await tool("../../../etc/passwd")
 
+    async def test_rejects_a_directory_as_a_directory(self, tmp_path: Path) -> None:
+        # A selected folder reaches the model as a path like any other, so it
+        # is read like one. "Not found" sent that run hunting for a respelling
+        # of a path that was right; the listing tool is the actual correction.
+        (tmp_path / "reports").mkdir()
+        tool = ReadDocumentTool(paths=tmp_path)
+
+        with pytest.raises(ToolRetry, match="is a directory.*list_documents"):
+            await tool("reports/")
+
     async def test_reads_group_document(self, tmp_path: Path) -> None:
         group_dir = tmp_path / "group"
         group_dir.mkdir()
@@ -1278,6 +1288,33 @@ class TestGrepSearch:
         (tmp_path / "doc.md").write_text("```xml\n<a>needle</a>\n```\n")
         result = await GrepTool(paths=tmp_path)("needle", glob="*.xml")
         assert self._filenames(result.data) == {"doc.xml"}
+
+    async def test_a_directory_glob_searches_that_subtree_of_every_workspace(
+        self, tmp_path: Path
+    ) -> None:
+        # ripgrep matches a glob carrying a slash relative to its working
+        # directory, so one anchored run per workspace is what makes
+        # `reports/*.md` name that folder in each of them.  Handed the root as
+        # an argument instead, it was tested against the absolute path and
+        # matched nothing at all, while a slashless `*.md` appeared to work.
+        for name in ("user", "group"):
+            reports = tmp_path / name / "reports"
+            reports.mkdir(parents=True)
+            (reports / "q1.md").write_text("needle\n")
+            (tmp_path / name / "loose.md").write_text("needle\n")
+        paths = (
+            SearchPath(path=tmp_path / "user", scope=WorkspaceScope()),
+            SearchPath(path=tmp_path / "group", scope=WorkspaceScope("team")),
+        )
+
+        both = await GrepTool(paths=paths)("needle", glob="reports/*.md")
+        one = await GrepTool(paths=paths)("needle", glob="~/reports/*.md")
+
+        assert self._filenames(both.data) == {
+            "~/reports/q1.md",
+            "@team/reports/q1.md",
+        }
+        assert self._filenames(one.data) == {"~/reports/q1.md"}
 
     async def test_assets_payload_hidden_unless_ignored(self, tmp_path: Path) -> None:
         assets = tmp_path / "doc.assets"
