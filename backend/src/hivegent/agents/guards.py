@@ -278,35 +278,39 @@ class IterationLimitWarner(AbstractCapability[UserDeps]):
     Once the run has used ``threshold`` of ``max_requests`` model requests
     (shared across the main agent and its subagents, which run on the same
     usage accumulator), a short user-turn note is appended to the outgoing
-    request stating how many requests remain.  The note rides only the
-    per-request message copy pydantic-ai builds, so it steers the model
-    without ever entering the persisted conversation, and it is re-derived
-    each request rather than accumulating.
+    request stating how many requests remain.  It rides the wire alone, so it
+    steers the model without entering the persisted conversation and is
+    re-derived each request rather than accumulating: appended to the run's
+    own messages it would be recorded as a user turn nobody sent, replayed on
+    every later turn, and joined by one more note per warned request.
     """
 
     max_requests: int
     threshold: float = 0.75
 
-    async def before_model_request(
+    async def wrap_model_request(
         self,
         ctx: RunContext[UserDeps],
+        *,
         request_context: ModelRequestContext,
-    ) -> ModelRequestContext:
+        handler: WrapModelRequestHandler,
+    ) -> ModelResponse:
         """Append a wrap-up note once the request budget is nearly spent."""
         used = ctx.usage.requests
 
-        if used < self.threshold * self.max_requests:
-            return request_context
+        if used >= self.threshold * self.max_requests:
+            remaining = max(0, self.max_requests - used)
+            note = (
+                f"[run-limit-warning] You have used {used} of {self.max_requests} "
+                f"model requests for this turn ({remaining} remaining). Wrap up: "
+                f"give your best answer now and avoid unnecessary tool calls."
+            )
+            request_context = replace(
+                request_context,
+                messages=[
+                    *request_context.messages,
+                    ModelRequest(parts=[UserPromptPart(content=note)]),
+                ],
+            )
 
-        remaining = max(0, self.max_requests - used)
-        note = (
-            f"[run-limit-warning] You have used {used} of {self.max_requests} model "
-            f"requests for this turn ({remaining} remaining). Wrap up: give your "
-            f"best answer now and avoid unnecessary tool calls."
-        )
-        request_context.messages = [
-            *request_context.messages,
-            ModelRequest(parts=[UserPromptPart(content=note)]),
-        ]
-
-        return request_context
+        return await handler(request_context)
