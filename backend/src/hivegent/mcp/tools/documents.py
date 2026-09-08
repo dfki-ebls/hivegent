@@ -69,6 +69,7 @@ def _read_binary_document(
     return ReadBinaryDocumentTool(
         paths=paths,
         binary_content_mode=settings.multimodal.binary_content,
+        max_images=settings.multimodal.max_images,
     )
 
 

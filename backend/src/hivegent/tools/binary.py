@@ -111,6 +111,21 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
     frame_max_dimension: int = FRAME_MAX_DIMENSION
     """Maximum width/height of a sampled frame in pixels."""
 
+    max_images: int | None = None
+    """The serving gateway's per-request image cap, or ``None`` for none.
+
+    A gateway with such a limit (vLLM's ``--limit-mm-per-prompt``) rejects the
+    whole request, which fails the turn rather than the call, so the cap binds
+    the page and frame budgets below rather than being discovered by the model
+    request that carries the attachments.  A PDF over it is a refusal the run
+    can fix by naming ``pages=``; frames are clamped instead, since a run picks
+    pages but never frames.
+    """
+
+    def _bounded(self, budget: int) -> int:
+        """Bound a per-call attachment budget by the gateway's image cap."""
+        return budget if self.max_images is None else min(budget, self.max_images)
+
     @override
     async def __call__(
         self,
@@ -200,7 +215,7 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
                 raw,
                 pages,
                 self.frame_max_dimension,
-                self.max_pages,
+                self._bounded(self.max_pages),
             )
         except ValueError as exc:
             raise ToolRetry(f"PDF could not be read: {exc}") from exc
@@ -265,7 +280,7 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
         try:
             sample = await sample_video(
                 absolute,
-                max_frames=self.max_frames,
+                max_frames=self._bounded(self.max_frames),
                 max_dimension=self.frame_max_dimension,
             )
         except Exception as exc:
@@ -280,7 +295,7 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
             sample = await asyncio.to_thread(
                 sample_animated_image,
                 raw,
-                max_frames=self.max_frames,
+                max_frames=self._bounded(self.max_frames),
                 max_dimension=self.frame_max_dimension,
             )
         except ValueError as exc:

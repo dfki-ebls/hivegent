@@ -638,15 +638,22 @@ class AttachmentLimits(BaseModel):
     """What a chat turn may attach, so the client can enforce it locally.
 
     The composer renders ``media_types`` as its file picker's ``accept``
-    filter and checks ``max_bytes`` before upload.  The chat route
-    validates the same values, since that filter is a convenience and
-    never the gate.
+    filter and checks ``max_bytes`` and ``max_count`` before upload.  The
+    chat route validates the same values, since that filter is a
+    convenience and never the gate.
     """
 
     media_types: list[str] = Field(
         description="Media types the chat composer accepts, sorted"
     )
     max_bytes: int = Field(description="Size cap for a single attachment")
+    max_count: int | None = Field(
+        description=(
+            "How many images one turn may attach, or null for no limit — the "
+            "serving gateway's per-request image cap, which rejects the whole "
+            "request rather than the attachment that overran it"
+        )
+    )
 
 
 class SettingsResponse(BaseModel):

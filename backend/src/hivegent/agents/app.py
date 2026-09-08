@@ -11,7 +11,7 @@ from pydantic_ai.usage import UsageLimits
 
 from ..config import settings
 from .common import UserDeps
-from .guards import IncompleteToolCallGuard
+from .guards import IncompleteToolCallGuard, PromptImageLimit
 
 __all__ = ["base_agent", "turn_usage_limits", "user_agent"]
 
@@ -22,7 +22,13 @@ _default_model_settings = ModelSettings(
 # Carried by the agents rather than composed per run: a run-level
 # ``capabilities`` argument adds to these rather than replacing them, so every
 # run is guarded, including the subagent and MCP ones that compose their own.
-_guards = [IncompleteToolCallGuard()]
+# The image cap belongs here for that reason — it is a property of the gateway
+# every one of those runs talks to, and it takes the setting unconditionally
+# because ``None`` is already how it spells "counts nothing".
+_guards = [
+    IncompleteToolCallGuard(),
+    PromptImageLimit(max_images=settings.multimodal.max_images),
+]
 
 base_agent: Agent[None, str] = Agent(
     retries=settings.llm.retries,

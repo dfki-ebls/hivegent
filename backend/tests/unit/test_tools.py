@@ -14,7 +14,7 @@ from pydantic_monty import AsyncMonty
 from hivegent.config import content_hash
 from hivegent.converters import VISION_MEDIA_TYPES
 from hivegent.store import WorkspaceScope
-from hivegent.tools import workspace_os
+from hivegent.tools import binary, workspace_os
 from hivegent.tools.base import (
     SearchPath,
     ToolRetry,
@@ -598,6 +598,32 @@ class TestReadDocumentTool:
 
         with pytest.raises(ToolRetry, match=r"@team/report\.md"):
             await tool("@team/report.docx")
+
+    async def test_binary_tool_bounds_pdf_pages_by_the_image_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The serving gateway rejects a whole request carrying more images than
+        # its per-prompt cap, which would fail the turn, so the reader renders
+        # no more pages than the cap admits and the over-request lands as the
+        # retryable refusal naming pages=.
+        (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4\n")
+        seen: list[int] = []
+
+        async def render(
+            raw: bytes, spec: str | None, max_dimension: int, max_pages: int
+        ) -> tuple[tuple[bytes, ...], tuple[int, ...]]:
+            seen.append(max_pages)
+            raise ValueError(
+                f"3 pages exceeds the {max_pages}-page limit — narrow with pages="
+            )
+
+        monkeypatch.setattr(binary, "render_pdf_pages", render)
+        tool = ReadBinaryDocumentTool(paths=tmp_path, max_images=2)
+
+        with pytest.raises(ToolRetry, match="narrow with pages="):
+            await tool("report.pdf")
+
+        assert seen == [2]
 
     async def test_binary_without_companion_retries(self, tmp_path: Path) -> None:
         # Undecodable bytes become a recoverable ToolRetry, never a run-aborting

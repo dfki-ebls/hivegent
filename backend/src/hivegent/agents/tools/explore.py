@@ -41,6 +41,7 @@ def _read_binary_document(deps: UserDeps) -> ReadBinaryDocumentTool:
     return ReadBinaryDocumentTool(
         paths=deps.search_paths(),
         binary_content_mode=settings.multimodal.binary_content,
+        max_images=settings.multimodal.max_images,
     )
 
 

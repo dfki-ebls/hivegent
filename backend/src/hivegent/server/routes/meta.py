@@ -57,6 +57,7 @@ async def get_settings(
         attachments=AttachmentLimits(
             media_types=sorted(INGESTIBLE_IMAGE_MEDIA_TYPES),
             max_bytes=settings.limits.max_attachment_bytes,
+            max_count=settings.multimodal.max_images,
         ),
     )
 

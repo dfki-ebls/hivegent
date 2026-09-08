@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from typing import Annotated, cast
 
@@ -374,6 +374,17 @@ async def import_conversation_route(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _attached_items(messages: Sequence[ModelMessage]) -> Iterator[UserContent]:
+    """The non-text items of every user prompt in *messages*, in order."""
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+
+        for part in message.parts:
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                yield from (i for i in part.content if not isinstance(i, str))
+
+
 def _accept_attachment(item: UserContent) -> None:
     """Admit one attached item, sanitising it in place, or reject it.
 
@@ -382,9 +393,6 @@ def _accept_attachment(item: UserContent) -> None:
     Pillow-based inference servers, the same best-effort pass
     ``read_binary_document`` applies to an image read off disk.
     """
-    if isinstance(item, str):
-        return
-
     if (
         not isinstance(item, BinaryContent)
         or item.media_type not in INGESTIBLE_IMAGE_MEDIA_TYPES
@@ -414,15 +422,27 @@ def _accept_attachments(messages: Sequence[ModelMessage]) -> None:
     Takes the client's new prompt alone, never the replayed prefix, so an
     already-admitted image is never re-scanned on a later turn.  Anything
     but an image belongs in a workspace instead (see ``AGENTS.md``).
-    """
-    for message in messages:
-        if not isinstance(message, ModelRequest):
-            continue
 
-        for part in message.parts:
-            if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                for item in part.content:
-                    _accept_attachment(item)
+    How many is bounded here too, by the serving gateway's per-request image
+    cap (``multimodal.max_images``, served to the composer as
+    ``AttachmentLimits.max_count``): the gateway rejects the whole request
+    rather than the image that overran it, so a turn over the cap would fail
+    once it was already streaming, with nothing left for the user to fix.
+    The count is spent before the item is admitted, since sanitising copies
+    the bytes and an over-cap turn is refused whatever they hold.
+    """
+    cap = settings.multimodal.max_images
+    for count, item in enumerate(_attached_items(messages), start=1):
+        if cap is not None and count > cap:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"At most {cap} image(s) can be attached to a message, "
+                    "since the model server accepts no more in one request."
+                ),
+            )
+
+        _accept_attachment(item)
 
 
 async def _run_chat(conversation_id: str, request: Request, user: User) -> Response:

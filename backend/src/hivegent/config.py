@@ -8,7 +8,7 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Literal, Self
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, PositiveInt, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -348,14 +348,24 @@ class MultimodalSettings(BaseModel):
     understanding (OpenAI, Anthropic).  Set it to match the configured
     ``llm.model``'s capabilities.
 
+    ``max_images`` is the serving gateway's own per-request image cap
+    (vLLM's ``--limit-mm-per-prompt``, and its equivalents), which rejects
+    a request carrying more images outright.  The binary reader bounds one
+    call to it, so a PDF read over the cap comes back as a retryable
+    "narrow with pages=" the model can fix instead of a failed turn, and
+    frame sampling is clamped to it.  ``None`` (the default) caps nothing
+    beyond the reader's own page and frame budgets.
+
     Ad-hoc chat attachments need no such policy: the composer accepts
     images alone (:data:`~hivegent.converters.INGESTIBLE_IMAGE_MEDIA_TYPES`),
     which every vision backend ingests identically.
 
-    Configurable via ``HIVEGENT_MULTIMODAL__BINARY_CONTENT``.
+    Configurable via ``HIVEGENT_MULTIMODAL__BINARY_CONTENT`` and
+    ``HIVEGENT_MULTIMODAL__MAX_IMAGES``.
     """
 
     binary_content: BinaryContentMode = BinaryContentMode.IMAGES
+    max_images: PositiveInt | None = None
 
 
 class LoggingSettings(BaseModel):

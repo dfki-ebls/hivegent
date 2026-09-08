@@ -223,6 +223,8 @@ export interface ConversationArchive {
 export const AttachmentLimitsSchema = z.object({
   media_types: z.array(z.string()),
   max_bytes: z.number(),
+  /** Images one turn may attach: the model server's per-request cap, or null for none. */
+  max_count: z.number().nullable(),
 });
 export type AttachmentLimits = z.infer<typeof AttachmentLimitsSchema>;
 

@@ -6,14 +6,12 @@ markdown sidecar is actually stored — and if anything fails, the partial
 entry is rolled back wholesale rather than left as an orphan.
 """
 
-import io
 from pathlib import Path
 from typing import ClassVar
 
-import PIL.Image
-import PIL.PngImagePlugin
 import pytest
 from fastapi import HTTPException
+from PIL.PngImagePlugin import PngInfo
 
 from hivegent import workspace
 from hivegent.chunkers.base import EntryMetadata
@@ -22,6 +20,7 @@ from hivegent.db import documents as db_documents
 from hivegent.llm_config import LlmConfig
 from hivegent.store import Casebase
 from hivegent.workspace import commit, prepare
+from tests.helpers import png_bytes
 
 
 class _Recorder:
@@ -42,19 +41,12 @@ class _Chunked:
     pipeline: ClassVar[str] = "none"
 
 
-def _png() -> bytes:
-    buf = io.BytesIO()
-    PIL.Image.new("RGB", (64, 48), (10, 80, 160)).save(buf, "PNG")
-    return buf.getvalue()
-
-
 def _png_with_metadata() -> bytes:
     """A PNG carrying an ancillary tEXt chunk that sanitisation would strip."""
-    buf = io.BytesIO()
-    info = PIL.PngImagePlugin.PngInfo()
+    info = PngInfo()
     info.add_text("Comment", "x" * 256)
-    PIL.Image.new("RGB", (64, 48), (10, 80, 160)).save(buf, "PNG", pnginfo=info)
-    return buf.getvalue()
+
+    return png_bytes(info)
 
 
 async def test_image_upload_reports_stage_and_stores_sidecar(
@@ -76,7 +68,7 @@ async def test_image_upload_reports_stage_and_stores_sidecar(
     monkeypatch.setattr(commit, "chunk_and_index_document", fake_chunk)
 
     recorder = _Recorder()
-    await workspace.upload(user_store, "photo.png", _png(), ctx=recorder)
+    await workspace.upload(user_store, "photo.png", png_bytes(), ctx=recorder)
 
     workspace_dir = user_store.workspace_dir(settings.data_dir)
     assert "Generating image description" in recorder.stages
@@ -107,7 +99,7 @@ async def test_failed_commit_leaves_no_orphan(
     monkeypatch.setattr(commit, "delete_chunked_document", noop_delete)
 
     with pytest.raises(RuntimeError):
-        await workspace.upload(user_store, "photo.png", _png())
+        await workspace.upload(user_store, "photo.png", png_bytes())
 
     workspace_dir = user_store.workspace_dir(settings.data_dir)
     assert not (workspace_dir / "photo.png").exists()
@@ -287,7 +279,7 @@ async def test_reprocess_failure_preserves_existing_entry(
 
     monkeypatch.setattr(prepare, "_build_image_description", fake_describe)
     monkeypatch.setattr(commit, "chunk_and_index_document", fake_chunk)
-    await workspace.upload(user_store, "photo.png", _png())
+    await workspace.upload(user_store, "photo.png", png_bytes())
 
     workspace_dir = user_store.workspace_dir(settings.data_dir)
     original = (workspace_dir / "photo.png").read_bytes()
