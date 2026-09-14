@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from hivegent.converters.dyn import DynJSONConverter
+
 from ..llm_config import LlmConfig
 from ..pipeline_registry import (
     PipelineConfigInfo,
@@ -88,6 +90,13 @@ class ConversionPipeline(StrEnum):
     PDF_OXIDE = "pdf-oxide"
     TABLE_CHEF = "table-chef"
     PLAIN_TEXT = "plain-text"
+    DYN_MARKDOWN = "dynmarkdown"
+    DYN_PDF = "dynpdf"
+    DYN_WORD = "dynword"
+    DYN_EMAIL = "dynemail"
+    DYN_EXCEL = "dynexcel"
+    DYN_JSON = "dynjson"
+    DYN_WEB = "dynweb"
 
 
 class ConversionSpec(BaseModel):
@@ -135,6 +144,48 @@ def _load_llm() -> PipelineImplementation[DocumentConverter]:
     from .llm import LLMConverter, LlmConverterConfig
 
     return PipelineImplementation(LLMConverter, LlmConverterConfig)
+
+
+def _load_dyn_markdown() -> PipelineImplementation[DocumentConverter]:
+    from .dyn import DynMarkdownConfig, DynMarkdownConverter
+
+    return PipelineImplementation(DynMarkdownConverter, DynMarkdownConfig)
+
+
+def _load_dyn_pdf() -> PipelineImplementation[DocumentConverter]:
+    from .dyn import DynPDFConverter
+
+    return PipelineImplementation(DynPDFConverter)
+
+
+def _load_dyn_word() -> PipelineImplementation[DocumentConverter]:
+    from .dyn import DynWordConverter
+
+    return PipelineImplementation(DynWordConverter)
+
+
+def _load_dyn_email() -> PipelineImplementation[DocumentConverter]:
+    from .dyn import DynWordConverter
+
+    return PipelineImplementation(DynWordConverter)
+
+
+def _load_dyn_excel() -> PipelineImplementation[DocumentConverter]:
+    from .dyn import DynExcelConverter
+
+    return PipelineImplementation(DynExcelConverter)
+
+
+def _load_dyn_json() -> PipelineImplementation[DocumentConverter]:
+    from .dyn import DynJSONConverter
+
+    return PipelineImplementation(DynJSONConverter)
+
+
+def _load_dyn_web() -> PipelineImplementation[DocumentConverter]:
+    from .dyn import DynWebConverter
+
+    return PipelineImplementation(DynWebConverter)
 
 
 def _load_pandoc() -> PipelineImplementation[DocumentConverter]:
@@ -398,6 +449,54 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
         description="Text, configuration, data-serialization, and source files as-is",
         extensions=None,
         auto_extensions=PLAIN_TEXT_EXTENSIONS,
+    ),
+    ConversionPipeline.DYN_MARKDOWN: _ConverterRegistration(
+        loader=_load_dyn_markdown,
+        label="dyn markdown",
+        description="Text, configuration, data-serialization, and source files as-is",
+        extensions=frozenset({".md"}),
+    ),
+    ConversionPipeline.DYN_MARKDOWN: _ConverterRegistration(
+        loader=_load_dyn_markdown,
+        label="dyn markdown",
+        description="Text, configuration, data-serialization, and source files as-is",
+        extensions=frozenset({".md"}),
+    ),
+    ConversionPipeline.DYN_PDF: _ConverterRegistration(
+        loader=_load_dyn_pdf,
+        label="dyn pdf",
+        description="Text, configuration, data-serialization, and source files as-is",
+        extensions=frozenset({".pdf"}),
+    ),
+    ConversionPipeline.DYN_WORD: _ConverterRegistration(
+        loader=_load_dyn_word,
+        label="dyn word",
+        description="Text, configuration, data-serialization, and source files as-is",
+        extensions=frozenset({".doc", ".docx"}),
+    ),
+    ConversionPipeline.DYN_EMAIL: _ConverterRegistration(
+        loader=_load_dyn_email,
+        label="dyn email",
+        description="Text, configuration, data-serialization, and source files as-is",
+        extensions=frozenset({".eml", ".txt"}),
+    ),
+    ConversionPipeline.DYN_EXCEL: _ConverterRegistration(
+        loader=_load_dyn_excel,
+        label="dyn excel",
+        description="Text, configuration, data-serialization, and source files as-is",
+        extensions=frozenset({".xls", ".xlsx"}),
+    ),
+    ConversionPipeline.DYN_JSON: _ConverterRegistration(
+        loader=_load_dyn_json,
+        label="dyn json",
+        description="Text, configuration, data-serialization, and source files as-is",
+        extensions=frozenset({".json", ".jsonl"}),
+    ),
+    ConversionPipeline.DYN_WEB: _ConverterRegistration(
+        loader=_load_dyn_email,
+        label="dyn web",
+        description="Text, configuration, data-serialization, and source files as-is",
+        extensions=(),
     ),
 }
 

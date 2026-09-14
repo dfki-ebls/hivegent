@@ -1,0 +1,127 @@
+from dataclasses import dataclass, field
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from pydantic import BaseModel, Field
+
+from dyn.commons.tabular_data import assemble_table
+from dyn.serialization.complex.markdown import parse
+from dyn.serialization.complex.markdown.model import TableMdNode, TableNode, TextNode
+from dyn.serialization.complex.pdf import Converter as PDFConverter
+from dyn.serialization.complex.word import Converter as WordConverter
+from dyn.serialization.simple.email import to_markdown as email_to_markdown
+from dyn.serialization.simple.excel import to_markdown as excel_to_markdown
+from dyn.serialization.simple.json import to_markdown as json_to_markdown
+from dyn.serialization.web import to_md as web_to_markdown
+
+from .base import ConversionResult, DocumentConverter
+
+__all__ = [
+    "DynMarkdownConfig",
+    "DynMarkdownConverter",
+    "DynPDFConverter",
+    "DynWordConverter",
+    "DynEmailConverter",
+    "DynExcelConverter",
+    "DynJSONConverter",
+    "DynWebConverter",
+]
+
+
+class DynMarkdownConfig(BaseModel):
+    """Configuration for the LLM conversion pipeline."""
+
+    summarize_floats: bool = Field(default=True)
+
+
+@dataclass(slots=True, frozen=True)
+class DynMarkdownConverter(DocumentConverter):
+    """Document converter using"""
+
+    name = "dynmarkdown"
+    config: DynMarkdownConfig = field(default_factory=DynMarkdownConfig)
+
+    async def _convert(self, path: Path, /) -> ConversionResult:
+        doc = parse(path)
+        # convert TableNode to TableMdNode
+        for _, contentlist in doc.tree:
+            for node in contentlist:
+                if isinstance(node.data, (TableNode, TableMdNode)):
+                    # TODO: fix line numbers
+                    table = assemble_table(
+                        node.data.name, node.data.headers, node.data.vals
+                    )
+                    node.data = TextNode(content=table)
+        text = doc.markdown
+        return ConversionResult(markdown=text)
+
+
+@dataclass(slots=True, frozen=True)
+class DynPDFConverter(DocumentConverter):
+    """Document converter using"""
+
+    name = "dynpdf"
+
+    async def _convert(self, path: Path, /) -> ConversionResult:
+        with TemporaryDirectory() as tmpdir:
+            converter = PDFConverter(path, Path(tmpdir))
+            md_path = converter.convert()
+            return ConversionResult(markdown=md_path.read_text())
+
+
+@dataclass(slots=True, frozen=True)
+class DynWordConverter(DocumentConverter):
+    """Document converter using"""
+
+    name = "dynword"
+
+    async def _convert(self, path: Path, /) -> ConversionResult:
+        with TemporaryDirectory() as tmpdir:
+            converter = WordConverter(path, Path(tmpdir))
+            md_path = converter.convert()
+            return ConversionResult(markdown=md_path.read_text())
+
+
+@dataclass(slots=True, frozen=True)
+class DynEmailConverter(DocumentConverter):
+    """Document converter using"""
+
+    name = "dynemail"
+
+    async def _convert(self, path: Path, /) -> ConversionResult:
+        subject, body = email_to_markdown(path)
+        text = f"# {subject}\n\n{body}"
+        return ConversionResult(markdown=text)
+
+
+@dataclass(slots=True, frozen=True)
+class DynExcelConverter(DocumentConverter):
+    """Document converter using"""
+
+    name = "dynexcel"
+
+    async def _convert(self, path: Path, /) -> ConversionResult:
+        text = excel_to_markdown(path)
+        return ConversionResult(markdown=text)
+
+
+@dataclass(slots=True, frozen=True)
+class DynJSONConverter(DocumentConverter):
+    """Document converter using"""
+
+    name = "dynjson"
+
+    async def _convert(self, path: Path, /) -> ConversionResult:
+        text = json_to_markdown(path)
+        return ConversionResult(markdown=text)
+
+
+@dataclass(slots=True, frozen=True)
+class DynWebConverter(DocumentConverter):
+    """Document converter using"""
+
+    name = "dynweb"
+
+    async def _convert(self, url: str, is_single: bool = True, /) -> ConversionResult:
+        text = web_to_markdown(url, is_single)
+        return ConversionResult(markdown=text)
