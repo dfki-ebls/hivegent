@@ -72,6 +72,14 @@ class TestRgSearch:
         matches = await rg_search("zzz_missing", tmp_path)
         assert matches == []
 
+    async def test_pattern_starting_with_dash(self, tmp_path: Path) -> None:
+        (tmp_path / "options.txt").write_text("--version\n")
+
+        matches = await rg_search("--version", tmp_path)
+
+        assert len(matches) == 1
+        assert matches[0].lines[0].text == "--version"
+
     async def test_glob_filter(self, tmp_path: Path) -> None:
         (tmp_path / "include.md").write_text("target\n")
         (tmp_path / "exclude.txt").write_text("target\n")

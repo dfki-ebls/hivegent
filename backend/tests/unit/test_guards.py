@@ -4,7 +4,8 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from pydantic_ai import BinaryContent
+from pydantic_ai import BinaryContent, ImageUrl
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import IncompleteToolCall
 from pydantic_ai.messages import (
     FinishReason,
@@ -105,7 +106,10 @@ def _read(tool_call_id: str) -> ToolReturnPart:
 
 
 async def _sent(
-    max_images: int | None, messages: list[ModelMessage]
+    capability: AbstractCapability[Any],
+    messages: list[ModelMessage],
+    *,
+    requests: int = 0,
 ) -> list[ModelMessage]:
     """The messages the guard puts on the wire for a request carrying *messages*."""
     sent: list[ModelMessage] = []
@@ -115,8 +119,8 @@ async def _sent(
 
         return ModelResponse(parts=[TextPart(content="ok")])
 
-    await PromptImageLimit(max_images=max_images).wrap_model_request(
-        cast(Any, None),
+    await capability.wrap_model_request(
+        cast(Any, SimpleNamespace(usage=SimpleNamespace(requests=requests))),
         request_context=ModelRequestContext(
             model=cast(Any, None),
             messages=messages,
@@ -141,7 +145,7 @@ async def test_the_whole_request_shares_one_image_allowance() -> None:
         ModelRequest(parts=[_read("a"), _read("b")]),
     ]
 
-    sent = await _sent(2, messages)
+    sent = await _sent(PromptImageLimit(2), messages)
 
     assert len(_images(sent)) == 2
     prompt = sent[0].parts[0]
@@ -161,7 +165,7 @@ async def test_the_trim_is_spent_on_the_wire_and_not_on_the_conversation() -> No
     part = _read("a")
     messages: list[ModelMessage] = [ModelRequest(parts=[part, _read("b")])]
 
-    sent = await _sent(1, messages)
+    sent = await _sent(PromptImageLimit(1), messages)
 
     assert len(_images(sent)) == 1
     assert len(_images(messages)) == 2
@@ -178,7 +182,37 @@ async def test_a_request_the_gateway_accepts_is_passed_through(
         ModelRequest(parts=[UserPromptPart(content=["look", _image(), _image()])])
     ]
 
-    assert await _sent(max_images, messages) == messages
+    assert await _sent(PromptImageLimit(max_images), messages) == messages
+
+
+@pytest.mark.parametrize("shape", ["scalar", "tuple", "url", "shared"])
+async def test_image_occurrences_match_provider_content_shapes(shape: str) -> None:
+    """Keep the newest occurrence across scalar tools and sequence prompts."""
+    newest = _image()
+    older = newest if shape == "shared" else _image()
+    if shape == "scalar":
+        part = ToolReturnPart(tool_name="image", content=older, tool_call_id="a")
+    elif shape == "tuple":
+        part = UserPromptPart(content=(older,))
+    elif shape == "url":
+        part = UserPromptPart(
+            content=[ImageUrl(url="https://example.com/image.png")]
+        )
+    else:
+        part = UserPromptPart(content=[older])
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[part, UserPromptPart(content=[newest])])
+    ]
+
+    sent = await _sent(PromptImageLimit(1), messages)
+    request = sent[0]
+    assert isinstance(request, ModelRequest)
+    trimmed = request.parts[0]
+    assert isinstance(trimmed, UserPromptPart | ToolReturnPart)
+    assert "image not shown" in str(trimmed.content)
+    assert request.parts[1] is messages[0].parts[1]
+    assert len(_images(messages)) == 2
 
 
 async def test_the_wrap_up_note_stays_off_the_conversation() -> None:
@@ -189,23 +223,7 @@ async def test_the_wrap_up_note_stays_off_the_conversation() -> None:
     """
     warner = IterationLimitWarner(max_requests=2)
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content="go")])]
-    sent: list[ModelMessage] = []
-
-    async def handler(request_context: ModelRequestContext) -> ModelResponse:
-        sent.extend(request_context.messages)
-
-        return ModelResponse(parts=[TextPart(content="ok")])
-
-    await warner.wrap_model_request(
-        cast(Any, SimpleNamespace(usage=SimpleNamespace(requests=2))),
-        request_context=ModelRequestContext(
-            model=cast(Any, None),
-            messages=messages,
-            model_settings=None,
-            model_request_parameters=cast(Any, None),
-        ),
-        handler=handler,
-    )
+    sent = await _sent(warner, messages, requests=2)
 
     assert "[run-limit-warning]" in str(sent[-1].parts[0])
     assert len(sent) == 2

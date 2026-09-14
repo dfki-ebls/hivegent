@@ -22,9 +22,6 @@ _default_model_settings = ModelSettings(
 # Carried by the agents rather than composed per run: a run-level
 # ``capabilities`` argument adds to these rather than replacing them, so every
 # run is guarded, including the subagent and MCP ones that compose their own.
-# The image cap belongs here for that reason — it is a property of the gateway
-# every one of those runs talks to, and it takes the setting unconditionally
-# because ``None`` is already how it spells "counts nothing".
 _guards = [
     IncompleteToolCallGuard(),
     PromptImageLimit(max_images=settings.multimodal.max_images),

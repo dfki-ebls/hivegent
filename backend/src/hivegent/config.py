@@ -348,13 +348,8 @@ class MultimodalSettings(BaseModel):
     understanding (OpenAI, Anthropic).  Set it to match the configured
     ``llm.model``'s capabilities.
 
-    ``max_images`` is the serving gateway's own per-request image cap
-    (vLLM's ``--limit-mm-per-prompt``, and its equivalents), which rejects
-    a request carrying more images outright.  The binary reader bounds one
-    call to it, so a PDF read over the cap comes back as a retryable
-    "narrow with pages=" the model can fix instead of a failed turn, and
-    frame sampling is clamped to it.  ``None`` (the default) caps nothing
-    beyond the reader's own page and frame budgets.
+    ``max_images`` sets the gateway's per-request image cap.
+    ``None`` leaves only the reader's page and frame budgets in effect.
 
     Ad-hoc chat attachments need no such policy: the composer accepts
     images alone (:data:`~hivegent.converters.INGESTIBLE_IMAGE_MEDIA_TYPES`),

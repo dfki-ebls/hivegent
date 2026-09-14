@@ -423,25 +423,21 @@ def _accept_attachments(messages: Sequence[ModelMessage]) -> None:
     already-admitted image is never re-scanned on a later turn.  Anything
     but an image belongs in a workspace instead (see ``AGENTS.md``).
 
-    How many is bounded here too, by the serving gateway's per-request image
-    cap (``multimodal.max_images``, served to the composer as
-    ``AttachmentLimits.max_count``): the gateway rejects the whole request
-    rather than the image that overran it, so a turn over the cap would fail
-    once it was already streaming, with nothing left for the user to fix.
-    The count is spent before the item is admitted, since sanitising copies
-    the bytes and an over-cap turn is refused whatever they hold.
+    Check the count before sanitizing any images in an over-cap request.
     """
     cap = settings.multimodal.max_images
-    for count, item in enumerate(_attached_items(messages), start=1):
-        if cap is not None and count > cap:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"At most {cap} image(s) can be attached to a message, "
-                    "since the model server accepts no more in one request."
-                ),
-            )
+    items = list(_attached_items(messages))
 
+    if cap is not None and len(items) > cap:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"At most {cap} image(s) can be attached to a message, "
+                "since the model server accepts no more in one request."
+            ),
+        )
+
+    for item in items:
         _accept_attachment(item)
 
 

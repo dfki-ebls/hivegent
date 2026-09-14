@@ -647,13 +647,7 @@ class AttachmentLimits(BaseModel):
         description="Media types the chat composer accepts, sorted"
     )
     max_bytes: int = Field(description="Size cap for a single attachment")
-    max_count: int | None = Field(
-        description=(
-            "How many images one turn may attach, or null for no limit — the "
-            "serving gateway's per-request image cap, which rejects the whole "
-            "request rather than the attachment that overran it"
-        )
-    )
+    max_count: int | None = Field(description="Maximum images per turn, or null for no limit")
 
 
 class SettingsResponse(BaseModel):

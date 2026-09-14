@@ -171,7 +171,7 @@ async def rg_search(
         args.extend(["--glob", f"!**/{excluded}/**"])
     if context_lines > 0:
         args.extend(["--context", str(context_lines)])
-    args.extend([pattern, "."])
+    args.extend(["--", pattern, "."])
 
     # rg exits 1 when there are no matches — that's not an error.  An
     # explicitly given target is searched whatever the ignore files say, and

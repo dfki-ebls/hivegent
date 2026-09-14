@@ -112,15 +112,7 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
     """Maximum width/height of a sampled frame in pixels."""
 
     max_images: int | None = None
-    """The serving gateway's per-request image cap, or ``None`` for none.
-
-    A gateway with such a limit (vLLM's ``--limit-mm-per-prompt``) rejects the
-    whole request, which fails the turn rather than the call, so the cap binds
-    the page and frame budgets below rather than being discovered by the model
-    request that carries the attachments.  A PDF over it is a refusal the run
-    can fix by naming ``pages=``; frames are clamped instead, since a run picks
-    pages but never frames.
-    """
+    """Gateway image cap, bounding PDF pages and sampled frames per call."""
 
     def _bounded(self, budget: int) -> int:
         """Bound a per-call attachment budget by the gateway's image cap."""

@@ -44,9 +44,9 @@ reduction is what persists.
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, TypeGuard
 
-from pydantic_ai import BinaryContent
+from pydantic_ai import BinaryContent, ImageUrl
 from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.exceptions import IncompleteToolCall
 from pydantic_ai.messages import (
@@ -73,54 +73,45 @@ __all__ = [
 ]
 
 
-def _image_list(part: ModelRequestPart) -> list[Any] | None:
-    """The content list of a part that can carry images, else ``None``."""
-    carries = isinstance(part, UserPromptPart | ToolReturnPart)
+def _image_list(part: ModelRequestPart) -> Sequence[Any]:
+    """Inspect the same content shapes the provider sends as images."""
+    if isinstance(part, ToolReturnPart):
+        return part.content_items()
 
-    return part.content if carries and isinstance(part.content, list) else None
+    if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+        return part.content
+
+    return ()
 
 
-def _images(messages: Sequence[ModelMessage]) -> list[BinaryContent]:
-    """Every image the request carries, oldest first — what the gateway counts."""
+def _is_image(item: Any) -> TypeGuard[BinaryContent | ImageUrl]:
+    return isinstance(item, ImageUrl) or (
+        isinstance(item, BinaryContent) and item.is_image
+    )
+
+
+def _images(messages: Sequence[ModelMessage]) -> list[BinaryContent | ImageUrl]:
+    """Every image occurrence in request order."""
     return [
         item
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if (content := _image_list(part)) is not None
-        for item in content
-        if isinstance(item, BinaryContent) and item.is_image
+        for item in _image_list(part)
+        if _is_image(item)
     ]
-
-
-def _swap_images(
-    part: ModelRequestPart, displaced: set[int], note: str
-) -> ModelRequestPart:
-    """*part* with each of its *displaced* images swapped for *note*.
-
-    Rebuilt rather than edited: the content list is shared with the persisted
-    message tree, which an in-place swap would strip the image from too.
-    """
-    content = _image_list(part)
-    if content is None:
-        return part
-
-    return replace(
-        part, content=[note if id(item) in displaced else item for item in content]
-    )
 
 
 def _within_image_cap(
     messages: list[ModelMessage], max_images: int | None
 ) -> list[ModelMessage]:
-    """*messages* with all but the newest *max_images* images swapped for a note.
+    """Replace older image occurrences without mutating shared history."""
+    if max_images is None:
+        return messages
 
-    Returned unchanged when the gateway counts nothing (``None``) or the
-    request already fits, so the ordinary request is never rebuilt.  Displaced
-    images are keyed by identity, since two that compare equal are still two.
-    """
-    images = _images(messages)
-    if max_images is None or len(images) <= max_images:
+    remaining = len(_images(messages)) - max_images
+
+    if remaining <= 0:
         return messages
 
     note = (
@@ -128,14 +119,32 @@ def _within_image_cap(
         "image(s), and newer ones displaced this. Read the document again "
         "if you still need to see it.]"
     )
-    displaced = {id(image) for image in images[: len(images) - max_images]}
     kept: list[ModelMessage] = []
+
     for message in messages:
-        if isinstance(message, ModelRequest):
-            message = replace(
-                message,
-                parts=[_swap_images(part, displaced, note) for part in message.parts],
-            )
+        if remaining > 0 and isinstance(message, ModelRequest):
+            parts = list(message.parts)
+
+            for index, part in enumerate(parts):
+                content = list(_image_list(part))
+                changed = False
+
+                for position, item in enumerate(content):
+                    if remaining > 0 and _is_image(item):
+                        content[position] = note
+                        remaining -= 1
+                        changed = True
+
+                if changed:
+                    replacement = (
+                        content[0]
+                        if isinstance(part, ToolReturnPart)
+                        and not isinstance(part.content, list)
+                        else content
+                    )
+                    parts[index] = replace(part, content=replacement)
+
+            message = replace(message, parts=parts)
 
         kept.append(message)
 
@@ -238,20 +247,9 @@ class ToolOutputLimit(AbstractCapability[UserDeps]):
 class PromptImageLimit(AbstractCapability[Any]):
     """Hold one model request to the images the serving gateway accepts.
 
-    The cap belongs to the serving gateway (vLLM's ``--limit-mm-per-prompt``),
-    which counts the images of a whole request and rejects it entirely, so an
-    overflow is a failed turn rather than a refusal anything can act on.  What
-    it counts is the request, so that is what is counted here, once, where the
-    outgoing messages are in hand: the images a step's parallel reads
-    attached, the turn's own attachments, and the ones already in the replayed
-    history — none of which any per-call budget can see.
-
-    All but the newest ``max_images`` are swapped for a note, on the wire
-    alone.  Trimming rather than refusing the call keeps the
-    rendering the run already paid for and spends no extra round trip, and the
-    note is what keeps it honest: the model is told an image it asked for is
-    not in front of it, so it reads the document again instead of answering
-    from a picture it cannot see.  ``None`` is a gateway that counts nothing.
+    Replace older images with a note on the wire only.
+    The allowance covers history, user attachments, and parallel tool returns.
+    ``None`` disables the cap.
     """
 
     max_images: int | None
