@@ -136,6 +136,37 @@ class TestPathCanonicalization:
         with pytest.raises(ToolRetry, match="does not exist"):
             await tool("*.md", path="~/sub/..")
 
+    async def test_listing_subdirectory_cannot_escape_workspace(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.md").write_text("secret")
+        tool = ListDocumentsTool(
+            paths=(SearchPath(path=workspace, scope=WorkspaceScope()),)
+        )
+
+        with pytest.raises(ToolRetry, match="does not exist"):
+            await tool(path="~/../outside", max_depth=None)
+
+    async def test_listing_subdirectory_cannot_follow_escaping_symlink(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.md").write_text("secret")
+        (workspace / "alias").symlink_to(outside, target_is_directory=True)
+        tool = ListDocumentsTool(
+            paths=(SearchPath(path=workspace, scope=WorkspaceScope()),)
+        )
+
+        with pytest.raises(ToolRetry, match="does not exist"):
+            await tool(path="~/alias", max_depth=None)
+
 
 class TestListDocumentsTool:
     """Tests for ListDocumentsTool (flat list and tree modes)."""
@@ -1382,6 +1413,21 @@ class TestGrepSearch:
             GrepTool(paths=tmp_path)("needle", include_ignored=True)
         )
         assert self._filenames(revealed.data) == {"doc.assets/fig1.txt"}
+
+    async def test_parent_glob_cannot_search_outside_workspace(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "inside.md").write_text("inside\n")
+        (tmp_path / "secret.md").write_text("needle\n")
+        tool = GrepTool(
+            paths=(SearchPath(path=workspace, scope=WorkspaceScope()),)
+        )
+
+        result = await tool("needle", glob="../*.md")
+
+        assert result.data == []
 
 
 class TestGrepFormatting:
