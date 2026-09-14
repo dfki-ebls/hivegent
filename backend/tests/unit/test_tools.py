@@ -133,7 +133,8 @@ class TestPathCanonicalization:
         (tmp_path / "sub").mkdir()
         tool = GlobDocumentsTool(paths=(self._scoped(tmp_path),))
 
-        assert (await tool("*.md", path="~/sub/..")).data == []
+        with pytest.raises(ToolRetry, match="does not exist"):
+            await tool("*.md", path="~/sub/..")
 
 
 class TestListDocumentsTool:
@@ -153,6 +154,61 @@ class TestListDocumentsTool:
         filenames = [r.filename for r in data]
         assert "a.md" in filenames
         assert "b.txt" not in filenames
+
+    @pytest.mark.parametrize("path", [".", "./", "~/."])
+    async def test_root_directory_aliases(self, tmp_path: Path, path: str) -> None:
+        (tmp_path / "a.md").write_text("hello")
+        paths = (SearchPath(path=tmp_path, scope=WorkspaceScope()),)
+
+        data = _as_summaries((await ListDocumentsTool(paths=paths)(path=path)).data)
+        matches = (await GlobDocumentsTool(paths=paths)("*.md", path=path)).data
+
+        assert [entry.filename for entry in data] == ["~/a.md"]
+        assert matches == ["~/a.md"]
+
+    async def test_missing_subdirectory_is_retry(self, tmp_path: Path) -> None:
+        tool = ListDocumentsTool(
+            paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
+        )
+
+        with pytest.raises(ToolRetry, match="Directory '~/missing' does not exist"):
+            await tool(path="~/missing")
+
+    async def test_subdirectory_traversal_is_folded(self, tmp_path: Path) -> None:
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "a.md").write_text("hello")
+        tool = ListDocumentsTool(
+            paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
+        )
+
+        data = _as_summaries((await tool(path="~/sub/../docs")).data)
+
+        assert [entry.filename for entry in data] == ["~/docs/a.md"]
+
+    async def test_unknown_prefix_names_the_roots(self, tmp_path: Path) -> None:
+        tool = ListDocumentsTool(
+            paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
+        )
+
+        with pytest.raises(ToolRetry, match="This tool addresses ~"):
+            await tool(path="@nope/x")
+
+    async def test_empty_listing_names_its_scope(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.assets").mkdir()
+        (tmp_path / "doc.assets" / "img.png").write_bytes(b"\x89PNG")
+        tool = ListDocumentsTool(
+            paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
+        )
+
+        empty = await tool(path="~/doc.assets", max_depth=None)
+
+        assert empty.data == []
+        assert empty.formatted == (
+            "(no documents under '~/doc.assets', 1 hidden entry (`.assets` "
+            "contents and common build/vendor directories), pass "
+            "include_ignored=True to reveal them)"
+        )
 
     async def test_custom_glob(self, tmp_path: Path) -> None:
         (tmp_path / "a.txt").write_text("hello")
@@ -298,7 +354,7 @@ class TestListDocumentsTool:
         result = await tool(flatten=False)
         assert isinstance(result.data, DocumentTreeNode)
         assert result.data.children == ()
-        assert result.formatted == "(empty)"
+        assert result.formatted == "(empty tree in the workspace)"
 
     async def test_empty_result_hint_counts_hidden_entries(
         self, tmp_path: Path

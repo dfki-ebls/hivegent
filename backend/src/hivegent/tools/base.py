@@ -72,10 +72,12 @@ __all__ = [
     "file_allowed",
     "is_in_excluded_dir",
     "match_scope",
+    "missing_directory_retry",
     "near_miss_hint",
     "query_hint",
     "read_text_or_retry",
     "resolve_accessible_file",
+    "resolve_directory",
     "resolve_file_or_retry",
     "resolve_search_path",
     "resolve_tool_cls",
@@ -476,6 +478,48 @@ def workspace_root_hint(paths: tuple[SearchPath, ...], file_path: str) -> str:
         f" This tool addresses {', '.join(roots)}; give the full path, "
         "leading with one of them."
     )
+
+
+def resolve_directory(
+    paths: tuple[SearchPath, ...], subdir: str
+) -> tuple[tuple[tuple[SearchPath, Path], ...], str]:
+    """Pair each search path with the directory *subdir* names under it.
+
+    Returns the ``(search_path, root)`` pairs a walk starts from, and *subdir*
+    folded to the canonical spelling its entries are named under, so a ``..``
+    segment resolves the way it does for every other path argument rather than
+    being refused for its spelling.  A root that holds no such directory drops
+    out, so a directory no accessible root holds comes back empty and the
+    refusal falls out of the resolution instead of costing a second pass.
+    """
+    roots: list[tuple[SearchPath, Path]] = []
+    canonical = subdir
+    for sp in paths:
+        resolved = canonical_local_path(sp.path, subdir)
+        if resolved is not None and resolved[1].is_dir():
+            canonical, root = resolved
+            roots.append((sp, root))
+
+    return tuple(roots), canonical
+
+
+def missing_directory_retry(paths: tuple[SearchPath, ...], shown: str) -> ToolRetry:
+    """The refusal a filter argument owes when it names no directory.
+
+    A listing or search that silently comes back empty reads as an empty
+    workspace, which the caller cannot tell from its own typo.
+
+    Deliberately not :func:`workspace_root_hint`, which tells a *file* path to
+    lead with a root: a filter argument may legitimately carry none, so the
+    roots are named without demanding one.  *shown* is the caller's own
+    spelling, never the prefix-stripped remainder, since a scope that was never
+    claimed is still on it and rendering the remainder back through one would
+    staple a second prefix onto a path that already carries it.
+    """
+    roots = addressable_roots(paths)
+    hint = f" This tool addresses {', '.join(roots)}." if roots else ""
+
+    return ToolRetry(f"Directory '{shown}' does not exist.{hint}")
 
 
 def near_miss_hint(absolute: Path) -> str:
