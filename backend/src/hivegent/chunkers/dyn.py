@@ -1,12 +1,10 @@
 from dataclasses import dataclass, field
-from functools import lru_cache
-from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from dyn.segmentation.complex import full_chunking, to_chunks
-from dyn.serialization.complex.markdown.load import load
-from dyn.util import get_token_count
+from hivegent.dyn.segmentation.complex import full_chunking, to_chunks
+from hivegent.dyn.serialization.complex.markdown.load import load
+from hivegent.dyn.util import get_token_count
 
 from .base import ChunkData, DocumentChunker
 

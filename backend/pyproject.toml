@@ -94,7 +94,7 @@ build-backend = "uv_build"
 # under the ``dyn`` extra import it, so a wheel without it ships pipelines that
 # cannot load.
 [tool.uv.build-backend]
-module-name = ["hivegent", "dyn"]
+module-name = ["hivegent"]
 # Tool caches are gitignored but not build-excluded, so name them here.
 source-exclude = ["**/.ruff_cache"]
 wheel-exclude = ["**/.ruff_cache"]

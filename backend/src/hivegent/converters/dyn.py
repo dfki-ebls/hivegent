@@ -4,15 +4,19 @@ from tempfile import TemporaryDirectory
 
 from pydantic import BaseModel, Field
 
-from dyn.commons.tabular_data import assemble_table
-from dyn.serialization.complex.markdown import parse
-from dyn.serialization.complex.markdown.model import TableMdNode, TableNode, TextNode
-from dyn.serialization.complex.pdf import Converter as PDFConverter
-from dyn.serialization.complex.word import Converter as WordConverter
-from dyn.serialization.simple.email import to_markdown as email_to_markdown
-from dyn.serialization.simple.excel import to_markdown as excel_to_markdown
-from dyn.serialization.simple.json import to_markdown as json_to_markdown
-from dyn.serialization.web import to_md as web_to_markdown
+from hivegent.dyn.commons.tabular_data import assemble_table
+from hivegent.dyn.serialization.complex.markdown import parse
+from hivegent.dyn.serialization.complex.markdown.model import (
+    TableMdNode,
+    TableNode,
+    TextNode,
+)
+from hivegent.dyn.serialization.complex.pdf import Converter as PDFConverter
+from hivegent.dyn.serialization.complex.word import Converter as WordConverter
+from hivegent.dyn.serialization.simple.email import to_markdown as email_to_markdown
+from hivegent.dyn.serialization.simple.excel import to_markdown as excel_to_markdown
+from hivegent.dyn.serialization.simple.json import to_markdown as json_to_markdown
+from hivegent.dyn.serialization.web import to_md as web_to_markdown
 
 from .base import ConversionResult, DocumentConverter
 
