@@ -76,6 +76,7 @@ class TableMdNode(Float):
     node_type: Literal[NodeType.TableMd] = NodeType.TableMd
     headers: Sequence[str]
     vals: Sequence[Sequence[str]]
+    raw_content: str
 
 
 class TableNode(Float):
@@ -84,7 +85,7 @@ class TableNode(Float):
     # it after chunking) does not re-parse the html
     headers: Sequence[str]
     vals: Sequence[Sequence[str]]
-    raw_html: str
+    raw_content: str
 
 
 NodeContent = Annotated[
@@ -174,7 +175,6 @@ def build_text_node(text: str, lines: tuple[int, int]) -> Node:
 
 
 def build_node(content: NodeContent, lines: tuple[int, int]) -> Node:
-    # TODO. stub. add line numbering down the line
     return Node(
         data=content,
         line_numbers=lines,
@@ -190,8 +190,41 @@ def merge_nodes(nodeslist: list[Node], start_idx: int, nodes_to_merge: list[Node
     nodeslist[start_idx : start_idx + len(nodes_to_merge)] = [repr_node]
 
 
+def _compute_indices(
+    orig_content: str, new_string: str, start_idx: int
+) -> tuple[int, int]:
+    # TODO: Problem: raw_content von md_table ist nicht raw sondern
+    # durch assemble_table gebaut und enthält somit z. B. fette header usw.
+    # dadurch passen die Indizes nicht auf die tatsächliche rohe Tabelle
+    # Idealerweise würden wir die tatsächliche rohe Tabelle in einem zusätzlichen Feld speichern
+    # sodass wir, wenn ein Chunk die komplette konvertierte Tabelle enthält die Indizes der kompletten
+    # originalen Tabelle zurückgeben können
+    print(orig_content)
+    print(new_string)
+    new_start = orig_content.find(new_string, start_idx)
+    print("new start ", new_start)
+    new_end = new_start + len(new_string)
+    return new_start, new_end
+
+
 def split_node(nodeslist: list[Node], idx: int, texts_to_split_into: list[str]):
     orig_node = nodeslist[idx]
-    nodeslist[idx : idx + 1] = [
-        build_text_node(t, orig_node.line_numbers) for t in texts_to_split_into
-    ]
+    orig_start = orig_node.start_index
+
+    orig_content = (
+        orig_node.data.content
+        if isinstance(orig_node.data, TextNode)
+        else orig_node.data.raw_content
+    )
+
+    new_nodes: list[Node] = []
+    start_idx = 0
+
+    for t in texts_to_split_into:
+        node = build_text_node(t, orig_node.line_numbers)
+        indices = _compute_indices(orig_content, t, start_idx)
+        node.start_index = orig_start + indices[0]
+        node.end_index = orig_start + indices[1]
+        new_nodes.append(node)
+        start_idx = indices[1] + 1
+    nodeslist[idx : idx + 1] = new_nodes

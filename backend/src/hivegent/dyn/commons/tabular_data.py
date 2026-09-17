@@ -27,7 +27,7 @@ def assemble_table(
     title: str,
     headers: Sequence[str],
     vals: Iterable[Iterable[str]],
-    add_title: bool = True,
+    add_title: bool = False,
 ) -> str:
     """Construct the Markdown-formatted string representation of a table.
 
@@ -42,7 +42,7 @@ def assemble_table(
     """
     seps = ["---" for _ in range(len(headers))]
     headers = [f"**{h}**" if h else "" for h in headers]
-    if not title.startswith("#"):
+    if title and not title.startswith("#"):
         title = f"# {title}".rstrip()
     rendered_rows = [title, "", render_row(headers), render_row(seps)]
     if not add_title:

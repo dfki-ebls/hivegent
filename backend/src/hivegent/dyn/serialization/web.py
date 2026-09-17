@@ -20,7 +20,6 @@ def get_single_webpage_md(url: str) -> str:
         str: The extracted Markdown content
     """
     url = f"https://r.jina.ai/{url}"
-    print("JINA_API_KEY", os.getenv("JINA_API_KEY"))
     headers = {"Authorization": f"Bearer {os.getenv('JINA_API_KEY')}"}
 
     response = requests.get(url, headers=headers)

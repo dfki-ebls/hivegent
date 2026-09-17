@@ -122,7 +122,7 @@ async def summarize_table(
     """
 
     html = (
-        node.data.raw_html
+        node.data.raw_content
         if isinstance(node.data, TableNode)
         else markdown(assemble_table("", node.data.headers, node.data.vals))
     )

@@ -15,7 +15,7 @@ from hivegent.dyn.commons.markdown import (
     escape_stray_tilde_fences,
     get_first_float_name,
 )
-from hivegent.dyn.commons.tabular_data import html_to_headers_rows
+from hivegent.dyn.commons.tabular_data import assemble_table, html_to_headers_rows
 
 from .model import (
     ContentTree,
@@ -163,7 +163,7 @@ def _parse_html_block(
         # no table found
         return html, 0
     # html_block is a single token -> skip offset 0 (caller adds +1)
-    return TableNode(caption="", headers=headers, vals=rows, raw_html=html), 0
+    return TableNode(caption="", headers=headers, vals=rows, raw_content=html), 0
 
 
 LIST_FORMATS: dict[str, Callable[[int, int, str], str]] = {  # indent, position, value
@@ -280,7 +280,12 @@ def _parse_md_table(tokens: Sequence[Token], start_idx: int) -> tuple[TableMdNod
         if t.type == "table_close":
             headers = rows[0]
             rows = rows[1:]
-            table_md_node = TableMdNode(caption="", headers=headers, vals=rows)
+            table_md_node = TableMdNode(
+                caption="",
+                headers=headers,
+                vals=rows,
+                raw_content=assemble_table("", headers, rows, add_title=False),
+            )
             return table_md_node, offset
         offset += 1
 
@@ -353,7 +358,7 @@ def _parse_footnote_block(
 
 
 def _build_line_numbers(token: Token, endtoken: Token) -> tuple[int, int]:
-    # TODO: Woher kommt das?
+    # TODO: Woher kommt das (endtoken.map = None)?
     if endtoken.map is None:
         return token.map
     return (token.map[0], endtoken.map[1])
@@ -508,13 +513,15 @@ def load(input: Path | str) -> Document:
     tree, footnote_mentions = _parse(tokens)
 
     # set start and end indices
-    md_line_indices = np.array([len(l) for l in md_content.splitlines()])
+    md_line_indices = np.array(
+        [len(l) + 1 for l in md_content.splitlines()]
+    )  # count \n as well
     md_line_cumsum = np.cumsum(md_line_indices).tolist()
     for _, contentlist in tree:
         for i, node in enumerate(contentlist):
             lines = node.line_numbers
-            start_idx = 0 if lines[0] <= 1 else md_line_cumsum[lines[0] - 2]
-            end_idx = md_line_cumsum[lines[1] - 2]
+            start_idx = 0 if lines[0] <= 1 else md_line_cumsum[lines[0] - 1]
+            end_idx = md_line_cumsum[lines[1] - 1]
             contentlist[i].start_index = start_idx
             contentlist[i].end_index = end_idx
 

@@ -2,8 +2,7 @@ import asyncio
 
 from hivegent.chunkers import ChunkingPipeline, get_chunker
 
-text = """
-# Test Markdown Document
+text = """# Test Markdown Document
 
 This is a sample Markdown file created to test rendering of common elements: headings, paragraphs, inline formatting, lists, code, and more.
 

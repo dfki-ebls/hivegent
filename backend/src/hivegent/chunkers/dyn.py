@@ -37,6 +37,8 @@ class DynChunker(DocumentChunker):
                 token_count=get_token_count(t.text),
                 start_index=t.start_idx,
                 end_index=t.end_idx,
+                start_line=t.lines[0],
+                end_line=t.lines[1],
             )
             for t in chunks
         ]
