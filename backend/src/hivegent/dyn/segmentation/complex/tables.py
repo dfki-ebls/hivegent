@@ -23,7 +23,7 @@ def _split_section_tables_inplace(title: str, contentlist: list[Node], limit: in
     idx = 0
     while idx < len(contentlist):
         node = contentlist[idx]
-        if isinstance(node.data, TableNode) or isinstance(node.data, TableMdNode):
+        if isinstance(node.data, (TableMdNode, TableNode)):
             headers, vals = node.data.headers, node.data.vals
             table_chunks = chunked_table(title, headers, vals, limit)
             split_node(contentlist, idx, table_chunks)

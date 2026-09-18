@@ -1,6 +1,8 @@
 import asyncio
+from pathlib import Path
 
 from hivegent.chunkers import ChunkingPipeline, get_chunker
+from hivegent.converters import ConversionPipeline, get_converter
 
 text = """# Test Markdown Document
 
@@ -65,9 +67,16 @@ This document covers most of the common Markdown syntax elements in a single fil
 """
 
 
+def test_dyn_converter() -> str:
+    converter = get_converter(ConversionPipeline.DYN_MARKDOWN, filename="test.md")
+    result = asyncio.run(converter(Path("/Users/kilian/Downloads/test.md")))
+    return result.markdown
+
+
 def test_dyn_chunker() -> None:
+    converted = test_dyn_converter()
     chunker = get_chunker(ChunkingPipeline.DYN)
-    chunks = asyncio.run(chunker(text))
+    chunks = asyncio.run(chunker(converted))
 
     assert chunks
     for chunk in chunks:
@@ -78,4 +87,5 @@ def test_dyn_chunker() -> None:
 
 
 if __name__ == "__main__":
+    # test_dyn_converter()
     test_dyn_chunker()

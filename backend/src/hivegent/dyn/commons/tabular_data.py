@@ -23,6 +23,14 @@ def render_row(vals: Iterable[str]) -> str:
     return "| " + " | ".join(vals) + " |"
 
 
+def _format_header(header: str) -> str:
+    if not header:
+        return ""
+    if header.startswith("**"):
+        return header
+    return f"**{header}**"
+
+
 def assemble_table(
     title: str,
     headers: Sequence[str],
@@ -41,7 +49,8 @@ def assemble_table(
         str: The assembled table as a string
     """
     seps = ["---" for _ in range(len(headers))]
-    headers = [f"**{h}**" if h else "" for h in headers]
+
+    headers = [_format_header(h) for h in headers]
     if title and not title.startswith("#"):
         title = f"# {title}".rstrip()
     rendered_rows = [title, "", render_row(headers), render_row(seps)]

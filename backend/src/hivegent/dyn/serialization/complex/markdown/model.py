@@ -191,7 +191,7 @@ def merge_nodes(nodeslist: list[Node], start_idx: int, nodes_to_merge: list[Node
 
 
 def _compute_indices(
-    orig_content: str, new_string: str, start_idx: int
+    converted_content: str, new_string: str, start_idx: int
 ) -> tuple[int, int]:
     # TODO: Problem: raw_content von md_table ist nicht raw sondern
     # durch assemble_table gebaut und enthält somit z. B. fette header usw.
@@ -199,10 +199,7 @@ def _compute_indices(
     # Idealerweise würden wir die tatsächliche rohe Tabelle in einem zusätzlichen Feld speichern
     # sodass wir, wenn ein Chunk die komplette konvertierte Tabelle enthält die Indizes der kompletten
     # originalen Tabelle zurückgeben können
-    print(orig_content)
-    print(new_string)
-    new_start = orig_content.find(new_string, start_idx)
-    print("new start ", new_start)
+    new_start = converted_content.find(new_string, start_idx)
     new_end = new_start + len(new_string)
     return new_start, new_end
 
