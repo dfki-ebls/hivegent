@@ -92,6 +92,11 @@ describe("getSettings", () => {
         max_bytes: 10 * 1024 * 1024,
         max_count: 2,
       },
+      transparency: {
+        enabled: true,
+        contact_email: "operator@example.com",
+        minimum_watermark_tokens: 200,
+      },
     };
 
     vi.mocked(fetch).mockResolvedValueOnce(

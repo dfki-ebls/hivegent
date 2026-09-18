@@ -61,6 +61,8 @@ import {
   type ToolSchema,
   ToolSchemaSchema,
   TranscriptionResponseSchema,
+  type TransparencyDetectionResponse,
+  TransparencyDetectionResponseSchema,
   type PipelineSpec,
 } from "@/lib/types";
 
@@ -290,6 +292,18 @@ export async function getSettings(): Promise<BackendSettings> {
     `${API_BASE_URL}/api/settings`,
     "Failed to fetch settings",
     BackendSettingsSchema,
+  );
+}
+
+/** Verify whether free-form text carries this deployment's watermark. */
+export async function detectAiGeneratedText(
+  text: string,
+): Promise<TransparencyDetectionResponse> {
+  return requestJson(
+    `${API_BASE_URL}/api/transparency/detect`,
+    "Failed to verify the text watermark",
+    TransparencyDetectionResponseSchema,
+    jsonRequest("POST", { text }),
   );
 }
 

@@ -228,6 +228,23 @@ export const AttachmentLimitsSchema = z.object({
 });
 export type AttachmentLimits = z.infer<typeof AttachmentLimitsSchema>;
 
+export const TransparencyConfigSchema = z.object({
+  enabled: z.boolean(),
+  contact_email: z.string().nullable(),
+  minimum_watermark_tokens: z.number(),
+});
+export type TransparencyConfig = z.infer<typeof TransparencyConfigSchema>;
+
+export const TransparencyDetectionResponseSchema = z.object({
+  status: z.enum(["detected", "not_detected", "inconclusive"]),
+  method: z.literal("watermark"),
+  message: z.string(),
+  signed_report: z.string(),
+});
+export type TransparencyDetectionResponse = z.infer<
+  typeof TransparencyDetectionResponseSchema
+>;
+
 /** Settings exposed by the backend. */
 export const BackendSettingsSchema = z.object({
   model: z.string(),
@@ -237,6 +254,7 @@ export const BackendSettingsSchema = z.object({
   base_url: z.string(),
   user: UserResponseSchema,
   attachments: AttachmentLimitsSchema,
+  transparency: TransparencyConfigSchema,
 });
 export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
 

@@ -25,6 +25,7 @@ from ...converters import (
 )
 from ...mcp import build_mcp_toolset, validate_mcp_servers
 from ...pipeline_registry import PipelineConfigInfo
+from ...transparency import get_transparency_config
 from ...types import (
     AttachmentLimits,
     McpServerConfig,
@@ -59,6 +60,7 @@ async def get_settings(
             max_bytes=settings.limits.max_attachment_bytes,
             max_count=settings.multimodal.max_images,
         ),
+        transparency=get_transparency_config(),
     )
 
 

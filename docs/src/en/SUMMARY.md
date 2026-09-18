@@ -6,5 +6,6 @@
 - [Architecture](architecture.md)
 - [Setup](setup.md)
 - [Usage](usage.md)
+- [AI transparency](ai-transparency.md)
 - [Troubleshooting](troubleshooting.md)
 - [FAQ](faq.md)

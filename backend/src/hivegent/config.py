@@ -27,8 +27,13 @@ DEFAULT_CONFIG_FILE = Path("config.toml")
 #: groups used to share knowledge.
 ADMIN_ROLE = "admin"
 
+#: Minimum length of :attr:`Settings.secret_key`, matching a 256-bit secret
+#: rendered as base64.
+MIN_SECRET_KEY_LENGTH = 32
+
 __all__ = [
     "ADMIN_ROLE",
+    "MIN_SECRET_KEY_LENGTH",
     "AuthSettings",
     "ClaimSettings",
     "DatabaseSettings",
@@ -388,6 +393,34 @@ class LogfireSettings(BaseModel):
 
     otlp_endpoint: str | None = None
     service_name: str = "hivegent"
+
+
+class TransparencySettings(BaseModel):
+    """AI-generated text marking and detection settings.
+
+    ``detector_url`` points at the vLLM reference detector attached to the
+    inference server. ``report_issuer`` is the public origin placed in signed
+    detection reports. Both must be set when this feature is enabled.
+
+    Configurable via ``HIVEGENT_TRANSPARENCY__*`` environment variables.
+    """
+
+    enabled: bool = False
+    detector_url: str = ""
+    detector_api_key: str = ""
+    report_issuer: str = ""
+    contact_email: str = ""
+
+    @model_validator(mode="after")
+    def validate_detector(self) -> Self:
+        """Require the detector and public issuer as one enabled unit."""
+        if self.enabled and not self.detector_url:
+            raise ValueError("detector_url is required when transparency is enabled")
+
+        if self.enabled and not self.report_issuer:
+            raise ValueError("report_issuer is required when transparency is enabled")
+
+        return self
 
 
 class EmbeddingSettings(BaseModel):
@@ -927,6 +960,7 @@ class Settings(BaseSettings):
     rerank: RerankSettings = RerankSettings()
     logging: LoggingSettings = LoggingSettings()
     logfire: LogfireSettings = LogfireSettings()
+    transparency: TransparencySettings = TransparencySettings()
     mcp: McpSettings = McpSettings()
     claims: ClaimSettings = ClaimSettings()
     auth: AuthSettings = AuthSettings()
@@ -942,6 +976,23 @@ class Settings(BaseSettings):
     db: DatabaseSettings = DatabaseSettings()
 
     data_dir: Path = Path("data")
+
+    #: Root secret every key the application signs with is derived from, see
+    #: :mod:`hivegent.keys`.  Required once transparency is enabled: changing
+    #: it rotates the report signing key, and reports issued under the old key
+    #: stop verifying.
+    secret_key: str = ""
+
+    @model_validator(mode="after")
+    def validate_secret_key(self) -> Self:
+        """Require a strong application secret once reports are signed."""
+        if self.transparency.enabled and len(self.secret_key) < MIN_SECRET_KEY_LENGTH:
+            raise ValueError(
+                f"secret_key of at least {MIN_SECRET_KEY_LENGTH} characters "
+                "is required when transparency is enabled"
+            )
+
+        return self
 
 
 settings = Settings()

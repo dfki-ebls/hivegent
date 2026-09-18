@@ -22,8 +22,15 @@ from .security import (
     validate_external_headers,
 )
 
+#: Upper bound on text submitted for watermark verification, roughly 250k
+#: tokens at four characters per token.  That covers a generated document
+#: whole, while keeping the body small enough for the upstream detector to
+#: accept.
+MAX_DETECTION_CHARS = 1_000_000
+
 __all__ = [
     "AUTO_APPROVED_MODES",
+    "MAX_DETECTION_CHARS",
     "MODE_VALUES",
     "MUTATING_MODES",
     "AdminFactoryResetResponse",
@@ -73,6 +80,11 @@ __all__ = [
     "ToolSchema",
     "ToolsSpec",
     "TranscriptionResponse",
+    "TransparencyConfig",
+    "TransparencyDetectionRequest",
+    "TransparencyDetectionResponse",
+    "TransparencyJwk",
+    "TransparencyJwks",
     "UpdateTitleRequest",
     "UploadCompleteEvent",
     "UploadDocumentResponse",
@@ -650,6 +662,54 @@ class AttachmentLimits(BaseModel):
     max_count: int | None = Field(description="Maximum images per turn, or null for no limit")
 
 
+class TransparencyConfig(BaseModel):
+    """Public AI-generated text marking and detection configuration."""
+
+    enabled: bool = Field(description="Whether watermark detection is available")
+    contact_email: str | None = Field(
+        description="Operator contact for external expert detector access"
+    )
+    minimum_watermark_tokens: int = Field(
+        description="Minimum output length covered by text watermarking"
+    )
+
+
+class TransparencyDetectionRequest(BaseModel):
+    """Free-form text submitted for watermark verification."""
+
+    text: str = Field(
+        min_length=1,
+        max_length=MAX_DETECTION_CHARS,
+        description="Text to verify",
+    )
+
+
+class TransparencyDetectionResponse(BaseModel):
+    """Watermark verification result and its signed report."""
+
+    status: Literal["detected", "not_detected", "inconclusive"]
+    method: Literal["watermark"] = "watermark"
+    message: str
+    signed_report: str = Field(description="Compact, Ed25519-signed JWT report")
+
+
+class TransparencyJwk(BaseModel):
+    """Public Ed25519 signing key for transparency reports."""
+
+    kty: Literal["OKP"] = "OKP"
+    crv: Literal["Ed25519"] = "Ed25519"
+    x: str
+    kid: str
+    use: Literal["sig"] = "sig"
+    alg: Literal["Ed25519"] = "Ed25519"
+
+
+class TransparencyJwks(BaseModel):
+    """JSON Web Key Set for transparency report verification."""
+
+    keys: list[TransparencyJwk]
+
+
 class SettingsResponse(BaseModel):
     """LLM settings with user context."""
 
@@ -671,6 +731,9 @@ class SettingsResponse(BaseModel):
     user: UserResponse = Field(description="Authenticated user information")
     attachments: AttachmentLimits = Field(
         description="Constraints the chat composer enforces on attachments"
+    )
+    transparency: TransparencyConfig = Field(
+        description="AI-generated text marking and detection configuration"
     )
 
 

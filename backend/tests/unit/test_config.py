@@ -8,6 +8,7 @@ import pytest
 from hivegent.config import (
     CONFIG_FILE_ENV_VAR,
     Settings,
+    TransparencySettings,
     sanitize_document_path,
     sanitize_group_id,
     sanitize_user_id,
@@ -115,3 +116,41 @@ def test_toml_config_overrides_defaults(
     assert settings.network.connect_timeout_seconds == 12.5
     assert settings.network.webfetch_timeout_seconds == 7.0
     assert settings.limits.max_file_size_bytes == 50 * 1024 * 1024
+
+
+def test_transparency_requires_an_application_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reports cannot be signed without a strong application secret."""
+    for key in [
+        k for k in os.environ if k.startswith("HIVEGENT_") and k != CONFIG_FILE_ENV_VAR
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    enabled = TransparencySettings(
+        enabled=True,
+        detector_url="http://127.0.0.1:18206/detect",
+        report_issuer="https://hivegent.example.test",
+    )
+
+    with pytest.raises(ValueError, match="secret_key"):
+        Settings(transparency=enabled, secret_key="too-short")
+
+    assert Settings(transparency=enabled, secret_key="x" * 32).secret_key
+
+
+def test_transparency_requires_complete_enabled_configuration() -> None:
+    """The UI cannot be enabled independently from detection and reporting."""
+    with pytest.raises(ValueError, match="detector_url"):
+        TransparencySettings(
+            enabled=True,
+            report_issuer="https://hivegent.example.test",
+        )
+
+    with pytest.raises(ValueError, match="report_issuer"):
+        TransparencySettings(
+            enabled=True,
+            detector_url=(
+                "http://127.0.0.1:18206/plugins/hivegent-watermark/detect"
+            ),
+        )

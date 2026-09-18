@@ -13,6 +13,7 @@ from .documents import router as documents_router
 from .jobs import router as jobs_router
 from .meta import router as meta_router
 from .transcription import router as transcription_router
+from .transparency import router as transparency_router
 
 __all__ = ["api_router"]
 
@@ -24,6 +25,7 @@ api_router.include_router(meta_router)
 api_router.include_router(jobs_router)
 api_router.include_router(conversations_router)
 api_router.include_router(transcription_router)
+api_router.include_router(transparency_router)
 api_router.include_router(documents_router)
 api_router.include_router(directories_router)
 api_router.include_router(account_router)
