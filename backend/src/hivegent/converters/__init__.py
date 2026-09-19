@@ -8,8 +8,6 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from hivegent.converters.dyn import DynJSONConverter
-
 from ..llm_config import LlmConfig
 from ..pipeline_registry import (
     PipelineConfigInfo,
