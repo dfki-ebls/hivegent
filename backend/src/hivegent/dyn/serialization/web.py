@@ -20,12 +20,15 @@ def get_single_webpage_md(url: str) -> str:
         str: The extracted Markdown content
     """
     url = f"https://r.jina.ai/{url}"
-    headers = {"Authorization": f"Bearer {os.getenv('JINA_API_KEY')}"}
+    api_key = os.getenv("JINA_API_KEY")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     response = requests.get(url, headers=headers)
+    response.raise_for_status()
     text = response.text
     marker = "Markdown Content:\n"
-    return text[text.index(marker) + len(marker) :]
+    _, found, content = text.partition(marker)
+    return content if found else text
 
 
 async def crawl_and_merge(url: str) -> str:

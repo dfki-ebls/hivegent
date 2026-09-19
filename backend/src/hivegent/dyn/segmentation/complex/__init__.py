@@ -106,7 +106,7 @@ def to_chunks(doc: Document, limit: int | None = None) -> list[Chunk]:
                     Chunk(
                         text=c_text,
                         lines=c.line_numbers,
-                        start_idx=c.start_idx,
+                        start_idx=c.start_index,
                         end_idx=c.end_index,
                     )
                 )

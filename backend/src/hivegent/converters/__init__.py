@@ -165,9 +165,9 @@ def _load_dyn_word() -> PipelineImplementation[DocumentConverter]:
 
 
 def _load_dyn_email() -> PipelineImplementation[DocumentConverter]:
-    from .dyn import DynWordConverter
+    from .dyn import DynEmailConverter
 
-    return PipelineImplementation(DynWordConverter)
+    return PipelineImplementation(DynEmailConverter)
 
 
 def _load_dyn_excel() -> PipelineImplementation[DocumentConverter]:
@@ -456,12 +456,6 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
         description="Text, configuration, data-serialization, and source files as-is",
         extensions=frozenset({".md"}),
     ),
-    ConversionPipeline.DYN_MARKDOWN: _ConverterRegistration(
-        loader=_load_dyn_markdown,
-        label="dyn markdown",
-        description="Text, configuration, data-serialization, and source files as-is",
-        extensions=frozenset({".md"}),
-    ),
     ConversionPipeline.DYN_PDF: _ConverterRegistration(
         loader=_load_dyn_pdf,
         label="dyn pdf",
@@ -493,10 +487,10 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
         extensions=frozenset({".json", ".jsonl"}),
     ),
     ConversionPipeline.DYN_WEB: _ConverterRegistration(
-        loader=_load_dyn_email,
+        loader=_load_dyn_web,
         label="dyn web",
         description="Text, configuration, data-serialization, and source files as-is",
-        extensions=(),
+        extensions=frozenset({".html"}),
     ),
 }
 

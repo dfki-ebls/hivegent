@@ -18,6 +18,7 @@ from hivegent.dyn.commons.tabular_data import (
     assemble_table,
     merge_cell,
 )
+from hivegent.dyn.util import convert_office_legacy
 
 _ReadOnlyRow = tuple[ReadOnlyCell | EmptyCell, ...]
 
@@ -295,8 +296,9 @@ def sheet_to_markdown(sheet: ReadOnlyWorksheet) -> str:
 
 
 def excel_to_sheets(path: Path) -> Iterable[ReadOnlyWorksheet]:
-    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
-    yield from wb.worksheets
+    with convert_office_legacy(path, "xlsx") as xlsx_path:
+        wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
+        yield from wb.worksheets
 
 
 def to_markdown(path: Path) -> str:
