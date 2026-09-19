@@ -3,14 +3,13 @@ from functools import lru_cache
 import spacy
 import torch
 from fastcoref import FCoref
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from hivegent.dyn.commons.markdown import build_title
 from hivegent.dyn.config import MATH_COREF_MODEL
 from hivegent.dyn.serialization.complex.markdown.model import (
     Document,
     FigureNode,
-    Node,
     TextNode,
 )
 from hivegent.dyn.util import get_token_count, truncate_to_tokens
@@ -41,7 +40,10 @@ def get_device():
 
 @lru_cache(maxsize=1)
 def get_general_coref_model() -> FCoref:
-    return FCoref(device=get_device())
+    return FCoref(
+        nlp=spacy.blank("en"),  # pyright: ignore[reportArgumentType]
+        device=get_device(),
+    )
 
 
 @lru_cache(maxsize=1)
