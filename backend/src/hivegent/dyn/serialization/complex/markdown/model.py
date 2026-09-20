@@ -335,11 +335,11 @@ def split_node(nodeslist: list[Node], idx: int, texts_to_split_into: list[str]):
     orig_node = nodeslist[idx]
     orig_start = orig_node.start_index
 
-    orig_content = (
-        orig_node.data.content
-        if isinstance(orig_node.data, TextNode)
-        else orig_node.data.raw_content
-    )
+    # a table is split by `split_table_node`, which works in the table's own
+    # coordinates, and a figure has no text to split, so the caller only ever
+    # reaches here with a TextNode
+    assert isinstance(orig_node.data, TextNode)
+    orig_content = orig_node.data.content
 
     new_nodes: list[Node] = []
     start_idx = 0
