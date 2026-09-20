@@ -66,6 +66,7 @@ dyn = [
   "python-docx>=1.2.0",
   "spacy>=3.8.15",
   "tiktoken>=0.14.0",
+  "python-dotenv>=1.2.3",
 ]
 kreuzberg = ["kreuzberg>=4,<5"]
 markitdown = ["markitdown[all]>=0.1,<1"]
@@ -81,7 +82,6 @@ dev = [
   "pydantic-evals>=2,<3",
   "pytest>=9,<10",
   "pytest-asyncio>=1,<2",
-  "python-dotenv>=1.2.3",
 ]
 
 [build-system]
@@ -94,10 +94,7 @@ build-backend = "uv_build"
 # under the ``dyn`` extra import it, so a wheel without it ships pipelines that
 # cannot load.
 [tool.uv.build-backend]
-module-name = ["hivegent"]
-# Tool caches are gitignored but not build-excluded, so name them here.
-source-exclude = ["**/.ruff_cache"]
-wheel-exclude = ["**/.ruff_cache"]
+module-name = "hivegent"
 
 [tool.alembic]
 script_location = "src/hivegent/migrations"

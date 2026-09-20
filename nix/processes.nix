@@ -32,21 +32,7 @@
             '';
             # The dev stack owns the proxy port, so it also states the URL
             # rather than relying on the backend's compiled-in default.
-            environment = [
-              "HIVEGENT_SECURITY__EGRESS_PROXY_URL=${egressProxy.url}"
-              # The venv runs on Nix's Python, whose loader never searches the
-              # host's /usr/lib, so the PyPI wheels' native deps (numpy, torch,
-              # opencv) must be named here on non-NixOS hosts.
-              "LD_LIBRARY_PATH=${
-                lib.makeLibraryPath [
-                  pkgs.stdenv.cc.cc.lib
-                  pkgs.zlib
-                  pkgs.libxcb
-                  pkgs.libGL
-                  pkgs.glib
-                ]
-              }"
-            ];
+            environment = [ "HIVEGENT_SECURITY__EGRESS_PROXY_URL=${egressProxy.url}" ];
             # FastAPI only serves once lifespan startup (migrations, reconcile)
             # finishes, so a healthy probe means the backend is ready for traffic.
             # Cadence mirrors the NixOS deployment's `/api/health` check (Caddy's

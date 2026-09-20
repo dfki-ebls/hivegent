@@ -17,10 +17,10 @@ resolution-markers = [
 [options]
 
 [options.exclude-newer-package]
-pydantic-ai-slim = { timestamp = "2026-09-13T16:19:18.632890785Z", span = "P1D" }
-pydantic-graph = { timestamp = "2026-09-13T16:19:18.632894905Z", span = "P1D" }
+pydantic-ai-slim = { timestamp = "2026-09-19T11:53:24.368199317Z", span = "P1D" }
+pydantic-graph = { timestamp = "2026-09-19T11:53:24.368202517Z", span = "P1D" }
 cbrkit = false
-pydantic-evals = { timestamp = "2026-09-13T16:19:18.632895265Z", span = "P1D" }
+pydantic-evals = { timestamp = "2026-09-19T11:53:24.368202767Z", span = "P1D" }
 
 [[package]]
 name = "accelerate"
@@ -2183,6 +2183,7 @@ dyn = [
     { name = "polars" },
     { name = "pydantic-ai" },
     { name = "python-docx" },
+    { name = "python-dotenv" },
     { name = "spacy" },
     { name = "tiktoken" },
 ]
@@ -2208,7 +2209,6 @@ dev = [
     { name = "pydantic-evals" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
-    { name = "python-dotenv" },
 ]
 
 [package.metadata]
@@ -2259,6 +2259,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2,<3" },
     { name = "pypdfium2", specifier = ">=5,<6" },
     { name = "python-docx", marker = "extra == 'dyn'", specifier = ">=1.2.0" },
+    { name = "python-dotenv", marker = "extra == 'dyn'", specifier = ">=1.2.3" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "sentence-transformers", specifier = ">=6,<7" },
     { name = "spacy", marker = "extra == 'dyn'", specifier = ">=3.8.15" },
@@ -2279,7 +2280,6 @@ dev = [
     { name = "pydantic-evals", specifier = ">=2,<3" },
     { name = "pytest", specifier = ">=9,<10" },
     { name = "pytest-asyncio", specifier = ">=1,<2" },
-    { name = "python-dotenv", specifier = ">=1.2.3" },
 ]
 
 [[package]]

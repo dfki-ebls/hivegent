@@ -20,7 +20,6 @@ __all__ = [
     "EntryMetadata",
     "EntryOrigin",
     "RetrievedChunk",
-    "AIOChunker",
 ]
 
 
@@ -255,74 +254,3 @@ class DocumentChunker(ABC):
             )
             for chunk in chunks
         ]
-
-
-class AIOChunker(ABC):
-    """Abstract base class for document chunkers.
-
-    CPU/model-bound chunkers implement the sync :meth:`_split_sync`; the base
-    :meth:`_split` offloads it through :func:`hivegent.workers.pool.run_offloaded`
-    (a persistent worker process when the pool is on, a lock-guarded thread
-    otherwise).  Chunkers that do no offloadable work (the no-op chunker, the
-    LLM-driven slumber chunker) override :meth:`_split` directly.  The base
-    :meth:`__call__` annotates each returned chunk with 1-based line numbers.
-    """
-
-    name: ClassVar[str]
-
-    def _split_sync(self, path: Path, /) -> list[ChunkData]:
-        """CPU-bound chunking core, run in a worker process.
-
-        CPU- and model-bound chunkers implement this; the base :meth:`_split`
-        offloads it to the process pool.  Chunkers that override :meth:`_split`
-        never reach here.  (Mirrors :meth:`DocumentConverter._convert_sync`.)
-
-        Args:
-            text: The document text to chunk.
-
-        Returns:
-            List of ChunkData objects (line numbers may be unset).
-        """
-        raise NotImplementedError
-
-    async def _split(
-        self,
-        path: Path,
-        /,
-        *,
-        mime: str | None = None,
-    ) -> list[ChunkData]:
-        """Split text into chunks.
-
-        Defaults to offloading :meth:`_split_sync` off the event loop (a worker
-        process when the pool is on, a lock-guarded thread otherwise).  Chunkers
-        that are trivial or I/O-bound override this to run on the event loop.
-
-        Args:
-            text: The document text to chunk.
-            mime: Detected MIME type of the original file, when available.
-                Format-aware chunkers may use this to switch strategies.
-
-        Returns:
-            List of ChunkData objects (line numbers may be unset).
-        """
-        return await run_offloaded(self._split_sync, path)
-
-    async def __call__(
-        self,
-        path: Path,
-        /,
-        *,
-        mime: str | None = None,
-    ) -> list[ChunkData]:
-        """Split text into chunks and annotate line numbers.
-
-        Args:
-            text: The document text to chunk.
-            mime: Detected MIME type of the original file, when available.
-
-        Returns:
-            List of ChunkData objects with 1-based line numbers set.
-        """
-        chunks = await self._split(path, mime=mime)
-        return chunks
