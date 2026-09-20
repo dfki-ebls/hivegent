@@ -90,9 +90,6 @@ build-backend = "uv_build"
 
 # The distribution is named for the artifact it ships, the import package for
 # the system it belongs to, so the module has to be named rather than derived.
-# ``dyn`` rides along as a second top-level module: the chunker and converters
-# under the ``dyn`` extra import it, so a wheel without it ships pipelines that
-# cannot load.
 [tool.uv.build-backend]
 module-name = "hivegent"
 
