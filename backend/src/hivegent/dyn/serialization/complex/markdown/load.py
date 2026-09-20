@@ -270,6 +270,8 @@ def _parse_md_table(
     offset = 0
     rows: list[list[str]] = []
     current_row: list[str] = []
+    # table_close carries no map; the opening token spans the whole table
+    table_lines = tokens[start_idx].map
     while True:
         t = tokens[start_idx + offset]
         if t.type == "inline":
@@ -286,7 +288,12 @@ def _parse_md_table(
                 caption="",
                 headers=headers,
                 vals=rows,
-                raw_content="\n".join(raw_text.splitlines()[t.map[0] : t.map[1]]),
+                # kept verbatim: the node's indices are offsets into the
+                # document, so re-rendering the table here would drift by
+                # whatever whitespace the parser normalised away
+                raw_content="\n".join(
+                    raw_text.splitlines()[table_lines[0] : table_lines[1]]
+                ),
             )
             return table_md_node, offset
         offset += 1
@@ -522,7 +529,9 @@ def load(input: Path | str) -> Document:
     for _, contentlist in tree:
         for i, node in enumerate(contentlist):
             lines = node.line_numbers
-            start_idx = 0 if lines[0] <= 1 else md_line_cumsum[lines[0] - 1]
+            # markdown-it line maps are 0-based: line L starts just past line L-1's
+            # newline, and only line 0 starts at the top of the document
+            start_idx = 0 if lines[0] <= 0 else md_line_cumsum[lines[0] - 1]
             end_idx = md_line_cumsum[lines[1] - 1]
             contentlist[i].start_index = start_idx
             contentlist[i].end_index = end_idx

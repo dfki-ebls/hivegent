@@ -210,6 +210,17 @@ def _find_kth_occurence(string: str, char: str, k: int) -> int:
     return idx
 
 
+def _pipe_index(line: str, k: int) -> int:
+    """Position of the k-th ``|`` in a rendered table row.
+
+    Rows in the source may be ragged; the parser pads them out to the header
+    width, so a column index can point past the row's last pipe. Those columns
+    all collapse onto the end of the row.
+    """
+    idx = _find_kth_occurence(line, "|", k)
+    return line.rfind("|") if idx == -1 else idx
+
+
 def _find_run(
     rows: Sequence[Sequence[str]], cell_contents: Sequence[str], y_offset: int
 ) -> tuple[tuple[int, int], tuple[int, int]] | None:
@@ -270,16 +281,12 @@ def _compute_indices_table(
         _find_kth_occurence(converted_string, "\n", start_coords[0] + line_offset - 1)
         + 1
     )
-    start_idx = (
-        _find_kth_occurence(start_line, "|", start_coords[1]) + start_line_startidx
-    )
+    start_idx = _pipe_index(start_line, start_coords[1]) + start_line_startidx
     end_line = lines[end_coords[0] + line_offset]
     end_line_startidx = (
         _find_kth_occurence(converted_string, "\n", end_coords[0] + line_offset - 1) + 1
     )
-    end_idx = (
-        _find_kth_occurence(end_line, "|", end_coords[1] + 1) + end_line_startidx + 1
-    )
+    end_idx = _pipe_index(end_line, end_coords[1] + 1) + end_line_startidx + 1
     return (
         start_idx,
         end_idx,
@@ -297,6 +304,11 @@ def split_table_node(nodeslist: list[Node], idx: int, texts_to_split_into: list[
 
     new_nodes: list[Node] = []
 
+    # _compute_indices_table works in the table's own coordinates; both the
+    # indices and the line numbers it returns have to be lifted to the
+    # document's, which is where the original node is anchored
+    line_base = orig_node.line_numbers[0]
+
     last_end = 0
     for t in texts_to_split_into:
         node = build_text_node(t, orig_node.line_numbers)
@@ -305,7 +317,8 @@ def split_table_node(nodeslist: list[Node], idx: int, texts_to_split_into: list[
         )
         node.start_index = orig_start + start_idx
         node.end_index = orig_start + end_idx
-        node.line_numbers = (start_line, end_line)
+        node.line_numbers = (line_base + start_line, line_base + end_line)
+        # the next chunk resumes searching in table coordinates
         last_end = end_line
         new_nodes.append(node)
     nodeslist[idx : idx + 1] = new_nodes

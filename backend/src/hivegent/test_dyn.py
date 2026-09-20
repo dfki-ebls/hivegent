@@ -6,10 +6,12 @@ from hivegent.converters import ConversionPipeline, get_converter
 
 
 def test_dyn_converter() -> str:
-    converter = get_converter(ConversionPipeline.DYN_EXCEL, filename="email.xlsx")
+    converter = get_converter(ConversionPipeline.DYN_WORD, filename="email.docx")
     result = asyncio.run(
         converter(
-            Path("~/Downloads/jeffrey_a_shankman_000_1_2.pst.131.xlsx").expanduser()
+            Path(
+                "~/Downloads/Firmenwagenregelung_Nordwerk_Maschinenbau.docx"
+            ).expanduser()
         )
     )
     return result.markdown
