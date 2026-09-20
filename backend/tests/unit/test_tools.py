@@ -14,7 +14,7 @@ from pydantic_monty import AsyncMonty
 from hivegent.config import content_hash
 from hivegent.converters import VISION_MEDIA_TYPES
 from hivegent.store import WorkspaceScope
-from hivegent.tools import workspace_os
+from hivegent.tools import binary, workspace_os
 from hivegent.tools.base import (
     SearchPath,
     ToolRetry,
@@ -133,7 +133,39 @@ class TestPathCanonicalization:
         (tmp_path / "sub").mkdir()
         tool = GlobDocumentsTool(paths=(self._scoped(tmp_path),))
 
-        assert (await tool("*.md", path="~/sub/..")).data == []
+        with pytest.raises(ToolRetry, match="does not exist"):
+            await tool("*.md", path="~/sub/..")
+
+    async def test_listing_subdirectory_cannot_escape_workspace(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.md").write_text("secret")
+        tool = ListDocumentsTool(
+            paths=(SearchPath(path=workspace, scope=WorkspaceScope()),)
+        )
+
+        with pytest.raises(ToolRetry, match="does not exist"):
+            await tool(path="~/../outside", max_depth=None)
+
+    async def test_listing_subdirectory_cannot_follow_escaping_symlink(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.md").write_text("secret")
+        (workspace / "alias").symlink_to(outside, target_is_directory=True)
+        tool = ListDocumentsTool(
+            paths=(SearchPath(path=workspace, scope=WorkspaceScope()),)
+        )
+
+        with pytest.raises(ToolRetry, match="does not exist"):
+            await tool(path="~/alias", max_depth=None)
 
 
 class TestListDocumentsTool:
@@ -153,6 +185,61 @@ class TestListDocumentsTool:
         filenames = [r.filename for r in data]
         assert "a.md" in filenames
         assert "b.txt" not in filenames
+
+    @pytest.mark.parametrize("path", [".", "./", "~/."])
+    async def test_root_directory_aliases(self, tmp_path: Path, path: str) -> None:
+        (tmp_path / "a.md").write_text("hello")
+        paths = (SearchPath(path=tmp_path, scope=WorkspaceScope()),)
+
+        data = _as_summaries((await ListDocumentsTool(paths=paths)(path=path)).data)
+        matches = (await GlobDocumentsTool(paths=paths)("*.md", path=path)).data
+
+        assert [entry.filename for entry in data] == ["~/a.md"]
+        assert matches == ["~/a.md"]
+
+    async def test_missing_subdirectory_is_retry(self, tmp_path: Path) -> None:
+        tool = ListDocumentsTool(
+            paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
+        )
+
+        with pytest.raises(ToolRetry, match="Directory '~/missing' does not exist"):
+            await tool(path="~/missing")
+
+    async def test_subdirectory_traversal_is_folded(self, tmp_path: Path) -> None:
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "a.md").write_text("hello")
+        tool = ListDocumentsTool(
+            paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
+        )
+
+        data = _as_summaries((await tool(path="~/sub/../docs")).data)
+
+        assert [entry.filename for entry in data] == ["~/docs/a.md"]
+
+    async def test_unknown_prefix_names_the_roots(self, tmp_path: Path) -> None:
+        tool = ListDocumentsTool(
+            paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
+        )
+
+        with pytest.raises(ToolRetry, match="This tool addresses ~"):
+            await tool(path="@nope/x")
+
+    async def test_empty_listing_names_its_scope(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.assets").mkdir()
+        (tmp_path / "doc.assets" / "img.png").write_bytes(b"\x89PNG")
+        tool = ListDocumentsTool(
+            paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
+        )
+
+        empty = await tool(path="~/doc.assets", max_depth=None)
+
+        assert empty.data == []
+        assert empty.formatted == (
+            "(no documents under '~/doc.assets', 1 hidden entry (`.assets` "
+            "contents and common build/vendor directories), pass "
+            "include_ignored=True to reveal them)"
+        )
 
     async def test_custom_glob(self, tmp_path: Path) -> None:
         (tmp_path / "a.txt").write_text("hello")
@@ -298,7 +385,7 @@ class TestListDocumentsTool:
         result = await tool(flatten=False)
         assert isinstance(result.data, DocumentTreeNode)
         assert result.data.children == ()
-        assert result.formatted == "(empty)"
+        assert result.formatted == "(empty tree in the workspace)"
 
     async def test_empty_result_hint_counts_hidden_entries(
         self, tmp_path: Path
@@ -599,6 +686,32 @@ class TestReadDocumentTool:
         with pytest.raises(ToolRetry, match=r"@team/report\.md"):
             await tool("@team/report.docx")
 
+    async def test_binary_tool_bounds_pdf_pages_by_the_image_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The serving gateway rejects a whole request carrying more images than
+        # its per-prompt cap, which would fail the turn, so the reader renders
+        # no more pages than the cap admits and the over-request lands as the
+        # retryable refusal naming pages=.
+        (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4\n")
+        seen: list[int] = []
+
+        async def render(
+            raw: bytes, spec: str | None, max_dimension: int, max_pages: int
+        ) -> tuple[tuple[bytes, ...], tuple[int, ...]]:
+            seen.append(max_pages)
+            raise ValueError(
+                f"3 pages exceeds the {max_pages}-page limit — narrow with pages="
+            )
+
+        monkeypatch.setattr(binary, "render_pdf_pages", render)
+        tool = ReadBinaryDocumentTool(paths=tmp_path, max_images=2)
+
+        with pytest.raises(ToolRetry, match="narrow with pages="):
+            await tool("report.pdf")
+
+        assert seen == [2]
+
     async def test_binary_without_companion_retries(self, tmp_path: Path) -> None:
         # Undecodable bytes become a recoverable ToolRetry, never a run-aborting
         # UnicodeDecodeError.
@@ -632,6 +745,16 @@ class TestReadDocumentTool:
         tool = ReadDocumentTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="not found"):
             await tool("../../../etc/passwd")
+
+    async def test_rejects_a_directory_as_a_directory(self, tmp_path: Path) -> None:
+        # A selected folder reaches the model as a path like any other, so it
+        # is read like one. "Not found" sent that run hunting for a respelling
+        # of a path that was right; the listing tool is the actual correction.
+        (tmp_path / "reports").mkdir()
+        tool = ReadDocumentTool(paths=tmp_path)
+
+        with pytest.raises(ToolRetry, match="is a directory.*list_documents"):
+            await tool("reports/")
 
     async def test_reads_group_document(self, tmp_path: Path) -> None:
         group_dir = tmp_path / "group"
@@ -1253,6 +1376,33 @@ class TestGrepSearch:
         result = await GrepTool(paths=tmp_path)("needle", glob="*.xml")
         assert self._filenames(result.data) == {"doc.xml"}
 
+    async def test_a_directory_glob_searches_that_subtree_of_every_workspace(
+        self, tmp_path: Path
+    ) -> None:
+        # ripgrep matches a glob carrying a slash relative to its working
+        # directory, so one anchored run per workspace is what makes
+        # `reports/*.md` name that folder in each of them.  Handed the root as
+        # an argument instead, it was tested against the absolute path and
+        # matched nothing at all, while a slashless `*.md` appeared to work.
+        for name in ("user", "group"):
+            reports = tmp_path / name / "reports"
+            reports.mkdir(parents=True)
+            (reports / "q1.md").write_text("needle\n")
+            (tmp_path / name / "loose.md").write_text("needle\n")
+        paths = (
+            SearchPath(path=tmp_path / "user", scope=WorkspaceScope()),
+            SearchPath(path=tmp_path / "group", scope=WorkspaceScope("team")),
+        )
+
+        both = await GrepTool(paths=paths)("needle", glob="reports/*.md")
+        one = await GrepTool(paths=paths)("needle", glob="~/reports/*.md")
+
+        assert self._filenames(both.data) == {
+            "~/reports/q1.md",
+            "@team/reports/q1.md",
+        }
+        assert self._filenames(one.data) == {"~/reports/q1.md"}
+
     async def test_assets_payload_hidden_unless_ignored(self, tmp_path: Path) -> None:
         assets = tmp_path / "doc.assets"
         assets.mkdir()
@@ -1263,6 +1413,21 @@ class TestGrepSearch:
             GrepTool(paths=tmp_path)("needle", include_ignored=True)
         )
         assert self._filenames(revealed.data) == {"doc.assets/fig1.txt"}
+
+    async def test_parent_glob_cannot_search_outside_workspace(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "inside.md").write_text("inside\n")
+        (tmp_path / "secret.md").write_text("needle\n")
+        tool = GrepTool(
+            paths=(SearchPath(path=workspace, scope=WorkspaceScope()),)
+        )
+
+        result = await tool("needle", glob="../*.md")
+
+        assert result.data == []
 
 
 class TestGrepFormatting:

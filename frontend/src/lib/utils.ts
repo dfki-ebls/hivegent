@@ -1,6 +1,6 @@
 import type { DirectoryEntry, DocumentInfo } from "@/lib/types";
 
-export { cn, type ClassValue } from "cnfast";
+export { cn, type ClassValue } from "cn";
 
 /** Handbook URL from `VITE_DOCS_URL`, or `undefined` when no handbook is served,
  * which hides the "Documentation" link. */

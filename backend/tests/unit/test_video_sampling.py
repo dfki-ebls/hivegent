@@ -87,6 +87,18 @@ async def test_binary_tool_samples_animated_gif(tmp_path: Path) -> None:
     assert "#t=" in (output.attachments[-1].identifier or "")
 
 
+async def test_binary_tool_clamps_frames_to_the_image_cap(tmp_path: Path) -> None:
+    # A run picks PDF pages but never frames, so the serving gateway's
+    # per-request image cap shrinks the sample instead of refusing the call.
+    (tmp_path / "anim.gif").write_bytes(_animated_gif(10))
+    tool = ReadBinaryDocumentTool(
+        paths=SearchPath(path=tmp_path), max_frames=4, max_images=2
+    )
+    output = await tool("anim.gif")
+    assert output.data.frames == 2
+    assert len(output.attachments) == 2
+
+
 async def test_binary_tool_rejects_pages_for_video(tmp_path: Path) -> None:
     (tmp_path / "clip.mp4").write_bytes(b"\x00" * 16)
     tool = ReadBinaryDocumentTool(paths=SearchPath(path=tmp_path))

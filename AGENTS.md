@@ -71,6 +71,10 @@
 
 ### Tools
 
+- A filter argument naming a directory that no accessible root holds is refused, never answered with an empty result, since a listing that silently comes back empty reads as an empty workspace and the caller cannot tell that from its own typo.
+  `tools.base.resolve_directory` folds the directory and pairs it with the roots that hold it, `missing_directory_retry` is the one refusal, and both reach `list_documents` and `glob_documents` through their `path`.
+  Not `workspace_root_hint`, which tells a *file* path to lead with a root: a filter argument may legitimately carry no prefix, so the refusal names the roots without demanding one, and it names the caller's own spelling rather than the prefix-stripped remainder, which would staple a second prefix onto a path that already carries one.
+  The roots come back resolved, so the walk starts at the subtree instead of sweeping the workspace and discarding the rest.
 - The chat's document selection is asymmetric: `included_documents` is advisory and only named in the prompt (`parse_document_scope`, `format_document_scope`), never a filter, so a run can follow a reference out of the selection.
   Only `excluded_documents` becomes a `DocumentFilter`, enforced by the path tools through `SearchPath.filter_func` and by retrieval in `resolve_accessible_document_ids`, staying one predicate.
   `.scratch/` is exempt inside `DocumentFilter.__call__`, which lets `UserDeps` offer a single `search_paths`.

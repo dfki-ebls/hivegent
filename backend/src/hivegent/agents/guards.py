@@ -1,6 +1,6 @@
 """Cross-cutting run-loop safeguards composed onto the agents.
 
-Three capabilities that guard a run without belonging to any one feature:
+Four capabilities that guard a run without belonging to any one feature:
 
 * :class:`IncompleteToolCallGuard` fails a turn whose response the token
   limit cut off mid tool call, before the half-written call is dispatched.
@@ -11,33 +11,52 @@ Three capabilities that guard a run without belonging to any one feature:
   runaway return — a foreign MCP tool that self-caps nothing, or a built-in
   tool rendering an outsized window — cannot dominate the context and
   re-cost every later request.
+* :class:`PromptImageLimit` holds one outgoing request to the number of
+  images the serving gateway accepts, swapping the older surplus for a note,
+  so a batch of parallel reads that each obey the cap cannot overflow it
+  together.
 * :class:`IterationLimitWarner` injects a user-turn nudge as the run nears
   its request budget, so the model wraps up before the hard
   :class:`~pydantic_ai.exceptions.UsageLimitExceeded` abort rather than
   being cut off mid-task.
 
-All three hook the pydantic-ai agent loop, so they touch only the agent
+All four hook the pydantic-ai agent loop, so they touch only the agent
 path; the framework-neutral tools and their FastMCP adapter are unaffected.
-:class:`IncompleteToolCallGuard` rides on the agents themselves (see
-``agents/app.py``) because a truncated call is a hazard on every run, not
-only the mode-composed chat one; the other two are composed per chat run.
+:class:`IncompleteToolCallGuard` and :class:`PromptImageLimit` ride on the
+agents themselves (see ``agents/app.py``), because a truncated call and a
+request the gateway will reject are hazards on every run, not only the
+mode-composed chat one; the other two are composed per chat run.
 
-Neither of the editing two touches the persisted message tree, only the
-per-request message copy or the tool return: pydantic-ai passes a fresh
-``message_history`` copy to ``before_model_request``, and a reduced return is
-recorded in place of the original, so the reduction is what persists.
+The two that reshape the conversation do it on the wire and nowhere else,
+through ``wrap_model_request``: the messages handed to the handler are what
+the model sees, while the graph keeps its own and records those, so a note
+never enters the stored conversation and never accumulates across requests.
+``before_model_request`` is not that seam — ``request_context.messages`` is
+the run's history, so editing or replacing it there rewrites the tree the
+conversation is replayed from and exported out of.  Nor are the messages the
+place to edit in place: the parts and their content lists are shared with
+that tree, so a reshape rebuilds what it touches.
+
+:class:`ToolOutputLimit` is the deliberate exception — it reduces the tool
+return itself, which is recorded in place of the original, so there the
+reduction is what persists.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, TypeGuard
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai import BinaryContent, ImageUrl
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.exceptions import IncompleteToolCall
 from pydantic_ai.messages import (
+    ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ToolCallPart,
     ToolReturn,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext
@@ -49,8 +68,87 @@ from .common import UserDeps
 __all__ = [
     "IncompleteToolCallGuard",
     "IterationLimitWarner",
+    "PromptImageLimit",
     "ToolOutputLimit",
 ]
+
+
+def _image_list(part: ModelRequestPart) -> Sequence[Any]:
+    """Inspect the same content shapes the provider sends as images."""
+    if isinstance(part, ToolReturnPart):
+        return part.content_items()
+
+    if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+        return part.content
+
+    return ()
+
+
+def _is_image(item: Any) -> TypeGuard[BinaryContent | ImageUrl]:
+    return isinstance(item, ImageUrl) or (
+        isinstance(item, BinaryContent) and item.is_image
+    )
+
+
+def _images(messages: Sequence[ModelMessage]) -> list[BinaryContent | ImageUrl]:
+    """Every image occurrence in request order."""
+    return [
+        item
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        for item in _image_list(part)
+        if _is_image(item)
+    ]
+
+
+def _within_image_cap(
+    messages: list[ModelMessage], max_images: int | None
+) -> list[ModelMessage]:
+    """Replace older image occurrences without mutating shared history."""
+    if max_images is None:
+        return messages
+
+    remaining = len(_images(messages)) - max_images
+
+    if remaining <= 0:
+        return messages
+
+    note = (
+        f"[image not shown: a model request carries at most {max_images} "
+        "image(s), and newer ones displaced this. Read the document again "
+        "if you still need to see it.]"
+    )
+    kept: list[ModelMessage] = []
+
+    for message in messages:
+        if remaining > 0 and isinstance(message, ModelRequest):
+            parts = list(message.parts)
+
+            for index, part in enumerate(parts):
+                content = list(_image_list(part))
+                changed = False
+
+                for position, item in enumerate(content):
+                    if remaining > 0 and _is_image(item):
+                        content[position] = note
+                        remaining -= 1
+                        changed = True
+
+                if changed:
+                    replacement = (
+                        content[0]
+                        if isinstance(part, ToolReturnPart)
+                        and not isinstance(part.content, list)
+                        else content
+                    )
+                    parts[index] = replace(part, content=replacement)
+
+            message = replace(message, parts=parts)
+
+        kept.append(message)
+
+    return kept
 
 
 class IncompleteToolCallGuard(AbstractCapability[Any]):
@@ -146,41 +244,71 @@ class ToolOutputLimit(AbstractCapability[UserDeps]):
 
 
 @dataclass(slots=True)
+class PromptImageLimit(AbstractCapability[Any]):
+    """Hold one model request to the images the serving gateway accepts.
+
+    Replace older images with a note on the wire only.
+    The allowance covers history, user attachments, and parallel tool returns.
+    ``None`` disables the cap.
+    """
+
+    max_images: int | None
+
+    async def wrap_model_request(
+        self,
+        ctx: RunContext[Any],
+        *,
+        request_context: ModelRequestContext,
+        handler: WrapModelRequestHandler,
+    ) -> ModelResponse:
+        """Send all but the newest ``max_images`` images as a note."""
+        messages = _within_image_cap(request_context.messages, self.max_images)
+        if messages is not request_context.messages:
+            request_context = replace(request_context, messages=messages)
+
+        return await handler(request_context)
+
+
+@dataclass(slots=True)
 class IterationLimitWarner(AbstractCapability[UserDeps]):
     """Nudge the model to finish as the run nears its request budget.
 
     Once the run has used ``threshold`` of ``max_requests`` model requests
     (shared across the main agent and its subagents, which run on the same
     usage accumulator), a short user-turn note is appended to the outgoing
-    request stating how many requests remain.  The note rides only the
-    per-request message copy pydantic-ai builds, so it steers the model
-    without ever entering the persisted conversation, and it is re-derived
-    each request rather than accumulating.
+    request stating how many requests remain.  It rides the wire alone, so it
+    steers the model without entering the persisted conversation and is
+    re-derived each request rather than accumulating: appended to the run's
+    own messages it would be recorded as a user turn nobody sent, replayed on
+    every later turn, and joined by one more note per warned request.
     """
 
     max_requests: int
     threshold: float = 0.75
 
-    async def before_model_request(
+    async def wrap_model_request(
         self,
         ctx: RunContext[UserDeps],
+        *,
         request_context: ModelRequestContext,
-    ) -> ModelRequestContext:
+        handler: WrapModelRequestHandler,
+    ) -> ModelResponse:
         """Append a wrap-up note once the request budget is nearly spent."""
         used = ctx.usage.requests
 
-        if used < self.threshold * self.max_requests:
-            return request_context
+        if used >= self.threshold * self.max_requests:
+            remaining = max(0, self.max_requests - used)
+            note = (
+                f"[run-limit-warning] You have used {used} of {self.max_requests} "
+                f"model requests for this turn ({remaining} remaining). Wrap up: "
+                f"give your best answer now and avoid unnecessary tool calls."
+            )
+            request_context = replace(
+                request_context,
+                messages=[
+                    *request_context.messages,
+                    ModelRequest(parts=[UserPromptPart(content=note)]),
+                ],
+            )
 
-        remaining = max(0, self.max_requests - used)
-        note = (
-            f"[run-limit-warning] You have used {used} of {self.max_requests} model "
-            f"requests for this turn ({remaining} remaining). Wrap up: give your "
-            f"best answer now and avoid unnecessary tool calls."
-        )
-        request_context.messages = [
-            *request_context.messages,
-            ModelRequest(parts=[UserPromptPart(content=note)]),
-        ]
-
-        return request_context
+        return await handler(request_context)

@@ -4,13 +4,25 @@ Fixtures live in ``conftest.py``; this is for the plain functions a test
 calls directly.
 """
 
+import io
 from collections.abc import Awaitable
 from typing import cast
+
+from PIL import Image
+from PIL.PngImagePlugin import PngInfo
 
 from hivegent.tools.base import ToolOutput
 from hivegent.tools.sink import RedirectedOutput
 
-__all__ = ["returned"]
+__all__ = ["png_bytes", "returned"]
+
+
+def png_bytes(info: PngInfo | None = None) -> bytes:
+    """A small PNG, optionally carrying the chunks sanitisation strips."""
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8), (10, 80, 160)).save(buffer, format="PNG", pnginfo=info)
+
+    return buffer.getvalue()
 
 
 async def returned[T](

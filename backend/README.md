@@ -270,6 +270,26 @@ The following pieces still need to be built before that tool ships, and none of 
 The read tools serve the markdown projection, which is what retrieval and citation line anchors are built on.
 Two document shapes are deliberately not served that way, and `converters.TABULAR_SUFFIXES` and `converters.JSON_SUFFIXES` are the one table behind each split, for the same reason `VISION_MEDIA_TYPES` is the one table behind read/read_binary: the specialised tool gates on it and `read_document` points at that tool when a read lands on one of these, so the reader cannot silently spend the context on a document that could have been queried.
 
+### The image cap belongs to the gateway, not to the reader
+
+`multimodal.max_images` is the serving gateway's per-request image limit (vLLM's `--limit-mm-per-prompt`), and it is set to what the operator gave that server rather than picked here.
+It matters because the gateway rejects the whole request, not the call that overfilled it: an attachment set over the cap fails the turn with a message the run never sees and cannot act on, while the same refusal raised by the tool is a `ToolRetry` the model fixes by narrowing `pages=`.
+So `ReadBinaryDocumentTool` binds its own budgets to the cap before it renders anything: `max_pages` for PDFs, where the refusal names the argument that fixes it, and `max_frames` for video and animations, which is clamped instead, since a run picks pages but never frames.
+`None` (the default) is a gateway with no such limit and leaves the reader's own budgets alone.
+
+One call obeying the cap is not enough, because what the gateway counts is the request, and three separate things fill it: a step of parallel reads each attaching one image, the turn's own attachments, and every image already in the replayed history.
+No per-call budget can see any but the first, so `agents.guards.PromptImageLimit` counts the one thing that matters, once, where the outgoing messages are in hand: it swaps all but the newest `max_images` for a note and hands that to the model.
+Trimming rather than refusing the call keeps the rendering the run already paid for and spends no extra round trip, and the note is what keeps it honest — the model is told an image it asked for is not in front of it, so it reads the document again instead of answering from a picture it cannot see.
+It rides on the agents in `agents/app.py` rather than being composed per chat run, because a request the gateway will reject is a hazard on every run against it, subagent and MCP ones included, and it takes the setting unconditionally since `None` is already how it spells "counts nothing".
+
+The trim is spent on the wire and nowhere else, which is what `wrap_model_request` is for: the messages handed to the handler are what the model sees, while the graph keeps its own and records those.
+`before_model_request` is not that seam — `request_context.messages` is the run's history, so a hook that edits or replaces it there rewrites the tree the conversation is replayed from and exported out of, and `IterationLimitWarner` was appending its nudge as a user turn nobody sent, replayed on every later turn and joined by one more per warned request.
+Nor are the messages the place to edit in place: the parts and their content lists are shared with that tree, so the reshape rebuilds what it touches.
+`ToolOutputLimit` is the deliberate exception, since it reduces the tool return itself and that is recorded in place of the original.
+
+A chat turn's own attachments answer to the same number twice over: the trim counts them like any other image, and `_accept_attachments` refuses an over-cap set outright, served to the composer as `AttachmentLimits.max_count` so the file picker stops at it (`max_bytes` bounds one image, `max_count` how many).
+That gate is not what keeps the request legal any more — the trim is — but a user who attached twelve images should be told at send time rather than have ten of them quietly go unlooked-at.
+
 ### Tables are queried, not read
 
 `query_table` runs Polars SQL against the original CSV/TSV/Parquet/Excel file in `data/workspace/`, which is the same trade `jq` makes for JSON.

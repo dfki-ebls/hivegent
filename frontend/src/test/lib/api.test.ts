@@ -90,6 +90,7 @@ describe("getSettings", () => {
       attachments: {
         media_types: ["image/jpeg", "image/png"],
         max_bytes: 10 * 1024 * 1024,
+        max_count: 2,
       },
     };
 

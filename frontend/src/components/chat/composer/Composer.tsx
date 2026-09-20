@@ -37,6 +37,9 @@ function attachmentErrorMessage(
   if (err.code === "max_file_size") {
     return `Images must be under ${formatFileSize(limits?.max_bytes ?? 0)}.`;
   }
+  if (err.code === "max_files") {
+    return `At most ${limits?.max_count ?? 0} image(s) can be attached, since the model server accepts no more in one request.`;
+  }
   return err.message;
 }
 
@@ -127,6 +130,7 @@ function ComposerContent({
     <PromptInput
       accept={attachments?.media_types.join(",")}
       maxFileSize={attachments?.max_bytes}
+      maxFiles={attachments?.max_count ?? undefined}
       onError={onAttachmentError}
       onSubmit={(msg) => onSubmit(msg.text, msg.files)}
     >

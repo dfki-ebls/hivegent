@@ -37,6 +37,7 @@ class RgMatch:
     """A match block from ripgrep — at least one matching line, plus any
     surrounding context lines that ripgrep grouped with it."""
 
+    # Relative to the search root, which is where ripgrep was run.
     path: str
     lines: tuple[RgLine, ...]
 
@@ -122,7 +123,7 @@ def _parse_event(raw: JsonValue) -> _RgEvent | None:
 
 async def rg_search(
     pattern: str,
-    path: Path,
+    root: Path,
     *,
     glob: str | None = None,
     context_lines: int = 0,
@@ -130,12 +131,22 @@ async def rg_search(
     literal: bool = False,
     exclude_dirs: tuple[str, ...] = (),
 ) -> list[RgMatch]:
-    """Search *path* for *pattern* using ripgrep.
+    """Search *root* for *pattern* using ripgrep.
+
+    ripgrep runs with *root* as its working directory rather than being
+    handed it as an argument, because that is what anchors a glob: ripgrep
+    matches a glob carrying a slash against the path relative to the working
+    directory, so ``reports/*.txt`` passed beside an absolute root was tested
+    against ``/…/workspace/user:x/reports/note.txt`` and could never match,
+    while a slashless ``*.md`` matched by basename and appeared to work.  The
+    reported paths come back relative to *root* for the same reason.
 
     Args:
         pattern: Regex pattern to search for.
-        path: Directory or file to search.
-        glob: Only search files matching this glob (e.g. ``"*.md"``).
+        root: Directory to search, which is also what every glob and every
+            reported path is relative to.
+        glob: Only search files matching this glob, either by basename
+            (``"*.md"``) or anchored at *root* (``"reports/*.txt"``).
         context_lines: Number of context lines before and after each match.
         case_sensitive: When ``False`` (the default), search
             case-insensitively.  When ``True``, match case exactly.
@@ -145,9 +156,9 @@ async def rg_search(
             (e.g. ``("node_modules", ".git")``).
 
     Returns:
-        List of match blocks parsed from ripgrep's JSON output.  Each
-        block contains one or more lines; ``is_match`` distinguishes
-        matching lines from surrounding context.
+        List of match blocks parsed from ripgrep's JSON output, each path
+        relative to *root*.  Each block contains one or more lines;
+        ``is_match`` distinguishes matching lines from surrounding context.
     """
     args: list[str | Path] = ["rg", "--json"]
     if not case_sensitive:
@@ -160,10 +171,13 @@ async def rg_search(
         args.extend(["--glob", f"!**/{excluded}/**"])
     if context_lines > 0:
         args.extend(["--context", str(context_lines)])
-    args.extend([pattern, path])
+    args.extend(["--", pattern, "."])
 
-    # rg exits 1 when there are no matches — that's not an error.
-    result = await run(args, allowed_returncodes=(1,))
+    # rg exits 1 when there are no matches — that's not an error.  An
+    # explicitly given target is searched whatever the ignore files say, and
+    # `.` is as explicit as an absolute path, so a workspace under an ignored
+    # directory (`data/` in the dev tree) stays searchable.
+    result = await run(args, allowed_returncodes=(1,), cwd=root)
 
     matches: list[RgMatch] = []
     block_lines: list[RgLine] = []
@@ -188,6 +202,9 @@ async def rg_search(
         if line_path is None or text is None:
             logger.debug("Skipping undecodable ripgrep line: %r", raw)
             continue
+
+        # `.` is the target, so every path arrives spelled `./<relative>`.
+        line_path = line_path.removeprefix("./")
 
         is_match = event.type == "match"
         # Without --context, consecutive matches have no separator,
