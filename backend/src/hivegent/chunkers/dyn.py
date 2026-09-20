@@ -22,7 +22,7 @@ class DynConfig(BaseModel):
 
 @dataclass(slots=True, frozen=True)
 class DynChunker(DocumentChunker):
-    """ """
+    """Dynamic chunk generation pipeline which focusses on the creation of independent chunks"""
 
     name = "dyn"
     config: DynConfig = field(default_factory=DynConfig)

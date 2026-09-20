@@ -1,7 +1,6 @@
 import os
 import re
 from collections.abc import Sequence
-from copy import copy
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Literal

@@ -40,7 +40,7 @@ class DynMarkdownConfig(BaseModel):
 
 @dataclass(slots=True, frozen=True)
 class DynMarkdownConverter(DocumentConverter):
-    """Document converter using"""
+    """Optimizes a Markdown file to facilitate the generation of more independent chunks"""
 
     name = "dynmarkdown"
     config: DynMarkdownConfig = field(default_factory=DynMarkdownConfig)
@@ -62,7 +62,7 @@ class DynMarkdownConverter(DocumentConverter):
 
 @dataclass(slots=True, frozen=True)
 class DynPDFConverter(DocumentConverter):
-    """Document converter using"""
+    """Converts a PDF file to Markdown to facilitate the generation of more independent chunks. Currently deactivated."""
 
     name = "dynpdf"
 
@@ -75,7 +75,7 @@ class DynPDFConverter(DocumentConverter):
 
 @dataclass(slots=True, frozen=True)
 class DynWordConverter(DocumentConverter):
-    """Document converter using"""
+    """Converts a Word file to Markdown to facilitate the generation of more independent chunks"""
 
     name = "dynword"
 
@@ -88,7 +88,7 @@ class DynWordConverter(DocumentConverter):
 
 @dataclass(slots=True, frozen=True)
 class DynEmailConverter(DocumentConverter):
-    """Document converter using"""
+    """Converts an email file (eml) to Markdown to facilitate the generation of more independent chunks"""
 
     name = "dynemail"
 
@@ -100,7 +100,7 @@ class DynEmailConverter(DocumentConverter):
 
 @dataclass(slots=True, frozen=True)
 class DynExcelConverter(DocumentConverter):
-    """Document converter using"""
+    """Converts an Excel file to Markdown to facilitate the generation of more independent chunks"""
 
     name = "dynexcel"
 
@@ -111,7 +111,7 @@ class DynExcelConverter(DocumentConverter):
 
 @dataclass(slots=True, frozen=True)
 class DynJSONConverter(DocumentConverter):
-    """Document converter using"""
+    """Converts a JSON file to Markdown to facilitate the generation of more independent chunks"""
 
     name = "dynjson"
 
@@ -122,7 +122,7 @@ class DynJSONConverter(DocumentConverter):
 
 @dataclass(slots=True, frozen=True)
 class DynWebConverter(DocumentConverter):
-    """Document converter using"""
+    """Converts a web source to Markdown to facilitate the generation of more independent chunks. Currently deactivated."""
 
     name = "dynweb"
 

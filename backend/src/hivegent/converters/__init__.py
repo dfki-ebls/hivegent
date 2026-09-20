@@ -450,8 +450,8 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
     ),
     ConversionPipeline.DYN_MARKDOWN: _ConverterRegistration(
         loader=_load_dyn_markdown,
-        label="dyn markdown",
-        description="Text, configuration, data-serialization, and source files as-is",
+        label="Independent Markdown",
+        description="Optimizes a Markdown file to correct prior serialization problems and facilitate the generation of more independent chunks",
         extensions=frozenset({".md"}),
     ),
     # ConversionPipeline.DYN_PDF: _ConverterRegistration(
@@ -462,26 +462,26 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
     # ),
     ConversionPipeline.DYN_WORD: _ConverterRegistration(
         loader=_load_dyn_word,
-        label="dyn word",
-        description="Text, configuration, data-serialization, and source files as-is",
+        label="Independent Word",
+        description="Converts a Word file to Markdown to facilitate the generation of more independent chunks",
         extensions=frozenset({".doc", ".docx"}),
     ),
     ConversionPipeline.DYN_EMAIL: _ConverterRegistration(
         loader=_load_dyn_email,
-        label="dyn email",
-        description="Text, configuration, data-serialization, and source files as-is",
+        label="Independent Email",
+        description="Converts an email file (eml) to Markdown to facilitate the generation of more independent chunks",
         extensions=frozenset({".eml", ".txt"}),
     ),
     ConversionPipeline.DYN_EXCEL: _ConverterRegistration(
         loader=_load_dyn_excel,
-        label="dyn excel",
-        description="Text, configuration, data-serialization, and source files as-is",
+        label="Inpendent Excel",
+        description="Converts a Excel file to Markdown to facilitate the generation of more independent chunks",
         extensions=frozenset({".xls", ".xlsx"}),
     ),
     ConversionPipeline.DYN_JSON: _ConverterRegistration(
         loader=_load_dyn_json,
-        label="dyn json",
-        description="Text, configuration, data-serialization, and source files as-is",
+        label="Independent JSON",
+        description="Converts a JSON file to Markdown to facilitate the generation of more independent chunks",
         extensions=frozenset({".json", ".jsonl"}),
     ),
     # ConversionPipeline.DYN_WEB: _ConverterRegistration(

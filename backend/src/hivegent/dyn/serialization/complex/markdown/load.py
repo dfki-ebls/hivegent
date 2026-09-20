@@ -1,21 +1,18 @@
 import re
 from collections.abc import Callable, Sequence
-from enum import Enum
 from pathlib import Path
-from typing import Annotated, Literal
 
 import numpy as np
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from mdit_py_plugins.footnote import footnote_plugin
-from pydantic import BaseModel, Field
 
 from hivegent.dyn.commons.markdown import (
     escape_stray_html_block_openers,
     escape_stray_tilde_fences,
     get_first_float_name,
 )
-from hivegent.dyn.commons.tabular_data import assemble_table, html_to_headers_rows
+from hivegent.dyn.commons.tabular_data import html_to_headers_rows
 
 from .model import (
     ContentTree,
@@ -272,6 +269,7 @@ def _parse_md_table(
     current_row: list[str] = []
     # table_close carries no map; the opening token spans the whole table
     table_lines = tokens[start_idx].map
+    assert table_lines is not None
     while True:
         t = tokens[start_idx + offset]
         if t.type == "inline":
@@ -367,9 +365,8 @@ def _parse_footnote_block(
 
 
 def _build_line_numbers(token: Token, endtoken: Token) -> tuple[int, int]:
-    # TODO: Woher kommt das (endtoken.map = None)?
     if endtoken.map is None:
-        return token.map
+        return token.map[0], token.map[1]
     return (token.map[0], endtoken.map[1])
 
 
@@ -399,7 +396,7 @@ def _parse(tokens: Sequence[Token], raw_text: str) -> tuple[ContentTree, Mention
                             data=c
                             if isinstance(c, FigureNode)
                             else TextNode(content=c),
-                            line_numbers=t.map,
+                            line_numbers=t.map if t.map is not None else (-1, -1),
                         )
                     )
             case "bullet_list_open":
@@ -523,7 +520,7 @@ def load(input: Path | str) -> Document:
 
     # set start and end indices
     md_line_indices = np.array(
-        [len(l) + 1 for l in md_content.splitlines()]
+        [len(line) + 1 for line in md_content.splitlines()]
     )  # count \n as well
     md_line_cumsum = np.cumsum(md_line_indices).tolist()
     for _, contentlist in tree:
