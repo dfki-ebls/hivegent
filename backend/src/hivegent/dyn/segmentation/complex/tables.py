@@ -5,7 +5,7 @@ from hivegent.dyn.serialization.complex.markdown.model import (
     Node,
     TableMdNode,
     TableNode,
-    split_node,
+    split_table_node,
 )
 
 
@@ -26,7 +26,7 @@ def _split_section_tables_inplace(title: str, contentlist: list[Node], limit: in
         if isinstance(node.data, (TableMdNode, TableNode)):
             headers, vals = node.data.headers, node.data.vals
             table_chunks = chunked_table(title, headers, vals, limit)
-            split_node(contentlist, idx, table_chunks)
+            split_table_node(contentlist, idx, table_chunks)
             idx += len(table_chunks)
         else:
             idx += 1

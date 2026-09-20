@@ -6,13 +6,19 @@ from hivegent.converters import ConversionPipeline, get_converter
 
 
 def test_dyn_converter() -> str:
-    converter = get_converter(ConversionPipeline.DYN_JSON, filename="email.jsonl")
-    result = asyncio.run(converter(Path("~/Downloads/random.jsonl").expanduser()))
+    converter = get_converter(ConversionPipeline.DYN_EXCEL, filename="email.xlsx")
+    result = asyncio.run(
+        converter(
+            Path("~/Downloads/jeffrey_a_shankman_000_1_2.pst.131.xlsx").expanduser()
+        )
+    )
     return result.markdown
 
 
 def test_dyn_chunker() -> None:
     converted = test_dyn_converter()
+    print(converted)
+    print()
     chunker = get_chunker(ChunkingPipeline.DYN)
     chunks = asyncio.run(chunker(converted))
 

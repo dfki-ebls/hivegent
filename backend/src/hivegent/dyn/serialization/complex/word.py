@@ -17,6 +17,7 @@ from docx.text.hyperlink import Hyperlink
 from docx.text.paragraph import Paragraph
 from docx.text.run import Run
 
+from hivegent.dyn.commons.tabular_data import assemble_table
 from hivegent.dyn.util import convert_office_legacy
 
 
@@ -242,23 +243,20 @@ class Converter:
         Returns:
             str: The rendered table as a string
         """
-        rows_rendered: list[str] = []
 
-        # handle first row in isolation (maybe header)
-        cell_texts = [self._render_cell(cell) for cell in table.rows[0].cells]
-        row = "| " + " | ".join(cell_texts) + " |"
-        rows_rendered.append(row)
+        rows = [
+            [self._render_cell(cell).strip() for cell in row.cells]
+            for row in table.rows
+        ]
+        if not rows:
+            return ""
 
-        # if first row is the header, insert separator
-        if all([text.count("*") == 4 for text in cell_texts]):
-            texts = [" --- " for _ in range(len(cell_texts))]
-            rows_rendered.append("| " + " | ".join(texts) + " |")
+        # if the first row is the header, use it as such
+        if rows[0] and all(text.count("*") == 4 for text in rows[0]):
+            return assemble_table("", rows[0], rows[1:])
 
-        for row in table.rows[1:]:
-            cell_texts = [self._render_cell(cell) for cell in row.cells]
-            row = "| " + " | ".join(cell_texts) + " |"
-            rows_rendered.append(row)
-        return "\n".join(rows_rendered)
+        # otherwise emit an empty header row so the Markdown table stays valid
+        return assemble_table("", ["" for _ in rows[0]], rows)
 
     def _render_element(self, elem: Paragraph | Table | Run) -> str:
         """Routes an element to the appropriate Markdown renderer.

@@ -89,12 +89,12 @@ class ConversionPipeline(StrEnum):
     TABLE_CHEF = "table-chef"
     PLAIN_TEXT = "plain-text"
     DYN_MARKDOWN = "dynmarkdown"
-    DYN_PDF = "dynpdf"
+    # DYN_PDF = "dynpdf" # disabled due to missing MinerU dep
     DYN_WORD = "dynword"
     DYN_EMAIL = "dynemail"
     DYN_EXCEL = "dynexcel"
     DYN_JSON = "dynjson"
-    DYN_WEB = "dynweb"
+    # DYN_WEB = "dynweb" # disabled due to incompatible format (URL instead of file)
 
 
 class ConversionSpec(BaseModel):
@@ -150,10 +150,10 @@ def _load_dyn_markdown() -> PipelineImplementation[DocumentConverter]:
     return PipelineImplementation(DynMarkdownConverter, DynMarkdownConfig)
 
 
-def _load_dyn_pdf() -> PipelineImplementation[DocumentConverter]:
-    from .dyn import DynPDFConverter
+# def _load_dyn_pdf() -> PipelineImplementation[DocumentConverter]:
+#     from .dyn import DynPDFConverter
 
-    return PipelineImplementation(DynPDFConverter)
+#     return PipelineImplementation(DynPDFConverter)
 
 
 def _load_dyn_word() -> PipelineImplementation[DocumentConverter]:
@@ -180,10 +180,10 @@ def _load_dyn_json() -> PipelineImplementation[DocumentConverter]:
     return PipelineImplementation(DynJSONConverter)
 
 
-def _load_dyn_web() -> PipelineImplementation[DocumentConverter]:
-    from .dyn import DynWebConverter
+# def _load_dyn_web() -> PipelineImplementation[DocumentConverter]:
+#     from .dyn import DynWebConverter
 
-    return PipelineImplementation(DynWebConverter)
+#     return PipelineImplementation(DynWebConverter)
 
 
 def _load_pandoc() -> PipelineImplementation[DocumentConverter]:
@@ -454,12 +454,12 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
         description="Text, configuration, data-serialization, and source files as-is",
         extensions=frozenset({".md"}),
     ),
-    ConversionPipeline.DYN_PDF: _ConverterRegistration(
-        loader=_load_dyn_pdf,
-        label="dyn pdf",
-        description="Text, configuration, data-serialization, and source files as-is",
-        extensions=frozenset({".pdf"}),
-    ),
+    # ConversionPipeline.DYN_PDF: _ConverterRegistration(
+    #     loader=_load_dyn_pdf,
+    #     label="dyn pdf",
+    #     description="Text, configuration, data-serialization, and source files as-is",
+    #     extensions=frozenset({".pdf"}),
+    # ),
     ConversionPipeline.DYN_WORD: _ConverterRegistration(
         loader=_load_dyn_word,
         label="dyn word",
@@ -484,12 +484,12 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
         description="Text, configuration, data-serialization, and source files as-is",
         extensions=frozenset({".json", ".jsonl"}),
     ),
-    ConversionPipeline.DYN_WEB: _ConverterRegistration(
-        loader=_load_dyn_web,
-        label="dyn web",
-        description="Text, configuration, data-serialization, and source files as-is",
-        extensions=frozenset({".html"}),
-    ),
+    # ConversionPipeline.DYN_WEB: _ConverterRegistration(
+    #     loader=_load_dyn_web,
+    #     label="dyn web",
+    #     description="Text, configuration, data-serialization, and source files as-is",
+    #     extensions=frozenset({".html"}),
+    # ),
 }
 
 

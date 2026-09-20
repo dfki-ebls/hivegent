@@ -254,7 +254,9 @@ def _parse_inline(tokens: Sequence[Token], start_idx: int) -> tuple[str, int]:
     return token.content, 0
 
 
-def _parse_md_table(tokens: Sequence[Token], start_idx: int) -> tuple[TableMdNode, int]:
+def _parse_md_table(
+    tokens: Sequence[Token], start_idx: int, raw_text: str
+) -> tuple[TableMdNode, int]:
     """Parses a Markdown table.
 
     Args:
@@ -284,7 +286,7 @@ def _parse_md_table(tokens: Sequence[Token], start_idx: int) -> tuple[TableMdNod
                 caption="",
                 headers=headers,
                 vals=rows,
-                raw_content=assemble_table("", headers, rows, add_title=False),
+                raw_content="\n".join(raw_text.splitlines()[t.map[0] : t.map[1]]),
             )
             return table_md_node, offset
         offset += 1
@@ -364,7 +366,7 @@ def _build_line_numbers(token: Token, endtoken: Token) -> tuple[int, int]:
     return (token.map[0], endtoken.map[1])
 
 
-def _parse(tokens: Sequence[Token]) -> tuple[ContentTree, MentionsDict]:
+def _parse(tokens: Sequence[Token], raw_text: str) -> tuple[ContentTree, MentionsDict]:
     """Parse the sequence of tokens into a content tree and collect footnote mentions.
 
     Args:
@@ -429,7 +431,7 @@ def _parse(tokens: Sequence[Token]) -> tuple[ContentTree, MentionsDict]:
                         )
                     )
             case "table_open":
-                tablemdnode, skip = _parse_md_table(tokens, idx)
+                tablemdnode, skip = _parse_md_table(tokens, idx, raw_text)
                 end_token = tokens[idx + skip]
                 current_nodes.append(
                     build_node(tablemdnode, _build_line_numbers(t, end_token))
@@ -510,7 +512,7 @@ def load(input: Path | str) -> Document:
 
     tokens = md.parse(md_content)
 
-    tree, footnote_mentions = _parse(tokens)
+    tree, footnote_mentions = _parse(tokens, md_content)
 
     # set start and end indices
     md_line_indices = np.array(
