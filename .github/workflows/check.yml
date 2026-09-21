@@ -24,3 +24,7 @@ jobs:
           name: dfki-ebls
           authToken: ${{ secrets.CACHIX_TOKEN }}
       - run: nix flake check --show-trace --no-build
+      # The bill of materials is only worth building if something reads it.
+      # A step of its own rather than a check, since grype resolves its
+      # vulnerability database over the network and no derivation may do that.
+      - run: nix run .#sbom-scan

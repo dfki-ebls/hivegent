@@ -12,7 +12,7 @@
   # `moduleWithSystem` resolves `perSystem.config` against the importing
   # system, so a consumer only needs to import the module and set options.
   flake.nixosModules.default = moduleWithSystem (
-    perSystem@{ config }:
+    perSystem:
     { lib, config, ... }:
     let
       caddy = config.services.hivegent.caddy;
@@ -22,18 +22,20 @@
     in
     {
       imports = [ ./nixos ];
-      services.hivegent.package = lib.mkDefault perSystem.config.packages.backend;
-      services.hivegent.bridge.package = lib.mkDefault perSystem.config.packages.bridge;
-      services.hivegent.egressProxy.package = lib.mkDefault perSystem.config.packages.smokescreen;
-      # Blank the URL when `caddy.docs` is null so the SPA hides the link.
-      services.hivegent.caddy.frontend = lib.mkDefault (
-        perSystem.config.packages.frontend.override {
-          docsUrl = lib.optionalString (caddy.docs != null) docsSite;
-        }
-      );
-      services.hivegent.caddy.docs = lib.mkDefault (
-        perSystem.config.packages.docs.override { sitePath = docsSite; }
-      );
+      services.hivegent = {
+        package = lib.mkDefault perSystem.config.packages.backend;
+        bridge.package = lib.mkDefault perSystem.config.packages.bridge;
+        egressProxy.package = lib.mkDefault perSystem.config.packages.smokescreen;
+        # Blank the URL when `caddy.docs` is null so the SPA hides the link.
+        caddy.frontend = lib.mkDefault (
+          perSystem.config.packages.frontend.override {
+            docsUrl = lib.optionalString (caddy.docs != null) docsSite;
+          }
+        );
+        caddy.docs = lib.mkDefault (
+          perSystem.config.packages.docs.override { sitePath = docsSite; }
+        );
+      };
     }
   );
 
@@ -44,6 +46,21 @@
       config,
       ...
     }:
+    let
+      sbomPipeline = pkgs.callPackage ./sbom.nix {
+        # bombon's own entry point, not its flake `lib`, which would evaluate a
+        # second nixpkgs instead of the one everything else here is built from.
+        bombon = import inputs.bombon { inherit pkgs; };
+        inherit (inputs) cyclonedx-spec;
+        inherit (config.packages)
+          backend
+          frontend
+          bridge
+          smokescreen
+          docs
+          ;
+      };
+    in
     {
       devShells.default = pkgs.callPackage ./shell.nix {
         treefmt = config.treefmt.build.wrapper;
@@ -66,19 +83,8 @@
         bridge = pkgs.callPackage ../bridge { };
         docs = pkgs.callPackage ../docs { };
         smokescreen = pkgs.callPackage ./smokescreen.nix { };
-        sbom = pkgs.callPackage ./sbom.nix {
-          # bombon's own entry point, not its flake `lib`, which would evaluate a
-          # second nixpkgs instead of the one everything else here is built from.
-          bombon = import inputs.bombon { inherit pkgs; };
-          inherit (inputs) cyclonedx-spec;
-          inherit (config.packages)
-            backend
-            frontend
-            bridge
-            smokescreen
-            docs
-            ;
-        };
+        inherit (sbomPipeline) sbom;
+        sbom-scan = sbomPipeline.scan;
         tessdata = pkgs.callPackage ./tessdata.nix { };
         release-env = pkgs.buildEnv {
           name = "release-env";

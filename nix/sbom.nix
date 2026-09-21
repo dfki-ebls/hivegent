@@ -4,11 +4,8 @@
   lib,
   bombon,
   pkgs,
-  cyclonedx-cli,
   cyclonedx-spec,
-  jsonschema,
   jq,
-  linkFarm,
   runCommand,
   cyclonedx-gomod,
   cyclonedx-python,
@@ -19,52 +16,8 @@
   docs,
 }:
 let
-  # Every document is validated before it leaves the build, against the schema
-  # from the specification repo rather than a producer's private copy of it,
-  # since a lockfile is what keeps a schema current. Not `cyclonedx validate`:
-  # it asserts no `format`, so the URL repaired below passes it, and its SPDX
-  # list is older than the identifiers nixpkgs states. `jv` picks the schema by
-  # the version the document states and maps the schema's own base URL onto the
-  # directory it came from, so its siblings resolve without a network.
-  schemas = "${cyclonedx-spec}/schema";
-
-  validated =
-    name: nativeBuildInputs: command:
-    runCommand name
-      {
-        nativeBuildInputs = nativeBuildInputs ++ [
-          jq
-          jsonschema
-        ];
-      }
-      ''
-        ${command}
-
-        jv --assert-format \
-          --map "http://cyclonedx.org/schema/=${schemas}" \
-          "${schemas}/bom-$(jq -r .specVersion "$out").schema.json" \
-          "$out"
-      '';
-
-  # Two producer defects, repaired for every document rather than per producer.
-  # bombon names the package both as `metadata.component` and as a component of
-  # itself under the same `bom-ref`, so the merge below would nest each artifact
-  # under a copy of itself. And `npm sbom` copies a dependency's package.json
-  # `repository.url` verbatim, so the SCP shorthand npm allows there arrives as
-  # a URL that is no `iri-reference` and Dependency-Track rejects the document
-  # over it; `git+ssh://git@github.com/owner/repo.git` is how npm spells the
-  # same remote. Only an external reference is rewritten, since a URL elsewhere
-  # should fail the gate rather than be repaired by a rule aimed past it.
-  normalize =
-    name: bom:
-    validated name [ ] ''
-      jq '
-        .metadata.component["bom-ref"] as $self
-        | del(.components[] | select(.["bom-ref"] == $self))
-        | (.. | objects | select(has("externalReferences")).externalReferences[].url)
-          |= sub("^git@(?<host>[^:]+):"; "git+ssh://git@\(.host)/")
-      ' ${bom} > "$out"
-    '';
+  buildSbom = pkgs.callPackage ./sbom { inherit cyclonedx-spec; };
+  backendProject = (lib.importTOML backend.pyproject).project;
 
   # An ecosystem that vendors its dependencies into a single derivation needs a
   # tool of its own to describe them; bombon merges whatever a package carries
@@ -160,7 +113,7 @@ let
               (if any(.license.text | not) then map(select(.license.text | not)) else . end)' \
           gathered.cdx.json > "$sbom"
       '';
-  boms = lib.mapAttrs (path: normalize (baseNameOf path)) {
+  components = {
     # bombon walks `drvAttrs`, so a store path that reaches the closure only
     # interpolated into the wrapper has no derivation to describe it. Naming them
     # one by one is what makes them describable: joining them into a single path
@@ -181,25 +134,10 @@ let
     "components/docs.cdx.json" = bombon.buildBom docs { };
   };
 in
-linkFarm "hivegent-sbom" (
-  boms
-  // {
-    # The deployment as one document, and the one to reach for: a root
-    # component with each artifact and its dependencies beneath it. Hierarchical
-    # rather than flat so a component stays attributable to the artifact that
-    # needs it, and the per-artifact documents stay beside it under
-    # `components/`, since a document describes one product and these are the
-    # ones to hand to whoever consumes an artifact alone. The first-party
-    # packages share one version, and the application is where it is stated.
-    # No `--output-version`: the newest specification the tools write is what
-    # BSI TR-03183-2 asks of an SBOM under the Cyber Resilience Act.
-    "hivegent.cdx.json" = validated "hivegent.cdx.json" [ cyclonedx-cli ] ''
-      cyclonedx merge \
-        --hierarchical \
-        --name hivegent \
-        --version ${backend.version} \
-        --output-file "$out" \
-        --input-files ${lib.concatStringsSep " " (lib.attrValues boms)}
-    '';
-  }
-)
+buildSbom {
+  pname = "hivegent";
+  inherit (backend) version;
+  creator = lib.head backendProject.authors;
+  inherit (backendProject) license;
+  inherit components;
+}
