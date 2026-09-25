@@ -11,8 +11,9 @@
   # `caddy.frontend` default to this flake's builds for the host platform.
   # `moduleWithSystem` resolves `perSystem.config` against the importing
   # system, so a consumer only needs to import the module and set options.
+  # It passes only the arguments the function names, so keep `{ config }`.
   flake.nixosModules.default = moduleWithSystem (
-    perSystem:
+    perSystem@{ config }:
     { lib, config, ... }:
     let
       caddy = config.services.hivegent.caddy;
