@@ -339,7 +339,8 @@ async def export_conversation_route(
 
     # Signed metadata is the machine-readable marking a container format
     # carries (Code of Practice, Sub-measure 1.1.1).
-    server.provenance = sign_provenance(server)
+    if settings.transparency is not None:
+        server.provenance = sign_provenance(settings.transparency, server)
 
     archive = ConversationArchive(backend=server)
     return Response(

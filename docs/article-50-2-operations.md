@@ -14,6 +14,7 @@ A single watermark layer is what the Code considers sufficient for free-form tex
 
 Conversation exports carry a `provenance` field, a JWT signed with the report key that states the content is AI-generated (Code, Sub-measure 1.1.1).
 It covers the SHA-256 digest of the `backend` half without `provenance`, serialized as JSON with sorted keys, no whitespace, and unescaped unicode.
+Its JWS `typ` is `ai-provenance+jwt`, while detection reports use `JWT`, so neither passes for the other.
 Documents Hivegent writes into the workspace carry no metadata layer yet.
 This gap is open and is reviewed together with the detector interoperability work due by 2 February 2027.
 
@@ -38,20 +39,16 @@ Keep vLLM private to Hivegent and llmhop.
 
 Do not enable watermarking before a stable vLLM release carries upstream commit `ea40bb9e905f8d552281dd1ec074f91865a0a242` or equivalent support.
 
-Configure Hivegent with:
+Configuring the `[transparency]` section enables detection and signing:
 
 ```toml
-# At least 32 random characters, e.g. `openssl rand -base64 32`. Required once
-# transparency is enabled, since the report signing key is derived from it.
-secret_key = "..."
-
 [transparency]
-enabled = true
 detector_url = "http://127.0.0.1:18001/detect"
-detector_api_key = ""
 report_issuer = "https://hivegent.example.eu"
 contact_email = "responsible-operator@example.eu"
 ```
+
+`secret_key` and the optional `detector_api_key` are secrets, so pass them as environment variables `HIVEGENT_TRANSPARENCY__SECRET_KEY` and `HIVEGENT_TRANSPARENCY__DETECTOR_API_KEY`, never in the TOML file.
 
 `detector_url` is vLLM's reference detector, which takes `{"text": "..."}` and answers with `score`, `p_value`, `num_scored_tokens`, and `is_watermarked`.
 Hivegent speaks that contract directly so that no Hivegent-specific detection format exists.
@@ -63,8 +60,9 @@ Keep the active key on the first line and retained keys below it, rotate by prep
 Retained keys stay in the detector so that previously marked text remains detectable.
 Never publish watermark keys.
 
-Hivegent derives its Ed25519 key for reports and export provenance from `secret_key` (`HIVEGENT_SECRET_KEY`), so the signing key itself is never stored and only its JWKS is published.
-Set `secret_key` to at least 32 random characters, for example `openssl rand -base64 32`, and keep it stable across deployments: changing it rotates the signing key.
+Hivegent derives its Ed25519 key for reports and export provenance from `transparency.secret_key`, so the signing key itself is never stored and only its JWKS is published.
+Set it to at least 32 random characters, for example `openssl rand -base64 32`, back it up in the secret manager, and keep it stable across deployments: changing it rotates the signing key.
+Restoring a backup needs the same secret, or earlier reports and exports stop verifying.
 For a planned rotation, add the old key's public `x` value from `/api/transparency/jwks` to `transparency.retired_public_keys` before changing the secret, so earlier reports and exports keep verifying.
 After a compromise, leave the old key out, since its holder could sign backdated reports, and not listing it is how those reports are revoked.
 

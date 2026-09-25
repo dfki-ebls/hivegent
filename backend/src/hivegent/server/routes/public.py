@@ -1,11 +1,11 @@
 """Routes that do not require authentication."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
 from ...config import settings
 from ...transparency import public_jwks
 from ...types import FrontendConfigResponse, OidcPublicConfig, TransparencyJwks
-from .transparency import require_transparency
+from .transparency import TransparencyConfigured
 
 __all__ = ["router"]
 
@@ -40,11 +40,11 @@ async def config() -> FrontendConfigResponse:
     )
 
 
-@router.get("/transparency/jwks", dependencies=[Depends(require_transparency)])
-async def transparency_jwks() -> TransparencyJwks:
+@router.get("/transparency/jwks")
+async def transparency_jwks(config: TransparencyConfigured) -> TransparencyJwks:
     """Publish the key that verifies detection reports and export provenance.
 
     Unauthenticated, since a report or an export handed on to someone without
     a sign-in is only verifiable while its key is reachable.
     """
-    return public_jwks()
+    return public_jwks(config)
