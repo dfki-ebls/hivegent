@@ -155,13 +155,10 @@ _CHUNKERS: dict[ChunkingPipeline, PipelineRegistration[DocumentChunker]] = {
         description="dyn",
         dependencies=(
             "spacy",
-            "crawl4ai",
             "fastcoref",
             "fastexcel",
-            "ftfy",
             "html2text",
             "imgkit",
-            "jinja2",
             "jsonlines",
             "mailparser",
             "markdown_it",

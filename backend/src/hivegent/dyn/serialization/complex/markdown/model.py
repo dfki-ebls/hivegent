@@ -151,15 +151,10 @@ class Document(BaseModel):
             ret += "# " + heading + "\n\n"
             for c in contentlist:
                 if isinstance(c.data, FigureNode):
-                    ret += f"![{c.data.caption}]({c.data.path.location})\n"
+                    ret += c.data.render() + "\n"
                     continue
                 if not isinstance(c.data, TextNode):
                     raise TypeError(f"Got {c.data}, but only TextNodes allowed!")
-                ret = (
-                    c.data.content
-                    if _has_heading(c.data.content)
-                    else ret + c.data.content
-                )
                 ret += c.data.content + "\n"
         return ret
 

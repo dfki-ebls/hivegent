@@ -1,12 +1,10 @@
 from functools import lru_cache
 
 import spacy
-import torch
 from fastcoref import FCoref
 from pydantic import BaseModel
 
 from hivegent.dyn.commons.markdown import build_title
-from hivegent.dyn.config import MATH_COREF_MODEL
 from hivegent.dyn.serialization.complex.markdown.model import (
     Document,
     FigureNode,
@@ -20,38 +18,26 @@ from . import (
 from .coref_merge import coref_merge_inplace
 from .prechunk import Chunker
 from .tables import split_tables_inplace
+from sentence_transformers.util import get_device_name
 
 _ELLIPSIS = "...\n\n"
 _ELLIPSIS_TOKENS = get_token_count(_ELLIPSIS)
 
 
 @lru_cache(maxsize=1)
-def get_device():
-    if torch.cuda.is_available():
-        # NVIDIA GPU
-        return torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        # Apple Silicon (M1/M2/M3/M4/M5)
-        return torch.device("mps")
-    else:
-        # Fallback to CPU
-        return torch.device("cpu")
-
-
-@lru_cache(maxsize=1)
 def get_general_coref_model() -> FCoref:
     return FCoref(
         nlp=spacy.blank("en"),  # pyright: ignore[reportArgumentType]
-        device=get_device(),
+        device=get_device_name(),
     )
 
 
 @lru_cache(maxsize=1)
-def get_math_coref_model() -> FCoref:
+def get_math_coref_model(model_name: str) -> FCoref:
     return FCoref(
-        model_name_or_path=MATH_COREF_MODEL,
+        model_name_or_path=model_name,
         nlp=spacy.blank("en"),  # pyright: ignore[reportArgumentType]
-        device=get_device(),
+        device=get_device_name(),
     )
 
 
@@ -60,7 +46,7 @@ def get_prechunker(limit: int) -> Chunker:
     return Chunker(limit)
 
 
-def full_chunking(doc: Document, limit: int):
+def full_chunking(doc: Document, limit: int, math_coref_model: str):
     """Chunks `doc` in place.
 
     The coref models and the prechunker are cached process-wide: they are
@@ -69,7 +55,7 @@ def full_chunking(doc: Document, limit: int):
     """
     prechunker = get_prechunker(limit)
     general_model = get_general_coref_model()
-    math_model = get_math_coref_model()
+    math_model = get_math_coref_model(math_coref_model)
     prechunker.prechunk_inplace(doc, limit, limit)
     split_tables_inplace(doc, limit)
     coref_merge_inplace(doc, general_model, limit)

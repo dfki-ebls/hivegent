@@ -29,13 +29,7 @@ export enum ConversionPipeline {
   PDF_OXIDE = "pdf-oxide",
   TABLE_CHEF = "table-chef",
   PLAIN_TEXT = "plain-text",
-  DYN_MARKDOWN = "dynmarkdown",
-  // DYN_PDF = "dynpdf", //disabled due to missing MinerU
-  DYN_WORD = "dynword",
-  DYN_EMAIL = "dynemail",
-  DYN_EXCEL = "dynexcel",
-  DYN_JSON = "dynjson",
-  // DYN_WEB = "dynweb", //disabled due to incompatible interface
+  DYN_AUTO = "dynauto",
 }
 
 /** Available chunking pipelines. */

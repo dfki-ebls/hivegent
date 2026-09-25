@@ -18,6 +18,10 @@ class DynConfig(BaseModel):
         le=32768,
         description="Target chunk size in tokens.",
     )
+    math_coref_model: str = Field(
+        default="kblw/mathcoref",
+        description="Hugging Face model used for math coreference resolution. Used to merge related subsequent chunks.",
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -29,7 +33,7 @@ class DynChunker(DocumentChunker):
 
     def _split_sync(self, text: str) -> list[ChunkData]:
         doc = load(text)
-        full_chunking(doc, self.config.chunk_size)
+        full_chunking(doc, self.config.chunk_size, self.config.math_coref_model)
         chunks = to_chunks(doc, self.config.chunk_size)
         return [
             ChunkData(

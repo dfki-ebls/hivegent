@@ -31,7 +31,6 @@ dependencies = [
   "pydantic-monty>=0.0.21,<0.0.22",
   "pydantic-settings>=2,<3",
   "pypdfium2>=5,<6",
-  "requests>=2.34.2",
   "sentence_transformers>=6,<7",
   "sqlalchemy[asyncio]>=2,<3",
   "typer>=0.20,<1",
@@ -48,13 +47,10 @@ all = ["hivegent-backend[docling,pdf-oxide,semantic]"]
 # mineru = ["mineru[all]>=3,<4"]
 docling = ["docling>=2,<3", "tesserocr>=2,<3"]
 dyn = [
-  "crawl4ai>=0.9.3",
   "fastcoref>=2.1.6",
   "fastexcel>=0.21.0",
-  "ftfy>=6.3.1",
   "html2text>=2025.4.15",
   "imgkit>=1.2.3",
-  "jinja2>=3.1.6",
   "jsonlines>=4.0.0",
   "mail-parser>=4.6.3",
   "markdown-it-py>=4.2.0",
@@ -62,11 +58,9 @@ dyn = [
   "markitdown[docx,xls,xlsx]>=0.1,<1",
   "mdit-py-plugins>=0.6.1",
   "polars>=1.43.2",
-  "pydantic-ai>=2.31.1",
   "python-docx>=1.2.0",
   "spacy>=3.8.15",
   "tiktoken>=0.14.0",
-  "python-dotenv>=1.2.3",
 ]
 kreuzberg = ["kreuzberg>=4,<5"]
 markitdown = ["markitdown[all]>=0.1,<1"]

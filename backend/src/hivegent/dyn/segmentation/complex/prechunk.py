@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+from functools import cached_property
 from typing import cast, final
 
 from chonkie import Chunk, RecursiveChunker
@@ -13,10 +15,13 @@ from hivegent.dyn.util import get_token_count
 
 
 @final
+@dataclass(frozen=True)
 class Chunker:
-    def __init__(self, limit_split: int):
-        self.limit_split = limit_split
-        self.rec_char = RecursiveChunker(tokenizer="o200k_base", chunk_size=limit_split)
+    limit_split: int
+
+    @cached_property
+    def rec_char(self) -> RecursiveChunker:
+        return RecursiveChunker(tokenizer="o200k_base", chunk_size=self.limit_split)
 
     def _merge_section_inplace(self, contentlist: list[Node], limit_merge: int):
         """Merge consecutive text nodes within a single section.

@@ -1,6 +1,7 @@
 import re
 import warnings
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast, final
 
@@ -97,12 +98,15 @@ def _iter_block_items(parent: _Document) -> Iterable[Paragraph | Table]:
 
 
 @final
+@dataclass(frozen=True)
 class Converter:
-    def __init__(self, inpath: Path, outpath: Path):
-        self.inpath = inpath
-        self.outpath = outpath
+    inpath: Path
+    outpath: Path
+
+    @property
+    def drawing_path(self) -> Path:
         drawing_base = self.outpath if self.outpath.is_dir() else self.outpath.parent
-        self.drawing_path = drawing_base / f"{self.inpath.stem}_images"
+        return drawing_base / f"{self.inpath.stem}_images"
 
     def handle_drawing(self, drawing: Drawing) -> str:
         """Extracts Word drawings/images.
@@ -128,7 +132,8 @@ class Converter:
         save_path = self.drawing_path / f"{img.sha1}.{img.ext}"
         _ = save_path.write_bytes(img.blob)
 
-        return f"![]({save_path})"
+        # relative to the output directory, next to the written markdown
+        return f"![]({self.drawing_path.name}/{save_path.name})"
 
     def _render_run(self, run: Run) -> str:
         """Render the content of a run text object into a formatted Markdown string.
@@ -294,7 +299,10 @@ class Converter:
         Returns:
             Path: The resulting file path
         """
-        if self.outpath.is_dir():
-            self.outpath = self.outpath / f"{self.inpath.stem}.md"
-        _ = self.outpath.write_text(self._to_markdown())
-        return self.outpath
+        target = (
+            self.outpath / f"{self.inpath.stem}.md"
+            if self.outpath.is_dir()
+            else self.outpath
+        )
+        _ = target.write_text(self._to_markdown())
+        return target

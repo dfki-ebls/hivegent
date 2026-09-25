@@ -5,6 +5,7 @@ from hivegent.dyn.serialization.complex.markdown.model import (
     Node,
     TableMdNode,
     TableNode,
+    TextNode,
     split_table_node,
 )
 
@@ -25,6 +26,13 @@ def _split_section_tables_inplace(title: str, contentlist: list[Node], limit: in
         node = contentlist[idx]
         if isinstance(node.data, (TableMdNode, TableNode)):
             headers, vals = node.data.headers, node.data.vals
+            if not vals:
+                # header-only tables (e.g. layout tables for signature blocks)
+                # yield no row chunks; keep their raw content as text instead
+                # of silently dropping them
+                node.data = TextNode(content=node.data.raw_content)
+                idx += 1
+                continue
             table_chunks = chunked_table(title, headers, vals, limit)
             split_table_node(contentlist, idx, table_chunks)
             idx += len(table_chunks)

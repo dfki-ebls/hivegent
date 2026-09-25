@@ -1,17 +1,20 @@
 import asyncio
 import io
+import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import cast
 
 import imgkit
-from dotenv import load_dotenv
 from markdown2 import markdown
 from PIL import Image
-from pydantic_ai import Agent, BinaryContent, ImageUrl
+from pydantic_ai import BinaryContent, ImageUrl
 
+from hivegent.agents.app import base_agent
+from hivegent.config import settings
 from hivegent.dyn.commons.tabular_data import assemble_table
-from hivegent.dyn.config import DEFAULT_GENERATOR
-from hivegent.dyn.util import run_in_parallel
+from hivegent.llm import model_from_config, thinking_model_settings
+from hivegent.llm_config import LlmConfig, resolve_llm_config
 
 from .model import (
     Document,
@@ -24,7 +27,9 @@ from .model import (
     TextNode,
 )
 
-type SummarizeCall = tuple[str, str, Node, list[str]]
+_VISION_TIMEOUT_S = 120.0
+
+logger = logging.getLogger(__name__)
 
 
 def image_to_binary_content(image: Path | Image.Image) -> BinaryContent:
@@ -68,32 +73,53 @@ def render_html(html_string: str, quiet: bool = False) -> Image.Image:
 
 
 async def summarize_figure_generic(
-    image: ImagePath | Path | Image.Image, prompt: str, model: str
+    image: ImagePath | Path | Image.Image,
+    prompt: str,
+    llm_options: LlmConfig,
 ) -> str:
     """Sets a figure Node's summary to an LLM generated text.
     references is to be retrieved from float_mentions.find_mentions_spacy.
     Returns heading, Node index, Node"""
 
-    agent = Agent(
-        model,
-        instructions=(
-            "Extract the most important information derivable from this figure in a compact paragraph"
-        ),
+    prompt = (
+        "Extract the most important information derivable from this figure in a compact paragraph\n"
+        + prompt
     )
-    # fallback for tables
-    if isinstance(image, Path) or isinstance(image, Image.Image):
-        result = await agent.run([prompt, image_to_binary_content(image)])
+    # Only a remote ImagePath travels as a URL: a local one names a file on
+    # this host, which the provider cannot fetch, so it is sent as bytes.
+    if isinstance(image, (Path, Image.Image)):
+        content = image_to_binary_content(image)
+    elif image.is_remote:
+        content = ImageUrl(image.location)
     else:
-        result = await agent.run(
-            [
-                prompt,
-                ImageUrl(image.location)
-                if image.is_remote
-                else image_to_binary_content(image.path),
-            ]
-        )
+        content = image_to_binary_content(image.path)
+    input = [prompt, content]
+    result = await asyncio.wait_for(
+        base_agent.run(
+            input,
+            model=model_from_config(llm_options),
+            model_settings=thinking_model_settings(False, llm_options),
+        ),
+        timeout=_VISION_TIMEOUT_S,
+    )
+    return str(result.output).strip()
 
-    return result.output
+
+async def _summarize_with_fallback(
+    label: str,
+    summarize: Callable[[], Awaitable[None]],
+) -> None:
+    """Run *summarize*, leaving the float unsummarized on any failure.
+
+    One figure the vision model choked on is worth less than the document, so
+    a failure must not fail the conversion.  ``Float.summary`` defaults to the
+    empty string and :meth:`Float.render` omits it when empty, so the float
+    still renders with the caption the document itself gave it.
+    """
+    try:
+        await summarize()
+    except Exception:
+        logger.warning("Float summary generation failed for %s", label, exc_info=True)
 
 
 async def summarize_table(
@@ -101,6 +127,7 @@ async def summarize_table(
     heading: str,
     node: Node,
     references: list[str],
+    llm_options: LlmConfig,
 ):
     """Generate a summary for a table based on provided context and references.
 
@@ -126,9 +153,8 @@ async def summarize_table(
         if isinstance(node.data, TableNode)
         else markdown(assemble_table("", node.data.headers, node.data.vals))
     )
-    summary = await summarize_figure_generic(
-        render_html(html), prompt, DEFAULT_GENERATOR
-    )
+    image = await asyncio.to_thread(render_html, html)
+    summary = await summarize_figure_generic(image, prompt, llm_options)
 
     node.data.summary = summary
 
@@ -138,6 +164,7 @@ async def summarize_figure(
     heading: str,
     node: Node,
     references: list[str],
+    llm_options: LlmConfig,
 ):
     """Generate a summary for the figure node.
 
@@ -157,29 +184,42 @@ async def summarize_figure(
     TABLE CAPTION: {node.data.caption}
     """
 
-    summary = await summarize_figure_generic(node.data.path, prompt, DEFAULT_GENERATOR)
+    summary = await summarize_figure_generic(node.data.path, prompt, llm_options)
 
     node.data.summary = summary
 
 
-def summarize_all_floats(
+async def summarize_all_floats(
     doc: Document,
+    llm_options: LlmConfig,
 ) -> None:
     """Summarizes all floats (figures and tables) within the Document.
 
     Args:
         doc (Document): The document to process
     """
-    _ = load_dotenv()
-    params_figure: list[SummarizeCall] = []
-    params_table: list[SummarizeCall] = []
-    for heading, float_node in doc.all_floats:
+    aux = resolve_llm_config(llm_options)
+    if not aux.model:
+        logger.debug("No aux model configured; skipping float summaries")
+        return
+
+    slots = asyncio.Semaphore(settings.llm.caption_concurrency)
+
+    async def summarize(heading: str, float_node: Node) -> None:
         assert isinstance(float_node.data, Float)
-        refs = doc.float_mentions.get(float_node.data.name, [])
-        refs = [cast(TextNode, c.data).content for c in refs]
-        if isinstance(float_node.data, FigureNode):
-            params_figure.append((doc.title, heading, float_node, refs))
-        else:
-            params_table.append((doc.title, heading, float_node, refs))
-    _ = asyncio.run(run_in_parallel(summarize_figure, params_figure))
-    _ = asyncio.run(run_in_parallel(summarize_table, params_table))
+        mentions = doc.float_mentions.get(float_node.data.name, [])
+        refs = [cast(TextNode, c.data).content for c in mentions]
+        summarize_one = (
+            summarize_figure
+            if isinstance(float_node.data, FigureNode)
+            else summarize_table
+        )
+        async with slots:
+            await _summarize_with_fallback(
+                float_node.data.name or heading,
+                lambda: summarize_one(doc.title, heading, float_node, refs, aux),
+            )
+
+    _ = await asyncio.gather(
+        *(summarize(heading, float_node) for heading, float_node in doc.all_floats)
+    )
