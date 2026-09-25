@@ -9,6 +9,7 @@ from starlette.requests import Request
 from ...auth import User, get_current_user
 from ...config import settings
 from ...llm import create_openai_client
+from ...llm_config import LlmConfig, resolve_llm_config
 from ...types import TranscriptionResponse
 from ..cancellation import run_until_disconnect
 
@@ -36,9 +37,10 @@ async def create_transcription(
 
     # Server-configured credentials only; the base URL is trusted
     # operator input (may legitimately point at a private host).
+    llm = resolve_llm_config(LlmConfig())
     client = create_openai_client(
-        api_key=settings.llm.api_key,
-        base_url=settings.llm.base_url or None,
+        api_key=llm.api_key or None,
+        base_url=llm.base_url,
         base_url_is_trusted=True,
     )
 

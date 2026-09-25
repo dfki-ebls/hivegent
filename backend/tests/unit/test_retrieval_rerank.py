@@ -3,6 +3,7 @@
 from typing import Any, ClassVar, cast
 
 import pytest
+from pydantic import SecretStr
 
 from hivegent import retrieval
 from hivegent.config import settings
@@ -50,7 +51,7 @@ def test_build_reranker_http(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings.rerank, "provider", "http")
     monkeypatch.setattr(settings.rerank, "model", "rerank-x")
     monkeypatch.setattr(settings.rerank, "base_url", "https://reranker.test/v1")
-    monkeypatch.setattr(settings.rerank, "api_key", "secret")
+    monkeypatch.setattr(settings.rerank, "api_key", SecretStr("secret"))
     monkeypatch.setattr(settings.rerank, "top_n", 3)
     monkeypatch.setattr(retrieval, "get_trusted_http_client", lambda: "CLIENT")
     monkeypatch.setattr(

@@ -56,7 +56,8 @@ Two layered sources, mirroring the backend's `HIVEGENT_CONFIG_FILE` pattern (env
   `host` defaults to `127.0.0.1` and `port` defaults to `3001`.
   `adapters` overrides per-adapter enablement, each also settable via `ENABLE_<NAME>`.
   Unset adapters use their registry default, teams on and web off.
-- **Environment variables** — override any file value; the place for secrets (`OIDC_CLIENT_SECRET`, `POSTGRES_URL`, `TEAMS_APP_*`). The dev-shell values live in `nix/shell.nix`; production values come from the deploy target (NixOS `environmentFile` / Docker env).
+- **Environment variables** — override any file value. The dev-shell values live in `nix/shell.nix`.
+- **Credential files** — the place for secrets (`OIDC_CLIENT_SECRET`, `POSTGRES_URL`, `TEAMS_APP_*`): one file per variable, named like it, in `$CREDENTIALS_DIRECTORY`, which systemd sets for `LoadCredential=` and the image points at `/run/secrets`. A set environment variable wins over its file.
 
 Auth: the bot needs an OIDC client-credentials token whose `groups` claim carries the shared KB (`team-kb`). Rauthy nests a client's static custom claims under `custom`, and the backend reads both top-level `groups` and `custom.groups` by default — so interactive users and the bot both work with no extra `[claims]` config. Omit all `OIDC_*` to run unauthenticated against an auth-disabled hivegent.
 
@@ -66,5 +67,5 @@ Register with the Teams CLI (`teams app create --endpoint https://<domain>/api/w
 
 ## Deploy
 
-- **NixOS** — the flake's `nixosModules.default` exposes `services.hivegent.bridge`: set `enable`, `settings` (rendered to a store JSON via `BRIDGE_CONFIG_FILE`), and `environmentFile` (secrets). When both the bridge and the bundled Caddy vhost are enabled, `/api/webhooks/*` is routed to the bridge automatically. The unit shares the systemd hardening baseline (`nix/nixos/hardening.nix`) with the backend.
-- **Docker** — the all-in-one image runs the bridge as an optional third dinit service: build with `docker.override { enableBridge = true; }`, mount a `bridge-config.json` at `/data/bridge-config.json`, and set secrets as env. Caddy in the image routes `/api/webhooks/*` to it. See `compose.yaml`.
+- **NixOS** — the flake's `nixosModules.default` exposes `services.hivegent.bridge`: set `enable`, `settings` (rendered to a store JSON via `BRIDGE_CONFIG_FILE`), and `credentials` (secrets via `LoadCredential=`). When both the bridge and the bundled Caddy vhost are enabled, `/api/webhooks/*` is routed to the bridge automatically. The unit shares the systemd hardening baseline (`nix/nixos/hardening.nix`) with the backend.
+- **Docker** — the all-in-one image runs the bridge as an optional third dinit service: build with `docker.override { enableBridge = true; }`, mount a `bridge-config.json` at `/data/bridge-config.json`, and mount secrets under `/run/secrets`. Caddy in the image routes `/api/webhooks/*` to it. See `compose.yaml`.

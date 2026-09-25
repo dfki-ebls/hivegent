@@ -18,6 +18,7 @@ let
   configFile = jsonFormat.generate "hivegent-bridge-config.json" settings;
 
   hardening = import ./hardening.nix;
+  credentials = import ./credentials.nix lib;
 in
 {
   options.services.hivegent.bridge = {
@@ -67,11 +68,11 @@ in
       description = ''
         Non-secret bridge configuration rendered to JSON in the Nix store and
         passed via `BRIDGE_CONFIG_FILE`. Environment variables (see
-        `environment`/`environmentFile`) override individual keys.
+        `environment`) and `credentials` override individual keys.
 
         Do NOT put secrets here — anything in this attrset lands in
-        `/nix/store`. Keep `oidc.clientSecret`, `POSTGRES_URL`, and the
-        `TEAMS_APP_*` credentials in `environmentFile`.
+        `/nix/store`. Pass `OIDC_CLIENT_SECRET`, `POSTGRES_URL`, and the
+        `TEAMS_APP_*` values as `credentials`.
       '';
     };
 
@@ -84,17 +85,12 @@ in
       '';
     };
 
-    environmentFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      example = "/etc/hivegent/bridge.env";
-      description = ''
-        File in `KEY=VALUE` format forwarded via `EnvironmentFile`. Use it for
-        secrets — `OIDC_CLIENT_SECRET`, `POSTGRES_URL`, `TEAMS_APP_ID`,
-        `TEAMS_APP_PASSWORD`, `TEAMS_APP_TENANT_ID` — so they never land in the
-        Nix store. Missing files are tolerated (systemd's `-` prefix).
-      '';
-    };
+    credentials = credentials.option ''
+      {
+        OIDC_CLIENT_SECRET = "/run/secrets/hivegent-bridge-oidc-client-secret";
+        TEAMS_APP_PASSWORD = "/run/secrets/hivegent-bridge-teams-app-password";
+      }
+    '';
   };
 
   config = lib.mkIf cfg.enable {
@@ -122,7 +118,7 @@ in
         StateDirectory = "hivegent-bridge";
         WorkingDirectory = "/var/lib/hivegent-bridge";
 
-        EnvironmentFile = lib.optional (cfg.environmentFile != null) "-${cfg.environmentFile}";
+        LoadCredential = credentials.load cfg.credentials;
 
         ExecStart = lib.getExe cfg.package;
 

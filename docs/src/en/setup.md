@@ -27,6 +27,7 @@ docker compose up -d
 
 The backend reads a TOML config file (mounted at `/data/config.toml`) and also accepts `HIVEGENT_*` environment variables that override individual keys.
 Nested keys use a double underscore, so `[llm] model` becomes `HIVEGENT_LLM__MODEL`.
+Keep secrets such as API keys out of the config file and mount each as a file named like its variable under `/run/secrets`, for example with Compose `secrets`.
 
 A minimal config looks like this:
 

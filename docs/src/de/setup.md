@@ -27,6 +27,7 @@ docker compose up -d
 
 Das Backend liest eine TOML-Konfigurationsdatei (eingebunden unter `/data/config.toml`) und akzeptiert zusätzlich `HIVEGENT_*`-Umgebungsvariablen, die einzelne Schlüssel überschreiben.
 Verschachtelte Schlüssel verwenden einen doppelten Unterstrich, aus `[llm] model` wird also `HIVEGENT_LLM__MODEL`.
+Halten Sie Geheimnisse wie API-Schlüssel aus der Konfigurationsdatei heraus und binden Sie jedes als Datei mit dem Namen seiner Variablen unter `/run/secrets` ein, etwa mit Compose `secrets`.
 
 Eine minimale Konfiguration sieht so aus:
 

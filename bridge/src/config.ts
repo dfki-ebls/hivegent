@@ -3,10 +3,12 @@
  * by the NixOS module into the store) overlaid by environment variables, which win.
  * Mirrors the backend's `HIVEGENT_CONFIG_FILE` (TOML) + `HIVEGENT_*` env pattern.
  * The file path comes from `BRIDGE_CONFIG_FILE` (default `config.json`); a missing
- * file is tolerated. Keep secrets in the environment, not the file.
+ * file is tolerated. Keep secrets out of the file: pass them as environment
+ * variables or, preferably, as credential files (see `readCredentials`).
  */
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 export interface OidcConfig {
   issuer: string;
@@ -58,11 +60,40 @@ export function readFileConfig(path: string | undefined): FileConfig {
   try {
     return JSON.parse(readFileSync(file, "utf8")) as FileConfig;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isMissing(err)) {
       return {};
     }
 
     throw new Error(`Failed to read config file ${file}: ${String(err)}`);
+  }
+}
+
+function isMissing(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+/**
+ * Credential files named like the env var they replace, e.g. `OIDC_CLIENT_SECRET`,
+ * from `$CREDENTIALS_DIRECTORY`, which systemd sets for `LoadCredential=` and the
+ * container image points at `/run/secrets`. A missing directory holds none.
+ */
+export function readCredentials(dir: string | undefined): Record<string, string> {
+  if (!dir) {
+    return {};
+  }
+
+  try {
+    return Object.fromEntries(
+      readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => [entry.name, readFileSync(join(dir, entry.name), "utf8").trim()]),
+    );
+  } catch (err) {
+    if (isMissing(err)) {
+      return {};
+    }
+
+    throw err;
   }
 }
 
@@ -127,5 +158,11 @@ export function resolveConfig(env: NodeJS.ProcessEnv, file: FileConfig): BridgeC
 }
 
 export function loadConfig(): BridgeConfig {
+  // Adapters read their own credentials (e.g. `TEAMS_APP_PASSWORD`) from
+  // `process.env`, so credential files fill it, below any variable already set.
+  for (const [name, value] of Object.entries(readCredentials(process.env.CREDENTIALS_DIRECTORY))) {
+    process.env[name] ??= value;
+  }
+
   return resolveConfig(process.env, readFileConfig(process.env.BRIDGE_CONFIG_FILE));
 }

@@ -36,12 +36,13 @@ def resolve_database_url() -> str:
     fallback dialect because PostgreSQL with ``pgvector`` is the only
     supported backend.
     """
-    if not settings.db.url:
+    if settings.db.url is None:
         raise RuntimeError(
             "settings.db.url is unset.  Set HIVEGENT_DB__URL to a "
             "PostgreSQL async URL (e.g. postgresql+psycopg://...)."
         )
-    return settings.db.url
+
+    return settings.db.url.get_secret_value()
 
 
 @cache

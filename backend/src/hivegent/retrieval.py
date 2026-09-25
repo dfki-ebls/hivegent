@@ -38,7 +38,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .chunkers.base import ChunkData, RetrievedChunk
 from .concurrency import shield_to_completion
-from .config import settings
+from .config import reveal, settings
 from .db import documents as db_documents
 from .db.engine import session
 from .db.models import Chunk, Document, IndexState
@@ -111,7 +111,7 @@ def _build_reranker(device: str) -> AsyncRetrieverFunc[str, str, float] | None:
         model=cfg.model,
         url=f"{cfg.base_url.rstrip('/')}/rerank",
         client=get_trusted_http_client(),
-        api_key=cfg.api_key or None,
+        api_key=reveal(cfg.api_key),
         top_n=cfg.top_n,
     )
 
@@ -131,7 +131,7 @@ def _build_embedding_func(
         raw_func = cbrkit.sim.embed.openai(
             model=cfg.model,
             client=create_openai_client(
-                api_key=cfg.api_key or None,
+                api_key=reveal(cfg.api_key),
                 base_url=cfg.base_url or None,
                 base_url_is_trusted=True,
             ),

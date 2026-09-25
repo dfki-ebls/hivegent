@@ -12,6 +12,7 @@ let
   configFile = tomlFormat.generate "hivegent-config.toml" cfg.settings;
 
   hardening = import ./hardening.nix;
+  credentials = import ./credentials.nix lib;
 
   # `enableTorchCompile` is an argument of the hivegent backend derivation:
   # it puts the C toolchain TorchInductor needs for runtime codegen on the
@@ -96,9 +97,8 @@ in
         `HIVEGENT_CONFIG_FILE`. Nested attribute sets become TOML tables.
 
         Do NOT put secrets here — anything in this attrset lands in
-        `/nix/store`. Use `environmentFile` for `HIVEGENT_*` overrides
-        (e.g. `HIVEGENT_MCP__CLIENT_SECRET`); env vars take precedence
-        over the TOML file.
+        `/nix/store`. Pass them as `credentials` instead, which take
+        precedence over the TOML file.
 
         `auth.enable = false` bypasses JWT validation entirely and
         treats every request as a synthetic localhost user — only use
@@ -159,20 +159,12 @@ in
       '';
     };
 
-    environmentFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      example = "/etc/hivegent/hivegent.env";
-      description = ''
-        File in `KEY=VALUE` format forwarded via `EnvironmentFile`. Use it
-        for secrets — API keys, MCP client secrets, OIDC client secrets —
-        so they never land in the Nix store. Loaded by systemd before the
-        process drops to the unit's `DynamicUser`, so the file must be
-        readable by `root`. Missing files are tolerated (systemd's `-`
-        prefix) so the unit still starts before an operator-managed
-        secret file has been created.
-      '';
-    };
+    credentials = credentials.option ''
+      {
+        HIVEGENT_TRANSPARENCY__SECRET_KEY = "/run/secrets/hivegent-transparency-secret-key";
+        HIVEGENT_MCP__CLIENT_SECRET = "/run/secrets/hivegent-mcp-client-secret";
+      }
+    '';
 
     postgresql.createLocally = lib.mkOption {
       type = lib.types.bool;
@@ -262,7 +254,11 @@ in
             CacheDirectory = "hivegent";
             WorkingDirectory = "/var/lib/hivegent";
 
-            EnvironmentFile = lib.optional (cfg.environmentFile != null) "-${cfg.environmentFile}";
+            LoadCredential = credentials.load cfg.credentials;
+            # Also every `HIVEGENT_*` credential in the system credstore, plain
+            # files in the root-only /etc/credstore or `systemd-creds encrypt`
+            # output in /etc/credstore.encrypted, so a secret needs no config.
+            ImportCredential = "HIVEGENT_*";
 
             ExecStart = utils.escapeSystemdExecArgs [
               (lib.getExe' package "hivegent")

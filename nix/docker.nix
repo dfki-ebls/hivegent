@@ -98,6 +98,11 @@ let
     }
   '';
 
+  # Docker and Podman mount secrets as files under /run/secrets, the same
+  # interface systemd credentials offer, so both services read them from there.
+  # Name each secret like the env var it replaces, e.g. `HIVEGENT_LLM__API_KEY`.
+  credentialsDirectory = "/run/secrets";
+
   # HIVEGENT_CONFIG_FILE is an absolute path so it resolves regardless of cwd;
   # bind-mount `${dataDir}/config.toml` to set it (missing file = empty config).
   backendEnv = toEnvFile "backend.env" {
@@ -107,6 +112,7 @@ let
     HIVEGENT_DATA_DIR = dataDir;
     HIVEGENT_CONFIG_FILE = "${dataDir}/config.toml";
     HIVEGENT_SECURITY__EGRESS_PROXY_URL = egressProxy.url;
+    CREDENTIALS_DIRECTORY = credentialsDirectory;
     SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
   };
 
@@ -115,8 +121,8 @@ let
     XDG_DATA_HOME = "${dataDir}/caddy";
   };
 
-  # Non-secret bridge env; secrets (POSTGRES_URL, OIDC_*, TEAMS_*) come from the
-  # mounted `${dataDir}/bridge-config.json` or operator-set env vars (env wins).
+  # Non-secret bridge env; secrets (POSTGRES_URL, OIDC_CLIENT_SECRET, TEAMS_*)
+  # come from /run/secrets, non-secrets from `${dataDir}/bridge-config.json`.
   bridgeEnv = toEnvFile "bridge.env" {
     HOME = dataDir;
     NODE_ENV = "production";
@@ -124,6 +130,7 @@ let
     PORT = toString bridgePort;
     HIVEGENT_URL = "http://127.0.0.1:${toString backendPort}";
     BRIDGE_CONFIG_FILE = "${dataDir}/bridge-config.json";
+    CREDENTIALS_DIRECTORY = credentialsDirectory;
     SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
   };
 

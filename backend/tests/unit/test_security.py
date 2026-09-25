@@ -52,7 +52,7 @@ def test_prepare_llm_config_trusts_configured_base_url_only(
     """Server-configured LLM URLs bypass only the user URL policy."""
     monkeypatch.setattr(settings.security.user_urls, "allow_hosts", [])
     monkeypatch.setattr(settings.llm, "model", "configured-model")
-    monkeypatch.setattr(settings.llm, "api_key", "")
+    monkeypatch.setattr(settings.llm, "api_key", None)
     monkeypatch.setattr(settings.llm, "base_url", "http://127.0.0.1:18000/v1")
 
     resolved = prepare_llm_config(LlmConfig())

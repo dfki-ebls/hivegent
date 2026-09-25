@@ -48,11 +48,11 @@ class SlumberDocumentChunker(DocumentChunker):
     config: SlumberChunkerConfig = field(default_factory=SlumberChunkerConfig)
 
     def _chunk(self, text: str) -> list[ChunkData]:
-        from ..config import settings
+        from ..config import reveal, settings
 
         genie = OpenAIGenie(
             model=settings.llm.aux_model or settings.llm.model,
-            api_key=settings.llm.api_key,
+            api_key=reveal(settings.llm.api_key),
             base_url=settings.llm.base_url or None,
         )
         chunks = SlumberChunker(

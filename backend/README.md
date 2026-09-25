@@ -51,6 +51,17 @@ In production the systemd unit from [`nixosModules.default`](../nix/nixos/servic
 With `services.hivegent.postgresql.createLocally`, the unit is ordered after `postgresql.target`, so the role and database exist first.
 A failed migration aborts startup with a non-zero exit code, which trips the unit's `Restart = "on-failure"` and surfaces in `journalctl -u hivegent`.
 
+## Configuration
+
+### Secrets are credential files
+
+Settings layer init arguments over environment variables, `.env`, credential files, and the TOML file.
+Credentials are files named like the environment variable they replace, for example `HIVEGENT_LLM__API_KEY`, in `$CREDENTIALS_DIRECTORY`.
+systemd sets that directory for `LoadCredential=` and `ImportCredential=`, and the container image points it at `/run/secrets`, where Docker and Podman mount secrets, so one code path serves both.
+On NixOS the unit imports every `HIVEGENT_*` credential from the system credential store: plain files in `/etc/credstore`, which systemd keeps readable by root only, or files encrypted with `systemd-creds encrypt` in `/etc/credstore.encrypted`.
+Unlike an environment file, a credential is readable only by the unit's user, stays out of the environment every subprocess inherits, and a missing `LoadCredential=` file fails the unit start.
+Every secret setting is a `SecretStr`, so it stays masked in `repr`, logs, and tracebacks, and `config.reveal` unwraps it only where a client needs the value.
+
 ## Workspace content
 
 ### The filesystem is the source of truth

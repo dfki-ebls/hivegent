@@ -10,7 +10,7 @@ from fastmcp.server.auth import (
 from pydantic import AnyHttpUrl
 
 from ..auth import build_discovery_url, fetch_oidc_configuration
-from ..config import settings
+from ..config import reveal, settings
 from ..prompts import WORKSPACE_PATH_INSTRUCTIONS
 
 __all__ = ["mcp_app"]
@@ -22,7 +22,7 @@ if settings.mcp.enable and settings.auth.enable:
         mcp_auth = OIDCProxy(
             config_url=build_discovery_url(settings.auth.issuer),
             client_id=settings.mcp.client_id,
-            client_secret=settings.mcp.client_secret,
+            client_secret=reveal(settings.mcp.client_secret),
             base_url=settings.mcp.base_url,
         )
     elif settings.mcp.mode == "remote":

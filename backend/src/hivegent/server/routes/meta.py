@@ -52,7 +52,7 @@ async def get_settings(
         model=settings.llm.model,
         aux_model=settings.llm.aux_model,
         stt_model=settings.llm.stt_model,
-        has_api_key=bool(settings.llm.api_key),
+        has_api_key=settings.llm.api_key is not None,
         base_url=settings.llm.base_url,
         user=UserResponse.from_user(user),
         attachments=AttachmentLimits(

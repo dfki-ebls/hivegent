@@ -11,6 +11,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, Field, PositiveInt, SecretStr, model_validator
 from pydantic_settings import (
     BaseSettings,
+    NestedSecretsSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
@@ -317,7 +318,7 @@ class LlmSettings(BaseModel):
     model: str = ""
     aux_model: str | None = None
     stt_model: str | None = None
-    api_key: str = ""
+    api_key: SecretStr | None = None
     base_url: str = ""
     max_tokens: int | None = None
     aux_max_tokens: int | None = 2048
@@ -444,7 +445,7 @@ class EmbeddingSettings(BaseModel):
     provider: Literal["sentence-transformers", "openai"] = "sentence-transformers"
     model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     dimension: int = 384
-    api_key: str = ""
+    api_key: SecretStr | None = None
     base_url: str = ""
     text_search_config: str | list[str] = ["german", "english"]
     """PostgreSQL FTS configuration(s) for the sparse (keyword) channel.
@@ -499,7 +500,7 @@ class RerankSettings(BaseModel):
 
     provider: Literal["sentence-transformers", "http"] | None = None
     model: str = ""
-    api_key: str = ""
+    api_key: SecretStr | None = None
     base_url: str = ""
     candidate_multiplier: int = 5
     top_n: int | None = None
@@ -523,7 +524,7 @@ class McpSettings(BaseModel):
     enable: bool = False
     mode: Literal["proxy", "remote"] = "proxy"
     client_id: str = ""
-    client_secret: str = ""
+    client_secret: SecretStr | None = None
     base_url: str = "http://localhost:8000/mcp"
     allow_unauthenticated: bool = False
 
@@ -881,7 +882,7 @@ class DatabaseSettings(BaseModel):
     PostgreSQL with the ``pgvector`` extension; there is no fallback.
     """
 
-    url: str = ""
+    url: SecretStr | None = None
     echo: bool = False
 
 
@@ -941,18 +942,26 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Layer a TOML config file underneath env vars but above defaults.
+        """Layer credential files and a TOML config file underneath env vars.
 
-        The path is read from ``HIVEGENT_CONFIG_FILE`` so deployments can
+        The TOML path is read from ``HIVEGENT_CONFIG_FILE`` so deployments can
         relocate it without code changes; a missing file is silently empty.
+        Credential files come from ``$CREDENTIALS_DIRECTORY``, see the
+        backend README's "Secrets are credential files".
         """
         toml_path = Path(os.environ.get(CONFIG_FILE_ENV_VAR, DEFAULT_CONFIG_FILE))
+        credentials = NestedSecretsSettingsSource(
+            file_secret_settings,
+            secrets_dir=os.environ.get("CREDENTIALS_DIRECTORY"),
+            secrets_dir_missing="ok",
+        )
+
         return (
             init_settings,
             env_settings,
             dotenv_settings,
+            credentials,
             TomlConfigSettingsSource(settings_cls, toml_file=toml_path),
-            file_secret_settings,
         )
 
     llm: LlmSettings = LlmSettings()

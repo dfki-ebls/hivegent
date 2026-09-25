@@ -8,6 +8,7 @@ import pytest
 from hivegent.config import (
     CONFIG_FILE_ENV_VAR,
     Settings,
+    TransparencySettings,
     sanitize_document_path,
     sanitize_group_id,
     sanitize_user_id,
@@ -115,3 +116,23 @@ def test_toml_config_overrides_defaults(
     assert settings.network.connect_timeout_seconds == 12.5
     assert settings.network.webfetch_timeout_seconds == 7.0
     assert settings.limits.max_file_size_bytes == 50 * 1024 * 1024
+
+
+def test_credential_files_override_toml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A file in ``$CREDENTIALS_DIRECTORY`` supplies a nested secret setting."""
+    (tmp_path / "HIVEGENT_TRANSPARENCY__SECRET_KEY").write_text("x" * 32 + "\n")
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("HIVEGENT_TRANSPARENCY__DETECTOR_URL", "http://detector/detect")
+    monkeypatch.setenv("HIVEGENT_TRANSPARENCY__REPORT_ISSUER", "https://hivegent.test")
+
+    transparency = Settings().transparency
+
+    assert transparency is not None
+    assert transparency.secret_key.get_secret_value() == "x" * 32
+    assert "x" * 32 not in repr(transparency)
+    with pytest.raises(ValueError, match="secret_key"):
+        TransparencySettings.model_validate(
+            {**transparency.model_dump(), "secret_key": "too-short"}
+        )

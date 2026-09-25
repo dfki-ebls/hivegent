@@ -10,7 +10,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, PrivateAttr, model_validator
 from pydantic_ai.settings import ThinkingEffort
 
-from .config import InferenceProvider, settings
+from .config import InferenceProvider, reveal, settings
 from .security import require_safe_url_shape
 
 __all__ = ["LlmConfig", "LlmTier", "ReasoningEffort", "resolve_llm_config"]
@@ -70,7 +70,7 @@ def resolve_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:
     configured_base_url = settings.llm.base_url or None
     resolved = LlmConfig(
         model=llm.model or default_model or settings.llm.model,
-        api_key=llm.api_key or settings.llm.api_key,
+        api_key=llm.api_key or reveal(settings.llm.api_key) or "",
         base_url=llm.base_url or configured_base_url,
         max_tokens=llm.max_tokens or default_max_tokens,
         inference_provider=(llm.inference_provider or settings.llm.inference_provider),

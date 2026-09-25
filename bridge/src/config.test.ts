@@ -1,6 +1,21 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
-import { resolveConfig } from "./config.js";
+import { readCredentials, resolveConfig } from "./config.js";
+
+describe("readCredentials", () => {
+  it("reads one trimmed credential per file and tolerates a missing directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "credentials-"));
+    writeFileSync(join(dir, "OIDC_CLIENT_SECRET"), "s3cret\n");
+
+    expect(readCredentials(dir)).toEqual({ OIDC_CLIENT_SECRET: "s3cret" });
+    expect(readCredentials(join(dir, "missing"))).toEqual({});
+    expect(readCredentials(undefined)).toEqual({});
+  });
+});
 
 describe("resolveConfig", () => {
   it("layers env over the file and requires the essentials", () => {
