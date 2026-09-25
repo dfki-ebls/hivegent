@@ -202,6 +202,8 @@ export interface ServerConversation {
   title: string | null;
   messages: ChatMessage[];
   instructions: InstructionsSnapshot[];
+  /** Compact Ed25519-signed JWT marking the conversation as AI-generated. */
+  provenance: string | null;
 }
 
 /** A conversation exactly as the browser tab held it, errors included. */

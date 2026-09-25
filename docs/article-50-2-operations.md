@@ -5,19 +5,23 @@ The system generates free-form text that natural persons read, so the marking an
 None of the three exceptions in Article 50(2) fit: the system generates rather than performs standard editing, and the industrial and business-to-business carve-out in the Commission guidelines needs strictly technical output, which a retrieval assistant does not produce.
 
 This record follows the Commission's Code of Practice as a reference for the state of the art.
-Hivegent is not a signatory.
+Hivegent is not a signatory, so this record is the gap analysis the Commission guidelines expect from non-signatories (point 148).
 
 ## What is marked
 
 Free-form text longer than 200 tokens is marked at inference time by vLLM's `gumbel` watermark.
-A single watermark layer is what the Code considers sufficient for free-form text, since such text carries no metadata.
-Shorter text cannot be watermarked with even basic reliability and is not marked.
+A single watermark layer is what the Code considers sufficient for free-form text, since such text carries no metadata, and very short text is exempt from it (Sub-measure 1.1.2).
 
-Documents Hivegent writes into the workspace and conversation exports carry the watermark but no second, metadata-based layer.
-The Code asks for signed metadata alongside the watermark for text in a format that can hold it.
+Conversation exports carry a `provenance` field, a JWT signed with the report key that states the content is AI-generated (Code, Sub-measure 1.1.1).
+It covers the SHA-256 digest of the `backend` half without `provenance`, serialized as JSON with sorted keys, no whitespace, and unescaped unicode.
+Documents Hivegent writes into the workspace carry no metadata layer yet.
 This gap is open and is reviewed together with the detector interoperability work due by 2 February 2027.
 
 Structured output consumed only by machines is out of scope under the Commission guidelines and is not marked.
+
+## What is disclosed
+
+The web UI shows a persistent notice under the composer, and the Teams bridge opens every conversation with the same notice (Article 50(1) and (5)).
 
 ## Runtime configuration
 
@@ -59,17 +63,18 @@ Keep the active key on the first line and retained keys below it, rotate by prep
 Retained keys stay in the detector so that previously marked text remains detectable.
 Never publish watermark keys.
 
-Hivegent derives its Ed25519 report-signing key from `secret_key` (`HIVEGENT_SECRET_KEY`), so the signing key itself is never stored and only its JWKS is published.
-Set `secret_key` to at least 32 random characters, for example `openssl rand -base64 32`, and keep it stable across deployments: changing it rotates the signing key, and reports issued under the old key stop verifying.
-Rotating it deliberately is how those reports are revoked.
+Hivegent derives its Ed25519 key for reports and export provenance from `secret_key` (`HIVEGENT_SECRET_KEY`), so the signing key itself is never stored and only its JWKS is published.
+Set `secret_key` to at least 32 random characters, for example `openssl rand -base64 32`, and keep it stable across deployments: changing it rotates the signing key.
+For a planned rotation, add the old key's public `x` value from `/api/transparency/jwks` to `transparency.retired_public_keys` before changing the secret, so earlier reports and exports keep verifying.
+After a compromise, leave the old key out, since its holder could sign backdated reports, and not listing it is how those reports are revoked.
 
 ## Detection
 
 `POST /api/transparency/detect` answers for signed-in users, which covers the persons exposed to the content.
-`GET /api/transparency/jwks` publishes the report verification key behind the same authentication.
-It carries only a public key, so exposing it would be harmless, but a report only ever reaches someone who already has access, and an unauthenticated route is attack surface bought for nobody.
-Access is free and unlimited on request through the contact address above for competent authorities, regulators, law enforcement, media, fact-checkers, researchers, and civil society organisations.
-Granting that access means granting a sign-in, which covers both endpoints at once.
+Each result can be downloaded as a signed report with the text hash, the detector URL, and a timestamp (Code, Sub-measure 2.1.2).
+`GET /api/transparency/jwks` publishes the verification key without authentication, since reports and exports travel to people without a sign-in.
+Access to detection is free and unlimited on request through the contact address above for competent authorities, regulators, law enforcement, media, fact-checkers, researchers, and civil society organisations.
+Granting that access means granting a sign-in.
 
 Submitted text is processed in memory only.
 It is never logged, retained, used for analytics or training, or placed in a signed report.

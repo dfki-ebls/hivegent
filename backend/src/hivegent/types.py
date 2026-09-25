@@ -528,6 +528,10 @@ class ServerConversation(_ArchivedConversation):
     """A persisted active path and the system prompts it ran under."""
 
     instructions: list[InstructionsSnapshot] = Field(default_factory=list)
+    provenance: str | None = Field(
+        default=None,
+        description="Compact Ed25519-signed JWT marking the conversation as AI-generated",
+    )
 
 
 class ClientConversation(_ArchivedConversation):
@@ -694,7 +698,7 @@ class TransparencyDetectionResponse(BaseModel):
 
 
 class TransparencyJwk(BaseModel):
-    """Public Ed25519 signing key for transparency reports."""
+    """Public Ed25519 key for detection reports and export provenance."""
 
     kty: Literal["OKP"] = "OKP"
     crv: Literal["Ed25519"] = "Ed25519"
@@ -705,7 +709,7 @@ class TransparencyJwk(BaseModel):
 
 
 class TransparencyJwks(BaseModel):
-    """JSON Web Key Set for transparency report verification."""
+    """JSON Web Key Set for detection report and export provenance verification."""
 
     keys: list[TransparencyJwk]
 

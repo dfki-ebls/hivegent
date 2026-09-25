@@ -57,6 +57,7 @@ from ...llm import (
     thinking_model_settings,
 )
 from ...tools.formatting import BLOCK_SEP
+from ...transparency import sign_provenance
 from ...types import (
     AgentRunConfig,
     ChatRequestConfig,
@@ -329,14 +330,18 @@ async def export_conversation_route(
 
     result = await load_active_for_display(user.id, conversation_id)
     pairs, siblings = result if result else ([], {})
-    archive = ConversationArchive(
-        backend=ServerConversation(
-            id=summary.id,
-            title=summary.title,
-            messages=dump_messages_with_ids(pairs, siblings=siblings),
-            instructions=_instruction_snapshots(pairs),
-        )
+    server = ServerConversation(
+        id=summary.id,
+        title=summary.title,
+        messages=dump_messages_with_ids(pairs, siblings=siblings),
+        instructions=_instruction_snapshots(pairs),
     )
+
+    # Signed metadata is the machine-readable marking a container format
+    # carries (Code of Practice, Sub-measure 1.1.1).
+    server.provenance = sign_provenance(server)
+
+    archive = ConversationArchive(backend=server)
     return Response(
         content=archive.model_dump_json(indent=2),
         media_type="application/json",

@@ -1,4 +1,4 @@
-"""Tests for watermark detection reports."""
+"""Tests for watermark detection reports and export provenance."""
 
 import json
 
@@ -7,9 +7,12 @@ from joserfc import jws
 from joserfc.jwk import OKPKey
 
 from hivegent import keys, transparency
-from hivegent.config import settings
+from hivegent.config import content_digest, settings
+from hivegent.types import ServerConversation
 
 SECRET_KEY = "test-secret-key-with-enough-entropy"
+
+ISSUER = "https://example.test"
 
 
 class _Response:
@@ -45,26 +48,50 @@ class _Client:
         return self.response
 
 
+def _clear_key_caches() -> None:
+    keys.derived_ed25519_key.cache_clear()
+    transparency._signing_key.cache_clear()
+    transparency.public_jwks.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def _derived_key_cache() -> object:
     """Keys are cached per process, so each test derives them afresh."""
-    keys.derived_ed25519_key.cache_clear()
-    transparency._signing_key.cache_clear()
+    _clear_key_caches()
 
     yield
 
-    keys.derived_ed25519_key.cache_clear()
-    transparency._signing_key.cache_clear()
+    _clear_key_caches()
+
+
+def _rotate_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_key_caches()
+    monkeypatch.setattr(settings, "secret_key", "a-completely-different-secret-key")
+
+
+def _enable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "secret_key", SECRET_KEY)
+    monkeypatch.setattr(settings.transparency, "enabled", True)
+    monkeypatch.setattr(settings.transparency, "report_issuer", ISSUER)
+
+
+def _verified_claims(token: str) -> dict[str, object]:
+    """Verify *token* against the published key its ``kid`` names."""
+    kid = jws.extract_compact(token.encode()).headers()["kid"]
+    jwk = next(key for key in transparency.public_jwks().keys if key.kid == kid)
+    signature = jws.deserialize_compact(
+        token, OKPKey.import_key(jwk.model_dump()), algorithms=["Ed25519"]
+    )
+
+    return json.loads(signature.payload)
 
 
 async def test_detection_report_is_verifiable_and_contains_only_a_hash(
     monkeypatch,
 ) -> None:
     """A positive result is signed with the key derived from the app secret."""
-    monkeypatch.setattr(settings, "secret_key", SECRET_KEY)
-    monkeypatch.setattr(settings.transparency, "enabled", True)
+    _enable(monkeypatch)
     monkeypatch.setattr(settings.transparency, "detector_url", "http://detector/detect")
-    monkeypatch.setattr(settings.transparency, "report_issuer", "https://example.test")
     monkeypatch.setattr(
         transparency,
         "get_trusted_http_client",
@@ -72,19 +99,48 @@ async def test_detection_report_is_verifiable_and_contains_only_a_hash(
     )
 
     result = await transparency.detect_text("marked text")
-    jwk = transparency.public_jwks().keys[0].model_dump()
-    signature = jws.deserialize_compact(
-        result.signed_report,
-        OKPKey.import_key(jwk),
-        algorithms=["Ed25519"],
-    )
-    claims = json.loads(signature.payload)
+    claims = _verified_claims(result.signed_report)
 
     assert result.status == "detected"
+    assert claims["method"] == "watermark"
     assert claims["status"] == "detected"
-    assert claims["content_sha256"] == claims["sub"].removeprefix("sha256:")
-    assert claims["detector"] == "https://example.test/api/transparency/detect"
-    assert "marked text" not in signature.payload.decode()
+    assert claims["sub"] == f"sha256:{claims['content_sha256']}"
+    assert claims["detector"] == f"{ISSUER}/api/transparency/detect"
+    assert "marked text" not in json.dumps(claims)
+
+
+def test_export_provenance_covers_the_canonical_conversation(monkeypatch) -> None:
+    """A verifier recomputes the signed digest from the exported JSON."""
+    _enable(monkeypatch)
+    conversation = ServerConversation(id="c1", title="Grüße")
+    provenance = transparency.sign_provenance(conversation)
+    assert provenance is not None
+    conversation.provenance = provenance
+
+    exported = json.loads(conversation.model_dump_json(indent=2))
+    del exported["provenance"]
+    canonical = json.dumps(
+        exported, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    claims = _verified_claims(provenance)
+
+    assert claims["ai_generated"] is True
+    assert claims["content_sha256"] == content_digest(canonical)
+
+
+def test_a_retired_key_still_verifies_after_rotation(monkeypatch) -> None:
+    """A report signed before a planned rotation verifies against the new JWKS."""
+    _enable(monkeypatch)
+    report = transparency._sign(
+        transparency._ReportClaims(content_sha256="0" * 64, status="detected")
+    )
+    retired = transparency.public_jwks().keys[0]
+
+    _rotate_secret(monkeypatch)
+    monkeypatch.setattr(settings.transparency, "retired_public_keys", [retired.x])
+
+    assert transparency.public_jwks().keys[0].kid != retired.kid
+    assert _verified_claims(report)["status"] == "detected"
 
 
 def test_signing_key_is_derived_and_not_stored(monkeypatch) -> None:
@@ -92,9 +148,7 @@ def test_signing_key_is_derived_and_not_stored(monkeypatch) -> None:
     monkeypatch.setattr(settings, "secret_key", SECRET_KEY)
     first = transparency.public_jwks().keys[0]
 
-    transparency._signing_key.cache_clear()
-    keys.derived_ed25519_key.cache_clear()
-    monkeypatch.setattr(settings, "secret_key", "a-completely-different-secret-key")
+    _rotate_secret(monkeypatch)
 
     assert transparency.public_jwks().keys[0].x != first.x
 

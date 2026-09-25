@@ -1,19 +1,19 @@
-"""AI-generated text watermark detection and signed verification reports."""
+"""AI-generated text watermark detection, signed reports and export provenance."""
 
-import hashlib
+import json
 import time
-from dataclasses import dataclass
 from functools import cache
 from typing import Literal, cast
 
 from joserfc import jws
 from joserfc.jwk import OKPKey
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
-from .config import settings
+from .config import content_digest, settings
 from .http_client import get_trusted_http_client
 from .keys import derived_ed25519_key
 from .types import (
+    ServerConversation,
     TransparencyConfig,
     TransparencyDetectionResponse,
     TransparencyJwk,
@@ -26,6 +26,7 @@ __all__ = [
     "detect_text",
     "get_transparency_config",
     "public_jwks",
+    "sign_provenance",
 ]
 
 #: Label separating the report signing key from every other derived key.
@@ -68,14 +69,36 @@ class _ReportHeader(BaseModel):
     jku: str
 
 
-class _ReportClaims(BaseModel):
-    iss: str
-    sub: str
-    iat: int
+def _issuer() -> str:
+    return settings.transparency.report_issuer.rstrip("/")
+
+
+def _now() -> int:
+    return int(time.time())
+
+
+class _SignedClaims(BaseModel):
     content_sha256: str
-    detector: str
+    iss: str = Field(default_factory=_issuer)
+    iat: int = Field(default_factory=_now)
+
+    @computed_field
+    @property
+    def sub(self) -> str:
+        return f"sha256:{self.content_sha256}"
+
+
+class _ReportClaims(_SignedClaims):
+    # The detection solution is this endpoint, not the detector behind it:
+    # naming the upstream URL would publish internal topology in a report
+    # whose whole point is that anyone can re-run the check.
+    detector: str = Field(default_factory=lambda: f"{_issuer()}/api/transparency/detect")
     method: Literal["watermark"] = "watermark"
-    status: Literal["detected", "not_detected", "inconclusive"]
+    status: _DetectionStatus
+
+
+class _ProvenanceClaims(_SignedClaims):
+    ai_generated: Literal[True] = True
 
 
 def get_transparency_config() -> TransparencyConfig:
@@ -87,39 +110,33 @@ def get_transparency_config() -> TransparencyConfig:
     )
 
 
-@dataclass(slots=True, frozen=True)
-class _SigningKey:
-    """The report signing key and its RFC 7638 thumbprint."""
-
-    key: OKPKey
-    kid: str
-
-
 @cache
-def _signing_key() -> _SigningKey:
+def _signing_key() -> OKPKey:
     """Return the report signing key, derived from the application secret.
 
     Nothing is stored: the key is stable for as long as the secret is, so a
-    report downloaded today still verifies tomorrow, and the derivation plus
-    the thumbprint happen once per process instead of once per request.
+    report downloaded today still verifies tomorrow.
     """
-    key = OKPKey.import_key(derived_ed25519_key(_SIGNING_PURPOSE))
-
-    return _SigningKey(key=key, kid=key.thumbprint())
+    return OKPKey.import_key(derived_ed25519_key(_SIGNING_PURPOSE))
 
 
+def _jwk(key: OKPKey) -> TransparencyJwk:
+    return TransparencyJwk(x=cast(str, key.as_dict(private=False)["x"]), kid=key.thumbprint())
+
+
+@cache
 def public_jwks() -> TransparencyJwks:
-    """Return the public key used to verify signed detection reports."""
-    signing = _signing_key()
+    """Return the keys that verify detection reports and export provenance.
 
-    return TransparencyJwks(
-        keys=[
-            TransparencyJwk(
-                x=cast(str, signing.key.as_dict(private=False)["x"]),
-                kid=signing.kid,
-            )
-        ]
+    The active key comes first, followed by the retired keys that still verify
+    what was signed before a rotation.
+    """
+    retired = (
+        OKPKey.import_key({"kty": "OKP", "crv": "Ed25519", "x": x})
+        for x in settings.transparency.retired_public_keys
     )
+
+    return TransparencyJwks(keys=[_jwk(_signing_key()), *map(_jwk, retired)])
 
 
 def _status(result: _DetectorResponse) -> _DetectionStatus:
@@ -145,32 +162,37 @@ def _message(status: _DetectionStatus) -> str:
     )
 
 
-def _signed_report(text: str, status: _DetectionStatus) -> str:
-    signing = _signing_key()
-    digest = hashlib.sha256(text.encode()).hexdigest()
-    issuer = settings.transparency.report_issuer.rstrip("/")
-    header = _ReportHeader(
-        kid=signing.kid,
-        jku=f"{issuer}/api/transparency/jwks",
-    )
-    # The detection solution is this endpoint, not the detector behind it:
-    # naming the upstream URL would publish internal topology in a report
-    # whose whole point is that anyone can re-run the check.
-    claims = _ReportClaims(
-        iss=issuer,
-        sub=f"sha256:{digest}",
-        iat=int(time.time()),
-        content_sha256=digest,
-        detector=f"{issuer}/api/transparency/detect",
-        status=status,
-    )
+def _sign(claims: _SignedClaims) -> str:
+    key = _signing_key()
+    header = _ReportHeader(kid=key.thumbprint(), jku=f"{_issuer()}/api/transparency/jwks")
 
     return jws.serialize_compact(
         header.model_dump(),
         claims.model_dump_json().encode(),
-        signing.key,
+        key,
         algorithms=["Ed25519"],
     )
+
+
+def sign_provenance(conversation: ServerConversation) -> str | None:
+    """Return a signed statement that *conversation* contains AI-generated text.
+
+    Returns ``None`` while transparency is disabled, since nothing is signed
+    then. The digest covers the conversation without its ``provenance`` field,
+    serialized as JSON with sorted keys, no whitespace and unescaped unicode,
+    so a verifier recomputes it from the exported file.
+    """
+    if not settings.transparency.enabled:
+        return None
+
+    canonical = json.dumps(
+        conversation.model_dump(mode="json", exclude={"provenance"}),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+    return _sign(_ProvenanceClaims(content_sha256=content_digest(canonical)))
 
 
 async def detect_text(text: str) -> TransparencyDetectionResponse:
@@ -195,5 +217,5 @@ async def detect_text(text: str) -> TransparencyDetectionResponse:
     return TransparencyDetectionResponse(
         status=status,
         message=_message(status),
-        signed_report=_signed_report(text, status),
+        signed_report=_sign(_ReportClaims(content_sha256=content_digest(text), status=status)),
     )

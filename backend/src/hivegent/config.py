@@ -410,6 +410,10 @@ class TransparencySettings(BaseModel):
     detector_api_key: str = ""
     report_issuer: str = ""
     contact_email: str = ""
+    #: Public ``x`` values of earlier signing keys, kept in the JWKS so reports
+    #: and exports signed before a planned rotation still verify. Leave a
+    #: compromised key out, since it could sign backdated reports.
+    retired_public_keys: list[str] = []
 
     @model_validator(mode="after")
     def validate_detector(self) -> Self:

@@ -12,6 +12,10 @@ import {
 } from "./hivegent/client.js";
 import { parseHivegentStream } from "./hivegent/stream.js";
 
+// EU AI Act Article 50(1) and (5): the first reply of every conversation tells
+// the reader that an AI system is answering, as the web UI's persistent notice does.
+const AI_DISCLOSURE = "_Hivegent is AI and can make mistakes. Please double-check responses._";
+
 /** Per-thread state persisted by the Chat SDK (maps to a hivegent conversation). */
 export interface ThreadState extends Record<string, unknown> {
   hivegentConversationId?: string;
@@ -64,16 +68,26 @@ export function createTurnHandler(
     const text = [...(context?.skipped ?? []), message].map((item) => item.text).join("\n\n");
     const { response, conversationId } = await runChat(existing, text, accessToken);
 
-    if (conversationId !== existing) {
+    const started = conversationId !== existing;
+
+    if (started) {
       await thread.setState({ hivegentConversationId: conversationId });
     }
 
-    await thread.post(relay(thread, response));
+    await thread.post(relay(thread, response, started));
   };
 }
 
 /** Reduce the hivegent stream to answer text, showing tool activity as typing status. */
-async function* relay(thread: Thread<ThreadState>, response: Response): AsyncGenerator<string> {
+async function* relay(
+  thread: Thread<ThreadState>,
+  response: Response,
+  disclose: boolean,
+): AsyncGenerator<string> {
+  if (disclose) {
+    yield `${AI_DISCLOSURE}\n\n`;
+  }
+
   for await (const event of parseHivegentStream(response)) {
     if (event.kind === "status") {
       await thread.startTyping(event.label);
