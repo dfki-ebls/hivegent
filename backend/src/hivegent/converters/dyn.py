@@ -18,7 +18,12 @@ from hivegent.dyn.serialization.simple.excel import to_markdown as excel_to_mark
 from hivegent.dyn.serialization.simple.json import to_markdown as json_to_markdown
 from hivegent.subprocesses.libreoffice import libreoffice_convert
 
-from .base import ConversionResult, DocumentConverter, collect_dir_images
+from .base import (
+    ConversionResult,
+    DocumentConverter,
+    collect_dir_images,
+    ExtractedImage,
+)
 
 __all__ = ["DynAutoConverter"]
 
@@ -32,7 +37,11 @@ class DynAutoConfig(BaseModel):
 
 
 async def _convert_markdown(
-    path: Path, /, summarize_floats: bool, llm_options: LlmConfig | None = None
+    path: Path,
+    /,
+    summarize_floats: bool,
+    llm_options: LlmConfig | None = None,
+    images: dict[str, ExtractedImage] | None = None,
 ) -> ConversionResult:
     doc = await parse(path, summarize_floats, llm_options)
     # convert TableNode to TableMdNode
@@ -59,7 +68,7 @@ async def _convert_word(
         md_path = converter.convert()
         # the images live in tmpdir, so read them before it is removed
         images = collect_dir_images(converter.drawing_path, Path(tmpdir))
-        return await _convert_markdown(md_path, summarize_floats, llm_options)
+        return await _convert_markdown(md_path, summarize_floats, llm_options, images)
 
 
 async def _convert_email(path: Path, /) -> ConversionResult:

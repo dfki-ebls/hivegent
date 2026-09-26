@@ -82,38 +82,32 @@ class Chunk(BaseModel):
     end_idx: int
 
 
+def _has_heading(text: str) -> bool:
+    return text.startswith("# ")
+
+
 def to_chunks(doc: Document, limit: int | None = None) -> list[Chunk]:
     ret: list[Chunk] = []
     for heading, contentlist in doc.tree:
         prefix = build_title(doc.title, heading) + "\n\n"
         for c in contentlist:
-            c_text = prefix
-            if isinstance(c.data, FigureNode):
-                c_text += c.data.render()
-                ret.append(
-                    Chunk(
-                        text=c_text,
-                        lines=c.line_numbers,
-                        start_idx=c.start_index,
-                        end_idx=c.end_index,
-                    )
+            if not isinstance(c.data, (TextNode, FigureNode)):
+                raise TypeError(
+                    f"Got {c.data}, but only TextNodes or FigureNodes are allowed in this step!"
                 )
-                continue
-            if not isinstance(c.data, TextNode):
-                raise TypeError(f"Got {c.data}, but only TextNodes allowed!")
 
+            c_text = c.data.content if isinstance(c.data, TextNode) else c.data.render()
             # truncate heading enrichment if it would exceed limit
-            if (
-                limit is not None
-                and get_token_count(prefix)
-                + (len_content := get_token_count(c.data.content))
-                > limit
-            ):
-                budget = limit - len_content - _ELLIPSIS_TOKENS
-                truncated = truncate_to_tokens(prefix, budget)
-                c_text = truncated + _ELLIPSIS if truncated else ""
+            if not _has_heading(c_text) and limit is not None:
+                heading = prefix
+                if (
+                    get_token_count(prefix) + (len_content := get_token_count(c_text))
+                    > limit
+                ):
+                    budget = limit - len_content - _ELLIPSIS_TOKENS
+                    heading = truncate_to_tokens(prefix, budget) + _ELLIPSIS
+                c_text = heading + c_text
 
-            c_text += c.data.content
             ret.append(
                 Chunk(
                     text=c_text,

@@ -119,10 +119,6 @@ type MentionsDict = dict[str, str]
 type FloatDict = dict[str, Node]
 
 
-def _has_heading(text: str) -> bool:
-    return text.startswith("# ")
-
-
 class Document(BaseModel):
     tree: ContentTree
     path: Path
@@ -155,7 +151,7 @@ class Document(BaseModel):
                     continue
                 if not isinstance(c.data, TextNode):
                     raise TypeError(f"Got {c.data}, but only TextNodes allowed!")
-                ret += c.data.content + "\n"
+                ret += c.data.content + "\n\n"
         return ret
 
     def resolve_image_paths(self, base_dir: Path) -> None:

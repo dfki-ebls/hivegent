@@ -408,8 +408,8 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
     ),
     ConversionPipeline.DYN_AUTO: _ConverterRegistration(
         loader=_load_dyn_auto,
-        label="Independent Markdown",
-        description="Optimizes a Markdown file to correct prior serialization problems and facilitate the generation of more independent chunks",
+        label="Dyn",
+        description="Processes simple text-based documents, tabular data and complex text-based documents. Optimized for interpretability of local contexts and the creation of independent chunks.",
         extensions=frozenset(
             {
                 ".md",
