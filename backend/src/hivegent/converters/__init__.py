@@ -88,6 +88,7 @@ class ConversionPipeline(StrEnum):
     PDF_OXIDE = "pdf-oxide"
     TABLE_CHEF = "table-chef"
     PLAIN_TEXT = "plain-text"
+    DYN_AUTO = "dynauto"
 
 
 class ConversionSpec(BaseModel):
@@ -135,6 +136,12 @@ def _load_llm() -> PipelineImplementation[DocumentConverter]:
     from .llm import LLMConverter, LlmConverterConfig
 
     return PipelineImplementation(LLMConverter, LlmConverterConfig)
+
+
+def _load_dyn_auto() -> PipelineImplementation[DocumentConverter]:
+    from .dyn import DynAutoConfig, DynAutoConverter
+
+    return PipelineImplementation(DynAutoConverter, DynAutoConfig)
 
 
 def _load_pandoc() -> PipelineImplementation[DocumentConverter]:
@@ -398,6 +405,26 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
         description="Text, configuration, data-serialization, and source files as-is",
         extensions=None,
         auto_extensions=PLAIN_TEXT_EXTENSIONS,
+    ),
+    ConversionPipeline.DYN_AUTO: _ConverterRegistration(
+        loader=_load_dyn_auto,
+        label="Dyn",
+        description="Processes simple text-based documents, tabular data and complex text-based documents. Optimized for interpretability of local contexts and the creation of independent chunks.",
+        extensions=frozenset(
+            {
+                ".md",
+                ".doc",
+                ".docx",
+                ".xls",
+                ".xlsx",
+                ".json",
+                ".jsonl",
+                ".doc",
+                ".docx",
+                ".txt",
+                ".eml",
+            }
+        ),
     ),
 }
 
@@ -722,7 +749,9 @@ def _instantiate(
     kwargs: dict[str, Any] = {}
     if config and implementation.config is not None:
         kwargs["config"] = implementation.config(**config)
-    if pipeline is ConversionPipeline.LLM and llm_options is not None:
+    if (
+        pipeline is ConversionPipeline.LLM or pipeline is ConversionPipeline.DYN_AUTO
+    ) and llm_options is not None:
         kwargs["llm_options"] = llm_options
 
     return implementation.cls(detect_asset_roles=detect_asset_roles, **kwargs)

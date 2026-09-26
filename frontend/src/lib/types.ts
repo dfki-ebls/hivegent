@@ -29,6 +29,7 @@ export enum ConversionPipeline {
   PDF_OXIDE = "pdf-oxide",
   TABLE_CHEF = "table-chef",
   PLAIN_TEXT = "plain-text",
+  DYN_AUTO = "dynauto",
 }
 
 /** Available chunking pipelines. */
@@ -46,6 +47,7 @@ export enum ChunkingPipeline {
   NEURAL = "neural",
   LATE = "late",
   SLUMBER = "slumber",
+  DYN = "dyn",
 }
 
 // Zod v4: z.enum() accepts TS enums directly (replaces deprecated nativeEnum)

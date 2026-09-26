@@ -31,6 +31,7 @@ class ChunkingPipeline(StrEnum):
     AUTO = "auto"
     NONE = "none"
     TOKEN = "token"
+    DYN = "dyn"
     FAST = "fast"
     SENTENCE = "sentence"
     RECURSIVE = "recursive"
@@ -69,6 +70,12 @@ def _load_token() -> PipelineImplementation[DocumentChunker]:
     from .token import TokenChunkerConfig, TokenDocumentChunker
 
     return PipelineImplementation(TokenDocumentChunker, TokenChunkerConfig)
+
+
+def _load_dyn() -> PipelineImplementation[DocumentChunker]:
+    from .dyn import DynChunker, DynConfig
+
+    return PipelineImplementation(DynChunker, DynConfig)
 
 
 def _load_fast() -> PipelineImplementation[DocumentChunker]:
@@ -141,6 +148,27 @@ _CHUNKERS: dict[ChunkingPipeline, PipelineRegistration[DocumentChunker]] = {
         loader=_load_token,
         label="Token",
         description="Fixed token-count chunks for uniform processing",
+    ),
+    ChunkingPipeline.DYN: PipelineRegistration(
+        loader=_load_dyn,
+        label="Dyn",
+        description="dyn",
+        dependencies=(
+            "spacy",
+            "fastcoref",
+            "fastexcel",
+            "html2text",
+            "imgkit",
+            "jsonlines",
+            "mailparser",
+            "markdown_it",
+            "markdown2",
+            "markitdown",
+            "mdit_py_plugins",
+            "polars",
+            "docx",
+            "tiktoken",
+        ),
     ),
     ChunkingPipeline.FAST: PipelineRegistration(
         loader=_load_fast,
