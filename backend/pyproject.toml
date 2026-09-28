@@ -46,6 +46,22 @@ all = ["hivegent-backend[docling,pdf-oxide,semantic]"]
 # marker = ["marker-pdf[full]>=1,<2"]
 # mineru = ["mineru[all]>=3,<4"]
 docling = ["docling>=2,<3", "tesserocr>=2,<3"]
+dyn = [
+  "fastcoref>=2.1.6",
+  "fastexcel>=0.21.0",
+  "html2text>=2025.4.15",
+  "imgkit>=1.2.3",
+  "jsonlines>=4.0.0",
+  "mail-parser>=4.6.3",
+  "markdown-it-py>=4.2.0",
+  "markdown2>=2.5.5",
+  "markitdown[docx,xls,xlsx]>=0.1,<1",
+  "mdit-py-plugins>=0.6.1",
+  "polars>=1.43.2",
+  "python-docx>=1.2.0",
+  "spacy>=3.8.15",
+  "tiktoken>=0.14.0",
+]
 kreuzberg = ["kreuzberg>=4,<5"]
 markitdown = ["markitdown[all]>=0.1,<1"]
 pdf-oxide = ["pdf_oxide>=0.3,<1"]
