@@ -29,7 +29,7 @@ export enum ConversionPipeline {
   PDF_OXIDE = "pdf-oxide",
   TABLE_CHEF = "table-chef",
   PLAIN_TEXT = "plain-text",
-  DYN_AUTO = "dynauto",
+  DYN = "dyn",
 }
 
 /** Available chunking pipelines. */

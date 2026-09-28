@@ -88,7 +88,7 @@ class ConversionPipeline(StrEnum):
     PDF_OXIDE = "pdf-oxide"
     TABLE_CHEF = "table-chef"
     PLAIN_TEXT = "plain-text"
-    DYN_AUTO = "dynauto"
+    DYN = "dyn"
 
 
 class ConversionSpec(BaseModel):
@@ -406,7 +406,7 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
         extensions=None,
         auto_extensions=PLAIN_TEXT_EXTENSIONS,
     ),
-    ConversionPipeline.DYN_AUTO: _ConverterRegistration(
+    ConversionPipeline.DYN: _ConverterRegistration(
         loader=_load_dyn_auto,
         label="Dyn",
         description="Processes simple text-based documents, tabular data and complex text-based documents. Optimized for interpretability of local contexts and the creation of independent chunks.",
