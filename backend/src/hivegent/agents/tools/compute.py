@@ -28,7 +28,8 @@ from .write import output_sink, validate_commit_path
 __all__ = ["INJECTABLE_TOOL_NAMES", "compute_toolset", "sandbox_api_instructions"]
 
 _limits: ResourceLimits = {
-    "max_duration_secs": settings.sandbox.max_duration_seconds,
+    "max_feed_duration_secs": settings.sandbox.max_duration_seconds,
+    "max_total_sleep_secs": settings.sandbox.max_duration_seconds,
     "max_memory": settings.sandbox.max_memory_bytes,
 }
 

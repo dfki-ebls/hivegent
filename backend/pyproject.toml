@@ -18,7 +18,7 @@ dependencies = [
   "frozendict>=2.4.7",
   "httpx2>=2,<3",
   "joserfc>=1,<2",
-  "logfire>=4,<5",
+  "logfire>=5,<6",
   "lxml>=6,<7",
   "markdownify>=1,<2",
   "nanoid>=2,<3",
@@ -29,7 +29,7 @@ dependencies = [
   "polars>=1,<2",
   "psycopg[binary]>=3,<4",
   "pydantic-ai-slim[ui,openai,mcp]>=2,<3",
-  "pydantic-monty>=0.0.21,<0.0.22",
+  "pydantic-monty>=1,<2",
   "pydantic-settings>=2,<3",
   "pypdfium2>=5,<6",
   "sentence_transformers>=6,<7",
@@ -67,11 +67,6 @@ dev = [
 requires = ["uv-build>=0.11,<1"]
 build-backend = "uv_build"
 
-# The distribution is named for the artifact it ships, the import package for
-# the system it belongs to, so the module has to be named rather than derived.
-[tool.uv.build-backend]
-module-name = "hivegent"
-
 [tool.alembic]
 script_location = "src/hivegent/migrations"
 prepend_sys_path = ["src"]
@@ -98,6 +93,11 @@ asyncio_mode = "auto"
 # FastMCP declares dependencies through call expressions in argument defaults;
 # the signature *is* the injection point, so these are not mutable defaults.
 extend-immutable-calls = ["fastmcp.dependencies.CurrentAccessToken", "fastmcp.dependencies.Depends"]
+
+# The distribution is named for the artifact it ships, the import package for
+# the system it belongs to, so the module has to be named rather than derived.
+[tool.uv.build-backend]
+module-name = "hivegent"
 
 [tool.uv.exclude-newer-package]
 cbrkit = false

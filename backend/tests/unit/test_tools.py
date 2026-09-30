@@ -1585,7 +1585,7 @@ class TestRunPythonTool:
     async def test_time_limit_bounds_a_runaway_program(
         self, tool: RunPythonTool
     ) -> None:
-        bounded = replace(tool, limits={"max_duration_secs": 0.2})
+        bounded = replace(tool, limits={"max_feed_duration_secs": 0.2})
         with pytest.raises(ToolRetry, match="TimeoutError"):
             await bounded("while True:\n    pass")
 

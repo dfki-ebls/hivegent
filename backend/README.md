@@ -451,7 +451,7 @@ A program comes from either inline `code` or one scoped workspace `.py` `script_
 
 The workspace is mounted read-only and a program opens a document by the path everything else in the turn uses (`~/reports/q1.md`), so the string a tool result returns, a citation carries, and a program opens is one string, and it may open a path it only discovers while running.
 A leading slash is the run's own filesystem instead, `/tmp` and `/out`, which is the whole grammar a program has to hold: no mount prefix to add on the way in and none to strip on the way out, and `path_iterdir` hands back the same spelling it takes.
-`WORKSPACE_MOUNT` (`/workspace/~/reports/q1.md`) is still recognised inside a program, because a model that has met another sandbox opens `/workspace/...` before reading a word of the prompt, but it is never produced.
+The run's working directory is `WORKSPACE_MOUNT`, so Monty resolves `~/reports/q1.md` to `/workspace/~/reports/q1.md` before the mount sees it, which also makes the absolute form a model that has met another sandbox reaches for name the same document, while listings and refusals never produce it.
 It stops at the mount: a tool argument is refused for it like any other path that leads with no root, since the approval gate resolves the declared path before the tool sees it and a spelling the tool rewrote afterwards would be gated and shown to the user as a different document than the one written.
 A path that leads with neither (`/workspace/notes.md`, the scope dropped in between) is refused with the roots named, the sandbox's own spelling of `workspace_root_hint`.
 
@@ -462,9 +462,9 @@ Which of the two filesystems answers an operation is decided once, in the `dispa
 Nothing is handed to a program as a host function that the mount already covers: `open` and `iterdir` are the read tools, `re` is grep, and `json` is jq, and ranking a chunk against a question is a `search` call the model makes before it writes the program.
 Monty's `json` has `loads` and `dumps` and no file-reading `load`, which `PYTHON_INSTRUCTIONS` says outright, since `run_python` is the only reader the `.json` redirect channel has.
 Monty has no `glob`, `rglob`, or `fnmatch`, which is why `PYTHON_INSTRUCTIONS` shows the `iterdir` walk, and `path_iterdir` returns its entries sorted, since Monty cannot compare two `Path` values.
-Which modules a program may import is left for the model to find out, since Monty implements a subset only it knows and offers no `importlib`, `sys.modules`, `__import__`, or `dir` to enumerate one: any list written down here goes stale on the next release, and the one that used to stand in `PYTHON_INSTRUCTIONS` advertised `functools`, which Monty does not have, for as long as nobody tried it.
+Which modules a program may import is left for the model to find out, since Monty implements a subset only it knows and offers no `importlib`, `sys.modules`, `__import__`, or `dir` to enumerate one: any list written down here goes stale on the next release, and the one that used to stand in `PYTHON_INSTRUCTIONS` advertised `functools` before Monty had it, for as long as nobody tried it.
 A failed import raises `ModuleNotFoundError` naming the module, which is the correction a stale list would have needed anyway.
-A program parks intermediates in `/tmp`, created before the run and named by `TMPDIR`, because Monty has no `tempfile` and no working directory, and the fresh filesystem disappears after the call.
+A program parks intermediates in `/tmp`, created before the run and named by `TMPDIR`, because Monty has no `tempfile` and the working directory is the read-only mount, and the fresh filesystem disappears after the call.
 Bytes are refused on the mount in either direction, so a document with no text form stays `read_binary_document`'s.
 
 ### Writes from a program
@@ -549,10 +549,11 @@ A running total would have bounded nothing the host spends while capping the ver
 The per-document cap is enforced twice, since a byte count only bounds a character count from above: `check_read_budget` refuses a file by size before it is decoded, then the exact length is checked once the text is in hand.
 Inline `code`, the stored script, and the committed output answer to the same cap, each being one text the host holds whole.
 
-What a program retains is `max_memory`, the interpreter's own budget, and how long it spends retaining it is `request_timeout_seconds` and the agent's `tool_timeout_seconds`, since `max_duration_secs` counts bytecode alone and not the time a host callback takes (measured: five 0.4 s host reads complete under a 0.5 s limit).
+What a program retains is `max_memory`, the interpreter's own budget, and how long it spends retaining it is `request_timeout_seconds` and the agent's `tool_timeout_seconds`, since `max_feed_duration_secs` counts bytecode alone and not the time a host callback takes (measured: five 0.4 s host reads complete under a 0.5 s limit).
+Sleeping is off that clock too, so `max_total_sleep_secs` caps it with the same budget, which a program with a rate-limited web tool to pace still has room for.
 The one cumulative cap is `max_scratch_chars`, because written characters land on disk and stay there, so a loop writing the same megabyte a thousand times spends a gigabyte nothing else here bounds.
 The worker pool is owned by the FastAPI lifespan (`sandbox.py`), like the HTTP clients, because a tool instance is built per call and a pool per call would spawn and reap a worker every time.
-Every call takes a fresh session out of it: `max_duration_secs` counts cumulatively per session, so a reused session that once ran long would fail every later call with a timeout it did not cause.
+Every call takes a fresh session out of it, so no program sees another's variables and a session a time limit stopped mid-operation, whose heap Monty no longer vouches for, is never fed again.
 
 ## Video and animated media
 

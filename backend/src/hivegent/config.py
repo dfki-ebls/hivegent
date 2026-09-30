@@ -705,7 +705,8 @@ class SandboxSettings(BaseModel):
     which are sized on their own.
 
     The budgets bound one snippet.  ``max_duration_seconds`` counts only time
-    the interpreter spends executing bytecode, and ``max_memory_bytes`` counts
+    the interpreter spends executing bytecode, and separately caps the time it
+    may sleep, which Monty keeps off that clock.  ``max_memory_bytes`` counts
     what the worker's allocator hands out, both enforced inside the sandbox and
     reported to the model as a plain ``TimeoutError`` or ``MemoryError`` it can
     correct its code from.  ``request_timeout_seconds`` is the parent-side

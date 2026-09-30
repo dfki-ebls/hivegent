@@ -39,6 +39,7 @@ from .workspace_os import (
     MOUNT_STUB,
     SANDBOX_OUTPUT_FILE,
     SANDBOX_TMP_DIR,
+    WORKSPACE_MOUNT,
     WorkspaceOS,
 )
 
@@ -151,7 +152,11 @@ def _given(argument: str | None) -> str | None:
 
 def _default_limits() -> ResourceLimits:
     """The budget one program runs under when no caller sets one."""
-    return {"max_duration_secs": 5.0, "max_memory": 256_000_000}
+    return {
+        "max_feed_duration_secs": 5.0,
+        "max_total_sleep_secs": 5.0,
+        "max_memory": 256_000_000,
+    }
 
 
 def _budget_lines(text: str, max_chars: int) -> tuple[str, int, bool]:
@@ -253,9 +258,8 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
     """Run a Python program in a sandbox that reaches nothing outside itself.
 
     Each call takes a fresh session out of the pool, so one program never sees
-    another's variables and never inherits what another spent of the budget:
-    :attr:`limits` caps execution time cumulatively per session, which would
-    otherwise leave a session that once looped failing every later call.
+    another's variables, and a session a time limit stopped mid-operation,
+    which Monty leaves with no guarantees about its heap, is never fed again.
     """
 
     pool: AsyncMonty = field(kw_only=True)
@@ -360,6 +364,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
                 value = await session.feed_run(
                     prepared.source,
                     print_callback=printed,
+                    cwd=str(WORKSPACE_MOUNT),
                     os=filesystem,
                     external_lookup=dict(self.surface.external_lookup),
                 )
