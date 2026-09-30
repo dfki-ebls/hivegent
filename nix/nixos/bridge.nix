@@ -85,6 +85,17 @@ in
       '';
     };
 
+    environmentFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = "/etc/hivegent/bridge.env";
+      description = ''
+        Shortcut for the unit's `EnvironmentFile=`, a `KEY=VALUE` file read at
+        start that overrides `environment` and `settings`.
+        Prefer `credentials` for secrets.
+      '';
+    };
+
     credentials = credentials.option ''
       {
         OIDC_CLIENT_SECRET = "/run/secrets/hivegent-bridge-oidc-client-secret";
@@ -118,6 +129,7 @@ in
         StateDirectory = "hivegent-bridge";
         WorkingDirectory = "/var/lib/hivegent-bridge";
 
+        EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
         LoadCredential = credentials.load cfg.credentials;
 
         ExecStart = lib.getExe cfg.package;

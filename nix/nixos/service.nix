@@ -159,6 +159,17 @@ in
       '';
     };
 
+    environmentFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = "/etc/hivegent/hivegent.env";
+      description = ''
+        Shortcut for the unit's `EnvironmentFile=`, a `KEY=VALUE` file read at
+        start that overrides `environment` and the TOML file.
+        Prefer `credentials` for secrets.
+      '';
+    };
+
     credentials = credentials.option ''
       {
         HIVEGENT_TRANSPARENCY__SECRET_KEY = "/run/secrets/hivegent-transparency-secret-key";
@@ -254,6 +265,7 @@ in
             CacheDirectory = "hivegent";
             WorkingDirectory = "/var/lib/hivegent";
 
+            EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
             LoadCredential = credentials.load cfg.credentials;
             # Also every `HIVEGENT_*` credential in the system credstore, plain
             # files in the root-only /etc/credstore or `systemd-creds encrypt`
