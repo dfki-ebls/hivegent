@@ -96,6 +96,7 @@ DOCLING_EXTENSIONS = frozenset(
     {
         ".aac",
         ".adoc",
+        ".afp",
         ".asc",
         ".asciidoc",
         ".avi",
@@ -123,7 +124,10 @@ DOCLING_EXTENSIONS = frozenset(
         ".json",
         ".latex",
         ".m4a",
+        ".markdown",
         ".md",
+        ".mht",
+        ".mhtml",
         ".mkv",
         ".mov",
         ".mp3",
@@ -151,6 +155,7 @@ DOCLING_EXTENSIONS = frozenset(
         ".pptx",
         ".qmd",
         ".rmd",
+        ".rtf",
         ".tar.gz",
         ".tex",
         ".text",
@@ -167,6 +172,8 @@ DOCLING_EXTENSIONS = frozenset(
         ".xlsm",
         ".xlsx",
         ".xlt",
+        ".xltm",
+        ".xltx",
         ".xml",
     }
 )
