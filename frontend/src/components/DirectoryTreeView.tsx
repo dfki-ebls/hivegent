@@ -14,6 +14,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -94,16 +95,19 @@ interface TreeRowDnd {
 
 /**
  * Register one tree row as a drag source and/or drop target for the lifetime of
- * its element. `resolveDrag`/callbacks are read through a ref so a row only
- * re-registers when its identity changes, not on every render.
+ * its element. `resolveDrag`/callbacks are read through effect events so a row
+ * only re-registers when its identity changes, not on every render.
  */
 function useTreeRowDnd(config: TreeRowDnd) {
   const ref = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const [dropState, setDropState] = useState<TreeDropState>("none");
 
-  const latest = useRef(config);
-  latest.current = config;
+  const resolveDrag = useEffectEvent(() => config.resolveDrag!());
+  const onMove = useEffectEvent((drag: TreeItemDrag) => config.onMove?.(drag));
+  const onUpload = useEffectEvent((items: DataTransferItem[], files: File[]) =>
+    config.onUpload?.(items, files),
+  );
 
   const draggable = config.resolveDrag != null;
   const { scope, destDir } = config;
@@ -114,15 +118,15 @@ function useTreeRowDnd(config: TreeRowDnd) {
 
     return registerTreeRow({
       element,
-      drag: draggable ? () => latest.current.resolveDrag!() : null,
+      drag: draggable ? () => resolveDrag() : null,
       drop:
         destDir == null
           ? null
           : {
               scope,
               destDir,
-              onMove: (drag) => latest.current.onMove?.(drag),
-              onUpload: (items, files) => latest.current.onUpload?.(items, files),
+              onMove: (drag) => onMove(drag),
+              onUpload: (items, files) => onUpload(items, files),
             },
       onDragging: setDragging,
       onDropState: setDropState,

@@ -1,4 +1,4 @@
-import { type UseChatHelpers, useChat } from "@ai-sdk/react";
+import { useChat } from "@ai-sdk/react";
 import {
   type FileUIPart,
   DefaultChatTransport,
@@ -6,7 +6,7 @@ import {
 } from "ai";
 import type { BuildRequestBody } from "@/hooks/chat/use-build-request-body";
 import type { ChatRequestConfig } from "@/lib/types";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getAuthHeaders } from "@/lib/api";
 import {
   type ChatMessage,
@@ -16,6 +16,37 @@ import {
 } from "@/lib/chat/chat-utils";
 import { API_BASE_URL } from "@/lib/health";
 import type { SubagentSteps, SubagentUpdate } from "@/lib/chat/subagent";
+
+/**
+ * IDs the server issues in a turn's response headers. Read there rather than
+ * off the stream so they survive a turn the user stops or that errors, since
+ * the server persists the turn on every finish. One instance lives as long as
+ * the hook, so the IDs outlast transport rebuilds.
+ */
+class TurnIds {
+  /**
+   * Conversation a draft was persisted under. Follow-up sends from the still
+   * mounted draft (steering drain, approval auto-send) must target it, since
+   * re-posting to the mint endpoint would create a duplicate.
+   */
+  adoptedConversationId: string | null = null;
+  #conversationId: string | null = null;
+  #messageId: string | null = null;
+
+  capture(headers: Headers, draft: boolean): void {
+    this.#messageId = headers.get("X-Message-Id");
+    if (draft) this.#conversationId = headers.get("X-Conversation-Id");
+  }
+
+  /** Hand over the IDs of the finished turn, adopting a minted conversation. */
+  take(): { conversationId: string | null; messageId: string | null } {
+    const ids = { conversationId: this.#conversationId, messageId: this.#messageId };
+    this.#conversationId = null;
+    this.#messageId = null;
+    if (ids.conversationId) this.adoptedConversationId = ids.conversationId;
+    return ids;
+  }
+}
 
 export interface SendUserMessageInput {
   text: string;
@@ -36,30 +67,7 @@ export function useHivegentChat(
   id: string,
   { draft, onConversationCreated, requestBody }: UseHivegentChatOptions = {},
 ) {
-  const onCreatedRef = useRef(onConversationCreated);
-  onCreatedRef.current = onConversationCreated;
-  // ID minted for the in-flight draft turn. The server persists the turn
-  // whenever it has started responding — on success, error, or a stop — so
-  // once a minted ID came back (in the response header) the conversation is
-  // a real row. The ID is staged here and adopted on finish regardless of
-  // outcome, so a failed first turn still becomes a navigable conversation
-  // and its retry continues it instead of minting a duplicate.
-  const mintedIdRef = useRef<string | null>(null);
-  // Once a draft turn is adopted, follow-up sends from this still-mounted
-  // instance (steering drain, approval auto-send) must target the adopted
-  // conversation: re-posting to the mint endpoint would create a duplicate.
-  const adoptedIdRef = useRef<string | null>(null);
-  // Tree-node ID the server reserved for the user message of the in-flight
-  // turn. Read off the response headers rather than the stream so it survives
-  // a turn the user stops or that errors — both persist the message.
-  const messageNodeIdRef = useRef<string | null>(null);
-  // `onFinish` is a `useChat` argument, so it cannot close over the chat it
-  // belongs to; it reaches the one setter it needs through this ref.
-  const setMessagesRef = useRef<UseChatHelpers<ChatMessage>["setMessages"] | null>(null);
-  // Read inside the transport, which is memoized on the chat identity alone, so
-  // the settings stay current without rebuilding it on every keystroke.
-  const requestBodyRef = useRef(requestBody);
-  requestBodyRef.current = requestBody;
+  const [turnIds] = useState(() => new TurnIds());
 
   const transport = useMemo(
     () =>
@@ -84,11 +92,11 @@ export function useHivegentChat(
           const lastMessage = trigger === "regenerate-message" ? undefined : messages.at(-1);
           return {
             api:
-              draft && adoptedIdRef.current
-                ? `${API_BASE_URL}/api/conversations/${adoptedIdRef.current}/chat`
+              draft && turnIds.adoptedConversationId
+                ? `${API_BASE_URL}/api/conversations/${turnIds.adoptedConversationId}/chat`
                 : api,
             body: {
-              ...requestBodyRef.current?.(),
+              ...requestBody?.(),
               ...body,
               id: chatId,
               messages: lastMessage ? [lastMessage] : [],
@@ -104,12 +112,11 @@ export function useHivegentChat(
         // Access-Control-Expose-Headers; same-origin (the default) needs none.
         fetch: async (input, init) => {
           const res = await fetch(input, init);
-          messageNodeIdRef.current = res.headers.get("X-Message-Id");
-          if (draft) mintedIdRef.current = res.headers.get("X-Conversation-Id");
+          turnIds.capture(res.headers, draft ?? false);
           return res;
         },
       }),
-    [id, draft],
+    [id, draft, requestBody, turnIds],
   );
 
   // Live subagent transcripts for the current conversation, keyed by parent
@@ -132,28 +139,20 @@ export function useHivegentChat(
       const { tool_call_id, transcript } = dataPart.data as SubagentUpdate;
       setSubagentSteps((prev) => new Map(prev).set(tool_call_id, transcript.steps));
     },
+    // `useChat` always invokes the latest callbacks, so these stay current.
     onFinish: () => {
-      const nodeId = messageNodeIdRef.current;
-      messageNodeIdRef.current = null;
+      const { conversationId, messageId } = turnIds.take();
       // Swap the SDK's local ID for the node ID, so editing or retrying this
       // message forks the stored branch at it instead of appending to the end.
-      if (nodeId) {
-        setMessagesRef.current?.((messages) => adoptMessageNodeId(messages, nodeId));
+      if (messageId) {
+        chat.setMessages((messages) => adoptMessageNodeId(messages, messageId));
       }
-
-      const mintedId = mintedIdRef.current;
-      mintedIdRef.current = null;
       // The server mirrors the turn to storage on every finish (clean,
       // errored, or stopped), so a minted ID always names a persisted
       // conversation — adopt it unconditionally.
-      if (mintedId) {
-        adoptedIdRef.current = mintedId;
-        onCreatedRef.current?.(mintedId);
-      }
+      if (conversationId) onConversationCreated?.(conversationId);
     },
   });
-
-  setMessagesRef.current = chat.setMessages;
 
   const { sendMessage, regenerate } = chat;
 

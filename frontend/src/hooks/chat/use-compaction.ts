@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import type { FileUIPart } from "ai";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 import { compactConversation } from "@/lib/api";
 import { type ChatMessage, type UserTurn, getLastUserMessage } from "@/lib/chat/chat-utils";
@@ -27,10 +27,7 @@ export function useCompaction({
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const [isCompacting, setIsCompacting] = useState(false);
   const pendingRetryRef = useRef<UserTurn | undefined>(undefined);
-  const onRetryRef = useRef(onRetry);
-  onRetryRef.current = onRetry;
-  const activeIdRef = useRef<string | null>(id);
-  activeIdRef.current = id;
+  const activeIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     activeIdRef.current = id;
@@ -86,11 +83,13 @@ export function useCompaction({
     [id, buildRequestBody, messages, clearAll, navigate],
   );
 
+  const retry = useEffectEvent((turn: UserTurn) => onRetry(turn.text, turn.files));
+
   useEffect(() => {
     if (isLoadingHistory || !pendingRetryRef.current) return;
     const turn = pendingRetryRef.current;
     pendingRetryRef.current = undefined;
-    onRetryRef.current(turn.text, turn.files);
+    retry(turn);
   }, [isLoadingHistory]);
 
   return { compact, isCompacting };

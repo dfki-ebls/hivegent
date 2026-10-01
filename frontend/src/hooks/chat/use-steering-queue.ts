@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 export interface SteeringMessage {
   id: string;
@@ -8,21 +8,18 @@ export interface SteeringMessage {
 
 export function useSteeringQueue(isStreaming: boolean, onDrain: (text: string) => void) {
   const [queue, setQueue] = useState<SteeringMessage[]>([]);
-
-  const queueRef = useRef(queue);
-  queueRef.current = queue;
-  const onDrainRef = useRef(onDrain);
-  onDrainRef.current = onDrain;
   const prevStreamingRef = useRef(isStreaming);
+
+  const drain = useEffectEvent(() => {
+    if (queue.length === 0) return;
+    setQueue([]);
+    onDrain(queue.map((m) => m.text).join("\n\n"));
+  });
 
   useEffect(() => {
     const wasStreaming = prevStreamingRef.current;
     prevStreamingRef.current = isStreaming;
-    if (!isStreaming && wasStreaming && queueRef.current.length > 0) {
-      const text = queueRef.current.map((m) => m.text).join("\n\n");
-      setQueue([]);
-      onDrainRef.current(text);
-    }
+    if (wasStreaming && !isStreaming) drain();
   }, [isStreaming]);
 
   const enqueue = useCallback((text: string) => {
