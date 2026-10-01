@@ -74,8 +74,8 @@ function isMissing(err: unknown): boolean {
 
 /**
  * Credential files named like the env var they replace, e.g. `OIDC_CLIENT_SECRET`,
- * from `$CREDENTIALS_DIRECTORY`, which systemd sets for `LoadCredential=` and the
- * container image points at `/run/secrets`. A missing directory holds none.
+ * from `$CREDENTIALS_DIRECTORY`, which systemd sets for the unit's credentials and
+ * the container image points at `/run/secrets`. A missing directory holds none.
  */
 export function readCredentials(dir: string | undefined): Record<string, string> {
   if (!dir) {

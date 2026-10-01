@@ -130,7 +130,11 @@ in
         WorkingDirectory = "/var/lib/hivegent-bridge";
 
         EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
-        LoadCredential = credentials.load cfg.credentials;
+        inherit (credentials.serviceConfig { inherit (cfg) credentials; })
+          LoadCredential
+          LoadCredentialEncrypted
+          ImportCredential
+          ;
 
         ExecStart = lib.getExe cfg.package;
 

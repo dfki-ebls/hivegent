@@ -57,8 +57,11 @@ A failed migration aborts startup with a non-zero exit code, which trips the uni
 
 Settings layer init arguments over environment variables, `.env`, credential files, and the TOML file.
 Credentials are files named like the environment variable they replace, for example `HIVEGENT_LLM__API_KEY`, in `$CREDENTIALS_DIRECTORY`.
-systemd sets that directory for `LoadCredential=` and `ImportCredential=`, and the container image points it at `/run/secrets`, where Docker and Podman mount secrets, so one code path serves both.
+systemd sets that directory for the unit's credentials, and the container image points it at `/run/secrets`, where Docker and Podman mount secrets, so one code path serves both.
 On NixOS the unit imports every `HIVEGENT_*` credential from the system credential store: plain files in `/etc/credstore`, which systemd keeps readable by root only, or files encrypted with `systemd-creds encrypt` in `/etc/credstore.encrypted`.
+A plain file is enough, `(umask 077; systemd-ask-password -n > /etc/credstore/HIVEGENT_LLM__API_KEY)`.
+An encrypted credential carries its name and loads under no other, so encrypt it with `systemd-creds encrypt --name=HIVEGENT_LLM__API_KEY`.
+`services.hivegent.credentials` loads one from elsewhere instead, from a path outside the Nix store or an encrypted file.
 Unlike an environment file, a credential is readable only by the unit's user, stays out of the environment every subprocess inherits, and a missing `LoadCredential=` file fails the unit start.
 Every secret setting is a `SecretStr`, so it stays masked in `repr`, logs, and tracebacks, and `config.reveal` unwraps it only where a client needs the value.
 

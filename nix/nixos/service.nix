@@ -266,11 +266,18 @@ in
             WorkingDirectory = "/var/lib/hivegent";
 
             EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
-            LoadCredential = credentials.load cfg.credentials;
             # Also every `HIVEGENT_*` credential in the system credstore, plain
             # files in the root-only /etc/credstore or `systemd-creds encrypt`
             # output in /etc/credstore.encrypted, so a secret needs no config.
-            ImportCredential = "HIVEGENT_*";
+            inherit
+              (credentials.serviceConfig {
+                inherit (cfg) credentials;
+                imported = [ "HIVEGENT_*" ];
+              })
+              LoadCredential
+              LoadCredentialEncrypted
+              ImportCredential
+              ;
 
             ExecStart = utils.escapeSystemdExecArgs [
               (lib.getExe' package "hivegent")
