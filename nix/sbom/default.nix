@@ -4,12 +4,10 @@
   cyclonedx-cli,
   cyclonedx-spec,
   callPackage,
-  grype,
   jsonschema,
   jq,
   linkFarm,
   runCommand,
-  writeShellApplication,
   writeText,
 }:
 {
@@ -19,7 +17,6 @@
   license,
   components,
   logicalComponents ? true,
-  scanFailOn ? "high",
 }:
 assert lib.assertMsg (
   (creator.email or "") != "" || (creator.url or "") != ""
@@ -89,24 +86,13 @@ let
           exit 1
         fi
       '';
-
-  # The report is an entry of its own, so realizing the farm realizes it and a
-  # non-compliant document fails the build before anything can read it.
-  sbom = linkFarm "${pname}-sbom" (
-    documents
-    // {
-      ${productFile} = product;
-      "reports/bsi-v2.1.json" = complianceReport;
-    }
-  );
 in
-{
-  inherit sbom;
-  scan = writeShellApplication {
-    name = "${pname}-sbom-scan";
-    runtimeInputs = [ grype ];
-    text = ''
-      grype "sbom:${sbom}/${productFile}" --fail-on ${lib.escapeShellArg scanFailOn} "$@"
-    '';
-  };
-}
+# The report is an entry of its own, so realizing the farm realizes it and a
+# non-compliant document fails the build before anything can read it.
+linkFarm "${pname}-sbom" (
+  documents
+  // {
+    ${productFile} = product;
+    "reports/bsi-v2.1.json" = complianceReport;
+  }
+)

@@ -45,21 +45,6 @@
       config,
       ...
     }:
-    let
-      sbomPipeline = pkgs.callPackage ./sbom.nix {
-        # bombon's own entry point, not its flake `lib`, which would evaluate a
-        # second nixpkgs instead of the one everything else here is built from.
-        bombon = import inputs.bombon { inherit pkgs; };
-        inherit (inputs) cyclonedx-spec;
-        inherit (config.packages)
-          backend
-          frontend
-          bridge
-          smokescreen
-          docs
-          ;
-      };
-    in
     {
       devShells.default = pkgs.callPackage ./shell.nix {
         treefmt = config.treefmt.build.wrapper;
@@ -82,9 +67,20 @@
         bridge = pkgs.callPackage ../bridge { };
         docs = pkgs.callPackage ../docs { };
         smokescreen = pkgs.callPackage ./smokescreen.nix { };
-        inherit (sbomPipeline) sbom;
-        sbom-scan = sbomPipeline.scan;
         tessdata = pkgs.callPackage ./tessdata.nix { };
+        sbom = pkgs.callPackage ./sbom.nix {
+          # bombon's own entry point, not its flake `lib`, which would evaluate a
+          # second nixpkgs instead of the one everything else here is built from.
+          bombon = import inputs.bombon { inherit pkgs; };
+          inherit (inputs) cyclonedx-spec;
+          inherit (config.packages)
+            backend
+            frontend
+            bridge
+            smokescreen
+            docs
+            ;
+        };
         release-env = pkgs.buildEnv {
           name = "release-env";
           paths = with pkgs; [
