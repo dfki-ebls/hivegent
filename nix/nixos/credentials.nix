@@ -55,13 +55,9 @@ in
       '';
     };
 
-  # The unit's credential directives, importing `imported` globs besides the
-  # credentials without a `source`.
+  # The unit's credential directives, to merge into its `serviceConfig`.
   serviceConfig =
-    {
-      credentials,
-      imported ? [ ],
-    }:
+    credentials:
     let
       load =
         encrypted:
@@ -72,7 +68,6 @@ in
     {
       LoadCredential = load false;
       LoadCredentialEncrypted = load true;
-      ImportCredential =
-        imported ++ lib.attrNames (lib.filterAttrs (_: value: value.source == null) credentials);
+      ImportCredential = lib.attrNames (lib.filterAttrs (_: value: value.source == null) credentials);
     };
 }

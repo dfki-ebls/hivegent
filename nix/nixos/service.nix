@@ -252,46 +252,44 @@ in
           }
           // cfg.environment;
 
-          serviceConfig = hardening // {
-            Type = "exec";
-            Restart = "on-failure";
-            RestartSec = 5;
-            TimeoutStartSec = 600;
-            # Must exceed uvicorn's `timeout_graceful_shutdown` (30s) so teardown finishes before SIGKILL.
-            TimeoutStopSec = 45;
+          serviceConfig = lib.mkMerge [
+            (credentials.serviceConfig cfg.credentials)
+            (
+              hardening
+              // {
+                Type = "exec";
+                Restart = "on-failure";
+                RestartSec = 5;
+                TimeoutStartSec = 600;
+                # Must exceed uvicorn's `timeout_graceful_shutdown` (30s) so teardown finishes before SIGKILL.
+                TimeoutStopSec = 45;
 
-            DynamicUser = true;
-            StateDirectory = "hivegent";
-            CacheDirectory = "hivegent";
-            WorkingDirectory = "/var/lib/hivegent";
+                DynamicUser = true;
+                StateDirectory = "hivegent";
+                CacheDirectory = "hivegent";
+                WorkingDirectory = "/var/lib/hivegent";
 
-            EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
-            # Also every `HIVEGENT_*` credential in the system credstore, plain
-            # files in the root-only /etc/credstore or `systemd-creds encrypt`
-            # output in /etc/credstore.encrypted, so a secret needs no config.
-            inherit
-              (credentials.serviceConfig {
-                inherit (cfg) credentials;
-                imported = [ "HIVEGENT_*" ];
-              })
-              LoadCredential
-              LoadCredentialEncrypted
-              ImportCredential
-              ;
+                EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
+                # Also every `HIVEGENT_*` credential in the system credstore, plain
+                # files in the root-only /etc/credstore or `systemd-creds encrypt`
+                # output in /etc/credstore.encrypted, so a secret needs no config.
+                ImportCredential = "HIVEGENT_*";
 
-            ExecStart = utils.escapeSystemdExecArgs [
-              (lib.getExe' package "hivegent")
-              "serve"
-              "--host"
-              cfg.host
-              "--port"
-              (toString cfg.port)
-            ];
+                ExecStart = utils.escapeSystemdExecArgs [
+                  (lib.getExe' package "hivegent")
+                  "serve"
+                  "--host"
+                  cfg.host
+                  "--port"
+                  (toString cfg.port)
+                ];
 
-            SocketBindAllow = "tcp:${toString cfg.port}";
-            # CUDA-backed document/OCR models need the host NVIDIA character devices.
-            PrivateDevices = false;
-          };
+                SocketBindAllow = "tcp:${toString cfg.port}";
+                # CUDA-backed document/OCR models need the host NVIDIA character devices.
+                PrivateDevices = false;
+              }
+            )
+          ];
 
           unitConfig = {
             StartLimitBurst = 5;

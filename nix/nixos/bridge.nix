@@ -118,28 +118,29 @@ in
         BRIDGE_CONFIG_FILE = "${configFile}";
       };
 
-      serviceConfig = hardening // {
-        Type = "exec";
-        Restart = "on-failure";
-        RestartSec = 5;
-        # Must exceed the graceful shutdown window before SIGKILL.
-        TimeoutStopSec = 15;
+      serviceConfig = lib.mkMerge [
+        (credentials.serviceConfig cfg.credentials)
+        (
+          hardening
+          // {
+            Type = "exec";
+            Restart = "on-failure";
+            RestartSec = 5;
+            # Must exceed the graceful shutdown window before SIGKILL.
+            TimeoutStopSec = 15;
 
-        DynamicUser = true;
-        StateDirectory = "hivegent-bridge";
-        WorkingDirectory = "/var/lib/hivegent-bridge";
+            DynamicUser = true;
+            StateDirectory = "hivegent-bridge";
+            WorkingDirectory = "/var/lib/hivegent-bridge";
 
-        EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
-        inherit (credentials.serviceConfig { inherit (cfg) credentials; })
-          LoadCredential
-          LoadCredentialEncrypted
-          ImportCredential
-          ;
+            EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
 
-        ExecStart = lib.getExe cfg.package;
+            ExecStart = lib.getExe cfg.package;
 
-        SocketBindAllow = "tcp:${toString cfg.port}";
-      };
+            SocketBindAllow = "tcp:${toString cfg.port}";
+          }
+        )
+      ];
 
       unitConfig = {
         StartLimitBurst = 5;
