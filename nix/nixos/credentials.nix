@@ -45,11 +45,10 @@ in
       example = lib.literalExpression example;
       description = ''
         Secrets granted as systemd credentials, keyed by the name of the
-        environment variable a secret replaces. A path, e.g. a sops-nix or
-        agenix secret, uses `LoadCredential=`, the attribute form selects
-        `LoadCredentialEncrypted=` with `encrypted = true` or, without
-        `source`, `ImportCredential=` from the system credential store, which
-        every service shares, so only for prefixed names like `HIVEGENT_*`.
+        environment variable a secret replaces.
+        A path, e.g. a sops-nix or agenix secret, is shorthand for `source`.
+        The system credential store behind a missing `source` is shared by
+        every service, so import only prefixed names like `HIVEGENT_*`.
         systemd copies a loaded file into the unit's private credential
         directory at start, so a missing file fails the start instead of
         running without the secret.
