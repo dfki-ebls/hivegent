@@ -16,7 +16,7 @@
   "ignorePatterns": [
     "**/src/components/ai-elements/**",
     "**/src/components/ui/**",
-    "**/src/hooks/*.ts",
+    "**/src/hooks/use-mobile.ts",
     "**/src/**/*.gen.ts"
   ]
 }
