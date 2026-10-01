@@ -243,9 +243,7 @@ export const TransparencyDetectionResponseSchema = z.object({
   message: z.string(),
   signed_report: z.string(),
 });
-export type TransparencyDetectionResponse = z.infer<
-  typeof TransparencyDetectionResponseSchema
->;
+export type TransparencyDetectionResponse = z.infer<typeof TransparencyDetectionResponseSchema>;
 
 /** Settings exposed by the backend. */
 export const BackendSettingsSchema = z.object({

@@ -121,7 +121,7 @@ Both sides ask the same two questions in the same order: `converters.vision_medi
 `read_document` refuses on the first to hand the caller to `read_binary_document`, and `workspace.documents._current_text` refuses on it to say "upload a replacement", but the table is one table, so growing it cannot make one tool accept what the other rejects.
 A refusal on either reader ends in `tools.base.sidecar_hint`, so a caller turned away is never sent to the other tool to be turned away again: an Office document is neither showable nor decodable, and both refusals name its `<stem>.md`.
 
-So a document is writable exactly when it is readable as text, and the file's *name* only decides how an allowed write lands:
+So a document is writable exactly when it is readable as text, and the file's _name_ only decides how an allowed write lands:
 
 - A markdown description is the indexed content itself, so `_rewrite_description` writes and re-indexes it in place under the casebase lock.
 - Any other file is an original that `<stem>.md` is derived from, so `_rewrite_original` sends the new bytes through the same reserve → prepare → commit lifecycle an upload would use (`commit._phased_upload`).
@@ -130,7 +130,7 @@ So a document is writable exactly when it is readable as text, and the file's *n
 
 Creating a file asks the same question from the name alone, since a file that does not exist has no bytes to decode: `converters.writes_as_text` refuses a suffix on `converters.BINARY_SUFFIXES` and admits every other, so a `.csv`, an `.html`, or an `.svg` is created as the text it is.
 That table is composed only from the ones that already name a binary format — what a vision model is shown, what is sent as bytes, what pandoc cannot read, what a query reads columnar — rather than from a list of every binary format there is, so a suffix no converter claims is not on it.
-It is deliberately not `is_projectable_original`, which answers whether the *ingest pass* may derive a projection by copying, and so refused every text format a converter claims (`.csv`, `.html`, `.tex`) while admitting binary ones no converter does (`.parquet`, `.xlsb`).
+It is deliberately not `is_projectable_original`, which answers whether the _ingest pass_ may derive a projection by copying, and so refused every text format a converter claims (`.csv`, `.html`, `.tex`) while admitting binary ones no converter does (`.parquet`, `.xlsb`).
 A new original must still claim a free stem, so a write can never silently supersede another entry's files, and a binary is replaced by uploading.
 
 The refusal is one sentence (`converters.BINARY_WRITE_REASON`, the write-side counterpart of `text.NOT_TEXT_REASON`) shared by the gateway and by `tools.mutations.resolve_text_target`, which every text-writing surface resolves through.
@@ -190,7 +190,7 @@ None of the pieces below require breaking changes to the code above.
 
 The database is the source of truth for chat history, not the browser.
 A conversation's messages form a tree: every `Message` row has a global `id` and a nullable `parent_id`.
-The active branch is simply the newest one, so no branch pointer is stored: the linear history the frontend sees is the *active path*, the conversation's most recently created message walked up to the root via `parent_id` (`_load_active_path` in `db/conversations.py`).
+The active branch is simply the newest one, so no branch pointer is stored: the linear history the frontend sees is the _active path_, the conversation's most recently created message walked up to the root via `parent_id` (`_load_active_path` in `db/conversations.py`).
 Because references then flow only `messages -> conversations`, there is no FK cycle to break with a deferrable pointer and no write path to trust with keeping a pointer valid; the `(conversation_id, created_at)` index serves both the newest-leaf lookup and the cheap `EXISTS` check that drops empty conversations from the sidebar.
 No per-conversation message count is stored or shown: the active-path count is a path aggregate (a plain `COUNT(*)` would include sibling branches), so materializing it would mean an immutable per-node counter or a per-row tree walk, neither worth carrying for a sidebar label.
 
@@ -205,7 +205,7 @@ So `_run_chat` reserves that node id before the run (`append_branch(head_id=...)
 Without it, editing a message sent earlier in the same session would resolve to no fork point and silently continue the conversation instead of forking at it.
 Only a request carrying a user prompt reserves an id, and `resolve_fork` treats a `messageId` as an edit only when it names a user turn on the active path, since the AI SDK also sends `messageId` when it auto-continues after a tool approval, where it names the assistant message that requested one.
 
-That auto-continuation is also why `ChatAdapter` keeps only the client's *user* messages (`messages` in `server/vercel.py`).
+That auto-continuation is also why `ChatAdapter` keeps only the client's _user_ messages (`messages` in `server/vercel.py`).
 The base adapter appends whatever the request carries on top of the caller's `message_history`, and the SDK's approval resend is the assistant message holding the pending tool call, already the last message of the replayed prefix.
 Appending it would put the same `tool_call_id` in the history twice: pydantic-ai closes the stored copy with a synthetic "interrupted" return and gives only the echo the real result, so the model sees its call interrupted and reissues it.
 The decision itself is unaffected, since `deferred_tool_results` reads it from the request rather than from the loaded messages, and a denial carries the frontend's explicit reason, which pydantic-ai maps to `ToolDenied`.
@@ -248,13 +248,13 @@ Everything ahead of the prompt is then byte-identical to the request the provide
 That is what `AgentRunConfig` exists for: the compaction route posts the run configuration a chat turn posts, and `build_run_prefix` composes both, owning the two preconditions of an identical prefix (the MCP list is validated and `llm` resolved before the toolsets are built).
 The other half of that prefix is the message list, read where the chat route reads it (`compact_conversation` calls `load_conversation`) rather than accepted from the browser, which also spares the wire a near-full context window on the one request that exists because a near-full context window stopped fitting.
 
-The continuation is the *larger* request and is asked for exactly when a conversation has stopped fitting, so room is made by dropping messages from the **tail**.
+The continuation is the _larger_ request and is asked for exactly when a conversation has stopped fitting, so room is made by dropping messages from the **tail**.
 That is the whole reason there is one summarizer and not two: cutting the head would throw away the block being reused, while cutting the tail leaves a shorter prefix of that same block, so a trimmed continuation is still a cache hit.
 Where to cut comes from the conversation itself: `ModelResponse.usage` records what each request carried, so `total_tokens` on a response is exactly the size of the history up to it — observed, not configured, which is why `_plan` needs no tokenizer, no model card, and no `context_window` setting.
 This is the measurement that only survives in SQL.
 
 `_cut_points` offers only prefixes in which every tool call has been answered, since a provider rejects a history ending on an open one, and not those ending on a fresh user prompt, which measure the same as the turn before them while keeping a message the provider never counted.
-That makes the longest prefix the longest one the endpoint has actually *served*, which is where the first attempt starts: the whole history when the last turn succeeded, everything but the refused prompt when it did not.
+That makes the longest prefix the longest one the endpoint has actually _served_, which is where the first attempt starts: the whole history when the last turn succeeded, everything but the refused prompt when it did not.
 The endpoint is the cheaper judge of whether that fits, since an overflow is refused before anything is prefilled while a prefix trimmed on suspicion spends a full request to answer from less of the conversation than was available, so only a refusal sheds.
 That rule is also what lets the subagent recovery path (`_safe_summarize`) call this summarizer instead of a flat-transcript one of its own: a crashed subagent's messages may end mid tool call, and trimming back to the last answered one is both what makes the request legal and what makes it fit.
 
@@ -308,7 +308,7 @@ Only `excluded_documents` becomes a `DocumentFilter`, enforced by the path tools
 
 A filter argument naming a directory that no accessible root holds is refused, never answered with an empty result, since a listing that silently comes back empty reads as an empty workspace and the caller cannot tell that from its own typo.
 `tools.base.resolve_directory` folds the directory and pairs it with the roots that hold it, `missing_directory_retry` is the one refusal, and both reach `list_documents` and `glob_documents` through their `path`.
-It is not `workspace_root_hint`, which tells a *file* path to lead with a root: a filter argument may legitimately carry no prefix, so the refusal names the roots without demanding one, and it names the caller's own spelling rather than the prefix-stripped remainder, which would staple a second prefix onto a path that already carries one.
+It is not `workspace_root_hint`, which tells a _file_ path to lead with a root: a filter argument may legitimately carry no prefix, so the refusal names the roots without demanding one, and it names the caller's own spelling rather than the prefix-stripped remainder, which would staple a second prefix onto a path that already carries one.
 The roots come back resolved, so the walk starts at the subtree instead of sweeping the workspace and discarding the rest.
 
 ### Mutations
@@ -353,7 +353,7 @@ So the refusal says the dialect is Polars' and that another name may exist, and 
 What limits a query is less the dialect than a column typed `String`, which turns a plain `SUM` or `WHERE` into a dtype error and a `TRY_CAST` retry, so schema inference runs over the whole file rather than Polars' 100-row window and every text column whose values all parse as a number or an ISO date is retyped before the query runs.
 The conversion is applied only where it loses nothing, and one zero-padded value marks the column an identifier (a zip code, an EAN) and vetoes numeric typing for the whole of it.
 
-A column that falls short is reported as a `TextColumn` with the share that parsed and a sample of the values that did not, which is what lets the *first* query wrap it in `TRY_CAST` rather than the second.
+A column that falls short is reported as a `TextColumn` with the share that parsed and a sample of the values that did not, which is what lets the _first_ query wrap it in `TRY_CAST` rather than the second.
 `query_table` reports what is wrong with the data and repairs none of it, since every repair is a decision about someone else's measurements: a repeated label says a header row spilled into the data, a `<100` says a lab measured past its limit of quantification and declined to put a number on it, a `0,05` says a decimal comma.
 Each wants a different answer and none is this tool's to pick, so the hint names the values and says to ask — the limit overstates, zero understates, dropping the row changes the count, and no substitution is the neutral default.
 Naming the values covers every shape where a rule per shape covers one; two earlier versions reported the shapes instead (a `LabelRow` type, a `censored` regex count) and were each narrower than the values they were derived from, at the cost of a public field, a stub entry, and an extra Polars collect.
@@ -421,7 +421,7 @@ That is why the wrapping FastMCP does for a raw value is mirrored in `wrap_tool_
 
 ### Redirecting bulk output
 
-Every bulk-output tool (`list_documents`, `glob_documents`, `read_document`, `query_table`, `jq`, `grep`, `search`, and the two web tools) declares an `output_path`, which writes that call's result to a workspace file and hands the model a receipt, so a call whose answer dwarfs the question is worth making when a later *tool call* is what turns it into an answer.
+Every bulk-output tool (`list_documents`, `glob_documents`, `read_document`, `query_table`, `jq`, `grep`, `search`, and the two web tools) declares an `output_path`, which writes that call's result to a workspace file and hands the model a receipt, so a call whose answer dwarfs the question is worth making when a later _tool call_ is what turns it into an answer.
 
 Not a later program, which is where this and the injected sandbox surface used to claim the same trigger in the same words.
 A model reading both followed the second, and a spreadsheet question that is one `await query_table(...)` became a redirect to `.scratch/*.json`, a `read_document` of it, and a `json.loads` — three calls and a file for what the injected call returns entire.
@@ -510,7 +510,7 @@ So a program sees plain dicts and lists, reads a field as `hit['filename']`, and
 
 The declarations `monty_surface` builds have two consumers: the model reads them as the API it may call (`SANDBOX_API_INSTRUCTIONS`, composed per run so it never names a function the gate withheld), and the sandbox takes them as `type_check_stubs`.
 The rendering is pydantic-ai's `FunctionSignature`, which is what `pydantic-ai-harness`'s code mode uses for the same job, so this module supplies two JSON schemas per tool and does no type rendering of its own.
-A hand-rolled renderer that stood here first marked every field required, dropped each field's own description, and — keyed on the bare class name — declared two tools whose result records share a name with the *first* one's fields, so the program that read its own result correctly was the one the type check turned away.
+A hand-rolled renderer that stood here first marked every field required, dropped each field's own description, and — keyed on the bare class name — declared two tools whose result records share a name with the _first_ one's fields, so the program that read its own result correctly was the one the type check turned away.
 `FunctionSignature` states a defaulted field as `NotRequired`, carries the descriptions through, and prefixes a conflicting record with its function's name (`search_Result`, `query_table_Result`).
 Arguments are keyword-only, and the return schema is taken with `json_schema(mode="serialization")`, which is what makes a `tuple` field a list and a model a plain dict: the stub describes what actually arrives inside the program.
 

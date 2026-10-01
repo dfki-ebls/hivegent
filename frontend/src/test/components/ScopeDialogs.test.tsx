@@ -1,10 +1,7 @@
 import { act, createRef } from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import {
-  ScopeDialogs,
-  type ScopeDialogsHandle,
-} from "@/components/documents/ScopeDialogs";
+import { ScopeDialogs, type ScopeDialogsHandle } from "@/components/documents/ScopeDialogs";
 
 vi.mock("@/stores/documents-store", () => {
   const store = {

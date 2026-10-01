@@ -1421,9 +1421,7 @@ class TestGrepSearch:
         workspace.mkdir()
         (workspace / "inside.md").write_text("inside\n")
         (tmp_path / "secret.md").write_text("needle\n")
-        tool = GrepTool(
-            paths=(SearchPath(path=workspace, scope=WorkspaceScope()),)
-        )
+        tool = GrepTool(paths=(SearchPath(path=workspace, scope=WorkspaceScope()),))
 
         result = await tool("needle", glob="../*.md")
 
@@ -1724,8 +1722,7 @@ class TestRunPythonTool:
 
         with pytest.raises(ToolRetry, match="commit_path"):
             await workspace_tool(
-                "from pathlib import Path\n"
-                'Path("~/source.txt").write_text("new")'
+                'from pathlib import Path\nPath("~/source.txt").write_text("new")'
             )
 
         assert source.read_text() == "old"
@@ -1743,8 +1740,7 @@ class TestRunPythonTool:
             "state.read_text()"
         )
         later = await workspace_tool(
-            "from pathlib import Path\n"
-            'Path("~/.scratch/run/state.json").read_text()'
+            'from pathlib import Path\nPath("~/.scratch/run/state.json").read_text()'
         )
 
         assert written.data.result == later.data.result == "'{}'"

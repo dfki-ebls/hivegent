@@ -292,9 +292,7 @@ class TestQueryTableTool:
         assert "unparsed" not in formatted
         assert "ask the user" not in formatted
 
-    async def test_integers_wider_than_int64_stay_exact(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_integers_wider_than_int64_stay_exact(self, tmp_path: Path) -> None:
         (tmp_path / "ids.csv").write_text("id\n99999999999999999999\n1")
         tool = QueryTableTool(paths=tmp_path)
 
@@ -358,9 +356,7 @@ class TestMultipleTables:
 
         return tmp_path
 
-    async def test_two_tables_join_under_positional_names(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_two_tables_join_under_positional_names(self, tmp_path: Path) -> None:
         tool = QueryTableTool(paths=self._both(tmp_path))
 
         out = await returned(

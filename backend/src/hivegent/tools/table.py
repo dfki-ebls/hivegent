@@ -217,7 +217,7 @@ TableFilePathArg = Annotated[
             "Full workspace path of the table to query, or a list of paths to "
             f"query together. The first is addressed as '{_RELATION}', the "
             f"second '{_RELATION}2', the third '{_RELATION}3', so a join reads "
-            f"\"FROM {_RELATION} JOIN {_RELATION}2 ON ...\"."
+            f'"FROM {_RELATION} JOIN {_RELATION}2 ON ...".'
         ),
     ),
 ]
@@ -312,9 +312,7 @@ class TableResult:
         spelled as one — a hint a join would have to type back — they are
         joined at the point that holds both.
         """
-        return tuple(
-            column for table in self.tables for column in table.text_columns
-        )
+        return tuple(column for table in self.tables for column in table.text_columns)
 
 
 @dataclass(slots=True, frozen=True)
@@ -467,9 +465,7 @@ def _coerce(source: _Source) -> _Source:
     sampled = _with_unparsed(frame, typed)
     converted = {column.name for column, _ in sampled if column.complete}
     text_columns = tuple(
-        column
-        for column, _ in sampled
-        if source.report_complete or not column.complete
+        column for column, _ in sampled if source.report_complete or not column.complete
     )
 
     return replace(
@@ -769,8 +765,7 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
         # the limit bound, while what the display dropped rides the hint.
         result = TableResult(
             tables=tuple(
-                source.queried(_relation(index))
-                for index, source in enumerate(sources)
+                source.queried(_relation(index)) for index, source in enumerate(sources)
             ),
             columns=columns,
             dtypes=dtypes,
@@ -970,7 +965,12 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
             # and `t2."Menge (D)"` against several, which is the qualified name
             # SQL takes and not the quoted `"t2.Menge (D)"` that spelling the
             # two halves as one identifier would produce.
-            (f"{table.name}.{_quoted(column.name)}" if qualify else _quoted(column.name), column)
+            (
+                f"{table.name}.{_quoted(column.name)}"
+                if qualify
+                else _quoted(column.name),
+                column,
+            )
             for table in result.tables
             for column in table.text_columns
             if query is None

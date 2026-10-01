@@ -69,23 +69,26 @@ let
       --input-files ${lib.concatStringsSep " " (lib.attrValues documents)}
   '';
 
-  complianceReport = runCommand "${pname}-bsi-v2.1-compliance.json" {
-    nativeBuildInputs = [
-      jq
-      sbomqs
-    ];
-  } ''
-    sbomqs compliance --bsi-v21 --json ${product} > "$out"
-    failures=$(jq -r --slurpfile bom ${product} \
-      --argjson logicalComponents ${lib.toJSON logicalComponents} \
-      -f ${./compliance.jq} "$out")
+  complianceReport =
+    runCommand "${pname}-bsi-v2.1-compliance.json"
+      {
+        nativeBuildInputs = [
+          jq
+          sbomqs
+        ];
+      }
+      ''
+        sbomqs compliance --bsi-v21 --json ${product} > "$out"
+        failures=$(jq -r --slurpfile bom ${product} \
+          --argjson logicalComponents ${lib.toJSON logicalComponents} \
+          -f ${./compliance.jq} "$out")
 
-    if [ -n "$failures" ]; then
-      echo "BSI TR-03183-2 v2.1 required fields are incomplete:" >&2
-      echo "$failures" >&2
-      exit 1
-    fi
-  '';
+        if [ -n "$failures" ]; then
+          echo "BSI TR-03183-2 v2.1 required fields are incomplete:" >&2
+          echo "$failures" >&2
+          exit 1
+        fi
+      '';
 
   # The report is an entry of its own, so realizing the farm realizes it and a
   # non-compliant document fails the build before anything can read it.

@@ -71,10 +71,7 @@ export function MessageList({
     <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor">
       <MessageScroller className="min-h-0 flex-1">
         <MessageScrollerViewport>
-          <MessageScrollerContent
-            aria-busy={isChatBusy(status)}
-            className="gap-3 p-4"
-          >
+          <MessageScrollerContent aria-busy={isChatBusy(status)} className="gap-3 p-4">
             {compactedFrom && (
               <MessageScrollerItem>
                 <CompactionBanner

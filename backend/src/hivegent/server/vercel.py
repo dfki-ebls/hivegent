@@ -351,7 +351,9 @@ def dump_messages_with_ids(
         frozenset(
             call_id
             for _, msg in pairs
-            if isinstance(released := (msg.metadata or {}).get(APPROVED_CALLS_KEY), list)
+            if isinstance(
+                released := (msg.metadata or {}).get(APPROVED_CALLS_KEY), list
+            )
             for call_id in released
         ),
     )

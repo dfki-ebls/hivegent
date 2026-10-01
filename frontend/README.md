@@ -33,7 +33,7 @@ An approval the user overtakes by sending another message is declined on both si
 ## TODO: branch-navigation UI
 
 The active branch is always the newest leaf and the backend stores no selection pointer, so **branch navigation is ephemeral client view state, never persisted server-side.**
-Viewing an older branch just swaps the messages the client renders; the choice becomes durable only when the user *appends* to that branch (continue, edit, or regenerate), because the appended chain is then the newest leaf the server already treats as active on the next load.
+Viewing an older branch just swaps the messages the client renders; the choice becomes durable only when the user _appends_ to that branch (continue, edit, or regenerate), because the appended chain is then the newest leaf the server already treats as active on the next load.
 So there is **no** `/branches/select` endpoint, no `set_active_leaf`, and no schema change — only a read-only projection plus telling the server where a turn continues from.
 
 The backend already emits the navigation data: `GET /conversations/{id}/messages` returns `UIMessage`s whose forking nodes carry `metadata.branch = { branchCount, branchIndex, siblingIds }`.
@@ -42,7 +42,7 @@ The AI Elements branch components already exist, unwired, in `src/components/ai-
 Backend additions, both read-only and with no new column:
 
 - Give `GET /conversations/{id}/messages` an optional `?branch={messageId}` that anchors the active-path projection at a chosen leaf: descend the addressed node to its branch tip and walk up to the root (the same `_load_active_path` / `dump_messages_with_ids` path, just a different anchor). Without the param it returns the newest branch as today.
-- Let a turn continue a non-newest branch: the chat request carries the continuation anchor (the id of the last message in the client's current view) so `resolve_fork` forks there rather than at the global newest. Edit and regenerate keep their `messageId` semantics, and on the newest branch the anchor *is* the newest leaf, so behaviour is unchanged.
+- Let a turn continue a non-newest branch: the chat request carries the continuation anchor (the id of the last message in the client's current view) so `resolve_fork` forks there rather than at the global newest. Edit and regenerate keep their `messageId` semantics, and on the newest branch the anchor _is_ the newest leaf, so behaviour is unchanged.
 
 Frontend steps:
 

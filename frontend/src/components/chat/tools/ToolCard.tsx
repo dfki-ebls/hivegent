@@ -19,14 +19,7 @@ interface ToolCardProps extends CollapsibleProps {
  * Approval can arrive after mount, so the card opens when a decision is pending.
  * Pass `open` and `onOpenChange` to control tool-specific expansion.
  */
-export function ToolCard({
-  toolName,
-  part,
-  title,
-  children,
-  open,
-  onOpenChange,
-}: ToolCardProps) {
+export function ToolCard({ toolName, part, title, children, open, onOpenChange }: ToolCardProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
   const input = parseJson<Record<string, unknown>>(part.input);
 

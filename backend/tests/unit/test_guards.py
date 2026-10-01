@@ -195,9 +195,7 @@ async def test_image_occurrences_match_provider_content_shapes(shape: str) -> No
     elif shape == "tuple":
         part = UserPromptPart(content=(older,))
     elif shape == "url":
-        part = UserPromptPart(
-            content=[ImageUrl(url="https://example.com/image.png")]
-        )
+        part = UserPromptPart(content=[ImageUrl(url="https://example.com/image.png")])
     else:
         part = UserPromptPart(content=[older])
 

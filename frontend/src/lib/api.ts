@@ -296,9 +296,7 @@ export async function getSettings(): Promise<BackendSettings> {
 }
 
 /** Verify whether free-form text carries this deployment's watermark. */
-export async function detectAiGeneratedText(
-  text: string,
-): Promise<TransparencyDetectionResponse> {
+export async function detectAiGeneratedText(text: string): Promise<TransparencyDetectionResponse> {
   return requestJson(
     `${API_BASE_URL}/api/transparency/detect`,
     "Failed to verify the text watermark",

@@ -32,7 +32,12 @@ _ASSISTANT_TURN: dict[str, Any] = {
     "role": "assistant",
     "parts": [
         {"type": "step-start"},
-        {"type": "reasoning", "id": "msg-1", "text": "they want a file", "state": "done"},
+        {
+            "type": "reasoning",
+            "id": "msg-1",
+            "text": "they want a file",
+            "state": "done",
+        },
         {"type": "text", "text": "Writing it.", "state": "done"},
         {
             "type": "tool-write_document",
@@ -87,7 +92,9 @@ def test_a_coerced_approval_is_still_refused(
     fails the whole request rather than releasing a call that asked for a human
     decision, so no accommodation of client parts may relax it.
     """
-    coerced = json.loads(json.dumps(_ASSISTANT_TURN).replace('"approved": true', '"approved": 1'))
+    coerced = json.loads(
+        json.dumps(_ASSISTANT_TURN).replace('"approved": true', '"approved": 1')
+    )
 
     with pytest.raises(ValidationError):
         surface(coerced)

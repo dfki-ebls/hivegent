@@ -33,9 +33,7 @@
             docsUrl = lib.optionalString (caddy.docs != null) docsSite;
           }
         );
-        caddy.docs = lib.mkDefault (
-          perSystem.config.packages.docs.override { sitePath = docsSite; }
-        );
+        caddy.docs = lib.mkDefault (perSystem.config.packages.docs.override { sitePath = docsSite; });
       };
     }
   );

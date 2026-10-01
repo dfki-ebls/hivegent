@@ -45,7 +45,9 @@ _INJECTABLE_FACTORIES: tuple[AsyncToolFactory[UserDeps], ...] = tuple(
 )
 """The tools this deployment can hand a program, in registration order."""
 
-INJECTABLE_TOOL_NAMES: frozenset[str] = frozenset(map(factory_tool_name, _INJECTABLE_FACTORIES))
+INJECTABLE_TOOL_NAMES: frozenset[str] = frozenset(
+    map(factory_tool_name, _INJECTABLE_FACTORIES)
+)
 """Every tool a program can be given, whether or not a given run is given it.
 
 The domain of ``settings.tools.sandbox_only``: naming anything else would

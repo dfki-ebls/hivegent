@@ -180,7 +180,9 @@ def _message(status: _DetectionStatus) -> str:
     )
 
 
-def sign_provenance(config: TransparencySettings, conversation: ServerConversation) -> str:
+def sign_provenance(
+    config: TransparencySettings, conversation: ServerConversation
+) -> str:
     """Return a signed statement that *conversation* contains AI-generated text.
 
     The digest covers the conversation without its ``provenance`` field,
