@@ -275,22 +275,27 @@ function AdminSections({ setAction }: { setAction: (a: DangerAction) => void }) 
   const [groups, setGroups] = useState<AdminGroupInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Only sets state once the requests settle, so the mount effect can call it.
+  const load = useCallback(
+    () =>
+      Promise.all([adminListUsers(), adminListGroups()])
+        .then(([u, g]) => {
+          setUsers(u);
+          setGroups(g);
+        })
+        .catch((e: unknown) => console.error("Failed to load admin overview:", e))
+        .finally(() => setLoading(false)),
+    [],
+  );
+
   const refresh = useCallback(async () => {
     setLoading(true);
-    try {
-      const [u, g] = await Promise.all([adminListUsers(), adminListGroups()]);
-      setUsers(u);
-      setGroups(g);
-    } catch (e) {
-      console.error("Failed to load admin overview:", e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    await load();
+  }, [load]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    void load();
+  }, [load]);
 
   // Self-targeting is never useful: an admin cannot impersonate themselves
   // and wiping their own account belongs in the user danger zone.

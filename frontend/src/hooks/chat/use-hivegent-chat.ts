@@ -6,7 +6,7 @@ import {
 } from "ai";
 import type { BuildRequestBody } from "@/hooks/chat/use-build-request-body";
 import type { ChatRequestConfig } from "@/lib/types";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { getAuthHeaders } from "@/lib/api";
 import {
   type ChatMessage,
@@ -124,10 +124,12 @@ export function useHivegentChat(
   // `message.parts`, so this is the only live source; a fresh map per event
   // changes the reference so context consumers re-render.
   const [subagentSteps, setSubagentSteps] = useState<SubagentSteps>(() => new Map());
+  const [stepsId, setStepsId] = useState(id);
 
-  useEffect(() => {
+  if (stepsId !== id) {
+    setStepsId(id);
     setSubagentSteps(new Map());
-  }, [id]);
+  }
 
   const chat = useChat<ChatMessage>({
     id,

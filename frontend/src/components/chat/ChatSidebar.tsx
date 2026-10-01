@@ -64,6 +64,9 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   // Server-issued ID of a draft whose first turn finished cleanly; state
   // (not a ref) so the adoption effect below runs once it is reported.
   const [createdId, setCreatedId] = useState<string | null>(null);
+  // Adoption navigates away, so it must run once even if the effect re-fires
+  // before this draft unmounts.
+  const adoptedRef = useRef(false);
 
   // Id of the message whose error banner the user dismissed. A persisted error
   // rides on the last message, so keying on that id both hides it for this view
@@ -137,7 +140,8 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     if (!draft || !createdId || messages.length === 0) return;
     if (isStreaming) return;
     if (steeringQueue.length > 0) return;
-    setCreatedId(null);
+    if (adoptedRef.current) return;
+    adoptedRef.current = true;
     stashHandoff(createdId, recordChatError(messages, error));
     void fetchConversations();
     // Replace, not push: the transient draft URL ("/") shouldn't be a

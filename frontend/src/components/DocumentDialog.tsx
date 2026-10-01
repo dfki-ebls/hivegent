@@ -203,8 +203,25 @@ function fetchedContentChunk(chunk: FetchedChunk, content: string | null): Conte
   };
 }
 
-export function DocumentDialog({
-  open,
+export function DocumentDialog({ open, onOpenChange, ...props }: DocumentDialogProps) {
+  if (!props.isNew && !props.chunk && !props.fallbackFilename && !props.filename) return null;
+
+  // The body mounts with the dialog content, so every opening (and every new
+  // target) starts from fresh state instead of resetting it in an effect.
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="h-[85vh] w-[90vw] max-w-5xl! flex flex-col overflow-hidden p-0">
+        <DocumentDialogBody
+          key={props.chunk?.id ?? props.filename}
+          onOpenChange={onOpenChange}
+          {...props}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DocumentDialogBody({
   onOpenChange,
   filename: filenameProp,
   chunk,
@@ -219,16 +236,19 @@ export function DocumentDialog({
   isNew = false,
   target,
   onSave,
-}: DocumentDialogProps) {
+}: Omit<DocumentDialogProps, "open">) {
   // Local content is only used in managed mode (custom getContent fetcher).
   // In fetched mode the store is the source of truth (see `fullContent` below).
   const [localFullContent, setLocalFullContent] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("full-doc");
-  const [activeChunkId, setActiveChunkId] = useState<string | null>(null);
+  const [contentSettled, setContentSettled] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    if (isNew) return "edit";
+    if (!chunk || initialFullDoc || chunk.position.type === "full_document") return "full-doc";
+    return "chunk";
+  });
+  const [activeChunkId, setActiveChunkId] = useState<string | null>(chunk?.id ?? null);
 
   const [managedData, setManagedData] = useState<ChunkedDocumentResponse | null>(null);
-  const [managedLoading, setManagedLoading] = useState(false);
   const [managedError, setManagedError] = useState<string | null>(null);
   const [isRechunking, setIsRechunking] = useState(false);
 
@@ -265,6 +285,16 @@ export function DocumentDialog({
   const storedFullContent = useFetchedDocumentsStore((state) =>
     filename ? state.documents.get(filename)?.fullContent : undefined,
   );
+
+  const isWeb = isWebUrl(filename);
+  const wantsManagedChunks = isManagedMode && !!filename && !isNew;
+  const managedLoading = wantsManagedChunks && managedData === null && managedError === null;
+  // In fetched mode the store is the source of truth, so skip the fetcher when
+  // content is already present (or arrives via a tool output mid-flight). Web
+  // URLs are never fetched from the backend, their content comes from the store.
+  const needsContent =
+    !!filename && !isNew && !isWeb && (isManagedMode || storedFullContent == null);
+  const isLoading = needsContent && !contentSettled;
 
   const contentModel = useMemo<ContentModel>(() => {
     if (isManagedMode) {
@@ -320,69 +350,21 @@ export function DocumentDialog({
   const fullContent = contentModel.content;
   const activeChunk = contentModel.chunks.find((item) => item.id === activeChunkId) ?? null;
 
-  useEffect(() => {
-    if (!open) return;
-
-    isInitialScrollRef.current = true;
-    setEditFilename(filenameProp);
-    setSaveError(null);
-    setManagedData(null);
-    setManagedError(null);
-    setSidebarTab("chunks");
-    setAssetsData(null);
-    setActiveAssetIndex(null);
-    setIsEditingAssetDescription(false);
-
-    if (isNew) {
-      setViewMode("edit");
-      setEditContent("");
-      setLocalFullContent(null);
-    } else if (chunk) {
-      setActiveChunkId(chunk.id);
-      setViewMode(initialFullDoc || chunk.position.type === "full_document" ? "full-doc" : "chunk");
-    } else {
-      setActiveChunkId(null);
-      setViewMode("full-doc");
-    }
-  }, [open, chunk, initialFullDoc, isNew, filenameProp]);
-
-  const fetchManagedChunks = useCallback(() => {
-    if (!filename) return;
-    setManagedLoading(true);
-    setManagedError(null);
-    setManagedData(null);
-
+  // Only sets state once the request settles, so the mount effect can call it.
+  const loadManagedChunks = useCallback(() => {
     getDocumentChunks(filename)
       .then(setManagedData)
-      .catch((e) => setManagedError(e.message))
-      .finally(() => setManagedLoading(false));
+      .catch((e) => setManagedError(e.message));
   }, [filename]);
 
   useEffect(() => {
-    if (!open || !isManagedMode || !filename || isNew) return;
-    fetchManagedChunks();
-  }, [open, isManagedMode, filename, isNew, fetchManagedChunks]);
-
-  const isWeb = isWebUrl(filename);
+    if (wantsManagedChunks) loadManagedChunks();
+  }, [wantsManagedChunks, loadManagedChunks]);
 
   useEffect(() => {
-    if (!open || !filename || isNew) return;
-
-    // In fetched mode the store is the source of truth — skip the fetcher
-    // when content is already present (or arrives via a tool output mid-flight).
-    if (!isManagedMode && storedFullContent != null) {
-      setIsLoading(false);
-      return;
-    }
-
-    // Don't fetch from backend for web URLs — content comes from the store only
-    if (isWebUrl(filename)) {
-      setIsLoading(false);
-      return;
-    }
+    if (!needsContent) return;
 
     let cancelled = false;
-    setIsLoading(true);
     getDocumentContent(filename)
       .then((content) => {
         if (cancelled) return;
@@ -392,17 +374,17 @@ export function DocumentDialog({
           markFullDocument(filename, content, "preview");
         }
         setEditContent(content);
-        startTransition(() => setIsLoading(false));
+        startTransition(() => setContentSettled(true));
       })
       .catch(() => {
         if (cancelled) return;
         if (isManagedMode) setLocalFullContent(null);
-        setIsLoading(false);
+        setContentSettled(true);
       });
     return () => {
       cancelled = true;
     };
-  }, [open, filename, isNew, isManagedMode, markFullDocument, storedFullContent]);
+  }, [needsContent, filename, isManagedMode, markFullDocument]);
 
   // Scroll the highlight into view when its DOM element mounts. The span
   // is keyed by the active chunk identifier (see renderChunkHighlight), so
@@ -422,28 +404,36 @@ export function DocumentDialog({
       node.scrollIntoView({ behavior, block: overflows ? "start" : "center" });
     });
   }, []);
+  // Loaded on the first switch to the assets tab
   // (404 when the document has none → tab stays hidden via assets_dir)
-  useEffect(() => {
-    if (!open || !isManagedMode || sidebarTab !== "assets" || assetsData || !filename) return;
+  const loadAssets = useCallback(() => {
     setAssetsLoading(true);
     listDocumentAssets(filename)
       .then(setAssetsData)
       .catch(() => setAssetsData(null))
       .finally(() => setAssetsLoading(false));
-  }, [open, isManagedMode, sidebarTab, assetsData, filename]);
+  }, [filename]);
+
+  const handleSidebarTabChange = (tab: SidebarTab) => {
+    setSidebarTab(tab);
+    if (tab === "assets" && !assetsData) loadAssets();
+  };
 
   const handleRechunk = useCallback(async () => {
     if (!onRechunk) return;
     setIsRechunking(true);
     try {
       await onRechunk();
-      fetchManagedChunks();
-      // Invalidate the asset list; the lazy effect refetches it on demand.
+      setManagedData(null);
+      setManagedError(null);
+      loadManagedChunks();
+      // Invalidate the asset list and refetch it if it is on screen.
       setAssetsData(null);
+      if (sidebarTab === "assets") loadAssets();
     } finally {
       setIsRechunking(false);
     }
-  }, [onRechunk, fetchManagedChunks]);
+  }, [onRechunk, loadManagedChunks, sidebarTab, loadAssets]);
 
   // Download the markdown description shown in the dialog under its on-disk name.
   const handleDownloadMarkdown = useCallback(() => {
@@ -522,8 +512,6 @@ export function DocumentDialog({
       setIsSaving(false);
     }
   };
-
-  if (!isNew && !chunk && !fallbackFilename && !filenameProp) return null;
 
   // An uploaded image is a single image whose whole caption is one chunk, so we
   // render it like an extracted asset (image + caption + file metadata) and drop
@@ -880,7 +868,10 @@ export function DocumentDialog({
 
         {hasAssets && (
           <div className="px-2 shrink-0">
-            <Tabs value={sidebarTab} onValueChange={(value) => setSidebarTab(value as SidebarTab)}>
+            <Tabs
+              value={sidebarTab}
+              onValueChange={(value) => handleSidebarTabChange(value as SidebarTab)}
+            >
               <TabsList className="w-full">
                 <TabsTrigger value="chunks" className="flex-1 text-xs">
                   Chunks
@@ -974,125 +965,123 @@ export function DocumentDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[85vh] w-[90vw] max-w-5xl! flex flex-col overflow-hidden p-0">
-        <DialogHeader className="px-6 pt-4 pb-1 space-y-1.5">
-          <DialogTitle className="truncate pr-8 flex items-center gap-2">
-            {filename}
-            {isWeb && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-5 w-5 shrink-0"
-                onClick={() => window.open(filename, "_blank", "noopener,noreferrer")}
-                title="Open in browser"
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-              </Button>
-            )}
-          </DialogTitle>
-          <DialogDescription className="sr-only">
-            Document content and chunk context for {filename}
-          </DialogDescription>
-
-          {/* Metadata badges, then the document actions on their own line below. */}
-          {(showMetadata || editable) && (
-            <div className="flex flex-col gap-1.5 text-sm text-muted-foreground">
-              {showMetadata && contentModel.metadata && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary">Chunking: {contentModel.metadata.pipeline}</Badge>
-                  <Badge variant="secondary">{contentModel.chunks.length} chunks</Badge>
-                  {contentModel.metadata.size_bytes != null && (
-                    <Badge variant="outline">
-                      {formatFileSize(contentModel.metadata.size_bytes)}
-                    </Badge>
-                  )}
-                  <Badge variant="outline">
-                    Created: {formatDate(contentModel.metadata.created_at)}
-                  </Badge>
-                </div>
-              )}
-              {viewMode !== "edit" && (
-                <div className="flex flex-wrap items-center gap-2">
-                  {editable && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setEditContent(fullContent ?? "");
-                        setEditFilename(filename);
-                        setSaveError(null);
-                        setViewMode("edit");
-                      }}
-                    >
-                      <Pencil className="h-3 w-3 mr-1" />
-                      Edit
-                    </Button>
-                  )}
-                  {onRechunk && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleRechunk}
-                      disabled={isRechunking}
-                    >
-                      <RefreshCw className={`h-3 w-3 mr-1 ${isRechunking ? "animate-spin" : ""}`} />
-                      Rechunk
-                    </Button>
-                  )}
-                  {onReconvert && (
-                    <Button variant="outline" size="sm" onClick={onReconvert}>
-                      <RotateCcw className="h-3 w-3 mr-1" />
-                      Reconvert
-                    </Button>
-                  )}
-                  {onDownloadOriginal && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={onDownloadOriginal}
-                      title="Download the original file"
-                    >
-                      <Download className="h-3 w-3 mr-1" />
-                      Original
-                    </Button>
-                  )}
-                  {isManagedMode && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleDownloadMarkdown}
-                      disabled={fullContent == null}
-                      title="Download the markdown description"
-                    >
-                      <Download className="h-3 w-3 mr-1" />
-                      Markdown
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
+    <>
+      <DialogHeader className="px-6 pt-4 pb-1 space-y-1.5">
+        <DialogTitle className="truncate pr-8 flex items-center gap-2">
+          {filename}
+          {isWeb && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 shrink-0"
+              onClick={() => window.open(filename, "_blank", "noopener,noreferrer")}
+              title="Open in browser"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Button>
           )}
-        </DialogHeader>
+        </DialogTitle>
+        <DialogDescription className="sr-only">
+          Document content and chunk context for {filename}
+        </DialogDescription>
 
-        <div className="flex flex-1 min-h-0">
-          {renderSidebar()}
-
-          <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            {viewMode === "chunk" && activeChunk?.originLabel && (
-              <div className="flex items-center gap-2 px-4 py-2 border-b">
-                <Badge variant="outline" className="text-xs">
-                  {activeChunk.originLabel}
-                </Badge>
-                <Badge variant="secondary" className="text-xs">
-                  {activeChunk.badge}
+        {/* Metadata badges, then the document actions on their own line below. */}
+        {(showMetadata || editable) && (
+          <div className="flex flex-col gap-1.5 text-sm text-muted-foreground">
+            {showMetadata && contentModel.metadata && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">Chunking: {contentModel.metadata.pipeline}</Badge>
+                <Badge variant="secondary">{contentModel.chunks.length} chunks</Badge>
+                {contentModel.metadata.size_bytes != null && (
+                  <Badge variant="outline">
+                    {formatFileSize(contentModel.metadata.size_bytes)}
+                  </Badge>
+                )}
+                <Badge variant="outline">
+                  Created: {formatDate(contentModel.metadata.created_at)}
                 </Badge>
               </div>
             )}
-            {renderMainContent()}
+            {viewMode !== "edit" && (
+              <div className="flex flex-wrap items-center gap-2">
+                {editable && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setEditContent(fullContent ?? "");
+                      setEditFilename(filename);
+                      setSaveError(null);
+                      setViewMode("edit");
+                    }}
+                  >
+                    <Pencil className="h-3 w-3 mr-1" />
+                    Edit
+                  </Button>
+                )}
+                {onRechunk && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRechunk}
+                    disabled={isRechunking}
+                  >
+                    <RefreshCw className={`h-3 w-3 mr-1 ${isRechunking ? "animate-spin" : ""}`} />
+                    Rechunk
+                  </Button>
+                )}
+                {onReconvert && (
+                  <Button variant="outline" size="sm" onClick={onReconvert}>
+                    <RotateCcw className="h-3 w-3 mr-1" />
+                    Reconvert
+                  </Button>
+                )}
+                {onDownloadOriginal && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onDownloadOriginal}
+                    title="Download the original file"
+                  >
+                    <Download className="h-3 w-3 mr-1" />
+                    Original
+                  </Button>
+                )}
+                {isManagedMode && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownloadMarkdown}
+                    disabled={fullContent == null}
+                    title="Download the markdown description"
+                  >
+                    <Download className="h-3 w-3 mr-1" />
+                    Markdown
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
+        )}
+      </DialogHeader>
+
+      <div className="flex flex-1 min-h-0">
+        {renderSidebar()}
+
+        <div className="flex-1 flex flex-col min-h-0 min-w-0">
+          {viewMode === "chunk" && activeChunk?.originLabel && (
+            <div className="flex items-center gap-2 px-4 py-2 border-b">
+              <Badge variant="outline" className="text-xs">
+                {activeChunk.originLabel}
+              </Badge>
+              <Badge variant="secondary" className="text-xs">
+                {activeChunk.badge}
+              </Badge>
+            </div>
+          )}
+          {renderMainContent()}
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </>
   );
 }

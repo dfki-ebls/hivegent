@@ -1,5 +1,5 @@
 import { BrainIcon, type LucideIcon, MessageSquareIcon, WrenchIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought";
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
@@ -37,14 +37,16 @@ export function SubagentTool({ toolName, part, steps }: SubagentToolProps) {
 
   // Expand the card while the live run is working and collapse it once the
   // subagent returns, so its progress is visible without a manual click. A
-  // loaded transcript mounts already completed, so it stays closed. The effect
-  // only fires on a running <-> done transition, so a manual toggle in between
-  // is preserved.
+  // loaded transcript mounts already completed, so it stays closed. Only a
+  // running <-> done transition resets it, so a manual toggle in between is
+  // preserved.
   const [open, setOpen] = useState(isRunning);
+  const [wasRunning, setWasRunning] = useState(isRunning);
 
-  useEffect(() => {
+  if (isRunning !== wasRunning) {
+    setWasRunning(isRunning);
     setOpen(isRunning);
-  }, [isRunning]);
+  }
 
   return (
     <ToolCard toolName={toolName} part={part} open={open} onOpenChange={setOpen}>

@@ -4,6 +4,12 @@ import type { PipelineConfigInfo } from "@/lib/types";
 
 type ConfigFetcher<P extends string> = (pipeline: P) => Promise<PipelineConfigInfo>;
 
+interface LoadedConfig<P extends string> {
+  fetchConfig: ConfigFetcher<P>;
+  pipeline: P;
+  config: PipelineConfigInfo;
+}
+
 /**
  * Config payloads are static per server process, so one fetch per pipeline
  * suffices. Keyed by fetcher so the conversion and chunking registries cannot
@@ -33,31 +39,21 @@ export function usePipelineConfig<P extends string>(
   pipeline: P | null,
   fetchConfig: ConfigFetcher<P>,
 ): PipelineConfigInfo | null {
-  const [config, setConfig] = useState<PipelineConfigInfo | null>(() =>
-    pipeline === null ? null : cached(fetchConfig, pipeline),
-  );
+  // Tagged with its request, so switching pipelines reads as loading without
+  // resetting state inside the effect.
+  const [loaded, setLoaded] = useState<LoadedConfig<P> | null>(null);
 
   useEffect(() => {
-    if (pipeline === null) {
-      setConfig(null);
-      return;
-    }
-
-    const hit = cached(fetchConfig, pipeline);
-    if (hit) {
-      setConfig(hit);
-      return;
-    }
+    if (pipeline === null || cached(fetchConfig, pipeline)) return;
 
     let active = true;
-    setConfig(null);
     fetchConfig(pipeline)
-      .then((loaded) => {
+      .then((config) => {
         const key = fetchConfig as ConfigFetcher<string>;
         const entries = cache.get(key) ?? new Map<string, PipelineConfigInfo>();
-        entries.set(pipeline, loaded);
+        entries.set(pipeline, config);
         cache.set(key, entries);
-        if (active) setConfig(loaded);
+        if (active) setLoaded({ fetchConfig, pipeline, config });
       })
       .catch(() => {
         // The pipeline can become unavailable between the list and config requests.
@@ -68,5 +64,9 @@ export function usePipelineConfig<P extends string>(
     };
   }, [fetchConfig, pipeline]);
 
-  return config;
+  if (pipeline === null) return null;
+
+  if (loaded?.fetchConfig === fetchConfig && loaded.pipeline === pipeline) return loaded.config;
+
+  return cached(fetchConfig, pipeline);
 }

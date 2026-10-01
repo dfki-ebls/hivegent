@@ -6,7 +6,7 @@
  */
 
 import { RotateCcwIcon, SettingsIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -66,22 +66,20 @@ export function PipelineConfigDialog({
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  // Sync local state when dialog opens
-  useEffect(() => {
-    if (open) {
-      const merged = { ...configDefaults, ...currentConfig };
-      setValues(merged);
-      setAdvancedJson(JSON.stringify(merged, null, 2));
-      setJsonError(null);
-      setAdvancedOpen(false);
-    }
-  }, [open, configDefaults, currentConfig]);
-
   // Sync advanced JSON when form values change (and advanced is not focused)
   const syncJsonFromValues = (newValues: Record<string, unknown>) => {
     setValues(newValues);
     setAdvancedJson(JSON.stringify(newValues, null, 2));
     setJsonError(null);
+  };
+
+  // Load the current config into the form whenever the dialog opens
+  const handleOpenChange = (next: boolean) => {
+    if (next) {
+      syncJsonFromValues({ ...configDefaults, ...currentConfig });
+      setAdvancedOpen(false);
+    }
+    setOpen(next);
   };
 
   const handleAdvancedChange = (json: string) => {
@@ -108,9 +106,6 @@ export function PipelineConfigDialog({
   };
 
   const handleReset = () => {
-    setValues({ ...configDefaults });
-    setAdvancedJson(JSON.stringify(configDefaults, null, 2));
-    setJsonError(null);
     onReset();
     setOpen(false);
   };
@@ -120,7 +115,7 @@ export function PipelineConfigDialog({
   const hasSchema = Object.keys(validSchema?.properties ?? {}).length > 0;
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button
           variant="ghost"

@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
 
+type ObjectUrlFetcher = (signal: AbortSignal) => Promise<string>;
+
+interface ObjectUrlResult {
+  fetch: ObjectUrlFetcher;
+  url: string | null;
+  error: boolean;
+}
+
 /**
  * Fetch a resource as an object URL, aborting the request and revoking the URL
  * on unmount or when the fetcher changes.
@@ -10,16 +18,15 @@ import { useEffect, useState } from "react";
  * change. Pass `null` to skip fetching — combine with {@link useInView} to defer
  * loading until the target is on screen.
  */
-export function useObjectUrl(fetch: ((signal: AbortSignal) => Promise<string>) | null): {
+export function useObjectUrl(fetch: ObjectUrlFetcher | null): {
   url: string | null;
   error: boolean;
 } {
-  const [url, setUrl] = useState<string | null>(null);
-  const [error, setError] = useState(false);
+  // Tagged with the fetcher it came from, so a new fetcher reads as pending
+  // without resetting state inside the effect.
+  const [result, setResult] = useState<ObjectUrlResult | null>(null);
 
   useEffect(() => {
-    setUrl(null);
-    setError(false);
     if (!fetch) return;
 
     const controller = new AbortController();
@@ -33,10 +40,10 @@ export function useObjectUrl(fetch: ((signal: AbortSignal) => Promise<string>) |
           return;
         }
         created = objectUrl;
-        setUrl(objectUrl);
+        setResult({ fetch, url: objectUrl, error: false });
       })
       .catch(() => {
-        if (!controller.signal.aborted) setError(true);
+        if (!controller.signal.aborted) setResult({ fetch, url: null, error: true });
       });
 
     return () => {
@@ -45,5 +52,7 @@ export function useObjectUrl(fetch: ((signal: AbortSignal) => Promise<string>) |
     };
   }, [fetch]);
 
-  return { url, error };
+  const current = result?.fetch === fetch ? result : null;
+
+  return { url: current?.url ?? null, error: current?.error ?? false };
 }

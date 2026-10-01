@@ -127,11 +127,13 @@ export function ToolDebugConsole() {
   }, [tools]);
 
   // Reset the form to the selected tool's schema defaults whenever it changes.
-  useEffect(() => {
+  function handleSelect(name: string) {
+    const tool = tools.find((t) => t.name === name);
+    setSelected(name);
     setResult(null);
     setRunError(null);
-    setValues(selectedTool ? defaultValues(selectedTool.parameters as unknown as JsonSchema) : {});
-  }, [selectedTool]);
+    setValues(tool ? defaultValues(tool.parameters as unknown as JsonSchema) : {});
+  }
 
   async function handleRun() {
     if (!selectedTool) return;
@@ -181,7 +183,7 @@ export function ToolDebugConsole() {
           )}
 
           <div className="grid gap-1.5">
-            <Select value={selected} onValueChange={setSelected}>
+            <Select value={selected} onValueChange={handleSelect}>
               <SelectTrigger>
                 <SelectValue placeholder="Select a tool to debug" />
               </SelectTrigger>
