@@ -39,9 +39,9 @@ PROVENANCE_TYPE = "ai-provenance+jwt"
 
 _DetectionStatus = Literal["detected", "not_detected", "inconclusive"]
 
-# Text shorter than this cannot be watermarked with even a basic level of
-# reliability, so vLLM marks nothing below it and a negative result says
-# nothing about the text. The threshold is the state of the art, not a
+# vLLM marks all sampled text, but text shorter than this cannot be detected
+# with even a basic level of reliability, so a negative result says nothing
+# about it. The threshold is the state of the art, not a
 # constant of the scheme, and drops as detection improves.
 MINIMUM_WATERMARK_TOKENS = 200
 
