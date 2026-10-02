@@ -152,7 +152,7 @@ def _model_mcp() -> ModelTool:
 
 
 def _redirecting_mcp() -> RedirectingFixtureTool:
-    return RedirectingFixtureTool(writer=None)
+    return RedirectingFixtureTool(sink=None)
 
 
 def _sync_mcp() -> SyncFixtureTool:

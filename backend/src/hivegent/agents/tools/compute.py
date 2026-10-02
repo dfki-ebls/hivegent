@@ -23,7 +23,7 @@ from ...tools.python import RunPythonTool
 from ..common import UserDeps
 from .explore import EXPLORE_FACTORIES
 from .web import WEB_FACTORIES
-from .write import output_sink, validate_commit_path
+from .write import output_writer, validate_commit_path
 
 __all__ = ["INJECTABLE_TOOL_NAMES", "compute_toolset", "sandbox_api_instructions"]
 
@@ -124,7 +124,7 @@ def _run_python(deps: UserDeps) -> RunPythonTool:
         pool=get_monty_pool(),
         limits=_limits,
         paths=deps.search_paths(),
-        writer=output_sink(deps),
+        writer=output_writer(deps),
         surface=sandbox_surface(deps),
         type_check=settings.sandbox.type_check,
     )

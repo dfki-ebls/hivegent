@@ -2,10 +2,11 @@
 
 A tool built with a writer takes an ``output_path``: the suffix picks which of
 the result's two channels is stored, and the model is handed a receipt instead
-of the result. The write itself goes through the ordinary document gateway, so
+of the result unless it is short. The write itself goes through the ordinary document gateway, so
 these tests stub only that, not the tools around it.
 """
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ from hivegent import workspace_events
 from hivegent.tools.base import ToolRetry
 from hivegent.tools.documents import GlobDocumentsTool
 from hivegent.tools.mutations import WriteDocumentTool
-from hivegent.tools.sink import RedirectedOutput
+from hivegent.tools.sink import OutputSink, RedirectedOutput
 from hivegent.workspace_events import announcing_mutator
 
 
@@ -42,7 +43,7 @@ def writer(tmp_path: Path, written: dict[str, str]) -> WriteDocumentTool:
 def tool(tmp_path: Path, writer: WriteDocumentTool) -> GlobDocumentsTool:
     (tmp_path / "a.md").write_text("one")
     (tmp_path / "b.md").write_text("two")
-    return GlobDocumentsTool(paths=tmp_path, writer=writer)
+    return GlobDocumentsTool(paths=tmp_path, sink=OutputSink(writer, 2_000))
 
 
 async def test_json_stores_the_structured_result(
@@ -57,8 +58,17 @@ async def test_json_stores_the_structured_result(
         characters=len(written[".scratch/hits.json"]),
         entries=2,
     )
-    # The result itself never reaches the model, only the note that it exists.
-    assert "a.md" not in (out.formatted or "")
+    # Too short to be worth withholding, so the receipt repeats it.
+    assert "a.md" in out.text
+
+
+async def test_a_long_result_is_withheld(
+    tool: GlobDocumentsTool, writer: WriteDocumentTool
+) -> None:
+    terse = replace(tool, sink=OutputSink(writer, 3))
+    out = await terse("*.md", output_path=".scratch/hits.json")
+
+    assert "a.md" not in out.text
 
 
 async def test_txt_stores_the_text_the_model_would_have_seen(

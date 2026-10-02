@@ -21,7 +21,7 @@ from hivegent.agents.common import UserDeps
 from hivegent.agents.tools.write import (
     _edit_document,
     _write_document,
-    output_sink,
+    output_writer,
     validate_commit_path,
     validate_document_write,
     validate_output_path,
@@ -108,10 +108,10 @@ async def test_a_declared_output_is_not_a_stored_program(
     deps: UserDeps, routed: list[tuple[str, str]]
 ) -> None:
     """run_python's own commit carries no pointer back to run_python."""
-    sink = output_sink(deps)
-    assert sink is not None
+    writer = output_writer(deps)
+    assert writer is not None
 
-    assert (await sink("~/.scratch/report.py", "print(1)")).data == "written"
+    assert (await writer("~/.scratch/report.py", "print(1)")).data == "written"
     assert len(routed) == 1
 
 

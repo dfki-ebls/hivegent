@@ -298,7 +298,7 @@ guidance either way.
 """
 
 REDIRECT_INSTRUCTIONS = """
-Where a tool takes an `output_path`, that call writes its result to the workspace file you name and hands you back only a receipt for it.
+Where a tool takes an `output_path`, that call writes its result to the workspace file you name and hands you back a receipt for it, which repeats the result only when it is short.
 Reach for it when a call would return far more than you need to read and the whole of it is what a later *tool call* works from.
 When the next step is a program, call the tool inside run_python instead: the program is handed the whole result directly, where a file written only to be read back again is three calls that buy nothing over one.
 The suffix decides what is stored: `.json` keeps the structured result in full, `.txt` keeps the text you would otherwise have been shown.

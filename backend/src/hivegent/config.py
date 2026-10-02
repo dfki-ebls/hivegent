@@ -686,11 +686,17 @@ class ToolsSettings(BaseModel):
     names a tool has to name one the model can invoke; following a pointer to a
     name carrying no schema leaves it one indirection short of the call, which
     is the position ``defer_loading`` was removed for leaving it in.
+
+    ``redirect_inline_chars`` is the longest result an ``output_path`` receipt
+    still repeats in full.  A redirect only pays off on a result too large to
+    read, and a receipt that withholds a short one invites the model to guess
+    at it instead.  ``0`` always withholds.
     """
 
     enable_web: bool = False
     disabled: list[str] = ["list_conversations", "get_conversation"]
     sandbox_only: list[str] = []
+    redirect_inline_chars: int = Field(default=2_000, ge=0)
 
 
 class SandboxSettings(BaseModel):

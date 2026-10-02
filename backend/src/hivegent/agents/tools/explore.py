@@ -26,15 +26,15 @@ __all__ = ["EXPLORE_FACTORIES", "explore_toolset"]
 # `None` outside a writing mode: what a tool may do with its result is settled
 # when the tool is built, not by the framework it is handed to.
 def _list_documents(deps: UserDeps) -> ListDocumentsTool:
-    return ListDocumentsTool(paths=deps.search_paths(), writer=output_sink(deps))
+    return ListDocumentsTool(paths=deps.search_paths(), sink=output_sink(deps))
 
 
 def _glob_documents(deps: UserDeps) -> GlobDocumentsTool:
-    return GlobDocumentsTool(paths=deps.search_paths(), writer=output_sink(deps))
+    return GlobDocumentsTool(paths=deps.search_paths(), sink=output_sink(deps))
 
 
 def _read_document(deps: UserDeps) -> ReadDocumentTool:
-    return ReadDocumentTool(paths=deps.search_paths(), writer=output_sink(deps))
+    return ReadDocumentTool(paths=deps.search_paths(), sink=output_sink(deps))
 
 
 def _read_binary_document(deps: UserDeps) -> ReadBinaryDocumentTool:
@@ -46,22 +46,22 @@ def _read_binary_document(deps: UserDeps) -> ReadBinaryDocumentTool:
 
 
 def _query_table(deps: UserDeps) -> QueryTableTool:
-    return QueryTableTool(paths=deps.search_paths(), writer=output_sink(deps))
+    return QueryTableTool(paths=deps.search_paths(), sink=output_sink(deps))
 
 
 def _jq(deps: UserDeps) -> JqTool:
-    return JqTool(paths=deps.search_paths(), writer=output_sink(deps))
+    return JqTool(paths=deps.search_paths(), sink=output_sink(deps))
 
 
 def _grep(deps: UserDeps) -> GrepTool:
-    return GrepTool(paths=deps.search_paths(), writer=output_sink(deps))
+    return GrepTool(paths=deps.search_paths(), sink=output_sink(deps))
 
 
 def _search(deps: UserDeps) -> VectorSearchTool[RetrievedChunk]:
     return build_search_tool(
         deps.all_stores,
         filter_for_store=deps.filter_for_store,
-        writer=output_sink(deps),
+        sink=output_sink(deps),
     )
 
 

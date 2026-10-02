@@ -39,7 +39,7 @@ from hivegent.tools.mutations import (
     WriteDocumentTool,
 )
 from hivegent.tools.python import PythonResult, RunPythonTool
-from hivegent.tools.sink import RedirectedOutput
+from hivegent.tools.sink import OutputSink, RedirectedOutput
 from hivegent.tools.table import QueryTableTool
 from hivegent.types import DocumentFilter
 from tests.helpers import returned
@@ -1273,7 +1273,7 @@ class TestJqTool:
 
         (tmp_path / "big.json").write_text(json.dumps(list(range(100))))
         writer = WriteDocumentTool(paths=tmp_path, mutator=mutate)
-        tool = JqTool(paths=tmp_path, writer=writer, max_formatted_chars=20)
+        tool = JqTool(paths=tmp_path, sink=OutputSink(writer, 0), max_formatted_chars=20)
 
         output = await tool("big.json", ".[]", output_path="result.json")
         stored = json.loads(written["result.json"])
@@ -1296,7 +1296,7 @@ class TestJqTool:
         rows = "\n".join(f"r{i},{i}" for i in range(50))
         (tmp_path / "t.csv").write_text(f"name,val\n{rows}")
         writer = WriteDocumentTool(paths=tmp_path, mutator=mutate)
-        tool = QueryTableTool(paths=tmp_path, writer=writer, max_rows=10)
+        tool = QueryTableTool(paths=tmp_path, sink=OutputSink(writer, 0), max_rows=10)
 
         output = await tool(
             "t.csv", "SELECT * FROM t", row_limit=10, output_path="out.json"
@@ -1315,7 +1315,7 @@ class TestJqTool:
 
         (tmp_path / "t.csv").write_text("name,val\na,1\nb,2\n")
         writer = WriteDocumentTool(paths=tmp_path, mutator=mutate)
-        tool = QueryTableTool(paths=tmp_path, writer=writer)
+        tool = QueryTableTool(paths=tmp_path, sink=OutputSink(writer, 0))
 
         output = await tool("t.csv", "SELECT * FROM t", output_path="out.json")
 

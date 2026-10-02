@@ -20,6 +20,7 @@ from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 
 from ... import workspace
+from ...config import settings
 from ...entries import is_scratch_path
 from ...store import Casebase, scoped_operation, scoped_pair_operation
 from ...tools import (
@@ -32,12 +33,13 @@ from ...tools.base import resolve_accessible_file, translate_tool_retry
 from ...tools.mutations import MutationHint, resolve_text_target
 from ...tools.pydantic_ai import register_agent_tool, register_agent_tools
 from ...tools.python import CommitPathArg, is_python_script
-from ...tools.sink import OutputPathArg, output_format
+from ...tools.sink import OutputPathArg, OutputSink, output_format
 from ...workspace_events import announce_paths, announcing_mutator
 from ..common import UserDeps
 
 __all__ = [
     "output_sink",
+    "output_writer",
     "validate_commit_path",
     "validate_document_move",
     "validate_document_write",
@@ -90,7 +92,7 @@ def write_document(
 ) -> WriteDocumentTool:
     """Build the canonical scoped document writer for one agent run.
 
-    Public because ``run_python`` composes it through :func:`output_sink` to
+    Public because ``run_python`` composes it through :func:`output_writer` to
     commit its declared output, so the output it writes is scoped exactly like
     the files it read.  That path passes no *hint*: a commit the model asked
     for by declaring an ``output_path`` is not a program it just stored.
@@ -107,16 +109,26 @@ def _write_document(deps: UserDeps) -> WriteDocumentTool:
     return write_document(deps, _run_python_pointer)
 
 
-def output_sink(deps: UserDeps) -> WriteDocumentTool | None:
-    """Build the writer a tool's ``output_path`` redirect commits through.
+def output_writer(deps: UserDeps) -> WriteDocumentTool | None:
+    """Build the writer a tool commits its declared output through.
 
-    ``None`` in a mode that may not write, so the redirect is refused in words
+    ``None`` in a mode that may not write, so the write is refused in words
     the model can act on rather than silently dropped.
     """
     if not deps.can_write:
         return None
 
     return write_document(deps)
+
+
+def output_sink(deps: UserDeps) -> OutputSink | None:
+    """Build the sink a tool's ``output_path`` redirect commits through."""
+    writer = output_writer(deps)
+
+    if writer is None:
+        return None
+
+    return OutputSink(writer, settings.tools.redirect_inline_chars)
 
 
 def _is_scratch_target(deps: UserDeps, file_path: str) -> bool:

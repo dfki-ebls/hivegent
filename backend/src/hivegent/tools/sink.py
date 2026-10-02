@@ -5,18 +5,19 @@ later step, not the model's own reading, is what turns the result into an
 answer.  ``output_path`` is what makes that call affordable: the result is
 committed through the canonical mutation gateway and the model gets back a
 receipt naming the file, which a ``run_python`` program then opens on the
-mounted workspace.
+mounted workspace.  A result short enough to read is repeated on the receipt,
+since withholding it saves nothing.
 
 The suffix picks the channel, because the two a tool returns are not
 interchangeable: ``.json`` writes the structured ``data`` — every grep match,
 not the first ``max_results`` of them — while ``.txt`` writes the very text the
 model would otherwise have been shown.
 
-The argument is declared by each tool that offers it, next to a ``writer``
-field, the way :class:`~hivegent.tools.python.RunPythonTool` already declares
-the one document its programs persist.  Nothing injects it: where a result
-may land is a property of the tool as it was built for a run, so a surface
-that hands out no writer leaves it out of what it builds
+The argument is declared by each tool that offers it, next to a ``sink``
+field, the way :class:`~hivegent.tools.python.RunPythonTool` declares a
+writer for the one document its programs persist.  Nothing injects it: where
+a result may land is a property of the tool as it was built for a run, so a
+surface that hands out no sink leaves it out of what it builds
 (:meth:`~hivegent.tools.base.ToolSpec.without`) rather than advertising an
 argument it could only refuse.
 """
@@ -37,6 +38,7 @@ __all__ = [
     "NO_WRITER_REFUSAL",
     "OutputFormat",
     "OutputPathArg",
+    "OutputSink",
     "RedirectedOutput",
     "RedirectingPathTool",
     "RedirectingTool",
@@ -50,6 +52,20 @@ type OutputFormat = Literal["json", "txt"]
 
 _FORMATS: dict[str, OutputFormat] = {".json": "json", ".txt": "txt"}
 """The suffixes a redirect accepts, mapped to the channel each one names."""
+
+@dataclass(slots=True, frozen=True)
+class OutputSink:
+    """Where a redirect commits, and how much of a result it still shows.
+
+    *inline_chars* is the longest result text a receipt repeats rather than
+    withholds.  It exists because a redirect pays off only on a result too
+    large to read, and one shorter costs less in context than a receipt the
+    model then misreads: told only that a listing held three entries, it
+    concluded a directory was empty.
+    """
+
+    writer: WriteDocumentTool
+    inline_chars: int
 
 
 @dataclass(slots=True, frozen=True)
@@ -170,14 +186,20 @@ def _render(result: ToolOutput[Any], fmt: OutputFormat) -> str:
 
 
 def _receipt[T](
-    report: str, canonical_path: str, fmt: OutputFormat, content: str, data: T
+    report: str,
+    canonical_path: str,
+    fmt: OutputFormat,
+    content: str,
+    result: ToolOutput[T],
+    inline_chars: int,
 ) -> ToolOutput[RedirectedOutput]:
-    """Report what was written without repeating any of it.
+    """Report what was written, repeating the result's text only when short.
 
     *report* is what the write gateway said it did, so the sentence describing
     a workspace write is composed in one place and this adds only what is
     particular to a redirect.
     """
+    data = result.data
     entries = len(data) if isinstance(data, list | tuple) else None
     counted = f", {entries} {pluralize(entries, 'entry', 'entries')}" if entries else ""
     # Duck-typed rather than narrowed to one result: every payload that knows
@@ -191,6 +213,15 @@ def _receipt[T](
         if truncated
         else ""
     )
+    # The `.txt` channel already is the text, so it is not rendered twice.
+    text = content if fmt == "txt" else result.text
+    short = len(text) <= inline_chars
+    clause = (
+        "which is short enough to show here as well"
+        if short
+        else "and is not repeated here"
+    )
+    shown = f"\n\n{text}" if short else ""
 
     return ToolOutput(
         data=RedirectedOutput(
@@ -202,7 +233,7 @@ def _receipt[T](
         ),
         formatted=(
             f"{report} It holds this call's result as {fmt}{counted}, "
-            f"and is not repeated here.{partial}"
+            f"{clause}.{partial}{shown}"
         ),
     )
 
@@ -210,7 +241,7 @@ def _receipt[T](
 async def redirect_output[T](
     result: ToolOutput[T],
     output_path: str | None,
-    writer: WriteDocumentTool | None,
+    sink: OutputSink | None,
 ) -> ToolOutput[T | RedirectedOutput]:
     """Commit *result* to *output_path*, or pass it through when none was named.
 
@@ -224,13 +255,16 @@ async def redirect_output[T](
         return cast(ToolOutput[T | RedirectedOutput], result)
 
     fmt = output_format(output_path)
-    sink, canonical, _absolute = resolve_output_target(writer, output_path)
+    if sink is None:
+        raise ToolRetry(NO_WRITER_REFUSAL)
+
+    writer, canonical, _absolute = resolve_output_target(sink.writer, output_path)
     content = _render(result, fmt)
-    report = (await sink(canonical, content)).text
+    report = (await writer(canonical, content)).text
 
     return cast(
         ToolOutput[T | RedirectedOutput],
-        _receipt(report, canonical, fmt, content, result.data),
+        _receipt(report, canonical, fmt, content, result, sink.inline_chars),
     )
 
 
@@ -246,23 +280,23 @@ class RedirectingTool[T](AsyncTool[T | RedirectedOutput], ABC):
     caller is told in the signature that either can come back.
     """
 
-    writer: WriteDocumentTool | None = field(default=None, kw_only=True)
+    sink: OutputSink | None = field(default=None, kw_only=True)
 
     async def redirect(
         self, result: ToolOutput[T], output_path: str | None
     ) -> ToolOutput[T | RedirectedOutput]:
         """Write *result* to *output_path*, or return it unchanged."""
-        return await redirect_output(result, output_path, self.writer)
+        return await redirect_output(result, output_path, self.sink)
 
 
 @dataclass(slots=True, frozen=True)
 class RedirectingPathTool[T](AsyncPathTool[T | RedirectedOutput], ABC):
     """A workspace path tool whose result may be written out instead of returned."""
 
-    writer: WriteDocumentTool | None = field(default=None, kw_only=True)
+    sink: OutputSink | None = field(default=None, kw_only=True)
 
     async def redirect(
         self, result: ToolOutput[T], output_path: str | None
     ) -> ToolOutput[T | RedirectedOutput]:
         """Write *result* to *output_path*, or return it unchanged."""
-        return await redirect_output(result, output_path, self.writer)
+        return await redirect_output(result, output_path, self.sink)

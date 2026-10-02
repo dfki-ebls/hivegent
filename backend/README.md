@@ -435,13 +435,16 @@ A display budget never cuts the stored result, only what is printed, and a recei
 Only what the caller asked for bounds the data (`row_limit`, `max_results`, `max_chars`), while `max_formatted_chars` binds the text and says in a hint where it stopped.
 `read_document` had the same split and answers it the same way: `max_chars` is the read and bounds `DocumentRange.content`, `max_formatted_chars` is the display and names the line it stopped at so a follow-up `offset` resumes from what was actually shown.
 
-`output_path` is declared by each tool next to a `writer` field, the way `run_python` declares the one document its programs persist, rather than injected into every tool's schema by the framework adapter: where a result may land is a property of the tool as it was built for a run.
-The MCP surface hands out no writer, so it leaves the argument out of the signature it builds (`register_mcp_tools(..., omit=(OutputPathArg,))` via `ToolSpec.without`, which addresses the parameter by the shared `Annotated` alias rather than by a copy of its spelling).
+A receipt repeats a result whose text fits `settings.tools.redirect_inline_chars` (2000 by default, `0` always withholds).
+A model that redirected a three-entry listing for no reason was told only "3 entries" and concluded a directory was empty, and withholding a result that short saves nothing a misreading does not cost back.
+
+`output_path` is declared by each tool next to a `sink` field (an `OutputSink`, the writer plus the inline threshold), the way `run_python` declares a writer for the one document its programs persist, rather than injected into every tool's schema by the framework adapter: where a result may land is a property of the tool as it was built for a run.
+The MCP surface hands out no sink, so it leaves the argument out of the signature it builds (`register_mcp_tools(..., omit=(OutputPathArg,))` via `ToolSpec.without`, which addresses the parameter by the shared `Annotated` alias rather than by a copy of its spelling).
 That is not schema surgery: all three surfaces synthesize a signature rather than edit one, so leaving an argument out is the same act as putting one in.
 Dropping the argument drops the `RedirectedOutput` branch with it, read off the alias's own `Unreachable` metadata rather than named a second time at each call site.
 A read or plan mode still advertises it and refuses at call time, deliberately, since there the argument is dead for this run and live for the next one, which a schema fixed at registration cannot express.
 
-The write is the same one the write tools perform, so it answers to the same gate (`agents/tools/write.py` owns `output_sink` and both validators, which share one `_gate_declared_write`): read and plan modes refuse it, an interactive call asks for approval unless the path lands in `.scratch/`, write mode approves it.
+The write is the same one the write tools perform, so it answers to the same gate (`agents/tools/write.py` owns `output_sink`, `output_writer`, and both validators, which share one `_gate_declared_write`): read and plan modes refuse it, an interactive call asks for approval unless the path lands in `.scratch/`, write mode approves it.
 What a redirect is worth saying about is a paragraph, and a paragraph restated in eight tool schemas costs more context on every request than the feature saves, so the argument's description states only the mechanism and `REDIRECT_INSTRUCTIONS` carries the rest once, shared between the `explore` and `web` features and composed only in a mode that can write.
 
 ## The Python sandbox

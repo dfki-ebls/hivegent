@@ -38,7 +38,7 @@ def _web_search(deps: UserDeps) -> WebSearch:
         client=get_web_http_client(),
         language=settings.network.websearch_language,
         user_agent=_user_agent,
-        writer=output_sink(deps),
+        sink=output_sink(deps),
     )
 
 
@@ -46,7 +46,7 @@ def _web_fetch(deps: UserDeps) -> WebFetch:
     network = settings.network
     return WebFetch(
         client=get_web_http_client(),
-        writer=output_sink(deps),
+        sink=output_sink(deps),
         timeout_seconds=network.webfetch_timeout_seconds,
         max_response_bytes=network.webfetch_max_response_bytes,
         max_chars=network.webfetch_max_chars,
