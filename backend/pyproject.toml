@@ -88,6 +88,9 @@ ignore_no_config = true
 [tool.pytest]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# docling's own pipeline cache key serializes its options, deprecated computed
+# fields included, so `force_full_page_ocr` warns although nothing here sets it.
+filterwarnings = ["ignore:`force_full_page_ocr` is deprecated:DeprecationWarning"]
 
 [tool.ruff.lint.flake8-bugbear]
 # FastMCP declares dependencies through call expressions in argument defaults;
