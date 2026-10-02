@@ -236,9 +236,9 @@ class TestListDocumentsTool:
 
         assert empty.data == []
         assert empty.formatted == (
-            "(no documents under '~/doc.assets', 1 hidden entry (`.assets` "
+            "(no documents under '~/doc.assets')\n\n[1 hidden entry (`.assets` "
             "contents and common build/vendor directories), pass "
-            "include_ignored=True to reveal them)"
+            "include_ignored=True to reveal them]"
         )
 
     async def test_custom_glob(self, tmp_path: Path) -> None:
@@ -403,6 +403,20 @@ class TestListDocumentsTool:
         assert (
             await tool(max_depth=None, include_ignored=True)
         ).formatted != result.formatted
+
+    async def test_a_listing_names_what_it_left_out(self, tmp_path: Path) -> None:
+        (tmp_path / "doc.md").write_text("x")
+        (tmp_path / "doc.assets").mkdir()
+        (tmp_path / "doc.assets" / "a.png").write_bytes(b"x")
+        tool = ListDocumentsTool(paths=tmp_path)
+
+        tree = (await tool(flatten=False, max_depth=3)).text
+        deep = (await tool(include_ignored=True)).text
+        capped = (await tool(max_results=1)).text
+
+        assert "1 hidden entry" in tree
+        assert "1 entry below max_depth=1" in deep
+        assert "reached max_results=1" in capped
 
     async def test_tree_single_level(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("hello")
@@ -1409,10 +1423,23 @@ class TestGrepSearch:
         (assets / "fig1.txt").write_text("needle\n")
         hidden = await GrepTool(paths=tmp_path)("needle")
         assert hidden.data == []
+        assert "1 hidden entry" in hidden.text
         revealed = await returned(
             GrepTool(paths=tmp_path)("needle", include_ignored=True)
         )
         assert self._filenames(revealed.data) == {"doc.assets/fig1.txt"}
+
+    async def test_a_capped_result_says_how_many_it_left_out(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a.md").write_text("needle\n")
+        (tmp_path / "b.md").write_text("needle\n")
+
+        result = await GrepTool(paths=tmp_path)(
+            "needle", max_results=1, output_mode="files_with_matches"
+        )
+
+        assert "showing 1 of 2" in result.text
 
     async def test_parent_glob_cannot_search_outside_workspace(
         self, tmp_path: Path
@@ -1454,7 +1481,7 @@ class TestGrepFormatting:
                 GrepLine(line_number=11, text="hit", is_match=True),
             ),
         )
-        formatted = tool._format_matches([block])
+        formatted, _hints = tool._format_matches([block])
         assert formatted == "doc.md\n10-ctx\n11:hit"
 
     def test_oversized_block_truncates_instead_of_dropping(
@@ -1463,31 +1490,31 @@ class TestGrepFormatting:
         # A single merged block larger than the budget must still show its
         # leading lines (truncated), never just a heading with no content.
         tool = GrepTool(paths=tmp_path, max_formatted_chars=40)
-        formatted = tool._format_matches([self._block(50)])
+        formatted, hints = tool._format_matches([self._block(50)])
         shown = formatted.count(":x")
         assert 0 < shown < 50
         assert formatted.startswith("f.md\n1:x")
         assert not formatted.startswith("\n---\n")
-        assert f"({50 - shown} of 50 lines omitted" in formatted
+        assert hints[0].startswith(f"{50 - shown} of 50 lines omitted")
 
     def test_fully_shown_has_no_omitted_notice(self, tmp_path: Path) -> None:
         tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
-        formatted = tool._format_matches([self._block(3)])
+        formatted, hints = tool._format_matches([self._block(3)])
         assert formatted == "f.md\n1:x\n2:x\n3:x"
-        assert "omitted" not in formatted
+        assert hints == []
 
     def test_blocks_within_document_separated_by_dashes(self, tmp_path: Path) -> None:
         tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
-        formatted = tool._format_matches([self._block(1), self._block(1)])
+        formatted, _hints = tool._format_matches([self._block(1), self._block(1)])
         assert formatted == "f.md\n1:x\n--\n1:x"
 
     async def test_separate_documents_joined_by_separator(self, tmp_path: Path) -> None:
         tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
-        formatted = tool._format_matches(
+        formatted, hints = tool._format_matches(
             [self._block(1, "a.md"), self._block(1, "b.md")]
         )
         assert formatted == "a.md\n1:x\n---\nb.md\n1:x"
-        assert "omitted" not in formatted
+        assert hints == []
 
 
 def _recording_python_tool(

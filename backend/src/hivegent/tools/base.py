@@ -65,6 +65,7 @@ __all__ = [
     "canonical_local_path",
     "check_read_budget",
     "coerce_paths",
+    "entry_ignored",
     "entry_stat",
     "entry_visible",
     "excluded_dirs",
@@ -341,21 +342,30 @@ def is_in_excluded_dir(rel_path: str, exclude_dirs: tuple[str, ...]) -> bool:
     return any(excluded in parts for excluded in exclude_dirs)
 
 
-def entry_visible(sp: SearchPath, rel_path: str, exclude_dirs: tuple[str, ...]) -> bool:
-    """Whether the entry at *rel_path* may be shown for search path *sp*.
+def entry_ignored(rel_path: str, exclude_dirs: tuple[str, ...]) -> bool:
+    """Whether *rel_path* is hidden by default, which ``include_ignored`` reveals.
 
     The one definition of what a path tool hides by default, shared by the
     listing walk and the grep post-filter so ``include_ignored`` means the same
     thing in both.  Elements of ``.assets`` payload directories are hidden with
     the build and vendor directories: a single converted document can carry
     hundreds of extracted images, and only the directory itself is worth
-    listing.  The search path's own filter always applies.
+    listing.
     """
-    if is_in_excluded_dir(rel_path, exclude_dirs):
-        return False
-    if exclude_dirs and is_inside_assets_dir(rel_path):
-        return False
-    return file_allowed(sp.filter_func, rel_path)
+    return is_in_excluded_dir(rel_path, exclude_dirs) or bool(
+        exclude_dirs and is_inside_assets_dir(rel_path)
+    )
+
+
+def entry_visible(sp: SearchPath, rel_path: str, exclude_dirs: tuple[str, ...]) -> bool:
+    """Whether the entry at *rel_path* may be shown for search path *sp*.
+
+    Not :func:`entry_ignored`, and allowed by the search path's own filter,
+    which always applies.
+    """
+    return not entry_ignored(rel_path, exclude_dirs) and file_allowed(
+        sp.filter_func, rel_path
+    )
 
 
 def check_read_budget(canonical: str, size: int, limit: int) -> None:

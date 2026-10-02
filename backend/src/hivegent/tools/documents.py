@@ -23,9 +23,10 @@ from .base import (
     SearchPath,
     ToolOutput,
     ToolRetry,
+    entry_ignored,
     entry_stat,
-    entry_visible,
     excluded_dirs,
+    file_allowed,
     missing_directory_retry,
     query_hint,
     read_text_or_retry,
@@ -34,7 +35,7 @@ from .base import (
     scope_paths,
     sidecar_hint,
 )
-from .formatting import cap_lines, hint_suffix, iter_annotated
+from .formatting import cap_lines, hint_suffix, iter_annotated, omission_hints
 from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
 
 __all__ = [
@@ -68,24 +69,6 @@ def _humanize_size(n: int) -> str:
             return f"{value:.0f}{unit}" if value == int(value) else f"{value:.1f}{unit}"
         value /= 1024
     return f"{value:.1f}{_SIZE_UNITS[-1]}"
-
-
-def _ignored_hint(hidden_count: int) -> str:
-    """Nudge toward ``include_ignored`` when hidden entries exist.
-
-    Appended to empty-result messages so a caller who sees nothing knows
-    whether the scope is genuinely empty or just filtered.  *hidden_count*
-    is how many entries (``.assets`` contents and build/vendor directories)
-    the ``include_ignored`` flag would expose; the hint is suppressed when
-    nothing is hidden.
-    """
-    if hidden_count <= 0:
-        return ""
-    noun = pluralize(hidden_count, "entry", "entries")
-    return (
-        f", {hidden_count} hidden {noun} (`.assets` contents and common "
-        "build/vendor directories), pass include_ignored=True to reveal them"
-    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -234,10 +217,8 @@ def _scoped_directory(
     return scoped, roots, canonical
 
 
-def _empty_message(
-    noun: str, paths: tuple[SearchPath, ...], subdir: str | None, hidden: int
-) -> str:
-    """Render an empty result: what the call covered, and what it hid.
+def _empty_message(noun: str, paths: tuple[SearchPath, ...], subdir: str | None) -> str:
+    """Render an empty result as what the call covered.
 
     A bare ``(no documents)`` reads as an empty workspace whatever the call
     actually covered, so the scope is named in the grammar a path argument
@@ -252,21 +233,20 @@ def _empty_message(
     else:
         location = " in accessible workspaces"
 
-    return f"({noun}{location}{_ignored_hint(hidden)})"
+    return f"({noun}{location})"
 
 
 def _walk_entries(
     roots: tuple[tuple[SearchPath, Path], ...],
     base_glob: str | None,
-    exclude_dirs: tuple[str, ...],
     *,
     include_dirs: bool,
 ) -> Iterator[tuple[SearchPath, str, stat_result]]:
     """Walk pre-resolved roots yielding ``(sp, relative, stat)`` tuples.
 
-    Applies ``base_glob``, the excluded-dir filter, and the search path's own
-    ``filter_func``.  Callers handle sorting, capping, and any additional
-    filters (depth, fnmatch).
+    Applies ``base_glob`` and the search path's own ``filter_func``.  Callers
+    handle capping and any additional filters (depth, fnmatch, and the
+    default exclusions, which they count rather than drop unseen).
 
     Roots arrive folded and containment-checked from :func:`_scoped_directory`,
     so a directory argument is resolved once for the whole call rather than
@@ -291,7 +271,7 @@ def _walk_entries(
             if not is_dir and not S_ISREG(st.st_mode):
                 continue
             rel = str(absolute.relative_to(sp.path).as_posix())
-            if not entry_visible(sp, rel, exclude_dirs):
+            if not file_allowed(sp.filter_func, rel):
                 continue
             yield sp, rel, st
 
@@ -303,12 +283,21 @@ def _scan_entries(
     max_depth: int | None,
     max_results: int,
     exclude_dirs: tuple[str, ...],
-) -> list[DocumentSummary]:
-    """Collect matching file and directory entries from the walked roots."""
+) -> tuple[list[DocumentSummary], list[str]]:
+    """Collect file and directory entries, with hints naming what was left out."""
     results: list[DocumentSummary] = []
-    for sp, rel, st in _walk_entries(roots, base_glob, exclude_dirs, include_dirs=True):
+    hidden = deeper = 0
+    for sp, rel, st in _walk_entries(roots, base_glob, include_dirs=True):
+        ignored = entry_ignored(rel, exclude_dirs)
+
         if max_depth is not None and _relative_depth(rel, subdir) > max_depth:
+            deeper += not ignored
             continue
+
+        if ignored:
+            hidden += 1
+            continue
+
         is_dir = S_ISDIR(st.st_mode)
         results.append(
             DocumentSummary(
@@ -318,9 +307,17 @@ def _scan_entries(
                 is_directory=is_dir,
             )
         )
+
         if len(results) >= max_results:
             break
-    return results
+
+    return results, omission_hints(
+        hidden=hidden,
+        deeper=deeper,
+        max_depth=max_depth,
+        max_results=max_results,
+        shown=len(results),
+    )
 
 
 def _glob_entries(
@@ -329,8 +326,8 @@ def _glob_entries(
     pattern: str,
     max_results: int,
     exclude_dirs: tuple[str, ...],
-) -> list[str]:
-    """Find files matching *pattern* across the walked roots.
+) -> tuple[list[str], list[str]]:
+    """Find files matching *pattern*, with hints naming what was left out.
 
     *pattern* is a path argument matched against canonically named entries, so
     it is folded here rather than at the call sites: unlike a scoped subdirectory
@@ -342,14 +339,23 @@ def _glob_entries(
     effective_glob = pattern if base_glob is None else base_glob
     skip_fnmatch = base_glob is None
     results: list[str] = []
-    for sp, rel, _st in _walk_entries(
-        roots, effective_glob, exclude_dirs, include_dirs=False
-    ):
-        if skip_fnmatch or fnmatch(rel, pattern):
-            results.append(sp.prefixed(rel))
-            if len(results) >= max_results:
-                break
-    return results
+    hidden = 0
+    for sp, rel, _st in _walk_entries(roots, effective_glob, include_dirs=False):
+        if not (skip_fnmatch or fnmatch(rel, pattern)):
+            continue
+
+        if entry_ignored(rel, exclude_dirs):
+            hidden += 1
+            continue
+
+        results.append(sp.prefixed(rel))
+
+        if len(results) >= max_results:
+            break
+
+    return results, omission_hints(
+        hidden=hidden, max_results=max_results, shown=len(results)
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -460,20 +466,22 @@ class ListDocumentsTool(RedirectingPathTool[list[DocumentSummary] | DocumentTree
         include_ignored: bool,
     ) -> ToolOutput[list[DocumentSummary] | DocumentTreeNode]:
         """Scan the workspace and render it flat or as a tree."""
-        exclude = excluded_dirs(include_ignored)
         paths, roots, subdir = _scoped_directory(self.resolved_paths, path)
-        entries = _scan_entries(
-            roots, self.glob, subdir, max_depth, max_results, exclude
+        entries, hints = _scan_entries(
+            roots,
+            self.glob,
+            subdir,
+            max_depth,
+            max_results,
+            excluded_dirs(include_ignored),
         )
+        note = hint_suffix(hints)
 
         if flatten:
             if not entries:
-                hidden = self._hidden_count(
-                    roots, subdir, max_depth, max_results, include_ignored
-                )
                 return ToolOutput(
                     data=entries,
-                    formatted=_empty_message("no documents", paths, subdir, hidden),
+                    formatted=_empty_message("no documents", paths, subdir) + note,
                 )
             lines: list[str] = []
             for d in entries:
@@ -484,17 +492,14 @@ class ListDocumentsTool(RedirectingPathTool[list[DocumentSummary] | DocumentTree
                 lines.append(
                     f"{kind} {date}  {_humanize_size(d.size):>6}  {d.filename}"
                 )
-            return ToolOutput(data=entries, formatted="\n".join(lines))
+            return ToolOutput(data=entries, formatted="\n".join(lines) + note)
 
         root = _build_document_tree(entries)
         tree_lines = _format_document_tree(root)
         if not tree_lines:
-            hidden = self._hidden_count(
-                roots, subdir, max_depth, max_results, include_ignored
-            )
             return ToolOutput(
                 data=root,
-                formatted=_empty_message("empty tree", paths, subdir, hidden),
+                formatted=_empty_message("empty tree", paths, subdir) + note,
             )
 
         dir_count = sum(1 for e in entries if e.is_directory)
@@ -504,25 +509,7 @@ class ListDocumentsTool(RedirectingPathTool[list[DocumentSummary] | DocumentTree
             f"{dir_count} {pluralize(dir_count, 'directory', 'directories')}, "
             f"{file_count} {pluralize(file_count, 'file', 'files')}"
         )
-        return ToolOutput(data=root, formatted="\n".join(tree_lines))
-
-    def _hidden_count(
-        self,
-        roots: tuple[tuple[SearchPath, Path], ...],
-        subdir: str | None,
-        max_depth: DocumentMaxDepthArg,
-        max_results: int,
-        include_ignored: bool,
-    ) -> int:
-        """Count entries an unfiltered scan would expose, for the empty hint.
-
-        Only meaningful when the filtered scan came back empty: every entry
-        an exclusion-free scan finds is one the default filter hid.  Returns
-        0 when *include_ignored* is set, since nothing is being hidden.
-        """
-        if include_ignored:
-            return 0
-        return len(_scan_entries(roots, self.glob, subdir, max_depth, max_results, ()))
+        return ToolOutput(data=root, formatted="\n".join(tree_lines) + note)
 
 
 @dataclass(slots=True, frozen=True)
@@ -561,21 +548,14 @@ class GlobDocumentsTool(RedirectingPathTool[list[str]]):
         max_results: int,
         include_ignored: bool,
     ) -> ToolOutput[list[str]]:
-        """Match filenames against *pattern*, reporting what was hidden."""
+        """Match filenames against *pattern*, reporting what was left out."""
         paths, roots, subdir = _scoped_directory(self.resolved_paths, path)
-        results = _glob_entries(
+        results, hints = _glob_entries(
             roots, self.glob, pattern, max_results, excluded_dirs(include_ignored)
         )
-        if results:
-            return ToolOutput(data=results, formatted="\n".join(results))
-        hidden = (
-            0
-            if include_ignored
-            else len(_glob_entries(roots, self.glob, pattern, max_results, ()))
-        )
-        return ToolOutput(
-            data=results, formatted=_empty_message("no matches", paths, subdir, hidden)
-        )
+        body = "\n".join(results) or _empty_message("no matches", paths, subdir)
+
+        return ToolOutput(data=results, formatted=body + hint_suffix(hints))
 
 
 @dataclass(slots=True, frozen=True)

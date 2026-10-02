@@ -19,11 +19,20 @@ from .base import (
     SearchPath,
     ToolOutput,
     ToolRetry,
-    entry_visible,
+    entry_ignored,
     excluded_dirs,
+    file_allowed,
     sidecar_hint,
 )
-from .formatting import BLOCK_SEP, GROUP_SEP, cap_lines, number_line, truncate_line
+from .formatting import (
+    BLOCK_SEP,
+    GROUP_SEP,
+    cap_lines,
+    hint_suffix,
+    number_line,
+    omission_hints,
+    truncate_line,
+)
 from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
 
 __all__ = [
@@ -179,16 +188,21 @@ async def _search_path(
     case_sensitive: bool,
     literal: bool,
     exclude_dirs: tuple[str, ...],
-) -> list[GrepMatch]:
-    """Run ripgrep against a single search path.
+) -> tuple[list[GrepMatch], int]:
+    """Run ripgrep against a single search path, counting the matches it hid.
 
     One run per workspace, each anchored in its own root, so an unprefixed
     ``reports/*.txt`` names that subdirectory of every workspace the call
     spans, which is what a glob without a scope prefix promises, while a
     prefixed one has already narrowed the paths to the workspace it names.
+
+    The hidden count covers what the post-filter drops, ``.assets`` contents
+    above all, and not the build and vendor directories ripgrep never enters,
+    so it is a floor: worth saying that ``include_ignored`` reveals more, not
+    exactly how much.
     """
     if not sp.path.exists():
-        return []
+        return [], 0
     try:
         rg_matches = await rg_search(
             pattern,
@@ -203,14 +217,21 @@ async def _search_path(
         logger.warning(
             "Grep failed for pattern %r in %s", pattern, sp.path, exc_info=True
         )
-        return []
+        return [], 0
 
     matches: list[GrepMatch] = []
+    hidden = 0
     for rg_match in rg_matches:
         # ripgrep runs inside the root, so what it reports is already local.
         filename = rg_match.path
-        if not entry_visible(sp, filename, exclude_dirs):
+
+        if not file_allowed(sp.filter_func, filename):
             continue
+
+        if entry_ignored(filename, exclude_dirs):
+            hidden += 1
+            continue
+
         matches.append(
             GrepMatch(
                 filename=sp.prefixed(filename),
@@ -224,7 +245,8 @@ async def _search_path(
                 ),
             )
         )
-    return matches
+
+    return matches, hidden
 
 
 @dataclass(slots=True, frozen=True)
@@ -290,16 +312,20 @@ class GrepTool(RedirectingPathTool[list[GrepMatch]]):
                 for sp in paths
             )
         )
-        all_matches = _drop_shadowed_originals([m for batch in results for m in batch])
+        all_matches = _drop_shadowed_originals(
+            [m for batch, _hidden in results for m in batch]
+        )
+        hidden = sum(hidden for _batch, hidden in results)
 
         return await self.redirect(
-            self._render(all_matches, output_mode, max_results, full_lines),
+            self._render(all_matches, hidden, output_mode, max_results, full_lines),
             output_path,
         )
 
     def _render(
         self,
         all_matches: list[GrepMatch],
+        hidden: int,
         output_mode: GrepOutputMode,
         max_results: int,
         full_lines: bool,
@@ -310,27 +336,38 @@ class GrepTool(RedirectingPathTool[list[GrepMatch]]):
         every match; the content mode caps both, since a match the text never
         showed still carries its lines and the frontend cites what it is given.
         """
-        if not all_matches:
-            return ToolOutput(data=all_matches, formatted="(no matches)")
-        if output_mode == "files_with_matches":
-            filenames = sorted({m.filename for m in all_matches})[:max_results]
-            return ToolOutput(data=all_matches, formatted="\n".join(filenames))
-        if output_mode == "count":
+        if output_mode == "content":
+            data = all_matches[:max_results]
+            body, budget_hints = self._format_matches(data, full_lines)
+            total = len(all_matches)
+        else:
+            data = all_matches
             counts: dict[str, int] = {}
             for m in all_matches:
                 counts[m.filename] = counts.get(m.filename, 0) + sum(
                     1 for line in m.lines if line.is_match
                 )
-            lines = [f"{fn}: {n}" for fn, n in sorted(counts.items())[:max_results]]
-            return ToolOutput(data=all_matches, formatted="\n".join(lines))
-        capped = all_matches[:max_results]
+            listed = sorted(counts.items())[:max_results]
+            body = "\n".join(
+                fn if output_mode == "files_with_matches" else f"{fn}: {n}"
+                for fn, n in listed
+            )
+            budget_hints = []
+            total = len(counts)
+
+        hints = (
+            omission_hints(hidden=hidden, max_results=max_results, total=total)
+            + budget_hints
+        )
+
         return ToolOutput(
-            data=capped, formatted=self._format_matches(capped, full_lines)
+            data=data, formatted=(body or "(no matches)") + hint_suffix(hints)
         )
 
     def _format_matches(
         self, matches: list[GrepMatch], full_lines: bool = False
-    ) -> str:
+    ) -> tuple[str, list[str]]:
+        """Render *matches* under the output budget, with a hint for what it cut."""
         # Budget at the line level rather than the block level: ripgrep can
         # merge many nearby hits into one block whose formatted form dwarfs
         # the budget, and dropping it whole would print nothing but a notice.
@@ -339,13 +376,16 @@ class GrepTool(RedirectingPathTool[list[GrepMatch]]):
         body, omitted = cap_lines(
             self._iter_lines(matches, line_cap), self.max_formatted_chars, ""
         )
+
         if not omitted:
-            return body
-        notice = (
-            f"({omitted} of {total_lines} lines omitted, "
-            f"reduce context or narrow the pattern/glob)"
-        )
-        return f"{body}{BLOCK_SEP}{notice}"
+            return body, []
+
+        return body, [
+            (
+                f"{omitted} of {total_lines} lines omitted, "
+                "reduce context or narrow the pattern/glob"
+            )
+        ]
 
     def _iter_lines(
         self, matches: list[GrepMatch], max_line_chars: int | None

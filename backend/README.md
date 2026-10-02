@@ -437,6 +437,8 @@ Only what the caller asked for bounds the data (`row_limit`, `max_results`, `max
 
 A receipt repeats a result whose text fits `settings.tools.redirect_inline_chars` (2000 by default, `0` always withholds).
 A model that redirected a three-entry listing for no reason was told only "3 entries" and concluded a directory was empty, and withholding a result that short saves nothing a misreading does not cost back.
+The listing itself had hidden the answer too, so `list_documents`, `glob_documents`, and `grep` now name what they left out on every result, not just an empty one, through one `omission_hints` in `tools/formatting.py`: entries `include_ignored` would reveal, entries below `max_depth`, and the `max_results` cap.
+Each count is what changing that one argument would reveal, and grep's hidden count is a floor, since ripgrep never enters the build and vendor directories it was told to skip.
 
 `output_path` is declared by each tool next to a `sink` field (an `OutputSink`, the writer plus the inline threshold), the way `run_python` declares a writer for the one document its programs persist, rather than injected into every tool's schema by the framework adapter: where a result may land is a property of the tool as it was built for a run.
 The MCP surface hands out no sink, so it leaves the argument out of the signature it builds (`register_mcp_tools(..., omit=(OutputPathArg,))` via `ToolSpec.without`, which addresses the parameter by the shared `Annotated` alias rather than by a copy of its spelling).

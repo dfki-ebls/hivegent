@@ -6,6 +6,8 @@ wherever text is assembled for a model to read.
 
 from collections.abc import Iterable, Iterator, Sequence
 
+from ..humanize import pluralize
+
 __all__ = [
     "BLOCK_SEP",
     "GROUP_SEP",
@@ -14,6 +16,7 @@ __all__ = [
     "hint_suffix",
     "iter_annotated",
     "number_line",
+    "omission_hints",
     "truncate_block",
     "truncate_line",
     "truncate_middle",
@@ -167,6 +170,55 @@ def hint_suffix(hints: Sequence[str]) -> str:
     ''
     """
     return f"\n\n[{'; '.join(hints)}]" if hints else ""
+
+
+def omission_hints(
+    *,
+    hidden: int = 0,
+    deeper: int = 0,
+    max_depth: int | None = None,
+    max_results: int | None = None,
+    shown: int = 0,
+    total: int | None = None,
+) -> list[str]:
+    """Say what a search or listing left out, so a short result is not read as all.
+
+    Each hint is what changing one argument would reveal: *hidden* entries
+    ``include_ignored`` would expose, *deeper* ones a larger *max_depth* would,
+    and the rest past *max_results*.  A call that knows its *total* says how
+    many there are, and one that stopped walking once *shown* reached the cap
+    can only say there may be more.  Render them with :func:`hint_suffix`.
+
+    >>> omission_hints(hidden=1, max_results=5, total=9)
+    ['1 hidden entry (`.assets` contents and common build/vendor directories), pass include_ignored=True to reveal them', 'showing 5 of 9, raise max_results to see more']
+    >>> omission_hints(max_results=5, shown=5)
+    ['reached max_results=5, there may be more']
+    """
+    hints: list[str] = []
+
+    if hidden:
+        noun = pluralize(hidden, "entry", "entries")
+        hints.append(
+            f"{hidden} hidden {noun} (`.assets` contents and common build/vendor "
+            "directories), pass include_ignored=True to reveal them"
+        )
+
+    if deeper:
+        noun = pluralize(deeper, "entry", "entries")
+        hints.append(
+            f"{deeper} {noun} below max_depth={max_depth}, raise it or pass a "
+            "directory as path to see them"
+        )
+
+    if max_results is None:
+        return hints
+
+    if total is not None and total > max_results:
+        hints.append(f"showing {max_results} of {total}, raise max_results to see more")
+    elif total is None and shown >= max_results:
+        hints.append(f"reached max_results={max_results}, there may be more")
+
+    return hints
 
 
 def iter_annotated(
