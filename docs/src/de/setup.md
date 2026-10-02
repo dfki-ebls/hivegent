@@ -69,6 +69,11 @@ Ein Eintrag erlaubt diese Domain und ihre Subdomains, eine leere Liste verweiger
 Diese Anfragen und alle vom Modell gesteuerten Web-Anfragen laufen durch den mitgelieferten Smokescreen-Proxy, der private und reservierte Ziele nach der DNS-Auflösung ablehnt.
 Vom Betreiber konfigurierte URLs wie `llm.base_url` bleiben direkt und vertrauenswürdig.
 
+Um einen Betreiber-Endpunkt über einen Unix-Socket statt über TCP zu erreichen, ordnen Sie seinen Hostnamen unter `[network.unix_sockets]` dem Socket-Pfad zu, zum Beispiel mit `HIVEGENT_NETWORK__UNIX_SOCKETS='{"llmhop": "/run/llmhop/default.sock"}'`.
+URLs wie `llm.base_url = "http://llmhop/v1"` bleiben dann gewöhnliche URLs, während die Verbindung zum Socket geht.
+Nur vom Betreiber konfigurierte URLs nutzen diese Zuordnung, eine von Benutzern angegebene URL mit demselben Hostnamen läuft also weiterhin über den Proxy.
+Das NixOS-Modul betreibt den Dienst mit der statischen Gruppe `hivegent`, sodass ein dieser Gruppe gehörender Socket mit Modus `0660` nur Hivegent zulässt.
+
 ## Identitätsanbieter (OIDC)
 
 Hivegent überlässt die Anmeldung einem OIDC-Anbieter und ist anbieterunabhängig.

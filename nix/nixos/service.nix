@@ -219,6 +219,11 @@ in
           }
         ];
 
+        # `DynamicUser` adopts a static group of the unit's name, which gives
+        # sockets listed in `settings.network.unix_sockets` a stable group to
+        # grant Hivegent alone access through (e.g. mode 0660, group hivegent).
+        users.groups.hivegent = { };
+
         services.hivegent.settings.data_dir = lib.mkDefault "/var/lib/hivegent";
         services.hivegent.settings.security.egress_proxy_url = lib.mkDefault egressProxy.url;
 

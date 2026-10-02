@@ -69,6 +69,11 @@ An entry permits that domain and its subdomains, an empty list denies every host
 These requests and all model-controlled web requests pass through the bundled Smokescreen proxy, which rejects private and reserved destinations after DNS resolution.
 Operator-configured URLs such as `llm.base_url` remain direct and trusted.
 
+To reach an operator endpoint over a unix socket instead of TCP, map its host name to the socket path under `[network.unix_sockets]`, for example `HIVEGENT_NETWORK__UNIX_SOCKETS='{"llmhop": "/run/llmhop/default.sock"}'`.
+URLs such as `llm.base_url = "http://llmhop/v1"` then stay plain while the connection goes to the socket.
+Only operator-configured URLs use this mapping, so a user-provided URL with the same host name still goes through the proxy.
+The NixOS module runs the service with the static group `hivegent`, so a socket owned by that group with mode `0660` admits Hivegent alone.
+
 ## Identity provider (OIDC)
 
 Hivegent delegates login to an OIDC provider and is provider-agnostic.

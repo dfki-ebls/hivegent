@@ -3,7 +3,8 @@
 Shared clients are opened by the FastAPI lifespan and re-used by outbound
 callers so connection pooling pays for itself.
 The user-policy and web clients use the SSRF-safe egress proxy, while the
-trusted client connects directly to operator-configured endpoints.
+trusted client connects directly to operator-configured endpoints, reaching
+the hosts in ``network.unix_sockets`` over their unix socket.
 The two proxied clients are separate because ``user_urls`` and ``web_urls``
 are independent policies, and pooling the web client is what keeps a research
 turn from paying a fresh CONNECT and TLS handshake per tool call.
@@ -35,6 +36,17 @@ _HttpClientKind = Literal["user", "trusted", "web"]
 _Clients = dict[_HttpClientKind, httpx2.AsyncClient]
 
 
+def _unix_socket_mounts() -> dict[str, httpx2.AsyncHTTPTransport]:
+    """Route every configured socket host through its unix socket.
+
+    Only the trusted client may mount these, since they bypass the egress proxy.
+    """
+    return {
+        f"all://{host}": httpx2.AsyncHTTPTransport(uds=str(path))
+        for host, path in settings.network.unix_sockets.items()
+    }
+
+
 @asynccontextmanager
 async def _open_clients() -> AsyncIterator[_Clients]:
     """Open one client per variant, keyed so they share one code path."""
@@ -55,6 +67,7 @@ async def _open_clients() -> AsyncIterator[_Clients]:
             timeout=timeout,
             headers=headers,
             trust_env=False,
+            mounts=_unix_socket_mounts(),
         ),
         # Redirects are followed for both web tools: every hop is checked
         # by the request hook and the egress proxy, so a search that lands

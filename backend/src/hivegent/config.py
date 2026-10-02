@@ -914,6 +914,11 @@ class NetworkSettings(BaseModel):
     questions reach a human); it falls back to the package author when
     unset.  The per-model-request timeout lives on ``LlmSettings``
     (``request_timeout_seconds``), not here.
+
+    ``unix_sockets`` maps host names to unix socket paths, so an operator
+    endpoint such as ``http://llmhop/v1`` keeps a plain URL while the trusted
+    client connects to the socket instead of resolving the host.  It never
+    applies to user-provided or web URLs.
     """
 
     connect_timeout_seconds: float = 5.0
@@ -925,6 +930,7 @@ class NetworkSettings(BaseModel):
     webfetch_max_redirects: int = 5
     websearch_language: str = "en"
     contact_email: str = ""
+    unix_sockets: dict[str, Path] = {}
 
 
 class Settings(BaseSettings):
