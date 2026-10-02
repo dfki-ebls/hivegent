@@ -72,7 +72,7 @@ Vom Betreiber konfigurierte URLs wie `llm.base_url` bleiben direkt und vertrauen
 Um einen Betreiber-Endpunkt über einen Unix-Socket statt über TCP zu erreichen, ordnen Sie seinen Hostnamen unter `[network.unix_sockets]` dem Socket-Pfad zu, zum Beispiel mit `HIVEGENT_NETWORK__UNIX_SOCKETS='{"llmhop": "/run/llmhop/default.sock"}'`.
 URLs wie `llm.base_url = "http://llmhop/v1"` bleiben dann gewöhnliche URLs, während die Verbindung zum Socket geht.
 Nur vom Betreiber konfigurierte URLs nutzen diese Zuordnung, eine von Benutzern angegebene URL mit demselben Hostnamen läuft also weiterhin über den Proxy.
-Das NixOS-Modul betreibt den Dienst mit der statischen Gruppe `hivegent`, sodass ein dieser Gruppe gehörender Socket mit Modus `0660` nur Hivegent zulässt.
+Das NixOS-Modul betreibt den Dienst mit einem dynamischen Benutzer. Geben Sie dem Socket daher eine eigene statische Gruppe mit Modus `0660`, die nicht `hivegent` heißt, da systemd diesen Namen für den dynamischen Benutzer reserviert, und fügen Sie diese Gruppe zu `systemd.services.hivegent.serviceConfig.SupplementaryGroups` hinzu.
 
 ## Identitätsanbieter (OIDC)
 
