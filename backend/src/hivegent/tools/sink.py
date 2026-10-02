@@ -53,6 +53,7 @@ type OutputFormat = Literal["json", "txt"]
 _FORMATS: dict[str, OutputFormat] = {".json": "json", ".txt": "txt"}
 """The suffixes a redirect accepts, mapped to the channel each one names."""
 
+
 @dataclass(slots=True, frozen=True)
 class OutputSink:
     """Where a redirect commits, and how much of a result it still shows.

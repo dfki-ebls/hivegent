@@ -1287,7 +1287,9 @@ class TestJqTool:
 
         (tmp_path / "big.json").write_text(json.dumps(list(range(100))))
         writer = WriteDocumentTool(paths=tmp_path, mutator=mutate)
-        tool = JqTool(paths=tmp_path, sink=OutputSink(writer, 0), max_formatted_chars=20)
+        tool = JqTool(
+            paths=tmp_path, sink=OutputSink(writer, 0), max_formatted_chars=20
+        )
 
         output = await tool("big.json", ".[]", output_path="result.json")
         stored = json.loads(written["result.json"])
