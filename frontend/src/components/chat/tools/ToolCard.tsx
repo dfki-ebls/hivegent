@@ -1,7 +1,7 @@
 import { type ComponentProps, type ReactNode, useState } from "react";
 import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
 import { ToolError, ToolParameters } from "@/components/ToolDisplay";
-import { parseJson, type ToolPart } from "@/lib/chat/tool-part";
+import { type ToolPart, toolInput } from "@/lib/chat/tool-part";
 import { snakeCaseToTitleCase } from "@/lib/utils";
 
 type CollapsibleProps = Pick<ComponentProps<typeof Tool>, "open" | "onOpenChange">;
@@ -21,7 +21,7 @@ interface ToolCardProps extends CollapsibleProps {
  */
 export function ToolCard({ toolName, part, title, children, open, onOpenChange }: ToolCardProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
-  const input = parseJson<Record<string, unknown>>(part.input);
+  const input = toolInput<Record<string, unknown>>(part);
 
   const awaitingApproval = state === "approval-requested";
   const [selfOpen, setSelfOpen] = useState(false);

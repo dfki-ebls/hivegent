@@ -58,6 +58,15 @@ export function parseJson<T>(value: unknown): T | undefined {
   return value as T;
 }
 
+/**
+ * Read a tool call's arguments in every state.
+ * A call rejected before it ran streams as ``tool-input-error``,
+ * which the AI SDK stores under ``rawInput`` and leaves ``input`` empty.
+ */
+export function toolInput<T>(part: { input?: unknown; rawInput?: unknown }): T | undefined {
+  return parseJson<T>(part.input ?? part.rawInput);
+}
+
 /** Check whether a message part is a ``data-tool-output`` DataUIPart. */
 export function isToolDataPart(
   part: unknown,
@@ -113,6 +122,7 @@ export function getToolPartInfo(
     toolCallId?: string;
     state?: ToolPart["state"];
     input?: unknown;
+    rawInput?: unknown;
     output?: unknown;
   };
   const toolName = getToolName(typed);
@@ -131,7 +141,7 @@ export function getToolPartInfo(
     toolName,
     toolCallId: typed.toolCallId,
     state: typed.state ?? "output-available",
-    input: parseJson<Record<string, unknown>>(typed.input),
+    input: toolInput<Record<string, unknown>>(typed),
     text,
     metadata,
     formatted: text,

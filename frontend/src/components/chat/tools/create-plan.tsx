@@ -9,7 +9,7 @@ import {
   PlanTrigger,
 } from "@/components/ai-elements/plan";
 import { Button } from "@/components/ui/button";
-import { parseJson, type ToolPart } from "@/lib/chat/tool-part";
+import { type ToolPart, toolInput } from "@/lib/chat/tool-part";
 
 interface CreatePlanToolProps {
   part: ToolPart;
@@ -18,7 +18,7 @@ interface CreatePlanToolProps {
 
 export function CreatePlanTool({ part, onExecutePlan }: CreatePlanToolProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
-  const input = parseJson<{ title?: string; description?: string; steps?: string[] }>(part.input);
+  const input = toolInput<{ title?: string; description?: string; steps?: string[] }>(part);
 
   return (
     <Plan defaultOpen isStreaming={state === "input-streaming"}>
