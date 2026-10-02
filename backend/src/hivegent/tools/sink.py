@@ -76,21 +76,23 @@ OutputPathArg = Annotated[
     str | None,
     Field(
         description=(
-            "Workspace path to write this call's result to instead of "
-            "returning it (`.json` structured, `.txt` text). You get back "
-            "only a receipt."
+            "Leave unset to get the result back. Set it only to write the "
+            "result to this file instead and get back just a receipt, never "
+            "to choose what the call reads. A full workspace path ending in "
+            "`.json` (structured result) or `.txt` (the text you would see), "
+            "such as `~/.scratch/result.json`."
         ),
     ),
     Unreachable(RedirectedOutput),
 ]
 """The redirect argument, worded for the several tools that each declare it.
 
-It says what the argument does and nothing about when to reach for it: that
-guidance is worth a paragraph, and a paragraph restated once per tool costs
-more context on every request than the redirect saves on the calls that use
-it.  The paragraph is ``REDIRECT_INSTRUCTIONS``, composed once for the whole
-run, which is also why the shared workspace-path hint is left off here — the
-prompt already carries it.
+It sits next to input arguments such as ``path``, so it opens by saying it is
+optional and where the result goes, and closes on a complete example path:
+a model that mistook it for an input, or guessed at its form, wasted a retry
+on each of the suffix and the scope prefix.  When to reach for it is worth a
+paragraph, which a per-tool restatement would cost on every request, so that
+stays in ``REDIRECT_INSTRUCTIONS``, composed once for the whole run.
 """
 
 
