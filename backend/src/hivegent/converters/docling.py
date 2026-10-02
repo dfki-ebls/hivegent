@@ -150,7 +150,8 @@ class DoclingConverterConfig(BaseModel):
 
     def __hash__(self) -> int:
         # Content hash so instances can key the ``_build_converter`` LRU cache.
-        return hash(self.model_dump_json())
+        # Computed fields are views over stored ones, and docling deprecates one.
+        return hash(self.model_dump_json(exclude_computed_fields=True))
 
 
 # Formats that use the threaded PDF pipeline options.
