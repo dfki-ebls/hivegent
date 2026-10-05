@@ -2,10 +2,8 @@ import type { ToolUIPart } from "ai";
 import type { ReactNode } from "react";
 import {
   Confirmation,
-  ConfirmationAccepted,
   ConfirmationAction,
   ConfirmationActions,
-  ConfirmationRejected,
   ConfirmationRequest,
 } from "@/components/ai-elements/confirmation";
 import { useToolApproval } from "@/hooks/chat/use-tool-approval";
@@ -22,6 +20,8 @@ interface ApprovalRequestProps {
 export function ApprovalRequest({ toolName, approval, state, children }: ApprovalRequestProps) {
   const { decide, blockedReason } = useToolApproval();
 
+  if (state !== "approval-requested" && approval.approved === undefined) return null;
+
   return (
     <Confirmation approval={approval} state={state}>
       <ConfirmationRequest>
@@ -31,12 +31,12 @@ export function ApprovalRequest({ toolName, approval, state, children }: Approva
           </span>
         )}
       </ConfirmationRequest>
-      <ConfirmationAccepted>
+      {state !== "approval-requested" && approval.approved === true && (
         <span className="text-sm text-green-700 dark:text-green-400">Approved</span>
-      </ConfirmationAccepted>
-      <ConfirmationRejected>
+      )}
+      {state !== "approval-requested" && approval.approved === false && (
         <span className="text-sm text-orange-700 dark:text-orange-400">Denied</span>
-      </ConfirmationRejected>
+      )}
       <ConfirmationActions>
         {blockedReason && (
           <span className="mr-auto text-xs text-muted-foreground">{blockedReason}</span>
