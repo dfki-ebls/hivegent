@@ -130,7 +130,9 @@ function Program({ code, scriptPath }: { code?: string; scriptPath?: string }) {
     );
   }
 
-  return null;
+  return (
+    <p className="text-muted-foreground">No Python code or script path was provided.</p>
+  );
 }
 
 /** A workspace path set inline in prose. */
