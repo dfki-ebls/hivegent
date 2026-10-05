@@ -11,21 +11,38 @@ lists.
 """
 
 from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_monty import ResourceLimits
 
 from ...config import settings
 from ...prompts import SANDBOX_API_INSTRUCTIONS, SANDBOX_TYPE_CHECK_INSTRUCTION
 from ...sandbox import get_monty_pool
-from ...tools.base import AsyncToolFactory, factory_tool_name, resolve_tool_cls
+from ...tools.base import (
+    AsyncToolFactory,
+    factory_tool_name,
+    resolve_tool_cls,
+    translate_tool_retry,
+)
 from ...tools.monty import MontySurface, monty_declarations, monty_surface
 from ...tools.pydantic_ai import register_agent_tool
-from ...tools.python import RunPythonTool
+from ...tools.python import (
+    CodeArg,
+    CommitPathArg,
+    PythonScriptPathArg,
+    RunPythonTool,
+    validate_program_source,
+)
 from ..common import UserDeps
 from .explore import EXPLORE_FACTORIES
 from .web import WEB_FACTORIES
 from .write import output_writer, validate_commit_path
 
-__all__ = ["INJECTABLE_TOOL_NAMES", "compute_toolset", "sandbox_api_instructions"]
+__all__ = [
+    "INJECTABLE_TOOL_NAMES",
+    "compute_toolset",
+    "sandbox_api_instructions",
+    "validate_run_python",
+]
 
 _limits: ResourceLimits = {
     "max_feed_duration_secs": settings.sandbox.max_duration_seconds,
@@ -132,6 +149,20 @@ def _run_python(deps: UserDeps) -> RunPythonTool:
 
 compute_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
+
+def validate_run_python(
+    ctx: RunContext[UserDeps],
+    code: CodeArg = None,
+    script_path: PythonScriptPathArg = None,
+    commit_path: CommitPathArg = None,
+) -> None:
+    """Reject invalid program sources before asking approval for their output."""
+    with translate_tool_retry(ModelRetry):
+        _ = validate_program_source(code, script_path)
+
+    validate_commit_path(ctx, commit_path=commit_path)
+
+
 # The sandbox names its destination rather than capturing a result, so it takes
 # the gate alone and not the redirect's suffix check — but the same gate, since
 # both persist a document on the model's say-so.
@@ -139,5 +170,5 @@ register_agent_tool(
     compute_toolset,
     UserDeps,
     _run_python,
-    args_validator=validate_commit_path,
+    args_validator=validate_run_python,
 )

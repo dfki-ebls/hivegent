@@ -204,10 +204,62 @@ def test_run_python_output_accepts_arbitrary_text_suffix(deps: UserDeps) -> None
 
     assert (
         compute_tools.compute_toolset.tools["run_python"].args_validator
-        is validate_commit_path
+        is compute_tools.validate_run_python
     )
     validate_commit_path(context, commit_path="~/result.csv")
     validate_commit_path(context, commit_path="~/report.md")
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ({}, "program is empty"),
+        ({"code": None, "script_path": None}, "program is empty"),
+        ({"code": "  ", "script_path": "\n"}, "program is empty"),
+        ({"code": "1", "script_path": "~/.scratch/run.py"}, "both given"),
+    ],
+)
+def test_invalid_program_is_refused_before_approval(
+    deps: UserDeps, arguments: dict[str, str | None], message: str
+) -> None:
+    """A destination alone must never ask the user to approve an empty run."""
+    tool = compute_tools.compute_toolset.tools["run_python"]
+    validated = tool.function_schema.validator.validate_python(
+        {**arguments, "commit_path": "~/rezepte.json"}
+    )
+    assert tool.args_validator is not None
+
+    with pytest.raises(ModelRetry, match=message):
+        tool.args_validator(_context(deps, "interactive"), **validated)
+
+
+@pytest.mark.parametrize(
+    ("code", "script_path"),
+    [
+        ("1 + 1", None),
+        (None, "~/.scratch/run.py"),
+        ("", "~/.scratch/run.py"),
+        ("1 + 1", " "),
+    ],
+)
+def test_valid_program_still_requires_output_approval(
+    deps: UserDeps, code: str | None, script_path: str | None
+) -> None:
+    """Either source reaches the write gate, including a blank unused field."""
+    with pytest.raises(ApprovalRequired):
+        compute_tools.validate_run_python(
+            _context(deps, "interactive"),
+            code=code,
+            script_path=script_path,
+            commit_path="~/report.md",
+        )
+
+    compute_tools.validate_run_python(
+        _context(deps, "interactive", approved=True),
+        code=code,
+        script_path=script_path,
+        commit_path="~/report.md",
+    )
 
 
 def test_scratch_writes_skip_approval_without_lifting_the_mode_gate(
