@@ -1,5 +1,5 @@
 import { CheckIcon, MessageSquare, PencilIcon, SparklesIcon, TrashIcon, XIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type Ref, useEffect, useState } from "react";
 import { buildAuxLlmConfig } from "@/lib/api";
 import { useConversationsStore } from "@/stores/conversations-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -145,7 +145,17 @@ function ConversationActions({
 
 // --- Conversation item ---
 
+// Centers the open conversation in its scrolling list once its row mounts.
+function centerInList(row: HTMLDivElement | null): void {
+  const list = row?.parentElement;
+  if (!row || !list) return;
+
+  const offset = row.getBoundingClientRect().top - list.getBoundingClientRect().top;
+  list.scrollTop += offset - (list.clientHeight - row.offsetHeight) / 2;
+}
+
 interface ConversationItemProps {
+  ref?: Ref<HTMLDivElement>;
   title: string;
   updatedAt: string;
   isActive: boolean;
@@ -156,6 +166,7 @@ interface ConversationItemProps {
 }
 
 function ConversationItem({
+  ref,
   title,
   updatedAt,
   isActive,
@@ -202,6 +213,7 @@ function ConversationItem({
 
   return (
     <div
+      ref={ref}
       className={`group flex w-full items-start gap-2 rounded-lg border p-3 transition-colors ${
         isActive
           ? "border-primary bg-primary/5"
@@ -329,6 +341,7 @@ export function ConversationsList({
           matches.map((conversation) => (
             <ConversationItem
               key={conversation.id}
+              ref={conversation.id === currentConversationId ? centerInList : undefined}
               title={conversation.title}
               updatedAt={conversation.updated_at}
               isActive={conversation.id === currentConversationId}
