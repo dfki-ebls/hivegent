@@ -73,7 +73,13 @@ class GrepMatch:
 
 GrepPatternArg = Annotated[
     str,
-    Field(description="Text or regular expression pattern to search for."),
+    Field(
+        description=(
+            "Text or regular expression pattern to search for. Write it in the "
+            "language the documents are likely written in, and retry in another "
+            "language (e.g. English or the user's) when nothing matches."
+        ),
+    ),
 ]
 GrepGlobArg = Annotated[
     str | None,

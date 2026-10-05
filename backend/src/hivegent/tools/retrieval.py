@@ -50,7 +50,13 @@ class SearchResult:
 
 SearchQueryArg = Annotated[
     str,
-    Field(description="Natural language search query."),
+    Field(
+        description=(
+            "Natural language search query. Phrase it in the language the "
+            "documents are likely written in, and retry in another language "
+            "(e.g. English or the user's) when results are poor."
+        ),
+    ),
 ]
 SearchMaxResultsArg = Annotated[
     int,
