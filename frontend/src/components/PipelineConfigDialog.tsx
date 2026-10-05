@@ -21,17 +21,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { type JsonSchema, SchemaForm } from "@/components/SchemaForm";
+import { isJsonSchema, SchemaForm } from "@/components/SchemaForm";
 import type { PipelineKind } from "@/lib/types";
-
-/** Type guard: check that a value looks like a JSON Schema with properties. */
-function isJsonSchema(v: unknown): v is JsonSchema {
-  return (
-    typeof v === "object" &&
-    v !== null &&
-    (!("properties" in v) || typeof (v as Record<string, unknown>).properties === "object")
-  );
-}
 
 interface PipelineConfigDialogProps {
   /** Pipeline display label (e.g. "Docling", "Token"). */

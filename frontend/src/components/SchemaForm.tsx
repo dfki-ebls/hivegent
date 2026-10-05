@@ -43,6 +43,15 @@ export interface JsonSchema {
   $defs?: Record<string, SchemaProperty>;
 }
 
+/** Whether a value looks like a JSON Schema whose properties the form can render. */
+export function isJsonSchema(value: unknown): value is JsonSchema {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (!("properties" in value) || typeof value.properties === "object")
+  );
+}
+
 interface SchemaFormProps {
   schema: JsonSchema;
   values: Record<string, unknown>;

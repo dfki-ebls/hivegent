@@ -16,7 +16,7 @@ import { listToolSchemas, runTool } from "@/lib/api";
 import type { ToolRunResult, ToolSchema } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
 import { selectIsAdmin, useSettingsStore } from "@/stores/settings-store";
-import { type JsonSchema, SchemaForm } from "@/components/SchemaForm";
+import { isJsonSchema, type JsonSchema, SchemaForm } from "@/components/SchemaForm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -147,7 +147,7 @@ export function ToolDebugConsole() {
     setSelected(name);
     setResult(null);
     setRunError(null);
-    setValues(tool ? defaultValues(tool.parameters as unknown as JsonSchema) : {});
+    setValues(tool && isJsonSchema(tool.parameters) ? defaultValues(tool.parameters) : {});
   }
 
   async function handleRun() {
@@ -223,11 +223,13 @@ export function ToolDebugConsole() {
                 )}
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
-                <SchemaForm
-                  schema={selectedTool.parameters as unknown as JsonSchema}
-                  values={values}
-                  onChange={setValues}
-                />
+                {isJsonSchema(selectedTool.parameters) && (
+                  <SchemaForm
+                    schema={selectedTool.parameters}
+                    values={values}
+                    onChange={setValues}
+                  />
+                )}
                 <Button className="self-start gap-2" onClick={handleRun} disabled={running}>
                   {running && <Spinner />}
                   {t(($) => $.run)}

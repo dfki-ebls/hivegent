@@ -11,7 +11,9 @@ import { getToolPartInfo, indexToolData, toolDisplayName } from "@/lib/chat/tool
  * must correlate by tool-call id rather than position.
  */
 describe("getToolPartInfo", () => {
-  const toolPart = (toolCallId: string, filePath: string) => ({
+  type Part = UIMessage["parts"][number];
+
+  const toolPart = (toolCallId: string, filePath: string): Part => ({
     type: "tool-read_document",
     toolCallId,
     state: "output-available",
@@ -19,7 +21,7 @@ describe("getToolPartInfo", () => {
     output: filePath,
   });
 
-  const dataPart = (id: string, content: string) => ({
+  const dataPart = (id: string, content: string): Part => ({
     type: "data-tool-output",
     id,
     data: { start_line: 1, end_line: 1, total_lines: 1, content },
@@ -40,7 +42,7 @@ describe("getToolPartInfo", () => {
       dataPart("call-c", "C"),
       dataPart("call-a", "A"),
       dataPart("call-b", "B"),
-    ] as unknown as UIMessage["parts"];
+    ];
 
     expect(contentOf(parts, 0)).toBe("A");
     expect(contentOf(parts, 1)).toBe("B");
@@ -48,7 +50,7 @@ describe("getToolPartInfo", () => {
   });
 
   it("returns null metadata when the data part has not streamed yet", () => {
-    const parts = [toolPart("call-a", "a.md")] as unknown as UIMessage["parts"];
+    const parts = [toolPart("call-a", "a.md")];
     expect(getToolPartInfo(parts[0], indexToolData(parts))?.metadata).toBeNull();
   });
 });
