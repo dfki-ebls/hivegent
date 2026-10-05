@@ -50,6 +50,7 @@ __all__ = [
     "PythonScriptPathArg",
     "RunPythonTool",
     "is_python_script",
+    "validate_program_source",
 ]
 
 
@@ -148,6 +149,25 @@ def _given(argument: str | None) -> str | None:
     'x = 1'
     """
     return argument if argument and argument.strip() else None
+
+
+def validate_program_source(
+    code: str | None, script_path: str | None
+) -> tuple[str | None, str | None]:
+    """Require one nonblank program source and return normalized arguments."""
+    code, script_path = _given(code), _given(script_path)
+
+    if code is not None and script_path is not None:
+        raise ToolRetry(
+            f"`code` and `script_path` were both given, and a call runs one "
+            f"program. Drop `code` to run the stored '{script_path}', or "
+            "drop `script_path` to run the inline program."
+        )
+
+    if code is None and script_path is None:
+        raise ToolRetry(f"The program is empty. Provide {_PROGRAM_SOURCES}")
+
+    return code, script_path
 
 
 def _default_limits() -> ResourceLimits:
@@ -400,24 +420,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         this settles is which source runs and which document the run was given
         permission to persist.
         """
-        # A blank string is a model spelling the argument it did not use, not
-        # a second program: folding it to absent is what keeps `code=""`
-        # alongside a `script_path` from reading as both, and what leaves an
-        # empty program answered by the emptiness rather than by the pairing.
-        code, script_path = _given(code), _given(script_path)
-        # Named apart from the empty case below, because the two are opposite
-        # mistakes and one sentence for both is read as the other: a model told
-        # to "provide one of" what it just provided both of goes looking for the
-        # fault in a third argument.
-        if code is not None and script_path is not None:
-            raise ToolRetry(
-                f"`code` and `script_path` were both given, and a call runs one "
-                f"program. Drop `code` to run the stored '{script_path}', or "
-                "drop `script_path` to run the inline program."
-            )
-
-        if code is None and script_path is None:
-            raise ToolRetry(f"The program is empty. Provide {_PROGRAM_SOURCES}")
+        code, script_path = validate_program_source(code, script_path)
 
         source, canonical_script = code or "", None
         if script_path is not None:
