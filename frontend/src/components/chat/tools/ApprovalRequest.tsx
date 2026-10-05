@@ -1,4 +1,5 @@
 import type { ToolUIPart } from "ai";
+import type { ReactNode } from "react";
 import {
   Confirmation,
   ConfirmationAccepted,
@@ -14,17 +15,21 @@ interface ApprovalRequestProps {
   toolName: string;
   approval: NonNullable<ToolUIPart["approval"]>;
   state: ToolUIPart["state"];
+  /** What the call is about to do, in place of the generic question. */
+  children?: ReactNode;
 }
 
-export function ApprovalRequest({ toolName, approval, state }: ApprovalRequestProps) {
+export function ApprovalRequest({ toolName, approval, state, children }: ApprovalRequestProps) {
   const { decide, blockedReason } = useToolApproval();
 
   return (
     <Confirmation approval={approval} state={state}>
       <ConfirmationRequest>
-        <span className="text-sm">
-          Allow the assistant to run <strong>{snakeCaseToTitleCase(toolName)}</strong>?
-        </span>
+        {children ?? (
+          <span className="text-sm">
+            Allow the assistant to run <strong>{snakeCaseToTitleCase(toolName)}</strong>?
+          </span>
+        )}
       </ConfirmationRequest>
       <ConfirmationAccepted>
         <span className="text-sm text-green-700 dark:text-green-400">Approved</span>

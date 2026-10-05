@@ -1,5 +1,7 @@
+import type { ToolUIPart } from "ai";
 import { type ComponentProps, type ReactNode, useState } from "react";
 import { Tool, ToolContent, ToolHeader } from "@/components/ai-elements/tool";
+import { ApprovalRequest } from "@/components/chat/tools/ApprovalRequest";
 import { ToolError, ToolParameters } from "@/components/ToolDisplay";
 import { type ToolPart, toolInput } from "@/lib/chat/tool-part";
 import { snakeCaseToTitleCase } from "@/lib/utils";
@@ -11,17 +13,31 @@ interface ToolCardProps extends CollapsibleProps {
   part: ToolPart;
   /** Override the header title; defaults to the title-cased tool name. */
   title?: string;
+  /** Present the call's input; defaults to the raw parameter list. */
+  parameters?: ReactNode;
+  /** What the call is about to do, in place of the generic approval question. */
+  approvalPrompt?: ReactNode;
   children?: ReactNode;
 }
 
 /**
- * Shared tool-call card for status, parameters, results, and approval expansion.
+ * Shared tool-call card for status, parameters, approval, and results.
  * Approval can arrive after mount, so the card opens when a decision is pending.
  * Pass `open` and `onOpenChange` to control tool-specific expansion.
  */
-export function ToolCard({ toolName, part, title, children, open, onOpenChange }: ToolCardProps) {
+export function ToolCard({
+  toolName,
+  part,
+  title,
+  parameters,
+  approvalPrompt,
+  children,
+  open,
+  onOpenChange,
+}: ToolCardProps) {
   const state: ToolPart["state"] = part.state ?? "output-available";
   const input = toolInput<Record<string, unknown>>(part);
+  const approval = "approval" in part ? (part as ToolUIPart).approval : undefined;
 
   const awaitingApproval = state === "approval-requested";
   const [selfOpen, setSelfOpen] = useState(false);
@@ -43,7 +59,12 @@ export function ToolCard({ toolName, part, title, children, open, onOpenChange }
         state={state}
       />
       <ToolContent>
-        {input && <ToolParameters params={input} />}
+        {parameters ?? (input && <ToolParameters params={input} />)}
+        {approval && (
+          <ApprovalRequest toolName={toolName} approval={approval} state={state}>
+            {approvalPrompt}
+          </ApprovalRequest>
+        )}
         {children}
         {state === "output-error" && part.errorText && <ToolError message={part.errorText} />}
       </ToolContent>
