@@ -22,6 +22,8 @@ import {
 
 interface MessageListProps {
   messages: ChatMessage[];
+  /** Stable React key of a message, which outlives its ID adoption. */
+  messageKey: (messageId: string) => string;
   status: ChatStatus;
   chatError: string | undefined;
   compactDisabled: boolean;
@@ -41,6 +43,7 @@ interface MessageListProps {
 
 export function MessageList({
   messages,
+  messageKey,
   status,
   chatError,
   compactDisabled,
@@ -94,7 +97,7 @@ export function MessageList({
             )}
             {messages.map((message, index) => (
               <MessageScrollerItem
-                key={message.id}
+                key={messageKey(message.id)}
                 messageId={message.id}
                 scrollAnchor={message.role === "user"}
               >

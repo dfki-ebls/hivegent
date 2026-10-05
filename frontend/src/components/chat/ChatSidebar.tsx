@@ -85,6 +85,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     status,
     error,
     clearError,
+    messageKey,
     setMessages,
     addToolApprovalResponse,
     stop,
@@ -345,6 +346,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
           <ToolApprovalProvider value={approvalGate}>
             <MessageList
               messages={messages}
+              messageKey={messageKey}
               status={status}
               chatError={visibleChatError}
               compactDisabled={compactDisabled}

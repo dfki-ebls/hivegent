@@ -13,6 +13,7 @@ import {
   adoptMessageNodeId,
   declineAbandonedApprovals,
   isChatBusy,
+  lastUserIndex,
 } from "@/lib/chat/chat-utils";
 import { API_BASE_URL } from "@/lib/health";
 import type { SubagentSteps, SubagentUpdate } from "@/lib/chat/subagent";
@@ -68,6 +69,9 @@ export function useHivegentChat(
   { draft, onConversationCreated, requestBody }: UseHivegentChatOptions = {},
 ) {
   const [turnIds] = useState(() => new TurnIds());
+  // Adopted node ID to the message's first ID. Rendering keys on the first one,
+  // since a remount on adoption makes the message scroller re-anchor.
+  const [renderKeys] = useState(() => new Map<string, string>());
 
   const transport = useMemo(
     () =>
@@ -147,7 +151,11 @@ export function useHivegentChat(
       // Swap the SDK's local ID for the node ID, so editing or retrying this
       // message forks the stored branch at it instead of appending to the end.
       if (messageId) {
-        chat.setMessages((messages) => adoptMessageNodeId(messages, messageId));
+        chat.setMessages((messages) => {
+          const localId = messages[lastUserIndex(messages)]?.id;
+          if (localId) renderKeys.set(messageId, renderKeys.get(localId) ?? localId);
+          return adoptMessageNodeId(messages, messageId);
+        });
       }
       // The server mirrors the turn to storage on every finish (clean,
       // errored, or stopped), so a minted ID always names a persisted
@@ -181,6 +189,18 @@ export function useHivegentChat(
   const messages = useMemo(() => declineAbandonedApprovals(chat.messages), [chat.messages]);
 
   const isStreaming = isChatBusy(chat.status);
+  const messageKey = useCallback(
+    (messageId: string) => renderKeys.get(messageId) ?? messageId,
+    [renderKeys],
+  );
 
-  return { ...chat, messages, sendUserMessage, regenerateTurn, isStreaming, subagentSteps };
+  return {
+    ...chat,
+    messages,
+    messageKey,
+    sendUserMessage,
+    regenerateTurn,
+    isStreaming,
+    subagentSteps,
+  };
 }

@@ -38,7 +38,7 @@ export function joinTextParts(parts: UIMessage["parts"] | undefined): string | u
  * Retry addresses it by id and `adoptMessageNodeId` re-keys it, so both must
  * agree on which message that is.
  */
-function lastUserIndex(messages: UIMessage[]): number {
+export function lastUserIndex(messages: UIMessage[]): number {
   return messages.findLastIndex((message) => message.role === "user");
 }
 
