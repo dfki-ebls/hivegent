@@ -55,27 +55,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-
-// --- Section components ---
-
-interface SettingsSectionProps {
-  label: string;
-  htmlFor?: string;
-  description?: string;
-  children: React.ReactNode;
-}
-
-function SettingsSection({ label, htmlFor, description, children }: SettingsSectionProps) {
-  return (
-    <div className="grid gap-2">
-      <label htmlFor={htmlFor} className="text-sm font-medium">
-        {label}
-      </label>
-      {children}
-      {description && <p className="text-xs text-muted-foreground">{description}</p>}
-    </div>
-  );
-}
+import { FormSection } from "@/components/FormSection";
 
 // --- Footer confirm button ---
 
@@ -255,7 +235,7 @@ export function SettingsDialog() {
           {/* Column 1 — Model Configuration */}
           {featureFlags.llmSpec && (
             <div className="grid gap-4 content-start">
-              <SettingsSection
+              <FormSection
                 label="Model"
                 htmlFor="model"
                 description="The main model to use for chat. Leave empty to use the server default."
@@ -266,9 +246,9 @@ export function SettingsDialog() {
                   value={overrides.model}
                   onChange={(e) => setOverride({ model: e.target.value })}
                 />
-              </SettingsSection>
+              </FormSection>
 
-              <SettingsSection
+              <FormSection
                 label="API Key (optional)"
                 htmlFor="api-key"
                 description={
@@ -286,9 +266,9 @@ export function SettingsDialog() {
                   value={overrides.apiKey}
                   onChange={(e) => setOverride({ apiKey: e.target.value })}
                 />
-              </SettingsSection>
+              </FormSection>
 
-              <SettingsSection
+              <FormSection
                 label="Base URL"
                 htmlFor="base-url"
                 description="API endpoint for the LLM provider."
@@ -300,9 +280,9 @@ export function SettingsDialog() {
                   value={overrides.baseUrl}
                   onChange={(e) => setOverride({ baseUrl: e.target.value })}
                 />
-              </SettingsSection>
+              </FormSection>
 
-              <SettingsSection
+              <FormSection
                 label="Auxiliary Model (optional)"
                 htmlFor="aux-model"
                 description="Must be small, fast, and vision-capable. Drives document conversion, alt-text generation, title generation, compaction, subagent exploration, and LLM-guided chunking — all high-volume workloads where cost and latency matter more than reasoning depth. Uses the same provider settings as the main model."
@@ -313,13 +293,13 @@ export function SettingsDialog() {
                   value={overrides.auxModel}
                   onChange={(e) => setOverride({ auxModel: e.target.value })}
                 />
-              </SettingsSection>
+              </FormSection>
             </div>
           )}
 
           {/* Column 2 — Personality */}
           <div className="grid gap-4 content-start">
-            <SettingsSection label="Personality" description="Choose how the assistant responds.">
+            <FormSection label="Personality" description="Choose how the assistant responds.">
               <Select value={personality} onValueChange={(v) => setPersonality(v as Personality)}>
                 <SelectTrigger>
                   <SelectValue />
@@ -332,10 +312,10 @@ export function SettingsDialog() {
                   ))}
                 </SelectContent>
               </Select>
-            </SettingsSection>
+            </FormSection>
 
             {personality === "custom" && (
-              <SettingsSection
+              <FormSection
                 label="Custom System Message"
                 htmlFor="custom-system-message"
                 description="Provide your own system instructions for the assistant."
@@ -347,7 +327,7 @@ export function SettingsDialog() {
                   onChange={(e) => setCustomSystemMessage(e.target.value)}
                   className="min-h-[100px] resize-y"
                 />
-              </SettingsSection>
+              </FormSection>
             )}
           </div>
 
@@ -355,10 +335,7 @@ export function SettingsDialog() {
           {featureFlags.toolsSpec && (
             <div className="grid gap-4 content-start">
               {tools.length > 0 && (
-                <SettingsSection
-                  label="Tools"
-                  description="Toggle which tools the assistant can use."
-                >
+                <FormSection label="Tools" description="Toggle which tools the assistant can use.">
                   <div className="grid gap-3">
                     {Object.entries(toolsByGroup).map(([group, groupTools]) => (
                       <div key={group}>
@@ -389,10 +366,10 @@ export function SettingsDialog() {
                       </div>
                     ))}
                   </div>
-                </SettingsSection>
+                </FormSection>
               )}
 
-              <SettingsSection
+              <FormSection
                 label="MCP Servers"
                 description='Connect external tool servers via the Model Context Protocol (Streamable HTTP transport). A prefix namespaces all tools from a server (e.g., prefix "jira" turns "search" into "jira_search"), preventing name collisions when multiple servers provide similarly-named tools.'
               >
@@ -590,7 +567,7 @@ export function SettingsDialog() {
                     </Button>
                   </div>
                 </div>
-              </SettingsSection>
+              </FormSection>
             </div>
           )}
         </div>
