@@ -1,4 +1,6 @@
 import type { UIMessage } from "@ai-sdk/react";
+import { CopyIcon } from "lucide-react";
+import { MessageAction, MessageActions } from "@/components/ai-elements/message";
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
 import { ImagePart } from "@/components/chat/parts/ImagePart";
 import { ReasoningPart } from "@/components/chat/parts/ReasoningPart";
@@ -17,6 +19,7 @@ interface MessagePartProps {
   isUserMessage: boolean;
   messageId: string;
   isEditing: boolean;
+  canCopy: boolean;
   onCancelEdit: () => void;
   onSubmitEdit: (messageId: string, newText: string) => void;
   onExecutePlan?: () => void;
@@ -29,24 +32,37 @@ export function MessagePart({
   isUserMessage,
   messageId,
   isEditing,
+  canCopy,
   onCancelEdit,
   onSubmitEdit,
   onExecutePlan,
 }: MessagePartProps) {
-  if (part.type === "text" && isUserMessage) {
-    return (
-      <UserTextPart
-        text={part.text}
-        messageId={messageId}
-        isEditing={isEditing}
-        onCancelEdit={onCancelEdit}
-        onSubmitEdit={onSubmitEdit}
-      />
-    );
-  }
-
   if (part.type === "text") {
-    return <MarkdownText>{part.text}</MarkdownText>;
+    return (
+      <div className="flex flex-col gap-1.5">
+        {isUserMessage ? (
+          <UserTextPart
+            text={part.text}
+            messageId={messageId}
+            isEditing={isEditing}
+            onCancelEdit={onCancelEdit}
+            onSubmitEdit={onSubmitEdit}
+          />
+        ) : (
+          <MarkdownText>{part.text}</MarkdownText>
+        )}
+        {canCopy && (
+          <MessageActions className={isUserMessage ? "ml-auto" : undefined}>
+            <MessageAction
+              onClick={() => void navigator.clipboard.writeText(part.text)}
+              label="Copy"
+            >
+              <CopyIcon className="size-3" />
+            </MessageAction>
+          </MessageActions>
+        )}
+      </div>
+    );
   }
 
   if (part.type === "reasoning") {

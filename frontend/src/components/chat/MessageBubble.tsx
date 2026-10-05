@@ -1,5 +1,5 @@
 import type { ChatStatus } from "ai";
-import { CopyIcon, PencilIcon, RefreshCcwIcon } from "lucide-react";
+import { PencilIcon, RefreshCcwIcon } from "lucide-react";
 import {
   Message,
   MessageAction,
@@ -7,7 +7,7 @@ import {
   MessageContent,
 } from "@/components/ai-elements/message";
 import { MessagePart } from "@/components/chat/MessagePart";
-import { type ChatMessage, isChatBusy, joinTextParts } from "@/lib/chat/chat-utils";
+import { type ChatMessage, isChatBusy } from "@/lib/chat/chat-utils";
 import { indexToolData } from "@/lib/chat/tool-part";
 
 const MS_IN_S = 1000;
@@ -19,13 +19,6 @@ function reasoningDurationSeconds(
   const durationMs = metadata?.reasoningDurationsMs?.[reasoningIndex];
 
   return typeof durationMs === "number" ? Math.ceil(durationMs / MS_IN_S) : undefined;
-}
-
-/** An assistant turn copies its final answer, not the narration between tool calls. */
-function copyText(message: ChatMessage): string {
-  return message.role === "assistant"
-    ? (message.parts.findLast((part) => part.type === "text")?.text ?? "")
-    : (joinTextParts(message.parts) ?? "");
 }
 
 interface MessageBubbleProps {
@@ -59,7 +52,7 @@ export function MessageBubble({
   const parts = message.parts ?? [];
   const toolData = indexToolData(parts);
   const canCopy =
-    parts.some((part) => part.type === "text") && !isStreaming && editingId !== message.id;
+    (isAssistant || isUser) && !isStreaming && editingId !== message.id;
   let reasoningIndex = 0;
 
   return (
@@ -81,6 +74,7 @@ export function MessageBubble({
               isUserMessage={isUser}
               messageId={message.id}
               isEditing={editingId === message.id}
+              canCopy={canCopy}
               onCancelEdit={onCancelEdit}
               onSubmitEdit={onSubmitEdit}
               onExecutePlan={isAssistant && isLastMessage ? onExecutePlan : undefined}
@@ -88,7 +82,7 @@ export function MessageBubble({
           );
         })}
       </MessageContent>
-      {(canEdit || canRetry || canCopy) && (
+      {(canEdit || canRetry) && (
         <MessageActions className={isUser ? "ml-auto" : undefined}>
           {canEdit && (
             <MessageAction onClick={() => onSetEditing(message.id)} label="Edit">
@@ -98,14 +92,6 @@ export function MessageBubble({
           {canRetry && (
             <MessageAction onClick={onRegenerate} label="Retry">
               <RefreshCcwIcon className="size-3" />
-            </MessageAction>
-          )}
-          {canCopy && (
-            <MessageAction
-              onClick={() => void navigator.clipboard.writeText(copyText(message))}
-              label="Copy"
-            >
-              <CopyIcon className="size-3" />
             </MessageAction>
           )}
         </MessageActions>
