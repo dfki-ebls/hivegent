@@ -51,8 +51,7 @@ export function MessageBubble({
   const canEdit = isUser && (status === "ready" || status === "error") && editingId !== message.id;
   const parts = message.parts ?? [];
   const toolData = indexToolData(parts);
-  const canCopy =
-    (isAssistant || isUser) && !isStreaming && editingId !== message.id;
+  const canCopy = (isAssistant || isUser) && !isStreaming && editingId !== message.id;
   let reasoningIndex = 0;
 
   return (

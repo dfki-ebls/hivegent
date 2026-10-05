@@ -25,7 +25,9 @@ async def socket_hits(
     """Serve HTTP on a unix socket mapped to ``llmhop`` and record each request."""
     hits: list[bytes] = []
 
-    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def handle(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         hits.append(await reader.readuntil(b"\r\n\r\n"))
         writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
         await writer.drain()
