@@ -195,7 +195,7 @@ export function RunPythonTool({ part, metadata }: RunPythonToolProps) {
           <Program code={code} scriptPath={scriptPath} />
           {commitPath && (
             <p className="text-muted-foreground">
-              Saves its <PathCode>/out</PathCode> file as <PathCode>{commitPath}</PathCode>.
+              Output destination: <PathCode>{commitPath}</PathCode>.
             </p>
           )}
         </ToolSection>
