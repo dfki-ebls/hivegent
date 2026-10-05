@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   PERSONAL_SCOPE,
@@ -32,6 +33,7 @@ import { ScopeSection } from "@/components/documents/ScopeSection";
 import { UploadArea } from "@/components/documents/UploadArea";
 
 export function DocumentManager() {
+  const { t } = useTranslation();
   const overrides = useSettingsStore((s) => s.overrides);
   const conversionPipeline = useSettingsStore((s) => s.conversionPipeline);
   const chunkingPipeline = useSettingsStore((s) => s.chunkingPipeline);
@@ -139,10 +141,14 @@ export function DocumentManager() {
       } catch (err) {
         // The drop fails before any queue item exists, so surface it as its own
         // failed tray row (a collection that fails mid-build already shows as one).
-        reportUpload(target, "Dropped items", errorMessage(err));
+        reportUpload(
+          target,
+          t(($) => $.documents.manager.droppedItems),
+          errorMessage(err),
+        );
       }
     },
-    [enqueueCollection, enqueueFiles, reportUpload, uploadOptions],
+    [enqueueCollection, enqueueFiles, reportUpload, uploadOptions, t],
   );
 
   const handleDrop = useCallback(
@@ -244,7 +250,7 @@ export function DocumentManager() {
           <SearchInput
             value={searchQuery}
             onChange={setSearchQuery}
-            placeholder="Search documents..."
+            placeholder={t(($) => $.documents.manager.searchPlaceholder)}
           />
         </div>
       </div>
@@ -252,7 +258,7 @@ export function DocumentManager() {
       <div className="space-y-1 px-4 pb-4">
         <ScopeSection
           scope={PERSONAL_SCOPE}
-          label="~ (Personal)"
+          label={t(($) => $.documents.manager.personal)}
           canWrite
           defaultOpen
           searchQuery={searchQuery}

@@ -1,6 +1,11 @@
 import { Eye, EyeOff } from "lucide-react";
+import { useTranslation } from "react-i18next";
+
 import { Button } from "@/components/ui/button";
+import { keyPrefix } from "@/i18n";
 import { cn } from "@/lib/utils";
+
+const T_OPTIONS = keyPrefix(($) => $.documents.filter);
 
 export type FilterEntryState = "included" | "excluded" | undefined;
 
@@ -28,6 +33,7 @@ export function FilterToggleButtons({
   compact = false,
   revealOnHover = false,
 }: FilterToggleButtonsProps) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
   const iconSize = compact ? "h-3 w-3" : "h-4 w-4";
   // Collapse (not just fade) inactive buttons until the row is hovered, so an
   // idle row gives its full width to the name instead of reserving button space.
@@ -38,7 +44,7 @@ export function FilterToggleButtons({
         variant="ghost"
         size="icon"
         className={cn(compact && "h-6 w-6", state === "included" ? "text-primary" : hidden)}
-        title={state === "included" ? "Stop pointing chat at this" : "Point chat at this"}
+        title={state === "included" ? t(($) => $.stopIncluding) : t(($) => $.include)}
         onClick={(e) => {
           e.stopPropagation();
           onInclude();
@@ -50,7 +56,7 @@ export function FilterToggleButtons({
         variant="ghost"
         size="icon"
         className={cn(compact && "h-6 w-6", state === "excluded" ? "text-destructive" : hidden)}
-        title={state === "excluded" ? "Stop excluding from chat" : "Exclude from chat"}
+        title={state === "excluded" ? t(($) => $.stopExcluding) : t(($) => $.exclude)}
         onClick={(e) => {
           e.stopPropagation();
           onExclude();

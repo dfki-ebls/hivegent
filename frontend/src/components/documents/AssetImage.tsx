@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useInView } from "@/hooks/use-in-view";
 import { useObjectUrl } from "@/hooks/use-object-url";
@@ -17,6 +18,7 @@ interface AssetImageProps {
 
 /** Lazily fetches a workspace asset and renders it once scrolled into view. */
 export function AssetImage({ filePath, alt, className, wrapperClassName }: AssetImageProps) {
+  const { t } = useTranslation();
   const fetch = useCallback(
     (signal: AbortSignal) => fetchDocumentAsset(filePath, signal),
     [filePath],
@@ -36,7 +38,7 @@ export function AssetImage({ filePath, alt, className, wrapperClassName }: Asset
       {url && !error ? (
         <img src={url} alt={alt ?? filePath} className={cn("block", className)} />
       ) : error ? (
-        "unavailable"
+        t(($) => $.documents.image.unavailable)
       ) : null}
     </span>
   );

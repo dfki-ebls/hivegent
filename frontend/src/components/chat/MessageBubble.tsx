@@ -1,5 +1,6 @@
 import type { ChatStatus } from "ai";
 import { PencilIcon, RefreshCcwIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   Message,
   MessageAction,
@@ -44,6 +45,7 @@ export function MessageBubble({
   onRegenerate,
   onExecutePlan,
 }: MessageBubbleProps) {
+  const { t } = useTranslation();
   const isAssistant = message.role === "assistant";
   const isUser = message.role === "user";
   const isStreaming = isLastMessage && isChatBusy(status);
@@ -84,12 +86,15 @@ export function MessageBubble({
       {(canEdit || canRetry) && (
         <MessageActions className={isUser ? "ml-auto" : undefined}>
           {canEdit && (
-            <MessageAction onClick={() => onSetEditing(message.id)} label="Edit">
+            <MessageAction
+              onClick={() => onSetEditing(message.id)}
+              label={t(($) => $.common.actions.edit)}
+            >
               <PencilIcon className="size-3" />
             </MessageAction>
           )}
           {canRetry && (
-            <MessageAction onClick={onRegenerate} label="Retry">
+            <MessageAction onClick={onRegenerate} label={t(($) => $.common.actions.retry)}>
               <RefreshCcwIcon className="size-3" />
             </MessageAction>
           )}

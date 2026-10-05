@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { Compass, MoveLeft } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 
@@ -9,6 +10,8 @@ import { Button } from "@/components/ui/button";
  * place and the user can navigate straight back home.
  */
 export function NotFound() {
+  const { t } = useTranslation();
+
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 p-8 text-center">
       <div className="relative flex items-center justify-center">
@@ -18,15 +21,15 @@ export function NotFound() {
         <Compass className="absolute h-14 w-14 text-muted-foreground" />
       </div>
       <div className="flex flex-col items-center gap-2">
-        <h1 className="text-2xl font-semibold">Page not found</h1>
+        <h1 className="text-2xl font-semibold">{t(($) => $.app.notFound.title)}</h1>
         <p className="max-w-md text-sm text-muted-foreground">
-          The page you are looking for does not exist or may have been moved.
+          {t(($) => $.app.notFound.description)}
         </p>
       </div>
       <Button asChild>
         <Link to="/">
           <MoveLeft className="mr-2 h-4 w-4" />
-          Back to home
+          {t(($) => $.app.notFound.backHome)}
         </Link>
       </Button>
     </div>

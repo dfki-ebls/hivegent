@@ -1,5 +1,9 @@
 import type { UIMessage } from "@ai-sdk/react";
+import type { TFunction } from "i18next";
 import type { ToolPart } from "@/components/ai-elements/tool";
+import { isCatalogKey } from "@/i18n";
+import { chat } from "@/i18n/locales/en/chat";
+import { snakeCaseToTitleCase } from "@/lib/utils";
 import type { AddChunk, AddImage, MarkFullDocument } from "@/stores/fetched-documents-store";
 
 export type { ToolPart };
@@ -146,4 +150,11 @@ export function getToolPartInfo(
     metadata,
     formatted: text,
   };
+}
+
+/** A tool's name for display, title-cased for tools without a catalog entry such as MCP tools. */
+export function toolDisplayName(t: TFunction, toolName: string): string {
+  return isCatalogKey(chat.tools.names, toolName)
+    ? t(($) => $.chat.tools.names[toolName])
+    : snakeCaseToTitleCase(toolName);
 }

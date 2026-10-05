@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
@@ -30,6 +31,8 @@ export function ChatAlert({
   onAction,
   onDismiss,
 }: ChatAlertProps) {
+  const { t } = useTranslation();
+
   return (
     <Alert variant="destructive">
       <Icon className="h-4 w-4" />
@@ -43,7 +46,7 @@ export function ChatAlert({
           </Button>
           <Button variant="ghost" size="icon-sm" onClick={onDismiss}>
             <X className="h-3 w-3" />
-            <span className="sr-only">Dismiss</span>
+            <span className="sr-only">{t(($) => $.chat.messages.dismiss)}</span>
           </Button>
         </span>
       </AlertDescription>

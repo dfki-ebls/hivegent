@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -23,6 +24,7 @@ function UserTextEditor({
   onCancelEdit,
   onSubmitEdit,
 }: Omit<UserTextPartProps, "isEditing">) {
+  const { t } = useTranslation();
   const [editText, setEditText] = useState(text);
 
   const submit = () => {
@@ -46,10 +48,10 @@ function UserTextEditor({
       />
       <div className="flex gap-2">
         <Button variant="outline" size="sm" onClick={onCancelEdit}>
-          Cancel
+          {t(($) => $.common.actions.cancel)}
         </Button>
         <Button size="sm" onClick={submit}>
-          Submit
+          {t(($) => $.chat.messages.submitEdit)}
         </Button>
       </div>
     </div>

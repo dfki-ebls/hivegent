@@ -10,8 +10,6 @@ interface DocumentAction {
   id: DocumentActionId;
   /** Lucide icon component. */
   icon: LucideIcon;
-  /** Human-readable label, shown beside the icon in the batch bar. */
-  label: string;
   /** Button variant for the batch bar. */
   variant: "secondary" | "destructive";
   /** When true, the action only appears when a selected file has an original binary. */
@@ -27,25 +25,22 @@ const DOCUMENT_ACTIONS: readonly DocumentAction[] = [
   {
     id: "rechunk",
     icon: Scissors,
-    label: "Rechunk",
     variant: "secondary",
     requiresOriginal: false,
   },
   {
     id: "reconvert",
     icon: RotateCcw,
-    label: "Reconvert",
     variant: "secondary",
     requiresOriginal: true,
   },
   {
     id: "download",
     icon: Download,
-    label: "Download",
     variant: "secondary",
     requiresOriginal: true,
   },
-  { id: "delete", icon: Trash2, label: "Delete", variant: "destructive", requiresOriginal: false },
+  { id: "delete", icon: Trash2, variant: "destructive", requiresOriginal: false },
 ];
 
 export { DOCUMENT_ACTIONS };

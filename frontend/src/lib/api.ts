@@ -70,6 +70,8 @@ import { featureFlags } from "@/lib/feature-flags";
 
 import { API_BASE_URL, waitForBackendReady } from "@/lib/health";
 import { getImpersonation, IMPERSONATE_HEADER } from "@/lib/impersonation";
+import { i18n, LANGUAGE } from "@/i18n";
+import type { app } from "@/i18n/locales/en/app";
 import { nanoid } from "nanoid";
 import { getOidc } from "@/oidc";
 
@@ -92,22 +94,25 @@ async function authFetch(url: string, options: RequestInit = {}): Promise<Respon
   return fetch(url, { ...options, headers });
 }
 
+/** Client-side fallback for a failed request, resolved in the interface language when the error is raised. */
+type ApiError = keyof typeof app.api.errors;
+
 /**
  * Human explanation for the edge statuses that reach the client without a JSON
- * `detail` body: the reverse proxy (Caddy), not the API, produced them — so the
+ * `detail` body: the reverse proxy (Caddy), not the API, produced them, so the
  * bare `(HTTP nnn)` fallback leaves the user guessing. Returns null when a status
  * carries no more meaning than itself, so the caller keeps its own fallback.
  */
 function statusExplanation(status: number): string | null {
   switch (status) {
     case 413:
-      return "This upload is too large. Please choose a smaller file, or split it into several parts.";
+      return i18n.t(($) => $.app.api.status.tooLarge);
     case 429:
-      return "Too many requests in a short time. Please wait a moment and try again.";
+      return i18n.t(($) => $.app.api.status.tooManyRequests);
     case 502:
     case 503:
     case 504:
-      return "The server is temporarily unavailable, likely restarting. Please try again in a moment.";
+      return i18n.t(($) => $.app.api.status.unavailable);
     default:
       return null;
   }
@@ -115,17 +120,17 @@ function statusExplanation(status: number): string | null {
 
 /**
  * Message for a failure with no usable `detail` body: a friendly explanation for
- * a known edge status, otherwise `fallback`, always suffixed with `(HTTP nnn)` so
- * the status stays visible for diagnostics.
+ * a known edge status, otherwise the `error` fallback, always suffixed with
+ * `(HTTP nnn)` so the status stays visible for diagnostics.
  */
-function fallbackMessage(fallback: string, status: number): string {
-  return `${statusExplanation(status) ?? fallback} (HTTP ${status})`;
+function fallbackMessage(error: ApiError, status: number): string {
+  return `${statusExplanation(status) ?? i18n.t(($) => $.app.api.errors[error])} (HTTP ${status})`;
 }
 
 /** Thrown when the backend rejects a request through the maintenance gate. */
 export class MaintenanceError extends Error {}
 
-async function responseError(res: Response, fallback: string): Promise<Error> {
+async function responseError(res: Response, error: ApiError): Promise<Error> {
   const body = (await res.json().catch(() => null)) as {
     detail?: string | { code?: string; message?: string };
   } | null;
@@ -140,44 +145,40 @@ async function responseError(res: Response, fallback: string): Promise<Error> {
   return new Error(
     typeof body?.detail === "string" && body.detail
       ? body.detail
-      : fallbackMessage(fallback, res.status),
+      : fallbackMessage(error, res.status),
   );
 }
 
 async function checkedResponse(
   url: string,
-  errorMessage: string,
+  error: ApiError,
   options?: RequestInit,
 ): Promise<Response> {
   const response = await authFetch(url, options);
-  if (!response.ok) throw await responseError(response, errorMessage);
+  if (!response.ok) throw await responseError(response, error);
   return response;
 }
 
 async function requestJson<T>(
   url: string,
-  errorMessage: string,
+  error: ApiError,
   schema: z.ZodType<T>,
   options?: RequestInit,
 ): Promise<T> {
-  const response = await checkedResponse(url, errorMessage, options);
+  const response = await checkedResponse(url, error, options);
   return schema.parse(await response.json());
 }
 
-async function requestVoid(
-  url: string,
-  errorMessage: string,
-  options?: RequestInit,
-): Promise<void> {
-  await checkedResponse(url, errorMessage, options);
+async function requestVoid(url: string, error: ApiError, options?: RequestInit): Promise<void> {
+  await checkedResponse(url, error, options);
 }
 
-async function requestText(url: string, errorMessage: string): Promise<string> {
-  return (await checkedResponse(url, errorMessage)).text();
+async function requestText(url: string, error: ApiError): Promise<string> {
+  return (await checkedResponse(url, error)).text();
 }
 
-async function requestBlob(url: string, errorMessage: string): Promise<Blob> {
-  return (await checkedResponse(url, errorMessage)).blob();
+async function requestBlob(url: string, error: ApiError): Promise<Blob> {
+  return (await checkedResponse(url, error)).blob();
 }
 
 function jsonRequest(method: "POST" | "PUT" | "PATCH" | "DELETE", body: unknown): RequestInit {
@@ -189,8 +190,8 @@ function jsonRequest(method: "POST" | "PUT" | "PATCH" | "DELETE", body: unknown)
 }
 
 /** POST a JSON body to a job endpoint and return the started job's snapshot. */
-async function postJob(url: string, body: unknown, errorMsg: string): Promise<JobView> {
-  return requestJson(url, errorMsg, JobViewSchema, jsonRequest("POST", body));
+async function postJob(url: string, body: unknown, error: ApiError): Promise<JobView> {
+  return requestJson(url, error, JobViewSchema, jsonRequest("POST", body));
 }
 
 const CLIENT_ID_HEADER = "X-Client-Id";
@@ -207,7 +208,11 @@ const CLIENT_ID = nanoid();
  * Get the current auth headers for use with external transports.
  */
 export async function getAuthHeaders(): Promise<Record<string, string>> {
-  const headers: Record<string, string> = { [CLIENT_ID_HEADER]: CLIENT_ID };
+  const headers: Record<string, string> = {
+    [CLIENT_ID_HEADER]: CLIENT_ID,
+    // The backend answers in this language, prompts and tool schemas included.
+    "Accept-Language": LANGUAGE,
+  };
   const oidc = await getOidc();
   if (oidc.isUserLoggedIn) {
     headers.Authorization = `Bearer ${await oidc.getAccessToken()}`;
@@ -288,18 +293,14 @@ export function requiresConversion(filename: string): boolean {
 
 /** Fetch server-side LLM settings. */
 export async function getSettings(): Promise<BackendSettings> {
-  return requestJson(
-    `${API_BASE_URL}/api/settings`,
-    "Failed to fetch settings",
-    BackendSettingsSchema,
-  );
+  return requestJson(`${API_BASE_URL}/api/settings`, "fetchSettings", BackendSettingsSchema);
 }
 
 /** Verify whether free-form text carries this deployment's watermark. */
 export async function detectAiGeneratedText(text: string): Promise<TransparencyDetectionResponse> {
   return requestJson(
     `${API_BASE_URL}/api/transparency/detect`,
-    "Failed to verify the text watermark",
+    "verifyWatermark",
     TransparencyDetectionResponseSchema,
     jsonRequest("POST", { text }),
   );
@@ -312,7 +313,7 @@ export async function transcribeAudio(audio: Blob): Promise<string> {
   return (
     await requestJson(
       `${API_BASE_URL}/api/transcription`,
-      "Failed to transcribe audio",
+      "transcribeAudio",
       TranscriptionResponseSchema,
       { method: "POST", body: form },
     )
@@ -321,14 +322,14 @@ export async function transcribeAudio(audio: Blob): Promise<string> {
 
 /** Fetch available agent tools from the backend. */
 export async function listTools(): Promise<ToolInfo[]> {
-  return requestJson(`${API_BASE_URL}/api/tools`, "Failed to fetch tools", z.array(ToolInfoSchema));
+  return requestJson(`${API_BASE_URL}/api/tools`, "fetchTools", z.array(ToolInfoSchema));
 }
 
 /** Fetch every agent tool with its parameter JSON Schema (admin only). */
 export async function listToolSchemas(): Promise<ToolSchema[]> {
   return requestJson(
     `${API_BASE_URL}/api/debug/tools`,
-    "Failed to fetch tool schemas",
+    "fetchToolSchemas",
     z.array(ToolSchemaSchema),
   );
 }
@@ -337,7 +338,7 @@ export async function listToolSchemas(): Promise<ToolSchema[]> {
 export async function runTool(name: string, args: Record<string, unknown>): Promise<ToolRunResult> {
   return requestJson(
     `${API_BASE_URL}/api/debug/tools/${encodeURIComponent(name)}`,
-    "Failed to run tool",
+    "runTool",
     ToolRunResultSchema,
     jsonRequest("POST", args),
   );
@@ -370,7 +371,11 @@ export async function testMcpServer(server: McpServerEntry): Promise<McpTestResu
   });
 
   if (!res.ok) {
-    return { ok: false, tool_count: null, error: "Request failed" };
+    return {
+      ok: false,
+      tool_count: null,
+      error: (await responseError(res, "testMcpServer")).message,
+    };
   }
   return (await res.json()) as McpTestResult;
 }
@@ -526,7 +531,7 @@ export async function uploadDocument(
 ): Promise<JobView> {
   return requestJson(
     `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`,
-    "Upload failed",
+    "upload",
     JobViewSchema,
     {
       method: "PUT",
@@ -550,7 +555,7 @@ export async function writeDocument(
 ): Promise<void> {
   return requestVoid(
     `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`,
-    "Save failed",
+    "save",
     jsonRequest("PATCH", { content, mode, chunking: chunking ?? null }),
   );
 }
@@ -583,7 +588,7 @@ export async function uploadCollection(
 
   return requestJson(
     `${API_BASE_URL}/api/documents/collections/${encodeFilePath(target)}`,
-    "Collection upload failed",
+    "uploadCollection",
     JobViewSchema,
     { method: "POST", body: formData, signal: options?.signal },
   );
@@ -637,7 +642,7 @@ async function readSseEvents<TEvent, TResult>(
 }
 
 export async function deleteDocument(filename: string): Promise<void> {
-  return requestVoid(`${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`, "Delete failed", {
+  return requestVoid(`${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`, "delete", {
     method: "DELETE",
   });
 }
@@ -645,7 +650,7 @@ export async function deleteDocument(filename: string): Promise<void> {
 export async function getDocumentContent(filename: string): Promise<string> {
   return requestText(
     `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`,
-    "Failed to fetch document content",
+    "fetchDocumentContent",
   );
 }
 
@@ -654,7 +659,7 @@ export async function fetchDocumentAsset(filepath: string, signal?: AbortSignal)
   const blob = await (
     await checkedResponse(
       `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`,
-      "Failed to fetch document asset",
+      "fetchDocumentAsset",
       { signal },
     )
   ).blob();
@@ -665,7 +670,7 @@ export async function fetchDocumentAsset(filepath: string, signal?: AbortSignal)
 export async function downloadOriginal(filepath: string): Promise<Blob> {
   return requestBlob(
     `${API_BASE_URL}/api/documents/original/${encodeFilePath(filepath)}`,
-    "Download failed",
+    "download",
   );
 }
 
@@ -686,7 +691,7 @@ export async function replaceOriginal(
 
   return requestJson(
     `${API_BASE_URL}/api/documents/original/${encodeFilePath(filepath)}`,
-    "Replace failed",
+    "replaceOriginal",
     JobViewSchema,
     { method: "PUT", body: formData },
   );
@@ -696,7 +701,7 @@ export async function listConversations(): Promise<ConversationSummary[]> {
   return (
     await requestJson(
       `${API_BASE_URL}/api/conversations`,
-      "Failed to list conversations",
+      "listConversations",
       ConversationListResponseSchema,
     )
   ).conversations;
@@ -708,7 +713,7 @@ export async function updateConversationTitle(
 ): Promise<ConversationSummary> {
   return requestJson(
     `${API_BASE_URL}/api/conversations/${conversationId}`,
-    "Update failed",
+    "update",
     ConversationSummarySchema,
     jsonRequest("PATCH", { title }),
   );
@@ -720,7 +725,7 @@ export async function generateConversationTitle(
 ): Promise<GenerateTitleResponse> {
   return requestJson(
     `${API_BASE_URL}/api/conversations/${conversationId}/title/generation`,
-    "Title generation failed",
+    "generateTitle",
     GenerateTitleResponseSchema,
     jsonRequest("POST", { llm }),
   );
@@ -740,7 +745,7 @@ export async function compactConversation(
 ): Promise<CompactConversationResponse> {
   return requestJson(
     `${API_BASE_URL}/api/conversations/${conversationId}/compaction`,
-    "Compaction failed",
+    "compact",
     CompactConversationResponseSchema,
     jsonRequest("POST", runConfig),
   );
@@ -749,7 +754,7 @@ export async function compactConversation(
 export async function getConversation(conversationId: string): Promise<ConversationSummary | null> {
   const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}`);
   if (res.status === 404) return null;
-  if (!res.ok) throw await responseError(res, "Failed to fetch conversation");
+  if (!res.ok) throw await responseError(res, "fetchConversation");
   const data: unknown = await res.json();
   return ConversationSummarySchema.parse(data);
 }
@@ -758,14 +763,14 @@ export async function getConversation(conversationId: string): Promise<Conversat
 export async function importConversation(file: File): Promise<ConversationSummary> {
   return requestJson(
     `${API_BASE_URL}/api/conversations/import`,
-    "Import failed",
+    "importConversation",
     ConversationSummarySchema,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: await file.text() },
   );
 }
 
 export async function deleteConversation(conversationId: string): Promise<void> {
-  return requestVoid(`${API_BASE_URL}/api/conversations/${conversationId}`, "Delete failed", {
+  return requestVoid(`${API_BASE_URL}/api/conversations/${conversationId}`, "delete", {
     method: "DELETE",
   });
 }
@@ -775,7 +780,7 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 export async function listConversionPipelines(): Promise<ConversionPipelineInfo[]> {
   return requestJson(
     `${API_BASE_URL}/api/pipelines/conversion`,
-    "Failed to get conversion pipelines",
+    "fetchConversionPipelines",
     z.array(ConversionPipelineInfoSchema),
   );
 }
@@ -785,7 +790,7 @@ export async function getConversionPipelineConfig(
 ): Promise<PipelineConfigInfo> {
   return requestJson(
     `${API_BASE_URL}/api/pipelines/conversion/${encodeURIComponent(pipeline)}/config`,
-    "Failed to get conversion pipeline configuration",
+    "fetchConversionPipelineConfig",
     PipelineConfigInfoSchema,
   );
 }
@@ -795,7 +800,7 @@ export async function getConversionPipelineConfig(
 export async function listChunkingPipelines(): Promise<ChunkingPipelineInfo[]> {
   return requestJson(
     `${API_BASE_URL}/api/pipelines/chunking`,
-    "Failed to get chunking pipelines",
+    "fetchChunkingPipelines",
     z.array(ChunkingPipelineInfoSchema),
   );
 }
@@ -805,7 +810,7 @@ export async function getChunkingPipelineConfig(
 ): Promise<PipelineConfigInfo> {
   return requestJson(
     `${API_BASE_URL}/api/pipelines/chunking/${encodeURIComponent(pipeline)}/config`,
-    "Failed to get chunking pipeline configuration",
+    "fetchChunkingPipelineConfig",
     PipelineConfigInfoSchema,
   );
 }
@@ -813,7 +818,7 @@ export async function getChunkingPipelineConfig(
 export async function getDocumentChunks(filename: string): Promise<ChunkedDocumentResponse> {
   return requestJson(
     `${API_BASE_URL}/api/documents/chunks/${encodeFilePath(filename)}`,
-    "Failed to fetch chunks",
+    "fetchChunks",
     ChunkedDocumentResponseSchema,
   );
 }
@@ -825,7 +830,7 @@ export async function getDocumentLineCounts(files: string[]): Promise<Record<str
   return (
     await requestJson(
       `${API_BASE_URL}/api/documents/line-counts`,
-      "Failed to fetch line counts",
+      "fetchLineCounts",
       DocumentLineCountsResponseSchema,
       jsonRequest("POST", { files }),
     )
@@ -838,7 +843,7 @@ export async function getDocumentLineCounts(files: string[]): Promise<Record<str
 export async function listDocumentAssets(filename: string): Promise<AssetListResponse> {
   return requestJson(
     `${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`,
-    "Failed to list assets",
+    "listAssets",
     AssetListResponseSchema,
   );
 }
@@ -851,7 +856,7 @@ export async function updateAssetDescription(
 ): Promise<AssetEntry> {
   return requestJson(
     `${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`,
-    "Failed to update description",
+    "updateDescription",
     AssetEntrySchema,
     jsonRequest("PATCH", { asset_name: assetName, content }),
   );
@@ -865,7 +870,7 @@ export async function generateAssetDescription(
 ): Promise<AssetEntry> {
   return requestJson(
     `${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}`,
-    "Failed to generate description",
+    "generateDescription",
     AssetEntrySchema,
     jsonRequest("POST", { asset_name: assetName, llm: llm ?? {} }),
   );
@@ -878,7 +883,7 @@ export async function deleteAssetDescription(
 ): Promise<AssetEntry> {
   return requestJson(
     `${API_BASE_URL}/api/documents/assets/${encodeFilePath(filename)}?asset_name=${encodeURIComponent(assetName)}`,
-    "Failed to delete description",
+    "deleteDescription",
     AssetEntrySchema,
     { method: "DELETE" },
   );
@@ -898,7 +903,7 @@ export async function rechunkDocument(filename: string, spec?: PipelineSpec): Pr
   return postJob(
     `${API_BASE_URL}/api/documents/rechunk/${encodeFilePath(filename)}`,
     spec ?? {},
-    "Rechunk failed",
+    "rechunk",
   );
 }
 
@@ -912,7 +917,7 @@ export async function reconvertDocument(
 ): Promise<JobView> {
   return requestJson(
     `${API_BASE_URL}/api/documents/reconvert/${encodeFilePath(filename)}`,
-    "Reconvert failed",
+    "reconvert",
     JobViewSchema,
     {
       method: "POST",
@@ -927,12 +932,12 @@ export async function reconvertDocument(
 
 /** List the caller's known background jobs. */
 export async function listJobs(): Promise<JobView[]> {
-  return requestJson(`${API_BASE_URL}/api/jobs`, "Failed to list jobs", z.array(JobViewSchema));
+  return requestJson(`${API_BASE_URL}/api/jobs`, "listJobs", z.array(JobViewSchema));
 }
 
 /** Request cancellation of a background job. Idempotent server-side. */
 export async function cancelJob(id: string): Promise<void> {
-  return requestVoid(`${API_BASE_URL}/api/jobs/${encodeURIComponent(id)}`, "Failed to cancel job", {
+  return requestVoid(`${API_BASE_URL}/api/jobs/${encodeURIComponent(id)}`, "cancelJob", {
     method: "DELETE",
   });
 }
@@ -950,7 +955,7 @@ export async function subscribeJobs(
   onScopeChanged: (scope: string) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await checkedResponse(`${API_BASE_URL}/api/jobs/events`, "Job feed failed", {
+  const res = await checkedResponse(`${API_BASE_URL}/api/jobs/events`, "jobFeed", {
     signal,
   });
 
@@ -976,7 +981,7 @@ export function bulkRechunk(files: string[], spec?: PipelineSpec): Promise<JobVi
   return postJob(
     `${API_BASE_URL}/api/documents/rechunk/bulk`,
     { files, pipeline: spec ?? {} },
-    "Bulk rechunk failed",
+    "bulkRechunk",
   );
 }
 
@@ -989,7 +994,7 @@ export function bulkReconvert(
   return postJob(
     `${API_BASE_URL}/api/documents/reconvert/bulk`,
     { files, pipeline: spec ?? {}, llm: llm ?? {} },
-    "Bulk reconvert failed",
+    "bulkReconvert",
   );
 }
 
@@ -1000,12 +1005,12 @@ export interface BulkMoveEntry {
 
 /** Bulk move multiple documents as a background job. */
 export function bulkMove(moves: BulkMoveEntry[]): Promise<JobView> {
-  return postJob(`${API_BASE_URL}/api/documents/move/bulk`, { moves }, "Bulk move failed");
+  return postJob(`${API_BASE_URL}/api/documents/move/bulk`, { moves }, "bulkMove");
 }
 
 /** Bulk delete multiple documents as a background job. */
 export function bulkDelete(files: string[]): Promise<JobView> {
-  return postJob(`${API_BASE_URL}/api/documents/delete/bulk`, { files }, "Bulk delete failed");
+  return postJob(`${API_BASE_URL}/api/documents/delete/bulk`, { files }, "bulkDelete");
 }
 
 // User directory management
@@ -1014,7 +1019,7 @@ export function bulkDelete(files: string[]): Promise<JobView> {
 export async function getDirectories(scope: string): Promise<DirectoryTreeResponse> {
   return requestJson(
     `${API_BASE_URL}/api/directories/${encodeFilePath(scope)}`,
-    "Failed to fetch directory tree",
+    "fetchDirectories",
     DirectoryTreeResponseSchema,
   );
 }
@@ -1022,7 +1027,7 @@ export async function getDirectories(scope: string): Promise<DirectoryTreeRespon
 export async function createDirectory(path: string): Promise<void> {
   return requestVoid(
     `${API_BASE_URL}/api/directories`,
-    "Failed to create directory",
+    "createDirectory",
     jsonRequest("POST", { path }),
   );
 }
@@ -1030,7 +1035,7 @@ export async function createDirectory(path: string): Promise<void> {
 export async function deleteDirectory(dirpath: string): Promise<void> {
   return requestVoid(
     `${API_BASE_URL}/api/directories`,
-    "Failed to delete directory",
+    "deleteDirectory",
     jsonRequest("DELETE", { path: dirpath }),
   );
 }
@@ -1038,7 +1043,7 @@ export async function deleteDirectory(dirpath: string): Promise<void> {
 export async function moveDirectory(source: string, destination: string): Promise<void> {
   return requestVoid(
     `${API_BASE_URL}/api/directories/move`,
-    "Failed to move directory",
+    "moveDirectory",
     jsonRequest("POST", { source, destination }),
   );
 }
@@ -1046,7 +1051,7 @@ export async function moveDirectory(source: string, destination: string): Promis
 export async function moveDocument(filepath: string, destination: string): Promise<void> {
   return requestVoid(
     `${API_BASE_URL}/api/documents/move/${encodeFilePath(filepath)}`,
-    "Move failed",
+    "move",
     jsonRequest("POST", { destination }),
   );
 }
@@ -1057,7 +1062,7 @@ export async function moveDocument(filepath: string, destination: string): Promi
 
 /** Delete all conversations for the authenticated user. */
 export async function deleteAllConversations(): Promise<void> {
-  return requestVoid(`${API_BASE_URL}/api/conversations`, "Failed to delete conversations", {
+  return requestVoid(`${API_BASE_URL}/api/conversations`, "deleteConversations", {
     method: "DELETE",
   });
 }
@@ -1067,33 +1072,28 @@ export async function deleteAllConversations(): Promise<void> {
  * `scope` is `~` (personal) or `@<group>`.
  */
 export async function deleteAllDocuments(scope: string): Promise<void> {
-  return requestVoid(
-    `${API_BASE_URL}/api/documents/${encodeFilePath(scope)}`,
-    "Failed to delete documents",
-    { method: "DELETE" },
-  );
+  return requestVoid(`${API_BASE_URL}/api/documents/${encodeFilePath(scope)}`, "deleteDocuments", {
+    method: "DELETE",
+  });
 }
 
 /** Clear the user's persistent memory. */
 export async function clearMemory(): Promise<void> {
-  return requestVoid(`${API_BASE_URL}/api/memory`, "Failed to clear memory", {
+  return requestVoid(`${API_BASE_URL}/api/memory`, "clearMemory", {
     method: "DELETE",
   });
 }
 
 /** Drop the scratch state agent runs parked in the user's workspaces. */
 export async function clearScratch(): Promise<ScratchClearedResponse> {
-  return requestJson(
-    `${API_BASE_URL}/api/scratch`,
-    "Failed to clear scratch files",
-    ScratchClearedResponseSchema,
-    { method: "DELETE" },
-  );
+  return requestJson(`${API_BASE_URL}/api/scratch`, "clearScratch", ScratchClearedResponseSchema, {
+    method: "DELETE",
+  });
 }
 
 /** Delete all user data (conversations, documents, tokens). */
 export async function deleteAllUserData(): Promise<void> {
-  return requestVoid(`${API_BASE_URL}/api/user-data`, "Failed to delete user data", {
+  return requestVoid(`${API_BASE_URL}/api/user-data`, "deleteUserData", {
     method: "DELETE",
   });
 }
@@ -1110,7 +1110,7 @@ export async function deleteAllUserData(): Promise<void> {
 
 /** POST helper that validates an admin reset response, raising on HTTP errors. */
 async function adminPost<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-  return requestJson(`${API_BASE_URL}${path}`, "Admin action failed", schema, { method: "POST" });
+  return requestJson(`${API_BASE_URL}${path}`, "adminAction", schema, { method: "POST" });
 }
 
 /** Wipe the workspace tree on disk and the matching SQL document rows. */
@@ -1136,11 +1136,7 @@ export function adminFactoryReset(): Promise<AdminFactoryResetResponse> {
 /** List every user known to the local database (footprint-bearing only). */
 export async function adminListUsers(): Promise<AdminUserInfo[]> {
   return (
-    await requestJson(
-      `${API_BASE_URL}/api/admin/users`,
-      "Failed to list users",
-      AdminListUsersResponseSchema,
-    )
+    await requestJson(`${API_BASE_URL}/api/admin/users`, "listUsers", AdminListUsersResponseSchema)
   ).users;
 }
 
@@ -1149,7 +1145,7 @@ export async function adminListGroups(): Promise<AdminGroupInfo[]> {
   return (
     await requestJson(
       `${API_BASE_URL}/api/admin/groups`,
-      "Failed to list groups",
+      "listGroups",
       AdminListGroupsResponseSchema,
     )
   ).groups;
@@ -1160,7 +1156,7 @@ export async function adminGetMaintenance(): Promise<boolean> {
   return (
     await requestJson(
       `${API_BASE_URL}/api/admin/maintenance`,
-      "Failed to read maintenance mode",
+      "readMaintenance",
       AdminMaintenanceStateSchema,
     )
   ).enabled;
@@ -1171,7 +1167,7 @@ export async function adminSetMaintenance(enabled: boolean): Promise<boolean> {
   return (
     await requestJson(
       `${API_BASE_URL}/api/admin/maintenance`,
-      "Failed to set maintenance mode",
+      "setMaintenance",
       AdminMaintenanceStateSchema,
       jsonRequest("PUT", { enabled }),
     )
@@ -1182,7 +1178,7 @@ export async function adminSetMaintenance(enabled: boolean): Promise<boolean> {
 export async function adminDeleteUserData(userId: string): Promise<void> {
   return requestVoid(
     `${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}/data`,
-    "Failed to delete user data",
+    "deleteUserData",
     { method: "DELETE" },
   );
 }
@@ -1191,7 +1187,7 @@ export async function adminDeleteUserData(userId: string): Promise<void> {
 export async function adminDeleteGroupData(groupId: string): Promise<void> {
   return requestVoid(
     `${API_BASE_URL}/api/admin/groups/${encodeURIComponent(groupId)}/data`,
-    "Failed to delete group data",
+    "deleteGroupData",
     { method: "DELETE" },
   );
 }

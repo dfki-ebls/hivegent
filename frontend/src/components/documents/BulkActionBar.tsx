@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { DOCUMENT_ACTIONS } from "@/lib/document-actions";
 import { Button } from "@/components/ui/button";
@@ -21,19 +22,29 @@ export function BulkActionBar({
   handlers,
   onClear,
 }: BulkActionBarProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex h-9 items-center gap-2 px-2 py-1">
-      <Button variant="ghost" size="icon" className="h-7 w-7 -mx-1.5" onClick={onClear}>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-7 w-7 -mx-1.5"
+        aria-label={t(($) => $.documents.scope.clearSelection)}
+        onClick={onClear}
+      >
         <X className="h-4 w-4" />
       </Button>
-      <span className="text-sm font-medium">{selectedCount} selected</span>
+      <span className="text-sm font-medium">
+        {t(($) => $.documents.scope.selected, { count: selectedCount })}
+      </span>
       {DOCUMENT_ACTIONS.map((action) => {
         if (action.requiresOriginal && !hasReconvertable) return null;
         const Icon = action.icon;
         return (
           <Button key={action.id} variant={action.variant} size="sm" onClick={handlers[action.id]}>
             <Icon className="h-4 w-4 mr-1" />
-            {action.label}
+            {t(($) => $.documents.actions[action.id])}
           </Button>
         );
       })}

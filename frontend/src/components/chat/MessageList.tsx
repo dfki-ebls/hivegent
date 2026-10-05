@@ -1,4 +1,6 @@
 import type { ChatStatus } from "ai";
+import { ArrowDownIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -13,12 +15,15 @@ import { CompactionBanner } from "@/components/chat/CompactionBanner";
 import { ContextLimitBanner } from "@/components/chat/ContextLimitBanner";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { keyPrefix } from "@/i18n";
 import {
   type ChatMessage,
   isChatBusy,
   isContextLengthError,
   showThinkingLoader,
 } from "@/lib/chat/chat-utils";
+
+const T_OPTIONS = keyPrefix(($) => $.chat.messages);
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -60,6 +65,7 @@ export function MessageList({
   onRegenerate,
   onExecutePlan,
 }: MessageListProps) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
   const contextLimitReached = isContextLengthError(chatError);
 
   if (isLoadingHistory) {
@@ -87,10 +93,8 @@ export function MessageList({
               <MessageScrollerItem className="flex min-h-[50vh]">
                 <Empty className="p-8">
                   <EmptyHeader className="gap-1">
-                    <EmptyTitle className="text-sm">Ask about your documents</EmptyTitle>
-                    <EmptyDescription>
-                      Start a conversation to search and explore your documents.
-                    </EmptyDescription>
+                    <EmptyTitle className="text-sm">{t(($) => $.emptyTitle)}</EmptyTitle>
+                    <EmptyDescription>{t(($) => $.emptyDescription)}</EmptyDescription>
                   </EmptyHeader>
                 </Empty>
               </MessageScrollerItem>
@@ -135,7 +139,10 @@ export function MessageList({
             )}
           </MessageScrollerContent>
         </MessageScrollerViewport>
-        <MessageScrollerButton />
+        <MessageScrollerButton>
+          <ArrowDownIcon />
+          <span className="sr-only">{t(($) => $.scrollToEnd)}</span>
+        </MessageScrollerButton>
       </MessageScroller>
     </MessageScrollerProvider>
   );

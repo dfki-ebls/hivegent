@@ -32,6 +32,7 @@ import {
   type PersistedToolsSpec,
   PersistedToolsSpecSchema,
   PipelineConfigsSchema,
+  type PipelineKind,
   type ToolsSpec,
   type UserOverrides,
 } from "@/lib/types";
@@ -45,6 +46,12 @@ const EMPTY_OVERRIDES: UserOverrides = {
 
 /** Per-pipeline configuration overrides, keyed by pipeline value. */
 export type PipelineConfigs = Record<string, Record<string, unknown>>;
+
+/** The state field holding each pipeline kind's per-pipeline configs. */
+export const PIPELINE_CONFIG_FIELDS = {
+  conversion: "conversionConfigs",
+  chunking: "chunkingConfigs",
+} as const satisfies Record<PipelineKind, string>;
 
 /**
  * Exact shape written to localStorage — the persist middleware's persisted-state
@@ -113,10 +120,12 @@ interface SettingsState {
   setExpandedDirs: (dirs: string[]) => void;
   setPersonality: (personality: Personality) => void;
   setCustomSystemMessage: (message: string) => void;
-  setConversionConfig: (pipeline: string, config: Record<string, unknown>) => void;
-  setChunkingConfig: (pipeline: string, config: Record<string, unknown>) => void;
-  resetConversionConfig: (pipeline: string) => void;
-  resetChunkingConfig: (pipeline: string) => void;
+  setPipelineConfig: (
+    kind: PipelineKind,
+    pipeline: string,
+    config: Record<string, unknown>,
+  ) => void;
+  resetPipelineConfig: (kind: PipelineKind, pipeline: string) => void;
   setDisabledTools: (tools: string[]) => void;
   toggleTool: (toolName: string) => void;
   addMcpServer: (server: McpServerEntry) => void;
@@ -210,26 +219,17 @@ export const useSettingsStore = create<SettingsState>()(
 
       setCustomSystemMessage: (customSystemMessage) => set({ customSystemMessage }),
 
-      setConversionConfig: (pipeline, config) =>
-        set((state) => ({
-          conversionConfigs: { ...state.conversionConfigs, [pipeline]: config },
-        })),
-
-      setChunkingConfig: (pipeline, config) =>
-        set((state) => ({
-          chunkingConfigs: { ...state.chunkingConfigs, [pipeline]: config },
-        })),
-
-      resetConversionConfig: (pipeline) =>
+      setPipelineConfig: (kind, pipeline, config) =>
         set((state) => {
-          const { [pipeline]: _, ...rest } = state.conversionConfigs;
-          return { conversionConfigs: rest };
+          const field = PIPELINE_CONFIG_FIELDS[kind];
+          return { [field]: { ...state[field], [pipeline]: config } };
         }),
 
-      resetChunkingConfig: (pipeline) =>
+      resetPipelineConfig: (kind, pipeline) =>
         set((state) => {
-          const { [pipeline]: _, ...rest } = state.chunkingConfigs;
-          return { chunkingConfigs: rest };
+          const field = PIPELINE_CONFIG_FIELDS[kind];
+          const { [pipeline]: _, ...rest } = state[field];
+          return { [field]: rest };
         }),
 
       setDisabledTools: (tools) =>

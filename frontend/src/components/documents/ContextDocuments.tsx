@@ -1,5 +1,6 @@
 import { Search } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useDocumentLineCounts } from "@/hooks/use-document-line-counts";
 import type { FetchedChunk, FetchedDocument } from "@/lib/types";
@@ -10,6 +11,7 @@ import { DocumentGroup } from "@/components/documents/DocumentGroup";
 import { EmptyState } from "@/components/EmptyState";
 
 export function ContextDocuments() {
+  const { t } = useTranslation();
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
 
@@ -85,8 +87,8 @@ export function ContextDocuments() {
     return (
       <EmptyState
         icon={<Search className="h-12 w-12 opacity-50" />}
-        title="Context documents will appear here"
-        description="Ask questions in the chat to search and fetch documents"
+        title={t(($) => $.documents.context.emptyTitle)}
+        description={t(($) => $.documents.context.emptyDescription)}
       />
     );
   }

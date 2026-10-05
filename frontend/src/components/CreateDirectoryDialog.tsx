@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 import { formatTarget } from "@/lib/api";
 import { NameInputDialog } from "@/components/documents/NameInputDialog";
 
@@ -16,15 +18,19 @@ export function CreateDirectoryDialog({
   target,
   onCreate,
 }: CreateDirectoryDialogProps) {
+  const { t } = useTranslation();
+
   return (
     <NameInputDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Create Folder"
-      description={`Create a new folder in ${formatTarget(target)}.`}
-      label="Folder name"
-      placeholder="new-folder"
-      submitLabel="Create"
+      title={t(($) => $.documents.confirm.createFolder)}
+      description={t(($) => $.documents.confirm.createFolderDescription, {
+        target: formatTarget(target),
+      })}
+      label={t(($) => $.documents.confirm.folderName)}
+      placeholder={t(($) => $.documents.confirm.folderPlaceholder)}
+      submitLabel={t(($) => $.common.actions.create)}
       onSubmit={onCreate}
     />
   );

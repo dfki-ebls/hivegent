@@ -3,6 +3,7 @@
 import { FileTextIcon } from "lucide-react";
 import type { HTMLAttributes } from "react";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { DocumentDialog } from "@/components/DocumentDialog";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -14,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { keyPrefix } from "@/i18n";
 import {
   chunkOriginLabel,
   chunkPositionLabel,
@@ -24,6 +26,8 @@ import {
   parseLinePositions,
 } from "@/lib/types";
 import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
+
+const T_OPTIONS = keyPrefix(($) => $.chat.citation);
 
 interface CitationProps extends HTMLAttributes<HTMLElement> {
   src?: string;
@@ -86,14 +90,15 @@ function EvidenceDialog({
   evidence: Evidence[];
   onClose: () => void;
 }) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
+
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="flex max-h-[80vh] max-w-3xl flex-col">
         <DialogHeader>
           <DialogTitle>{filename}</DialogTitle>
           <DialogDescription>
-            {chunkPositionLabel(position)} from the tool output stored with this conversation. The
-            document link opens the current workspace version separately.
+            {t(($) => $.evidenceDescription, { position: chunkPositionLabel(position) })}
           </DialogDescription>
         </DialogHeader>
         <ScrollArea className="min-h-0 flex-1">
@@ -101,7 +106,7 @@ function EvidenceDialog({
             {evidence.map(({ chunk, lines }) => (
               <section key={chunk.id} className="overflow-hidden rounded-md border">
                 <div className="border-b bg-muted px-3 py-2 text-xs text-muted-foreground">
-                  Captured by {chunkOriginLabel(chunk)}
+                  {t(($) => $.capturedBy, { source: chunkOriginLabel(chunk) })}
                 </div>
                 <pre className="overflow-x-auto p-3 text-sm">
                   {lines.map(({ number, text }) => (
@@ -121,6 +126,7 @@ function EvidenceDialog({
 }
 
 export function Citation({ src, line }: CitationProps) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
   const [open, setOpen] = useState<OpenTarget>(null);
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   // Subscribe to this document's entry rather than the whole map: its identity
@@ -160,7 +166,7 @@ export function Citation({ src, line }: CitationProps) {
             {displayName}
           </button>
         </TooltipTrigger>
-        <TooltipContent>Open the current document</TooltipContent>
+        <TooltipContent>{t(($) => $.openDocument)}</TooltipContent>
       </Tooltip>
       {positions.length > 0 && <span aria-hidden className="h-3.5 w-px bg-border" />}
       {positions.map((position, index) => {
@@ -179,9 +185,7 @@ export function Citation({ src, line }: CitationProps) {
               </button>
             </TooltipTrigger>
             <TooltipContent>
-              {available
-                ? "Open the captured lines"
-                : "No supporting tool output was captured for these lines."}
+              {available ? t(($) => $.openEvidence) : t(($) => $.noEvidence)}
             </TooltipContent>
           </Tooltip>
         );

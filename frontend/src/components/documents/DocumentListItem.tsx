@@ -1,7 +1,7 @@
 import { FileText, Scissors, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import type { DocumentInfo } from "@/lib/types";
-import { formatFileSize } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -10,7 +10,7 @@ import {
   FilterToggleButtons,
   type FilterEntryState,
 } from "@/components/documents/FilterToggleButtons";
-import { formatRelativeDate } from "@/components/documents/utils";
+import { formatFileSize, formatRelativeTime } from "@/i18n/format";
 
 interface DocumentListItemProps {
   doc: DocumentInfo;
@@ -35,6 +35,8 @@ export function DocumentListItem({
   selected,
   onToggleSelect,
 }: DocumentListItemProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex w-full items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50">
       {onToggleSelect && (
@@ -62,7 +64,7 @@ export function DocumentListItem({
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            {formatFileSize(doc.size_bytes)} · {formatRelativeDate(doc.modified_at)}
+            {formatFileSize(doc.size_bytes)} · {formatRelativeTime(doc.modified_at)}
           </p>
         </div>
       </button>
@@ -71,7 +73,13 @@ export function DocumentListItem({
         onInclude={onIncludeDocument}
         onExclude={onExcludeDocument}
       />
-      <Button variant="ghost" size="icon" title="Remove" onClick={onRemove} disabled={isMutating}>
+      <Button
+        variant="ghost"
+        size="icon"
+        title={t(($) => $.common.actions.remove)}
+        onClick={onRemove}
+        disabled={isMutating}
+      >
         <Trash2 className="h-4 w-4 text-destructive" />
       </Button>
     </div>

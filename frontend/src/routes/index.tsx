@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { LogIn } from "lucide-react";
 import { useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { DocsLink } from "@/components/DocsLink";
 import { Logo } from "@/components/Logo";
@@ -9,12 +10,14 @@ import { ChatLayout } from "@/components/ChatLayout";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useOidc } from "@/oidc";
+import { PRODUCT_NAME } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
   component: IndexPage,
 });
 
 function IndexPage() {
+  const { t } = useTranslation();
   const { isUserLoggedIn, login } = useOidc();
   const [isSigningIn, setIsSigningIn] = useState(false);
 
@@ -27,13 +30,10 @@ function IndexPage() {
       <div className="flex flex-col items-center gap-6 text-center">
         <Logo className="w-60 max-w-full" />
         <div className="flex items-center gap-3">
-          <h1 className="text-4xl font-bold">Hivegent</h1>
+          <h1 className="text-4xl font-bold">{PRODUCT_NAME}</h1>
           <VersionBadge className="self-start" />
         </div>
-        <p className="text-lg text-muted-foreground max-w-md">
-          Your intelligent document assistant powered by RAG. Upload documents and chat with your
-          knowledge base.
-        </p>
+        <p className="text-lg text-muted-foreground max-w-md">{t(($) => $.app.landing.tagline)}</p>
         <Button
           size="lg"
           disabled={isSigningIn}
@@ -43,7 +43,7 @@ function IndexPage() {
           }}
         >
           {isSigningIn ? <Spinner className="mr-2 h-4 w-4" /> : <LogIn className="mr-2 h-4 w-4" />}
-          Sign In
+          {t(($) => $.app.landing.signIn)}
         </Button>
         <DocsLink className="text-sm text-muted-foreground hover:text-foreground transition-colors" />
       </div>

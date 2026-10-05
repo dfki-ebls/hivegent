@@ -1,17 +1,14 @@
+import { i18n } from "@/i18n";
 import type { DirectoryEntry, DocumentInfo } from "@/lib/types";
 
 export { cn, type ClassValue } from "cn";
 
+/** The product name, the same in every language. */
+export const PRODUCT_NAME = "Hivegent";
+
 /** Handbook URL from `VITE_DOCS_URL`, or `undefined` when no handbook is served,
  * which hides the "Documentation" link. */
 export const DOCS_URL = import.meta.env.VITE_DOCS_URL;
-
-/** Format a byte count as a human-readable file size. */
-export function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 /** Filename without its extension (the logical document stem). */
 export function fileStem(name: string): string {
@@ -136,7 +133,7 @@ export function formatWebUrl(url: string): string {
 export const isAbortError = (err: unknown): boolean =>
   err instanceof DOMException && err.name === "AbortError";
 
-/** Coerce an unknown thrown value into a human-readable message. */
+/** A thrown value's message, or a localized generic one when it is no `Error`. */
 export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return error instanceof Error ? error.message : i18n.t(($) => $.common.states.unknownError);
 }

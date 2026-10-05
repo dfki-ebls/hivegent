@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { parseJson } from "@/lib/chat/tool-part";
 import { cn } from "@/lib/utils";
 
@@ -86,12 +87,14 @@ interface ToolParametersProps {
 }
 
 export function ToolParameters({ params }: ToolParametersProps) {
+  const { t } = useTranslation();
+
   if (!params || Object.keys(params).length === 0) {
     return null;
   }
 
   return (
-    <ToolSection title="Parameters">
+    <ToolSection title={t(($) => $.chat.tools.sections.parameters)}>
       {Object.entries(params).map(([key, value]) => (
         <ToolParameter key={key} label={key} value={value} />
       ))}
@@ -104,8 +107,10 @@ interface ToolResultProps {
 }
 
 export function ToolResult({ children }: ToolResultProps) {
+  const { t } = useTranslation();
+
   return (
-    <ToolSection title="Result" border>
+    <ToolSection title={t(($) => $.chat.tools.sections.result)} border>
       {children}
     </ToolSection>
   );
@@ -116,8 +121,10 @@ interface ToolErrorProps {
 }
 
 export function ToolError({ message }: ToolErrorProps) {
+  const { t } = useTranslation();
+
   return (
-    <ToolSection title="Error" variant="error" border>
+    <ToolSection title={t(($) => $.common.states.error)} variant="error" border>
       <ToolPre>{message}</ToolPre>
     </ToolSection>
   );

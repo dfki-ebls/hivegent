@@ -1,4 +1,5 @@
 import { WrenchIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { FullScreenNotice } from "@/components/FullScreenNotice";
 
@@ -9,13 +10,14 @@ import { FullScreenNotice } from "@/components/FullScreenNotice";
  * mode back off.
  */
 export function MaintenanceScreen() {
+  const { t } = useTranslation();
+
   return (
     <FullScreenNotice
       icon={<WrenchIcon className="h-12 w-12 text-muted-foreground" />}
-      title="Down for maintenance"
+      title={t(($) => $.app.maintenance.title)}
     >
-      The application is temporarily unavailable while an administrator performs maintenance. This
-      page refreshes automatically once the app is back.
+      {t(($) => $.app.maintenance.description)}
     </FullScreenNotice>
   );
 }

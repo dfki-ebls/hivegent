@@ -8,6 +8,8 @@
  */
 
 import { z } from "zod";
+
+import { i18n } from "@/i18n";
 import type { ChatMessage } from "@/lib/chat/chat-utils";
 
 // ============================================================
@@ -257,6 +259,9 @@ export const BackendSettingsSchema = z.object({
   transparency: TransparencyConfigSchema,
 });
 export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
+
+/** The two pipeline stages a document passes through. */
+export type PipelineKind = "conversion" | "chunking";
 
 /** Metadata for a conversion pipeline, fetched from the backend. */
 export const ConversionPipelineInfoSchema = z.object({
@@ -701,11 +706,14 @@ export function chunkSortKey(position: ChunkPosition): number {
 export function chunkPositionLabel(position: ChunkPosition): string {
   switch (position.type) {
     case "line":
-      return `Line ${position.line}`;
+      return i18n.t(($) => $.options.chunkPosition.line, { line: position.line });
     case "line_range":
-      return `Lines ${position.startLine}-${position.endLine}`;
+      return i18n.t(($) => $.options.chunkPosition.lineRange, {
+        start: position.startLine,
+        end: position.endLine,
+      });
     case "full_document":
-      return "Full document";
+      return i18n.t(($) => $.options.chunkPosition.fullDocument);
     case "web_result": {
       try {
         return new URL(position.url).hostname;
@@ -714,16 +722,18 @@ export function chunkPositionLabel(position: ChunkPosition): string {
       }
     }
     case "text":
-      return "Cited text";
+      return i18n.t(($) => $.options.chunkPosition.citedText);
   }
 }
 
-/** Human-readable label for a chunk's origin ("grep: foo", "read"). */
+/** Localized label for how a chunk was captured ("Grep: foo", "Read"). */
 export function chunkOriginLabel({
   origin,
   detail,
 }: Pick<FetchedChunk, "origin" | "detail">): string {
-  return detail ? `${origin}: ${detail}` : origin;
+  const label = i18n.t(($) => $.documents.chunkOrigin[origin]);
+
+  return detail ? i18n.t(($) => $.documents.chunkOriginDetail, { origin: label, detail }) : label;
 }
 
 /** The line-based `ChunkPosition` variants a citation `line` attribute yields. */
@@ -854,41 +864,8 @@ export type Personality = "default" | "concise" | "detailed" | "structured" | "c
 /** Zod schema for personality (used in store rehydration). */
 export const PersonalitySchema = z.enum(["default", "concise", "detailed", "structured", "custom"]);
 
-/** Personality option for display in UI. */
-export interface PersonalityOption {
-  value: Personality;
-  label: string;
-  description: string;
-}
-
-/** Available personality options. */
-export const PERSONALITY_OPTIONS: PersonalityOption[] = [
-  {
-    value: "default",
-    label: "Default",
-    description: "Helpful and accurate with source citations",
-  },
-  {
-    value: "concise",
-    label: "Concise",
-    description: "Brief, to-the-point responses",
-  },
-  {
-    value: "detailed",
-    label: "Detailed",
-    description: "Thorough explanations with comprehensive context",
-  },
-  {
-    value: "structured",
-    label: "Structured",
-    description: "Tables and bullet points instead of prose",
-  },
-  {
-    value: "custom",
-    label: "Custom",
-    description: "Use a custom system message",
-  },
-];
+/** Every agent mode, in display order. Labels live in the `options.mode` catalog section. */
+export const AGENT_MODES = ["interactive", "read", "write", "plan"] as const;
 
 /**
  * Agent mode controlling which tools are offered and how writes are gated.
@@ -898,21 +875,18 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
  * unattended. `plan` is `read` plus the planning tool, so the agent drafts a
  * plan for the user to approve instead of acting.
  */
-export type AgentMode = "interactive" | "read" | "write" | "plan";
+export type AgentMode = (typeof AGENT_MODES)[number];
 
-/** Agent mode option for display in UI. */
-export interface AgentModeOption {
-  value: AgentMode;
-  label: string;
-}
-
-/** Available agent mode options. */
-export const AGENT_MODE_OPTIONS: AgentModeOption[] = [
-  { value: "interactive", label: "Interactive" },
-  { value: "read", label: "Read" },
-  { value: "write", label: "Write" },
-  { value: "plan", label: "Plan" },
-];
+/** Selectable reasoning efforts: `auto`, `none`, and the 1:1 pydantic-ai levels. Labels live in `options.reasoningEffort`. */
+export const REASONING_EFFORTS = [
+  "auto",
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const;
 
 /**
  * Reasoning effort level for the LLM.
@@ -922,21 +896,4 @@ export const AGENT_MODE_OPTIONS: AgentModeOption[] = [
  * the default and resolves server-side to the deployed default effort, so that
  * default can be retargeted without a client change.
  */
-export type ReasoningEffort = "auto" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
-
-/** Reasoning effort option for display in UI. */
-export interface ReasoningEffortOption {
-  value: ReasoningEffort;
-  label: string;
-}
-
-/** Selectable reasoning effort options: `auto`, `none`, and the 1:1 pydantic-ai levels. */
-export const REASONING_EFFORT_OPTIONS: ReasoningEffortOption[] = [
-  { value: "auto", label: "Auto" },
-  { value: "none", label: "None" },
-  { value: "minimal", label: "Minimal" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "xhigh", label: "Extra High" },
-];
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];

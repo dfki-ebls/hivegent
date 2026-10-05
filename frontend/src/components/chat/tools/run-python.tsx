@@ -1,5 +1,6 @@
 import { FileCodeIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import {
   CodeBlock,
   CodeBlockActions,
@@ -19,9 +20,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { keyPrefix } from "@/i18n";
 import { getDocumentContent } from "@/lib/api";
-import { type ToolPart, toolInput } from "@/lib/chat/tool-part";
+import { type ToolPart, toolDisplayName, toolInput } from "@/lib/chat/tool-part";
 import { basename, errorMessage } from "@/lib/utils";
+
+const T_OPTIONS = keyPrefix(($) => $.chat.tools.runPython);
 
 interface RunPythonInput {
   code?: string | null;
@@ -83,21 +87,20 @@ function ScriptSourceView({ path }: { path: string }) {
 }
 
 function ScriptSourceDialog({ path }: { path: string }) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
+
   return (
     <Dialog>
       <DialogTrigger asChild>
         <Button variant="outline" size="xs">
           <FileCodeIcon aria-hidden />
-          View source
+          {t(($) => $.viewSource)}
         </Button>
       </DialogTrigger>
       <DialogContent className="flex h-[min(85vh,56rem)] flex-col sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle className="font-mono">{path}</DialogTitle>
-          <DialogDescription>
-            The script as stored now. It is read afresh on every run, so a later edit may differ
-            from the version this call ran.
-          </DialogDescription>
+          <DialogDescription>{t(($) => $.sourceDescription)}</DialogDescription>
         </DialogHeader>
         <ScriptSourceView path={path} />
       </DialogContent>
@@ -106,11 +109,13 @@ function ScriptSourceDialog({ path }: { path: string }) {
 }
 
 function Program({ code, scriptPath }: { code?: string; scriptPath?: string }) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
+
   if (code) {
     return (
       <CodeBlock code={code} language="python">
         <CodeBlockHeader>
-          <CodeBlockFilename>Inline program</CodeBlockFilename>
+          <CodeBlockFilename>{t(($) => $.inlineProgram)}</CodeBlockFilename>
           <CodeBlockActions>
             <CodeBlockCopyButton className="size-6" />
           </CodeBlockActions>
@@ -130,40 +135,53 @@ function Program({ code, scriptPath }: { code?: string; scriptPath?: string }) {
     );
   }
 
-  return <p className="text-muted-foreground">No Python code or script path was provided.</p>;
+  return <p className="text-muted-foreground">{t(($) => $.noProgram)}</p>;
 }
 
 /** A workspace path set inline in prose. */
-function PathCode({ children }: { children: string }) {
+function PathCode({ children }: { children?: ReactNode }) {
   return <code className="font-mono text-xs">{children}</code>;
+}
+
+type PathMessage = "savedTo" | "notSaved" | "destination" | "approvalQuestion";
+
+/** A sentence naming a workspace path, set in code within the translated text. */
+function PathText({ message, path }: { message: PathMessage; path: string }) {
+  return (
+    <Trans
+      i18nKey={($) => $.chat.tools.runPython[message]}
+      values={{ path }}
+      components={{ path: <PathCode /> }}
+    />
+  );
 }
 
 const OUTPUT_BLOCK = "max-h-80 overflow-auto rounded-md bg-muted/40 p-2";
 
 function Output({ result, commitPath }: { result: PythonResult; commitPath?: string }) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
+
   return (
     <ToolResult>
       {result.stdout && <ToolPre className={OUTPUT_BLOCK}>{result.stdout}</ToolPre>}
-      {result.truncated && (
-        <p className="text-xs text-muted-foreground">Printed output was truncated.</p>
-      )}
+      {result.truncated && <p className="text-xs text-muted-foreground">{t(($) => $.truncated)}</p>}
       {result.result !== null && (
         <div>
-          <span className="text-muted-foreground">Returned:</span>
+          <span className="text-muted-foreground">{t(($) => $.returned)}</span>
           <ToolPre className={`mt-1 ${OUTPUT_BLOCK}`}>{result.result}</ToolPre>
         </div>
       )}
       {!result.stdout && result.result === null && (
-        <p className="text-muted-foreground">The program printed nothing and returned no value.</p>
+        <p className="text-muted-foreground">{t(($) => $.noOutput)}</p>
       )}
       {result.written_file ? (
         <p>
-          Saved to <PathCode>{result.written_file}</PathCode>.
+          <PathText message="savedTo" path={result.written_file} />
         </p>
       ) : (
         commitPath && (
           <p className="text-muted-foreground">
-            Nothing was saved to <PathCode>{commitPath}</PathCode>.
+            <PathText message="notSaved" path={commitPath} />
           </p>
         )
       )}
@@ -177,23 +195,29 @@ interface RunPythonToolProps {
 }
 
 export function RunPythonTool({ part, metadata }: RunPythonToolProps) {
+  const { t } = useTranslation();
   const input = toolInput<RunPythonInput>(part);
   const result = isPythonResult(metadata) ? metadata : null;
   const code = given(input?.code);
   const scriptPath = result?.script_path ?? given(input?.script_path);
   const commitPath = given(input?.commit_path);
+  const tool = toolDisplayName(t, "run_python");
 
   return (
     <ToolCard
       toolName="run_python"
       part={part}
-      title={scriptPath ? `Run Python · ${basename(scriptPath)}` : "Run Python"}
+      title={
+        scriptPath
+          ? t(($) => $.chat.tools.runPython.titleWithScript, { tool, script: basename(scriptPath) })
+          : tool
+      }
       parameters={
-        <ToolSection title="Program">
+        <ToolSection title={t(($) => $.chat.tools.sections.program)}>
           <Program code={code} scriptPath={scriptPath} />
           {commitPath && (
             <p className="text-muted-foreground">
-              Output destination: <PathCode>{commitPath}</PathCode>.
+              <PathText message="destination" path={commitPath} />
             </p>
           )}
         </ToolSection>
@@ -202,12 +226,10 @@ export function RunPythonTool({ part, metadata }: RunPythonToolProps) {
         commitPath && (
           <div className="space-y-1 text-sm">
             <p>
-              Allow this program to create or replace <PathCode>{commitPath}</PathCode>?
+              <PathText message="approvalQuestion" path={commitPath} />
             </p>
             <p className="text-xs text-muted-foreground">
-              Python runs in an isolated sandbox. It can read your documents and use the
-              assistant&apos;s search tools. Saving the document named here requires your approval.
-              Review the program first.
+              {t(($) => $.chat.tools.runPython.approvalHint)}
             </p>
           </div>
         )

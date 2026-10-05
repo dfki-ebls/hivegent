@@ -1,14 +1,11 @@
 import { AlertCircle, CheckCircle2, Loader2, RotateCw, X } from "lucide-react";
+import type { TFunction } from "i18next";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { ACTIVE_JOB_STATUSES, type JobView } from "@/lib/types";
 import { onJobStarted, useJobsStore } from "@/stores/jobs-store";
-import {
-  type UploadItem,
-  type UploadItemStatus,
-  onUploadAdded,
-  useUploadQueue,
-} from "@/stores/upload-queue-store";
+import { type UploadItem, onUploadAdded, useUploadQueue } from "@/stores/upload-queue-store";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
@@ -44,25 +41,20 @@ interface TaskRow {
   actions: TaskAction[];
 }
 
-const UPLOAD_STATUS_LABEL: Record<UploadItemStatus, string> = {
-  preparing: "Preparing...",
-  queued: "Queued",
-  uploading: "Uploading...",
-  failed: "Failed",
-};
-
-function jobStatusLabel(job: JobView): string {
+// Job stages and errors arrive localized from the backend,
+// so only the fallbacks are translated here.
+function jobStatusLabel(job: JobView, t: TFunction): string {
   switch (job.status) {
     case "failed":
-      return job.error ?? "Failed";
+      return job.error ?? t(($) => $.documents.jobs.status.failed);
     case "succeeded":
-      return "Done";
+      return t(($) => $.documents.jobs.status.done);
     case "cancelled":
-      return "Cancelled";
+      return t(($) => $.documents.jobs.status.cancelled);
     case "queued":
-      return job.stage ?? "Queued";
+      return job.stage ?? t(($) => $.documents.jobs.status.queued);
     default:
-      return job.stage ?? "Processing";
+      return job.stage ?? t(($) => $.documents.jobs.status.processing);
   }
 }
 
@@ -81,19 +73,31 @@ interface JobActions {
   dismiss: (id: string) => void;
 }
 
-function jobRow(job: JobView, { cancel, dismiss }: JobActions): TaskRow {
+function jobRow(job: JobView, { cancel, dismiss }: JobActions, t: TFunction): TaskRow {
   const active = ACTIVE_JOB_STATUSES.has(job.status);
   const actions: TaskAction[] = active
-    ? [xAction("cancel", "Cancel task", () => cancel(job.id))]
+    ? [
+        xAction(
+          "cancel",
+          t(($) => $.documents.jobs.cancelTask),
+          () => cancel(job.id),
+        ),
+      ]
     : job.status === "failed"
-      ? [xAction("dismiss", "Dismiss task", () => dismiss(job.id))]
+      ? [
+          xAction(
+            "dismiss",
+            t(($) => $.documents.jobs.dismissTask),
+            () => dismiss(job.id),
+          ),
+        ]
       : [];
 
   return {
     id: job.id,
     order: job.created_at,
     title: job.title,
-    statusText: jobStatusLabel(job),
+    statusText: jobStatusLabel(job, t),
     tone: active
       ? "active"
       : job.status === "succeeded"
@@ -112,27 +116,37 @@ interface UploadActions {
   dismiss: (id: string) => void;
 }
 
-function uploadRow(item: UploadItem, a: UploadActions): TaskRow {
+function uploadRow(item: UploadItem, a: UploadActions, t: TFunction): TaskRow {
   const failed = item.status === "failed";
   const retry: TaskAction = {
     key: "retry",
-    label: "Retry",
+    label: t(($) => $.common.actions.retry),
     icon: <RotateCw className="h-3.5 w-3.5 mr-1" />,
-    ariaLabel: "Retry",
+    ariaLabel: t(($) => $.common.actions.retry),
     run: () => a.retry(item.id),
   };
-  const dismiss = xAction("dismiss", "Dismiss upload", () => a.dismiss(item.id));
+  const dismiss = xAction(
+    "dismiss",
+    t(($) => $.documents.jobs.dismissUpload),
+    () => a.dismiss(item.id),
+  );
   const actions: TaskAction[] = failed
     ? item.retryable
       ? [retry, dismiss]
       : [dismiss]
-    : [xAction("cancel", "Cancel upload", () => a.cancel(item.id))];
+    : [
+        xAction(
+          "cancel",
+          t(($) => $.documents.jobs.cancelUpload),
+          () => a.cancel(item.id),
+        ),
+      ];
 
   return {
     id: item.id,
     order: item.createdAt,
     title: item.name,
-    statusText: item.error ?? UPLOAD_STATUS_LABEL[item.status],
+    statusText: item.error ?? t(($) => $.documents.jobs.status[item.status]),
     tone: failed ? "error" : "active",
     progress: null,
     actions,
@@ -216,6 +230,7 @@ function TaskRowView({ row }: { row: TaskRow }) {
  * its row without ever showing both.
  */
 export function JobTray() {
+  const { t } = useTranslation();
   const start = useJobsStore((s) => s.start);
   const jobsMap = useJobsStore((s) => s.jobs);
   const jobCancel = useJobsStore((s) => s.cancel);
@@ -248,14 +263,14 @@ export function JobTray() {
 
   const rows = useMemo(() => {
     const uploadRows = Object.values(uploadMap).map((item) =>
-      uploadRow(item, { retry, cancel: uploadCancel, dismiss: uploadDismiss }),
+      uploadRow(item, { retry, cancel: uploadCancel, dismiss: uploadDismiss }, t),
     );
     const jobRows = Object.values(jobsMap).map((job) =>
-      jobRow(job, { cancel: (id) => void jobCancel(id), dismiss: jobDismiss }),
+      jobRow(job, { cancel: (id) => void jobCancel(id), dismiss: jobDismiss }, t),
     );
 
     return [...uploadRows, ...jobRows].sort((a, b) => a.order - b.order);
-  }, [uploadMap, jobsMap, retry, uploadCancel, uploadDismiss, jobCancel, jobDismiss]);
+  }, [uploadMap, jobsMap, retry, uploadCancel, uploadDismiss, jobCancel, jobDismiss, t]);
 
   if (rows.length === 0) return null;
 
@@ -275,15 +290,17 @@ export function JobTray() {
           )}
           <span className="hidden sm:inline">
             {activeCount > 0
-              ? `Processing ${activeCount}`
+              ? t(($) => $.documents.jobs.processing, { count: activeCount })
               : attentionCount > 0
-                ? `${attentionCount} need attention`
-                : "Done"}
+                ? t(($) => $.documents.jobs.needAttention, { count: attentionCount })
+                : t(($) => $.documents.jobs.status.done)}
           </span>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-0">
-        <div className="border-b px-3 py-2 text-sm font-medium">Background tasks</div>
+        <div className="border-b px-3 py-2 text-sm font-medium">
+          {t(($) => $.documents.jobs.title)}
+        </div>
         <div className="max-h-80 divide-y overflow-y-auto">
           {rows.map((row) => (
             <TaskRowView key={row.id} row={row} />

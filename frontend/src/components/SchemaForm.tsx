@@ -6,6 +6,8 @@
  * Deeply nested or unsupported types are skipped (handled by the Advanced JSON editor).
  */
 
+import { useTranslation } from "react-i18next";
+
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -77,6 +79,7 @@ function ScalarField({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
+  const { t } = useTranslation();
   const label = prop.title || name;
   const id = `schema-field-${name}`;
 
@@ -173,7 +176,7 @@ function ScalarField({
         <Input
           id={id}
           value={arr.join(", ")}
-          placeholder="Comma-separated values"
+          placeholder={t(($) => $.app.schemaForm.commaSeparated)}
           onChange={(e) => {
             const v = e.target.value;
             onChange(
@@ -235,12 +238,10 @@ function ObjectFields({
 
 /** Main component: renders a JSON Schema as a form. */
 export function SchemaForm({ schema, values, onChange }: SchemaFormProps) {
+  const { t } = useTranslation();
+
   if (!schema.properties || !hasProperties(schema)) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        No configuration options available for this pipeline.
-      </p>
-    );
+    return <p className="text-sm text-muted-foreground">{t(($) => $.app.schemaForm.noOptions)}</p>;
   }
 
   const defs = schema.$defs;

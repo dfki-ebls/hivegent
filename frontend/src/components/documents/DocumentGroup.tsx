@@ -1,5 +1,6 @@
 import { ChevronRight, Globe } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { featureFlags } from "@/lib/feature-flags";
 import { type FetchedChunk, type FetchedDocument, sortChunks } from "@/lib/types";
@@ -27,6 +28,7 @@ export function DocumentGroup({
   onFilenameClick,
   onImageClick,
 }: DocumentGroupProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const isWeb = isWebUrl(doc.filename);
   // Image docs are keyed by their description path; show the image's own name.
@@ -81,8 +83,7 @@ export function DocumentGroup({
         </button>
         {contentChunks.length > 0 && (
           <Badge variant="outline" className="shrink-0 text-xs">
-            {contentChunks.length} chunk
-            {contentChunks.length !== 1 ? "s" : ""}
+            {t(($) => $.documents.chunks, { count: contentChunks.length })}
           </Badge>
         )}
         {featureFlags.documentMap && <DocumentMap segments={mapSegments} />}

@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useInView } from "@/hooks/use-in-view";
 import { useObjectUrl } from "@/hooks/use-object-url";
@@ -37,6 +38,7 @@ function isWorkspaceRelative(src: string): boolean {
  * right scope. Non-relative sources are unsupported and render as a fallback.
  */
 export function WorkspaceImage({ src, alt, documentPath }: WorkspaceImageProps) {
+  const { t } = useTranslation();
   const fetch = useCallback(
     (signal: AbortSignal) => {
       // Resolve relative path against the document directory (prefix preserved).
@@ -52,7 +54,11 @@ export function WorkspaceImage({ src, alt, documentPath }: WorkspaceImageProps) 
   const { url, error } = useObjectUrl(supported && inView ? fetch : null);
 
   if (!supported || error) {
-    return <span className="text-muted-foreground text-xs">[{alt || "image"}]</span>;
+    return (
+      <span className="text-muted-foreground text-xs">
+        [{alt || t(($) => $.documents.image.fallbackAlt)}]
+      </span>
+    );
   }
 
   // The wrapper stays mounted across the loading transition so the observer
@@ -62,7 +68,9 @@ export function WorkspaceImage({ src, alt, documentPath }: WorkspaceImageProps) 
       {url ? (
         <img src={url} alt={alt ?? ""} className="h-auto max-w-full overflow-hidden rounded-md" />
       ) : (
-        <span className="text-muted-foreground text-xs animate-pulse">Loading image...</span>
+        <span className="text-muted-foreground text-xs animate-pulse">
+          {t(($) => $.common.states.loadingImage)}
+        </span>
       )}
     </span>
   );

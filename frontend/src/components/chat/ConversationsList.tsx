@@ -1,5 +1,7 @@
 import { CheckIcon, MessageSquare, PencilIcon, SparklesIcon, TrashIcon, XIcon } from "lucide-react";
 import { type Ref, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { keyPrefix } from "@/i18n";
 import { buildAuxLlmConfig } from "@/lib/api";
 import { useConversationsStore } from "@/stores/conversations-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -18,31 +20,18 @@ import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/EmptyState";
 import { SearchInput } from "@/components/SearchInput";
 import { useFuzzySearch } from "@/hooks/use-fuzzy-search";
+import { formatRelativeTime } from "@/i18n/format";
 
-// --- Utility functions ---
-
-function formatRelativeTime(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffSecs = Math.floor(diffMs / 1000);
-  const diffMins = Math.floor(diffSecs / 60);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffSecs < 60) return "Just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
-}
+const T_OPTIONS = keyPrefix(($) => $.chat.conversations);
 
 // --- State display components ---
 
 function LoadingState() {
+  const { t } = useTranslation();
+
   return (
     <div className="flex h-full items-center justify-center text-muted-foreground">
-      Loading conversations...
+      {t(($) => $.chat.conversations.loading)}
     </div>
   );
 }
@@ -53,11 +42,13 @@ interface ErrorStateProps {
 }
 
 function ErrorState({ message, onRetry }: ErrorStateProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
       <p className="text-sm text-destructive">{message}</p>
       <Button variant="outline" size="sm" onClick={onRetry}>
-        Retry
+        {t(($) => $.common.actions.retry)}
       </Button>
     </div>
   );
@@ -73,6 +64,7 @@ interface TitleEditorProps {
 }
 
 function TitleEditor({ value, onChange, onSave, onCancel }: TitleEditorProps) {
+  const { t } = useTranslation();
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") onSave();
     else if (e.key === "Escape") onCancel();
@@ -84,12 +76,25 @@ function TitleEditor({ value, onChange, onSave, onCancel }: TitleEditorProps) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={handleKeyDown}
+        aria-label={t(($) => $.chat.conversations.titleLabel)}
         className="h-6 text-sm"
       />
-      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onSave}>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6"
+        onClick={onSave}
+        title={t(($) => $.common.actions.save)}
+      >
         <CheckIcon className="h-3 w-3" />
       </Button>
-      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onCancel}>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6"
+        onClick={onCancel}
+        title={t(($) => $.common.actions.cancel)}
+      >
         <XIcon className="h-3 w-3" />
       </Button>
     </div>
@@ -111,13 +116,21 @@ function ConversationActions({
   onGenerate,
   onDelete,
 }: ConversationActionsProps) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
+
   return (
     // Faded rather than the `hidden group-hover:inline-flex` the document and
     // directory rows use, because `display: none` drops the buttons out of the
     // tab order.  Pointer events are withheld to match, so a faded button
     // cannot take a click meant for the row button beside it.
     <div className="pointer-events-none flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
-      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onEdit} title="Edit title">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6"
+        onClick={onEdit}
+        title={t(($) => $.editTitle)}
+      >
         <PencilIcon className="h-3 w-3" />
       </Button>
       <Button
@@ -126,7 +139,7 @@ function ConversationActions({
         className="h-6 w-6"
         onClick={onGenerate}
         disabled={isGenerating}
-        title="Generate title with AI"
+        title={t(($) => $.generateTitle)}
       >
         <SparklesIcon className={`h-3 w-3 ${isGenerating ? "animate-pulse" : ""}`} />
       </Button>
@@ -135,7 +148,7 @@ function ConversationActions({
         size="icon"
         className="h-6 w-6 text-destructive hover:text-destructive"
         onClick={onDelete}
-        title="Delete conversation"
+        title={t(($) => $.delete)}
       >
         <TrashIcon className="h-3 w-3" />
       </Button>
@@ -175,6 +188,7 @@ function ConversationItem({
   onUpdateTitle,
   onGenerateTitle,
 }: ConversationItemProps) {
+  const { t } = useTranslation();
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(title);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -245,7 +259,9 @@ function ConversationItem({
           >
             {icon}
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{title || "Untitled"}</p>
+              <p className="truncate text-sm font-medium">
+                {title || t(($) => $.chat.conversations.untitled)}
+              </p>
               {timestamp}
             </div>
           </button>
@@ -272,6 +288,7 @@ export function ConversationsList({
   onConversationSelect,
   onActiveConversationDeleted,
 }: ConversationsListProps) {
+  const { t } = useTranslation();
   const {
     conversations,
     isLoading,
@@ -315,8 +332,8 @@ export function ConversationsList({
     return (
       <EmptyState
         icon={<MessageSquare className="h-8 w-8" />}
-        title="No conversations yet"
-        description="Start a new chat to begin"
+        title={t(($) => $.chat.conversations.emptyTitle)}
+        description={t(($) => $.chat.conversations.emptyDescription)}
       />
     );
 
@@ -326,7 +343,7 @@ export function ConversationsList({
         <SearchInput
           value={searchQuery}
           onChange={setSearchQuery}
-          placeholder="Search conversations..."
+          placeholder={t(($) => $.chat.conversations.search)}
         />
       </div>
 
@@ -334,8 +351,8 @@ export function ConversationsList({
         {matches.length === 0 ? (
           <EmptyState
             icon={<MessageSquare className="h-8 w-8" />}
-            title="No matching conversations"
-            description="Try a different search term"
+            title={t(($) => $.chat.conversations.noMatchesTitle)}
+            description={t(($) => $.chat.conversations.noMatchesDescription)}
           />
         ) : (
           matches.map((conversation) => (
@@ -360,17 +377,17 @@ export function ConversationsList({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
+            <AlertDialogTitle>{t(($) => $.chat.conversations.deleteTitle)}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete
-              {pendingDelete?.title ? ` "${pendingDelete.title}"` : " this conversation"} and all
-              its messages. This action cannot be undone.
+              {pendingDelete?.title
+                ? t(($) => $.chat.conversations.deleteNamed, { title: pendingDelete.title })
+                : t(($) => $.chat.conversations.deleteUnnamed)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t(($) => $.common.actions.cancel)}</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={() => void confirmDelete()}>
-              Delete
+              {t(($) => $.common.actions.delete)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

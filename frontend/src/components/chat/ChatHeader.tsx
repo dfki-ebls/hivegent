@@ -6,8 +6,12 @@ import {
   SquarePen,
   UploadIcon,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { keyPrefix } from "@/i18n";
+
+const T_OPTIONS = keyPrefix(($) => $.chat.header);
 
 export type ChatTab = "chat" | "history";
 
@@ -30,26 +34,23 @@ export function ChatHeader({
   onImport,
   onExport,
 }: ChatHeaderProps) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
+
   return (
     <div className="shrink-0 border-b px-4 flex items-center justify-between h-15">
       <TabsList>
         <TabsTrigger value="chat">
           <MessageSquareIcon className="h-4 w-4 mr-1.5" />
-          Chat
+          {t(($) => $.chat)}
         </TabsTrigger>
         <TabsTrigger value="history">
           <HistoryIcon className="h-4 w-4 mr-1.5" />
-          History
+          {t(($) => $.history)}
         </TabsTrigger>
       </TabsList>
       <div className="flex items-center gap-1">
         {activeTab === "history" ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onImport}
-            title="Import conversation from JSON"
-          >
+          <Button variant="ghost" size="icon" onClick={onImport} title={t(($) => $.import)}>
             <UploadIcon className="h-4 w-4" />
           </Button>
         ) : (
@@ -60,24 +61,19 @@ export function ChatHeader({
                 size="icon"
                 onClick={onCompact}
                 disabled={compactDisabled}
-                title="Compact conversation"
+                title={t(($) => $.compact)}
               >
                 <Minimize2 className="h-4 w-4" />
               </Button>
             )}
             {onExport && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onExport}
-                title="Export conversation as JSON"
-              >
+              <Button variant="ghost" size="icon" onClick={onExport} title={t(($) => $.export)}>
                 <DownloadIcon className="h-4 w-4" />
               </Button>
             )}
           </>
         )}
-        <Button variant="ghost" size="icon" onClick={onNewChat} title="New chat">
+        <Button variant="ghost" size="icon" onClick={onNewChat} title={t(($) => $.newChat)}>
           <SquarePen className="h-4 w-4" />
         </Button>
       </div>

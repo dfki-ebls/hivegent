@@ -1,12 +1,13 @@
 import { Link } from "@tanstack/react-router";
 import { Bug, LogOut, User, UserCog } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useOidc } from "@/oidc";
 import { DocsLink } from "@/components/DocsLink";
 import { JobTray } from "@/components/JobTray";
 import { Logo } from "@/components/Logo";
 import { VersionBadge } from "@/components/VersionBadge";
 import { selectIsAdmin, useSettingsStore } from "@/stores/settings-store";
-import { DOCS_URL } from "@/lib/utils";
+import { DOCS_URL, PRODUCT_NAME } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -18,6 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 function UserMenu() {
+  const { t } = useTranslation();
   const oidc = useOidc();
   const isAdmin = useSettingsStore(selectIsAdmin);
 
@@ -34,7 +36,7 @@ function UserMenu() {
     decodedIdToken.name ||
     decodedIdToken.preferred_username ||
     decodedIdToken.email ||
-    "User";
+    t(($) => $.app.userMenu.fallbackName);
 
   return (
     <DropdownMenu>
@@ -56,7 +58,7 @@ function UserMenu() {
         <DropdownMenuItem asChild>
           <Link to="/settings/account" className="flex items-center gap-2">
             <UserCog className="h-4 w-4" />
-            Account
+            {t(($) => $.app.userMenu.account)}
           </Link>
         </DropdownMenuItem>
         {DOCS_URL && (
@@ -68,7 +70,7 @@ function UserMenu() {
           <DropdownMenuItem asChild>
             <Link to="/debug" className="flex items-center gap-2">
               <Bug className="h-4 w-4" />
-              Tool Debugger
+              {t(($) => $.app.userMenu.toolDebugger)}
             </Link>
           </DropdownMenuItem>
         )}
@@ -78,7 +80,7 @@ function UserMenu() {
           className="flex items-center gap-2"
         >
           <LogOut className="h-4 w-4" />
-          Sign out
+          {t(($) => $.app.userMenu.signOut)}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -93,7 +95,7 @@ export function Header() {
         className="flex items-center gap-2 text-foreground hover:opacity-80 transition-opacity"
       >
         <Logo className="h-10 w-10" />
-        <h1 className="text-xl font-semibold">Hivegent</h1>
+        <h1 className="text-xl font-semibold">{PRODUCT_NAME}</h1>
         <VersionBadge />
       </Link>
 

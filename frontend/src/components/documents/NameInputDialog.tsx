@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,6 +43,7 @@ export function NameInputDialog({
   submitLabel,
   onSubmit,
 }: NameInputDialogProps) {
+  const { t } = useTranslation();
   const [name, setName] = useState(initialValue);
 
   const handleOpen = (isOpen: boolean) => {
@@ -85,7 +87,7 @@ export function NameInputDialog({
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
+              {t(($) => $.common.actions.cancel)}
             </Button>
             <Button type="submit" disabled={!canSubmit}>
               {submitLabel}

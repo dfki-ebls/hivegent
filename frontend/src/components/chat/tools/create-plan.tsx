@@ -8,8 +8,12 @@ import {
   PlanTitle,
   PlanTrigger,
 } from "@/components/ai-elements/plan";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { keyPrefix } from "@/i18n";
 import { type ToolPart, toolInput } from "@/lib/chat/tool-part";
+
+const T_OPTIONS = keyPrefix(($) => $.chat.tools.plan);
 
 interface CreatePlanToolProps {
   part: ToolPart;
@@ -17,6 +21,7 @@ interface CreatePlanToolProps {
 }
 
 export function CreatePlanTool({ part, onExecutePlan }: CreatePlanToolProps) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
   const state: ToolPart["state"] = part.state ?? "output-available";
   const input = toolInput<{ title?: string; description?: string; steps?: string[] }>(part);
 
@@ -24,11 +29,11 @@ export function CreatePlanTool({ part, onExecutePlan }: CreatePlanToolProps) {
     <Plan defaultOpen isStreaming={state === "input-streaming"}>
       <PlanHeader>
         <div>
-          <PlanTitle>{input?.title ?? "Plan"}</PlanTitle>
+          <PlanTitle>{input?.title ?? t(($) => $.fallbackTitle)}</PlanTitle>
           {input?.description && <PlanDescription>{input.description}</PlanDescription>}
         </div>
         <PlanAction>
-          <PlanTrigger />
+          <PlanTrigger aria-label={t(($) => $.toggle)} />
         </PlanAction>
       </PlanHeader>
       <PlanContent>
@@ -40,7 +45,7 @@ export function CreatePlanTool({ part, onExecutePlan }: CreatePlanToolProps) {
       </PlanContent>
       {state === "output-available" && onExecutePlan && (
         <PlanFooter>
-          <Button onClick={onExecutePlan}>Execute Plan</Button>
+          <Button onClick={onExecutePlan}>{t(($) => $.execute)}</Button>
         </PlanFooter>
       )}
     </Plan>

@@ -1,5 +1,6 @@
 import { Brain, Files, type LucideIcon } from "lucide-react";
 import type { ComponentType } from "react";
+import { useTranslation } from "react-i18next";
 
 import { type DocumentCanvasTab } from "@/lib/types";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
@@ -9,7 +10,6 @@ import { DocumentManager } from "@/components/documents/DocumentManager";
 
 interface TabDef {
   id: DocumentCanvasTab;
-  label: string;
   icon: LucideIcon;
   Panel: ComponentType;
 }
@@ -17,11 +17,12 @@ interface TabDef {
 // Tabs of the document canvas, in display order. A future view (e.g. a graph or
 // database explorer) is a single entry here plus its id in DocumentCanvasTabSchema.
 const TABS: TabDef[] = [
-  { id: "documents", label: "Documents", icon: Files, Panel: DocumentManager },
-  { id: "context", label: "Context", icon: Brain, Panel: ContextDocuments },
+  { id: "documents", icon: Files, Panel: DocumentManager },
+  { id: "context", icon: Brain, Panel: ContextDocuments },
 ];
 
 export function DocumentCanvas() {
+  const { t } = useTranslation();
   const activeTab = useDocumentCanvasStore((state) => state.activeTab);
   const setActiveTab = useDocumentCanvasStore((state) => state.setActiveTab);
 
@@ -33,10 +34,10 @@ export function DocumentCanvas() {
     >
       <div className="shrink-0 border-b px-4 flex items-center h-15">
         <TabsList className="w-full sm:w-auto">
-          {TABS.map(({ id, label, icon: Icon }) => (
+          {TABS.map(({ id, icon: Icon }) => (
             <TabsTrigger key={id} value={id} className="flex-1 sm:flex-none gap-2">
               <Icon className="h-4 w-4" />
-              {label}
+              {t(($) => $.documents.canvas[id])}
             </TabsTrigger>
           ))}
         </TabsList>

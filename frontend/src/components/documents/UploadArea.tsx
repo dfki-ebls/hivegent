@@ -8,6 +8,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { PERSONAL_SCOPE, formatTarget } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,8 @@ function ActionMenu({
   onFile: () => void;
   onFolder: () => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -64,11 +67,11 @@ function ActionMenu({
       <DropdownMenuContent align="start">
         <DropdownMenuItem onClick={onFile}>
           <FileText className="h-4 w-4 mr-2" />
-          File
+          {t(($) => $.documents.upload.file)}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={onFolder}>
           <FolderOpen className="h-4 w-4 mr-2" />
-          Folder
+          {t(($) => $.documents.upload.folder)}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -94,6 +97,7 @@ export function UploadArea({
   onNewDocument,
   onNewFolder,
 }: UploadAreaProps) {
+  const { t } = useTranslation();
   const atPersonalRoot = target === PERSONAL_SCOPE;
 
   return (
@@ -113,7 +117,7 @@ export function UploadArea({
           type="file"
           multiple
           className="hidden"
-          aria-label="Upload files"
+          aria-label={t(($) => $.documents.upload.uploadFiles)}
           onChange={onFileInputChange}
         />
         <input
@@ -122,41 +126,50 @@ export function UploadArea({
           webkitdirectory=""
           multiple
           className="hidden"
-          aria-label="Upload directory"
+          aria-label={t(($) => $.documents.upload.uploadFolder)}
           onChange={onDirectoryInputChange}
         />
         {/* A drop-zone icon (dashed frame + pointer) marks the dashed area as a
             drop target — deliberately not the Upload icon used by the menu below. */}
         <div className="flex max-w-full items-center gap-2">
           <Inbox className="h-8 w-8 shrink-0 text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">Drop files here to upload</span>
+          <span className="text-sm text-muted-foreground">
+            {t(($) => $.documents.upload.dropHint)}
+          </span>
         </div>
         <div className="flex flex-wrap justify-center gap-2">
           {/* Upload > File accepts any files, including ZIP archives, which are
               extracted into a collection rather than stored as one document. */}
           <ActionMenu
-            label="Upload"
+            label={t(($) => $.common.actions.upload)}
             icon={Upload}
             onFile={onSelectFiles}
             onFolder={onSelectDirectory}
           />
-          <ActionMenu label="Create" icon={Plus} onFile={onNewDocument} onFolder={onNewFolder} />
+          <ActionMenu
+            label={t(($) => $.common.actions.create)}
+            icon={Plus}
+            onFile={onNewDocument}
+            onFolder={onNewFolder}
+          />
         </div>
         {/* Where drops, uploads, and new files land — click a folder in the tree
             to change it. */}
         <div
           className="flex max-w-full items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-sm"
-          title="Uploads, new files and folders land here. Click a folder in the tree to change it."
+          title={t(($) => $.documents.upload.targetHint)}
         >
           <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="shrink-0 text-muted-foreground">Working in</span>
+          <span className="shrink-0 text-muted-foreground">
+            {t(($) => $.documents.upload.workingIn)}
+          </span>
           <span className="min-w-0 truncate font-medium">{formatTarget(target)}</span>
           {!atPersonalRoot && (
             <Button
               variant="ghost"
               size="icon"
               className="h-4 w-4 shrink-0"
-              title="Reset to root"
+              title={t(($) => $.documents.upload.resetTarget)}
               onClick={onResetTarget}
             >
               <X className="h-3 w-3" />

@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { type FileUIPart } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { AiDisclosure } from "@/components/chat/AiDisclosure";
 import { ChatHeader, type ChatTab } from "@/components/chat/ChatHeader";
@@ -11,6 +12,7 @@ import { ChatSuggestions } from "@/components/chat/Suggestions";
 import { ConversationsList } from "@/components/chat/ConversationsList";
 import { StreamingNavGuard } from "@/components/chat/StreamingNavGuard";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { i18n } from "@/i18n";
 import { useCompaction } from "@/hooks/chat/use-compaction";
 import { useBuildRequestBody } from "@/hooks/chat/use-build-request-body";
 import { useChatErrorLogger } from "@/hooks/chat/use-chat-error-logger";
@@ -30,6 +32,7 @@ import {
   recordChatError,
 } from "@/lib/chat/chat-utils";
 import { type AgentMode, type ConversationArchive, type ReasoningEffort } from "@/lib/types";
+import { errorMessage } from "@/lib/utils";
 import { useConversationsStore } from "@/stores/conversations-store";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
@@ -43,12 +46,8 @@ interface ChatSidebarProps {
   onNewDraft?: () => void;
 }
 
-const TOOL_DENIED_REASON =
-  "The user rejected this tool call, so it was not executed. " +
-  "Do not call the same tool again with the same or similar arguments. " +
-  "Stop working on this step, tell the user what you were about to do, and wait for their instructions.";
-
 export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const addChunk = useFetchedDocumentsStore((state) => state.addChunk);
   const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
@@ -206,14 +205,14 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
         void addToolApprovalResponse({
           id: approvalId,
           approved,
-          reason: approved ? undefined : TOOL_DENIED_REASON,
+          reason: approved ? undefined : i18n.t(($) => $.chat.sidebar.toolDenied),
         }),
       // The SDK records but does not dispatch a decision made while the
       // previous turn's final chunks are still draining, so the buttons wait
       // for it to settle.
-      blockedReason: isStreaming ? "Available once the current response finishes." : undefined,
+      blockedReason: isStreaming ? t(($) => $.chat.sidebar.approvalBlocked) : undefined,
     }),
-    [addToolApprovalResponse, isStreaming],
+    [addToolApprovalResponse, isStreaming, t],
   );
 
   const handleRegenerate = useCallback(async () => {
@@ -232,7 +231,10 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   // but each is still confirmed by the user.
   const handleExecutePlan = useCallback(async () => {
     setAgentMode("interactive");
-    await sendUserMessage({ text: "Execute the plan." }, buildRequestBody("interactive"));
+    await sendUserMessage(
+      { text: i18n.t(($) => $.chat.sidebar.executePlan) },
+      buildRequestBody("interactive"),
+    );
   }, [buildRequestBody, sendUserMessage]);
 
   const handleNewChat = useCallback(async () => {
@@ -294,9 +296,9 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
         const summary = await importConversation(file);
         await fetchConversations();
         await handleConversationSelect(summary.id);
-        toast.success("Conversation imported");
-      } catch {
-        toast.error("Failed to import conversation");
+        toast.success(i18n.t(($) => $.chat.sidebar.imported));
+      } catch (e) {
+        toast.error(errorMessage(e));
       }
     },
     [fetchConversations, handleConversationSelect],
@@ -309,8 +311,8 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   const handleAudioRecorded = useCallback(async (audio: Blob) => {
     try {
       return await transcribeAudio(audio);
-    } catch {
-      toast.error("Failed to transcribe audio");
+    } catch (e) {
+      toast.error(errorMessage(e));
       return "";
     }
   }, []);
@@ -336,7 +338,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
         type="file"
         accept="application/json,.json"
         className="hidden"
-        aria-label="Import conversation file"
+        aria-label={t(($) => $.chat.header.importFile)}
         onChange={handleImportFile}
       />
 

@@ -2,8 +2,10 @@ import { useNavigate } from "@tanstack/react-router";
 import type { FileUIPart } from "ai";
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { toast } from "sonner";
+import { i18n } from "@/i18n";
 import { compactConversation } from "@/lib/api";
 import { type ChatMessage, type UserTurn, getLastUserMessage } from "@/lib/chat/chat-utils";
+import { errorMessage } from "@/lib/utils";
 import type { BuildRequestBody } from "@/hooks/chat/use-build-request-body";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 
@@ -41,27 +43,33 @@ export function useCompaction({
     async (retryLastMessage = false) => {
       setIsCompacting(true);
       const toastId = `compaction:${id}`;
-      toast.loading("Compacting conversation", {
-        id: toastId,
-        description: "Summarizing earlier messages to fit the context window.",
-      });
+      toast.loading(
+        i18n.t(($) => $.chat.compaction.compacting),
+        {
+          id: toastId,
+          description: i18n.t(($) => $.chat.compaction.compactingDescription),
+        },
+      );
 
       try {
         const result = await compactConversation(id, buildRequestBody());
 
         if (activeIdRef.current !== id) {
-          toast.success("Conversation compacted", {
-            id: toastId,
-            description: "Open it to continue where this chat left off.",
-            action: {
-              label: "Open",
-              onClick: () =>
-                void navigate({
-                  to: "/conversations/$id",
-                  params: { id: result.new_conversation_id },
-                }),
+          toast.success(
+            i18n.t(($) => $.chat.compaction.compacted),
+            {
+              id: toastId,
+              description: i18n.t(($) => $.chat.compaction.compactedDescription),
+              action: {
+                label: i18n.t(($) => $.common.actions.open),
+                onClick: () =>
+                  void navigate({
+                    to: "/conversations/$id",
+                    params: { id: result.new_conversation_id },
+                  }),
+              },
             },
-          });
+          );
 
           return;
         }
@@ -72,10 +80,18 @@ export function useCompaction({
           to: "/conversations/$id",
           params: { id: result.new_conversation_id },
         });
-        toast.success("Conversation compacted", { id: toastId });
+        toast.success(
+          i18n.t(($) => $.chat.compaction.compacted),
+          { id: toastId },
+        );
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        toast.error("Couldn't compact the conversation", { id: toastId, description: message });
+        toast.error(
+          i18n.t(($) => $.chat.compaction.failed),
+          {
+            id: toastId,
+            description: errorMessage(error),
+          },
+        );
       } finally {
         setIsCompacting(false);
       }

@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 import { type FetchedChunk, chunkOriginLabel, chunkPositionLabel } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 
@@ -7,18 +9,22 @@ interface ChunkCardProps {
 }
 
 export function ChunkCard({ chunk, onClick }: ChunkCardProps) {
+  const { t } = useTranslation();
   const label = chunkPositionLabel(chunk.position);
 
   return (
     <button
       type="button"
       onClick={onClick}
-      title={`${chunkOriginLabel(chunk)} — ${label}`}
+      title={t(($) => $.documents.chunkSummary, {
+        origin: chunkOriginLabel(chunk),
+        position: label,
+      })}
       className="flex min-w-0 flex-col gap-1 overflow-hidden rounded-md border bg-card p-2 text-left cursor-pointer transition-colors hover:bg-muted/50"
     >
       <div className="flex min-w-0 items-center gap-1.5">
-        <Badge variant="outline" className="shrink-0 text-[10px] capitalize">
-          {chunk.origin}
+        <Badge variant="outline" className="shrink-0 text-[10px]">
+          {t(($) => $.documents.chunkOrigin[chunk.origin])}
         </Badge>
         <span className="truncate text-[10px] text-muted-foreground">{label}</span>
       </div>

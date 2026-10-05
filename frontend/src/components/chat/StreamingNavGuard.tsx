@@ -1,4 +1,5 @@
 import { useBlocker } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -9,6 +10,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { keyPrefix } from "@/i18n";
+
+const T_OPTIONS = keyPrefix(($) => $.chat.navGuard);
 
 interface StreamingNavGuardProps {
   isStreaming: boolean;
@@ -26,6 +30,7 @@ interface StreamingNavGuardProps {
  * tab close / reload so both paths behave the same.
  */
 export function StreamingNavGuard({ isStreaming, onStop }: StreamingNavGuardProps) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
   const { status, proceed, reset } = useBlocker({
     shouldBlockFn: () => isStreaming,
     enableBeforeUnload: isStreaming,
@@ -41,21 +46,18 @@ export function StreamingNavGuard({ isStreaming, onStop }: StreamingNavGuardProp
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Stop the current response?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This chat is still generating a response. Leaving now stops it. Any partial answer is
-            saved, so you can return and continue this conversation later.
-          </AlertDialogDescription>
+          <AlertDialogTitle>{t(($) => $.title)}</AlertDialogTitle>
+          <AlertDialogDescription>{t(($) => $.description)}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Stay</AlertDialogCancel>
+          <AlertDialogCancel>{t(($) => $.stay)}</AlertDialogCancel>
           <AlertDialogAction
             onClick={() => {
               onStop();
               proceed?.();
             }}
           >
-            Leave and stop
+            {t(($) => $.leave)}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

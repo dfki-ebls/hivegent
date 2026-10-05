@@ -1,5 +1,6 @@
 import type { ChatStatus, FileUIPart } from "ai";
 import { useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   PromptInput,
@@ -19,10 +20,13 @@ import { FileSelectButton } from "@/components/chat/composer/FileSelectButton";
 import { ModeSelector } from "@/components/chat/composer/ModeSelector";
 import { ReasoningEffortSelector } from "@/components/chat/composer/ReasoningEffortSelector";
 import { SettingsDialog } from "@/components/SettingsDialog";
+import { i18n, keyPrefix, LANGUAGE } from "@/i18n";
+import { formatFileSize } from "@/i18n/format";
 import { featureFlags } from "@/lib/feature-flags";
 import type { AgentMode, AttachmentLimits, ReasoningEffort } from "@/lib/types";
-import { formatFileSize } from "@/lib/utils";
 import { selectAttachmentLimits, useSettingsStore } from "@/stores/settings-store";
+
+const T_OPTIONS = keyPrefix(($) => $.chat.composer);
 
 type AttachmentError = Parameters<NonNullable<PromptInputProps["onError"]>>[0];
 
@@ -31,16 +35,18 @@ function attachmentErrorMessage(
   err: AttachmentError,
   limits: AttachmentLimits | undefined,
 ): string {
-  if (err.code === "accept") {
-    return "Only images can be attached. Upload other documents to your workspace, where the assistant can search them.";
+  switch (err.code) {
+    case "accept":
+      return i18n.t(($) => $.chat.composer.attachmentErrors.accept);
+    case "max_file_size":
+      return i18n.t(($) => $.chat.composer.attachmentErrors.maxFileSize, {
+        size: formatFileSize(limits?.max_bytes ?? 0),
+      });
+    case "max_files":
+      return i18n.t(($) => $.chat.composer.attachmentErrors.maxFiles, {
+        count: limits?.max_count ?? 0,
+      });
   }
-  if (err.code === "max_file_size") {
-    return `Images must be under ${formatFileSize(limits?.max_bytes ?? 0)}.`;
-  }
-  if (err.code === "max_files") {
-    return `At most ${limits?.max_count ?? 0} image(s) can be attached, since the model server accepts no more in one request.`;
-  }
-  return err.message;
 }
 
 interface ComposerProps {
@@ -65,10 +71,14 @@ function ComposerSpeechInput({
   disabled: boolean;
   onAudioRecorded?: (audio: Blob) => Promise<string>;
 }) {
+  const { t } = useTranslation();
   const { textInput } = usePromptInputController();
 
   return (
     <SpeechInput
+      lang={LANGUAGE}
+      aria-label={t(($) => $.chat.composer.dictate)}
+      title={t(($) => $.chat.composer.dictate)}
       type="button"
       variant="ghost"
       size="icon"
@@ -106,6 +116,7 @@ function ComposerContent({
   onReasoningEffortChange,
   onAudioRecorded,
 }: ComposerProps) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
   // Served by the backend so the picker, the paste handler, and the chat
   // route all gate on one table: a file the model could not read is refused
   // here rather than after a round trip.
@@ -138,7 +149,7 @@ function ComposerContent({
       <AttachedFiles />
       <PromptInputBody>
         <PromptInputTextarea
-          placeholder={isStreaming ? "Steer the conversation..." : "Ask about your documents..."}
+          placeholder={isStreaming ? t(($) => $.steerPlaceholder) : t(($) => $.placeholder)}
         />
       </PromptInputBody>
       <PromptInputFooter>
@@ -153,7 +164,11 @@ function ComposerContent({
             <ModeSelector value={agentMode} onChange={onAgentModeChange} />
           )}
         </PromptInputTools>
-        <PromptInputSubmit status={status} onStop={onStop} />
+        <PromptInputSubmit
+          status={status}
+          onStop={onStop}
+          aria-label={isStreaming ? t(($) => $.stop) : t(($) => $.submit)}
+        />
       </PromptInputFooter>
     </PromptInput>
   );

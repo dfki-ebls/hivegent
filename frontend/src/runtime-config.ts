@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { i18n } from "@/i18n";
 import { API_BASE_URL } from "@/lib/health";
 
 /**
@@ -24,7 +25,8 @@ export type RuntimeConfig = z.infer<typeof schema>;
 export async function fetchRuntimeConfig(): Promise<RuntimeConfig> {
   const res = await fetch(`${API_BASE_URL}/api/config`);
   if (!res.ok) {
-    throw new Error(`Failed to fetch /api/config: ${res.status}`);
+    throw new Error(i18n.t(($) => $.app.startup.configFailed, { status: res.status }));
   }
+
   return schema.parse(await res.json());
 }

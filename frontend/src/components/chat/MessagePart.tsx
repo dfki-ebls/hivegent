@@ -1,5 +1,6 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { CopyIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { MessageAction, MessageActions } from "@/components/ai-elements/message";
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
 import { ImagePart } from "@/components/chat/parts/ImagePart";
@@ -37,6 +38,8 @@ export function MessagePart({
   onSubmitEdit,
   onExecutePlan,
 }: MessagePartProps) {
+  const { t } = useTranslation();
+
   if (part.type === "text") {
     return (
       <div className="flex flex-col gap-1.5">
@@ -55,7 +58,7 @@ export function MessagePart({
           <MessageActions className={isUserMessage ? "ml-auto" : undefined}>
             <MessageAction
               onClick={() => void navigator.clipboard.writeText(part.text)}
-              label="Copy"
+              label={t(($) => $.common.actions.copy)}
             >
               <CopyIcon className="size-3" />
             </MessageAction>

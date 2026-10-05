@@ -1,6 +1,8 @@
 import { ChevronDown, ChevronRight, FolderOpen, Loader2, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
+import { keyPrefix } from "@/i18n";
 import {
   PERSONAL_SCOPE,
   buildAuxLlmConfig,
@@ -30,6 +32,8 @@ import {
 } from "@/components/documents/FilterToggleButtons";
 import { ScopeDialogs, type ScopeDialogsHandle } from "@/components/documents/ScopeDialogs";
 import { useFuzzySearch } from "@/hooks/use-fuzzy-search";
+
+const T_OPTIONS = keyPrefix(($) => $.documents.scope);
 
 /** Edit/view dialog target within a scope (local path). */
 interface ScopeDialogState {
@@ -71,6 +75,7 @@ export function ScopeSection({
   onArmTarget,
   onUploadInto,
 }: ScopeSectionProps) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
   const state = useDocumentsStore((s) => s.byScope[scope] ?? DEFAULT_SCOPE_STATE);
   const refresh = useDocumentsStore((s) => s.refresh);
   const storeRechunk = useDocumentsStore((s) => s.rechunk);
@@ -292,7 +297,7 @@ export function ScopeSection({
     // Read off the rendered tree rather than the response totals, so an
     // optimistically grafted directory counts immediately.
     if (!directoryTree?.root.children?.length) {
-      return <p className="py-2 text-xs text-muted-foreground">No documents in this workspace</p>;
+      return <p className="py-2 text-xs text-muted-foreground">{t(($) => $.empty)}</p>;
     }
     return (
       <DirectoryTreeView
@@ -324,7 +329,7 @@ export function ScopeSection({
 
   const flatList = () => {
     if (filtered.length === 0) {
-      return <p className="py-2 text-xs text-muted-foreground">No matching documents</p>;
+      return <p className="py-2 text-xs text-muted-foreground">{t(($) => $.noMatches)}</p>;
     }
     return (
       <div className="space-y-2">
@@ -361,7 +366,7 @@ export function ScopeSection({
     <button
       type="button"
       className="min-w-0 flex-1 truncate text-left text-sm font-medium"
-      title={canWrite ? "Set as upload target" : undefined}
+      title={canWrite ? t(($) => $.setUploadTarget) : undefined}
       onClick={
         canWrite
           ? () => {
@@ -442,7 +447,7 @@ export function ScopeSection({
                     checked={allSelected ? true : someSelected ? "indeterminate" : false}
                     onCheckedChange={toggleSelectAll}
                   />
-                  <span className="text-xs text-muted-foreground">Select all</span>
+                  <span className="text-xs text-muted-foreground">{t(($) => $.selectAll)}</span>
                 </div>
               )
             )}

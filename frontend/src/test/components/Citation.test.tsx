@@ -30,7 +30,7 @@ describe("Citation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Line 2" }));
 
     expect(screen.getByText("beta")).toBeTruthy();
-    expect(screen.getByText("Captured by read")).toBeTruthy();
+    expect(screen.getByText("Captured by Read")).toBeTruthy();
   });
 
   it("disables a line with no supporting tool output", () => {

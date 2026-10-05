@@ -10,8 +10,10 @@ import {
   Trash2,
 } from "lucide-react";
 import { downloadBlob } from "@/lib/download";
-import { formatFileSize, isWebUrl } from "@/lib/utils";
+import { errorMessage, isWebUrl } from "@/lib/utils";
+import { formatDateTime, formatFileSize } from "@/i18n/format";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   buildAuxLlmConfig,
@@ -111,16 +113,16 @@ interface ContentModel {
   metadata: ChunkedDocumentResponse | null;
 }
 
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleString();
-}
-
 /** Read-only markdown description with an empty-state fallback. */
 function DescriptionBody({ markdown }: { markdown: string | null }) {
+  const { t } = useTranslation();
+
   return markdown ? (
     <WorkspaceMarkdown>{markdown}</WorkspaceMarkdown>
   ) : (
-    <p className="text-muted-foreground italic text-sm">No description</p>
+    <p className="text-muted-foreground italic text-sm">
+      {t(($) => $.documents.dialog.noDescription)}
+    </p>
   );
 }
 
@@ -237,6 +239,7 @@ function DocumentDialogBody({
   target,
   onSave,
 }: Omit<DocumentDialogProps, "open">) {
+  const { t } = useTranslation();
   // Local content is only used in managed mode (custom getContent fetcher).
   // In fetched mode the store is the source of truth (see `fullContent` below).
   const [localFullContent, setLocalFullContent] = useState<string | null>(null);
@@ -304,8 +307,8 @@ function DocumentDialogBody({
           managedData?.chunks.map((item, index) => ({
             id: `managed:${index}`,
             content: item.text,
-            badge: `Chunk #${index}`,
-            detail: `${item.token_count} tokens`,
+            badge: t(($) => $.documents.dialog.chunkNumber, { index }),
+            detail: t(($) => $.documents.dialog.tokens, { count: item.token_count }),
             range: { start: item.start_index, end: item.end_index },
           })) ?? [],
         loading: isLoading || managedLoading,
@@ -345,6 +348,7 @@ function DocumentDialogBody({
     documents,
     filename,
     storedFullContent,
+    t,
   ]);
 
   const fullContent = contentModel.content;
@@ -354,7 +358,7 @@ function DocumentDialogBody({
   const loadManagedChunks = useCallback(() => {
     getDocumentChunks(filename)
       .then(setManagedData)
-      .catch((e) => setManagedError(e.message));
+      .catch((e: unknown) => setManagedError(errorMessage(e)));
   }, [filename]);
 
   useEffect(() => {
@@ -507,7 +511,7 @@ function DocumentDialogBody({
       await onSave(editFilename.trim(), editContent);
       onOpenChange(false);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Save failed");
+      setSaveError(errorMessage(err));
     } finally {
       setIsSaving(false);
     }
@@ -550,11 +554,13 @@ function DocumentDialogBody({
               <Input
                 value={editFilename}
                 onChange={(e) => setEditFilename(e.target.value)}
-                placeholder="filename.md"
+                placeholder={t(($) => $.documents.dialog.filenamePlaceholder)}
                 className="text-lg font-semibold"
               />
               {target && (
-                <p className="text-sm text-muted-foreground">Creating in {formatTarget(target)}</p>
+                <p className="text-sm text-muted-foreground">
+                  {t(($) => $.documents.dialog.creatingIn, { target: formatTarget(target) })}
+                </p>
               )}
             </div>
           )}
@@ -562,7 +568,7 @@ function DocumentDialogBody({
             <Textarea
               value={editContent}
               onChange={(e) => setEditContent(e.target.value)}
-              placeholder="Write your markdown content here..."
+              placeholder={t(($) => $.documents.dialog.contentPlaceholder)}
               className="h-full resize-none font-mono text-sm"
             />
           </div>
@@ -580,10 +586,10 @@ function DocumentDialogBody({
                 }
               }}
             >
-              Cancel
+              {t(($) => $.common.actions.cancel)}
             </Button>
             <Button onClick={handleSave} disabled={isSaving || !editFilename.trim()}>
-              {isSaving ? <Spinner /> : "Save"}
+              {isSaving ? <Spinner /> : t(($) => $.common.actions.save)}
             </Button>
           </DialogFooter>
         </div>
@@ -616,7 +622,9 @@ function DocumentDialogBody({
                 />
               </div>
               <div className="space-y-2">
-                <h3 className="text-sm font-medium">Description</h3>
+                <h3 className="text-sm font-medium">
+                  {t(($) => $.documents.dialog.descriptionHeading)}
+                </h3>
                 <DescriptionBody markdown={fullContent} />
                 <FileMetaBadges name={name} mediaType={imageEntry.mime} />
               </div>
@@ -671,10 +679,10 @@ function DocumentDialogBody({
         return (
           <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
             {isWeb
-              ? "Page content not available — it has not been fetched in this session"
+              ? t(($) => $.documents.dialog.pageNotFetched)
               : !filename.toLowerCase().endsWith(".md")
-                ? "Binary file — preview not available"
-                : "Document content unavailable"}
+                ? t(($) => $.documents.dialog.binaryFile)
+                : t(($) => $.documents.dialog.contentUnavailable)}
           </div>
         );
       }
@@ -704,7 +712,9 @@ function DocumentDialogBody({
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium">Description</h3>
+                <h3 className="text-sm font-medium">
+                  {t(($) => $.documents.dialog.descriptionHeading)}
+                </h3>
                 {editable && !isEditingAssetDescription && (
                   <div className="flex gap-1">
                     <Button
@@ -718,7 +728,7 @@ function DocumentDialogBody({
                       ) : (
                         <Sparkles className="h-3 w-3 mr-1" />
                       )}
-                      Generate
+                      {t(($) => $.documents.dialog.generate)}
                     </Button>
                     <Button
                       variant="ghost"
@@ -730,7 +740,7 @@ function DocumentDialogBody({
                       }}
                     >
                       <Pencil className="h-3 w-3 mr-1" />
-                      Edit
+                      {t(($) => $.common.actions.edit)}
                     </Button>
                     {asset.description && (
                       <Button
@@ -744,7 +754,7 @@ function DocumentDialogBody({
                         ) : (
                           <Trash2 className="h-3 w-3 mr-1" />
                         )}
-                        Delete
+                        {t(($) => $.common.actions.delete)}
                       </Button>
                     )}
                   </div>
@@ -765,14 +775,14 @@ function DocumentDialogBody({
                       variant="outline"
                       onClick={() => setIsEditingAssetDescription(false)}
                     >
-                      Cancel
+                      {t(($) => $.common.actions.cancel)}
                     </Button>
                     <Button
                       size="sm"
                       disabled={isSavingAssetDescription}
                       onClick={handleSaveAssetDescription}
                     >
-                      {isSavingAssetDescription ? <Spinner /> : "Save"}
+                      {isSavingAssetDescription ? <Spinner /> : t(($) => $.common.actions.save)}
                     </Button>
                   </div>
                 </div>
@@ -794,7 +804,7 @@ function DocumentDialogBody({
     if (!activeChunk) {
       return (
         <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
-          Select a chunk from the sidebar
+          {t(($) => $.documents.dialog.selectChunk)}
         </div>
       );
     }
@@ -809,7 +819,7 @@ function DocumentDialogBody({
       }
       return (
         <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
-          Document content unavailable
+          {t(($) => $.documents.dialog.contentUnavailable)}
         </div>
       );
     }
@@ -862,7 +872,7 @@ function DocumentDialogBody({
             }}
           >
             <FileText className="h-3 w-3 shrink-0" />
-            <span className="font-medium">Full document</span>
+            <span className="font-medium">{t(($) => $.options.chunkPosition.fullDocument)}</span>
           </button>
         </div>
 
@@ -874,10 +884,10 @@ function DocumentDialogBody({
             >
               <TabsList className="w-full">
                 <TabsTrigger value="chunks" className="flex-1 text-xs">
-                  Chunks
+                  {t(($) => $.documents.dialog.chunksTab)}
                 </TabsTrigger>
                 <TabsTrigger value="assets" className="flex-1 text-xs">
-                  Assets
+                  {t(($) => $.documents.dialog.assetsTab)}
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -919,7 +929,7 @@ function DocumentDialogBody({
                   </div>
                   <p className="truncate text-muted-foreground mt-0.5">
                     {item.content.slice(0, 60)}
-                    {item.content.length > 60 ? "..." : ""}
+                    {item.content.length > 60 ? "…" : ""}
                   </p>
                 </button>
               ))}
@@ -952,9 +962,8 @@ function DocumentDialogBody({
                   </div>
                   <p className="truncate text-muted-foreground mt-0.5">
                     {asset.description
-                      ? asset.description.slice(0, 60) +
-                        (asset.description.length > 60 ? "..." : "")
-                      : "No description"}
+                      ? asset.description.slice(0, 60) + (asset.description.length > 60 ? "…" : "")
+                      : t(($) => $.documents.dialog.noDescription)}
                   </p>
                 </button>
               ))
@@ -975,14 +984,14 @@ function DocumentDialogBody({
               size="icon"
               className="h-5 w-5 shrink-0"
               onClick={() => window.open(filename, "_blank", "noopener,noreferrer")}
-              title="Open in browser"
+              title={t(($) => $.documents.dialog.openInBrowser)}
             >
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           )}
         </DialogTitle>
         <DialogDescription className="sr-only">
-          Document content and chunk context for {filename}
+          {t(($) => $.documents.dialog.description, { filename })}
         </DialogDescription>
 
         {/* Metadata badges, then the document actions on their own line below. */}
@@ -990,15 +999,23 @@ function DocumentDialogBody({
           <div className="flex flex-col gap-1.5 text-sm text-muted-foreground">
             {showMetadata && contentModel.metadata && (
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary">Chunking: {contentModel.metadata.pipeline}</Badge>
-                <Badge variant="secondary">{contentModel.chunks.length} chunks</Badge>
+                <Badge variant="secondary">
+                  {t(($) => $.documents.dialog.chunking, {
+                    pipeline: contentModel.metadata.pipeline,
+                  })}
+                </Badge>
+                <Badge variant="secondary">
+                  {t(($) => $.documents.chunks, { count: contentModel.chunks.length })}
+                </Badge>
                 {contentModel.metadata.size_bytes != null && (
                   <Badge variant="outline">
                     {formatFileSize(contentModel.metadata.size_bytes)}
                   </Badge>
                 )}
                 <Badge variant="outline">
-                  Created: {formatDate(contentModel.metadata.created_at)}
+                  {t(($) => $.documents.dialog.created, {
+                    date: formatDateTime(contentModel.metadata.created_at),
+                  })}
                 </Badge>
               </div>
             )}
@@ -1016,7 +1033,7 @@ function DocumentDialogBody({
                     }}
                   >
                     <Pencil className="h-3 w-3 mr-1" />
-                    Edit
+                    {t(($) => $.common.actions.edit)}
                   </Button>
                 )}
                 {onRechunk && (
@@ -1027,13 +1044,13 @@ function DocumentDialogBody({
                     disabled={isRechunking}
                   >
                     <RefreshCw className={`h-3 w-3 mr-1 ${isRechunking ? "animate-spin" : ""}`} />
-                    Rechunk
+                    {t(($) => $.documents.actions.rechunk)}
                   </Button>
                 )}
                 {onReconvert && (
                   <Button variant="outline" size="sm" onClick={onReconvert}>
                     <RotateCcw className="h-3 w-3 mr-1" />
-                    Reconvert
+                    {t(($) => $.documents.actions.reconvert)}
                   </Button>
                 )}
                 {onDownloadOriginal && (
@@ -1041,10 +1058,10 @@ function DocumentDialogBody({
                     variant="outline"
                     size="sm"
                     onClick={onDownloadOriginal}
-                    title="Download the original file"
+                    title={t(($) => $.documents.dialog.downloadOriginal)}
                   >
                     <Download className="h-3 w-3 mr-1" />
-                    Original
+                    {t(($) => $.documents.dialog.original)}
                   </Button>
                 )}
                 {isManagedMode && (
@@ -1053,10 +1070,10 @@ function DocumentDialogBody({
                     size="sm"
                     onClick={handleDownloadMarkdown}
                     disabled={fullContent == null}
-                    title="Download the markdown description"
+                    title={t(($) => $.documents.dialog.downloadMarkdown)}
                   >
                     <Download className="h-3 w-3 mr-1" />
-                    Markdown
+                    {t(($) => $.documents.dialog.markdown)}
                   </Button>
                 )}
               </div>

@@ -1,4 +1,5 @@
 import { EyeOff, FileText, Folder, type LucideIcon, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { PromptInputHeader } from "@/components/ai-elements/prompt-input";
 import { Badge } from "@/components/ui/badge";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
@@ -20,12 +21,16 @@ interface FilterBadgeProps {
 }
 
 function FilterBadge({ entry, variant, icon: Icon, onRemove }: FilterBadgeProps) {
+  const { t } = useTranslation();
+  const name = entryDisplayName(entry);
+
   return (
     <Badge variant={variant} className="gap-1 text-xs" title={entry}>
       <Icon className="h-3 w-3" />
-      {entryDisplayName(entry)}
+      {name}
       <button
         type="button"
+        aria-label={t(($) => $.chat.composer.removeFilter, { name })}
         className="ml-0.5 rounded-full hover:bg-muted"
         onClick={() => onRemove(entry)}
       >

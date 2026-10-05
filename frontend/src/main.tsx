@@ -5,6 +5,7 @@ import ReactDOM from "react-dom/client";
 import { BootstrapGate } from "@/components/BootstrapGate";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import "@/i18n";
 import { OidcInitializationGate } from "@/oidc";
 import { routeTree } from "@/routeTree.gen";
 

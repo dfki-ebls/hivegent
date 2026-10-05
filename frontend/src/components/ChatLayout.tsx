@@ -1,6 +1,8 @@
 import { PanelLeftOpen } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
+import { keyPrefix } from "@/i18n";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { DocumentCanvas } from "@/components/documents/DocumentCanvas";
@@ -13,6 +15,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
+const T_OPTIONS = keyPrefix(($) => $.chat.layout);
+
 interface ChatLayoutProps {
   id: string;
   draft?: boolean;
@@ -20,6 +24,7 @@ interface ChatLayoutProps {
 }
 
 export function ChatLayout({ id, draft = false, onNewDraft }: ChatLayoutProps) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
   const [mobileDocumentsOpen, setMobileDocumentsOpen] = useState(false);
   const openChat = useDocumentCanvasStore((state) => state.openChat);
 
@@ -41,8 +46,10 @@ export function ChatLayout({ id, draft = false, onNewDraft }: ChatLayoutProps) {
       <Sheet open={mobileDocumentsOpen} onOpenChange={setMobileDocumentsOpen}>
         <SheetContent side="left" className="w-full sm:max-w-lg p-0">
           <SheetHeader className="border-b">
-            <SheetTitle>Documents</SheetTitle>
-            <SheetDescription className="sr-only">Browse context and documents</SheetDescription>
+            <SheetTitle>{t(($) => $.documents)}</SheetTitle>
+            <SheetDescription className="sr-only">
+              {t(($) => $.documentsDescription)}
+            </SheetDescription>
           </SheetHeader>
           <div className="h-[calc(100%-60px)] overflow-hidden">
             <DocumentCanvas />
@@ -56,7 +63,7 @@ export function ChatLayout({ id, draft = false, onNewDraft }: ChatLayoutProps) {
         <div className="md:hidden border-b p-2">
           <Button variant="ghost" size="sm" onClick={() => setMobileDocumentsOpen(true)}>
             <PanelLeftOpen className="h-4 w-4 mr-2" />
-            View Documents
+            {t(($) => $.viewDocuments)}
           </Button>
         </div>
         <div className="flex-1 overflow-hidden">

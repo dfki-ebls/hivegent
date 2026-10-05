@@ -1,4 +1,5 @@
 import { MessageSquarePlusIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   Queue,
   QueueItem,
@@ -17,14 +18,17 @@ interface SteeringQueueProps {
 }
 
 export function SteeringQueue({ queue }: SteeringQueueProps) {
+  const { t } = useTranslation();
+
   if (queue.length === 0) return null;
+
   return (
     <Queue>
       <QueueSection>
         <QueueSectionTrigger>
           <QueueSectionLabel
             count={queue.length}
-            label={queue.length === 1 ? "queued message" : "queued messages"}
+            label={t(($) => $.chat.steering.queued, { count: queue.length })}
             icon={<MessageSquarePlusIcon className="size-4" />}
           />
         </QueueSectionTrigger>

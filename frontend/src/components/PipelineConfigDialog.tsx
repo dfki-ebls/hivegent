@@ -7,6 +7,7 @@
 
 import { RotateCcwIcon, SettingsIcon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -21,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { type JsonSchema, SchemaForm } from "@/components/SchemaForm";
+import type { PipelineKind } from "@/lib/types";
 
 /** Type guard: check that a value looks like a JSON Schema with properties. */
 function isJsonSchema(v: unknown): v is JsonSchema {
@@ -35,7 +37,7 @@ interface PipelineConfigDialogProps {
   /** Pipeline display label (e.g. "Docling", "Token"). */
   pipelineLabel: string;
   /** Whether this is a "conversion" or "chunking" pipeline. */
-  pipelineType: "conversion" | "chunking";
+  pipelineType: PipelineKind;
   /** The pipeline's JSON Schema for its config model. */
   configSchema: Record<string, unknown>;
   /** The pipeline's default config values. */
@@ -60,6 +62,7 @@ export function PipelineConfigDialog({
   onReset,
   disabled,
 }: PipelineConfigDialogProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [advancedJson, setAdvancedJson] = useState("");
@@ -89,7 +92,7 @@ export function PipelineConfigDialog({
       setValues(parsed);
       setJsonError(null);
     } catch {
-      setJsonError("Invalid JSON");
+      setJsonError(t(($) => $.documents.pipelineConfig.invalidJson));
     }
   };
 
@@ -113,6 +116,9 @@ export function PipelineConfigDialog({
   const hasConfig = Object.keys(currentConfig).length > 0;
   const validSchema = isJsonSchema(configSchema) ? configSchema : undefined;
   const hasSchema = Object.keys(validSchema?.properties ?? {}).length > 0;
+  const configureLabel = t(($) => $.documents.pipelineConfig.configure, {
+    pipeline: pipelineLabel,
+  });
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -122,18 +128,20 @@ export function PipelineConfigDialog({
           size="icon"
           className="h-8 w-8 shrink-0"
           disabled={disabled}
-          title={`Configure ${pipelineLabel}`}
+          title={configureLabel}
         >
           <SettingsIcon className={`h-3.5 w-3.5 ${hasConfig ? "text-primary" : ""}`} />
-          <span className="sr-only">Configure {pipelineLabel}</span>
+          <span className="sr-only">{configureLabel}</span>
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
-            {pipelineLabel} {pipelineType === "conversion" ? "Conversion" : "Chunking"} Settings
+            {t(($) => $.documents.pipelineConfig.title[pipelineType], { pipeline: pipelineLabel })}
           </DialogTitle>
-          <DialogDescription>Configure options for the {pipelineLabel} pipeline.</DialogDescription>
+          <DialogDescription>
+            {t(($) => $.documents.pipelineConfig.description, { pipeline: pipelineLabel })}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="py-4 grid gap-4">
@@ -141,7 +149,7 @@ export function PipelineConfigDialog({
             <SchemaForm schema={validSchema!} values={values} onChange={syncJsonFromValues} />
           ) : (
             <p className="text-sm text-muted-foreground">
-              No configuration options available for this pipeline.
+              {t(($) => $.documents.pipelineConfig.noOptions)}
             </p>
           )}
 
@@ -150,7 +158,9 @@ export function PipelineConfigDialog({
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
               <CollapsibleTrigger asChild>
                 <Button variant="ghost" size="sm" className="w-full justify-start text-xs">
-                  {advancedOpen ? "Hide" : "Show"} Advanced JSON
+                  {advancedOpen
+                    ? t(($) => $.documents.pipelineConfig.hideAdvanced)
+                    : t(($) => $.documents.pipelineConfig.showAdvanced)}
                 </Button>
               </CollapsibleTrigger>
               <CollapsibleContent>
@@ -170,10 +180,10 @@ export function PipelineConfigDialog({
         <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" size="sm" onClick={handleReset}>
             <RotateCcwIcon className="h-3.5 w-3.5 mr-1.5" />
-            Reset to Defaults
+            {t(($) => $.documents.pipelineConfig.resetDefaults)}
           </Button>
           <Button size="sm" onClick={handleSave} disabled={!!jsonError}>
-            Save
+            {t(($) => $.common.actions.save)}
           </Button>
         </DialogFooter>
       </DialogContent>

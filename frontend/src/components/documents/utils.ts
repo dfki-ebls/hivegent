@@ -47,15 +47,3 @@ export function documentReadMap(chunks: FetchedChunk[], totalLines?: number): Ma
 
   return merged;
 }
-
-const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-
-/** Human-friendly relative date label (today, yesterday, N days ago, ...). */
-export function formatRelativeDate(dateString: string): string {
-  const date = new Date(dateString);
-  const diffDays = Math.floor((Date.now() - date.getTime()) / 86_400_000);
-
-  if (diffDays < 7) return relativeTime.format(-diffDays, "day");
-  if (diffDays < 30) return relativeTime.format(-Math.floor(diffDays / 7), "week");
-  return date.toLocaleDateString();
-}

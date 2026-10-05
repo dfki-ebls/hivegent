@@ -6,6 +6,7 @@ import {
   updateConversationTitle,
 } from "@/lib/api";
 import type { ConversationSummary, LlmConfig } from "@/lib/types";
+import { errorMessage } from "@/lib/utils";
 
 interface ConversationsState {
   conversations: ConversationSummary[];
@@ -30,7 +31,7 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
       set({ conversations, isLoading: false });
     } catch (e) {
       set({
-        error: e instanceof Error ? e.message : "Failed to fetch conversations",
+        error: errorMessage(e),
         isLoading: false,
       });
     }
@@ -43,9 +44,7 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
         conversations: state.conversations.filter((c) => c.id !== id),
       }));
     } catch (e) {
-      set({
-        error: e instanceof Error ? e.message : "Failed to delete conversation",
-      });
+      set({ error: errorMessage(e) });
       throw e;
     }
   },
@@ -59,9 +58,7 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
         ),
       }));
     } catch (e) {
-      set({
-        error: e instanceof Error ? e.message : "Failed to update title",
-      });
+      set({ error: errorMessage(e) });
       throw e;
     }
   },
@@ -76,9 +73,7 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
       }));
       return result.title;
     } catch (e) {
-      set({
-        error: e instanceof Error ? e.message : "Failed to generate title",
-      });
+      set({ error: errorMessage(e) });
       throw e;
     }
   },

@@ -1,5 +1,6 @@
 import type { ToolUIPart } from "ai";
 import type { ReactNode } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import {
   Confirmation,
   ConfirmationAction,
@@ -7,7 +8,7 @@ import {
   ConfirmationRequest,
 } from "@/components/ai-elements/confirmation";
 import { useToolApproval } from "@/hooks/chat/use-tool-approval";
-import { snakeCaseToTitleCase } from "@/lib/utils";
+import { toolDisplayName } from "@/lib/chat/tool-part";
 
 interface ApprovalRequestProps {
   toolName: string;
@@ -18,6 +19,7 @@ interface ApprovalRequestProps {
 }
 
 export function ApprovalRequest({ toolName, approval, state, children }: ApprovalRequestProps) {
+  const { t } = useTranslation();
   const { decide, blockedReason } = useToolApproval();
 
   if (state !== "approval-requested" && approval.approved === undefined) return null;
@@ -27,15 +29,23 @@ export function ApprovalRequest({ toolName, approval, state, children }: Approva
       <ConfirmationRequest>
         {children ?? (
           <span className="text-sm">
-            Allow the assistant to run <strong>{snakeCaseToTitleCase(toolName)}</strong>?
+            <Trans
+              i18nKey={($) => $.chat.tools.approval.question}
+              values={{ tool: toolDisplayName(t, toolName) }}
+              components={{ bold: <strong /> }}
+            />
           </span>
         )}
       </ConfirmationRequest>
       {state !== "approval-requested" && approval.approved === true && (
-        <span className="text-sm text-green-700 dark:text-green-400">Approved</span>
+        <span className="text-sm text-green-700 dark:text-green-400">
+          {t(($) => $.chat.tools.approval.approved)}
+        </span>
       )}
       {state !== "approval-requested" && approval.approved === false && (
-        <span className="text-sm text-orange-700 dark:text-orange-400">Denied</span>
+        <span className="text-sm text-orange-700 dark:text-orange-400">
+          {t(($) => $.chat.tools.approval.denied)}
+        </span>
       )}
       <ConfirmationActions>
         {blockedReason && (
@@ -46,13 +56,13 @@ export function ApprovalRequest({ toolName, approval, state, children }: Approva
           disabled={blockedReason !== undefined}
           onClick={() => decide(approval.id ?? "", false)}
         >
-          Deny
+          {t(($) => $.chat.tools.approval.deny)}
         </ConfirmationAction>
         <ConfirmationAction
           disabled={blockedReason !== undefined}
           onClick={() => decide(approval.id ?? "", true)}
         >
-          Approve
+          {t(($) => $.chat.tools.approval.approve)}
         </ConfirmationAction>
       </ConfirmationActions>
     </Confirmation>

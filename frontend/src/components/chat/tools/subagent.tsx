@@ -1,21 +1,22 @@
 import { BrainIcon, type LucideIcon, MessageSquareIcon, WrenchIcon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought";
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
 import { ToolPre, ToolResult, ToolSection } from "@/components/ToolDisplay";
 import type { SubagentStep } from "@/lib/chat/subagent";
-import { prettyPrint, type ToolPart } from "@/lib/chat/tool-part";
-import { snakeCaseToTitleCase } from "@/lib/utils";
+import { prettyPrint, type ToolPart, toolDisplayName } from "@/lib/chat/tool-part";
 
-function describeStep(step: SubagentStep): { icon: LucideIcon; label: string } {
+function describeStep(t: TFunction, step: SubagentStep): { icon: LucideIcon; label: string } {
   switch (step.kind) {
     case "reasoning":
-      return { icon: BrainIcon, label: "Reasoning" };
+      return { icon: BrainIcon, label: t(($) => $.chat.tools.subagent.reasoning) };
     case "message":
-      return { icon: MessageSquareIcon, label: "Response" };
+      return { icon: MessageSquareIcon, label: t(($) => $.chat.tools.subagent.response) };
     case "tool":
-      return { icon: WrenchIcon, label: snakeCaseToTitleCase(step.tool_name ?? "tool") };
+      return { icon: WrenchIcon, label: toolDisplayName(t, step.tool_name ?? "tool") };
   }
 }
 
@@ -32,6 +33,7 @@ interface SubagentToolProps {
  * `MessagePart` whenever a tool carries a subagent transcript.
  */
 export function SubagentTool({ toolName, part, steps }: SubagentToolProps) {
+  const { t } = useTranslation();
   const state: ToolPart["state"] = part.state ?? "output-available";
   const isRunning = state === "input-available" || state === "input-streaming";
 
@@ -51,11 +53,11 @@ export function SubagentTool({ toolName, part, steps }: SubagentToolProps) {
   return (
     <ToolCard toolName={toolName} part={part} open={open} onOpenChange={setOpen}>
       {(steps.length > 0 || isRunning) && (
-        <ToolSection title="Steps" border>
+        <ToolSection title={t(($) => $.chat.tools.sections.steps)} border>
           {steps.length > 0 ? (
             <div className="space-y-3">
               {steps.map((step, index) => {
-                const { icon, label } = describeStep(step);
+                const { icon, label } = describeStep(t, step);
                 const active = isRunning && index === steps.length - 1;
                 return (
                   <ChainOfThoughtStep
@@ -68,7 +70,9 @@ export function SubagentTool({ toolName, part, steps }: SubagentToolProps) {
               })}
             </div>
           ) : (
-            <p className="text-muted-foreground animate-pulse">Working…</p>
+            <p className="text-muted-foreground animate-pulse">
+              {t(($) => $.common.states.working)}
+            </p>
           )}
         </ToolSection>
       )}

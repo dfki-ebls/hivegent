@@ -1,10 +1,15 @@
 import { FileImage, FileText, FileVideo, Paperclip } from "lucide-react";
 import { useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
 import { useObjectUrl } from "@/hooks/use-object-url";
+import { keyPrefix } from "@/i18n";
 import { fetchDocumentAsset } from "@/lib/api";
 import type { SyncOutput, ToolPart } from "@/lib/chat/tool-part";
-import { fileStem, formatFileSize } from "@/lib/utils";
+import { fileStem } from "@/lib/utils";
+import { formatDecimal, formatFileSize, formatNumber } from "@/i18n/format";
+
+const T_OPTIONS = keyPrefix(($) => $.chat.tools.binary);
 
 interface BinaryReadResult {
   file_path: string;
@@ -27,16 +32,27 @@ function isBinaryReadResult(value: unknown): value is BinaryReadResult {
 }
 
 function BinaryMeta({ result }: { result: BinaryReadResult }) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
+
   return (
     <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
       <span>{result.media_type}</span>
       <span>{formatFileSize(result.size)}</span>
-      {result.pages.length > 0 && <span>pages {result.pages.join(", ")}</span>}
-      {result.frames ? <span>{result.frames} frames sampled</span> : null}
-      {result.duration ? <span>{result.duration.toFixed(1)}s</span> : null}
+      {result.pages.length > 0 && (
+        <span>
+          {t(($) => $.pages, {
+            count: result.pages.length,
+            pages: result.pages.map(formatNumber).join(", "),
+          })}
+        </span>
+      )}
+      {result.frames ? <span>{t(($) => $.frames, { count: result.frames })}</span> : null}
+      {result.duration ? (
+        <span>{t(($) => $.duration, { duration: formatDecimal(result.duration) })}</span>
+      ) : null}
       <span className="flex items-center gap-1">
         <Paperclip className="size-3" />
-        attached to model
+        {t(($) => $.attached)}
       </span>
     </div>
   );
@@ -44,6 +60,7 @@ function BinaryMeta({ result }: { result: BinaryReadResult }) {
 
 /** Inline preview for image binaries, fetched lazily when the tool is expanded. */
 function ImagePreview({ result }: { result: BinaryReadResult }) {
+  const { t } = useTranslation();
   const fetch = useCallback(
     (signal: AbortSignal) => fetchDocumentAsset(result.file_path, signal),
     [result.file_path],
@@ -58,7 +75,9 @@ function ImagePreview({ result }: { result: BinaryReadResult }) {
         <div
           className={`flex h-40 items-center justify-center rounded text-xs text-muted-foreground ${error ? "" : "animate-pulse"}`}
         >
-          {error ? "Preview unavailable" : "Loading image…"}
+          {error
+            ? t(($) => $.chat.tools.binary.previewUnavailable)
+            : t(($) => $.common.states.loadingImage)}
         </div>
       )}
       <figcaption className="space-y-1">

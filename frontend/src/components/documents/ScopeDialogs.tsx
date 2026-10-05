@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useImperativeHandle, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useDocumentsStore } from "@/stores/documents-store";
 import { basename, parentDir } from "@/lib/utils";
@@ -49,6 +50,7 @@ export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(fu
   { scope, onBulkDone },
   ref,
 ) {
+  const { t } = useTranslation();
   const deleteDir = useDocumentsStore((s) => s.deleteDir);
   const removeDoc = useDocumentsStore((s) => s.remove);
   const storeBulkDelete = useDocumentsStore((s) => s.bulkDelete);
@@ -115,20 +117,21 @@ export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(fu
           <AlertDialogHeader>
             <AlertDialogTitle>
               {pendingDelete?.kind === "bulk"
-                ? `Delete ${pendingDelete.files.length} documents?`
+                ? t(($) => $.documents.confirm.deleteDocuments, {
+                    count: pendingDelete.files.length,
+                  })
                 : pendingDelete?.kind === "directory"
-                  ? "Delete directory?"
-                  : "Delete document?"}
+                  ? t(($) => $.documents.confirm.deleteFolder)
+                  : t(($) => $.documents.confirm.deleteDocument)}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This action permanently deletes the selected content and its chunks. It cannot be
-              undone.
+              {t(($) => $.documents.confirm.deleteDescription)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t(($) => $.common.actions.cancel)}</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={() => void confirmDelete()}>
-              Delete
+              {t(($) => $.common.actions.delete)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -138,11 +141,17 @@ export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(fu
         <NameInputDialog
           open
           onOpenChange={(open) => !open && setPendingRename(null)}
-          title={`Rename ${pendingRename.kind === "directory" ? "folder" : "document"}`}
-          description={`Enter a new name for ${basename(pendingRename.path)}.`}
-          label="Name"
+          title={
+            pendingRename.kind === "directory"
+              ? t(($) => $.documents.confirm.renameFolder)
+              : t(($) => $.documents.confirm.renameDocument)
+          }
+          description={t(($) => $.documents.confirm.renameDescription, {
+            name: basename(pendingRename.path),
+          })}
+          label={t(($) => $.documents.confirm.name)}
           initialValue={basename(pendingRename.path)}
-          submitLabel="Rename"
+          submitLabel={t(($) => $.common.actions.rename)}
           onSubmit={confirmRename}
         />
       )}

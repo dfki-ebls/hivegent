@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { DownloadIcon, ScanSearchIcon } from "lucide-react";
+import { Trans, useTranslation } from "react-i18next";
 
 import { FormSection } from "@/components/FormSection";
 import { Button } from "@/components/ui/button";
@@ -13,10 +14,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { keyPrefix } from "@/i18n";
+import { formatNumber } from "@/i18n/format";
 import { detectAiGeneratedText } from "@/lib/api";
 import { downloadBlob } from "@/lib/download";
 import type { TransparencyDetectionResponse } from "@/lib/types";
 import { cn, errorMessage } from "@/lib/utils";
+
+const T_OPTIONS = keyPrefix(($) => $.chat.transparency);
 
 interface AiTransparencyDialogProps {
   contactEmail: string | null;
@@ -30,6 +35,7 @@ const STATUS_STYLES = {
 } as const;
 
 export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTransparencyDialogProps) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [result, setResult] = useState<TransparencyDetectionResponse | null>(null);
@@ -73,23 +79,20 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogTrigger asChild>
         <Button variant="link" size="xs" className="h-auto px-1 text-xs">
-          Verify AI text
+          {t(($) => $.trigger)}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Verify Hivegent text</DialogTitle>
-          <DialogDescription>
-            Check text for Hivegent&apos;s imperceptible watermark. The text is processed only for
-            this check and is not retained.
-          </DialogDescription>
+          <DialogTitle>{t(($) => $.title)}</DialogTitle>
+          <DialogDescription>{t(($) => $.description)}</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 py-4">
           <FormSection
-            label="Text"
+            label={t(($) => $.textLabel)}
             htmlFor="verify-text"
-            description={`For a reliable negative result, use more than ${minimumTokens} tokens. Watermarks can be damaged by editing or translation, so a negative result never proves human authorship.`}
+            description={t(($) => $.textDescription, { tokens: formatNumber(minimumTokens) })}
           >
             <Textarea
               id="verify-text"
@@ -99,15 +102,15 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
                 setResult(null);
                 setError(null);
               }}
-              placeholder="Paste the text to verify..."
+              placeholder={t(($) => $.placeholder)}
               className="h-[40vh] min-h-[100px] resize-y overflow-y-auto field-sizing-fixed"
             />
           </FormSection>
 
           {result && (
             <FormSection
-              label="Result"
-              description="Based on an imperceptible text watermark. The signed report contains only a SHA-256 hash of the submitted text and detector metadata."
+              label={t(($) => $.resultLabel)}
+              description={t(($) => $.resultDescription)}
             >
               <output className={cn("text-sm font-medium", STATUS_STYLES[result.status])}>
                 {result.message}
@@ -123,11 +126,16 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
 
           {contactEmail && (
             <p className="text-xs text-muted-foreground">
-              Qualified external reviewers can request access at{" "}
-              <a className="underline" href={`mailto:${contactEmail}`}>
-                {contactEmail}
-              </a>
-              .
+              <Trans
+                i18nKey={($) => $.chat.transparency.contact}
+                components={{
+                  email: (
+                    <a className="underline" href={`mailto:${contactEmail}`}>
+                      {contactEmail}
+                    </a>
+                  ),
+                }}
+              />
             </p>
           )}
         </div>
@@ -136,12 +144,12 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
           {result && (
             <Button variant="outline" size="sm" className="mr-auto" onClick={downloadReport}>
               <DownloadIcon />
-              Download Signed Report
+              {t(($) => $.download)}
             </Button>
           )}
           <Button size="sm" onClick={detect} disabled={!text.trim() || checking}>
             <ScanSearchIcon />
-            {checking ? "Verifying..." : "Verify Text"}
+            {checking ? t(($) => $.verifying) : t(($) => $.verify)}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,4 +1,5 @@
 import { AlertCircle, RefreshCcwIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { ChatAlert } from "@/components/chat/ChatAlert";
 
 interface ChatErrorProps {
@@ -8,13 +9,15 @@ interface ChatErrorProps {
 }
 
 export function ChatError({ message, onRetry, onDismiss }: ChatErrorProps) {
+  const { t } = useTranslation();
+
   return (
     <ChatAlert
       icon={AlertCircle}
-      title="Error"
+      title={t(($) => $.common.states.error)}
       message={message}
       actionIcon={RefreshCcwIcon}
-      actionLabel="Retry"
+      actionLabel={t(($) => $.common.actions.retry)}
       onAction={onRetry}
       onDismiss={onDismiss}
     />

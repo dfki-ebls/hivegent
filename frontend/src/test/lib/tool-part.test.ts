@@ -1,7 +1,8 @@
 import type { UIMessage } from "@ai-sdk/react";
 import { describe, expect, it } from "vitest";
 
-import { getToolPartInfo, indexToolData } from "@/lib/chat/tool-part";
+import { i18n } from "@/i18n";
+import { getToolPartInfo, indexToolData, toolDisplayName } from "@/lib/chat/tool-part";
 
 /**
  * The AI SDK appends ``data-tool-output`` parts to the end of
@@ -49,5 +50,12 @@ describe("getToolPartInfo", () => {
   it("returns null metadata when the data part has not streamed yet", () => {
     const parts = [toolPart("call-a", "a.md")] as unknown as UIMessage["parts"];
     expect(getToolPartInfo(parts[0], indexToolData(parts))?.metadata).toBeNull();
+  });
+});
+
+describe("toolDisplayName", () => {
+  it("names built-in tools from the catalog and title-cases unknown ones", () => {
+    expect(toolDisplayName(i18n.t, "glob_documents")).toBe("Find Documents");
+    expect(toolDisplayName(i18n.t, "mcp_list_issues")).toBe("Mcp List Issues");
   });
 });

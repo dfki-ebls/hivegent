@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useInView } from "@/hooks/use-in-view";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { fetchDocumentAsset } from "@/lib/api";
@@ -20,6 +21,7 @@ interface ImageRefProps {
 }
 
 export function ImageRef({ src, alt }: ImageRefProps) {
+  const { t } = useTranslation();
   const fetch = useCallback((signal: AbortSignal) => fetchDocumentAsset(src ?? "", signal), [src]);
   const [ref, inView] = useInView();
   const { url, error } = useObjectUrl(src && inView ? fetch : null);
@@ -28,7 +30,9 @@ export function ImageRef({ src, alt }: ImageRefProps) {
 
   if (error) {
     return (
-      <span className="text-sm text-muted-foreground italic">[Image not available: {src}]</span>
+      <span className="text-sm text-muted-foreground italic">
+        {t(($) => $.chat.image.unavailable, { src })}
+      </span>
     );
   }
 
@@ -46,7 +50,9 @@ export function ImageRef({ src, alt }: ImageRefProps) {
           )}
         </>
       ) : (
-        <span className="text-sm text-muted-foreground italic">Loading image…</span>
+        <span className="text-sm text-muted-foreground italic">
+          {t(($) => $.common.states.loadingImage)}
+        </span>
       )}
     </figure>
   );

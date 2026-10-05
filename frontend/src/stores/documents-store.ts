@@ -23,7 +23,7 @@ import type {
   LlmConfig,
   PipelineSpec,
 } from "@/lib/types";
-import { treeDocuments, withDirectory } from "@/lib/utils";
+import { errorMessage, treeDocuments, withDirectory } from "@/lib/utils";
 import {
   awaitJobSettled,
   onFeedReady,
@@ -138,7 +138,6 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
   const withMutating = async (
     scope: string,
     path: string,
-    errorMsg: string,
     operation: () => Promise<unknown>,
     alsoRefresh?: string,
   ): Promise<void> => {
@@ -146,7 +145,7 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
     try {
       await operation();
     } catch (err) {
-      patch(scope, { error: err instanceof Error ? err.message : errorMsg });
+      patch(scope, { error: errorMessage(err) });
     } finally {
       // Refresh even after a failure so a stale view (e.g. an entry the
       // backend no longer knows about) converges with the server state. The two
@@ -170,7 +169,6 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
   // source) does not cover.
   const submitJob = async (
     scope: string,
-    errorMsg: string,
     submit: () => Promise<JobView>,
     alsoRefresh?: string,
   ): Promise<void> => {
@@ -184,7 +182,7 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
         });
       }
     } catch (err) {
-      patch(scope, { error: err instanceof Error ? err.message : errorMsg });
+      patch(scope, { error: errorMessage(err) });
     }
   };
 
@@ -205,16 +203,14 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
         await silentRefresh(scope);
       } catch (err) {
         patch(scope, {
-          error: err instanceof Error ? err.message : "Failed to load documents",
+          error: errorMessage(err),
           hasFetched: true,
         });
       }
     },
 
     remove: (scope, filename) =>
-      withMutating(scope, filename, "Delete failed", () =>
-        deleteDocument(canonicalPath(scope, filename)),
-      ),
+      withMutating(scope, filename, () => deleteDocument(canonicalPath(scope, filename))),
 
     // Rechunk runs as a background job; the tray shows its progress. The promise
     // resolves once the job settles so a caller that needs the fresh chunks (the
@@ -224,7 +220,7 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
       try {
         await submitAndAwait(() => rechunkDocument(canonicalPath(scope, filename), spec));
       } catch (err) {
-        patch(scope, { error: err instanceof Error ? err.message : "Rechunk failed" });
+        patch(scope, { error: errorMessage(err) });
       }
     },
 
@@ -232,12 +228,12 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
     // the targeted row also spins until the job settles so the document visibly
     // reflects that it is being reprocessed.
     reconvert: (scope, filename, options) =>
-      withMutating(scope, filename, "Reconvert failed", () =>
+      withMutating(scope, filename, () =>
         submitAndAwait(() => reconvertDocument(canonicalPath(scope, filename), options)),
       ),
 
     bulkRechunk: (scope, files, spec) =>
-      submitJob(scope, "Bulk rechunk failed", () =>
+      submitJob(scope, () =>
         apiBulkRechunk(
           files.map((f) => canonicalPath(scope, f)),
           spec,
@@ -245,7 +241,7 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
       ),
 
     bulkReconvert: (scope, files, spec, llm) =>
-      submitJob(scope, "Bulk reconvert failed", () =>
+      submitJob(scope, () =>
         apiBulkReconvert(
           files.map((f) => canonicalPath(scope, f)),
           spec,
@@ -254,14 +250,11 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
       ),
 
     bulkDelete: (scope, files) =>
-      submitJob(scope, "Bulk delete failed", () =>
-        apiBulkDelete(files.map((f) => canonicalPath(scope, f))),
-      ),
+      submitJob(scope, () => apiBulkDelete(files.map((f) => canonicalPath(scope, f)))),
 
     bulkMove: (srcScope, destScope, moves) =>
       submitJob(
         srcScope,
-        "Bulk move failed",
         () =>
           apiBulkMove(
             moves.map(({ source, destination }) => ({
@@ -276,7 +269,6 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
       withMutating(
         srcScope,
         filepath,
-        "Move failed",
         () =>
           moveDocument(canonicalPath(srcScope, filepath), canonicalPath(destScope, destination)),
         destScope,
@@ -286,7 +278,7 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
     // directory appears immediately instead of after the refresh's
     // full-workspace walk, which then only reconciles whatever else moved.
     createDir: (scope, path) =>
-      withMutating(scope, path, "Failed to create directory", async () => {
+      withMutating(scope, path, async () => {
         await createDirectory(canonicalPath(scope, path));
         patch(scope, (s) =>
           s.directoryTree
@@ -301,15 +293,12 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
       }),
 
     deleteDir: (scope, path) =>
-      withMutating(scope, path, "Failed to delete directory", () =>
-        deleteDirectory(canonicalPath(scope, path)),
-      ),
+      withMutating(scope, path, () => deleteDirectory(canonicalPath(scope, path))),
 
     moveDir: (srcScope, source, destScope, destination) =>
       withMutating(
         srcScope,
         source,
-        "Failed to move directory",
         () => moveDirectory(canonicalPath(srcScope, source), canonicalPath(destScope, destination)),
         destScope,
       ),

@@ -5,8 +5,9 @@ import {
   PencilIcon,
   type LucideIcon,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { ComposerSelect } from "@/components/chat/composer/ComposerSelect";
-import { AGENT_MODE_OPTIONS, type AgentMode } from "@/lib/types";
+import { AGENT_MODES, type AgentMode } from "@/lib/types";
 
 interface ModeSelectorProps {
   value: AgentMode;
@@ -20,18 +21,19 @@ const MODE_ICONS: Record<AgentMode, LucideIcon> = {
   plan: ListChecksIcon,
 };
 
-const MODE_OPTIONS = AGENT_MODE_OPTIONS.map((option) => ({
-  ...option,
-  icon: MODE_ICONS[option.value],
-}));
-
 export function ModeSelector({ value, onChange }: ModeSelectorProps) {
+  const { t } = useTranslation();
+
   return (
     <ComposerSelect
       value={value}
       onChange={onChange}
       icon={MODE_ICONS[value]}
-      options={MODE_OPTIONS}
+      options={AGENT_MODES.map((mode) => ({
+        value: mode,
+        label: t(($) => $.options.mode[mode]),
+        icon: MODE_ICONS[mode],
+      }))}
     />
   );
 }

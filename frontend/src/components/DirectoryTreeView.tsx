@@ -19,6 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   FilterToggleButtons,
@@ -286,6 +287,8 @@ function FileRow({
   selected?: boolean;
   onToggleSelect?: () => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <TreeRow dnd={dnd}>
       <RowMain
@@ -322,7 +325,7 @@ function FileRow({
           {onRename && (
             <RowActionButton
               icon={Pencil}
-              label="Rename"
+              label={t(($) => $.common.actions.rename)}
               onClick={onRename}
               disabled={isMutating}
             />
@@ -330,7 +333,7 @@ function FileRow({
           {onDelete && (
             <RowActionButton
               icon={Trash2}
-              label="Delete"
+              label={t(($) => $.common.actions.delete)}
               onClick={onDelete}
               disabled={isMutating}
               destructive
@@ -383,6 +386,7 @@ function DirectoryRow({
   onRenameDir?: () => void;
   onToggleSelect?: () => void;
 }) {
+  const { t } = useTranslation();
   const FolderIcon = isExpanded ? FolderOpen : Folder;
   const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
 
@@ -407,7 +411,9 @@ function DirectoryRow({
           <button
             type="button"
             className="shrink-0 cursor-pointer text-muted-foreground"
-            title={isExpanded ? "Collapse" : "Expand"}
+            title={
+              isExpanded ? t(($) => $.documents.tree.collapse) : t(($) => $.documents.tree.expand)
+            }
             onClick={onToggle}
           >
             <ChevronIcon className="h-4 w-4" />
@@ -416,7 +422,7 @@ function DirectoryRow({
             type="button"
             className="flex flex-1 items-center gap-2 min-w-0 text-left cursor-pointer"
             onClick={onSelect ?? onToggle}
-            title={onSelect ? "Set as upload target" : undefined}
+            title={onSelect ? t(($) => $.documents.scope.setUploadTarget) : undefined}
           >
             <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 truncate text-sm font-medium">{entry.name}</span>
@@ -435,7 +441,7 @@ function DirectoryRow({
           {onRenameDir && (
             <RowActionButton
               icon={Pencil}
-              label="Rename directory"
+              label={t(($) => $.documents.confirm.renameFolder)}
               onClick={onRenameDir}
               disabled={isMutating}
             />
@@ -443,7 +449,7 @@ function DirectoryRow({
           {onDeleteDir && (
             <RowActionButton
               icon={Trash2}
-              label="Delete directory"
+              label={t(($) => $.documents.tree.deleteFolder)}
               onClick={onDeleteDir}
               disabled={isMutating}
               destructive

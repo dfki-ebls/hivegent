@@ -1,4 +1,5 @@
 import { BotIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { AiTransparencyDialog } from "@/components/chat/AiTransparencyDialog";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -8,9 +9,8 @@ import { useSettingsStore } from "@/stores/settings-store";
 // interaction (Article 50(5)). A persistent marker under the composer keeps the
 // notice visible for the whole session, which the Commission guidance favours
 // over a one-time disclosure.
-const DISCLOSURE_TEXT = "Hivegent is AI and can make mistakes. Please double-check responses.";
-
 export function AiDisclosure({ className }: { className?: string }) {
+  const { t } = useTranslation();
   const transparency = useSettingsStore((state) => state.backendDefaults?.transparency);
 
   return (
@@ -25,7 +25,7 @@ export function AiDisclosure({ className }: { className?: string }) {
       )}
     >
       <BotIcon className="mt-px h-3 w-3 shrink-0" aria-hidden />
-      <span>{DISCLOSURE_TEXT}</span>
+      <span>{t(($) => $.chat.disclosure.notice)}</span>
       {transparency?.enabled && (
         <AiTransparencyDialog
           contactEmail={transparency.contact_email}

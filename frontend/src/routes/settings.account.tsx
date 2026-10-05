@@ -16,6 +16,7 @@ import {
   WrenchIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -46,6 +47,7 @@ import {
   deleteAllDocuments,
   deleteAllUserData,
 } from "@/lib/api";
+import { i18n, keyPrefix } from "@/i18n";
 import { startImpersonation } from "@/lib/impersonation";
 import type { AdminGroupInfo, AdminUserInfo } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
@@ -54,6 +56,10 @@ import { useConversationsStore } from "@/stores/conversations-store";
 import { selectIsAdmin, selectUserId, useSettingsStore } from "@/stores/settings-store";
 import { clearAllStorage } from "@/stores/storage";
 import { useDocumentsStore } from "@/stores/documents-store";
+
+const USER_DANGER_T = keyPrefix(($) => $.settings.account.userDanger);
+const MAINTENANCE_T = keyPrefix(($) => $.settings.account.maintenance);
+const ACCOUNT_T = keyPrefix(($) => $.settings.account);
 
 export const Route = createFileRoute("/settings/account")({
   beforeLoad: enforceLogin,
@@ -83,6 +89,8 @@ interface ConfirmDialogProps {
 }
 
 function ConfirmDialog({ action, busy, onConfirm, onCancel }: ConfirmDialogProps) {
+  const { t } = useTranslation();
+
   return (
     <AlertDialog open={!!action} onOpenChange={(open) => !open && onCancel()}>
       <AlertDialogContent>
@@ -91,13 +99,13 @@ function ConfirmDialog({ action, busy, onConfirm, onCancel }: ConfirmDialogProps
           <AlertDialogDescription>{action?.description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={busy}>{t(($) => $.common.actions.cancel)}</AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}
             disabled={busy}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            {busy ? "Working..." : action?.confirm}
+            {busy ? t(($) => $.common.states.working) : action?.confirm}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -108,6 +116,7 @@ function ConfirmDialog({ action, busy, onConfirm, onCancel }: ConfirmDialogProps
 // --- User Danger Zone ---
 
 function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => void }) {
+  const { t } = useTranslation(undefined, USER_DANGER_T);
   const resetLocalSettings = useSettingsStore((s) => s.reset);
   const fetchConversations = useConversationsStore((s) => s.fetchConversations);
   const refreshDocuments = useDocumentsStore((s) => s.refresh);
@@ -116,11 +125,9 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
     <div className="grid gap-3">
       <div className="flex items-center gap-2">
         <ShieldAlertIcon className="h-5 w-5 text-destructive" />
-        <h2 className="text-lg font-semibold text-destructive">User — Danger Zone</h2>
+        <h2 className="text-lg font-semibold text-destructive">{t(($) => $.title)}</h2>
       </div>
-      <p className="text-sm text-muted-foreground">
-        Destructive actions scoped to your account. These affect only you.
-      </p>
+      <p className="text-sm text-muted-foreground">{t(($) => $.description)}</p>
 
       <div className="grid grid-cols-2 gap-2">
         <Button
@@ -130,10 +137,9 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
           onClick={() =>
             setAction({
               key: "user-local",
-              title: "Reset Local Settings",
-              description:
-                "Discard your browser-side overrides and fall back to the server-configured defaults. Server-side data is untouched.",
-              confirm: "Reset Local Settings",
+              title: t(($) => $.resetLocal.label),
+              description: t(($) => $.resetLocal.description),
+              confirm: t(($) => $.resetLocal.label),
               run: async () => {
                 resetLocalSettings();
               },
@@ -141,7 +147,7 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
           }
         >
           <RotateCcwIcon className="h-4 w-4 mr-2" />
-          Reset Local Settings
+          {t(($) => $.resetLocal.label)}
         </Button>
         <Button
           variant="outline"
@@ -150,10 +156,9 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
           onClick={() =>
             setAction({
               key: "user-chats",
-              title: "Delete All Chats",
-              description:
-                "Permanently delete every chat you own on the server. This action cannot be undone.",
-              confirm: "Delete All Chats",
+              title: t(($) => $.deleteChats.label),
+              description: t(($) => $.deleteChats.description),
+              confirm: t(($) => $.deleteChats.label),
               run: async () => {
                 await deleteAllConversations();
                 await fetchConversations();
@@ -162,7 +167,7 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
           }
         >
           <MessageSquareXIcon className="h-4 w-4 mr-2" />
-          Delete All Chats
+          {t(($) => $.deleteChats.label)}
         </Button>
         <Button
           variant="outline"
@@ -171,10 +176,9 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
           onClick={() =>
             setAction({
               key: "user-docs",
-              title: "Delete All Documents",
-              description:
-                "Permanently delete every document, chunk, original, and search-index entry you own. This action cannot be undone.",
-              confirm: "Delete All Documents",
+              title: t(($) => $.deleteDocuments.label),
+              description: t(($) => $.deleteDocuments.description),
+              confirm: t(($) => $.deleteDocuments.label),
               run: async () => {
                 await deleteAllDocuments(PERSONAL_SCOPE);
                 await refreshDocuments(PERSONAL_SCOPE);
@@ -183,7 +187,7 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
           }
         >
           <FileX2Icon className="h-4 w-4 mr-2" />
-          Delete All Documents
+          {t(($) => $.deleteDocuments.label)}
         </Button>
         <Button
           variant="destructive"
@@ -192,10 +196,9 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
           onClick={() =>
             setAction({
               key: "user-everything",
-              title: "Reset Everything",
-              description:
-                "Permanently delete every server-side trace of your account (conversations, documents, tokens, memory) and clear all local browser data. This action cannot be undone.",
-              confirm: "Reset Everything",
+              title: t(($) => $.resetEverything.label),
+              description: t(($) => $.resetEverything.description),
+              confirm: t(($) => $.resetEverything.label),
               run: async () => {
                 await deleteAllUserData();
                 clearAllStorage();
@@ -204,7 +207,7 @@ function UserDangerZoneSection({ setAction }: { setAction: (a: DangerAction) => 
           }
         >
           <Trash2Icon className="h-4 w-4 mr-2" />
-          Reset Everything
+          {t(($) => $.resetEverything.label)}
         </Button>
       </div>
     </div>
@@ -234,6 +237,8 @@ function AdminTargetList<T extends { id: string }>({
   icon,
   emptyLabel,
 }: AdminTargetSelectorProps<T>) {
+  const { t } = useTranslation();
+
   return (
     <div className="grid gap-2 rounded-md border p-3">
       <div className="flex items-center gap-2 text-sm font-medium">
@@ -241,7 +246,7 @@ function AdminTargetList<T extends { id: string }>({
         {label}
       </div>
       {loading ? (
-        <p className="text-xs text-muted-foreground">Loading...</p>
+        <p className="text-xs text-muted-foreground">{t(($) => $.common.states.loading)}</p>
       ) : items.length === 0 ? (
         <p className="text-xs text-muted-foreground">{emptyLabel}</p>
       ) : (
@@ -264,9 +269,11 @@ function AdminTargetList<T extends { id: string }>({
   );
 }
 
-const NO_USERS_LABEL = "No users have left a footprint yet.";
-
-const userMeta = (u: AdminUserInfo) => `${u.document_count}d / ${u.conversation_count}c`;
+const userMeta = (u: AdminUserInfo) =>
+  i18n.t(($) => $.settings.account.userMeta, {
+    documents: u.document_count,
+    conversations: u.conversation_count,
+  });
 
 // Fetches the admin overview once and feeds both admin sections.
 function AdminSections({ setAction }: { setAction: (a: DangerAction) => void }) {
@@ -320,6 +327,7 @@ function AdminSections({ setAction }: { setAction: (a: DangerAction) => void }) 
 // The switch stays disabled until the current server state is known, so
 // it never shows a guessed value.
 function AdminMaintenanceSection() {
+  const { t } = useTranslation(undefined, MAINTENANCE_T);
   const [enabled, setEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -327,16 +335,19 @@ function AdminMaintenanceSection() {
       .then(setEnabled)
       .catch((e: unknown) => {
         console.error("Failed to read maintenance mode:", e);
-        toast.error("Failed to read maintenance mode", { description: errorMessage(e) });
+        toast.error(errorMessage(e));
       });
   }, []);
 
   const toggle = async (next: boolean) => {
     try {
       setEnabled(await adminSetMaintenance(next));
-      toast.success(next ? "Maintenance mode enabled" : "Maintenance mode disabled");
+      toast.success(next ? t(($) => $.enabled) : t(($) => $.disabled));
     } catch (e) {
-      toast.error("Failed to toggle maintenance mode", { description: errorMessage(e) });
+      toast.error(
+        t(($) => $.toggleFailed),
+        { description: errorMessage(e) },
+      );
     }
   };
 
@@ -344,16 +355,12 @@ function AdminMaintenanceSection() {
     <div className="grid gap-3">
       <div className="flex items-center gap-2">
         <WrenchIcon className="h-5 w-5" />
-        <h2 className="text-lg font-semibold">Admin — Maintenance</h2>
+        <h2 className="text-lg font-semibold">{t(($) => $.title)}</h2>
       </div>
       <div className="flex items-center justify-between gap-4 rounded-md border p-3">
         <div className="grid gap-1">
-          <Label htmlFor="maintenance-mode">Maintenance mode</Label>
-          <p className="text-sm text-muted-foreground">
-            Lock out every non-admin user and show them a maintenance notice instead of the app.
-            Admins keep full access. The setting is persisted and stays active across server
-            restarts until an admin turns it off.
-          </p>
+          <Label htmlFor="maintenance-mode">{t(($) => $.label)}</Label>
+          <p className="text-sm text-muted-foreground">{t(($) => $.description)}</p>
         </div>
         <Switch
           id="maintenance-mode"
@@ -373,23 +380,21 @@ function AdminImpersonationSection({
   users: AdminUserInfo[];
   loading: boolean;
 }) {
+  const { t } = useTranslation(undefined, ACCOUNT_T);
+
   return (
     <div className="grid gap-3">
       <div className="flex items-center gap-2">
         <EyeIcon className="h-5 w-5" />
-        <h2 className="text-lg font-semibold">Admin — Impersonation</h2>
+        <h2 className="text-lg font-semibold">{t(($) => $.impersonation.title)}</h2>
       </div>
-      <p className="text-sm text-muted-foreground">
-        Browse the app as another user to reproduce reported issues. The session carries the
-        privileges of the target user, never your admin powers, and a banner with an exit button
-        stays visible at the top.
-      </p>
+      <p className="text-sm text-muted-foreground">{t(($) => $.impersonation.description)}</p>
       <AdminTargetList
-        label="Impersonate a user"
+        label={t(($) => $.impersonation.list)}
         items={users}
         loading={loading}
         icon={<EyeIcon className="h-4 w-4" />}
-        emptyLabel={NO_USERS_LABEL}
+        emptyLabel={t(($) => $.noUsers)}
         renderMeta={userMeta}
         onSelect={(u) => startImpersonation(u.id)}
       />
@@ -412,15 +417,15 @@ function AdminDangerZoneSection({
   loading,
   refresh,
 }: AdminDangerZoneProps) {
+  const { t } = useTranslation(undefined, ACCOUNT_T);
+
   return (
     <div className="grid gap-3">
       <div className="flex items-center gap-2">
         <ShieldAlertIcon className="h-5 w-5 text-destructive" />
-        <h2 className="text-lg font-semibold text-destructive">Admin — Danger Zone</h2>
+        <h2 className="text-lg font-semibold text-destructive">{t(($) => $.adminDanger.title)}</h2>
       </div>
-      <p className="text-sm text-muted-foreground">
-        Destructive actions scoped to the whole deployment. These affect every user.
-      </p>
+      <p className="text-sm text-muted-foreground">{t(($) => $.adminDanger.description)}</p>
 
       <div className="grid grid-cols-2 gap-2">
         <Button
@@ -430,10 +435,9 @@ function AdminDangerZoneSection({
           onClick={() =>
             setAction({
               key: "admin-workspace",
-              title: "Reset Workspace Files",
-              description:
-                "Wipe every workspace file on disk and the matching document rows in SQL — the two must stay in sync. Chunks (text + vector) cascade with the document rows. Conversations, tokens, memory, users, and groups are kept.",
-              confirm: "Reset Workspace",
+              title: t(($) => $.adminDanger.resetWorkspace.label),
+              description: t(($) => $.adminDanger.resetWorkspace.description),
+              confirm: t(($) => $.adminDanger.resetWorkspace.confirm),
               run: async () => {
                 await adminResetWorkspace();
                 await refresh();
@@ -442,7 +446,7 @@ function AdminDangerZoneSection({
           }
         >
           <FolderXIcon className="h-4 w-4 mr-2" />
-          Reset Workspace Files
+          {t(($) => $.adminDanger.resetWorkspace.label)}
         </Button>
         <Button
           variant="outline"
@@ -451,10 +455,9 @@ function AdminDangerZoneSection({
           onClick={() =>
             setAction({
               key: "admin-reindex",
-              title: "Reindex Knowledge",
-              description:
-                "Reconcile every casebase: ingest files copied into the workspace by hand, prune SQL orphans, and rewrite filenames to one canonical Unicode spelling so the assistant can address them. Nothing is deleted or re-embedded. Safe to run anytime; useful after manual file changes or an embedding configuration change.",
-              confirm: "Reindex",
+              title: t(($) => $.adminDanger.reindex.label),
+              description: t(($) => $.adminDanger.reindex.description),
+              confirm: t(($) => $.adminDanger.reindex.confirm),
               run: async () => {
                 const { message } = await adminReindex();
                 await refresh();
@@ -464,7 +467,7 @@ function AdminDangerZoneSection({
           }
         >
           <RefreshCwIcon className="h-4 w-4 mr-2" />
-          Reindex Knowledge
+          {t(($) => $.adminDanger.reindex.label)}
         </Button>
         <Button
           variant="outline"
@@ -473,10 +476,9 @@ function AdminDangerZoneSection({
           onClick={() =>
             setAction({
               key: "admin-database",
-              title: "Reset Database",
-              description:
-                "Drop every user and group row along with everything that cascades: tokens, memory, conversations, documents, and chunks. Workspace files on disk survive.",
-              confirm: "Reset Database",
+              title: t(($) => $.adminDanger.resetDatabase.label),
+              description: t(($) => $.adminDanger.resetDatabase.description),
+              confirm: t(($) => $.adminDanger.resetDatabase.label),
               run: async () => {
                 await adminResetDatabase();
                 await refresh();
@@ -485,7 +487,7 @@ function AdminDangerZoneSection({
           }
         >
           <DatabaseZapIcon className="h-4 w-4 mr-2" />
-          Reset Database
+          {t(($) => $.adminDanger.resetDatabase.label)}
         </Button>
         <Button
           variant="destructive"
@@ -494,10 +496,9 @@ function AdminDangerZoneSection({
           onClick={() =>
             setAction({
               key: "admin-factory",
-              title: "Factory Reset",
-              description:
-                "Wipe every workspace file on disk, every user and group, and every dependent row (documents, chunks, conversations, tokens, memory). Local browser data is cleared too. The deployment returns to the state of a fresh checkout. This action cannot be undone.",
-              confirm: "Factory Reset",
+              title: t(($) => $.adminDanger.factoryReset.label),
+              description: t(($) => $.adminDanger.factoryReset.description),
+              confirm: t(($) => $.adminDanger.factoryReset.label),
               run: async () => {
                 await adminFactoryReset();
                 clearAllStorage();
@@ -506,24 +507,28 @@ function AdminDangerZoneSection({
           }
         >
           <FactoryIcon className="h-4 w-4 mr-2" />
-          Factory Reset
+          {t(($) => $.adminDanger.factoryReset.label)}
         </Button>
       </div>
 
       <div className="grid md:grid-cols-2 gap-3 mt-2">
         <AdminTargetList
-          label="Wipe one user's data"
+          label={t(($) => $.adminDanger.wipeUser.list)}
           items={users}
           loading={loading}
           icon={<UserXIcon className="h-4 w-4 text-destructive" />}
-          emptyLabel={NO_USERS_LABEL}
+          emptyLabel={t(($) => $.noUsers)}
           renderMeta={userMeta}
           onSelect={(u) =>
             setAction({
               key: `admin-user-${u.id}`,
-              title: `Wipe data for ${u.id}`,
-              description: `Delete every document, chunk, original, conversation, token, and memory entry owned by user ${u.id}. ${u.document_count} document(s) and ${u.conversation_count} conversation(s) will be removed. This action cannot be undone.`,
-              confirm: "Wipe User",
+              title: t(($) => $.adminDanger.wipeUser.title, { user: u.id }),
+              description: t(($) => $.adminDanger.wipeUser.description, {
+                user: u.id,
+                documents: t(($) => $.documentCount, { count: u.document_count }),
+                conversations: t(($) => $.conversationCount, { count: u.conversation_count }),
+              }),
+              confirm: t(($) => $.adminDanger.wipeUser.confirm),
               run: async () => {
                 await adminDeleteUserData(u.id);
                 await refresh();
@@ -532,18 +537,21 @@ function AdminDangerZoneSection({
           }
         />
         <AdminTargetList
-          label="Wipe one group's data"
+          label={t(($) => $.adminDanger.wipeGroup.list)}
           items={groups}
           loading={loading}
           icon={<UsersIcon className="h-4 w-4 text-destructive" />}
-          emptyLabel="No groups are registered yet."
-          renderMeta={(g) => `${g.document_count}d`}
+          emptyLabel={t(($) => $.noGroups)}
+          renderMeta={(g) => t(($) => $.groupMeta, { documents: g.document_count })}
           onSelect={(g) =>
             setAction({
               key: `admin-group-${g.id}`,
-              title: `Wipe data for group ${g.id}`,
-              description: `Delete every document, chunk, and original owned by group ${g.id}. ${g.document_count} document(s) will be removed. The group reappears the next time one of its members (per the OIDC token) uploads to it. This action cannot be undone.`,
-              confirm: "Wipe Group",
+              title: t(($) => $.adminDanger.wipeGroup.title, { group: g.id }),
+              description: t(($) => $.adminDanger.wipeGroup.description, {
+                group: g.id,
+                count: g.document_count,
+              }),
+              confirm: t(($) => $.adminDanger.wipeGroup.confirm),
               run: async () => {
                 await adminDeleteGroupData(g.id);
                 await refresh();
@@ -559,6 +567,7 @@ function AdminDangerZoneSection({
 // --- Main component ---
 
 function AccountPage() {
+  const { t } = useTranslation(undefined, ACCOUNT_T);
   const isAdmin = useSettingsStore(selectIsAdmin);
   const [action, setAction] = useState<DangerAction | null>(null);
   const [busy, setBusy] = useState(false);
@@ -568,12 +577,18 @@ function AccountPage() {
     setBusy(true);
     try {
       const detail = await action.run();
-      toast.success(`${action.title} — done`, detail ? { description: detail } : undefined);
+      toast.success(
+        t(($) => $.done, { action: action.title }),
+        detail ? { description: detail } : undefined,
+      );
     } catch (e) {
       console.error(`${action.key} failed:`, e);
-      toast.error(`${action.title} failed`, {
-        description: errorMessage(e),
-      });
+      toast.error(
+        t(($) => $.failed, { action: action.title }),
+        {
+          description: errorMessage(e),
+        },
+      );
     } finally {
       setBusy(false);
       setAction(null);
@@ -584,7 +599,7 @@ function AccountPage() {
     <div className="container max-w-4xl mx-auto py-8 px-4">
       <div className="flex items-center gap-3 mb-8">
         <UserCogIcon className="h-6 w-6" />
-        <h1 className="text-2xl font-semibold">Account</h1>
+        <h1 className="text-2xl font-semibold">{t(($) => $.title)}</h1>
       </div>
 
       {/* Each section after the first is separated by a top divider, so the

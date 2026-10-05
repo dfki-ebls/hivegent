@@ -1,6 +1,7 @@
 import { TriangleAlertIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { errorMessage } from "@/lib/utils";
 import { initOidc } from "@/oidc";
@@ -18,6 +19,7 @@ type State = { status: "loading" } | { status: "ready" } | { status: "error"; me
  * spinner instead of crashing the pre-render bootstrap to a blank page.
  */
 export function BootstrapGate({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const [state, setState] = useState<State>({ status: "loading" });
 
   useEffect(() => {
@@ -48,7 +50,7 @@ export function BootstrapGate({ children }: { children: ReactNode }) {
     return (
       <FullScreenNotice
         icon={<TriangleAlertIcon className="h-12 w-12 text-destructive" />}
-        title="Unable to start"
+        title={t(($) => $.app.startup.failed)}
       >
         {state.message}
       </FullScreenNotice>

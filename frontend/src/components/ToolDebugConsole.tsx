@@ -8,6 +8,10 @@
  */
 
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+
+import { keyPrefix } from "@/i18n";
+import { formatDecimal } from "@/i18n/format";
 import { listToolSchemas, runTool } from "@/lib/api";
 import type { ToolRunResult, ToolSchema } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
@@ -27,6 +31,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+
+const T_OPTIONS = keyPrefix(($) => $.app.toolDebugger);
 
 const PRE_CLASS =
   "max-h-96 overflow-auto rounded-md bg-muted p-3 font-mono text-xs whitespace-pre-wrap break-words";
@@ -53,38 +59,41 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 }
 
 function ResultPanel({ result }: { result: ToolRunResult }) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
   const hasData = result.data !== null && result.data !== undefined;
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
-          Result
+          {t(($) => $.result)}
           <Badge variant={result.ok ? "secondary" : "destructive"}>
-            {result.ok ? "ok" : "error"}
+            {result.ok ? t(($) => $.ok) : t(($) => $.error)}
           </Badge>
           <span className="ml-auto text-xs font-normal text-muted-foreground">
-            {result.elapsed_ms.toFixed(1)} ms
+            {t(($) => $.elapsed, {
+              ms: formatDecimal(result.elapsed_ms),
+            })}
           </span>
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {result.error && (
-          <Section title="Error">
+          <Section title={t(($) => $.error)}>
             <pre className={`${PRE_CLASS} text-destructive`}>{result.error}</pre>
           </Section>
         )}
         {result.text && (
-          <Section title="LLM text" hint="Stringified return value passed to the model">
+          <Section title={t(($) => $.llmText)} hint={t(($) => $.llmTextHint)}>
             <pre className={PRE_CLASS}>{result.text}</pre>
           </Section>
         )}
         {hasData && (
-          <Section title="Structured data" hint="Structured result the interface consumes">
+          <Section title={t(($) => $.structuredData)} hint={t(($) => $.structuredDataHint)}>
             <pre className={PRE_CLASS}>{JSON.stringify(result.data, null, 2)}</pre>
           </Section>
         )}
         {!result.error && !result.text && !hasData && (
-          <p className="text-sm text-muted-foreground">Tool returned no output.</p>
+          <p className="text-sm text-muted-foreground">{t(($) => $.noOutput)}</p>
         )}
       </CardContent>
     </Card>
@@ -92,6 +101,7 @@ function ResultPanel({ result }: { result: ToolRunResult }) {
 }
 
 export function ToolDebugConsole() {
+  const { t } = useTranslation(undefined, T_OPTIONS);
   const isAdmin = useSettingsStore(selectIsAdmin);
   const [tools, setTools] = useState<ToolSchema[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -103,18 +113,23 @@ export function ToolDebugConsole() {
 
   useEffect(() => {
     if (!isAdmin) return;
+
     let active = true;
     listToolSchemas()
       .then((fetched) => active && setTools(fetched))
       .catch((e: unknown) => {
         if (active) setLoadError(errorMessage(e));
       });
+
     return () => {
       active = false;
     };
   }, [isAdmin]);
 
-  const selectedTool = useMemo(() => tools.find((t) => t.name === selected), [tools, selected]);
+  const selectedTool = useMemo(
+    () => tools.find((tool) => tool.name === selected),
+    [tools, selected],
+  );
 
   const grouped = useMemo(() => {
     const map = new Map<string, ToolSchema[]>();
@@ -128,7 +143,7 @@ export function ToolDebugConsole() {
 
   // Reset the form to the selected tool's schema defaults whenever it changes.
   function handleSelect(name: string) {
-    const tool = tools.find((t) => t.name === name);
+    const tool = tools.find((candidate) => candidate.name === name);
     setSelected(name);
     setResult(null);
     setRunError(null);
@@ -154,10 +169,8 @@ export function ToolDebugConsole() {
       <div className="flex h-full items-center justify-center p-6">
         <Empty>
           <EmptyHeader>
-            <EmptyTitle>Administrator access required</EmptyTitle>
-            <EmptyDescription>
-              The tool debugger is only available to administrators.
-            </EmptyDescription>
+            <EmptyTitle>{t(($) => $.adminRequired)}</EmptyTitle>
+            <EmptyDescription>{t(($) => $.adminRequiredDescription)}</EmptyDescription>
           </EmptyHeader>
         </Empty>
       </div>
@@ -167,11 +180,8 @@ export function ToolDebugConsole() {
   return (
     <div className="flex h-full flex-col">
       <div className="shrink-0 space-y-1 border-b px-6 py-4">
-        <h1 className="text-2xl font-semibold">Tool Debugger</h1>
-        <p className="text-sm text-muted-foreground">
-          Invoke any agent tool directly to exercise stateful behaviour such as pgvector retrieval.
-          Arguments and their types are inferred from each tool's schema.
-        </p>
+        <h1 className="text-2xl font-semibold">{t(($) => $.title)}</h1>
+        <p className="text-sm text-muted-foreground">{t(($) => $.description)}</p>
       </div>
 
       {/* Body: one scroll region on mobile, two independent columns on desktop. */}
@@ -179,13 +189,15 @@ export function ToolDebugConsole() {
         {/* Input column */}
         <div className="flex flex-col gap-6 p-6 lg:w-1/2 lg:overflow-y-auto lg:border-r">
           {loadError && (
-            <p className="text-sm text-destructive">Failed to load tools: {loadError}</p>
+            <p className="text-sm text-destructive">
+              {t(($) => $.loadFailed, { error: loadError })}
+            </p>
           )}
 
           <div className="grid gap-1.5">
             <Select value={selected} onValueChange={handleSelect}>
               <SelectTrigger>
-                <SelectValue placeholder="Select a tool to debug" />
+                <SelectValue placeholder={t(($) => $.selectTool)} />
               </SelectTrigger>
               <SelectContent>
                 {grouped.map(([group, groupTools]) => (
@@ -218,7 +230,7 @@ export function ToolDebugConsole() {
                 />
                 <Button className="self-start gap-2" onClick={handleRun} disabled={running}>
                   {running && <Spinner />}
-                  Run tool
+                  {t(($) => $.run)}
                 </Button>
               </CardContent>
             </Card>
@@ -230,14 +242,14 @@ export function ToolDebugConsole() {
           {result ? (
             <ResultPanel result={result} />
           ) : runError ? (
-            <p className="text-sm text-destructive">Request failed: {runError}</p>
+            <p className="text-sm text-destructive">
+              {t(($) => $.requestFailed, { error: runError })}
+            </p>
           ) : (
             <Empty>
               <EmptyHeader>
-                <EmptyTitle>No results yet</EmptyTitle>
-                <EmptyDescription>
-                  Select a tool, fill in its arguments, and run it to see the output here.
-                </EmptyDescription>
+                <EmptyTitle>{t(($) => $.noResults)}</EmptyTitle>
+                <EmptyDescription>{t(($) => $.noResultsDescription)}</EmptyDescription>
               </EmptyHeader>
             </Empty>
           )}
