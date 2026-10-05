@@ -36,7 +36,7 @@ web_enabled = settings.tools.enable_web and settings.security.web_policy().has_a
 def _web_search(deps: UserDeps) -> WebSearch:
     return WebSearch(
         client=get_web_http_client(),
-        language=settings.network.websearch_language,
+        default_edition=settings.network.websearch_default_edition,
         user_agent=_user_agent,
         sink=output_sink(deps),
     )

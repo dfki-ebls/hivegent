@@ -946,12 +946,14 @@ class NetworkSettings(BaseModel):
     handed to the model, ``webfetch_max_line_chars`` truncates each
     numbered line so a data-URI or minified line cannot flood the
     context, and ``webfetch_max_formatted_chars`` bounds the rendered
-    output as a whole, which neither of the other two does.  ``web_search`` queries the official
+    output as a whole, which neither of the other two does.
+    ``web_search`` queries the official
     Wikipedia API directly — no scraping, so no bot detection or rate
     limits — and only ever returns ``wikipedia.org`` links, matching the
-    default ``web_urls`` allow list.  ``websearch_language`` selects the
-    Wikipedia edition (e.g. ``en`` → en.wikipedia.org, ``de`` →
-    de.wikipedia.org).  ``contact_email`` is the operator address put in
+    default ``web_urls`` allow list.  The model picks the Wikipedia edition
+    per call, and ``websearch_default_edition`` is the one it searches when
+    it names none (e.g. ``en`` → en.wikipedia.org, ``de`` → de.wikipedia.org).
+    ``contact_email`` is the operator address put in
     the web tools' ``User-Agent`` (as Wikimedia's policy asks, so traffic
     questions reach a human); it falls back to the package author when
     unset.  The per-model-request timeout lives on ``LlmSettings``
@@ -970,7 +972,7 @@ class NetworkSettings(BaseModel):
     webfetch_max_line_chars: int = 2000
     webfetch_max_formatted_chars: int = 50_000
     webfetch_max_redirects: int = 5
-    websearch_language: str = "en"
+    websearch_default_edition: str = "en"
     contact_email: str = ""
     unix_sockets: dict[str, Path] = {}
 

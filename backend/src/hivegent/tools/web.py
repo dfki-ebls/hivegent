@@ -19,6 +19,7 @@ from .formatting import BLOCK_SEP, cap_lines, hint_suffix, iter_annotated
 from .sink import OutputPathArg, RedirectedOutput, RedirectingTool
 
 __all__ = [
+    "WebEditionArg",
     "WebFetch",
     "WebMaxResultsArg",
     "WebPage",
@@ -49,7 +50,21 @@ def build_user_agent(contact: str = "") -> str:
 
 WebQueryArg = Annotated[
     str,
-    Field(description="Search query string."),
+    Field(description="Search query string, phrased in the edition's language."),
+]
+WebEditionArg = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Wikipedia edition to search, as its language code (e.g. `en`, "
+            "`de`, `fr`). Pick the edition whose language the best sources are "
+            "likely written in, and search another one (e.g. English or the "
+            "user's language) when results are poor. Omit it for the default "
+            "edition."
+        ),
+        pattern=r"^[a-z]+(-[a-z]+)*$",
+        max_length=20,
+    ),
 ]
 WebMaxResultsArg = Annotated[
     int,
@@ -73,8 +88,10 @@ class WebSearch(RedirectingTool[list[dict[str, str]]]):
     Queries the official MediaWiki API through the egress proxy with no
     scraping, bot detection, or search-engine rate limits.
     It only returns ``wikipedia.org`` links.
-    ``language`` selects the edition, whose host the client checks against its
-    URL policy like every request and redirect.
+    The model picks the edition per call, ``default_edition`` when it names
+    none.  The argument's pattern confines it to a subdomain label, and the
+    client checks the resulting host against its URL policy like every request
+    and redirect.
 
     ``client`` is the pooled, policy-checked web client; it is owned by the
     application lifespan, so this tool uses it without ever closing it.
@@ -84,7 +101,7 @@ class WebSearch(RedirectingTool[list[dict[str, str]]]):
     """The sandbox has no network, so a program can only be handed this."""
 
     client: httpx2.AsyncClient
-    language: str = "en"
+    default_edition: str = "en"
     timeout_seconds: float = 10.0
     user_agent: str = field(default_factory=build_user_agent)
 
@@ -92,6 +109,7 @@ class WebSearch(RedirectingTool[list[dict[str, str]]]):
     async def __call__(
         self,
         query: WebQueryArg,
+        edition: WebEditionArg = None,
         max_results: WebMaxResultsArg = 5,
         output_path: OutputPathArg = None,
     ) -> ToolOutput[list[dict[str, str]] | RedirectedOutput]:
@@ -101,13 +119,17 @@ class WebSearch(RedirectingTool[list[dict[str, str]]]):
         open web: every result is a Wikipedia article, so it is the tool
         for encyclopedic facts, definitions, and background, but it
         cannot find news, forums, product pages, or any other site.
+        Every language edition is searchable, and editions differ in
+        coverage, so search the edition most likely to cover the topic.
 
         Returns a list of results with ``title``, ``href``, and ``body``
         fields. ``body`` is only a short snippet, so follow up with
         ``web_fetch`` on a result's ``href`` to read the full article.
         """
         max_results = min(max(1, max_results), 20)
-        endpoint = f"https://{self.language}.wikipedia.org/w/api.php"
+        edition = edition or self.default_edition
+        base_url = f"https://{edition}.wikipedia.org"
+        endpoint = f"{base_url}/w/api.php"
         params = {
             "action": "query",
             "list": "search",
@@ -129,13 +151,14 @@ class WebSearch(RedirectingTool[list[dict[str, str]]]):
         except (httpx2.HTTPError, UnsafeUrlError) as exc:
             logger.warning("Web search failed for query %r: %s", query, exc)
             raise ToolRetry(
-                "web search failed — the Wikipedia API may be unavailable or "
-                "the query too narrow; try again or rephrase the query."
+                f"web search failed — the `{edition}` Wikipedia edition may not "
+                "exist or be unavailable, or the query too narrow; check the "
+                "edition code, try again, or rephrase the query."
             ) from exc
         results = [
             {
                 "title": hit.get("title", ""),
-                "href": f"https://{self.language}.wikipedia.org/wiki/"
+                "href": f"{base_url}/wiki/"
                 + quote(hit.get("title", "").replace(" ", "_")),
                 "body": _snippet_text(hit.get("snippet", "")),
             }

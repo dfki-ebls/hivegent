@@ -128,7 +128,7 @@ class TestWebSearch:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def handler(request: httpx2.Request) -> httpx2.Response:
-            # The configured language picks the Wikipedia edition.
+            # The configured default picks the edition when the call names none.
             assert request.url.host == "de.wikipedia.org"
             assert request.url.params["srsearch"] == "ChatGPT"
             # The configured operator User-Agent is sent on the request.
@@ -146,7 +146,7 @@ class TestWebSearch:
                 client=_web_client(
                     monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
                 ),
-                language="de",
+                default_edition="de",
                 user_agent="hivegent-test (+mailto:a@b.org)",
             )("ChatGPT")
         )
@@ -158,6 +158,20 @@ class TestWebSearch:
         # The highlighted snippet HTML is reduced to plain text.
         assert out.data[0]["body"] == "a ChatGPT bot"
         assert "[1] ChatGPT (https://de.wikipedia.org/wiki/ChatGPT)" in out.text
+
+    async def test_call_picks_the_edition(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            assert request.url.host == "fr.wikipedia.org"
+            return httpx2.Response(200, json=_search_response(("Paris", "")))
+
+        client = _web_client(
+            monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
+        )
+        out = await returned(WebSearch(client=client)("Paris", edition="fr"))
+
+        assert out.data[0]["href"] == "https://fr.wikipedia.org/wiki/Paris"
 
     async def test_api_failure_raises_tool_retry(
         self, monkeypatch: pytest.MonkeyPatch
