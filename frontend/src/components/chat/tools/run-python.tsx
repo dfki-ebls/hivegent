@@ -208,8 +208,8 @@ export function RunPythonTool({ part, metadata }: RunPythonToolProps) {
             </p>
             <p className="text-xs text-muted-foreground">
               Python runs in an isolated sandbox. It can read your documents and use the
-              assistant&apos;s search tools, but the only document it can change is the one named
-              here, so saving it waits for your approval. Review the program first.
+              assistant&apos;s search tools. Saving the document named here requires your approval.
+              Review the program first.
             </p>
           </div>
         )
