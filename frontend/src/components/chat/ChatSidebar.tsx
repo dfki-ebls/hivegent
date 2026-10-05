@@ -328,7 +328,6 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
         compactDisabled={compactDisabled}
         onCompact={() => compact()}
         onNewChat={handleNewChat}
-        onHistoryClick={() => fetchConversations()}
         onImport={() => importInputRef.current?.click()}
         onExport={messages.length > 0 ? handleExport : undefined}
       />

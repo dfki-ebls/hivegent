@@ -17,7 +17,6 @@ interface ChatHeaderProps {
   compactDisabled: boolean;
   onCompact: () => void;
   onNewChat: () => void;
-  onHistoryClick: () => void;
   onImport: () => void;
   onExport?: () => void;
 }
@@ -28,7 +27,6 @@ export function ChatHeader({
   compactDisabled,
   onCompact,
   onNewChat,
-  onHistoryClick,
   onImport,
   onExport,
 }: ChatHeaderProps) {
@@ -39,7 +37,7 @@ export function ChatHeader({
           <MessageSquareIcon className="h-4 w-4 mr-1.5" />
           Chat
         </TabsTrigger>
-        <TabsTrigger value="history" onClick={onHistoryClick}>
+        <TabsTrigger value="history">
           <HistoryIcon className="h-4 w-4 mr-1.5" />
           History
         </TabsTrigger>
