@@ -218,7 +218,7 @@ export function SettingsDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant="ghost" size="icon">
-          <SettingsIcon className="h-4 w-4" />
+          <SettingsIcon />
           <span className="sr-only">Settings</span>
         </Button>
       </DialogTrigger>
@@ -383,7 +383,7 @@ export function SettingsDialog() {
                         className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs"
                       >
                         {hasAuth(server) && (
-                          <LockIcon className="h-3 w-3 text-muted-foreground shrink-0" />
+                          <LockIcon className="size-3 text-muted-foreground shrink-0" />
                         )}
                         <span className="truncate flex-1" title={server.url}>
                           {server.url}
@@ -395,11 +395,11 @@ export function SettingsDialog() {
                         )}
                         {/* Test result indicator */}
                         {result === "loading" && (
-                          <LoaderIcon className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
+                          <LoaderIcon className="size-3 animate-spin text-muted-foreground shrink-0" />
                         )}
                         {result !== undefined && result !== "loading" && result.ok && (
                           <span className="flex items-center gap-0.5 text-green-600 shrink-0">
-                            <CheckIcon className="h-3 w-3" />
+                            <CheckIcon className="size-3" />
                             {result.tool_count}
                           </span>
                         )}
@@ -408,26 +408,24 @@ export function SettingsDialog() {
                             className="flex items-center gap-0.5 text-red-600 shrink-0"
                             title={result.error ?? "Connection failed"}
                           >
-                            <XIcon className="h-3 w-3" />
+                            <XIcon className="size-3" />
                           </span>
                         )}
                         <Button
                           variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 shrink-0"
+                          size="icon-xs"
                           title="Test connection"
                           disabled={result === "loading"}
                           onClick={() => handleTestConnection(index)}
                         >
-                          <PlugIcon className="h-3 w-3" />
+                          <PlugIcon />
                         </Button>
                         <Button
                           variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 shrink-0"
+                          size="icon-xs"
                           onClick={() => removeMcpServer(index)}
                         >
-                          <TrashIcon className="h-3 w-3" />
+                          <TrashIcon />
                         </Button>
                       </div>
                     );
@@ -501,21 +499,20 @@ export function SettingsDialog() {
                             />
                             <Button
                               variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 shrink-0"
+                              size="icon-xs"
                               onClick={() => setHeaders((prev) => prev.filter((_, ii) => ii !== i))}
                             >
-                              <TrashIcon className="h-3 w-3" />
+                              <TrashIcon />
                             </Button>
                           </div>
                         ))}
                         <Button
                           variant="outline"
-                          size="sm"
-                          className="text-xs w-fit"
+                          size="xs"
+                          className="w-fit"
                           onClick={() => setHeaders((prev) => [...prev, { key: "", value: "" }])}
                         >
-                          <PlusIcon className="h-3 w-3 mr-1" />
+                          <PlusIcon />
                           Add Header
                         </Button>
                       </div>
@@ -557,12 +554,12 @@ export function SettingsDialog() {
 
                     <Button
                       variant="outline"
-                      size="sm"
-                      className="text-xs w-fit"
+                      size="xs"
+                      className="w-fit"
                       disabled={!newMcpUrl.trim()}
                       onClick={handleAddMcpServer}
                     >
-                      <PlusIcon className="h-3 w-3 mr-1" />
+                      <PlusIcon />
                       Add Server
                     </Button>
                   </div>
@@ -575,14 +572,14 @@ export function SettingsDialog() {
         <DialogFooter className="flex-row justify-between sm:justify-between">
           <div className="flex gap-2">
             <ConfirmButton
-              icon={<TrashIcon className="h-4 w-4 mr-2" />}
+              icon={<TrashIcon />}
               label="Clear Memory"
               title="Clear memory?"
               description="This will permanently delete all saved memory. The assistant will no longer remember information from previous conversations."
               onConfirm={clearMemory}
             />
             <ConfirmButton
-              icon={<EraserIcon className="h-4 w-4 mr-2" />}
+              icon={<EraserIcon />}
               label="Clear Scratch"
               title="Clear scratch files?"
               description="This will delete the working files the assistant parks between tool calls, in your own workspace and every group you can write to. Your documents are untouched."
@@ -591,7 +588,7 @@ export function SettingsDialog() {
           </div>
           {featureFlags.llmSpec && (
             <Button variant="outline" size="sm" onClick={reset}>
-              <RotateCcwIcon className="h-4 w-4 mr-2" />
+              <RotateCcwIcon />
               Reset to Server Defaults
             </Button>
           )}
