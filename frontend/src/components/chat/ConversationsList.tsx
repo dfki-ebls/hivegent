@@ -295,7 +295,9 @@ export function ConversationsList({
     await generateTitle(id, buildAuxLlmConfig(overrides));
   };
 
-  if (isLoading) return <LoadingState />;
+  // A refetch keeps the cached list on screen,
+  // so it neither flickers nor loses its scroll position.
+  if (isLoading && conversations.length === 0) return <LoadingState />;
   if (error) return <ErrorState message={error} onRetry={fetchConversations} />;
   if (conversations.length === 0)
     return (
