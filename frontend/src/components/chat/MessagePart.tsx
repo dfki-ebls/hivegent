@@ -1,7 +1,7 @@
 import type { UIMessage } from "@ai-sdk/react";
+import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
 import { ImagePart } from "@/components/chat/parts/ImagePart";
 import { ReasoningPart } from "@/components/chat/parts/ReasoningPart";
-import { TextPart } from "@/components/chat/parts/TextPart";
 import { UserTextPart } from "@/components/chat/parts/UserTextPart";
 import { getToolHandler } from "@/components/chat/tools/registry";
 import { SubagentTool } from "@/components/chat/tools/subagent";
@@ -14,14 +14,11 @@ interface MessagePartProps {
   toolData: ReadonlyMap<string, unknown>;
   part: UIMessage["parts"][number];
   reasoningDuration?: number;
-  isLastTextPart: boolean;
-  showActions: boolean;
   isUserMessage: boolean;
   messageId: string;
   isEditing: boolean;
   onCancelEdit: () => void;
   onSubmitEdit: (messageId: string, newText: string) => void;
-  onRegenerate: () => void;
   onExecutePlan?: () => void;
 }
 
@@ -29,14 +26,11 @@ export function MessagePart({
   toolData,
   part,
   reasoningDuration,
-  isLastTextPart,
-  showActions,
   isUserMessage,
   messageId,
   isEditing,
   onCancelEdit,
   onSubmitEdit,
-  onRegenerate,
   onExecutePlan,
 }: MessagePartProps) {
   if (part.type === "text" && isUserMessage) {
@@ -52,13 +46,7 @@ export function MessagePart({
   }
 
   if (part.type === "text") {
-    return (
-      <TextPart
-        text={part.text}
-        showActions={isLastTextPart && showActions}
-        onRegenerate={onRegenerate}
-      />
-    );
+    return <MarkdownText>{part.text}</MarkdownText>;
   }
 
   if (part.type === "reasoning") {
