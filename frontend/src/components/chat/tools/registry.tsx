@@ -7,6 +7,7 @@ import {
   syncReadBinaryDocumentOutput,
 } from "@/components/chat/tools/read-binary-document";
 import { syncReadDocumentOutput } from "@/components/chat/tools/read-document";
+import { RunPythonTool } from "@/components/chat/tools/run-python";
 import { syncSearchOutput } from "@/components/chat/tools/search";
 import { syncWebFetchOutput } from "@/components/chat/tools/web-fetch";
 import { syncWebSearchOutput } from "@/components/chat/tools/web-search";
@@ -32,6 +33,9 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   grep: { syncOutput: syncGrepOutput },
   web_search: { syncOutput: syncWebSearchOutput },
   web_fetch: { syncOutput: syncWebFetchOutput },
+  run_python: {
+    render: ({ part, metadata }) => <RunPythonTool part={part} metadata={metadata} />,
+  },
   create_plan: {
     render: ({ part, onExecutePlan }) => (
       <CreatePlanTool part={part} onExecutePlan={onExecutePlan} />
