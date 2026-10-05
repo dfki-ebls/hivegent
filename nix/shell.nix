@@ -9,6 +9,7 @@
   mdbook,
   mdbook-mermaid,
   uv,
+  i18next-cli,
   git,
   lib,
 }:
@@ -60,6 +61,7 @@ mkShell {
 
   packages = [
     nodejs
+    i18next-cli
     python313
     treefmt
     uv
