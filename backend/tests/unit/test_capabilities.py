@@ -53,7 +53,7 @@ def _callables(spec: ToolsSpec) -> list[object]:
     """Every dynamic instruction the composed capabilities contribute."""
     return [
         part
-        for capability in build_capabilities(spec, mode="interactive")
+        for capability in build_capabilities(spec, mode="interactive", language="en")
         for part in _dynamic_parts(capability.get_instructions() or [])
     ]
 
@@ -62,24 +62,27 @@ def _instructions(spec: ToolsSpec) -> str:
     """Every static instruction the composed capabilities contribute."""
     return "\n".join(
         text
-        for capability in build_capabilities(spec, mode="interactive")
+        for capability in build_capabilities(spec, mode="interactive", language="en")
         for text in _static_texts(capability.get_instructions())
     )
 
 
 def test_grounding_rides_with_the_retrieval_tools() -> None:
     """Disabling every explore tool must retract the search-first mandate."""
-    assert GROUNDING_INSTRUCTIONS in _instructions(ToolsSpec())
+    assert GROUNDING_INSTRUCTIONS["en"] in _instructions(ToolsSpec())
 
     disabled = ToolsSpec(disabled_tools=sorted(_EXPLORE.tool_names))
-    assert GROUNDING_INSTRUCTIONS not in _instructions(disabled)
+    assert GROUNDING_INSTRUCTIONS["en"] not in _instructions(disabled)
 
 
 def test_shared_block_survives_on_its_remaining_feature() -> None:
     """Path guidance is owned by explore *and* write, so write alone keeps it."""
     disabled = ToolsSpec(disabled_tools=sorted(_EXPLORE.tool_names))
     ids = {
-        capability.id for capability in build_capabilities(disabled, mode="interactive")
+        capability.id
+        for capability in build_capabilities(
+            disabled, mode="interactive", language="en"
+        )
     }
     assert "workspace-paths" in ids
 
@@ -122,7 +125,7 @@ def _request_params(
         "hi",
         model=FunctionModel(respond),
         deps=deps,
-        capabilities=build_capabilities(ToolsSpec(), mode="interactive"),
+        capabilities=build_capabilities(ToolsSpec(), mode="interactive", language="en"),
     )
     return captured[0]
 
@@ -204,7 +207,7 @@ def test_an_operator_exclusion_retracts_the_feature_it_empties(
         capabilities.settings.tools, "disabled", sorted(_EXPLORE.tool_names)
     )
 
-    assert GROUNDING_INSTRUCTIONS not in _instructions(ToolsSpec())
+    assert GROUNDING_INSTRUCTIONS["en"] not in _instructions(ToolsSpec())
 
 
 def test_an_exclusion_reaches_the_tools_an_mcp_server_brought(
@@ -236,7 +239,7 @@ def test_an_exclusion_reaches_the_tools_an_mcp_server_brought(
                 user_id="u", store=Casebase(kind="user", id="u"), mode="interactive"
             ),
             capabilities=build_capabilities(
-                ToolsSpec(), extra=[extra], mode="interactive"
+                ToolsSpec(), extra=[extra], mode="interactive", language="en"
             ),
         )
         return {tool.name for tool in captured[0].function_tools}

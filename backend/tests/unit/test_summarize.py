@@ -23,6 +23,7 @@ from hivegent import compaction
 from hivegent.agents import RunPrefix, UserDeps, build_capabilities, capabilities
 from hivegent.agents.summarize import COMPACT_PROMPT, _plan, summarize_conversation
 from hivegent.db.conversations import ConversationData
+from hivegent.l10n import LANGUAGES, Language
 from hivegent.llm_config import LlmConfig
 from hivegent.store import Casebase
 from hivegent.types import ToolsSpec
@@ -93,17 +94,21 @@ def run_prefix(monkeypatch: pytest.MonkeyPatch) -> RunPrefix:
         deps=UserDeps(
             user_id="u", store=Casebase(kind="user", id="u"), mode="interactive"
         ),
-        capabilities=build_capabilities(ToolsSpec(), mode="interactive"),
+        capabilities=build_capabilities(ToolsSpec(), mode="interactive", language="en"),
         instructions="chat instructions",
         llm=LlmConfig(),
         model=FunctionModel(lambda messages, info: ModelResponse(parts=[])),
     )
 
 
+@pytest.mark.parametrize("language", LANGUAGES)
 async def test_compaction_continues_the_conversation_instead_of_re_rendering_it(
-    run_prefix: RunPrefix,
+    run_prefix: RunPrefix, language: Language
 ) -> None:
-    """The whole point: the request is the chat prefix plus a short prompt."""
+    """The whole point: the request is the chat prefix plus a short prompt.
+
+    The prompt is a user turn, so it is asked in the run's own language.
+    """
     seen: list[list[ModelMessage]] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -112,7 +117,12 @@ async def test_compaction_continues_the_conversation_instead_of_re_rendering_it(
         return ModelResponse(parts=[TextPart(content="  summary text  ")])
 
     summary = await summarize_conversation(
-        _MESSAGES, replace(run_prefix, model=FunctionModel(respond))
+        _MESSAGES,
+        replace(
+            run_prefix,
+            deps=replace(run_prefix.deps, language=language),
+            model=FunctionModel(respond),
+        ),
     )
 
     assert summary == "summary text"
@@ -123,7 +133,10 @@ async def test_compaction_continues_the_conversation_instead_of_re_rendering_it(
     request = sent[-1]
     assert isinstance(request, ModelRequest)
     prompt = request.parts[-1]
-    assert isinstance(prompt, UserPromptPart) and prompt.content == COMPACT_PROMPT
+    assert (
+        isinstance(prompt, UserPromptPart)
+        and prompt.content == COMPACT_PROMPT[language]
+    )
     assert "chat instructions" in (request.instructions or "")
 
 
@@ -226,7 +239,7 @@ async def test_compaction_rejects_tool_calls_before_execution(
     write_run = replace(
         run_prefix,
         deps=replace(run_prefix.deps, mode="write"),
-        capabilities=build_capabilities(ToolsSpec(), mode="write"),
+        capabilities=build_capabilities(ToolsSpec(), mode="write", language="en"),
         model=FunctionModel(respond),
     )
 

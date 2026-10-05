@@ -11,7 +11,12 @@ from pydantic_ai.messages import ModelResponse, TextPart
 
 from .agents import RunPrefix
 from .agents.summarize import summarize_conversation
-from .db.conversations import create_compacted_conversation, load_conversation
+from .db.conversations import (
+    UNTITLED,
+    create_compacted_conversation,
+    load_conversation,
+)
+from .l10n import Localized
 
 __all__ = [
     "CompactionResult",
@@ -19,6 +24,20 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+def _not_found(conversation_id: str) -> Localized[str]:
+    return Localized(
+        en=f"Conversation {conversation_id} not found or empty",
+        de=f"Konversation {conversation_id} nicht gefunden oder leer",
+    )
+
+
+def _continued_title(title: str | None) -> Localized[str]:
+    return Localized(
+        en=f"{title or UNTITLED.en} (continued)",
+        de=f"{title or UNTITLED.de} (Fortsetzung)",
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -51,7 +70,8 @@ async def compact_conversation(
     per-turn usage the retry plan is sized from.
 
     *run* is the prompt prefix the conversation's own turns ran under, which is
-    the other half of that prefix.
+    the other half of that prefix.  Its language also names the new
+    conversation.
 
     Args:
         user_id: The user who owns the conversation.
@@ -64,9 +84,10 @@ async def compact_conversation(
     Raises:
         ValueError: If the conversation is missing, not owned, or empty.
     """
+    language = run.deps.language
     conversation = await load_conversation(user_id, conversation_id)
     if conversation is None or not conversation.messages:
-        raise ValueError(f"Conversation {conversation_id} not found or empty")
+        raise ValueError(_not_found(conversation_id)[language])
 
     summary = await summarize_conversation(conversation.messages, run)
 
@@ -75,7 +96,7 @@ async def compact_conversation(
         user_id,
         original_conversation_id=conversation_id,
         summary_message=summary_message,
-        title=f"{conversation.title or 'Untitled'} (continued)",
+        title=_continued_title(conversation.title)[language],
     )
 
     logger.info(

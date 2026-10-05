@@ -21,7 +21,7 @@ from hivegent.agents.capabilities import check_tool_settings, unlisted_tool_name
 from hivegent.agents.common import UserDeps
 from hivegent.agents.tools.compute import (
     INJECTABLE_TOOL_NAMES,
-    sandbox_api_instructions,
+    sandbox_instructions,
     sandbox_surface,
 )
 from hivegent.agents.tools.explore import EXPLORE_FACTORIES
@@ -321,7 +321,7 @@ def test_a_run_given_no_tool_opens_no_api_block(
     context = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
     assert not sandbox_surface(deps)
-    assert sandbox_api_instructions(context) == ""
+    assert sandbox_instructions(context) == ""
 
 
 def test_two_records_sharing_a_name_are_disambiguated() -> None:

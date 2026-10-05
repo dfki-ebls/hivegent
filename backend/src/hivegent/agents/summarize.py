@@ -41,6 +41,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
+from ..l10n import Localized
 from ..llm import SUMMARY_MAX_TOKENS, is_context_overflow, summary_model_settings
 from .app import user_agent
 from .common import RunPrefix
@@ -49,7 +50,8 @@ __all__ = ["COMPACT_PROMPT", "summarize_conversation"]
 
 logger = logging.getLogger(__name__)
 
-COMPACT_PROMPT = """\
+COMPACT_PROMPT = Localized(
+    en="""\
 Summarize the conversation as a handover note for continuing the work in a fresh context.
 
 Use this exact structure, keeping every heading even where a section is empty:
@@ -76,8 +78,41 @@ Use this exact structure, keeping every heading even where a section is empty:
 
 Keep every section to terse bullets rather than prose, and reproduce workspace paths, quoted passages, names, and figures exactly as they appeared.
 Answer from the conversation above alone, and do not call any tools.
-Return only the summary, with no commentary around it."""
+Return only the summary, with no commentary around it.""",
+    de="""\
+Fasse die Konversation als Übergabenotiz zusammen, damit die Arbeit in einem frischen Kontext weitergehen kann.
+
+Verwende genau diese Struktur und behalte jede Überschrift bei, auch wenn ein Abschnitt leer ist:
+
+## Ziel
+[Was die Benutzer:in erreichen möchte, in ein oder zwei Sätzen.]
+
+## Vorgaben und Entscheidungen
+- [Vorlieben, Anforderungen und getroffene Entscheidungen, jeweils mit Begründung, sonst „(keine)“]
+
+## Fortschritt
+### Erledigt
+- [Abgeschlossene Arbeit und gesicherte Erkenntnisse, sonst „(keine)“]
+### In Arbeit
+- [Laufende oder teilweise umgesetzte Arbeit, sonst „(keine)“]
+### Blockiert
+- [Hindernisse, Fehlschläge und offene Fragen, sonst „(keine)“]
+
+## Dokumente
+- [Vollständiger Pfad im Arbeitsbereich: warum es wichtig ist, sonst „(keine)“]
+
+## Nächste Schritte
+1. [Die unmittelbar nächste konkrete Aktion, sonst „(keine)“]
+
+Halte jeden Abschnitt in knappen Aufzählungspunkten statt in Fließtext, und übernimm Pfade im Arbeitsbereich, zitierte Passagen, Namen und Zahlen genau so, wie sie vorkamen.
+Antworte allein aus der Konversation oben und ruf keine Tools auf.
+Gib nur die Zusammenfassung zurück, ohne Kommentar drumherum.""",
+)
 """The request, appended to the live conversation as its last user turn.
+
+Written in the run's language: an English user turn at the end of a German
+conversation would pull the summary, and every turn continuing from it, into
+English.
 
 Bounded by structure rather than by a word count, which would make the model
 drop sections instead of tightening them.  The tools stay declared, so the
@@ -200,7 +235,7 @@ async def _ask(
 ) -> str:
     """Run the compact prompt as the next turn of *messages*."""
     result = await user_agent.run(
-        COMPACT_PROMPT,
+        COMPACT_PROMPT[run.deps.language],
         message_history=list(messages),
         deps=run.deps,
         model=run.model,

@@ -3,7 +3,7 @@
 from .compute import (
     INJECTABLE_TOOL_NAMES,
     compute_toolset,
-    sandbox_api_instructions,
+    sandbox_instructions,
 )
 from .conversation import conversation_toolset
 from .explore import explore_toolset
@@ -22,7 +22,7 @@ __all__ = [
     "explore_toolset",
     "memory_toolset",
     "plan_toolset",
-    "sandbox_api_instructions",
+    "sandbox_instructions",
     "subagent_toolset",
     "web_toolset",
     "write_toolset",

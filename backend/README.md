@@ -529,7 +529,7 @@ A stub that rejects a working program is worse than one that checks nothing, and
 
 `settings.sandbox.type_check` is on by default: a misread field and a forgotten `await` are both caught before the program runs, with a diagnostic that names the field.
 It is a whole type checker rather than a check of the stub, so it also rejects unsound code that would have run, such as `Path(os.getenv("TMPDIR"))` for the `str | None` it is.
-`SANDBOX_TYPE_CHECK_INSTRUCTION` is added to the prompt only where the check is on, so a run never promises a correction it will not make.
+`SANDBOX_TYPE_CHECK_INSTRUCTIONS` is added to the prompt only where the check is on, so a run never promises a correction it will not make.
 
 ### Where a tool lives
 

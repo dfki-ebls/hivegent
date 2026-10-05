@@ -1,7 +1,10 @@
 """Cross-cutting run-loop safeguards composed onto the agents.
 
-Four capabilities that guard a run without belonging to any one feature:
+Five capabilities that guard a run without belonging to any one feature:
 
+* :class:`EnglishToolCalls` validates and executes every tool call in the
+  default language, so tool results and retries stay English whatever the
+  interface language of the request the run serves.
 * :class:`IncompleteToolCallGuard` fails a turn whose response the token
   limit cut off mid tool call, before the half-written call is dispatched.
 
@@ -20,10 +23,11 @@ Four capabilities that guard a run without belonging to any one feature:
   :class:`~pydantic_ai.exceptions.UsageLimitExceeded` abort rather than
   being cut off mid-task.
 
-All four hook the pydantic-ai agent loop, so they touch only the agent
+All five hook the pydantic-ai agent loop, so they touch only the agent
 path; the framework-neutral tools and their FastMCP adapter are unaffected.
-:class:`IncompleteToolCallGuard` and :class:`PromptImageLimit` ride on the
-agents themselves (see ``agents/app.py``), because a truncated call and a
+:class:`EnglishToolCalls`, :class:`IncompleteToolCallGuard` and
+:class:`PromptImageLimit` ride on the agents themselves (see
+``agents/app.py``), because a localized tool result, a truncated call and a
 request the gateway will reject are hazards on every run, not only the
 mode-composed chat one; the other two are composed per chat run.
 
@@ -47,7 +51,14 @@ from dataclasses import dataclass, replace
 from typing import Any, TypeGuard
 
 from pydantic_ai import BinaryContent, ImageUrl
-from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    RawToolArgs,
+    ValidatedToolArgs,
+    WrapModelRequestHandler,
+    WrapToolExecuteHandler,
+    WrapToolValidateHandler,
+)
 from pydantic_ai.exceptions import IncompleteToolCall
 from pydantic_ai.messages import (
     ModelMessage,
@@ -62,15 +73,76 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import RunContext, ToolDefinition
 
+from ..humanize import pluralize
+from ..l10n import DEFAULT_LANGUAGE, Language, Localized, current_language, use_language
 from ..tools.formatting import truncate_middle
 from .common import UserDeps
 
 __all__ = [
+    "EnglishToolCalls",
     "IncompleteToolCallGuard",
     "IterationLimitWarner",
     "PromptImageLimit",
     "ToolOutputLimit",
 ]
+
+
+def _incomplete_tool_call(max_tokens: int | None) -> Localized[str]:
+    return Localized(
+        en=(
+            f"Model token limit ({max_tokens or 'provider default'}) exceeded "
+            "while generating a tool call, resulting in incomplete arguments."
+        ),
+        de=(
+            f"Token-Limit des Modells ({max_tokens or 'Standard des Anbieters'}) "
+            "beim Erzeugen eines Tool-Aufrufs überschritten, die Argumente sind "
+            "daher unvollständig."
+        ),
+    )
+
+
+def _image_not_shown(max_images: int) -> Localized[str]:
+    return Localized(
+        en=(
+            f"[image not shown: a model request carries at most {max_images} "
+            f"{pluralize(max_images, 'image')}, and newer ones displaced this. "
+            "Read the document again if you still need to see it.]"
+        ),
+        de=(
+            f"[Bild nicht angezeigt: Eine Modellanfrage enthält höchstens "
+            f"{max_images} {pluralize(max_images, 'Bild', 'Bilder')}, und neuere "
+            "haben dieses verdrängt. Lies das Dokument erneut, wenn du es noch "
+            "sehen musst.]"
+        ),
+    )
+
+
+def _run_limit_warning(used: int, max_requests: int, remaining: int) -> Localized[str]:
+    return Localized(
+        en=(
+            f"[run-limit-warning] You have used {used} of {max_requests} "
+            f"model requests for this turn ({remaining} remaining). Wrap up: "
+            f"give your best answer now and avoid unnecessary tool calls."
+        ),
+        de=(
+            f"[run-limit-warning] Du hast {used} von {max_requests} "
+            f"Modellanfragen für diese Runde verbraucht ({remaining} übrig). "
+            "Komm zum Schluss: Gib jetzt deine beste Antwort und vermeide "
+            "unnötige Tool-Aufrufe."
+        ),
+    )
+
+
+def _run_language(ctx: RunContext[Any]) -> Language:
+    """The run's own language where its deps carry one, else the request's.
+
+    The guards ride on every agent, including ``base_agent``, whose runs have
+    no :class:`UserDeps` to state a language.
+    """
+    if isinstance(ctx.deps, UserDeps):
+        return ctx.deps.language
+
+    return current_language()
 
 
 def _image_list(part: ModelRequestPart) -> Sequence[Any]:
@@ -103,9 +175,13 @@ def _images(messages: Sequence[ModelMessage]) -> list[BinaryContent | ImageUrl]:
 
 
 def _within_image_cap(
-    messages: list[ModelMessage], max_images: int | None
+    messages: list[ModelMessage], max_images: int | None, language: Language
 ) -> list[ModelMessage]:
-    """Replace older image occurrences without mutating shared history."""
+    """Replace older image occurrences without mutating shared history.
+
+    The note standing in for an image is written in *language*, since it reads
+    like the rest of the turn it replaces part of.
+    """
     if max_images is None:
         return messages
 
@@ -114,11 +190,7 @@ def _within_image_cap(
     if remaining <= 0:
         return messages
 
-    note = (
-        f"[image not shown: a model request carries at most {max_images} "
-        "image(s), and newer ones displaced this. Read the document again "
-        "if you still need to see it.]"
-    )
+    note = _image_not_shown(max_images)[language]
     kept: list[ModelMessage] = []
 
     for message in messages:
@@ -149,6 +221,43 @@ def _within_image_cap(
         kept.append(message)
 
     return kept
+
+
+class EnglishToolCalls(AbstractCapability[Any]):
+    """Validate and execute every tool call in the default language.
+
+    Tool results and retries are read by the model alone, and the workspace,
+    URL policy and subagent code a tool reaches words its receipts and errors
+    in the ambient language of the request.  Pinning that language for the
+    duration of the call keeps every tool result English, the subagent runs a
+    tool starts included.
+    """
+
+    async def wrap_tool_validate(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: RawToolArgs,
+        handler: WrapToolValidateHandler,
+    ) -> ValidatedToolArgs:
+        """Validate the arguments in the default language."""
+        with use_language(DEFAULT_LANGUAGE):
+            return await handler(args)
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        """Execute the tool in the default language."""
+        with use_language(DEFAULT_LANGUAGE):
+            return await handler(args)
 
 
 class IncompleteToolCallGuard(AbstractCapability[Any]):
@@ -185,10 +294,8 @@ class IncompleteToolCallGuard(AbstractCapability[Any]):
         """Reject a length-truncated response that carries a tool call."""
         if response.finish_reason == "length" and response.tool_calls:
             max_tokens = (request_context.model_settings or {}).get("max_tokens")
-            raise IncompleteToolCall(
-                f"Model token limit ({max_tokens or 'provider default'}) exceeded "
-                "while generating a tool call, resulting in incomplete arguments."
-            )
+            message = _incomplete_tool_call(max_tokens)[_run_language(ctx)]
+            raise IncompleteToolCall(message)
 
         return response
 
@@ -262,7 +369,9 @@ class PromptImageLimit(AbstractCapability[Any]):
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
         """Send all but the newest ``max_images`` images as a note."""
-        messages = _within_image_cap(request_context.messages, self.max_images)
+        messages = _within_image_cap(
+            request_context.messages, self.max_images, _run_language(ctx)
+        )
         if messages is not request_context.messages:
             request_context = replace(request_context, messages=messages)
 
@@ -280,7 +389,9 @@ class IterationLimitWarner(AbstractCapability[UserDeps]):
     steers the model without entering the persisted conversation and is
     re-derived each request rather than accumulating: appended to the run's
     own messages it would be recorded as a user turn nobody sent, replayed on
-    every later turn, and joined by one more note per warned request.
+    every later turn, and joined by one more note per warned request.  It is
+    written in the run's language, since an English user turn would pull the
+    final answer into English.
     """
 
     max_requests: int
@@ -298,11 +409,9 @@ class IterationLimitWarner(AbstractCapability[UserDeps]):
 
         if used >= self.threshold * self.max_requests:
             remaining = max(0, self.max_requests - used)
-            note = (
-                f"[run-limit-warning] You have used {used} of {self.max_requests} "
-                f"model requests for this turn ({remaining} remaining). Wrap up: "
-                f"give your best answer now and avoid unnecessary tool calls."
-            )
+            note = _run_limit_warning(used, self.max_requests, remaining)[
+                _run_language(ctx)
+            ]
             request_context = replace(
                 request_context,
                 messages=[

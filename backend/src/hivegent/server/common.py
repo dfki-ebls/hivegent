@@ -14,6 +14,7 @@ from ..config import (
     sanitize_group_id,
     settings,
 )
+from ..l10n import Localized, current_language
 from ..llm import model_from_config
 from ..llm_config import LlmConfig, LlmTier, resolve_llm_config
 from ..mcp import build_mcp_server, validate_mcp_servers
@@ -46,6 +47,21 @@ __all__ = [
 # for any client that does not name itself (the CLI, an MCP client), which then
 # simply receives every notification.
 type ClientId = Annotated[str | None, Header(alias="X-Client-Id")]
+
+
+def _invalid_pipeline_spec(error: str) -> Localized[str]:
+    return Localized(
+        en=f"Invalid pipeline_spec: {error}", de=f"Ungültige pipeline_spec: {error}"
+    )
+
+
+_NOT_A_MEMBER = Localized(
+    en="Not a member of this group", de="Kein Mitglied dieser Gruppe"
+)
+_WRITE_ACCESS_REQUIRED = Localized(
+    en="Write access required for this group",
+    de="Für diese Gruppe ist Schreibzugriff erforderlich",
+)
 
 
 def prepare_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:
@@ -159,11 +175,14 @@ def build_run_prefix(config: AgentRunConfig, user: User) -> RunPrefix:
     its instructions, tool schemas, and document scope match the chat turn
     before it token for token.
 
-    It also owns the two preconditions of that match, so no caller can compose
-    a prefix that differs by forgetting one: the LLM config is resolved (and
-    returned on the result, since prefix and model go together), and the MCP
-    list is validated before its toolsets are built.
+    It also owns the preconditions of that match, so no caller can compose a
+    prefix that differs by forgetting one: the LLM config is resolved (and
+    returned on the result, since prefix and model go together), the MCP list
+    is validated before its toolsets are built, and the request's interface
+    language is read once and handed to every part of the prefix explicitly.
     """
+    language = current_language()
+
     try:
         validate_mcp_servers(config.tools.mcp_servers)
     except ValueError as exc:
@@ -187,6 +206,7 @@ def build_run_prefix(config: AgentRunConfig, user: User) -> RunPrefix:
         relevant_documents=relevant_documents,
         disabled_tools=frozenset(config.tools.disabled_tools),
         llm=llm,
+        language=language,
     )
 
     return RunPrefix(
@@ -195,8 +215,11 @@ def build_run_prefix(config: AgentRunConfig, user: User) -> RunPrefix:
             config.tools,
             extra=[build_mcp_server(server) for server in config.tools.mcp_servers],
             mode=deps.mode,
+            language=language,
         ),
-        instructions=compose_instructions(config.personality, config.system_message),
+        instructions=compose_instructions(
+            config.personality, config.system_message, language
+        ),
         llm=llm,
         model=model_from_config(llm),
     )
@@ -209,7 +232,7 @@ def parse_pipeline_spec(raw: str) -> PipelineSpec:
     except (ValidationError, ValueError) as exc:
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid pipeline_spec: {exc}",
+            detail=_invalid_pipeline_spec(str(exc)).current,
         ) from exc
 
 
@@ -233,7 +256,7 @@ def require_group_member(user: User, group_id: str) -> str:
     """Validate the group ID and require group membership."""
     safe_id = safe_group_id(group_id)
     if safe_id not in user.all_groups:
-        raise HTTPException(status_code=403, detail="Not a member of this group")
+        raise HTTPException(status_code=403, detail=_NOT_A_MEMBER.current)
     return safe_id
 
 
@@ -241,10 +264,7 @@ def require_group_write(user: User, group_id: str) -> str:
     """Validate the group ID and require group write access."""
     safe_id = safe_group_id(group_id)
     if safe_id not in user.write_groups:
-        raise HTTPException(
-            status_code=403,
-            detail="Write access required for this group",
-        )
+        raise HTTPException(status_code=403, detail=_WRITE_ACCESS_REQUIRED.current)
     return safe_id
 
 

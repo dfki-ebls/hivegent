@@ -86,11 +86,13 @@ class TestFormatDocumentScope:
     """Tests for the prompt-block renderer."""
 
     def test_nothing_selected_returns_empty(self) -> None:
-        assert format_document_scope({}, frozenset()) == ""
+        assert format_document_scope({}, frozenset(), "en") == ""
 
     def test_relevant_paths_are_named_as_a_hint(self) -> None:
         text = format_document_scope(
-            {"~/a.md": "", "~/lab.md": "query_table runs SQL over it"}, frozenset()
+            {"~/a.md": "", "~/lab.md": "query_table runs SQL over it"},
+            frozenset(),
+            "en",
         )
         assert "Most relevant:" in text
         assert "- ~/a.md\n" in text
@@ -99,13 +101,15 @@ class TestFormatDocumentScope:
         assert "Hidden from this conversation:" not in text
 
     def test_hidden_paths_are_named_as_unavailable(self) -> None:
-        text = format_document_scope({}, frozenset({"~/secret.md"}))
+        text = format_document_scope({}, frozenset({"~/secret.md"}), "en")
         assert "Hidden from this conversation:" in text
         assert "- ~/secret.md" in text
         assert "Most relevant:" not in text
 
     def test_both_halves_render_together(self) -> None:
-        text = format_document_scope({"~/docs/": ""}, frozenset({"~/docs/secret.md"}))
+        text = format_document_scope(
+            {"~/docs/": ""}, frozenset({"~/docs/secret.md"}), "en"
+        )
         assert "Most relevant:" in text
         assert "Hidden from this conversation:" in text
 

@@ -6,7 +6,6 @@ from typing import Annotated, Any, cast
 
 from pydantic import BeforeValidator
 from pydantic_ai import BinaryContent, FunctionToolset, RunContext
-from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.models.test import TestModel
@@ -25,7 +24,6 @@ from .base import (
 )
 
 __all__ = [
-    "capability_tools",
     "for_pydantic_ai",
     "invoke_tool",
     "register_agent_tool",
@@ -247,21 +245,6 @@ def register_agent_tools[D](
             factory,
             args_validator=args_validator,
         )
-
-
-def capability_tools[D](capability: Capability[D]) -> dict[str, PydanticTool[D]]:
-    """Map every function-tool name in a capability's toolsets to its tool.
-
-    The mechanical inverse of composing a capability: walk its function
-    toolsets so callers (e.g. the debug/meta REST surface) can list or invoke
-    individual tools straight from the same capability the agent is built from.
-    """
-    return {
-        name: tool
-        for toolset in capability.toolsets
-        if isinstance(toolset, FunctionToolset)
-        for name, tool in toolset.tools.items()
-    }
 
 
 async def invoke_tool[D](

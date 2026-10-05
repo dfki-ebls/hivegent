@@ -11,6 +11,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import Model
 
 from ..config import settings
+from ..l10n import DEFAULT_LANGUAGE, Language
 from ..llm_config import LlmConfig
 from ..prompts import format_document_scope
 from ..store import Casebase, build_search_paths
@@ -43,6 +44,10 @@ class UserDeps:
     user_id: str
     store: Casebase
     mode: Mode
+    # The run's interface language, which selects the language of its
+    # instructions and injected notes, while tool schemas and results stay
+    # English.  The default serves runs without a user interface (MCP).
+    language: Language = DEFAULT_LANGUAGE
     group_stores: tuple[Casebase, ...] = ()
     # The subset of `group_stores` the user may write to; the mutating tools
     # search these instead of every readable one, so a document the user can
@@ -108,6 +113,8 @@ class UserDeps:
     def describe_document_scope(self) -> str:
         """Render the active document scope as prompt text (``''`` if none).
 
+        Rendered in the run's :attr:`language`, since it is part of the prefix.
+
         The hidden half is rendered back from the very :class:`DocumentFilter`
         objects the document tools enforce, so what the model is told cannot
         drift from what its tools return.  The relevant half enforces nothing
@@ -132,7 +139,7 @@ class UserDeps:
             for file_path, entry in resolved
         }
 
-        return format_document_scope(relevant, hidden)
+        return format_document_scope(relevant, hidden, self.language)
 
 
 @dataclass(slots=True, frozen=True)

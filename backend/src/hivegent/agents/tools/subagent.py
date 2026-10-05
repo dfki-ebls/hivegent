@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Annotated, Any, Literal
 
 from pydantic import Field
@@ -12,6 +13,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelMessage, ToolReturn
 
 from ...config import settings
+from ...l10n import DEFAULT_LANGUAGE
 from ...llm import is_context_overflow, model_from_config
 from ...llm_config import LlmConfig, resolve_llm_config
 from ...prompts import (
@@ -50,15 +52,16 @@ type SubagentName = Literal["documents", "conversations", "web"]
 # self-contained capability a delegated run is composed from; the ``documents``
 # subagent *is* a document-exploration agent, so the explore toolset and its
 # system-prompt persona ride together, distinct from the main agent's bare
-# ``explore`` bundle.
+# ``explore`` bundle.  A subagent answers the main agent rather than the user, so
+# its prompt is English whatever the interface language is.
 SUBAGENT_CAPABILITIES: dict[SubagentName, AbstractCapability[UserDeps]] = {
     "documents": Capability(
         id="explore-subagent",
         toolsets=[explore_toolset],
         instructions=[
             EXPLORE_INSTRUCTIONS,
-            GROUNDING_INSTRUCTIONS,
-            VERSION_INSTRUCTIONS,
+            GROUNDING_INSTRUCTIONS[DEFAULT_LANGUAGE],
+            VERSION_INSTRUCTIONS[DEFAULT_LANGUAGE],
             scope_instructions,
         ],
     ),
@@ -179,9 +182,11 @@ async def run_subagent(
     llm_config = _subagent_llm_config(ctx.deps)
     # One prefix drives the run and the summary that recovers it: composed
     # twice, a capability or instruction added to either would silently stop
-    # the recovery from continuing the very run it is recovering.
+    # the recovery from continuing the very run it is recovering.  Its output
+    # is read by the main agent alone, so the whole run, its dynamic
+    # instructions and injected notes included, is held to the default language.
     prefix = RunPrefix(
-        deps=ctx.deps,
+        deps=replace(ctx.deps, language=DEFAULT_LANGUAGE),
         capabilities=[capability],
         instructions=None,
         llm=llm_config,

@@ -11,7 +11,7 @@ from pydantic_ai.usage import UsageLimits
 
 from ..config import settings
 from .common import UserDeps
-from .guards import IncompleteToolCallGuard, PromptImageLimit
+from .guards import EnglishToolCalls, IncompleteToolCallGuard, PromptImageLimit
 
 __all__ = ["base_agent", "turn_usage_limits", "user_agent"]
 
@@ -23,6 +23,7 @@ _default_model_settings = ModelSettings(
 # ``capabilities`` argument adds to these rather than replacing them, so every
 # run is guarded, including the subagent and MCP ones that compose their own.
 _guards = [
+    EnglishToolCalls(),
     IncompleteToolCallGuard(),
     PromptImageLimit(max_images=settings.multimodal.max_images),
 ]

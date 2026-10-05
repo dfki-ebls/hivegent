@@ -1,10 +1,9 @@
 """Tests for the cross-cutting run-loop safeguards."""
 
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import pytest
-from pydantic_ai import BinaryContent, ImageUrl
+from pydantic_ai import BinaryContent, FunctionToolset, ImageUrl, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import IncompleteToolCall
 from pydantic_ai.messages import (
@@ -18,9 +17,11 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RunUsage
 
 from hivegent.agents.app import base_agent
 from hivegent.agents.guards import (
@@ -29,10 +30,16 @@ from hivegent.agents.guards import (
     PromptImageLimit,
     _images,
 )
+from hivegent.l10n import current_language, use_language
 
 _TRUNCATED_CALL = ToolCallPart(
     tool_name="edit_document", args='{"file_path":', tool_call_id="call-1"
 )
+
+
+def _run_context(requests: int = 0) -> RunContext[None]:
+    """A run context with no deps, as ``base_agent`` hands its guards."""
+    return RunContext(deps=None, model=TestModel(), usage=RunUsage(requests=requests))
 
 
 async def _check(
@@ -42,15 +49,12 @@ async def _check(
 ) -> None:
     """Run the guard over a response with *parts*, as the agent loop would."""
     await IncompleteToolCallGuard().after_model_request(
-        cast(Any, None),
-        request_context=cast(
-            Any,
-            ModelRequestContext(
-                model=cast(Any, None),
-                messages=[],
-                model_settings=settings,
-                model_request_parameters=cast(Any, None),
-            ),
+        _run_context(),
+        request_context=ModelRequestContext(
+            model=TestModel(),
+            messages=[],
+            model_settings=settings,
+            model_request_parameters=ModelRequestParameters(),
         ),
         response=ModelResponse(parts=parts, finish_reason=finish_reason),
     )
@@ -70,6 +74,31 @@ async def test_tool_call_cut_off_by_the_token_limit_fails_the_turn() -> None:
 
     with pytest.raises(IncompleteToolCall, match="provider default"):
         await base_agent.run("go", model=FunctionModel(truncated))
+
+
+async def test_tool_calls_run_in_english_whatever_the_request_language() -> None:
+    toolset = FunctionToolset[None]()
+    toolset.add_function(current_language, name="probe")
+
+    def call_probe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name="probe")])
+
+        return ModelResponse(parts=[TextPart(content="done")])
+
+    with use_language("de"):
+        result = await base_agent.run(
+            "go", model=FunctionModel(call_probe), toolsets=[toolset]
+        )
+
+    returns = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert [part.content for part in returns] == ["en"]
 
 
 async def test_the_message_names_the_limit_that_was_hit() -> None:
@@ -120,12 +149,12 @@ async def _sent(
         return ModelResponse(parts=[TextPart(content="ok")])
 
     await capability.wrap_model_request(
-        cast(Any, SimpleNamespace(usage=SimpleNamespace(requests=requests))),
+        _run_context(requests),
         request_context=ModelRequestContext(
-            model=cast(Any, None),
+            model=TestModel(),
             messages=messages,
             model_settings=None,
-            model_request_parameters=cast(Any, None),
+            model_request_parameters=ModelRequestParameters(),
         ),
         handler=handler,
     )

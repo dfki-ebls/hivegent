@@ -15,7 +15,7 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_monty import ResourceLimits
 
 from ...config import settings
-from ...prompts import SANDBOX_API_INSTRUCTIONS, SANDBOX_TYPE_CHECK_INSTRUCTION
+from ...prompts import SANDBOX_TYPE_CHECK_INSTRUCTIONS, sandbox_api_instructions
 from ...sandbox import get_monty_pool
 from ...tools.base import (
     AsyncToolFactory,
@@ -40,7 +40,7 @@ from .write import output_writer, validate_commit_path
 __all__ = [
     "INJECTABLE_TOOL_NAMES",
     "compute_toolset",
-    "sandbox_api_instructions",
+    "sandbox_instructions",
     "validate_run_python",
 ]
 
@@ -107,7 +107,7 @@ def sandbox_surface(deps: UserDeps) -> MontySurface:
     return monty_surface(_sandbox_factories(deps), deps)
 
 
-def sandbox_api_instructions(ctx: RunContext[UserDeps]) -> str:
+def sandbox_instructions(ctx: RunContext[UserDeps]) -> str:
     """Declare the sandbox's tool surface, or say nothing when it has none.
 
     Composed per run rather than written once, since which functions exist is
@@ -116,19 +116,21 @@ def sandbox_api_instructions(ctx: RunContext[UserDeps]) -> str:
 
     ``declarations`` and not ``stubs``: the mount's ``open`` belongs to the type
     checker, and showing the model a declaration of a builtin it already knows
-    would spend context saying nothing.
+    would spend context saying nothing.  The prose is in the run's language,
+    while the declarations stay English like every other tool schema.
     """
     declarations = monty_declarations(_sandbox_factories(ctx.deps))
 
     if not declarations:
         return ""
 
-    declared = SANDBOX_API_INSTRUCTIONS.format(declarations=declarations)
+    language = ctx.deps.language
+    declared = sandbox_api_instructions(declarations)[language]
 
     if not settings.sandbox.type_check:
         return declared
 
-    return declared + SANDBOX_TYPE_CHECK_INSTRUCTION
+    return declared + SANDBOX_TYPE_CHECK_INSTRUCTIONS[language]
 
 
 # A factory runs per tool call, so it only wires up fields.  The worker pool

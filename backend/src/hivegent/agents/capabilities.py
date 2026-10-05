@@ -17,6 +17,15 @@ composed as soon as any of them is live, and only behaviour tied to no
 feature at all (personality, language, math) stays agent-level ``instructions``.
 Prompt text that explains a tool the model was not given is a defect, so nothing
 that names a tool belongs in the agent-level set.
+
+Instructions are composed in the run's interface language, chosen explicitly
+rather than from the ambient request, while the toolsets and their schemas are
+one English set shared by every language.  A feature therefore holds its fixed
+instructions as :class:`~hivegent.l10n.Localized` text and resolves them into
+plain strings when it builds the run's capability: an instruction callable
+reading the language off the run would do the same with less, but pydantic-ai
+marks every callable dynamic, which would move all of this guidance behind the
+cache boundary.
 """
 
 from collections.abc import Sequence
@@ -24,18 +33,17 @@ from dataclasses import dataclass
 from typing import Any, Self
 
 from pydantic_ai import FunctionToolset, RunContext
-from pydantic_ai.agent import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import SystemPromptFunc, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 
 from ..config import settings
 from ..db.memory import load_memory
+from ..l10n import DEFAULT_LANGUAGE, Language, Localized, use_language
 from ..prompts import (
     CITATION_INSTRUCTIONS,
     GROUNDING_INSTRUCTIONS,
     IMAGE_INSTRUCTIONS,
-    MEMORY_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS_EMPTY,
     PLAN_INSTRUCTIONS,
     PYTHON_INSTRUCTIONS,
@@ -44,8 +52,9 @@ from ..prompts import (
     VERSION_INSTRUCTIONS,
     WORKSPACE_PATH_INSTRUCTIONS,
     WRITE_INSTRUCTIONS,
+    memory_instructions,
 )
-from ..tools.pydantic_ai import capability_tools, invoke_tool
+from ..tools.pydantic_ai import invoke_tool
 from ..types import (
     MODE_VALUES,
     MUTATING_MODES,
@@ -62,7 +71,7 @@ from .tools import (
     explore_toolset,
     memory_toolset,
     plan_toolset,
-    sandbox_api_instructions,
+    sandbox_instructions,
     subagent_toolset,
     web_toolset,
     write_toolset,
@@ -83,31 +92,36 @@ __all__ = [
 
 _PLAN: frozenset[Mode] = frozenset({"plan"})
 
+type FeatureInstruction = Localized[str] | SystemPromptFunc[UserDeps]
+"""A fixed block in every language, or a callable resolved per run."""
+
 
 async def _memory_instructions(ctx: RunContext[UserDeps]) -> str:
     """Inject the user's persisted memory alongside the save-memory guidance."""
+    language = ctx.deps.language
     content = await load_memory(ctx.deps.user_id)
 
     if content:
-        return MEMORY_INSTRUCTIONS.format(memory_content=content)
+        return memory_instructions(content)[language]
 
-    return MEMORY_INSTRUCTIONS_EMPTY
+    return MEMORY_INSTRUCTIONS_EMPTY[language]
 
 
 @dataclass(frozen=True, slots=True)
 class Feature:
-    """A named agent feature: one capability plus the modes it is offered in.
+    """A named agent feature: a toolset, its instructions, and its modes.
 
-    The ``capability`` bundles the feature's toolset, instructions, and (later)
-    hooks; ``modes`` is the only selection metadata pydantic-ai has no concept
-    of.  Its ``id`` is the capability's ``id``, named once via :meth:`build`.
-    ``tool_names`` is its set of tool names, resolved once by :meth:`build` so the
+    :meth:`capability` bundles the toolset and the instructions into the
+    capability a run composes, once per language around the one shared
+    toolset; ``modes`` is the only selection metadata pydantic-ai has no
+    concept of.  ``tool_names`` is resolved once from the toolset, so the
     per-request disabled-tool check needs no toolset walk.
     """
 
     id: str
-    capability: Capability[UserDeps]
+    toolset: FunctionToolset[UserDeps]
     tool_names: frozenset[str]
+    instructions: Sequence[FeatureInstruction] = ()
     modes: frozenset[Mode] = MODE_VALUES
 
     @classmethod
@@ -116,19 +130,27 @@ class Feature:
         id: str,
         toolset: FunctionToolset[UserDeps],
         *,
-        instructions: AgentInstructions[UserDeps] | None = None,
+        instructions: Sequence[FeatureInstruction] = (),
         modes: frozenset[Mode] = MODE_VALUES,
     ) -> Self:
-        """Name a feature once, bundling its toolset and instructions into a capability."""
-        capability: Capability[UserDeps] = Capability(
-            id=id, toolsets=[toolset], instructions=instructions
-        )
-
+        """Name a feature once, resolving its tool names from the toolset."""
         return cls(
             id=id,
-            capability=capability,
-            tool_names=frozenset(capability_tools(capability)),
+            toolset=toolset,
+            tool_names=frozenset(toolset.tools),
+            instructions=instructions,
             modes=modes,
+        )
+
+    def capability(self, language: Language) -> AbstractCapability[UserDeps]:
+        """The capability this feature contributes to a run in *language*."""
+        return Capability(
+            id=self.id,
+            toolsets=[self.toolset],
+            instructions=[
+                part[language] if isinstance(part, Localized) else part
+                for part in self.instructions
+            ],
         )
 
 
@@ -158,21 +180,21 @@ FEATURES: tuple[Feature, ...] = (
     Feature.build(
         "compute",
         compute_toolset,
-        instructions=[PYTHON_INSTRUCTIONS, sandbox_api_instructions],
+        instructions=[PYTHON_INSTRUCTIONS, sandbox_instructions],
     ),
     Feature.build("subagent", subagent_toolset),
     Feature.build(
-        "write", write_toolset, instructions=WRITE_INSTRUCTIONS, modes=MUTATING_MODES
+        "write", write_toolset, instructions=[WRITE_INSTRUCTIONS], modes=MUTATING_MODES
     ),
     Feature.build(
         "memory",
         memory_toolset,
-        instructions=_memory_instructions,
+        instructions=[_memory_instructions],
         modes=MUTATING_MODES,
     ),
     Feature.build("web", web_toolset),
     Feature.build("conversation", conversation_toolset),
-    Feature.build("plan", plan_toolset, instructions=PLAN_INSTRUCTIONS, modes=_PLAN),
+    Feature.build("plan", plan_toolset, instructions=[PLAN_INSTRUCTIONS], modes=_PLAN),
 )
 
 
@@ -190,12 +212,12 @@ class SharedInstructions:
 
     id: str
     features: frozenset[str]
-    text: str
+    text: Localized[str]
     modes: frozenset[Mode] = MODE_VALUES
 
-    def capability(self) -> AbstractCapability[UserDeps]:
+    def capability(self, language: Language) -> AbstractCapability[UserDeps]:
         """The instructions-only capability this block contributes to a run."""
-        return Capability(id=self.id, instructions=self.text)
+        return Capability(id=self.id, instructions=self.text[language])
 
 
 SHARED_INSTRUCTIONS: tuple[SharedInstructions, ...] = (
@@ -258,6 +280,7 @@ def build_capabilities(
     *,
     extra: Sequence[AbstractToolset[UserDeps]] = (),
     mode: Mode,
+    language: Language,
 ) -> Sequence[AbstractCapability[UserDeps]]:
     """Compose the capabilities for an agent run.
 
@@ -285,6 +308,7 @@ def build_capabilities(
         tools_spec: Combined tool configuration from the chat request.
         extra: Additional toolsets to expose (e.g. MCP servers).
         mode: Agent mode controlling which features are included.
+        language: Language of every instruction, the tool schemas stay English.
 
     Returns:
         Sequence of capabilities ready to pass to the agent.
@@ -299,10 +323,10 @@ def build_capabilities(
     live = {feature.id for feature in features}
 
     result: list[AbstractCapability[UserDeps]] = [
-        feature.capability for feature in features
+        feature.capability(language) for feature in features
     ]
     result.extend(
-        shared.capability()
+        shared.capability(language)
         for shared in SHARED_INSTRUCTIONS
         if shared.features & live and mode in shared.modes
     )
@@ -374,7 +398,7 @@ def collect_tool_schemas() -> list[ToolSchema]:
             parameters=tool.function_schema.json_schema,
         )
         for feature in FEATURES
-        for name, tool in capability_tools(feature.capability).items()
+        for name, tool in feature.toolset.tools.items()
     ]
 
 
@@ -383,8 +407,9 @@ async def invoke_agent_tool(
 ) -> tuple[str | None, Any]:
     """Validate ``args``, run ``tool_name`` with ``deps``, and unwrap the result.
 
-    Looks the tool up across every feature capability and runs it through the
-    exact code path the agent uses (see :func:`hivegent.tools.pydantic_ai.invoke_tool`).
+    Looks the tool up across every feature and runs it through the exact code
+    path the agent uses (see :func:`hivegent.tools.pydantic_ai.invoke_tool`),
+    in the default language like every agent tool call.
 
     Args:
         tool_name: Name of the tool to invoke.
@@ -399,8 +424,8 @@ async def invoke_agent_tool(
         pydantic.ValidationError: If ``args`` fail the tool's schema.
     """
     for feature in FEATURES:
-        if tool_name in feature.tool_names:
-            tool = capability_tools(feature.capability)[tool_name]
-            return await invoke_tool(tool, args, deps)
+        if tool := feature.toolset.tools.get(tool_name):
+            with use_language(DEFAULT_LANGUAGE):
+                return await invoke_tool(tool, args, deps)
 
     raise KeyError(tool_name)
