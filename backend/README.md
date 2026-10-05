@@ -6,6 +6,20 @@ The system shape is in [`../ARCHITECTURE.md`](../ARCHITECTURE.md), the client ha
 `uv run pytest` is the whole test suite and needs no services: every test is stateless, so nothing reaches a live database and the paths that would hit PostgreSQL are stubbed with `monkeypatch`.
 Migrations, the running server, and retrieval are covered by the dev stack and manual smoke tests instead.
 
+## Interface language
+
+The frontend sends the interface language as `Accept-Language`, and `LanguageMiddleware` makes it the ambient language of the whole request, streamed body and spawned background tasks included.
+Every text a user reads (error details, job titles, pipeline labels, chat titles) is a `Localized` value from `l10n.py` with one field per language, so a missing translation is a type error, and is resolved with `.current` where it is raised.
+Text with parameters is a plain function returning `Localized[str]`, so its signature is declared and type checked once for every language.
+Fixed text is an UPPER_CASE constant and text with parameters a snake_case function, both named after the condition or event they report (`_host_blocked`, `_too_many_images`) rather than their wording, with noun phrases kept for reusable fragments (`_documents`, `UNTITLED`) and the `_INSTRUCTIONS` suffix for prompt blocks.
+
+What the model reads is split deliberately.
+The agent's instructions and the notes injected as user turns are composed in the run's language (`UserDeps.language`, fixed once per run) and end with an explicit pin to answer in it, since what sits closest to generation decides the answer language.
+Tool names, descriptions, parameter schemas, results, and retries stay English: models call tools most reliably from English schemas, smaller open-weight models lose accuracy on translated ones, and the schemas are not what pulls an answer into English.
+The `EnglishToolCalls` guard runs every tool call in English, so a workspace message shared with the HTTP surface reaches the model in English while the same message reaches a user in their language.
+A query argument instead says which language to phrase it in, since copying the user's language into a search over documents in another language is the common failure.
+Features hold one capability per language around the same toolset rather than an instruction callable, which pydantic-ai would treat as dynamic and move behind the cache boundary.
+
 ## Database
 
 ### Writes are atomic

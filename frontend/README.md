@@ -30,6 +30,16 @@ The buttons therefore stay disabled until the turn settles (`approvalBlockedReas
 The prompt itself is re-derived from stored history rather than stored as a decision, since a tool call with no result is an open approval.
 An approval the user overtakes by sending another message is declined on both sides: `chat-utils.declineAbandonedApprovals` derives the denial over the live transcript while the backend closes the dangling call on the next request.
 
+## Interface language
+
+All text lives in typed catalogs under `src/i18n/locales/{en,de}`, one namespace split into sections, read with the react-i18next selector API (`t(($) => $.chat.composer.placeholder)`).
+English is the source catalog whose literal types check keys and interpolation variables, and each German section is declared `satisfies Translation<typeof en>`, so a missing or extra key fails the type check instead of falling back at runtime.
+The catalogs are bundled statically: two small languages cost less than a lazy-loading round trip and nothing ever suspends.
+
+The browser alone decides the language: `LANGUAGE` is the first supported entry of `navigator.languages`, fixed at page load and never stored, so there is no picker and changing the browser language takes effect on the next load.
+`getAuthHeaders()` sends it as `Accept-Language` on every request, so the backend answers in the language the interface shows rather than renegotiating from the browser's own header.
+Dates, numbers, and sizes go through `@/i18n/format` rather than `toLocale*String()`, and `npm run i18n:lint` lists hardcoded JSX text.
+
 ## TODO: branch-navigation UI
 
 The active branch is always the newest leaf and the backend stores no selection pointer, so **branch navigation is ephemeral client view state, never persisted server-side.**
