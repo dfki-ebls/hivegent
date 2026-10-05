@@ -344,6 +344,9 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
     ) -> ToolOutput[PythonResult]:
         """Run a short program in the Monty interpreter.
 
+        Provide exactly one of `code` or `script_path` on every call,
+        including when `commit_path` is set.
+
         Reach for it when an answer turns on arithmetic, dates, sorting, or
         counting, and when one spans more documents than it could quote from:
         one program reads them all and returns the little the answer needs.
