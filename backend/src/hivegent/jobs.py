@@ -33,6 +33,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict
 
 from .config import settings
+from .l10n import Localized
 
 __all__ = [
     "FeedEvent",
@@ -52,6 +53,8 @@ logger = logging.getLogger(__name__)
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 
 _TERMINAL: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
+
+_JOB_FAILED = Localized(en="Job failed", de="Auftrag fehlgeschlagen")
 
 
 class JobProgress(BaseModel):
@@ -73,10 +76,11 @@ def _error_message(exc: BaseException) -> str:
 
     Prefers a ``detail`` attribute (so a FastAPI ``HTTPException`` surfaces its
     message instead of the ``"<status>: <detail>"`` ``str()`` form) and falls
-    back to ``str(exc)``.
+    back to ``str(exc)``.  The job task inherits the submitting request's
+    context, so the fallback reads that request's language.
     """
     detail = getattr(exc, "detail", None)
-    return str(detail) if detail else (str(exc) or "Job failed")
+    return str(detail) if detail else (str(exc) or _JOB_FAILED.current)
 
 
 class JobView(BaseModel):

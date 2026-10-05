@@ -17,10 +17,12 @@ from starlette.responses import FileResponse, PlainTextResponse, Response
 from ...config import settings
 from ...converters.base import DOCUMENT_EXTENSION
 from ...entries import assets_dir_for_stem, stem_path_from_reference
+from ...l10n import Localized
 from ...store import Casebase
 from ...text import read_text_file
 from ...types import AssetEntry, AssetListResponse
 from ...workspace import resolve_entry
+from ...workspace.paths import DOCUMENT_NOT_FOUND, no_original
 
 __all__ = [
     "attachment_disposition",
@@ -30,6 +32,12 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+_NOT_A_FILE = Localized(en="Path is not a file", de="Der Pfad ist keine Datei")
+_NO_ASSETS = Localized(
+    en="Document has no assets directory",
+    de="Das Dokument hat keinen Asset-Ordner",
+)
 
 
 async def find_original(store: Casebase, safe: str) -> Path:
@@ -43,7 +51,7 @@ async def find_original(store: Casebase, safe: str) -> Path:
     if full_path is None or not full_path.exists():
         raise HTTPException(
             status_code=404,
-            detail=f"No original file found for '{store.scope.render(safe)}'",
+            detail=no_original(store.scope.render(safe)).current,
         )
     return full_path
 
@@ -68,17 +76,19 @@ async def get_document_response(store: Casebase, safe: str) -> Response:
         try:
             decoded = await asyncio.to_thread(read_text_file, file_path)
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Document not found") from exc
+            raise HTTPException(
+                status_code=404, detail=DOCUMENT_NOT_FOUND.current
+            ) from exc
         except IsADirectoryError as exc:
-            raise HTTPException(status_code=400, detail="Path is not a file") from exc
+            raise HTTPException(status_code=400, detail=_NOT_A_FILE.current) from exc
         # Undecodable content falls through to the attachment response below.
         if decoded is not None:
             return PlainTextResponse(decoded.text)
 
     if not file_path.is_file():
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail="Document not found")
-        raise HTTPException(status_code=400, detail="Path is not a file")
+            raise HTTPException(status_code=404, detail=DOCUMENT_NOT_FOUND.current)
+        raise HTTPException(status_code=400, detail=_NOT_A_FILE.current)
 
     return FileResponse(
         path=file_path,
@@ -93,7 +103,7 @@ def list_assets(store: Casebase, safe: str) -> AssetListResponse:
     assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
     assets_path = workspace / assets_dir
     if not assets_path.exists() or not assets_path.is_dir():
-        raise HTTPException(status_code=404, detail="Document has no assets directory")
+        raise HTTPException(status_code=404, detail=_NO_ASSETS.current)
 
     md_files: dict[Path, Path] = {}
     asset_files: list[Path] = []

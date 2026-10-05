@@ -8,6 +8,7 @@ from starlette.requests import Request
 
 from ...auth import User, get_current_user
 from ...config import settings
+from ...l10n import Localized
 from ...llm import create_openai_client
 from ...llm_config import LlmConfig, resolve_llm_config
 from ...types import TranscriptionResponse
@@ -17,6 +18,14 @@ __all__ = ["router"]
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_NO_MODEL = Localized(
+    en="No transcription model configured",
+    de="Kein Transkriptionsmodell konfiguriert",
+)
+_FAILED = Localized(
+    en="Failed to transcribe audio", de="Audio konnte nicht transkribiert werden"
+)
 
 
 @router.post("/transcription")
@@ -33,7 +42,7 @@ async def create_transcription(
     """
     stt_model = settings.llm.stt_model
     if not stt_model:
-        raise HTTPException(status_code=501, detail="No transcription model configured")
+        raise HTTPException(status_code=501, detail=_NO_MODEL.current)
 
     # Server-configured credentials only; the base URL is trusted
     # operator input (may legitimately point at a private host).
@@ -59,7 +68,5 @@ async def create_transcription(
         text = await run_until_disconnect(http_request, _transcribe())
     except Exception as exc:
         logger.exception("Failed to transcribe audio")
-        raise HTTPException(
-            status_code=500, detail="Failed to transcribe audio"
-        ) from exc
+        raise HTTPException(status_code=500, detail=_FAILED.current) from exc
     return TranscriptionResponse(text=text)

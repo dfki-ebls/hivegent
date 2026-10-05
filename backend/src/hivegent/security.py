@@ -7,10 +7,12 @@ connection, which closes the DNS-rebinding window without a custom HTTP
 transport.
 """
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import httpx2
+
+from .l10n import Localized
 
 __all__ = [
     "DEFAULT_EGRESS_PROXY_URL",
@@ -18,11 +20,57 @@ __all__ = [
     "UrlPolicy",
     "create_safe_async_client",
     "require_safe_external_url",
+    "require_safe_headers",
     "require_safe_url_shape",
-    "validate_external_headers",
 ]
 
 DEFAULT_EGRESS_PROXY_URL = "http://127.0.0.1:4750"
+
+
+def _host_blocked(host: str) -> Localized[str]:
+    return Localized(
+        en=f"Host {host!r} is blocked by the URL host policy.",
+        de=f"Der Host „{host}“ wird durch die URL-Host-Richtlinie blockiert.",
+    )
+
+
+def _host_not_allowed(host: str) -> Localized[str]:
+    return Localized(
+        en=f"Host {host!r} is not on the URL host allowlist.",
+        de=f"Der Host „{host}“ steht nicht auf der Liste erlaubter URL-Hosts.",
+    )
+
+
+def _scheme_not_allowed(scheme: str) -> Localized[str]:
+    return Localized(
+        en=f"URL scheme {scheme!r} is not allowed. Use http or https.",
+        de=f"Das URL-Schema „{scheme}“ ist nicht erlaubt. Verwende http oder https.",
+    )
+
+
+_CREDENTIALS = Localized(
+    en="URLs with embedded credentials are not allowed.",
+    de="URLs mit eingebetteten Zugangsdaten sind nicht erlaubt.",
+)
+_NO_HOST = Localized(en="URL has no host.", de="Die URL hat keinen Host.")
+_EMPTY_URL = Localized(en="URL is empty.", de="Die URL ist leer.")
+
+
+def _invalid_url(error: str) -> Localized[str]:
+    return Localized(en=f"Invalid URL: {error}", de=f"Ungültige URL: {error}")
+
+
+def _illegal_header(name: str) -> Localized[str]:
+    return Localized(
+        en=f"Header {name!r} contains illegal control characters.",
+        de=f"Der Header „{name}“ enthält unzulässige Steuerzeichen.",
+    )
+
+
+def _unsafe_value(label: str, error: str) -> Localized[str]:
+    return Localized(
+        en=f"Unsafe {label}: {error}", de=f"Unsicherer Wert für {label}: {error}"
+    )
 
 
 class UnsafeUrlError(ValueError):
@@ -65,10 +113,10 @@ class UrlPolicy:
             UnsafeUrlError: If the host is denied by the policy.
         """
         if any(_host_matches(host, pattern) for pattern in self.deny_hosts):
-            raise UnsafeUrlError(f"Host {host!r} is blocked by the URL host policy.")
+            raise UnsafeUrlError(_host_blocked(host).current)
 
         if not any(_host_matches(host, pattern) for pattern in self.allow_hosts):
-            raise UnsafeUrlError(f"Host {host!r} is not on the URL host allowlist.")
+            raise UnsafeUrlError(_host_not_allowed(host).current)
 
 
 def _check_url_shape(url: httpx2.URL) -> str:
@@ -79,15 +127,13 @@ def _check_url_shape(url: httpx2.URL) -> str:
     """
     scheme = url.scheme.lower()
     if scheme not in ("http", "https"):
-        raise UnsafeUrlError(
-            f"URL scheme {scheme!r} is not allowed. Use http or https."
-        )
+        raise UnsafeUrlError(_scheme_not_allowed(scheme).current)
 
     if url.userinfo:
-        raise UnsafeUrlError("URLs with embedded credentials are not allowed.")
+        raise UnsafeUrlError(_CREDENTIALS.current)
 
     if not url.host:
-        raise UnsafeUrlError("URL has no host.")
+        raise UnsafeUrlError(_NO_HOST.current)
 
     return url.host
 
@@ -99,12 +145,12 @@ def _parsed_host(url: str) -> str:
         The URL's host.
     """
     if not url:
-        raise UnsafeUrlError("URL is empty.")
+        raise UnsafeUrlError(_EMPTY_URL.current)
 
     try:
         parsed = httpx2.URL(url)
     except (httpx2.InvalidURL, TypeError) as exc:
-        raise UnsafeUrlError(f"Invalid URL: {exc}") from exc
+        raise UnsafeUrlError(_invalid_url(str(exc)).current) from exc
 
     return _check_url_shape(parsed)
 
@@ -152,22 +198,17 @@ def create_safe_async_client(
     )
 
 
-def validate_external_headers(
-    headers: Iterable[tuple[str, str]] | Mapping[str, str],
-) -> None:
-    """Reject HTTP headers that contain CRLF or NUL characters.
+def require_safe_headers(headers: Mapping[str, str], label: str) -> None:
+    """Reject HTTP headers that contain CR, LF, or NUL characters.
 
     Raises:
-        UnsafeUrlError: If any header name or value contains CR, LF, or NUL.
+        ValueError: Naming *label*, for use inside Pydantic validators.
     """
-    pairs = headers.items() if isinstance(headers, Mapping) else headers
     illegal = ("\r", "\n", "\x00")
-    for name, value in pairs:
-        if any(character in name for character in illegal) or any(
-            character in value for character in illegal
-        ):
-            raise UnsafeUrlError(
-                f"Header {name!r} contains illegal control characters."
+    for name, value in headers.items():
+        if any(character in name or character in value for character in illegal):
+            raise ValueError(
+                _unsafe_value(label, _illegal_header(name).current).current
             )
 
 
@@ -176,7 +217,7 @@ def require_safe_url_shape(url: str, label: str) -> None:
     try:
         _parsed_host(url)
     except UnsafeUrlError as exc:
-        raise ValueError(f"Unsafe {label}: {exc}") from exc
+        raise ValueError(_unsafe_value(label, str(exc)).current) from exc
 
 
 def require_safe_external_url(url: str, label: str, *, policy: UrlPolicy) -> None:
@@ -184,4 +225,4 @@ def require_safe_external_url(url: str, label: str, *, policy: UrlPolicy) -> Non
     try:
         policy.check_host(_parsed_host(url))
     except UnsafeUrlError as exc:
-        raise ValueError(f"Unsafe {label}: {exc}") from exc
+        raise ValueError(_unsafe_value(label, str(exc)).current) from exc

@@ -51,17 +51,73 @@ from ..entries import (
     description_path_for_stem,
     stem_path_from_reference,
 )
+from ..l10n import Localized
 from ..llm_config import LlmConfig
 from ..store import Casebase
-from ..text import NOT_TEXT_REASON, decode_bytes
+from ..text import decode_bytes
 from ..types import AssetProcessingMode, PipelineSpec, ProgressReporter
 from .describe import _build_image_description, _build_video_description
 from .metadata import _build_entry_metadata
-from .paths import _shown
+from .paths import _shown, not_text
 
 __all__: list[str] = []
 
 logger = logging.getLogger(__name__)
+
+
+def _decoded_from(encoding: str) -> Localized[str]:
+    return Localized(
+        en=f" (decoded from {encoding})", de=f" (dekodiert aus {encoding})"
+    )
+
+
+def _markdown_uploaded(note: str) -> Localized[str]:
+    return Localized(
+        en=f"Document uploaded successfully{note}",
+        de=f"Dokument erfolgreich hochgeladen{note}",
+    )
+
+
+def _plain_text_uploaded(note: str) -> Localized[str]:
+    return Localized(
+        en=f"Document uploaded as plain text{note}",
+        de=f"Dokument als reiner Text hochgeladen{note}",
+    )
+
+
+def _converted_uploaded(note: str) -> Localized[str]:
+    return Localized(
+        en=f"Document uploaded and converted successfully{note}",
+        de=f"Dokument erfolgreich hochgeladen und konvertiert{note}",
+    )
+
+
+_IMAGE_UPLOADED = Localized(
+    en="Image uploaded and described successfully",
+    de="Bild erfolgreich hochgeladen und beschrieben",
+)
+_VIDEO_UPLOADED = Localized(
+    en="Video uploaded and described successfully",
+    de="Video erfolgreich hochgeladen und beschrieben",
+)
+_STUB_UPLOADED = Localized(
+    en="Binary file uploaded with searchable stub",
+    de="Binärdatei mit durchsuchbarem Platzhalter hochgeladen",
+)
+_STAGE_IMAGE = Localized(
+    en="Generating image description", de="Bildbeschreibung wird erstellt"
+)
+_STAGE_VIDEO = Localized(
+    en="Generating video description", de="Videobeschreibung wird erstellt"
+)
+_STAGE_PROCESSING = Localized(en="Processing document", de="Dokument wird verarbeitet")
+_STAGE_DESCRIBING = Localized(en="Describing images", de="Bilder werden beschrieben")
+
+
+def _conversion_failed(reason: str) -> Localized[str]:
+    return Localized(
+        en=f"Conversion failed: {reason}", de=f"Konvertierung fehlgeschlagen: {reason}"
+    )
 
 
 def _encoding_note(source_encoding: str | None) -> str:
@@ -70,7 +126,7 @@ def _encoding_note(source_encoding: str | None) -> str:
     CP1252 is a fallback for undeclared Western input, so every upload whose
     bytes were not already UTF-8 reports the source encoding in its response.
     """
-    return f" (decoded from {source_encoding})" if source_encoding else ""
+    return _decoded_from(source_encoding).current if source_encoding else ""
 
 
 @dataclass(slots=True, frozen=True)
@@ -244,8 +300,7 @@ def _prepare_markdown(
     decoded = decode_bytes(content)
     if decoded is None:
         raise HTTPException(
-            status_code=422,
-            detail=f"'{_shown(store, filepath)}' {NOT_TEXT_REASON}",
+            status_code=422, detail=not_text(_shown(store, filepath)).current
         )
     text = decoded.text
     stem_path = stem_path_from_reference(filepath)
@@ -268,9 +323,7 @@ def _prepare_markdown(
         main=main,
         filename=filepath,
         size_bytes=len(content),
-        message=(
-            f"Document uploaded successfully{_encoding_note(decoded.source_encoding)}"
-        ),
+        message=_markdown_uploaded(_encoding_note(decoded.source_encoding)).current,
     )
 
 
@@ -284,7 +337,7 @@ async def _prepare_image(
 ) -> _PreparedUpload:
     """Prepare a standalone image and its generated description for commit."""
     if ctx is not None:
-        ctx.set_stage("Generating image description")
+        ctx.set_stage(_STAGE_IMAGE.current)
 
     media_type = guess_image_media_type(filepath) or ""
     entry = await _prepare_image_entry(
@@ -300,7 +353,7 @@ async def _prepare_image(
         filename=filepath,
         size_bytes=len(content),
         converted_filename=entry.description_path,
-        message="Image uploaded and described successfully",
+        message=_IMAGE_UPLOADED.current,
     )
 
 
@@ -320,7 +373,7 @@ async def _prepare_video(
     lock-free prepare never touches the live workspace entry.
     """
     if ctx is not None:
-        ctx.set_stage("Generating video description")
+        ctx.set_stage(_STAGE_VIDEO.current)
 
     with _source_on_disk(filepath, content) as full_path:
         markdown = await _build_video_description(
@@ -337,7 +390,7 @@ async def _prepare_video(
         filename=filepath,
         size_bytes=len(content),
         converted_filename=main.description_path,
-        message="Video uploaded and described successfully",
+        message=_VIDEO_UPLOADED.current,
     )
 
 
@@ -361,13 +414,11 @@ def _prepare_plain_text_or_stub(
             f"MIME type: {mime}.\nSize: {len(content)} bytes.\n"
         )
         pipeline_used = None
-        message = "Binary file uploaded with searchable stub"
+        message = _STUB_UPLOADED.current
     else:
         markdown = result.markdown
         pipeline_used = ConversionPipeline.PLAIN_TEXT.value
-        message = (
-            f"Document uploaded as plain text{_encoding_note(result.source_encoding)}"
-        )
+        message = _plain_text_uploaded(_encoding_note(result.source_encoding)).current
 
     main = _derived_entry(
         filepath,
@@ -562,7 +613,7 @@ async def _prepare_convertible(
     rest of the workspace and a failure mid-conversion leaves nothing behind.
     """
     if ctx is not None:
-        ctx.set_stage("Processing document")
+        ctx.set_stage(_STAGE_PROCESSING.current)
 
     basename = PurePosixPath(filepath).name
     conversion_pipeline = spec.conversion.pipeline
@@ -592,8 +643,7 @@ async def _prepare_convertible(
             )
             return _prepare_plain_text_or_stub(filepath, content, origin=origin)
         raise HTTPException(
-            status_code=500,
-            detail=f"Conversion failed: {exc!s}",
+            status_code=500, detail=_conversion_failed(str(exc)).current
         ) from exc
 
     assets_dir = assets_dir_for_stem(stem_path_from_reference(filepath))
@@ -609,7 +659,7 @@ async def _prepare_convertible(
         has_assets = False
     else:
         if ctx is not None and mode is AssetProcessingMode.DESCRIBE and result.images:
-            ctx.set_stage("Describing images")
+            ctx.set_stage(_STAGE_DESCRIBING.current)
         ref_mapping, asset_list, entry_list = await _prepare_conversion_assets(
             assets_dir,
             result.images,
@@ -638,10 +688,7 @@ async def _prepare_convertible(
         conversion_pipeline_used=resolved_conversion.value,
         assets=assets,
         asset_entries=asset_entries,
-        message=(
-            "Document uploaded and converted successfully"
-            f"{_encoding_note(result.source_encoding)}"
-        ),
+        message=_converted_uploaded(_encoding_note(result.source_encoding)).current,
     )
 
 

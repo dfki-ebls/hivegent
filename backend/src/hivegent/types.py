@@ -16,11 +16,7 @@ from .db.conversations import ConversationSummary
 from .entries import entry_owns, is_scratch_path, stem_path_from_reference
 from .llm_config import LlmConfig, ReasoningEffort
 from .prompts import Personality
-from .security import (
-    UnsafeUrlError,
-    require_safe_url_shape,
-    validate_external_headers,
-)
+from .security import require_safe_headers, require_safe_url_shape
 
 #: Upper bound on text submitted for watermark verification, roughly 250k
 #: tokens at four characters per token.  That covers a generated document
@@ -240,10 +236,7 @@ class McpServerConfig(BaseModel):
     @model_validator(mode="after")
     def _check_safety(self) -> Self:
         require_safe_url_shape(self.url, "MCP server url")
-        try:
-            validate_external_headers(self.headers)
-        except UnsafeUrlError as exc:
-            raise ValueError(f"Unsafe MCP server headers: {exc}") from exc
+        require_safe_headers(self.headers, "MCP server headers")
         return self
 
 

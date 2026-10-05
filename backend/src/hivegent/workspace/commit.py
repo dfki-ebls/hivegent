@@ -31,6 +31,7 @@ from ..entries import (
     resolve_entry_paths,
     stem_path_from_reference,
 )
+from ..l10n import Localized
 from ..llm_config import LlmConfig
 from ..store import Casebase
 from ..types import PipelineSpec, ProgressReporter, UploadCompleteEvent
@@ -38,6 +39,7 @@ from .indexing import chunk_and_index_document, delete_chunked_document
 from .locks import _add_inflight, _discard_inflight, _locked_for, store_lock
 from .metadata import _merge_entry_paths
 from .paths import (
+    DOCUMENT_NOT_FOUND,
     _check_destination_parents,
     _remove_tree,
     _replace_workspace_paths,
@@ -49,6 +51,18 @@ from .paths import (
 from .prepare import _prepare_upload, _PreparedEntry, _PreparedUpload, _Reserved
 
 __all__: list[str] = []
+
+
+def _is_existing_directory(path: str) -> Localized[str]:
+    return Localized(
+        en=f"'{path}' is an existing directory",
+        de=f"„{path}“ ist ein vorhandener Ordner",
+    )
+
+
+_DOCUMENT_EXISTS = Localized(
+    en="Document already exists", de="Das Dokument existiert bereits"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +221,7 @@ async def _delete_single_locked(store: Casebase, safe: str) -> None:
     workspace = store.workspace_dir(settings.data_dir)
     metadata = await db_documents.get_entry_metadata(store, safe)
     if not metadata and not entry_exists(workspace, safe):
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail=DOCUMENT_NOT_FOUND.current)
 
     resolved = _merge_entry_paths(resolve_entry_paths(workspace, safe), metadata)
     (workspace / resolved.description_path).unlink(missing_ok=True)
@@ -256,10 +270,10 @@ def _ensure_upload_slot_locked(
         if (workspace_dir / rel).is_dir():
             raise HTTPException(
                 status_code=409,
-                detail=f"'{_shown(store, rel)}' is an existing directory",
+                detail=_is_existing_directory(_shown(store, rel)).current,
             )
     if entry_exists(workspace_dir, reference) and not overwrite:
-        raise HTTPException(status_code=409, detail="Document already exists")
+        raise HTTPException(status_code=409, detail=_DOCUMENT_EXISTS.current)
 
 
 type _Reserve = Callable[[], Awaitable[_Reserved]]

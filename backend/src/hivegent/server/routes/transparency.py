@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ...config import TransparencySettings, settings
+from ...l10n import Localized
 from ...transparency import TransparencyUnavailable, detect_text
 from ...types import (
     TransparencyDetectionRequest,
@@ -16,11 +17,17 @@ from ...types import (
 
 __all__ = ["TransparencyConfigured", "router"]
 
+_DISABLED = Localized(en="Transparency is disabled", de="Transparenz ist deaktiviert")
+_UNAVAILABLE = Localized(
+    en="Watermark detection is temporarily unavailable",
+    de="Die Wasserzeichenerkennung ist vorübergehend nicht verfügbar",
+)
+
 
 def _require_transparency() -> TransparencySettings:
     """Hide every transparency route while the feature is not configured."""
     if settings.transparency is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Transparency is disabled")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _DISABLED.current)
 
     return settings.transparency
 
@@ -41,5 +48,5 @@ async def detect_watermark(
     except TransparencyUnavailable as exc:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Watermark detection is temporarily unavailable",
+            _UNAVAILABLE.current,
         ) from exc

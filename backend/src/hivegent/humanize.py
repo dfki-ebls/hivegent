@@ -1,5 +1,7 @@
 """Human-readable formatting helpers shared across the CLI and API messages."""
 
+from .l10n import current_language
+
 __all__ = ["format_bytes", "pluralize"]
 
 
@@ -19,7 +21,8 @@ def format_bytes(size: int) -> str:
     """Render a byte count using the largest unit that keeps it at or above one.
 
     Mirrors the frontend's ``formatFileSize`` so a size shown in an API error and
-    the same size shown in the UI read identically.
+    the same size shown in the UI read identically, with the decimal separator
+    of the current language.
 
     Args:
         size: The number of bytes.
@@ -32,11 +35,17 @@ def format_bytes(size: int) -> str:
         '512 B'
         >>> format_bytes(52428800)
         '50.0 MB'
+        >>> from hivegent.l10n import use_language
+        >>> with use_language("de"):
+        ...     format_bytes(1536)
+        '1,5 KB'
     """
     if size < 1024:
         return f"{size} B"
 
     if size < 1024 * 1024:
-        return f"{size / 1024:.1f} KB"
+        formatted = f"{size / 1024:.1f} KB"
+    else:
+        formatted = f"{size / (1024 * 1024):.1f} MB"
 
-    return f"{size / (1024 * 1024):.1f} MB"
+    return formatted.replace(".", ",") if current_language() == "de" else formatted

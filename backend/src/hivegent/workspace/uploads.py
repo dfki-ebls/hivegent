@@ -16,12 +16,18 @@ from ..config import settings
 from ..converters.base import is_markdown_suffix
 from ..db import documents as db_documents
 from ..entries import entry_exists, resolve_entry_paths, stem_path_from_reference
+from ..l10n import Localized
 from ..llm_config import LlmConfig
 from ..store import Casebase
 from ..types import PipelineSpec, ProgressReporter, UploadCompleteEvent
 from .commit import _ensure_upload_slot_locked, _phased_upload
 from .metadata import _merge_entry_paths, resolve_entry
-from .paths import _check_not_reserved_path, _enforce_file_size, _shown
+from .paths import (
+    _check_not_reserved_path,
+    _enforce_file_size,
+    _shown,
+    no_original,
+)
 from .prepare import _Reserved
 
 __all__ = [
@@ -29,6 +35,10 @@ __all__ = [
     "replace_original",
     "upload",
 ]
+
+_DOCUMENT_PATH_REQUIRED = Localized(
+    en="Document path required", de="Dokumentpfad erforderlich"
+)
 
 
 async def upload(
@@ -52,7 +62,7 @@ async def upload(
     a sibling companion original, which lands in the same commit.
     """
     if not filepath:
-        raise HTTPException(status_code=400, detail="Document path required")
+        raise HTTPException(status_code=400, detail=_DOCUMENT_PATH_REQUIRED.current)
     _check_not_reserved_path(filepath)
     if (original_path is None) != (original_content is None):
         raise ValueError("original_path and original_content must be provided together")
@@ -122,7 +132,7 @@ async def replace_original(
         if not existing_original_rel:
             raise HTTPException(
                 status_code=404,
-                detail=f"No original file found for '{_shown(store, safe)}'",
+                detail=no_original(_shown(store, safe)).current,
             )
 
         existing_suffix = PurePosixPath(existing_original_rel).suffix
@@ -169,13 +179,13 @@ async def reconvert(
         if not metadata or not metadata.original_path:
             raise HTTPException(
                 status_code=404,
-                detail=f"No original file found for '{_shown(store, safe)}'",
+                detail=no_original(_shown(store, safe)).current,
             )
         original_full = store.workspace_dir(settings.data_dir) / metadata.original_path
         if not original_full.exists():
             raise HTTPException(
                 status_code=404,
-                detail=f"No original file found for '{_shown(store, safe)}'",
+                detail=no_original(_shown(store, safe)).current,
             )
 
         return _Reserved(

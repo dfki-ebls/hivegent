@@ -36,6 +36,7 @@ from .config import ADMIN_ROLE, sanitize_group_id, sanitize_user_id, settings
 from .db.groups import list_group_ids
 from .db.users import user_exists
 from .http_client import get_trusted_http_client
+from .l10n import Localized
 from .types import User
 
 __all__ = [
@@ -55,6 +56,46 @@ logger = logging.getLogger(__name__)
 
 # Request header through which an admin impersonates another user.
 IMPERSONATE_HEADER = "X-Impersonate-User"
+
+_INVALID_SIGNATURE = Localized(
+    en="Invalid token signature", de="Ungültige Token-Signatur"
+)
+_TOKEN_EXPIRED = Localized(en="Token has expired", de="Das Token ist abgelaufen")
+
+
+def _missing_claim(claim: str) -> Localized[str]:
+    return Localized(
+        en=f"Token missing required claim: {claim!r}",
+        de=f"Im Token fehlt der erforderliche Claim „{claim}“",
+    )
+
+
+def _invalid_claim(claim: str) -> Localized[str]:
+    return Localized(
+        en=f"Invalid token claim: {claim!r}", de=f"Ungültiger Token-Claim „{claim}“"
+    )
+
+
+_INVALID_SUBJECT = Localized(
+    en="Token subject is not a valid user identifier",
+    de="Das Subjekt des Tokens ist keine gültige Benutzerkennung",
+)
+_IMPERSONATION_FORBIDDEN = Localized(
+    en="Administrator privileges required for impersonation",
+    de="Für den Identitätswechsel sind Adminrechte erforderlich",
+)
+_INVALID_IMPERSONATION_TARGET = Localized(
+    en="Invalid impersonation target",
+    de="Ungültiges Ziel für den Identitätswechsel",
+)
+_UNKNOWN_IMPERSONATION_TARGET = Localized(
+    en="Unknown impersonation target",
+    de="Unbekanntes Ziel für den Identitätswechsel",
+)
+_NOT_AUTHENTICATED = Localized(en="Not authenticated", de="Nicht authentifiziert")
+_ADMIN_REQUIRED = Localized(
+    en="Administrator privileges required", de="Adminrechte erforderlich"
+)
 
 # Fallback when the IdP's discovery document doesn't advertise
 # ``id_token_signing_alg_values_supported`` and no explicit override is set.
@@ -342,7 +383,7 @@ def _format_invalid_claim_detail(claim: str) -> str:
     so an attacker can't probe the configured issuer/audience by sending
     crafted tokens.
     """
-    return f"Invalid token claim: {claim!r}"
+    return _invalid_claim(claim).current
 
 
 def _resolve_claim_path(claims: Mapping[str, Any], path: str) -> Any:
@@ -520,7 +561,7 @@ async def validate_jwt_token(token: str) -> User:
         if not _should_refresh_jwks(token, key_set):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token signature",
+                detail=_INVALID_SIGNATURE.current,
                 headers={"WWW-Authenticate": "Bearer"},
             ) from e
 
@@ -531,7 +572,7 @@ async def validate_jwt_token(token: str) -> User:
         except JoseError as e:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token signature",
+                detail=_INVALID_SIGNATURE.current,
                 headers={"WWW-Authenticate": "Bearer"},
             ) from e
 
@@ -545,13 +586,13 @@ async def validate_jwt_token(token: str) -> User:
     except ExpiredTokenError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
+            detail=_TOKEN_EXPIRED.current,
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
     except MissingClaimError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token missing required claim: {e.claim!r}",
+            detail=_missing_claim(e.claim).current,
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
     except InvalidClaimError as e:
@@ -568,7 +609,7 @@ async def validate_jwt_token(token: str) -> User:
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token subject is not a valid user identifier",
+            detail=_INVALID_SUBJECT.current,
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
@@ -601,19 +642,19 @@ async def _impersonate(actor: User, target_id: str) -> User:
     if not actor.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Administrator privileges required for impersonation",
+            detail=_IMPERSONATION_FORBIDDEN.current,
         )
     try:
         target_id = sanitize_user_id(target_id)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid impersonation target",
+            detail=_INVALID_IMPERSONATION_TARGET.current,
         ) from exc
     if not await user_exists(target_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Unknown impersonation target",
+            detail=_UNKNOWN_IMPERSONATION_TARGET.current,
         )
     logger.info("admin %r impersonating user %r", actor.id, target_id)
     return User(id=target_id)
@@ -656,7 +697,7 @@ async def get_current_user(
     elif credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
+            detail=_NOT_AUTHENTICATED.current,
             headers={"WWW-Authenticate": "Bearer"},
         )
     else:
@@ -680,6 +721,6 @@ async def require_admin(
     if not user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Administrator privileges required",
+            detail=_ADMIN_REQUIRED.current,
         )
     return user

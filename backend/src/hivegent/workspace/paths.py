@@ -17,9 +17,75 @@ from fastapi import HTTPException
 from ..config import settings
 from ..entries import SCRATCH_DIR_NAME, ContentStat, is_assets_dir, is_scratch_path
 from ..humanize import format_bytes
+from ..l10n import Localized
 from ..store import Casebase
+from ..text import NOT_TEXT_REASON
 
-__all__: list[str] = []
+__all__ = [
+    "DESTINATION_EXISTS",
+    "DIRECTORY_NOT_FOUND",
+    "DIRECTORY_PATH_REQUIRED",
+    "DOCUMENT_NOT_FOUND",
+    "file_too_large",
+    "no_original",
+    "not_text",
+]
+
+DOCUMENT_NOT_FOUND = Localized(en="Document not found", de="Dokument nicht gefunden")
+
+
+def no_original(path: str) -> Localized[str]:
+    return Localized(
+        en=f"No original file found for '{path}'",
+        de=f"Keine Originaldatei für „{path}“ gefunden",
+    )
+
+
+DIRECTORY_PATH_REQUIRED = Localized(
+    en="Directory path required", de="Ordnerpfad erforderlich"
+)
+DIRECTORY_NOT_FOUND = Localized(en="Directory not found", de="Ordner nicht gefunden")
+DESTINATION_EXISTS = Localized(
+    en="Destination already exists", de="Das Ziel existiert bereits"
+)
+
+
+def not_text(path: str) -> Localized[str]:
+    return Localized(
+        en=f"'{path}' {NOT_TEXT_REASON}", de=f"„{path}“ ist kein textbasierter Inhalt"
+    )
+
+
+def _parent_is_file(path: str) -> Localized[str]:
+    return Localized(
+        en=f"Destination parent '{path}' is a file",
+        de=f"Der übergeordnete Pfad „{path}“ des Ziels ist eine Datei",
+    )
+
+
+_ASSETS_RESERVED = Localized(
+    en="'.assets' directories are managed through their owning document",
+    de="„.assets“-Ordner werden über ihr zugehöriges Dokument verwaltet",
+)
+_SCRATCH_RESERVED = Localized(
+    en=(
+        f"'{SCRATCH_DIR_NAME}' holds agent scratch state, is never "
+        "indexed, and is cleared on restart; write it with the document "
+        "tools or choose another path"
+    ),
+    de=(
+        f"„{SCRATCH_DIR_NAME}“ enthält den Scratch-Zustand des Agenten, wird nie "
+        "indexiert und beim Neustart geleert. Schreibe dorthin mit den "
+        "Dokument-Tools oder wähle einen anderen Pfad"
+    ),
+)
+
+
+def file_too_large(limit: int) -> Localized[str]:
+    return Localized(
+        en=f"File too large. Maximum size: {format_bytes(limit)}",
+        de=f"Datei zu groß. Maximale Größe: {format_bytes(limit)}",
+    )
 
 
 def _shown(store: Casebase, local: str) -> str:
@@ -182,7 +248,7 @@ def _check_destination_parents(store: Casebase, target: str) -> None:
     if blocker is not None:
         raise HTTPException(
             status_code=409,
-            detail=f"Destination parent '{_shown(store, str(blocker))}' is a file",
+            detail=_parent_is_file(_shown(store, str(blocker))).current,
         )
 
 
@@ -198,20 +264,10 @@ def _check_not_reserved_path(path: str) -> None:
     on their own path, which is the one way it is meant to be written.
     """
     if any(is_assets_dir(part) for part in PurePosixPath(path).parts):
-        raise HTTPException(
-            status_code=400,
-            detail="'.assets' directories are managed through their owning document",
-        )
+        raise HTTPException(status_code=400, detail=_ASSETS_RESERVED.current)
 
     if is_scratch_path(path):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"'{SCRATCH_DIR_NAME}' holds agent scratch state, is never "
-                "indexed, and is cleared on restart; write it with the document "
-                "tools or choose another path"
-            ),
-        )
+        raise HTTPException(status_code=400, detail=_SCRATCH_RESERVED.current)
 
 
 def _enforce_file_size(content: bytes) -> None:
@@ -220,5 +276,5 @@ def _enforce_file_size(content: bytes) -> None:
     if len(content) > limit:
         raise HTTPException(
             status_code=413,
-            detail=f"File too large. Maximum size: {format_bytes(limit)}",
+            detail=file_too_large(limit).current,
         )

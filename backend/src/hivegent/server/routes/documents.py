@@ -28,8 +28,9 @@ from ...chunkers.base import DocumentMetadata
 from ...concurrency import shield_to_completion
 from ...config import settings
 from ...db.documents import get_document, get_line_counts
-from ...humanize import pluralize
+from ...humanize import format_bytes, pluralize
 from ...jobs import JobContext, JobView, JobWork, manager
+from ...l10n import Localized
 from ...llm_config import LlmConfig
 from ...store import Casebase
 from ...types import (
@@ -44,6 +45,7 @@ from ...types import (
     UpdateAssetDescriptionRequest,
     WriteDocumentRequest,
 )
+from ...workspace.paths import file_too_large
 from ...workspace_events import notify_workspace_change
 from ..common import (
     ClientId,
@@ -80,7 +82,70 @@ router = APIRouter()
 _SPOOL_CHUNK_SIZE = 1024 * 1024
 
 
-async def _spool_payload(file: UploadFile, *, limit: int, label: str) -> Path:
+def _collection_too_large(limit: int) -> Localized[str]:
+    return Localized(
+        en=f"Collection too large. Maximum size: {format_bytes(limit)}",
+        de=f"Sammlung zu groß. Maximale Größe: {format_bytes(limit)}",
+    )
+
+
+def _documents(count: int) -> Localized[str]:
+    return Localized(
+        en=f"{count} {pluralize(count, 'document')}",
+        de=f"{count} {pluralize(count, 'Dokument', 'Dokumente')}",
+    )
+
+
+def _rechunk_title(count: int) -> Localized[str]:
+    return Localized(
+        en=f"Rechunk {_documents(count).en}", de=f"{_documents(count).de} neu chunken"
+    )
+
+
+def _reconvert_title(count: int) -> Localized[str]:
+    return Localized(
+        en=f"Reconvert {_documents(count).en}",
+        de=f"{_documents(count).de} neu konvertieren",
+    )
+
+
+def _move_title(count: int) -> Localized[str]:
+    return Localized(
+        en=f"Move {_documents(count).en}", de=f"{_documents(count).de} bewegen"
+    )
+
+
+def _delete_title(count: int) -> Localized[str]:
+    return Localized(
+        en=f"Delete {_documents(count).en}", de=f"{_documents(count).de} löschen"
+    )
+
+
+_RECHUNKED = Localized(en="Rechunked", de="Neu gechunkt")
+_RECONVERTED = Localized(en="Reconverted", de="Neu konvertiert")
+_MOVED = Localized(en="Moved", de="Bewegt")
+_DELETED = Localized(en="Deleted", de="Gelöscht")
+
+
+def _not_imported(count: int, summary: str) -> Localized[str]:
+    return Localized(
+        en=f"{count} {pluralize(count, 'file')} not imported. {summary}",
+        de=(
+            f"{count} {pluralize(count, 'Datei', 'Dateien')} nicht importiert. {summary}"
+        ),
+    )
+
+
+_NO_CHUNKS = Localized(
+    en="No chunks found for this document",
+    de="Für dieses Dokument wurden keine Chunks gefunden",
+)
+_STAGE_CHUNKING = Localized(en="Chunking document", de="Dokument wird gechunkt")
+
+
+async def _spool_payload(
+    file: UploadFile, *, limit: int, too_large: Callable[[int], Localized[str]]
+) -> Path:
     """Persist an upload to a temp file so a queued job needn't pin it in RAM.
 
     Starlette has already spooled the upload to ``file.file`` (rolling it to
@@ -92,7 +157,7 @@ async def _spool_payload(file: UploadFile, *, limit: int, label: str) -> Path:
     live in a managed directory swept at startup (:func:`cleanup_spool_dir`), so
     a restart that cuts a job short cannot leak them.
     """
-    enforce_upload_size(file, limit=limit, label=label)
+    enforce_upload_size(file, limit=limit, too_large=too_large)
 
     def _write() -> Path:
         file.file.seek(0)
@@ -172,7 +237,7 @@ def _submit_bulk_job(
     title: str,
     files: list[str],
     process_one: Callable[[str], Awaitable[None]],
-    verb: str,
+    verb: Localized[str],
 ) -> JobView:
     """Submit a bulk per-file mutation as a single background job."""
     scope = _bulk_scope(user, files)
@@ -217,7 +282,7 @@ async def replace_original(
     llm = prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     new_filename = file.filename
     spool = await _spool_payload(
-        file, limit=settings.limits.max_file_size_bytes, label="File"
+        file, limit=settings.limits.max_file_size_bytes, too_large=file_too_large
     )
 
     async def work(ctx: JobContext) -> None:
@@ -256,7 +321,7 @@ async def upload_document(
     spec = parse_pipeline_spec(pipeline_spec)
     llm = prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     spool = await _spool_payload(
-        file, limit=settings.limits.max_file_size_bytes, label="File"
+        file, limit=settings.limits.max_file_size_bytes, too_large=file_too_large
     )
 
     async def work(ctx: JobContext) -> None:
@@ -295,7 +360,9 @@ async def upload_collection(
     resolved = prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     store, dest = resolve_workspace_path(user, target, write=True)
     spool = await _spool_payload(
-        file, limit=settings.limits.max_collection_size_bytes, label="Collection"
+        file,
+        limit=settings.limits.max_collection_size_bytes,
+        too_large=_collection_too_large,
     )
     # Enforce every collection limit here, before the job is queued, so a
     # too-large, too-many-files, or malformed archive is rejected synchronously
@@ -323,8 +390,10 @@ async def upload_collection(
                 # committed.
                 if event.failed_files:
                     raise RuntimeError(
-                        f"{len(event.failed_files)} file(s) not imported. "
-                        f"{summarize_failed_files(event.failed_files)}"
+                        _not_imported(
+                            len(event.failed_files),
+                            summarize_failed_files(event.failed_files),
+                        ).current
                     )
 
     return manager.submit(
@@ -364,10 +433,10 @@ async def bulk_rechunk(
     return _submit_bulk_job(
         user=user,
         kind=DocumentJobKind.RECHUNK_BULK,
-        title=f"Rechunk {len(request.files)} {pluralize(len(request.files), 'document')}",
+        title=_rechunk_title(len(request.files)).current,
         files=request.files,
         process_one=_rechunk_one,
-        verb="Rechunked",
+        verb=_RECHUNKED,
     )
 
 
@@ -387,10 +456,10 @@ async def bulk_reconvert(
     return _submit_bulk_job(
         user=user,
         kind=DocumentJobKind.RECONVERT_BULK,
-        title=f"Reconvert {len(request.files)} {pluralize(len(request.files), 'document')}",
+        title=_reconvert_title(len(request.files)).current,
         files=request.files,
         process_one=_reconvert_one,
-        verb="Reconverted",
+        verb=_RECONVERTED,
     )
 
 
@@ -415,7 +484,7 @@ async def bulk_move(
 
     async def work(ctx: JobContext) -> None:
         try:
-            await run_bulk_document_job(sources, _move_one, verb="Moved", ctx=ctx)
+            await run_bulk_document_job(sources, _move_one, verb=_MOVED, ctx=ctx)
         finally:
             # Per-entry moves leave their emptied source directories behind.
             # Prune them even when the batch failed or was cancelled — so the
@@ -426,7 +495,7 @@ async def bulk_move(
 
     return manager.submit(
         kind=DocumentJobKind.MOVE_BULK,
-        title=f"Move {len(sources)} {pluralize(len(sources), 'document')}",
+        title=_move_title(len(sources)).current,
         owner=user.id,
         scope=scope,
         work=work,
@@ -447,10 +516,10 @@ async def bulk_delete(
     return _submit_bulk_job(
         user=user,
         kind=DocumentJobKind.DELETE_BULK,
-        title=f"Delete {len(request.files)} {pluralize(len(request.files), 'document')}",
+        title=_delete_title(len(request.files)).current,
         files=request.files,
         process_one=_delete_one,
-        verb="Deleted",
+        verb=_DELETED,
     )
 
 
@@ -493,7 +562,7 @@ async def get_document_chunks(
     store, safe = resolve_workspace_path(user, filepath)
     chunked = await get_document(store, safe)
     if not chunked:
-        raise HTTPException(status_code=404, detail="No chunks found for this document")
+        raise HTTPException(status_code=404, detail=_NO_CHUNKS.current)
     return chunked
 
 
@@ -507,7 +576,7 @@ async def rechunk_document(
     store, safe = resolve_workspace_path(user, filepath, write=True)
 
     async def work(ctx: JobContext) -> None:
-        ctx.set_stage("Chunking document")
+        ctx.set_stage(_STAGE_CHUNKING.current)
         await workspace.rechunk(store, safe, spec=request)
 
     return _submit_document_job(

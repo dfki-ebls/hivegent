@@ -6,6 +6,7 @@ from contextlib import aclosing
 import pytest
 
 from hivegent.jobs import FeedReady, JobContext, JobManager, JobView, ScopeChanged
+from hivegent.l10n import Localized
 from hivegent.server.operations.processing import (
     run_bulk_document_job,
     summarize_failed_files,
@@ -134,7 +135,10 @@ async def test_bulk_runner_raises_so_failures_are_not_a_false_success() -> None:
 
     with pytest.raises(RuntimeError) as exc:
         await run_bulk_document_job(
-            ["a.md", "b.md", "c.md"], process_one, verb="Rechunked", ctx=progress
+            ["a.md", "b.md", "c.md"],
+            process_one,
+            verb=Localized(en="Rechunked", de="Neu gechunkt"),
+            ctx=progress,
         )
 
     assert processed == ["a.md", "b.md", "c.md"]  # batch is not aborted

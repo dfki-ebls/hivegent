@@ -88,8 +88,8 @@ async def test_companion_original_dropped_when_owning_markdown_fails(
     complete = await _run(user_store, archive)
 
     assert _failures(complete) == {
-        "M.md": collections._REASON_CONVERSION,
-        "M.pdf": collections._REASON_OWNER_FAILED,
+        "M.md": collections._REASON_CONVERSION.en,
+        "M.pdf": collections._REASON_OWNER_FAILED.en,
     }
     # The companion original is never written, so its owner's failure leaves no
     # orphan file on disk with no SQL row.
@@ -138,7 +138,7 @@ async def test_second_non_markdown_for_a_stem_is_rejected(
     archive = _make_zip(tmp_path, {"A.docx": b"doc", "A.pdf": b"%PDF-1.4"})
     complete = await _run(user_store, archive)
 
-    assert _failures(complete) == {"A.pdf": collections._REASON_NAME_CONFLICT}
+    assert _failures(complete) == {"A.pdf": collections._REASON_NAME_CONFLICT.en}
     assert complete.converted_attachments == 1
     assert complete.markdown_files == 0
 
@@ -164,7 +164,7 @@ async def test_markdown_adopts_one_original_and_rejects_the_rest(
     )
     complete = await _run(user_store, archive)
 
-    assert _failures(complete) == {"B.rtf": collections._REASON_NAME_CONFLICT}
+    assert _failures(complete) == {"B.rtf": collections._REASON_NAME_CONFLICT.en}
     assert complete.markdown_files == 1
     # Exactly one original landed for the stem.
     assert (workspace_dir / "B.pdf").exists()

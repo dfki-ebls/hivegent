@@ -15,12 +15,22 @@ from dataclasses import dataclass, field
 from fastapi import HTTPException
 
 from ..entries import entry_owns, stem_path_from_reference
+from ..l10n import Localized
 from ..store import Casebase
 
 __all__ = [
     "inflight_stems",
     "store_lock",
 ]
+
+_ENTRY_INFLIGHT = Localized(
+    en="Document is already being processed",
+    de="Das Dokument wird bereits verarbeitet",
+)
+_SCOPE_INFLIGHT = Localized(
+    en="A document in this scope is still being processed",
+    de="Ein Dokument in diesem Bereich wird noch verarbeitet",
+)
 
 
 @dataclass(slots=True)
@@ -118,9 +128,7 @@ def _reject_if_inflight(store: Casebase, reference: str) -> None:
     """
     stem = stem_path_from_reference(reference)
     if any(entry_owns(inflight, stem) for inflight in _state_for(store).stems):
-        raise HTTPException(
-            status_code=409, detail="Document is already being processed"
-        )
+        raise HTTPException(status_code=409, detail=_ENTRY_INFLIGHT.current)
 
 
 def _reject_if_scope_inflight(store: Casebase, prefix: str | None) -> None:
@@ -143,9 +151,7 @@ def _reject_if_scope_inflight(store: Casebase, prefix: str | None) -> None:
         prefix is None or s.startswith(f"{prefix}/") or entry_owns(s, prefix)
         for s in state.stems
     ):
-        raise HTTPException(
-            status_code=409, detail="A document in this scope is still being processed"
-        )
+        raise HTTPException(status_code=409, detail=_SCOPE_INFLIGHT.current)
 
 
 @asynccontextmanager

@@ -14,6 +14,7 @@ from ..agents import check_tool_settings
 from ..config import settings
 from ..db import apply_migrations, engine_lifespan
 from ..http_client import shared_http_client_lifespan
+from ..l10n import Localized
 from ..logging_config import configure_logging
 from ..mcp import mcp_app
 from ..observability import configure_observability
@@ -23,6 +24,7 @@ from ..sandbox import monty_pool_lifespan
 from ..workers.pool import pipeline_pool
 from ..workspace import cleanup_scratch_dirs
 from .access_log import install_probe_access_filter
+from .language import LanguageMiddleware
 from .maintenance import load_persisted_state
 from .operations import cleanup_spool_dir
 from .routes import api_router
@@ -137,6 +139,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await pipeline_pool.aclose()
 
 
+def _invalid_data(title: str) -> Localized[str]:
+    return Localized(en=f"Invalid data for {title}", de=f"Ungültige Daten für {title}")
+
+
 async def validation_error_handler(
     _request: Request,
     exc: Exception,
@@ -144,7 +150,18 @@ async def validation_error_handler(
     """Return 422 for request validation errors."""
     if not isinstance(exc, ValidationError):
         raise exc
-    return PlainTextResponse(str(exc), status_code=422)
+
+    # A validator's own ValueError is already localized, unlike pydantic's
+    # messages, so it is shown without pydantic's English "Value error" prefix.
+    errors = "\n".join(
+        f"{'.'.join(str(part) for part in error['loc'])}: "
+        + str(error.get("ctx", {}).get("error", error["msg"]))
+        for error in exc.errors()
+    )
+
+    return PlainTextResponse(
+        f"{_invalid_data(exc.title).current}\n{errors}", status_code=422
+    )
 
 
 def _validate_auth_settings() -> None:
@@ -195,6 +212,7 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if settings.security.expose_api_docs else None,
     )
     configure_observability(app)
+    app.add_middleware(LanguageMiddleware)
     app.add_exception_handler(ValidationError, validation_error_handler)
     app.include_router(public_router)
     app.include_router(api_router)

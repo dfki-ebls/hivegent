@@ -33,6 +33,7 @@ from ..entries import (
     stem_path_from_reference,
 )
 from ..humanize import format_bytes
+from ..l10n import Localized
 from ..llm_config import LlmConfig
 from ..store import Casebase
 from ..text import NOT_TEXT_REASON, read_text_file
@@ -54,20 +55,101 @@ logger = logging.getLogger(__name__)
 
 # One short, user-facing reason per failure class, shown in the job tray and
 # grouped there by reason.  Per-file exception detail is logged, not surfaced.
-_REASON_EXISTS = "already in the workspace, delete to re-import"
-_REASON_UNREADABLE_MD = "markdown could not be read"
-_REASON_NAME_CONFLICT = "another file in this collection uses the same name"
-_REASON_OWNER_FAILED = "the document it belongs to failed to import"
-_REASON_CONVERSION = "conversion failed"
+_REASON_EXISTS = Localized(
+    en="already in the workspace, delete to re-import",
+    de="bereits im Arbeitsbereich, zum erneuten Importieren löschen",
+)
+_REASON_UNREADABLE_MD = Localized(
+    en="markdown could not be read", de="Markdown konnte nicht gelesen werden"
+)
+_REASON_NAME_CONFLICT = Localized(
+    en="another file in this collection uses the same name",
+    de="eine andere Datei in dieser Sammlung hat denselben Namen",
+)
+_REASON_OWNER_FAILED = Localized(
+    en="the document it belongs to failed to import",
+    de="das zugehörige Dokument konnte nicht importiert werden",
+)
+_REASON_CONVERSION = Localized(
+    en="conversion failed", de="Konvertierung fehlgeschlagen"
+)
+
+
+def _too_many_files(count: int, limit: int) -> Localized[str]:
+    return Localized(
+        en=f"Collection has too many files ({count}). Maximum: {limit}",
+        de=f"Die Sammlung enthält zu viele Dateien ({count}). Maximum: {limit}",
+    )
+
+
+def _not_regular(name: str) -> Localized[str]:
+    return Localized(
+        en=f"ZIP entry {name!r} is not a regular file",
+        de=f"Der ZIP-Eintrag „{name}“ ist keine reguläre Datei",
+    )
+
+
+def _unsafe_path(name: str, reason: str) -> Localized[str]:
+    return Localized(
+        en=f"ZIP contains unsafe path {name!r}: {reason}",
+        de=f"Die ZIP-Datei enthält den unsicheren Pfad „{name}“: {reason}",
+    )
+
+
+def _member_too_large(name: str, size: int, limit: int) -> Localized[str]:
+    return Localized(
+        en=(
+            f"File '{name}' in ZIP is too large "
+            f"({format_bytes(size)} decompressed). "
+            f"Maximum: {format_bytes(limit)}"
+        ),
+        de=(
+            f"Die Datei „{name}“ in der ZIP-Datei ist zu groß "
+            f"({format_bytes(size)} entpackt). "
+            f"Maximum: {format_bytes(limit)}"
+        ),
+    )
+
+
+def _collection_too_large(limit: int) -> Localized[str]:
+    return Localized(
+        en=f"Collection decompresses to more than {format_bytes(limit)}",
+        de=f"Die Sammlung ist entpackt größer als {format_bytes(limit)}",
+    )
+
+
+_INVALID_ZIP = Localized(en="Invalid ZIP file", de="Ungültige ZIP-Datei")
+
+
+def _extract_failed(reason: str) -> Localized[str]:
+    return Localized(
+        en=f"Failed to extract ZIP: {reason}",
+        de=f"ZIP-Datei konnte nicht entpackt werden: {reason}",
+    )
+
+
+def _uploaded(markdown: int, converted: int, failed: int) -> Localized[str]:
+    return Localized(
+        en=(
+            f"Collection uploaded: {markdown} markdown, "
+            f"{converted} processed attachments"
+            + (f", {failed} failed" if failed else "")
+        ),
+        de=(
+            f"Sammlung hochgeladen: {markdown} Markdown, "
+            f"{converted} verarbeitete Anhänge"
+            + (f", {failed} fehlgeschlagen" if failed else "")
+        ),
+    )
 
 
 def _record_failure(
-    path: str, reason: str, *, exc: BaseException | None = None
+    path: str, reason: Localized[str], *, exc: BaseException | None = None
 ) -> FailedFile:
     """Log a skipped or failed member and return its record for the tray."""
-    logger.warning("Skipping %s: %s", path, reason, exc_info=exc)
+    logger.warning("Skipping %s: %s", path, reason.en, exc_info=exc)
 
-    return FailedFile(path=path, reason=reason)
+    return FailedFile(path=path, reason=reason.current)
 
 
 def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
@@ -85,17 +167,16 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
         if file_count > settings.limits.max_collection_files:
             raise HTTPException(
                 status_code=413,
-                detail=(
-                    f"Collection has too many files ({file_count}). "
-                    f"Maximum: {settings.limits.max_collection_files}"
-                ),
+                detail=_too_many_files(
+                    file_count, settings.limits.max_collection_files
+                ).current,
             )
 
         mode = (info.external_attr >> 16) & 0xFFFF
         if mode and not stat.S_ISREG(mode):
             raise HTTPException(
                 status_code=400,
-                detail=f"ZIP entry {info.filename!r} is not a regular file",
+                detail=_not_regular(info.filename).current,
             )
 
         try:
@@ -103,26 +184,25 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
         except ValueError as exc:
             raise HTTPException(
                 status_code=400,
-                detail=f"ZIP contains unsafe path {info.filename!r}: {exc}",
+                detail=_unsafe_path(info.filename, str(exc)).current,
             ) from exc
 
         if info.file_size > settings.limits.max_file_size_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=(
-                    f"File '{info.filename}' in ZIP is too large "
-                    f"({format_bytes(info.file_size)} decompressed). "
-                    f"Maximum: {format_bytes(settings.limits.max_file_size_bytes)}"
-                ),
+                detail=_member_too_large(
+                    info.filename,
+                    info.file_size,
+                    settings.limits.max_file_size_bytes,
+                ).current,
             )
         total_uncompressed += info.file_size
         if total_uncompressed > settings.limits.max_collection_size_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=(
-                    f"Collection decompresses to more than "
-                    f"{format_bytes(settings.limits.max_collection_size_bytes)}"
-                ),
+                detail=_collection_too_large(
+                    settings.limits.max_collection_size_bytes
+                ).current,
             )
 
 
@@ -138,7 +218,7 @@ def validate_collection_archive(archive_path: Path) -> None:
         with zipfile.ZipFile(archive_path) as archive:
             _validate_zip_entries(archive)
     except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail="Invalid ZIP file") from exc
+        raise HTTPException(status_code=400, detail=_INVALID_ZIP.current) from exc
 
 
 @dataclass(slots=True, frozen=True)
@@ -271,7 +351,7 @@ async def _plan_collection(
     uploads: list[_PlannedUpload] = []
     dropped: list[FailedFile] = []
 
-    def drop(planned_file: _PlannedFile, reason: str) -> None:
+    def drop(planned_file: _PlannedFile, reason: Localized[str]) -> None:
         dropped.append(_record_failure(planned_file.relative_path, reason))
 
     for _, grouped in groupby(planned, key=lambda p: p.stem):
@@ -358,7 +438,7 @@ async def process_collection(
                 archive.extractall(extract_root)
         except (zipfile.BadZipFile, zlib.error) as exc:
             raise HTTPException(
-                status_code=400, detail=f"Failed to extract ZIP: {exc!s}"
+                status_code=400, detail=_extract_failed(str(exc)).current
             ) from exc
 
         # Drop OS junk before the unwrap so a stray metadata file beside the real
@@ -454,9 +534,5 @@ async def process_collection(
         markdown_files=markdown_count,
         converted_attachments=converted_count,
         failed_files=failed,
-        message=(
-            f"Collection uploaded: {markdown_count} markdown, "
-            f"{converted_count} processed attachments"
-            + (f", {len(failed)} failed" if failed else "")
-        ),
+        message=_uploaded(markdown_count, converted_count, len(failed)).current,
     )

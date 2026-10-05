@@ -12,6 +12,7 @@ from hivegent.llm_config import LlmConfig, resolve_llm_config
 from hivegent.security import UrlPolicy, create_safe_async_client
 from hivegent.server.common import prepare_llm_config
 from hivegent.server.operations import enforce_upload_size
+from hivegent.workspace.paths import file_too_large
 
 
 def test_safe_async_client_requires_egress_proxy() -> None:
@@ -94,7 +95,7 @@ def test_enforce_upload_size_rejects_over_limit() -> None:
     upload = UploadFile(file=BytesIO(b"abcd"), size=4, filename="big.md")
 
     with pytest.raises(HTTPException) as exc_info:
-        enforce_upload_size(upload, limit=3, label="File")
+        enforce_upload_size(upload, limit=3, too_large=file_too_large)
 
     assert exc_info.value.status_code == 413
     assert "File too large" in str(exc_info.value.detail)

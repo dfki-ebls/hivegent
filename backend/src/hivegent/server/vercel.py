@@ -57,6 +57,7 @@ from starlette.responses import Response
 from ..agents.subagent_events import SubagentUpdate
 from ..db._common import new_id
 from ..db.conversations import is_user_request
+from ..l10n import Localized
 from ..llm import is_context_overflow
 
 __all__ = [
@@ -103,6 +104,11 @@ ABANDONED_APPROVAL_DENIAL = (
     "The user did not answer this approval request and moved on to another "
     "message, so the call was never executed. Do not reissue it unless they "
     "ask for it again."
+)
+
+_SAVE_FAILED = Localized(
+    en="Failed to save the conversation.",
+    de="Die Konversation konnte nicht gesichert werden.",
 )
 
 # Message metadata key carrying a run's error text so the frontend can re-render
@@ -618,6 +624,6 @@ async def run_and_persist[DepsT, OutputT](
                 await asyncio.shield(persist_turn(messages))
             except Exception:
                 logger.exception("Failed to persist conversation turn")
-                yield ErrorChunk(error_text="Failed to save the conversation.")
+                yield ErrorChunk(error_text=_SAVE_FAILED.current)
 
     return adapter.streaming_response(relay())

@@ -40,12 +40,14 @@ from sqlalchemy import CTE, ColumnElement, delete, func, literal, or_, select, u
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from ..l10n import Localized
 from ._common import affected_rows, new_id
 from .engine import session
 from .models import Conversation, Message
 from .users import ensure_user
 
 __all__ = [
+    "UNTITLED",
     "ConversationData",
     "ConversationSummary",
     "MessagePair",
@@ -77,6 +79,18 @@ class ActiveNode:
 
 # A node id paired with its decoded message — the public active-path shape.
 type MessagePair = tuple[str, ModelMessage]
+
+UNTITLED = Localized(en="Untitled", de="Ohne Titel")
+"""The title shown for a conversation that has none."""
+
+_NO_MESSAGES = Localized(
+    en="conversation export has no messages",
+    de="Der Konversationsexport enthält keine Nachrichten",
+)
+_IMPORT_FAILED = Localized(
+    en="failed to import conversation",
+    de="Die Konversation konnte nicht importiert werden",
+)
 
 
 # ─── Boundary types ────────────────────────────────────────────────────
@@ -586,14 +600,14 @@ async def import_conversation(
         ValueError: if *messages* is empty.
     """
     if not messages:
-        raise ValueError("conversation export has no messages")
+        raise ValueError(_NO_MESSAGES.current)
 
     conversation_id = new_id()
     await append_branch(user_id, conversation_id, None, messages, title=title)
 
     summary = await load_conversation_summary(user_id, conversation_id)
     if summary is None:  # unreachable: the conversation was just created
-        raise ValueError("failed to import conversation")
+        raise ValueError(_IMPORT_FAILED.current)
 
     return summary
 

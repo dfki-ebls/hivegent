@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile
 
 from ...config import settings
-from ...humanize import format_bytes
+from ...l10n import Localized
 from ...types import FailedFile, ProgressReporter
 
 __all__ = [
@@ -33,13 +33,29 @@ logger = logging.getLogger(__name__)
 _MAX_LISTED_FAILURES = 20
 
 
+def _more_failures(count: int) -> Localized[str]:
+    return Localized(en=f", and {count} more", de=f" und {count} weitere")
+
+
+_REASON_SEPARATOR = Localized(en="; ", de=". ")
+
+
+def _bulk_failed(
+    verb: str, succeeded: int, total: int, failed: int, names: str
+) -> Localized[str]:
+    return Localized(
+        en=f"{verb} {succeeded} of {total}; {failed} failed: {names}",
+        de=f"{verb}: {succeeded} von {total}. {failed} fehlgeschlagen: {names}",
+    )
+
+
 def summarize_failures(
     failed: Sequence[str], *, limit: int = _MAX_LISTED_FAILURES
 ) -> str:
     """Join failed filenames for a job-failure message, capping a long list."""
     listed = ", ".join(failed[:limit])
     if len(failed) > limit:
-        listed += f", and {len(failed) - limit} more"
+        listed += _more_failures(len(failed) - limit).current
     return listed
 
 
@@ -56,7 +72,7 @@ def summarize_failed_files(
     for f in failed:
         by_reason.setdefault(f.reason, []).append(f.path)
 
-    return "; ".join(
+    return _REASON_SEPARATOR.current.join(
         f"{reason}: {summarize_failures(paths, limit=limit)}"
         for reason, paths in by_reason.items()
     )
@@ -90,7 +106,7 @@ async def run_bulk_document_job(
     files: list[str],
     process_one: Callable[[str], Awaitable[None]],
     *,
-    verb: str,
+    verb: Localized[str],
     ctx: ProgressReporter,
 ) -> None:
     """Run a per-file mutation over many documents, reporting progress to *ctx*.
@@ -112,20 +128,26 @@ async def run_bulk_document_job(
         except Exception as exc:  # noqa: BLE001
             # One file's failure must not abort the batch; it is collected and
             # reported as a partial result once every file has been attempted.
-            logger.warning("Bulk %s failed for %s: %s", verb.lower(), filepath, exc)
+            logger.warning("Bulk %s failed for %s: %s", verb.en.lower(), filepath, exc)
             failed.append(filepath)
 
         ctx.set_progress(index + 1, total)
 
     if failed:
-        succeeded = total - len(failed)
         raise RuntimeError(
-            f"{verb} {succeeded} of {total}; "
-            f"{len(failed)} failed: {summarize_failures(failed)}"
+            _bulk_failed(
+                verb.current,
+                total - len(failed),
+                total,
+                len(failed),
+                summarize_failures(failed),
+            ).current
         )
 
 
-def enforce_upload_size(file: UploadFile, *, limit: int, label: str) -> None:
+def enforce_upload_size(
+    file: UploadFile, *, limit: int, too_large: Callable[[int], Localized[str]]
+) -> None:
     """Reject an upload whose size exceeds *limit*.
 
     Starlette populates ``UploadFile.size`` while parsing the multipart body and
@@ -135,7 +157,4 @@ def enforce_upload_size(file: UploadFile, *, limit: int, label: str) -> None:
     multipart parser, which are left uncapped.
     """
     if file.size is not None and file.size > limit:
-        raise HTTPException(
-            status_code=413,
-            detail=f"{label} too large. Maximum size: {format_bytes(limit)}",
-        )
+        raise HTTPException(status_code=413, detail=too_large(limit).current)

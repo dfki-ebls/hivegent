@@ -35,6 +35,7 @@ from ...converters import INGESTIBLE_IMAGE_MEDIA_TYPES
 from ...converters.images import sanitize_image_bytes
 from ...db._common import new_id
 from ...db.conversations import (
+    UNTITLED,
     ConversationSummary,
     MessagePair,
     append_branch,
@@ -50,7 +51,8 @@ from ...db.conversations import (
     resolve_fork,
     set_conversation_title,
 )
-from ...humanize import format_bytes
+from ...humanize import format_bytes, pluralize
+from ...l10n import Localized
 from ...llm import (
     model_from_config,
     resolve_thinking,
@@ -89,6 +91,83 @@ __all__ = ["router"]
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+_CONVERSATION_NOT_FOUND = Localized(
+    en="Conversation not found", de="Konversation nicht gefunden"
+)
+_TITLE_INSTRUCTIONS = Localized(
+    en="""Generate a short, descriptive title (max 60 characters) for the conversation.
+The title should capture the main topic or question.
+Write the title in the language of the conversation, or in English if that is unclear.
+Return ONLY the title, no quotes or extra text.
+""",
+    de="""Erstelle einen kurzen, aussagekräftigen Titel (maximal 60 Zeichen) für die Konversation.
+Der Titel soll das Hauptthema oder die Hauptfrage erfassen.
+Schreibe den Titel in der Sprache der Konversation oder auf Deutsch, wenn diese unklar ist.
+Gib NUR den Titel zurück, ohne Anführungszeichen oder zusätzlichen Text.
+""",
+)
+
+
+def _title_prompt(preview: str) -> Localized[str]:
+    return Localized(en=f"Conversation:\n{preview}", de=f"Konversation:\n{preview}")
+
+
+_TITLE_FAILED = Localized(
+    en="Failed to generate title", de="Titel konnte nicht erstellt werden"
+)
+
+
+def _summarizer_rejected(status_code: int) -> Localized[str]:
+    return Localized(
+        en=f"The summarization model rejected the request (HTTP {status_code}).",
+        de=(
+            f"Das Modell für die Zusammenfassung hat die Anfrage abgelehnt "
+            f"(HTTP {status_code})."
+        ),
+    )
+
+
+_COMPACTION_FAILED = Localized(
+    en="Failed to compact conversation",
+    de="Konversation konnte nicht komprimiert werden",
+)
+_ONLY_IMAGES = Localized(
+    en=(
+        "Only images can be attached to a chat message. Upload other "
+        "documents to your workspace, where they are converted and "
+        "indexed for the assistant to search."
+    ),
+    de=(
+        "An eine Chatnachricht können nur Bilder angehängt werden. Lade andere "
+        "Dokumente in deinen Arbeitsbereich hoch, wo sie konvertiert und für die "
+        "Suche durch den Assistenten indexiert werden."
+    ),
+)
+
+
+def _image_too_large(limit: int) -> Localized[str]:
+    return Localized(
+        en=f"Attached image exceeds the {format_bytes(limit)} limit.",
+        de=f"Das angehängte Bild überschreitet die Grenze von {format_bytes(limit)}.",
+    )
+
+
+def _too_many_images(cap: int) -> Localized[str]:
+    return Localized(
+        en=(
+            f"At most {cap} {pluralize(cap, 'image')} can be attached to a message, "
+            "since the model server accepts no more in one request."
+        ),
+        de=(
+            f"An eine Nachricht {pluralize(cap, 'kann', 'können')} höchstens {cap} "
+            f"{pluralize(cap, 'Bild', 'Bilder')} angehängt werden, da der "
+            "Modellserver nicht mehr pro Anfrage annimmt."
+        ),
+    )
+
+
+_INVALID_CHAT_REQUEST = Localized(en="Invalid chat request", de="Ungültige Chatanfrage")
+
 
 @router.get("/conversations")
 async def get_conversations(
@@ -110,7 +189,7 @@ async def get_conversation(
     """Get summary information for a specific conversation."""
     summary = await load_conversation_summary(user.id, conversation_id)
     if summary is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
     return summary
 
 
@@ -123,7 +202,7 @@ async def update_conversation_title(
     """Update the title of a conversation."""
     summary = await set_conversation_title(user.id, conversation_id, request.title)
     if summary is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
     return summary
 
 
@@ -156,25 +235,21 @@ async def generate_conversation_title(
     """Generate a title for a conversation using an LLM."""
     conversation = await load_conversation(user.id, conversation_id)
     if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
 
     messages_text = _extract_message_texts(conversation.messages)
     if not messages_text:
-        return GenerateTitleResponse(title=conversation.title or "Untitled")
+        return GenerateTitleResponse(title=conversation.title or UNTITLED.current)
 
     conversation_preview = BLOCK_SEP.join(messages_text)
-    instructions = """Generate a short, descriptive title (max 60 characters) for the conversation.
-The title should capture the main topic or question.
-Return ONLY the title, no quotes or extra text.
-"""
 
     async def _generate() -> str:
         resolved = prepare_llm_config(request.llm)
         result = await base_agent.run(
-            f"Conversation:\n{conversation_preview}",
+            _title_prompt(conversation_preview).current,
             model=model_from_config(resolved),
             model_settings=thinking_model_settings(False, resolved),
-            instructions=instructions,
+            instructions=_TITLE_INSTRUCTIONS.current,
         )
         return result.output
 
@@ -192,10 +267,7 @@ Return ONLY the title, no quotes or extra text.
         logger.exception(
             "Failed to generate title for conversation %s", conversation_id
         )
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to generate title",
-        ) from exc
+        raise HTTPException(status_code=500, detail=_TITLE_FAILED.current) from exc
 
 
 @router.delete(
@@ -207,7 +279,7 @@ async def delete_conversation(
 ) -> None:
     """Delete a conversation."""
     if not await remove_conversation(user.id, conversation_id):
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
 
 
 @router.delete("/conversations", status_code=status.HTTP_204_NO_CONTENT)
@@ -249,17 +321,11 @@ async def create_conversation_compaction(
         logger.exception("Failed to compact conversation %s", conversation_id)
         raise HTTPException(
             status_code=502,
-            detail=(
-                "The summarization model rejected the request "
-                f"(HTTP {exc.status_code})."
-            ),
+            detail=_summarizer_rejected(exc.status_code).current,
         ) from exc
     except Exception as exc:
         logger.exception("Failed to compact conversation %s", conversation_id)
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to compact conversation",
-        ) from exc
+        raise HTTPException(status_code=500, detail=_COMPACTION_FAILED.current) from exc
 
     return CompactConversationResponse(
         new_conversation_id=result.new_conversation_id,
@@ -326,7 +392,7 @@ async def export_conversation_route(
     """
     summary = await load_conversation_summary(user.id, conversation_id)
     if summary is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
 
     result = await load_active_for_display(user.id, conversation_id)
     pairs, siblings = result if result else ([], {})
@@ -405,18 +471,14 @@ def _accept_attachment(item: UserContent) -> None:
     ):
         raise HTTPException(
             status_code=400,
-            detail=(
-                "Only images can be attached to a chat message. Upload other "
-                "documents to your workspace, where they are converted and "
-                "indexed for the assistant to search."
-            ),
+            detail=_ONLY_IMAGES.current,
         )
 
     limit = settings.limits.max_attachment_bytes
     if len(item.data) > limit:
         raise HTTPException(
             status_code=400,
-            detail=f"Attached image exceeds the {format_bytes(limit)} limit.",
+            detail=_image_too_large(limit).current,
         )
 
     item.data = sanitize_image_bytes(item.data, item.media_type)
@@ -437,10 +499,7 @@ def _accept_attachments(messages: Sequence[ModelMessage]) -> None:
     if cap is not None and len(items) > cap:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"At most {cap} image(s) can be attached to a message, "
-                "since the model server accepts no more in one request."
-            ),
+            detail=_too_many_images(cap).current,
         )
 
     for item in items:
@@ -473,7 +532,9 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
             ),
         )
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail="Invalid chat request") from exc
+        raise HTTPException(
+            status_code=422, detail=_INVALID_CHAT_REQUEST.current
+        ) from exc
 
     # Gate the new user message's attachments before the run. Sanitisation
     # lands in place, and the adapter caches `messages`, so `run_stream` and
@@ -591,5 +652,5 @@ async def create_conversation_chat(
     conversation — clients cannot mint their own IDs.
     """
     if not await conversation_exists(user.id, conversation_id):
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
     return await _run_chat(conversation_id, request, user)

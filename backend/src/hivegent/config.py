@@ -17,6 +17,7 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
+from .l10n import Localized
 from .multimodal import BinaryContentMode
 from .security import DEFAULT_EGRESS_PROXY_URL, UrlPolicy
 
@@ -104,7 +105,48 @@ def content_hash(text: str) -> str:
 _SAFE_ID_PATTERN = re.compile(r"[a-zA-Z0-9_-]+")
 
 
-def _sanitize_id(value: str, kind: str) -> str:
+_USER = Localized(en="User", de="Benutzer")
+_GROUP = Localized(en="Group", de="Gruppen")
+
+
+def _empty_id(kind: Localized[str]) -> Localized[str]:
+    return Localized(
+        en=f"{kind.en} ID cannot be empty", de=f"Die {kind.de}-ID darf nicht leer sein"
+    )
+
+
+def _invalid_id(kind: Localized[str], value: str) -> Localized[str]:
+    return Localized(
+        en=f"Invalid {kind.en.lower()} ID: {value!r}",
+        de=f"Ungültige {kind.de}-ID: „{value}“",
+    )
+
+
+_EMPTY_PATH = Localized(
+    en="Document path cannot be empty", de="Der Dokumentpfad darf nicht leer sein"
+)
+_NULL_BYTES = Localized(
+    en="Document path contains null bytes", de="Der Dokumentpfad enthält Nullbytes"
+)
+_ABSOLUTE_PATH = Localized(
+    en="Document path must be relative", de="Der Dokumentpfad muss relativ sein"
+)
+
+
+def _unsafe_segment(segment: str) -> Localized[str]:
+    return Localized(
+        en=f"Document path contains unsafe segment: {segment!r}",
+        de=f"Der Dokumentpfad enthält das unsichere Segment „{segment}“",
+    )
+
+
+_EMPTY_SEGMENT = Localized(
+    en="Document path contains empty segment",
+    de="Der Dokumentpfad enthält ein leeres Segment",
+)
+
+
+def _sanitize_id(value: str, kind: Localized[str]) -> str:
     """Return *value* unchanged if it is safe as a path segment.
 
     Args:
@@ -118,10 +160,10 @@ def _sanitize_id(value: str, kind: str) -> str:
         ValueError: If the identifier is empty or contains unsafe characters.
     """
     if not value:
-        raise ValueError(f"{kind} ID cannot be empty")
+        raise ValueError(_empty_id(kind).current)
 
     if not _SAFE_ID_PATTERN.fullmatch(value):
-        raise ValueError(f"Invalid {kind.lower()} ID: {value!r}")
+        raise ValueError(_invalid_id(kind, value).current)
 
     return value
 
@@ -138,7 +180,7 @@ def sanitize_user_id(user_id: str) -> str:
     Raises:
         ValueError: If the user ID is invalid or contains unsafe characters.
     """
-    return _sanitize_id(user_id, "User")
+    return _sanitize_id(user_id, _USER)
 
 
 def sanitize_group_id(group_id: str) -> str:
@@ -158,7 +200,7 @@ def sanitize_group_id(group_id: str) -> str:
     Raises:
         ValueError: If the group ID is invalid or contains unsafe characters.
     """
-    return _sanitize_id(group_id, "Group")
+    return _sanitize_id(group_id, _GROUP)
 
 
 def normalize_unicode(value: str) -> str:
@@ -209,23 +251,23 @@ def sanitize_document_path(path: str) -> str:
         ValueError: If the path is empty, absolute, or contains unsafe segments.
     """
     if not path:
-        raise ValueError("Document path cannot be empty")
+        raise ValueError(_EMPTY_PATH.current)
 
     if "\x00" in path:
-        raise ValueError("Document path contains null bytes")
+        raise ValueError(_NULL_BYTES.current)
 
     # Normalize to POSIX forward slashes and one canonical Unicode spelling
     normalized = str(PurePosixPath(normalize_unicode(path).replace("\\", "/")))
 
     if normalized.startswith("/"):
-        raise ValueError("Document path must be relative")
+        raise ValueError(_ABSOLUTE_PATH.current)
 
     # Reject . and .. segments
     for segment in normalized.split("/"):
         if segment in (".", ".."):
-            raise ValueError(f"Document path contains unsafe segment: {segment!r}")
+            raise ValueError(_unsafe_segment(segment).current)
         if not segment:
-            raise ValueError("Document path contains empty segment")
+            raise ValueError(_EMPTY_SEGMENT.current)
 
     return normalized
 

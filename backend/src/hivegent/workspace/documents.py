@@ -28,9 +28,10 @@ from ..entries import (
     stem_path_from_reference,
 )
 from ..humanize import pluralize
+from ..l10n import Localized
 from ..llm_config import LlmConfig
 from ..store import Casebase
-from ..text import NOT_TEXT_REASON, DecodedText, read_text_file
+from ..text import DecodedText, read_text_file
 from ..types import PipelineSpec
 from .commit import (
     _delete_single_locked,
@@ -40,6 +41,8 @@ from .commit import (
 from .indexing import chunk_and_index_document
 from .locks import _locked_for, _reject_if_inflight
 from .paths import (
+    DESTINATION_EXISTS,
+    DOCUMENT_NOT_FOUND,
     _check_destination_parents,
     _check_not_reserved_path,
     _enforce_file_size,
@@ -48,6 +51,7 @@ from .paths import (
     _resolve_move_destination,
     _shown,
     _write_workspace_file,
+    not_text,
 )
 from .prepare import _Reserved
 
@@ -60,6 +64,184 @@ __all__ = [
 ]
 
 
+def _is_directory(path: str) -> Localized[str]:
+    return Localized(en=f"'{path}' is a directory", de=f"„{path}“ ist ein Ordner")
+
+
+def _binary_media(path: str, media_type: str) -> Localized[str]:
+    return Localized(
+        en=(
+            f"'{path}' is a {media_type} binary and cannot be written as "
+            "text; upload a replacement instead"
+        ),
+        de=(
+            f"„{path}“ ist eine Binärdatei vom Typ {media_type} und kann nicht als "
+            "Text geschrieben werden. Lade stattdessen einen Ersatz hoch"
+        ),
+    )
+
+
+def _transcoded(encoding: str) -> Localized[str]:
+    return Localized(
+        en=f" The file was transcoded from {encoding} to UTF-8.",
+        de=f" Die Datei wurde von {encoding} nach UTF-8 umkodiert.",
+    )
+
+
+def _hash_unread(path: str, expected: str) -> Localized[str]:
+    return Localized(
+        en=(
+            f"'{path}' does not exist, so it could not have been read "
+            f"(expected hash {expected}); omit expected_hash to create it"
+        ),
+        de=(
+            f"„{path}“ existiert nicht und kann daher nicht gelesen worden sein "
+            f"(erwarteter Hash {expected}). Lass expected_hash weg, um die Datei "
+            "zu erstellen"
+        ),
+    )
+
+
+def _hash_changed(path: str, expected: str, actual: str) -> Localized[str]:
+    return Localized(
+        en=(
+            f"'{path}' changed since it was read "
+            f"(expected hash {expected}, found {actual}); "
+            "re-read it and retry with the new hash"
+        ),
+        de=(
+            f"„{path}“ wurde seit dem Lesen geändert "
+            f"(erwarteter Hash {expected}, gefunden {actual}). "
+            "Lies die Datei erneut und versuche es mit dem neuen Hash noch einmal"
+        ),
+    )
+
+
+def _old_string_missing(path: str) -> Localized[str]:
+    return Localized(
+        en=f"old_string not found in '{path}'",
+        de=f"old_string wurde in „{path}“ nicht gefunden",
+    )
+
+
+def _old_string_ambiguous(path: str, count: int) -> Localized[str]:
+    return Localized(
+        en=(
+            f"old_string appears {count} times in '{path}'; "
+            "must be unique or call with replace_all=True"
+        ),
+        de=(
+            f"old_string kommt {count}-mal in „{path}“ vor. Wähle einen eindeutigen "
+            "Wert oder rufe das Tool mit replace_all=True auf"
+        ),
+    )
+
+
+def _replaced(path: str, count: int) -> Localized[str]:
+    return Localized(
+        en=f"Replaced {count} {pluralize(count, 'occurrence')} in '{path}'.",
+        de=f"{count} Vorkommen in „{path}“ ersetzt.",
+    )
+
+
+def _unsupported_mode(mode: str) -> Localized[str]:
+    return Localized(
+        en=f"Unsupported write mode: {mode}",
+        de=f"Nicht unterstützter Schreibmodus: {mode}",
+    )
+
+
+def _already_exists(path: str) -> Localized[str]:
+    return Localized(en=f"'{path}' already exists", de=f"„{path}“ existiert bereits")
+
+
+def _missing_for_mode(path: str) -> Localized[str]:
+    return Localized(
+        en=f"'{path}' does not exist (use mode='replace' to create)",
+        de=(
+            f"„{path}“ existiert nicht (verwende mode='replace', um die Datei zu erstellen)"
+        ),
+    )
+
+
+def _wrote(path: str, length: int) -> Localized[str]:
+    return Localized(
+        en=f"Wrote {length} characters to '{path}'.",
+        de=f"{length} Zeichen in „{path}“ geschrieben.",
+    )
+
+
+def _created(path: str, length: int) -> Localized[str]:
+    return Localized(
+        en=f"Created '{path}' with {length} characters.",
+        de=f"„{path}“ mit {length} Zeichen erstellt.",
+    )
+
+
+def _appended(path: str, length: int) -> Localized[str]:
+    return Localized(
+        en=f"Appended {length} characters to '{path}'.",
+        de=f"{length} Zeichen an „{path}“ angehängt.",
+    )
+
+
+def _prepended(path: str, length: int) -> Localized[str]:
+    return Localized(
+        en=f"Prepended {length} characters to '{path}'.",
+        de=f"{length} Zeichen am Anfang von „{path}“ eingefügt.",
+    )
+
+
+def _binary_write(path: str) -> Localized[str]:
+    return Localized(
+        en=f"'{path}' {BINARY_WRITE_REASON}",
+        de=(
+            f"„{path}“ ist ein Binärformat, das ein Textschreibvorgang nicht "
+            "erstellen kann. Schreibe den Text stattdessen in einen „.md“-Pfad "
+            "oder lade die Datei hoch"
+        ),
+    )
+
+
+def _regenerated(report: str, path: str) -> Localized[str]:
+    return Localized(
+        en=(
+            f"{report} Its searchable markdown '{path}' was "
+            f"regenerated from the new content."
+        ),
+        de=(
+            f"{report} Das durchsuchbare Markdown „{path}“ wurde aus dem neuen "
+            "Inhalt neu erzeugt."
+        ),
+    )
+
+
+def _scratch_directory(path: str) -> Localized[str]:
+    return Localized(
+        en=f"'{path}' names a scratch directory, not a writable file",
+        de=f"„{path}“ bezeichnet einen Scratch-Ordner, keine beschreibbare Datei",
+    )
+
+
+_SAME_DOCUMENT = Localized(
+    en=(
+        "Source and destination refer to the same document; "
+        "extensions are derived from the entry and cannot change by moving"
+    ),
+    de=(
+        "Quelle und Ziel bezeichnen dasselbe Dokument. Dateiendungen ergeben "
+        "sich aus dem Eintrag und lassen sich durch Bewegen nicht ändern"
+    ),
+)
+
+
+def _destination_exists_at(path: str) -> Localized[str]:
+    return Localized(
+        en=f"Destination already exists: {path}",
+        de=f"Das Ziel existiert bereits: {path}",
+    )
+
+
 def _decode_existing(file_path: Path, shown: str) -> DecodedText:
     """Decode an existing workspace file, rejecting content that is not text.
 
@@ -69,10 +251,7 @@ def _decode_existing(file_path: Path, shown: str) -> DecodedText:
     """
     decoded = read_text_file(file_path)
     if decoded is None:
-        raise HTTPException(
-            status_code=422,
-            detail=f"'{shown}' {NOT_TEXT_REASON}",
-        )
+        raise HTTPException(status_code=422, detail=not_text(shown).current)
     return decoded
 
 
@@ -87,14 +266,11 @@ def _editable_text(file_path: Path, shown: str) -> DecodedText | None:
     descriptions.
     """
     if file_path.is_dir():
-        raise HTTPException(status_code=409, detail=f"'{shown}' is a directory")
+        raise HTTPException(status_code=409, detail=_is_directory(shown).current)
     if (media_type := vision_media_type(file_path.name)) is not None:
         raise HTTPException(
             status_code=422,
-            detail=(
-                f"'{shown}' is a {media_type} binary and cannot be written as "
-                "text; upload a replacement instead"
-            ),
+            detail=_binary_media(shown, media_type).current,
         )
     return _decode_existing(file_path, shown) if file_path.is_file() else None
 
@@ -104,7 +280,7 @@ def _transcode_note(source_encoding: str | None) -> str:
     if source_encoding is None:
         return ""
 
-    return f" The file was transcoded from {source_encoding} to UTF-8."
+    return _transcoded(source_encoding).current
 
 
 def _check_expected_hash(
@@ -122,19 +298,12 @@ def _check_expected_hash(
     if current is None:
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"'{shown}' does not exist, so it could not have been read "
-                f"(expected hash {expected_hash}); omit expected_hash to create it"
-            ),
+            detail=_hash_unread(shown, expected_hash).current,
         )
     if (actual := content_hash(current)) != expected_hash:
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"'{shown}' changed since it was read "
-                f"(expected hash {expected_hash}, found {actual}); "
-                "re-read it and retry with the new hash"
-            ),
+            detail=_hash_changed(shown, expected_hash, actual).current,
         )
 
 
@@ -154,25 +323,21 @@ def _edit_mutation(
 
     def mutate(current: str | None) -> tuple[str, str]:
         if current is None:
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail=DOCUMENT_NOT_FOUND.current)
         count = current.count(old_string)
         if count == 0:
             raise HTTPException(
-                status_code=422,
-                detail=f"old_string not found in '{shown}'",
+                status_code=422, detail=_old_string_missing(shown).current
             )
         if count > 1 and not replace_all:
             raise HTTPException(
                 status_code=422,
-                detail=(
-                    f"old_string appears {count} times in '{shown}'; "
-                    "must be unique or call with replace_all=True"
-                ),
+                detail=_old_string_ambiguous(shown, count).current,
             )
         replaced = count if replace_all else 1
         return (
             current.replace(old_string, new_string, -1 if replace_all else 1),
-            f"Replaced {replaced} {pluralize(replaced, 'occurrence')} in '{shown}'.",
+            _replaced(shown, replaced).current,
         )
 
     return mutate
@@ -181,26 +346,25 @@ def _edit_mutation(
 def _write_mutation(shown: str, content: str, mode: str) -> _TextMutation:
     """Build the write-mode composition behind :func:`write_document_text`."""
     if mode not in ("replace", "create", "append", "prepend"):
-        raise HTTPException(status_code=400, detail=f"Unsupported write mode: {mode}")
+        raise HTTPException(status_code=400, detail=_unsupported_mode(mode).current)
 
     def mutate(current: str | None) -> tuple[str, str]:
         if mode == "replace":
-            return content, f"Wrote {len(content)} characters to '{shown}'."
+            return content, _wrote(shown, len(content)).current
         if mode == "create":
             if current is not None:
-                raise HTTPException(status_code=409, detail=f"'{shown}' already exists")
-            return content, f"Created '{shown}' with {len(content)} characters."
+                raise HTTPException(
+                    status_code=409, detail=_already_exists(shown).current
+                )
+            return content, _created(shown, len(content)).current
         if current is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"'{shown}' does not exist (use mode='replace' to create)",
+                detail=_missing_for_mode(shown).current,
             )
         if mode == "append":
-            return (
-                current + content,
-                f"Appended {len(content)} characters to '{shown}'.",
-            )
-        return content + current, f"Prepended {len(content)} characters to '{shown}'."
+            return current + content, _appended(shown, len(content)).current
+        return content + current, _prepended(shown, len(content)).current
 
     return mutate
 
@@ -283,9 +447,7 @@ async def _rewrite_original(
         # so, rather than being answered with a rule about creating one.
         content, message = mutate(current)
         if current is None and not writes_as_text(safe):
-            raise HTTPException(
-                status_code=400, detail=f"'{shown}' {BINARY_WRITE_REASON}"
-            )
+            raise HTTPException(status_code=400, detail=_binary_write(shown).current)
         # Creating an original claims the whole stem: requiring a free one keeps
         # the write from superseding another entry's description or original.
         _ensure_upload_slot_locked(store, safe, overwrite=current is not None)
@@ -308,10 +470,7 @@ async def _rewrite_original(
         store, spec, LlmConfig(), stem_reference=safe, reserve=reserve, ctx=None
     )
     description = description_path_for_stem(stem_path_from_reference(safe))
-    return (
-        f"{report[0]} Its searchable markdown '{_shown(store, description)}' was "
-        f"regenerated from the new content."
-    )
+    return _regenerated(report[0], _shown(store, description)).current
 
 
 async def _apply_text_mutation(
@@ -330,10 +489,7 @@ async def _apply_text_mutation(
     if PurePosixPath(safe).name == SCRATCH_DIR_NAME:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"'{_shown(store, safe)}' names a scratch directory, not a "
-                "writable file"
-            ),
+            detail=_scratch_directory(_shown(store, safe)).current,
         )
 
     if is_scratch_path(safe) or is_description_file(safe):
@@ -359,7 +515,7 @@ async def rechunk(
         file_path = workspace_dir / safe
         decoded = _editable_text(file_path, _shown(store, safe))
         if decoded is None:
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail=DOCUMENT_NOT_FOUND.current)
         return await shield_to_completion(
             chunk_and_index_document(
                 store,
@@ -437,7 +593,7 @@ def _remove_scratch_file(store: Casebase, safe: str) -> None:
     """
     path = store.workspace_path(settings.data_dir) / safe
     if not path.is_file():
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail=DOCUMENT_NOT_FOUND.current)
 
     path.unlink()
 
@@ -460,7 +616,7 @@ async def _move_document_locked(
 
     metadata = await db_documents.get_entry_metadata(src_store, src)
     if not metadata or not (src_workspace / metadata.description_path).exists():
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail=DOCUMENT_NOT_FOUND.current)
     src_stem = metadata.stem_path
     src_description_full = src_workspace / metadata.description_path
 
@@ -482,10 +638,7 @@ async def _move_document_locked(
     if not cross_store and dst_stem == src_stem:
         raise HTTPException(
             status_code=400,
-            detail=(
-                "Source and destination refer to the same document; "
-                "extensions are derived from the entry and cannot change by moving"
-            ),
+            detail=_SAME_DOCUMENT.current,
         )
 
     dst_description = description_path_for_stem(dst_stem)
@@ -518,12 +671,12 @@ async def _move_document_locked(
     # entry_exists takes a reference, so hand it the description path: a raw
     # dotted stem would be re-stemmed and the wrong entry checked.
     if not same_entry and entry_exists(dst_workspace, dst_description):
-        raise HTTPException(status_code=409, detail="Destination already exists")
+        raise HTTPException(status_code=409, detail=DESTINATION_EXISTS.current)
     for source, target in renames:
         if _is_blocked_by_other(dst_workspace / target, src_workspace / source):
             raise HTTPException(
                 status_code=409,
-                detail=f"Destination already exists: {_shown(dst_store, target)}",
+                detail=_destination_exists_at(_shown(dst_store, target)).current,
             )
 
     for source, target in renames:

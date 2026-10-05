@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from ..l10n import Localized
 from ..llm_config import LlmConfig
 from ..pipeline_registry import (
     PipelineConfigInfo,
@@ -208,16 +209,25 @@ def _load_plain_text() -> PipelineImplementation[DocumentConverter]:
 _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
     ConversionPipeline.LLM: _ConverterRegistration(
         loader=_load_llm,
-        label="LLM",
-        description="Uses vision model for all files",
+        label=Localized(en="LLM", de="LLM"),
+        description=Localized(
+            en="Uses vision model for all files",
+            de="Verwendet das Vision-Modell für alle Dateien",
+        ),
         extensions=frozenset(LLM_MEDIA_TYPES),
     ),
     ConversionPipeline.PANDOC: _ConverterRegistration(
         loader=_load_pandoc,
-        label="Pandoc",
-        description=(
-            "Universal converter for ODT, RST, RTF, EPUB, LaTeX, Org, "
-            "DocBook, Typst, and more"
+        label=Localized(en="Pandoc", de="Pandoc"),
+        description=Localized(
+            en=(
+                "Universal converter for ODT, RST, RTF, EPUB, LaTeX, Org, "
+                "DocBook, Typst, and more"
+            ),
+            de=(
+                "Universeller Konverter für ODT, RST, RTF, EPUB, LaTeX, Org, "
+                "DocBook, Typst und mehr"
+            ),
         ),
         extensions=PANDOC_EXTENSIONS,
         auto_extensions=PANDOC_EXTENSIONS,
@@ -227,15 +237,21 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
     # https://github.com/VikParuchuri/marker
     ConversionPipeline.MARKER: _ConverterRegistration(
         loader=_load_marker,
-        label="Marker",
-        description="Best for PDF documents",
+        label=Localized(en="Marker", de="Marker"),
+        description=Localized(
+            en="Best for PDF documents",
+            de="Ideal für PDF-Dokumente",
+        ),
         extensions=frozenset({".pdf"}),
         dependencies=("marker",),
     ),
     ConversionPipeline.DOCLING: _ConverterRegistration(
         loader=_load_docling,
-        label="Docling",
-        description="Best for Office documents",
+        label=Localized(en="Docling", de="Docling"),
+        description=Localized(
+            en="Best for Office documents",
+            de="Ideal für Office-Dokumente",
+        ),
         extensions=DOCLING_EXTENSIONS,
         auto_extensions=DOCLING_EXTENSIONS,
         dependencies=("docling", "tesserocr"),
@@ -244,8 +260,11 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
     # https://github.com/opendatalab/MinerU#supported-file-types
     ConversionPipeline.MINERU: _ConverterRegistration(
         loader=_load_mineru,
-        label="MinerU",
-        description="High-quality PDF parsing (no XLSX)",
+        label=Localized(en="MinerU", de="MinerU"),
+        description=Localized(
+            en="High-quality PDF parsing (no XLSX)",
+            de="Hochwertige PDF-Analyse (kein XLSX)",
+        ),
         extensions=frozenset({".pdf", ".docx", ".pptx", ".png", ".jpg", ".jpeg"}),
         dependencies=("mineru",),
     ),
@@ -254,8 +273,11 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
     # https://github.com/microsoft/markitdown/tree/main/packages/markitdown/src/markitdown/converters
     ConversionPipeline.MARKITDOWN: _ConverterRegistration(
         loader=_load_markitdown,
-        label="MarkItDown",
-        description="Microsoft's converter for Office, PDF, images, and more",
+        label=Localized(en="MarkItDown", de="MarkItDown"),
+        description=Localized(
+            en="Microsoft's converter for Office, PDF, images, and more",
+            de="Konverter von Microsoft für Office, PDF, Bilder und mehr",
+        ),
         extensions=frozenset(
             {
                 ".pdf",
@@ -293,8 +315,11 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
     # https://docs.kreuzberg.dev/features/supported-formats/
     ConversionPipeline.KREUZBERG: _ConverterRegistration(
         loader=_load_kreuzberg,
-        label="Kreuzberg",
-        description="Text extraction from 75+ formats with OCR support",
+        label=Localized(en="Kreuzberg", de="Kreuzberg"),
+        description=Localized(
+            en="Text extraction from 75+ formats with OCR support",
+            de="Textextraktion aus über 75 Formaten mit OCR-Unterstützung",
+        ),
         extensions=frozenset(
             {
                 ".pdf",
@@ -339,9 +364,15 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
     # (see AnydocConverter's docstring for why).
     ConversionPipeline.ANYDOC: _ConverterRegistration(
         loader=_load_anydoc,
-        label="anydoc",
-        description=(
-            "Fast structural converter for Office, OpenDocument, RTF, EPUB, and CSV"
+        label=Localized(en="anydoc", de="anydoc"),
+        description=Localized(
+            en=(
+                "Fast structural converter for Office, OpenDocument, RTF, EPUB, and CSV"
+            ),
+            de=(
+                "Schneller struktureller Konverter für Office, OpenDocument, RTF, "
+                "EPUB und CSV"
+            ),
         ),
         extensions=frozenset(
             {
@@ -370,21 +401,30 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
     ),
     ConversionPipeline.PDF_INSPECTOR: _ConverterRegistration(
         loader=_load_pdf_inspector,
-        label="pdf-inspector",
-        description="Fast layout-aware PDF to markdown converter, no OCR",
+        label=Localized(en="pdf-inspector", de="pdf-inspector"),
+        description=Localized(
+            en="Fast layout-aware PDF to markdown converter, no OCR",
+            de="Schneller, layoutbewusster Konverter von PDF zu Markdown, ohne OCR",
+        ),
         extensions=frozenset({".pdf"}),
     ),
     ConversionPipeline.PDF_OXIDE: _ConverterRegistration(
         loader=_load_pdf_oxide,
-        label="pdf_oxide",
-        description="High-performance Rust-based PDF to markdown converter",
+        label=Localized(en="pdf_oxide", de="pdf_oxide"),
+        description=Localized(
+            en="High-performance Rust-based PDF to markdown converter",
+            de="Leistungsstarker, Rust-basierter Konverter von PDF zu Markdown",
+        ),
         extensions=frozenset({".pdf"}),
         dependencies=("pdf_oxide",),
     ),
     ConversionPipeline.TABLE_CHEF: _ConverterRegistration(
         loader=_load_table_chef,
-        label="Table Chef",
-        description="CSV/Excel to markdown tables via pandas",
+        label=Localized(en="Table Chef", de="Table Chef"),
+        description=Localized(
+            en="CSV/Excel to markdown tables via pandas",
+            de="CSV/Excel zu Markdown-Tabellen über pandas",
+        ),
         extensions=frozenset({".csv", ".xls", ".xlsx"}),
     ),
     # A routing preference, not a capability: these overlap richer converters
@@ -394,8 +434,11 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
     # content.
     ConversionPipeline.PLAIN_TEXT: _ConverterRegistration(
         loader=_load_plain_text,
-        label="Plain Text",
-        description="Text, configuration, data-serialization, and source files as-is",
+        label=Localized(en="Plain Text", de="Reiner Text"),
+        description=Localized(
+            en="Text, configuration, data-serialization, and source files as-is",
+            de="Text-, Konfigurations-, Datenserialisierungs- und Quelldateien unverändert",
+        ),
         extensions=None,
         auto_extensions=PLAIN_TEXT_EXTENSIONS,
     ),
@@ -690,6 +733,33 @@ def projects_verbatim(filename: str) -> bool:
     )
 
 
+def _unsupported_extension(name: str, extension: str, supported: str) -> Localized[str]:
+    return Localized(
+        en=(
+            f"Conversion pipeline '{name}' does not support "
+            f"{extension}. Supported: {supported}"
+        ),
+        de=(
+            f"Die Konvertierungspipeline „{name}“ unterstützt {extension} nicht. "
+            f"Unterstützt: {supported}"
+        ),
+    )
+
+
+def _unknown_pipeline(name: str) -> Localized[str]:
+    return Localized(
+        en=f"Unknown conversion pipeline: {name}",
+        de=f"Unbekannte Konvertierungspipeline: {name}",
+    )
+
+
+def _not_available(name: str) -> Localized[str]:
+    return Localized(
+        en=f"Conversion pipeline '{name}' is not available",
+        de=f"Die Konvertierungspipeline „{name}“ ist nicht verfügbar",
+    )
+
+
 def _reject_unsupported_extension(
     pipeline: ConversionPipeline,
     registration: _ConverterRegistration,
@@ -706,8 +776,9 @@ def _reject_unsupported_extension(
     extension = match_file_extension(filename, registration.extensions)
     if extension and extension not in registration.extensions:
         raise ValueError(
-            f"Conversion pipeline '{pipeline.value}' does not support "
-            f"{extension}. Supported: {', '.join(sorted(registration.extensions))}"
+            _unsupported_extension(
+                pipeline.value, extension, ", ".join(sorted(registration.extensions))
+            ).current
         )
 
 
@@ -758,7 +829,7 @@ def get_converter(
     if pipeline is not ConversionPipeline.AUTO:
         registration = _CONVERTERS.get(pipeline)
         if registration is None:
-            raise ValueError(f"Unknown conversion pipeline: {pipeline}")
+            raise ValueError(_unknown_pipeline(pipeline).current)
 
         _reject_unsupported_extension(pipeline, registration, filename)
         try:
@@ -790,8 +861,18 @@ def get_converter(
     raise ImportError("No AUTO conversion pipeline is available") from unavailable
 
 
+_AUTO_LABEL = Localized(en="Auto", de="Automatisch")
+_AUTO_DESCRIPTION = Localized(
+    en="Automatically selects the best pipeline for each file",
+    de="Wählt automatisch die beste Pipeline für jede Datei",
+)
+
+
 def get_conversion_pipelines_info() -> list[ConversionPipelineInfo]:
-    """Get dependency-free metadata for installed conversion pipelines."""
+    """Get dependency-free metadata for installed conversion pipelines.
+
+    Labels and descriptions are in the language of the request being served.
+    """
     available = {
         pipeline: registration
         for pipeline, registration in _CONVERTERS.items()
@@ -807,15 +888,15 @@ def get_conversion_pipelines_info() -> list[ConversionPipelineInfo]:
     return [
         ConversionPipelineInfo(
             value=ConversionPipeline.AUTO.value,
-            label="Auto",
-            description="Automatically selects the best pipeline for each file",
+            label=_AUTO_LABEL.current,
+            description=_AUTO_DESCRIPTION.current,
             extensions=all_extensions,
         ),
         *(
             ConversionPipelineInfo(
                 value=pipeline.value,
-                label=registration.label,
-                description=registration.description,
+                label=registration.label.current,
+                description=registration.description.current,
                 extensions=sorted(registration.advertised_extensions),
             )
             for pipeline, registration in available.items()
@@ -830,6 +911,6 @@ def get_conversion_pipeline_config(
     """Get configuration metadata for one selected conversion pipeline."""
     registration = _CONVERTERS.get(pipeline)
     if registration is None or not registration.available:
-        raise ValueError(f"Conversion pipeline '{pipeline.value}' is not available")
+        raise ValueError(_not_available(pipeline.value).current)
 
     return registration.config_info(pipeline.value)

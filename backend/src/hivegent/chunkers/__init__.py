@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from ..l10n import Localized
 from ..pipeline_registry import (
     PipelineConfigInfo,
     PipelineImplementation,
@@ -134,67 +135,117 @@ def _load_slumber() -> PipelineImplementation[DocumentChunker]:
 _CHUNKERS: dict[ChunkingPipeline, PipelineRegistration[DocumentChunker]] = {
     ChunkingPipeline.NONE: PipelineRegistration(
         loader=_load_none,
-        label="None",
-        description="Keep the full document as a single chunk",
+        label=Localized(en="None", de="Keine"),
+        description=Localized(
+            en="Keep the full document as a single chunk",
+            de="Behält das gesamte Dokument als einen einzigen Chunk",
+        ),
     ),
     ChunkingPipeline.TOKEN: PipelineRegistration(
         loader=_load_token,
-        label="Token",
-        description="Fixed token-count chunks for uniform processing",
+        label=Localized(en="Token", de="Token"),
+        description=Localized(
+            en="Fixed token-count chunks for uniform processing",
+            de="Chunks mit fester Tokenanzahl für eine gleichmäßige Verarbeitung",
+        ),
     ),
     ChunkingPipeline.FAST: PipelineRegistration(
         loader=_load_fast,
-        label="Fast",
-        description="High-throughput delimiter-based splitting",
+        label=Localized(en="Fast", de="Schnell"),
+        description=Localized(
+            en="High-throughput delimiter-based splitting",
+            de="Schnelle Aufteilung anhand von Trennzeichen",
+        ),
     ),
     ChunkingPipeline.SENTENCE: PipelineRegistration(
         loader=_load_sentence,
-        label="Sentence",
-        description="Respects sentence boundaries, good for prose and plain text",
+        label=Localized(en="Sentence", de="Satz"),
+        description=Localized(
+            en="Respects sentence boundaries, good for prose and plain text",
+            de="Berücksichtigt Satzgrenzen, gut für Fließtext und reinen Text",
+        ),
     ),
     ChunkingPipeline.RECURSIVE: PipelineRegistration(
         loader=_load_recursive,
-        label="Recursive",
-        description="Hierarchical splitting by headings, paragraphs, and sentences",
+        label=Localized(en="Recursive", de="Rekursiv"),
+        description=Localized(
+            en="Hierarchical splitting by headings, paragraphs, and sentences",
+            de="Hierarchische Aufteilung nach Überschriften, Absätzen und Sätzen",
+        ),
     ),
     ChunkingPipeline.TABLE: PipelineRegistration(
         loader=_load_table,
-        label="Table",
-        description="Row-based splitting for tabular data",
+        label=Localized(en="Table", de="Tabelle"),
+        description=Localized(
+            en="Row-based splitting for tabular data",
+            de="Zeilenweise Aufteilung für tabellarische Daten",
+        ),
     ),
     ChunkingPipeline.MARKDOWN: PipelineRegistration(
         loader=_load_markdown,
-        label="Markdown",
-        description="Parses markdown into semantic elements (text, tables, code)",
+        label=Localized(en="Markdown", de="Markdown"),
+        description=Localized(
+            en="Parses markdown into semantic elements (text, tables, code)",
+            de="Zerlegt Markdown in semantische Elemente (Text, Tabellen, Code)",
+        ),
     ),
     ChunkingPipeline.SEMANTIC: PipelineRegistration(
         loader=_load_semantic,
-        label="Semantic",
-        description="Splits by semantic similarity using embeddings",
+        label=Localized(en="Semantic", de="Semantisch"),
+        description=Localized(
+            en="Splits by semantic similarity using embeddings",
+            de="Teilt nach semantischer Ähnlichkeit mithilfe von Embeddings",
+        ),
         dependencies=("model2vec",),
     ),
     ChunkingPipeline.CODE: PipelineRegistration(
         loader=_load_code,
-        label="Code",
-        description="Syntax-aware splitting using tree-sitter",
+        label=Localized(en="Code", de="Code"),
+        description=Localized(
+            en="Syntax-aware splitting using tree-sitter",
+            de="Syntaxbewusste Aufteilung mit tree-sitter",
+        ),
         dependencies=("tree_sitter_language_pack",),
     ),
     ChunkingPipeline.NEURAL: PipelineRegistration(
         loader=_load_neural,
-        label="Neural",
-        description="Neural model-based chunk boundary detection",
+        label=Localized(en="Neural", de="Neuronal"),
+        description=Localized(
+            en="Neural model-based chunk boundary detection",
+            de="Erkennt Chunkgrenzen mit einem neuronalen Modell",
+        ),
     ),
     ChunkingPipeline.LATE: PipelineRegistration(
         loader=_load_late,
-        label="Late",
-        description="Late-interaction embedding-aware chunk boundaries",
+        label=Localized(en="Late", de="Late"),
+        description=Localized(
+            en="Late-interaction embedding-aware chunk boundaries",
+            de="Chunkgrenzen auf Basis von Late-Interaction-Embeddings",
+        ),
     ),
     ChunkingPipeline.SLUMBER: PipelineRegistration(
         loader=_load_slumber,
-        label="Slumber",
-        description="LLM-guided intelligent chunk boundary decisions",
+        label=Localized(en="Slumber", de="Slumber"),
+        description=Localized(
+            en="LLM-guided intelligent chunk boundary decisions",
+            de="Intelligente Chunkgrenzen, vom LLM bestimmt",
+        ),
     ),
 }
+
+
+def _not_available(name: str) -> Localized[str]:
+    return Localized(
+        en=f"Chunking pipeline '{name}' is not available",
+        de=f"Die Chunking-Pipeline „{name}“ ist nicht verfügbar",
+    )
+
+
+_AUTO_LABEL = Localized(en="Auto", de="Automatisch")
+_AUTO_DESCRIPTION = Localized(
+    en="Recommended default: structure-aware recursive splitting",
+    de="Empfohlener Standard: strukturbewusste rekursive Aufteilung",
+)
 
 
 def get_chunker(
@@ -238,18 +289,21 @@ def get_chunker(
 
 
 def get_chunking_pipelines_info() -> list[ChunkingPipelineInfo]:
-    """Get dependency-free metadata for installed chunking pipelines."""
+    """Get dependency-free metadata for installed chunking pipelines.
+
+    Labels and descriptions are in the language of the request being served.
+    """
     return [
         ChunkingPipelineInfo(
             value=ChunkingPipeline.AUTO.value,
-            label="Auto",
-            description="Recommended default: structure-aware recursive splitting",
+            label=_AUTO_LABEL.current,
+            description=_AUTO_DESCRIPTION.current,
         ),
         *(
             ChunkingPipelineInfo(
                 value=pipeline.value,
-                label=registration.label,
-                description=registration.description,
+                label=registration.label.current,
+                description=registration.description.current,
             )
             for pipeline, registration in _CHUNKERS.items()
             if registration.available
@@ -264,6 +318,6 @@ def get_chunking_pipeline_config(
     """Get configuration metadata for one selected chunking pipeline."""
     registration = _CHUNKERS.get(pipeline)
     if registration is None or not registration.available:
-        raise ValueError(f"Chunking pipeline '{pipeline.value}' is not available")
+        raise ValueError(_not_available(pipeline.value).current)
 
     return registration.config_info(pipeline.value)

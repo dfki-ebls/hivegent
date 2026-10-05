@@ -16,9 +16,13 @@ from ..concurrency import shield_to_completion
 from ..config import settings
 from ..db import documents as db_documents
 from ..entries import SCRATCH_DIR_NAME
+from ..l10n import Localized
 from ..store import Casebase
 from .locks import _locked_for, _reject_if_scope_inflight, store_lock
 from .paths import (
+    DESTINATION_EXISTS,
+    DIRECTORY_NOT_FOUND,
+    DIRECTORY_PATH_REQUIRED,
     _check_destination_parents,
     _check_not_reserved_path,
     _is_blocked_by_other,
@@ -38,17 +42,27 @@ __all__ = [
     "prune_empty_dirs",
 ]
 
+_PATH_EXISTS = Localized(en="Path already exists", de="Der Pfad existiert bereits")
+_SAME_PATHS = Localized(
+    en="Source and destination are the same",
+    de="Quelle und Ziel sind identisch",
+)
+_INTO_ITSELF = Localized(
+    en="Cannot move a directory into itself",
+    de="Ein Ordner kann nicht in sich selbst bewegt werden",
+)
+
 
 async def create_directory(store: Casebase, path: str) -> None:
     """Create an empty workspace directory."""
     if not path:
-        raise HTTPException(status_code=400, detail="Directory path required")
+        raise HTTPException(status_code=400, detail=DIRECTORY_PATH_REQUIRED.current)
     _check_not_reserved_path(path)
     async with _locked_for(store, path):
         workspace_dir = store.workspace_dir(settings.data_dir)
         directory_path = workspace_dir / path
         if directory_path.exists():
-            raise HTTPException(status_code=409, detail="Path already exists")
+            raise HTTPException(status_code=409, detail=_PATH_EXISTS.current)
         _check_destination_parents(store, path)
         directory_path.mkdir(parents=True, exist_ok=True)
 
@@ -70,11 +84,11 @@ async def _move_directory_locked(
     cross_store = src_store != dst_store
 
     if not src:
-        raise HTTPException(status_code=400, detail="Directory path required")
+        raise HTTPException(status_code=400, detail=DIRECTORY_PATH_REQUIRED.current)
     _check_not_reserved_path(src)
     src_dir = src_workspace / src
     if not src_dir.is_dir():
-        raise HTTPException(status_code=404, detail="Directory not found")
+        raise HTTPException(status_code=404, detail=DIRECTORY_NOT_FOUND.current)
 
     dst = _resolve_move_destination(
         dst_workspace, PurePosixPath(src).name, dst, src_dir
@@ -82,9 +96,7 @@ async def _move_directory_locked(
     _check_not_reserved_path(dst)
     _reject_if_scope_inflight(dst_store, dst)
     if not cross_store and dst == src:
-        raise HTTPException(
-            status_code=400, detail="Source and destination are the same"
-        )
+        raise HTTPException(status_code=400, detail=_SAME_PATHS.current)
     dst_dir = dst_workspace / dst
     # Reject moving a directory beneath itself.  Inode comparison against the
     # destination's existing ancestors also catches case-aliased spellings on
@@ -95,12 +107,10 @@ async def _move_directory_locked(
         if ancestor == dst_workspace:
             break
         if _is_same_file(ancestor, src_dir):
-            raise HTTPException(
-                status_code=400, detail="Cannot move a directory into itself"
-            )
+            raise HTTPException(status_code=400, detail=_INTO_ITSELF.current)
     _check_destination_parents(dst_store, dst)
     if _is_blocked_by_other(dst_dir, src_dir):
-        raise HTTPException(status_code=409, detail="Destination already exists")
+        raise HTTPException(status_code=409, detail=DESTINATION_EXISTS.current)
 
     dst_dir.parent.mkdir(parents=True, exist_ok=True)
     src_dir.rename(dst_dir)
@@ -156,11 +166,11 @@ async def _delete_directory_locked(store: Casebase, path: str) -> None:
         # A bare scope root resolves to an empty path; deleting it here would
         # wipe the workspace files while leaving every SQL row behind.  The
         # full wipe (files + rows) is `delete_all`.
-        raise HTTPException(status_code=400, detail="Directory path required")
+        raise HTTPException(status_code=400, detail=DIRECTORY_PATH_REQUIRED.current)
     workspace_dir = store.workspace_dir(settings.data_dir)
     directory_path = workspace_dir / path
     if not directory_path.is_dir():
-        raise HTTPException(status_code=404, detail="Directory not found")
+        raise HTTPException(status_code=404, detail=DIRECTORY_NOT_FOUND.current)
     await asyncio.to_thread(_remove_tree, directory_path)
     # Children-only: a same-named sibling document (stem equal to *path*)
     # lives outside the directory and keeps its row.

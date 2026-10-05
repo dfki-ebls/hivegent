@@ -10,10 +10,13 @@ from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset
 
 from ..config import settings
+from ..l10n import Localized
 from ..security import create_safe_async_client, require_safe_external_url
 from ..types import McpServerConfig
 
 __all__ = ["build_mcp_server", "build_mcp_toolset", "validate_mcp_servers"]
+
+_URL_LABEL = Localized(en="MCP server url", de="URL des MCP-Servers")
 
 
 def _safe_httpx_client_factory(
@@ -40,10 +43,14 @@ def _safe_httpx_client_factory(
 
 
 def validate_mcp_servers(servers: Iterable[McpServerConfig]) -> None:
-    """Apply the user URL allowlist before dereferencing MCP server URLs."""
+    """Apply the user URL allowlist before dereferencing MCP server URLs.
+
+    The error names the field in the request's language, since it surfaces in
+    the settings dialog that configures the server.
+    """
     policy = settings.security.user_policy()
     for server in servers:
-        require_safe_external_url(server.url, "MCP server url", policy=policy)
+        require_safe_external_url(server.url, _URL_LABEL.current, policy=policy)
 
 
 def build_mcp_toolset(server_cfg: McpServerConfig) -> MCPToolset[Any]:

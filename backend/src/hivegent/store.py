@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Concatenate, Literal, Self, cast, get_args
 
 from .config import sanitize_group_id, sanitize_user_id
+from .l10n import Localized
 from .tools.base import SearchPath, SearchPathFilterFunc
 
 __all__ = [
@@ -32,6 +33,20 @@ CasebaseKind = Literal["user", "group"]
 
 USER_PREFIX = "~"
 GROUP_PREFIX = "@"
+
+
+def _invalid_path(path: str) -> Localized[str]:
+    return Localized(
+        en=f"Invalid workspace path: {path!r}",
+        de=f"Ungültiger Pfad im Arbeitsbereich: „{path}“",
+    )
+
+
+def _no_workspace(path: str) -> Localized[str]:
+    return Localized(
+        en=f"No accessible workspace for {path!r}",
+        de=f"Kein zugänglicher Arbeitsbereich für „{path}“",
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -91,7 +106,7 @@ class WorkspaceScope:
             group_id, _, local = raw[len(GROUP_PREFIX) :].partition("/")
             if group_id:
                 return cls(group_id), local
-        raise ValueError(f"Invalid workspace path: {raw!r}")
+        raise ValueError(_invalid_path(raw).current)
 
 
 @dataclass(slots=True, frozen=True)
@@ -220,7 +235,7 @@ def _route(stores: Sequence[Casebase], path: str) -> tuple[Casebase, str]:
     scope, local = WorkspaceScope.parse(path)
     store = next((s for s in stores if s.scope == scope), None)
     if store is None:
-        raise ValueError(f"No accessible workspace for {path!r}")
+        raise ValueError(_no_workspace(path).current)
 
     return store, local
 

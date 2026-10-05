@@ -31,6 +31,7 @@ from ...db.groups import delete_all_groups, list_groups_with_counts
 from ...db.models import Group, User
 from ...db.users import delete_all_users, delete_user, list_users_with_counts
 from ...humanize import pluralize
+from ...l10n import Localized
 from ...reconcile import reconcile_all
 from ...store import Casebase
 from ...types import (
@@ -49,6 +50,29 @@ from ..maintenance import is_enabled, set_enabled
 __all__ = ["router"]
 
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
+
+
+def _reindexed(
+    stores: int, ingested: int, renamed: int, collisions: int
+) -> Localized[str]:
+    return Localized(
+        en=(
+            f"Reconciled {stores} {pluralize(stores, 'casebase')}: "
+            f"{ingested} {pluralize(ingested, 'entry', 'entries')} ingested, "
+            f"{renamed} {pluralize(renamed, 'path')} renamed"
+            + (f", {collisions} skipped (both spellings exist)" if collisions else "")
+        ),
+        de=(
+            f"{stores} {pluralize(stores, 'Arbeitsbereich', 'Arbeitsbereiche')} "
+            f"abgeglichen: {ingested} {pluralize(ingested, 'Eintrag', 'Einträge')} "
+            f"aufgenommen, {renamed} {pluralize(renamed, 'Pfad', 'Pfade')} umbenannt"
+            + (
+                f", {collisions} übersprungen (beide Schreibweisen vorhanden)"
+                if collisions
+                else ""
+            )
+        ),
+    )
 
 
 # ─── Overviews ────────────────────────────────────────────────────────
@@ -176,14 +200,9 @@ async def admin_reindex() -> AdminReindexResponse:
     ingested = sum(r.entries_ingested for r in reports)
     renamed = sum(r.normalized.files_renamed for r in reports)
     collisions = sum(r.normalized.collisions for r in reports)
-    skipped = f", {collisions} skipped (both spellings exist)" if collisions else ""
     return AdminReindexResponse(
         stores_reconciled=len(reports),
-        message=(
-            f"Reconciled {len(reports)} {pluralize(len(reports), 'casebase')}: "
-            f"{ingested} {pluralize(ingested, 'entry', 'entries')} ingested, "
-            f"{renamed} {pluralize(renamed, 'path')} renamed{skipped}"
-        ),
+        message=_reindexed(len(reports), ingested, renamed, collisions).current,
     )
 
 

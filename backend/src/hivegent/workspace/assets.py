@@ -21,6 +21,7 @@ from ..entries import (
     description_path_for_stem,
     stem_path_from_reference,
 )
+from ..l10n import Localized
 from ..llm_config import LlmConfig
 from ..store import Casebase
 from ..text import read_text_file
@@ -35,6 +36,12 @@ __all__ = [
     "generate_asset_description",
     "update_asset_description",
 ]
+
+_ASSET_ESCAPES = Localized(
+    en="Asset path escapes assets directory",
+    de="Der Asset-Pfad verlässt den Asset-Ordner",
+)
+_ASSET_NOT_FOUND = Localized(en="Asset file not found", de="Asset-Datei nicht gefunden")
 
 
 def _resolve_existing_asset(
@@ -57,12 +64,9 @@ def _resolve_existing_asset(
 
     asset_path = assets_path / safe_name
     if not asset_path.resolve().is_relative_to(assets_path.resolve()):
-        raise HTTPException(
-            status_code=400,
-            detail="Asset path escapes assets directory",
-        )
+        raise HTTPException(status_code=400, detail=_ASSET_ESCAPES.current)
     if not asset_path.is_file():
-        raise HTTPException(status_code=404, detail="Asset file not found")
+        raise HTTPException(status_code=404, detail=_ASSET_NOT_FOUND.current)
 
     return workspace, safe_name, asset_path
 
