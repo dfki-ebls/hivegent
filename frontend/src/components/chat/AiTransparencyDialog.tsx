@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { DownloadIcon, ScanSearchIcon } from "lucide-react";
 
+import { FormSection } from "@/components/FormSection";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -75,63 +76,72 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
           Verify AI text
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Verify Hivegent text</DialogTitle>
           <DialogDescription>
-            Paste text to check for Hivegent&apos;s imperceptible watermark. The text is processed
-            only for this check and is not retained.
+            Check text for Hivegent&apos;s imperceptible watermark. The text is processed only for
+            this check and is not retained.
           </DialogDescription>
         </DialogHeader>
-        <Textarea
-          value={text}
-          onChange={(event) => {
-            setText(event.target.value);
-            setResult(null);
-            setError(null);
-          }}
-          rows={10}
-          placeholder={`For a reliable negative result, use more than ${minimumTokens} tokens.`}
-          aria-label="Text to verify"
-        />
-        {result && (
-          <output className="block space-y-1 text-sm">
-            <p className={cn("font-medium", STATUS_STYLES[result.status])}>{result.message}</p>
-            <p className="text-xs text-muted-foreground">
-              Result based on an imperceptible text watermark. The signed report contains only a
-              SHA-256 hash of the submitted text and detector metadata.
+
+        <div className="grid gap-4 py-4">
+          <FormSection
+            label="Text"
+            htmlFor="verify-text"
+            description={`For a reliable negative result, use more than ${minimumTokens} tokens. Watermarks can be damaged by editing or translation, so a negative result never proves human authorship.`}
+          >
+            <Textarea
+              id="verify-text"
+              value={text}
+              onChange={(event) => {
+                setText(event.target.value);
+                setResult(null);
+                setError(null);
+              }}
+              placeholder="Paste the text to verify..."
+              className="h-[40vh] min-h-[100px] resize-y overflow-y-auto field-sizing-fixed"
+            />
+          </FormSection>
+
+          {result && (
+            <FormSection
+              label="Result"
+              description="Based on an imperceptible text watermark. The signed report contains only a SHA-256 hash of the submitted text and detector metadata."
+            >
+              <output className={cn("text-sm font-medium", STATUS_STYLES[result.status])}>
+                {result.message}
+              </output>
+            </FormSection>
+          )}
+
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
             </p>
-          </output>
-        )}
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
-        <p className="text-xs text-muted-foreground">
-          Watermarks can be damaged by editing or translation. A negative result never proves human
-          authorship.
+          )}
+
           {contactEmail && (
-            <>
-              {" "}
+            <p className="text-xs text-muted-foreground">
               Qualified external reviewers can request access at{" "}
               <a className="underline" href={`mailto:${contactEmail}`}>
                 {contactEmail}
               </a>
               .
-            </>
+            </p>
           )}
-        </p>
-        <DialogFooter>
+        </div>
+
+        <DialogFooter className="flex-row">
           {result && (
-            <Button variant="outline" onClick={downloadReport}>
-              <DownloadIcon aria-hidden />
-              Download signed report
+            <Button variant="outline" size="sm" className="mr-auto" onClick={downloadReport}>
+              <DownloadIcon />
+              Download Signed Report
             </Button>
           )}
-          <Button onClick={detect} disabled={!text.trim() || checking}>
-            <ScanSearchIcon aria-hidden />
-            {checking ? "Checking" : "Verify text"}
+          <Button size="sm" onClick={detect} disabled={!text.trim() || checking}>
+            <ScanSearchIcon />
+            {checking ? "Verifying..." : "Verify Text"}
           </Button>
         </DialogFooter>
       </DialogContent>
