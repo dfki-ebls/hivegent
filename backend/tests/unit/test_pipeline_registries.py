@@ -15,10 +15,10 @@ from hivegent.chunkers import (
 def test_pipeline_metadata_does_not_load_implementations() -> None:
     code = (
         "import sys\n"
-        "from hivegent.chunkers import get_chunking_pipelines_info\n"
-        "from hivegent.converters import get_conversion_pipelines_info\n"
-        "get_chunking_pipelines_info()\n"
-        "get_conversion_pipelines_info()\n"
+        "from hivegent.chunkers import get_chunking_pipelines\n"
+        "from hivegent.converters import get_conversion_pipelines\n"
+        "get_chunking_pipelines()\n"
+        "get_conversion_pipelines()\n"
         "print('chonkie' in sys.modules, 'docling' in sys.modules)\n"
     )
     result = subprocess.run(

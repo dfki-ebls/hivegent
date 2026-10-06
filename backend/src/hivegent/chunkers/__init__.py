@@ -1,6 +1,5 @@
 """Document chunking infrastructure for Hivegent."""
 
-from dataclasses import dataclass
 from enum import StrEnum
 from functools import cache
 from typing import Any
@@ -17,12 +16,11 @@ from .base import DocumentChunker
 
 __all__ = [
     "ChunkingPipeline",
-    "ChunkingPipelineInfo",
     "ChunkingSpec",
     "DocumentChunker",
     "get_chunker",
     "get_chunking_pipeline_config",
-    "get_chunking_pipelines_info",
+    "get_chunking_pipelines",
 ]
 
 
@@ -49,15 +47,6 @@ class ChunkingSpec(BaseModel):
 
     pipeline: ChunkingPipeline = ChunkingPipeline.AUTO
     config: dict[str, Any] | None = None
-
-
-@dataclass(slots=True, frozen=True)
-class ChunkingPipelineInfo:
-    """Public metadata for a chunking pipeline."""
-
-    value: str
-    label: str
-    description: str
 
 
 def _load_none() -> PipelineImplementation[DocumentChunker]:
@@ -135,101 +124,41 @@ def _load_slumber() -> PipelineImplementation[DocumentChunker]:
 _CHUNKERS: dict[ChunkingPipeline, PipelineRegistration[DocumentChunker]] = {
     ChunkingPipeline.NONE: PipelineRegistration(
         loader=_load_none,
-        label=Localized(en="None", de="Keine"),
-        description=Localized(
-            en="Keep the full document as a single chunk",
-            de="Behält das gesamte Dokument als einen einzigen Chunk",
-        ),
     ),
     ChunkingPipeline.TOKEN: PipelineRegistration(
         loader=_load_token,
-        label=Localized(en="Token", de="Token"),
-        description=Localized(
-            en="Fixed token-count chunks for uniform processing",
-            de="Chunks mit fester Tokenanzahl für eine gleichmäßige Verarbeitung",
-        ),
     ),
     ChunkingPipeline.FAST: PipelineRegistration(
         loader=_load_fast,
-        label=Localized(en="Fast", de="Schnell"),
-        description=Localized(
-            en="High-throughput delimiter-based splitting",
-            de="Schnelle Aufteilung anhand von Trennzeichen",
-        ),
     ),
     ChunkingPipeline.SENTENCE: PipelineRegistration(
         loader=_load_sentence,
-        label=Localized(en="Sentence", de="Satz"),
-        description=Localized(
-            en="Respects sentence boundaries, good for prose and plain text",
-            de="Berücksichtigt Satzgrenzen, gut für Fließtext und reinen Text",
-        ),
     ),
     ChunkingPipeline.RECURSIVE: PipelineRegistration(
         loader=_load_recursive,
-        label=Localized(en="Recursive", de="Rekursiv"),
-        description=Localized(
-            en="Hierarchical splitting by headings, paragraphs, and sentences",
-            de="Hierarchische Aufteilung nach Überschriften, Absätzen und Sätzen",
-        ),
     ),
     ChunkingPipeline.TABLE: PipelineRegistration(
         loader=_load_table,
-        label=Localized(en="Table", de="Tabelle"),
-        description=Localized(
-            en="Row-based splitting for tabular data",
-            de="Zeilenweise Aufteilung für tabellarische Daten",
-        ),
     ),
     ChunkingPipeline.MARKDOWN: PipelineRegistration(
         loader=_load_markdown,
-        label=Localized(en="Markdown", de="Markdown"),
-        description=Localized(
-            en="Parses markdown into semantic elements (text, tables, code)",
-            de="Zerlegt Markdown in semantische Elemente (Text, Tabellen, Code)",
-        ),
     ),
     ChunkingPipeline.SEMANTIC: PipelineRegistration(
         loader=_load_semantic,
-        label=Localized(en="Semantic", de="Semantisch"),
-        description=Localized(
-            en="Splits by semantic similarity using embeddings",
-            de="Teilt nach semantischer Ähnlichkeit mithilfe von Embeddings",
-        ),
         dependencies=("model2vec",),
     ),
     ChunkingPipeline.CODE: PipelineRegistration(
         loader=_load_code,
-        label=Localized(en="Code", de="Code"),
-        description=Localized(
-            en="Syntax-aware splitting using tree-sitter",
-            de="Syntaxbewusste Aufteilung mit tree-sitter",
-        ),
         dependencies=("tree_sitter_language_pack",),
     ),
     ChunkingPipeline.NEURAL: PipelineRegistration(
         loader=_load_neural,
-        label=Localized(en="Neural", de="Neuronal"),
-        description=Localized(
-            en="Neural model-based chunk boundary detection",
-            de="Erkennt Chunkgrenzen mit einem neuronalen Modell",
-        ),
     ),
     ChunkingPipeline.LATE: PipelineRegistration(
         loader=_load_late,
-        label=Localized(en="Late", de="Late"),
-        description=Localized(
-            en="Late-interaction embedding-aware chunk boundaries",
-            de="Chunkgrenzen auf Basis von Late-Interaction-Embeddings",
-        ),
     ),
     ChunkingPipeline.SLUMBER: PipelineRegistration(
         loader=_load_slumber,
-        label=Localized(en="Slumber", de="Slumber"),
-        description=Localized(
-            en="LLM-guided intelligent chunk boundary decisions",
-            de="Intelligente Chunkgrenzen, vom LLM bestimmt",
-        ),
     ),
 }
 
@@ -239,13 +168,6 @@ def _not_available(name: str) -> Localized[str]:
         en=f"Chunking pipeline '{name}' is not available",
         de=f"Die Chunking-Pipeline „{name}“ ist nicht verfügbar",
     )
-
-
-_AUTO_LABEL = Localized(en="Auto", de="Automatisch")
-_AUTO_DESCRIPTION = Localized(
-    en="Recommended default: structure-aware recursive splitting",
-    de="Empfohlener Standard: strukturbewusste rekursive Aufteilung",
-)
 
 
 def get_chunker(
@@ -288,23 +210,12 @@ def get_chunker(
     return implementation.cls(**kwargs)
 
 
-def get_chunking_pipelines_info() -> list[ChunkingPipelineInfo]:
-    """Get dependency-free metadata for installed chunking pipelines.
-
-    Labels and descriptions are in the language of the request being served.
-    """
+def get_chunking_pipelines() -> list[ChunkingPipeline]:
+    """Get the installed chunking pipelines without importing them."""
     return [
-        ChunkingPipelineInfo(
-            value=ChunkingPipeline.AUTO.value,
-            label=_AUTO_LABEL.current,
-            description=_AUTO_DESCRIPTION.current,
-        ),
+        ChunkingPipeline.AUTO,
         *(
-            ChunkingPipelineInfo(
-                value=pipeline.value,
-                label=registration.label.current,
-                description=registration.description.current,
-            )
+            pipeline
             for pipeline, registration in _CHUNKERS.items()
             if registration.available
         ),

@@ -61,7 +61,7 @@ flowchart LR
 - Bearer tokens from the browser OIDC session on every API and chat request.
 - Chat configuration (model overrides, reasoning effort, filters, tool settings) travels with each chat request and resolves into a user-scoped agent run.
 - Zod on the frontend and Pydantic on the backend keep request and response boundaries explicit.
-- The interface language (English or German) is the browser's, fixed at page load, and travels as `Accept-Language` on every request and selects the language of backend error details, job titles, pipeline labels, and the agent's instructions.
+- The interface language (English or German) is the browser's, fixed at page load, and travels as `Accept-Language` on every request and selects the language of backend error details, job titles, and the agent's instructions, while labels of fixed option values such as pipelines live in the frontend catalog.
 
 ```mermaid
 sequenceDiagram

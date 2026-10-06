@@ -8,8 +8,6 @@ from typing import Any, ClassVar, Protocol
 
 from pydantic import BaseModel
 
-from .l10n import Localized
-
 __all__ = [
     "PipelineConfigInfo",
     "PipelineImplementation",
@@ -50,8 +48,6 @@ class PipelineRegistration[T: NamedPipeline]:
     """Dependency-free metadata and a typed lazy pipeline loader."""
 
     loader: Callable[[], PipelineImplementation[T]]
-    label: Localized[str]
-    description: Localized[str]
     dependencies: tuple[str, ...] = ()
 
     @property

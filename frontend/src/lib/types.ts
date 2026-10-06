@@ -263,23 +263,6 @@ export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
 /** The two pipeline stages a document passes through. */
 export type PipelineKind = "conversion" | "chunking";
 
-/** Metadata for a conversion pipeline, fetched from the backend. */
-export const ConversionPipelineInfoSchema = z.object({
-  value: z.string(),
-  label: z.string(),
-  description: z.string(),
-  extensions: z.array(z.string()),
-});
-export type ConversionPipelineInfo = z.infer<typeof ConversionPipelineInfoSchema>;
-
-/** Metadata for a chunking pipeline, fetched from the backend. */
-export const ChunkingPipelineInfoSchema = z.object({
-  value: z.string(),
-  label: z.string(),
-  description: z.string(),
-});
-export type ChunkingPipelineInfo = z.infer<typeof ChunkingPipelineInfoSchema>;
-
 /** Configuration metadata loaded only for the selected pipeline. */
 export const PipelineConfigInfoSchema = z.object({
   schema: z.record(z.string(), z.unknown()),

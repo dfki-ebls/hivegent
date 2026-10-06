@@ -29,8 +29,7 @@ import {
   type ChunkedDocumentResponse,
   ChunkedDocumentResponseSchema,
   type ChunkingPipeline,
-  type ChunkingPipelineInfo,
-  ChunkingPipelineInfoSchema,
+  ChunkingPipelineSchema,
   type CompactConversationResponse,
   CompactConversationResponseSchema,
   ConversationListResponseSchema,
@@ -40,8 +39,7 @@ import {
   ConversationSummarySchema,
   type ServerConversation,
   type ConversionPipeline,
-  type ConversionPipelineInfo,
-  ConversionPipelineInfoSchema,
+  ConversionPipelineSchema,
   type DirectoryTreeResponse,
   DirectoryTreeResponseSchema,
   type GenerateTitleResponse,
@@ -777,11 +775,11 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 
 // Conversion pipeline API functions
 
-export async function listConversionPipelines(): Promise<ConversionPipelineInfo[]> {
+export async function listConversionPipelines(): Promise<ConversionPipeline[]> {
   return requestJson(
     `${API_BASE_URL}/api/pipelines/conversion`,
     "fetchConversionPipelines",
-    z.array(ConversionPipelineInfoSchema),
+    z.array(ConversionPipelineSchema),
   );
 }
 
@@ -797,11 +795,11 @@ export async function getConversionPipelineConfig(
 
 // Chunking pipeline API functions
 
-export async function listChunkingPipelines(): Promise<ChunkingPipelineInfo[]> {
+export async function listChunkingPipelines(): Promise<ChunkingPipeline[]> {
   return requestJson(
     `${API_BASE_URL}/api/pipelines/chunking`,
     "fetchChunkingPipelines",
-    z.array(ChunkingPipelineInfoSchema),
+    z.array(ChunkingPipelineSchema),
   );
 }
 

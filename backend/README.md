@@ -9,9 +9,10 @@ Migrations, the running server, and retrieval are covered by the dev stack and m
 ## Interface language
 
 The frontend sends the interface language as `Accept-Language`, and `LanguageMiddleware` makes it the ambient language of the whole request, streamed body and spawned background tasks included.
-Every text a user reads (error details, job titles, pipeline labels, chat titles) is a `Localized` value from `l10n.py` with one field per language, so a missing translation is a type error, and is resolved with `.current` where it is raised.
+Every text a user reads (error details, job titles, chat titles) is a `Localized` value from `l10n.py` with one field per language, so a missing translation is a type error, and is resolved with `.current` where it is raised.
 Text with parameters is a plain function returning `Localized[str]`, so its signature is declared and type checked once for every language.
 Fixed text is an UPPER_CASE constant and text with parameters a snake_case function, both named after the condition or event they report (`_host_blocked`, `_too_many_images`) rather than their wording, with noun phrases kept for reusable fragments (`_documents`, `UNTITLED`) and the `_INSTRUCTIONS` suffix for prompt blocks.
+Labels and descriptions of fixed option values such as pipelines are not localized here, the backend sends the enum values and the frontend catalog describes them.
 
 What the model reads is split deliberately.
 The agent's instructions and the notes injected as user turns are composed in the run's language (`UserDeps.language`, fixed once per run) and end with an explicit pin to answer in it, since what sits closest to generation decides the answer language.

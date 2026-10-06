@@ -11,17 +11,15 @@ from ...agents import collect_tool_schemas, unlisted_tool_names
 from ...auth import User, get_current_user
 from ...chunkers import (
     ChunkingPipeline,
-    ChunkingPipelineInfo,
     get_chunking_pipeline_config,
-    get_chunking_pipelines_info,
+    get_chunking_pipelines,
 )
 from ...config import settings
 from ...converters import (
     INGESTIBLE_IMAGE_MEDIA_TYPES,
     ConversionPipeline,
-    ConversionPipelineInfo,
     get_conversion_pipeline_config,
-    get_conversion_pipelines_info,
+    get_conversion_pipelines,
 )
 from ...mcp import build_mcp_toolset, validate_mcp_servers
 from ...pipeline_registry import PipelineConfigInfo
@@ -112,9 +110,9 @@ async def test_mcp_server(
 
 
 @router.get("/pipelines/conversion")
-async def list_conversion_pipelines() -> list[ConversionPipelineInfo]:
-    """Get metadata for all conversion pipelines."""
-    return get_conversion_pipelines_info()
+async def list_conversion_pipelines() -> list[ConversionPipeline]:
+    """Get the installed conversion pipelines."""
+    return get_conversion_pipelines()
 
 
 @router.get("/pipelines/conversion/{pipeline}/config")
@@ -133,9 +131,9 @@ def get_conversion_config(
 
 
 @router.get("/pipelines/chunking")
-async def list_chunking_pipelines() -> list[ChunkingPipelineInfo]:
-    """Get metadata for all chunking pipelines."""
-    return get_chunking_pipelines_info()
+async def list_chunking_pipelines() -> list[ChunkingPipeline]:
+    """Get the installed chunking pipelines."""
+    return get_chunking_pipelines()
 
 
 @router.get("/pipelines/chunking/{pipeline}/config")
