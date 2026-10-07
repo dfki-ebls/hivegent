@@ -6,7 +6,7 @@ from collections.abc import Container, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 
 from ..concurrency import shield_to_completion
 
@@ -32,12 +32,8 @@ class SubprocessResult:
         return self.stderr.decode("utf-8", errors="replace")
 
     def stdout_json[T](self, type_: type[T]) -> T:
-        """Parse stdout as JSON and validate against a type.
-
-        Uses ``json.loads``; the *type_* hint is for documentation —
-        runtime validation is the caller's responsibility.
-        """
-        return json.loads(self.stdout)
+        """Parse stdout as JSON and validate it against *type_*."""
+        return TypeAdapter(type_).validate_json(self.stdout)
 
     def stdout_ndjson(self) -> Iterator[JsonValue]:
         """Parse stdout as newline-delimited JSON (one object per line).
