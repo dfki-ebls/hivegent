@@ -4,7 +4,20 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterable
 from typing import Any
 
-__all__ = ["bounded_as_completed", "shield_to_completion"]
+__all__ = ["bounded_as_completed", "bounded_gather", "shield_to_completion"]
+
+
+def _bounded[T, R](
+    run: Callable[[T], Awaitable[R]], limit: int
+) -> Callable[[T], Coroutine[Any, Any, R]]:
+    """Wrap *run* so that at most *limit* of its calls are in flight at once."""
+    semaphore = asyncio.Semaphore(limit)
+
+    async def guarded(item: T) -> R:
+        async with semaphore:
+            return await run(item)
+
+    return guarded
 
 
 async def bounded_as_completed[T, R](
@@ -30,13 +43,9 @@ async def bounded_as_completed[T, R](
     Yields:
         Each ``run(item)`` result, in the order the calls complete.
     """
-    semaphore = asyncio.Semaphore(limit)
+    guarded = _bounded(run, limit)
+    tasks = [asyncio.ensure_future(guarded(item)) for item in items]
 
-    async def _guarded(item: T) -> R:
-        async with semaphore:
-            return await run(item)
-
-    tasks = [asyncio.ensure_future(_guarded(item)) for item in items]
     try:
         for future in asyncio.as_completed(tasks):
             yield await future
@@ -48,6 +57,41 @@ async def bounded_as_completed[T, R](
             await asyncio.gather(*tasks, return_exceptions=True)
 
         await shield_to_completion(_drain())
+
+
+async def bounded_gather[T, R](
+    items: Iterable[T],
+    run: Callable[[T], Awaitable[R]],
+    *,
+    limit: int,
+) -> list[R]:
+    """Return ``run(item)`` for every item in input order, at most *limit* in flight.
+
+    The ordered sibling of :func:`bounded_as_completed`, for callers that
+    present results side by side rather than streaming them.  The first
+    exception cancels the remaining calls and propagates, so *run* should
+    return its expected failures rather than raise them.
+
+    Args:
+        items: The inputs to process.
+        run: Coroutine function applied to each input.
+        limit: Maximum number of *run* invocations in flight at once.
+
+    Returns:
+        Each ``run(item)`` result, in the order of *items*.
+    """
+    pending = list(items)
+
+    # Nothing to overlap, so skip the task group and the semaphore.
+    if limit == 1 or len(pending) <= 1:
+        return [await run(item) for item in pending]
+
+    guarded = _bounded(run, limit)
+
+    async with asyncio.TaskGroup() as group:
+        tasks = [group.create_task(guarded(item)) for item in pending]
+
+    return [task.result() for task in tasks]
 
 
 async def shield_to_completion[T](coro: Coroutine[Any, Any, T]) -> T:

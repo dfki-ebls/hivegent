@@ -20,6 +20,7 @@ from hivegent.tools.base import (
     SyncTool,
     ToolOutput,
     ToolSpec,
+    batch_field,
     tool_description,
 )
 from hivegent.tools.fastmcp import (
@@ -29,6 +30,7 @@ from hivegent.tools.fastmcp import (
 from hivegent.tools.fastmcp import wrap_tool_output as wrap_fastmcp_output
 from hivegent.tools.pydantic_ai import (
     for_pydantic_ai,
+    invoke_tool,
     register_agent_tools,
     wrap_tool_output,
 )
@@ -145,6 +147,26 @@ class RedirectingFixtureTool(RedirectingTool[list[str]]):
     ) -> ToolOutput[list[str] | RedirectedOutput]:
         """Find matching records."""
         return ToolOutput(data=[query], formatted=query)
+
+
+@dataclass(slots=True, frozen=True)
+class ListFixtureTool(SyncTool[list[str]]):
+    """A tool taking a list argument, the shape every batched tool declares."""
+
+    @override
+    def __call__(
+        self, queries: Annotated[list[str], batch_field("Queries.")]
+    ) -> ToolOutput[list[str]]:
+        """Echo the queries."""
+        return ToolOutput(data=queries, formatted=",".join(queries))
+
+
+def _list_default(_d: _Deps) -> ListFixtureTool:
+    return ListFixtureTool()
+
+
+def _list_mcp() -> ListFixtureTool:
+    return ListFixtureTool()
 
 
 def _model_mcp() -> ModelTool:
@@ -277,6 +299,19 @@ class TestRegisterAgentTools:
         assert "async_default" in toolset.tools
 
 
+    async def test_a_bare_item_is_taken_as_a_one_item_list(self) -> None:
+        """Models often send the item itself, which the schema still calls a list."""
+        toolset: FunctionToolset[_Deps] = FunctionToolset()
+        register_agent_tools(toolset, _Deps, [_list_default])
+        tool = toolset.tools["list_default"]
+
+        _text, data = await invoke_tool(tool, {"queries": "a"}, _Deps())
+
+        assert data == ["a"]
+        schema = tool.function_schema.json_schema["properties"]["queries"]
+        assert schema["type"] == "array"
+
+
 # -- wrap_tool_output ---------------------------------------------------------
 
 
@@ -372,6 +407,14 @@ class TestForFastMCP:
         assert "$defs" in schema
         assert "Hit" in schema["$defs"]
         assert schema["properties"]["result"]["items"] == {"$ref": "#/$defs/Hit"}
+
+    async def test_a_bare_item_is_taken_as_a_one_item_list(self) -> None:
+        app = FastMCP("test")
+        register_mcp_tools(app, [_list_mcp])
+
+        result = await app.call_tool("list_mcp", {"queries": "a"})
+
+        assert result.structured_content == {"result": ["a"]}
 
     async def test_an_omitted_argument_takes_its_unreachable_branch_with_it(
         self,

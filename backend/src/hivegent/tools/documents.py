@@ -11,18 +11,21 @@ from pathlib import Path, PurePosixPath
 from stat import S_ISDIR, S_ISREG
 from typing import Annotated, override
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from ..config import content_hash, normalize_unicode
 from ..converters import vision_media_type
 from ..humanize import pluralize
 from .base import (
     WORKSPACE_SCOPE_HINT,
+    Batch,
+    BatchShare,
     FullLinesArg,
     IncludeIgnoredArg,
     SearchPath,
     ToolOutput,
     ToolRetry,
+    batch_field,
     entry_ignored,
     entry_stat,
     excluded_dirs,
@@ -32,6 +35,7 @@ from .base import (
     read_text_or_retry,
     resolve_directory,
     resolve_file_or_retry,
+    run_batch,
     scope_paths,
     sidecar_hint,
 )
@@ -47,16 +51,21 @@ __all__ = [
     "DocumentOffsetArg",
     "DocumentPathArg",
     "DocumentRange",
+    "DocumentRead",
+    "DocumentReadsArg",
     "DocumentSummary",
     "DocumentTreeNode",
     "GlobDocumentsTool",
     "GlobMaxResultsArg",
-    "GlobPatternArg",
+    "GlobPatternsArg",
     "ListDocumentsTool",
     "ReadDocumentTool",
 ]
 
 logger = logging.getLogger(__name__)
+
+_READ_CONCURRENCY = 4
+"""Documents decoded at once by one batched read, each on its own thread."""
 
 _SIZE_UNITS = ("B", "K", "M", "G")
 
@@ -85,6 +94,7 @@ class DocumentSummary:
 class DocumentRange:
     """A range of lines from a document."""
 
+    file_path: str
     start_line: int
     end_line: int
     total_lines: int
@@ -144,14 +154,49 @@ DocumentLimitArg = Annotated[
     ),
 ]
 
-GlobPatternArg = Annotated[
-    str,
-    Field(
-        description=(
-            "Glob pattern matched against workspace-relative filenames (e.g. "
-            "`*.md`, `**/*.txt`). To restrict to one workspace, prefix the "
-            "`path` argument rather than the pattern."
-        ),
+
+@dataclass(slots=True, frozen=True)
+class DocumentRead:
+    """One document to read, and the window of lines to read from it."""
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    file_path: DocumentFilePathArg
+    offset: DocumentOffsetArg = 1
+    limit: DocumentLimitArg = None
+
+    @property
+    def key(self) -> str:
+        """The path, plus the window when it is not the default one.
+
+        >>> DocumentRead("~/a.md").key
+        '~/a.md'
+        >>> DocumentRead("~/a.md", offset=40, limit=10).key
+        '~/a.md (offset=40, limit=10)'
+        """
+        window = [f"offset={self.offset}"] if self.offset != 1 else []
+        window += [f"limit={self.limit}"] if self.limit is not None else []
+
+        return f"{self.file_path} ({', '.join(window)})" if window else self.file_path
+
+
+DocumentReadsArg = Annotated[
+    list[DocumentRead],
+    batch_field(
+        "Documents to read, each with an optional window. Read every document "
+        "you need in one call rather than one call each, since the output budget is "
+        "shared between them.",
+        max_items=20,
+    ),
+]
+
+GlobPatternsArg = Annotated[
+    list[str],
+    batch_field(
+        "Glob patterns matched against workspace-relative filenames (e.g. "
+        "`*.md`, `**/*.txt`), and a file matching any of them is returned once. "
+        "To restrict to one workspace, prefix the `path` argument rather than "
+        "the patterns."
     ),
 ]
 GlobMaxResultsArg = Annotated[
@@ -323,38 +368,45 @@ def _scan_entries(
 def _glob_entries(
     roots: tuple[tuple[SearchPath, Path], ...],
     base_glob: str | None,
-    pattern: str,
+    patterns: list[str],
     max_results: int,
     exclude_dirs: tuple[str, ...],
 ) -> tuple[list[str], list[str]]:
-    """Find files matching *pattern*, with hints naming what was left out.
+    """Find files matching any of *patterns*, with hints naming what was left out.
 
-    *pattern* is a path argument matched against canonically named entries, so
-    it is folded here rather than at the call sites: unlike a scoped subdirectory
-    or glob it reaches neither :func:`resolve_search_path` nor :func:`scope_paths`.
+    Each pattern is a path argument matched against canonically named entries,
+    so it is folded here rather than at the call sites: unlike a scoped
+    subdirectory or glob it reaches neither :func:`resolve_search_path` nor
+    :func:`scope_paths`.  One walk per pattern keeps each pattern's own rglob
+    semantics, and a file two of them match is listed once.
     """
-    pattern = normalize_unicode(pattern)
-    # Without a base_glob, pass the user pattern straight to rglob and skip the
-    # per-entry fnmatch pass.
-    effective_glob = pattern if base_glob is None else base_glob
-    skip_fnmatch = base_glob is None
-    results: list[str] = []
-    hidden = 0
-    for sp, rel, _st in _walk_entries(roots, effective_glob, include_dirs=False):
-        if not (skip_fnmatch or fnmatch(rel, pattern)):
-            continue
+    results: dict[str, None] = {}
+    hidden: set[str] = set()
 
-        if entry_ignored(rel, exclude_dirs):
-            hidden += 1
-            continue
+    for pattern in dict.fromkeys(map(normalize_unicode, patterns)):
+        # Without a base_glob, pass the user pattern straight to rglob and skip
+        # the per-entry fnmatch pass.
+        effective_glob = pattern if base_glob is None else base_glob
+        skip_fnmatch = base_glob is None
 
-        results.append(sp.prefixed(rel))
+        for sp, rel, _st in _walk_entries(roots, effective_glob, include_dirs=False):
+            if not (skip_fnmatch or fnmatch(rel, pattern)):
+                continue
+
+            if entry_ignored(rel, exclude_dirs):
+                hidden.add(sp.prefixed(rel))
+                continue
+
+            results[sp.prefixed(rel)] = None
+
+            if len(results) >= max_results:
+                break
 
         if len(results) >= max_results:
             break
 
-    return results, omission_hints(
-        hidden=hidden, max_results=max_results, shown=len(results)
+    return list(results), omission_hints(
+        hidden=len(hidden), max_results=max_results, shown=len(results)
     )
 
 
@@ -521,37 +573,37 @@ class GlobDocumentsTool(RedirectingPathTool[list[str]]):
     @override
     async def __call__(
         self,
-        pattern: GlobPatternArg,
+        patterns: GlobPatternsArg,
         path: DocumentPathArg = None,
         max_results: GlobMaxResultsArg = 1000,
         include_ignored: IncludeIgnoredArg = False,
         output_path: OutputPathArg = None,
     ) -> ToolOutput[list[str] | RedirectedOutput]:
-        """Find document filenames matching a glob pattern.
+        """Find document filenames matching any of the glob patterns.
 
-        Returns a flat list of relative filenames.  Use ``list_documents``
-        for directory listings with sizes, dates, or tree output.  Common
-        build and vendor directories and the contents of ``.assets``
-        payload directories are skipped by default; pass
+        Returns one flat list of relative filenames, each listed once.  Use
+        ``list_documents`` for directory listings with sizes, dates, or tree
+        output.  Common build and vendor directories and the contents of
+        ``.assets`` payload directories are skipped by default.  Pass
         ``include_ignored=True`` to include them.
         """
         result = await asyncio.to_thread(
-            self._glob, pattern, path, max_results, include_ignored
+            self._glob, patterns, path, max_results, include_ignored
         )
 
         return await self.redirect(result, output_path)
 
     def _glob(
         self,
-        pattern: str,
+        patterns: list[str],
         path: str | None,
         max_results: int,
         include_ignored: bool,
     ) -> ToolOutput[list[str]]:
-        """Match filenames against *pattern*, reporting what was left out."""
+        """Match filenames against *patterns*, reporting what was left out."""
         paths, roots, subdir = _scoped_directory(self.resolved_paths, path)
         results, hints = _glob_entries(
-            roots, self.glob, pattern, max_results, excluded_dirs(include_ignored)
+            roots, self.glob, patterns, max_results, excluded_dirs(include_ignored)
         )
         body = "\n".join(results) or _empty_message("no matches", paths, subdir)
 
@@ -559,8 +611,8 @@ class GlobDocumentsTool(RedirectingPathTool[list[str]]):
 
 
 @dataclass(slots=True, frozen=True)
-class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
-    """Read a document's content as a line range with line numbers.
+class ReadDocumentTool(RedirectingPathTool[Batch[DocumentRange]]):
+    """Read documents' content as line ranges with line numbers.
 
     Three budgets sit on different axes.  ``max_chars`` bounds the window
     of content selected, ``max_line_chars`` clips each numbered line so a
@@ -572,7 +624,8 @@ class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
     ``full_lines`` opts out of the per-line clip for content whose tail
     carries meaning; the whole-output budget then returns fewer lines rather
     than more text.  The structured ``content`` keeps the lines the model was
-    shown, untruncated, for the frontend.
+    shown, untruncated, for the frontend.  A call reading several documents
+    splits ``max_chars`` and ``max_formatted_chars`` between them.
     """
 
     default_lines: int = 2000
@@ -583,39 +636,47 @@ class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
     @override
     async def __call__(
         self,
-        file_path: DocumentFilePathArg,
-        offset: DocumentOffsetArg = 1,
-        limit: DocumentLimitArg = None,
+        reads: DocumentReadsArg,
         full_lines: FullLinesArg = False,
         output_path: OutputPathArg = None,
-    ) -> ToolOutput[DocumentRange | RedirectedOutput]:
-        """Read a document's content.
+    ) -> ToolOutput[Batch[DocumentRange] | RedirectedOutput]:
+        """Read the content of one or more documents.
 
-        Returns the lines from ``offset`` (1-indexed) up to ``limit`` lines,
-        each prefixed with its line number.  When ``limit`` is omitted the
-        tool reads a default window and reports how many lines remain so
-        the caller can issue a follow-up with a higher ``offset``.  The
-        output is also clamped by a per-call character budget.  Long lines
-        are clipped unless ``full_lines`` is set, and the output says when
-        that happened so the caller can ask for them whole.  A file
+        Each read returns the lines from ``offset`` (1-indexed) up to
+        ``limit`` lines, each prefixed with its line number, under a header
+        naming the document.  When ``limit`` is omitted the tool reads a
+        default window and reports how many lines remain so the caller can
+        issue a follow-up with a higher ``offset``.  The output is also
+        clamped by a per-call character budget shared by the reads.  Long
+        lines are clipped unless ``full_lines`` is set, and the output says
+        when that happened so the caller can ask for them whole.  A file
         stored in a legacy encoding is decoded transparently, with the
-        source encoding named next to the hash.
+        source encoding named next to the hash.  A read that fails is
+        reported in place without failing the others.
         """
-        result = await asyncio.to_thread(
-            self._read, file_path, offset, limit, full_lines
+
+        async def read(
+            item: DocumentRead, share: BatchShare
+        ) -> ToolOutput[DocumentRange]:
+            return await asyncio.to_thread(self._read, item, full_lines, share)
+
+        result = await run_batch(
+            reads, read, key=lambda item: item.key, concurrency=_READ_CONCURRENCY
         )
 
         return await self.redirect(result, output_path)
 
     def _read(
         self,
-        file_path: str,
-        offset: int,
-        limit: int | None,
+        read: DocumentRead,
         full_lines: bool,
+        share: BatchShare,
     ) -> ToolOutput[DocumentRange]:
         """Decode the file and render the requested window of lines."""
-        sp, local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
+        offset, limit = read.offset, read.limit
+        sp, local, absolute = resolve_file_or_retry(self.resolved_paths, read.file_path)
+        # Reported as the document is named, which a client keys its coverage by.
+        file_path = sp.prefixed(local)
 
         # Reads are uniform: the requested file is read as text and never
         # silently swapped for another.  Non-markdown inputs are redirected only
@@ -645,6 +706,7 @@ class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
         start = max(1, offset)
         if total == 0:
             empty = DocumentRange(
+                file_path=file_path,
                 start_line=start,
                 end_line=start - 1,
                 total_lines=0,
@@ -654,6 +716,7 @@ class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
             return ToolOutput(data=empty, formatted="(empty file)")
         if start > total:
             past_eof = DocumentRange(
+                file_path=file_path,
                 start_line=start,
                 end_line=start - 1,
                 total_lines=total,
@@ -673,7 +736,7 @@ class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
         # below run the same rule, so both are asked for it the same way and
         # trim the window by what it dropped.
         window = all_lines[start - 1 : end]
-        _text, over_budget = cap_lines(window, self.max_chars)
+        _text, over_budget = cap_lines(window, share.of(self.max_chars))
         selected = window[: len(window) - over_budget]
         # `max_chars` is the read: it decides how much of the file this call
         # took, and cuts the result with it.  `max_formatted_chars` is only the
@@ -684,13 +747,15 @@ class ReadDocumentTool(RedirectingPathTool[DocumentRange]):
         # the last line actually shown.
         line_cap = None if full_lines else self.max_line_chars
         body, dropped = cap_lines(
-            iter_annotated(selected, start, line_cap), self.max_formatted_chars
+            iter_annotated(selected, start, line_cap),
+            share.of(self.max_formatted_chars),
         )
 
         end = start + len(selected) - 1
         shown_end = end - dropped
 
         result = DocumentRange(
+            file_path=file_path,
             start_line=start,
             end_line=end,
             total_lines=total,

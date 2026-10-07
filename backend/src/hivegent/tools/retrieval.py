@@ -17,13 +17,13 @@ from cbrkit import filter as cbrkit_filter
 from cbrkit.typing import AsyncRetrieverFunc
 from pydantic import Field
 
-from .base import ToolOutput
+from .base import ToolOutput, batch_field
 from .formatting import BLOCK_SEP, annotate_lines, cap_lines, truncate_block
 from .sink import OutputPathArg, RedirectedOutput, RedirectingTool
 
 __all__ = [
     "SearchMaxResultsArg",
-    "SearchQueryArg",
+    "SearchQueriesArg",
     "SearchResult",
     "SearchType",
     "SearchTypeArg",
@@ -38,24 +38,32 @@ VectorStorage = cbrkit.typing.AsyncFilterableIndexableFunc[
     cbrkit.typing.Casebase[str, Any], Collection[str]
 ]
 
+_RRF_K = 60
+"""Reciprocal rank fusion's damping constant, the value its authors chose."""
+
 
 @dataclass(slots=True, frozen=True)
 class SearchResult:
-    """A single search result with key, text, and relevance score."""
+    """A single search result with key, text, and relevance score.
+
+    The score is the chunk's reciprocal rank fusion over the call's queries,
+    which orders the results and means nothing beyond that.
+    """
 
     key: str
     text: str
     score: float
 
 
-SearchQueryArg = Annotated[
-    str,
-    Field(
-        description=(
-            "Natural language search query. Phrase it in the language the "
-            "documents are likely written in, and retry in another language "
-            "(e.g. English or the user's) when results are poor."
-        ),
+SearchQueriesArg = Annotated[
+    list[str],
+    batch_field(
+        "Natural language search queries, each searched on its own and the "
+        "rankings merged, so a chunk several of them find ranks higher and is "
+        "returned once. Phrase each in the language the documents are likely "
+        "written in, and add phrasings in another language (e.g. English or "
+        "the user's) or other wordings of the question in the same call "
+        "rather than retrying."
     ),
 ]
 SearchMaxResultsArg = Annotated[
@@ -119,15 +127,20 @@ class VectorSearchTool[R = SearchResult](RedirectingTool[list[R]]):
     @override
     async def __call__(
         self,
-        query: SearchQueryArg,
+        queries: SearchQueriesArg,
         max_results: SearchMaxResultsArg = 10,
         search_type: SearchTypeArg = "hybrid",
         output_path: OutputPathArg = None,
     ) -> ToolOutput[list[R] | RedirectedOutput]:
-        """Search indexed chunks using dense, sparse, or hybrid retrieval."""
-        raw = await self._search(query, max_results, search_type)
-        raw.sort(key=lambda r: r.score, reverse=True)
-        raw = raw[:max_results]
+        """Search indexed chunks using dense, sparse, or hybrid retrieval.
+
+        Several queries are searched together and their rankings merged by
+        reciprocal rank fusion into one list of at most ``max_results``.
+        """
+        rankings = await self._search(
+            list(dict.fromkeys(queries)), max_results, search_type
+        )
+        raw = _fuse(rankings, max_results)
 
         final: list[R] = (
             await self.result_mapper(raw)
@@ -146,9 +159,13 @@ class VectorSearchTool[R = SearchResult](RedirectingTool[list[R]]):
         )
 
     async def _search(
-        self, query: str, max_results: int, search_type: SearchType
-    ) -> list[SearchResult]:
-        """Run the cbrkit query with the scope filter applied at SQL level."""
+        self, queries: list[str], max_results: int, search_type: SearchType
+    ) -> list[list[SearchResult]]:
+        """Run the cbrkit queries with the scope filter applied at SQL level.
+
+        The storage, filter, and reranker are resolved once for all of them,
+        and each query comes back as its own ranking, best first.
+        """
         if self.storage_factory is None:
             return []
         storage = await self.storage_factory()
@@ -167,7 +184,7 @@ class VectorSearchTool[R = SearchResult](RedirectingTool[list[R]]):
             "vector.search",
             search_type=search_type,
             max_results=max_results,
-            query_length=len(query),
+            query_count=len(queries),
             reranked=reranker is not None,
             candidate_pool=candidate_pool,
         ) as span:
@@ -180,18 +197,47 @@ class VectorSearchTool[R = SearchResult](RedirectingTool[list[R]]):
             retrievers: list[Any] = (
                 [retriever, reranker] if reranker is not None else [retriever]
             )
-            result = await cbrkit.retrieval.apply_query_indexed_async(query, retrievers)
-            step = result.final_step.queries["default"]
-            results = [
-                SearchResult(
-                    key=cast(str, key),
-                    text=step.casebase[key],
-                    score=float(step.similarities[key]),
-                )
-                for key in step.ranking
+            result = await cbrkit.retrieval.apply_queries_indexed_async(
+                {query: query for query in queries}, retrievers
+            )
+            rankings = [
+                [
+                    SearchResult(
+                        key=cast(str, key),
+                        text=step.casebase[key],
+                        score=float(step.similarities[key]),
+                    )
+                    for key in step.ranking
+                ]
+                for step in map(result.final_step.queries.__getitem__, queries)
             ]
-            span.set_attribute("result_count", len(results))
-            return results
+            span.set_attribute("result_count", sum(map(len, rankings)))
+
+            return rankings
+
+
+def _fuse(rankings: Sequence[Sequence[SearchResult]], limit: int) -> list[SearchResult]:
+    """Merge per-query rankings by reciprocal rank fusion, keeping the top *limit*.
+
+    Fused by rank rather than score, since cbrkit min-max normalises each
+    query's scores on its own and they are not comparable across queries.  A
+    chunk several queries found is summed into one result.
+
+    >>> a, b, c = (SearchResult(k, k, 1.0) for k in "abc")
+    >>> [r.key for r in _fuse([[a, b], [c, b]], 2)]
+    ['b', 'a']
+    """
+    scores: dict[str, float] = {}
+    texts: dict[str, str] = {}
+
+    for ranking in rankings:
+        for rank, result in enumerate(ranking, 1):
+            scores[result.key] = scores.get(result.key, 0.0) + 1 / (_RRF_K + rank)
+            texts.setdefault(result.key, result.text)
+
+    best = sorted(scores, key=scores.__getitem__, reverse=True)[:limit]
+
+    return [SearchResult(key=key, text=texts[key], score=scores[key]) for key in best]
 
 
 def _format_results(

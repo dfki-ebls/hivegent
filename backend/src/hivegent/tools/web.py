@@ -11,10 +11,19 @@ from urllib.parse import quote
 import httpx2
 from bs4 import BeautifulSoup
 from markdownify import MarkdownConverter
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
+from ..concurrency import bounded_gather
+from ..humanize import pluralize
 from ..security import UnsafeUrlError
-from .base import ToolOutput, ToolRetry
+from .base import (
+    Batch,
+    BatchShare,
+    ToolOutput,
+    ToolRetry,
+    batch_field,
+    run_batch,
+)
 from .formatting import BLOCK_SEP, cap_lines, hint_suffix, iter_annotated
 from .sink import OutputPathArg, RedirectedOutput, RedirectingTool
 
@@ -25,9 +34,16 @@ __all__ = [
     "WebPage",
     "WebQueryArg",
     "WebSearch",
-    "WebUrlArg",
+    "WebSearchHit",
+    "WebSearchResults",
+    "WebSearchesArg",
+    "WebUrlsArg",
+    "WikipediaSearch",
     "build_user_agent",
 ]
+
+_WEB_CONCURRENCY = 4
+"""Requests one batched web call keeps in flight, polite to a single host."""
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +84,54 @@ WebEditionArg = Annotated[
 ]
 WebMaxResultsArg = Annotated[
     int,
-    Field(description="Maximum number of search results to return.", ge=1, le=20),
+    Field(description="Maximum number of results to return per search.", ge=1, le=20),
 ]
-WebUrlArg = Annotated[
-    str,
-    Field(description="HTTP or HTTPS URL to fetch."),
+WebUrlsArg = Annotated[
+    list[str],
+    batch_field(
+        "HTTP or HTTPS URLs to fetch. Fetch every page you need in one call, as "
+        "the output budget is shared between them, and a page that fails is "
+        "reported without failing the others."
+    ),
 ]
+
+
+@dataclass(slots=True, frozen=True)
+class WikipediaSearch:
+    """One search: the query, and the Wikipedia edition to run it in."""
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    query: WebQueryArg
+    edition: WebEditionArg = None
+
+
+WebSearchesArg = Annotated[
+    list[WikipediaSearch],
+    batch_field(
+        "Searches to run. Search several editions or phrasings in one call "
+        "rather than one call each, and an article several of them find is "
+        "listed once."
+    ),
+]
+
+
+@dataclass(slots=True, frozen=True)
+class WebSearchHit:
+    """One Wikipedia article a search found, with its snippet."""
+
+    title: str
+    href: str
+    body: str
+
+
+@dataclass(slots=True, frozen=True)
+class WebSearchResults:
+    """The articles one search found that no earlier search of the call had."""
+
+    query: str
+    edition: str
+    hits: tuple[WebSearchHit, ...]
 
 
 def _snippet_text(html: str) -> str:
@@ -82,7 +140,7 @@ def _snippet_text(html: str) -> str:
 
 
 @dataclass(slots=True, frozen=True)
-class WebSearch(RedirectingTool[list[dict[str, str]]]):
+class WebSearch(RedirectingTool[Batch[WebSearchResults]]):
     """Search Wikipedia for up-to-date information.
 
     Queries the official MediaWiki API through the egress proxy with no
@@ -108,11 +166,10 @@ class WebSearch(RedirectingTool[list[dict[str, str]]]):
     @override
     async def __call__(
         self,
-        query: WebQueryArg,
-        edition: WebEditionArg = None,
+        searches: WebSearchesArg,
         max_results: WebMaxResultsArg = 5,
         output_path: OutputPathArg = None,
-    ) -> ToolOutput[list[dict[str, str]] | RedirectedOutput]:
+    ) -> ToolOutput[Batch[WebSearchResults] | RedirectedOutput]:
         """Search Wikipedia (and only Wikipedia) for up-to-date information.
 
         This searches the Wikipedia encyclopedia exclusively, not the
@@ -122,12 +179,53 @@ class WebSearch(RedirectingTool[list[dict[str, str]]]):
         Every language edition is searchable, and editions differ in
         coverage, so search the edition most likely to cover the topic.
 
-        Returns a list of results with ``title``, ``href``, and ``body``
-        fields. ``body`` is only a short snippet, so follow up with
-        ``web_fetch`` on a result's ``href`` to read the full article.
+        Returns each search's results with ``title``, ``href``, and
+        ``body`` fields, an article already found by an earlier search of
+        the call left out of the later ones. ``body`` is only a short
+        snippet, so follow up with ``web_fetch`` on a result's ``href`` to
+        read the full article.
         """
-        max_results = min(max(1, max_results), 20)
-        edition = edition or self.default_edition
+        keys = list(
+            dict.fromkeys(
+                (search.query, search.edition or self.default_edition)
+                for search in searches
+            )
+        )
+
+        async def hits(key: tuple[str, str]) -> list[WebSearchHit] | ToolRetry:
+            try:
+                return await self._hits(*key, max_results)
+            except ToolRetry as exc:
+                return exc
+
+        # Fetched together, then rendered in request order, so which search
+        # an article is listed under does not depend on which answered first.
+        fetched = await bounded_gather(keys, hits, limit=_WEB_CONCURRENCY)
+        found = dict(zip(keys, fetched, strict=True))
+        seen: set[str] = set()
+
+        async def render(
+            key: tuple[str, str], _share: BatchShare
+        ) -> ToolOutput[WebSearchResults]:
+            outcome = found[key]
+
+            if isinstance(outcome, ToolRetry):
+                raise outcome
+
+            fresh = tuple(hit for hit in outcome if hit.href not in seen)
+            seen.update(hit.href for hit in fresh)
+            results = WebSearchResults(*key, hits=fresh)
+
+            return _search_output(results, repeated=len(outcome) - len(fresh))
+
+        result = await run_batch(keys, render, key=lambda key: f"{key[0]} ({key[1]})")
+
+        return await self.redirect(result, output_path)
+
+    async def _hits(
+        self, query: str, edition: str, max_results: int
+    ) -> list[WebSearchHit]:
+        """Run one search against the edition's MediaWiki API."""
         base_url = f"https://{edition}.wikipedia.org"
         endpoint = f"{base_url}/w/api.php"
         params = {
@@ -155,37 +253,56 @@ class WebSearch(RedirectingTool[list[dict[str, str]]]):
                 "exist or be unavailable, or the query too narrow; check the "
                 "edition code, try again, or rephrase the query."
             ) from exc
-        results = [
-            {
-                "title": hit.get("title", ""),
-                "href": f"{base_url}/wiki/"
+
+        return [
+            WebSearchHit(
+                title=hit.get("title", ""),
+                href=f"{base_url}/wiki/"
                 + quote(hit.get("title", "").replace(" ", "_")),
-                "body": _snippet_text(hit.get("snippet", "")),
-            }
+                body=_snippet_text(hit.get("snippet", "")),
+            )
             for hit in hits
         ]
-        blocks: list[str] = []
-        for i, r in enumerate(results, 1):
-            block = f"[{i}] {r['title']} ({r['href']})"
-            if r["body"]:
-                block += f"\n    {r['body']}"
-            blocks.append(block)
-        formatted = BLOCK_SEP.join(blocks) if results else "(no results)"
 
-        return await self.redirect(
-            ToolOutput(data=results, formatted=formatted), output_path
-        )
+
+def _search_output(
+    results: WebSearchResults, *, repeated: int
+) -> ToolOutput[WebSearchResults]:
+    """Render one search's articles as numbered blocks.
+
+    *repeated* counts the articles left out as already listed by an earlier
+    search, which is said so an empty block is not read as an empty search.
+    """
+    blocks: list[str] = []
+
+    for i, hit in enumerate(results.hits, 1):
+        block = f"[{i}] {hit.title} ({hit.href})"
+
+        if hit.body:
+            block += f"\n    {hit.body}"
+
+        blocks.append(block)
+
+    note = f"{repeated} {pluralize(repeated, 'article')} already listed above"
+
+    if not blocks:
+        formatted = f"(only {note})" if repeated else "(no results)"
+    else:
+        formatted = BLOCK_SEP.join(blocks) + hint_suffix([note] if repeated else [])
+
+    return ToolOutput(data=results, formatted=formatted)
 
 
 @dataclass(slots=True, frozen=True)
 class WebPage:
     """Readable content extracted from a fetched web page.
 
-    ``url`` is the final URL after redirects; ``content`` is the page
-    reduced to markdown (for HTML) or its raw text (for plain-text and
-    JSON responses).
+    ``requested_url`` is the URL asked for and ``url`` the final one after
+    redirects.  ``content`` is the page reduced to markdown (for HTML) or its
+    raw text (for plain-text and JSON responses).
     """
 
+    requested_url: str
     url: str
     title: str
     content: str
@@ -232,14 +349,16 @@ def _html_to_markdown(body: bytes) -> tuple[str, str]:
 
 
 @dataclass(slots=True, frozen=True)
-class WebFetch(RedirectingTool[WebPage]):
+class WebFetch(RedirectingTool[Batch[WebPage]]):
     """Fetch a web page and return its readable content.
 
     ``max_response_bytes`` caps how many raw bytes are downloaded per
     page and ``max_chars`` caps the extracted text.  ``max_line_chars``
     truncates each numbered line so a data-URI or minified line cannot
     flood the context, and ``max_formatted_chars`` bounds the rendered
-    output as a whole, which neither of the other two does.
+    output as a whole, which neither of the other two does.  A call fetching
+    several pages splits ``max_chars`` and ``max_formatted_chars`` between
+    them, and keeps at most a few requests in flight.
     ``client`` is the pooled web client: its request hook validates the URL and
     every redirect hop against the URL host policy, and the egress proxy rejects
     non-public destinations after resolution.  Following redirects and the hop
@@ -260,18 +379,34 @@ class WebFetch(RedirectingTool[WebPage]):
 
     @override
     async def __call__(
-        self, url: WebUrlArg, output_path: OutputPathArg = None
-    ) -> ToolOutput[WebPage | RedirectedOutput]:
-        """Fetch a web page as readable text.
+        self, urls: WebUrlsArg, output_path: OutputPathArg = None
+    ) -> ToolOutput[Batch[WebPage] | RedirectedOutput]:
+        """Fetch one or more web pages as readable text.
 
         HTML is reduced to its markdown text content; plain-text and JSON
         responses pass through unchanged.  Each content line is numbered
         so it can be cited like a document line.  Redirects are followed
         by the client, whose request hook checks every hop against the URL
-        host policy before the egress proxy connects.
+        host policy before the egress proxy connects.  Each page is shown
+        under the URL it was asked for, and a URL redirecting to a page
+        already fetched is not shown twice.
         """
+        result = await run_batch(
+            urls,
+            self._fetch_or_retry,
+            key=lambda url: url,
+            concurrency=_WEB_CONCURRENCY,
+            identity=lambda page: page.url,
+        )
+
+        return await self.redirect(result, output_path)
+
+    async def _fetch_or_retry(
+        self, url: str, share: BatchShare
+    ) -> ToolOutput[WebPage]:
+        """Fetch one page, turning every failure into a correctable refusal."""
         try:
-            return await self.redirect(await self._fetch(url), output_path)
+            return await self._fetch(url, share)
         except ToolRetry:
             raise
         except httpx2.TimeoutException as exc:
@@ -290,7 +425,7 @@ class WebFetch(RedirectingTool[WebPage]):
             logger.exception("Web fetch failed for URL %r", url)
             raise ToolRetry("failed to fetch URL.") from exc
 
-    async def _fetch(self, url: str) -> ToolOutput[WebPage]:
+    async def _fetch(self, url: str, share: BatchShare) -> ToolOutput[WebPage]:
         async with self.client.stream(
             "GET",
             url,
@@ -303,7 +438,9 @@ class WebFetch(RedirectingTool[WebPage]):
                 raise ToolRetry(f"unsupported content type '{mime}'.")
             body, truncated = await self._read_capped(response)
 
-        return self._finalize(str(response.url), response, mime, body, truncated)
+        return self._finalize(
+            url, str(response.url), response, mime, body, truncated, share
+        )
 
     async def _read_capped(self, response: httpx2.Response) -> tuple[bytes, bool]:
         """Stream the response body up to the configured byte cap."""
@@ -316,11 +453,13 @@ class WebFetch(RedirectingTool[WebPage]):
 
     def _finalize(
         self,
+        requested_url: str,
         url: str,
         response: httpx2.Response,
         mime: str,
         body: bytes,
         truncated: bool,
+        share: BatchShare,
     ) -> ToolOutput[WebPage]:
         if _is_html(mime):
             title, content = _html_to_markdown(body)
@@ -333,17 +472,26 @@ class WebFetch(RedirectingTool[WebPage]):
                 content = body.decode("utf-8", errors="replace")
             content = content.strip()
 
-        if len(content) > self.max_chars:
-            content = content[: self.max_chars]
+        max_chars = share.of(self.max_chars)
+
+        if len(content) > max_chars:
+            content = content[:max_chars]
             truncated = True
 
-        page = WebPage(url=url, title=title, content=content, truncated=truncated)
+        page = WebPage(
+            requested_url=requested_url,
+            url=url,
+            title=title,
+            content=content,
+            truncated=truncated,
+        )
+
         if not content:
             return ToolOutput(data=page, formatted="(no readable text on this page)")
         header = f"{title} — {url}" if title else url
         rendered, omitted = cap_lines(
             iter_annotated(content.splitlines(), 1, self.max_line_chars),
-            self.max_formatted_chars,
+            share.of(self.max_formatted_chars),
         )
         suffix = hint_suffix(["truncated"] if truncated or omitted else [])
         return ToolOutput(data=page, formatted=f"{header}\n{rendered}{suffix}")

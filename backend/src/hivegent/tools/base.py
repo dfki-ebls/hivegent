@@ -5,7 +5,7 @@ import json
 import re
 import types
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Hashable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import cache, cached_property, reduce
@@ -17,9 +17,11 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    Literal,
     NoDefault,
     Self,
     TypeVar,
+    Union,
     cast,
     get_args,
     get_origin,
@@ -27,9 +29,18 @@ from typing import (
     override,
 )
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, create_model
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    JsonValue,
+    TypeAdapter,
+    create_model,
+)
 from pydantic.json_schema import JsonSchemaValue
 
+from ..concurrency import bounded_gather
 from ..config import normalize_unicode
 from ..converters import is_json, is_tabular
 from ..entries import (
@@ -44,13 +55,17 @@ from .scope import Scope
 
 __all__ = [
     "DEFAULT_EXCLUDE_DIRS",
+    "MAX_BATCH_ITEMS",
     "WORKSPACE_SCOPE_HINT",
     "AsyncPathTool",
     "AsyncTool",
     "AsyncToolFactory",
+    "Batch",
+    "BatchShare",
     "BinaryAttachment",
     "FullLinesArg",
     "IncludeIgnoredArg",
+    "ItemFailure",
     "PathTool",
     "SearchPath",
     "SearchPathFilterFunc",
@@ -61,7 +76,9 @@ __all__ = [
     "ToolRetry",
     "ToolSpec",
     "Unreachable",
+    "accept_scalar",
     "addressable_roots",
+    "batch_field",
     "canonical_local_path",
     "check_read_budget",
     "coerce_paths",
@@ -82,6 +99,7 @@ __all__ = [
     "resolve_file_or_retry",
     "resolve_search_path",
     "resolve_tool_cls",
+    "run_batch",
     "scope_paths",
     "sidecar_hint",
     "tool_description",
@@ -729,6 +747,181 @@ class ToolOutput[T]:
         if isinstance(self.data, str):
             return self.data
         return json.dumps(self.data, default=str)
+
+
+MAX_BATCH_ITEMS = 10
+"""Default cap on the items one list argument may carry."""
+
+
+@dataclass(slots=True, frozen=True)
+class ItemFailure:
+    """One item of a batch that could not be served, and why.
+
+    Stands in the result at the item's position, so a partial failure is read
+    beside the items that succeeded instead of discarding them.  *kind* is
+    serialized with it, so a client tells a failure from a result in one parse.
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(
+        json_schema_serialization_defaults_required=True
+    )
+
+    item: str
+    reason: str
+    kind: Literal["failure"] = "failure"
+
+
+type Batch[R] = tuple[R | ItemFailure, ...]
+"""One entry per distinct requested item, in request order."""
+
+
+def batch_field(description: str, *, max_items: int = MAX_BATCH_ITEMS) -> Any:
+    """The ``Field`` of a list argument: ``Annotated[list[X], batch_field(...)]``.
+
+    A one-item list is how a single item is asked for, so there is no separate
+    scalar variant of the argument and no empty list to answer.
+    """
+    return Field(description=description, min_length=1, max_length=max_items)
+
+
+def _is_list_type(annotation: Any) -> bool:
+    """Whether *annotation* is a list, possibly annotated or optional."""
+    origin = get_origin(annotation)
+
+    if origin is Annotated:
+        return _is_list_type(get_args(annotation)[0])
+
+    if origin in (Union, types.UnionType):
+        return any(_is_list_type(arg) for arg in get_args(annotation))
+
+    return origin is list
+
+
+def _as_list(value: object) -> object:
+    """Wrap a bare value into a one-item list, passing lists and ``None`` through."""
+    return value if value is None or isinstance(value, list | tuple) else [value]
+
+
+_AS_LIST = BeforeValidator(_as_list)
+
+
+def accept_scalar(annotation: Any) -> Any:
+    """Let a list argument also take one bare item, which models often send.
+
+    Applied by the framework adapters that validate model-written arguments,
+    and only there: the schema still says list, so a caller following it is
+    never steered toward the scalar spelling.
+    """
+    return Annotated[annotation, _AS_LIST] if _is_list_type(annotation) else annotation
+
+
+@dataclass(slots=True, frozen=True)
+class BatchShare:
+    """Which item of how many a batch runner is serving.
+
+    A batch spends one call's budgets, so each item takes its share of them
+    rather than the whole: :meth:`of` splits any per-call budget evenly, the
+    remainder going to the first items.
+    """
+
+    index: int
+    count: int
+
+    def of(self, total: int) -> int:
+        """This item's share of *total*.
+
+        >>> [BatchShare(i, 3).of(10) for i in range(3)]
+        [4, 3, 3]
+        """
+        base, extra = divmod(total, self.count)
+
+        return base + (self.index < extra)
+
+
+def _batch_failed(failures: list[ItemFailure]) -> ToolRetry:
+    """The refusal of a batch none of whose items succeeded.
+
+    A one-item batch refuses in the item's own words, exactly as a scalar call
+    did, so the list form costs a single request nothing.
+    """
+    if len(failures) == 1:
+        return ToolRetry(failures[0].reason)
+
+    lines = "\n".join(f"- {failure.item}: {failure.reason}" for failure in failures)
+
+    return ToolRetry(f"Every item failed:\n{lines}")
+
+
+async def run_batch[I, R](
+    items: Iterable[I],
+    run: Callable[[I, BatchShare], Awaitable[ToolOutput[R]]],
+    *,
+    key: Callable[[I], str],
+    concurrency: int = 1,
+    identity: Callable[[R], Hashable] | None = None,
+) -> ToolOutput[Batch[R]]:
+    """Run *run* over every distinct item and present the results side by side.
+
+    Items are deduplicated by *key*, keeping the first, and run at most
+    *concurrency* at a time while the result keeps request order.  Each item
+    is handed its :class:`BatchShare` to split the call's budgets with.  A
+    :class:`ToolRetry` from one item becomes its :class:`ItemFailure`, and only
+    a batch in which every item failed is refused as a whole.  *identity*
+    names what makes two results the same, for items that only turn out to be
+    duplicates once served (two URLs redirecting to one page).
+
+    Each item is rendered under its key, ``head``'s ``==> key <==`` header,
+    and the attachments are concatenated in order.
+    """
+    unique: dict[str, I] = {}
+
+    for item in items:
+        unique.setdefault(key(item), item)
+
+    count = len(unique)
+
+    async def attempt(entry: tuple[int, tuple[str, I]]) -> ToolOutput[R] | ItemFailure:
+        index, (name, item) = entry
+
+        try:
+            return await run(item, BatchShare(index, count))
+        except ToolRetry as exc:
+            return ItemFailure(item=name, reason=str(exc))
+
+    outcomes = await bounded_gather(
+        enumerate(unique.items()), attempt, limit=concurrency
+    )
+    seen: dict[Hashable, str] = {}
+    data: list[R | ItemFailure] = []
+    blocks: list[str] = []
+    attachments: list[BinaryAttachment] = []
+
+    for name, outcome in zip(unique, outcomes, strict=True):
+        if isinstance(outcome, ToolOutput) and identity is not None:
+            first = seen.setdefault(identity(outcome.data), name)
+
+            if first != name:
+                outcome = ItemFailure(item=name, reason=f"same result as {first}")
+
+        if isinstance(outcome, ItemFailure):
+            data.append(outcome)
+            blocks.append(f"==> {name} <==\nfailed: {outcome.reason}")
+            continue
+
+        data.append(outcome.data)
+        blocks.append(f"==> {name} <==\n{outcome.text}")
+        attachments.extend(outcome.attachments)
+
+    failures = [entry for entry in data if isinstance(entry, ItemFailure)]
+
+    if len(failures) == count:
+        raise _batch_failed(failures)
+
+    return ToolOutput(
+        data=tuple(data),
+        formatted="\n\n".join(blocks),
+        attachments=tuple(attachments),
+    )
 
 
 class Tool[T](ABC):

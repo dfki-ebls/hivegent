@@ -12,9 +12,9 @@ from hivegent.security import (
     create_safe_async_client,
     require_safe_external_url,
 )
-from hivegent.tools.base import ToolRetry
-from hivegent.tools.web import WebFetch, WebSearch, build_user_agent
-from tests.helpers import returned
+from hivegent.tools.base import ItemFailure, ToolRetry
+from hivegent.tools.web import WebFetch, WebSearch, WikipediaSearch, build_user_agent
+from tests.helpers import returned, single
 
 #: Permits every host, so a fetch test opts out of policy enforcement.
 _ANY_HOST = UrlPolicy(allow_hosts=("*",))
@@ -39,7 +39,7 @@ def _web_client(
     request hook applies the host policy on every hop exactly as in production.
     """
     monkeypatch.setattr(
-        security, "_egress_transport", lambda _proxy_url: httpx2.MockTransport(handler)
+        security, "_egress_transport", lambda *_: httpx2.MockTransport(handler)
     )
 
     return create_safe_async_client(
@@ -148,15 +148,16 @@ class TestWebSearch:
                 ),
                 default_edition="de",
                 user_agent="hivegent-test (+mailto:a@b.org)",
-            )("ChatGPT")
+            )([WikipediaSearch("ChatGPT")])
         )
+        hits = single(out.data).hits
 
-        assert [r["href"] for r in out.data] == [
+        assert [hit.href for hit in hits] == [
             "https://de.wikipedia.org/wiki/ChatGPT",
             "https://de.wikipedia.org/wiki/GPT-4",
         ]
         # The highlighted snippet HTML is reduced to plain text.
-        assert out.data[0]["body"] == "a ChatGPT bot"
+        assert hits[0].body == "a ChatGPT bot"
         assert "[1] ChatGPT (https://de.wikipedia.org/wiki/ChatGPT)" in out.text
 
     async def test_call_picks_the_edition(
@@ -169,9 +170,45 @@ class TestWebSearch:
         client = _web_client(
             monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
         )
-        out = await returned(WebSearch(client=client)("Paris", edition="fr"))
+        out = await returned(
+            WebSearch(client=client)([WikipediaSearch("Paris", edition="fr")])
+        )
 
-        assert out.data[0]["href"] == "https://fr.wikipedia.org/wiki/Paris"
+        assert single(out.data).hits[0].href == "https://fr.wikipedia.org/wiki/Paris"
+
+    async def test_an_article_two_searches_find_is_listed_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            if request.url.host == "xx.wikipedia.org":
+                return httpx2.Response(404)
+
+            hits = {"Paris": [("Paris", "")], "France": [("France", ""), ("Paris", "")]}
+
+            return httpx2.Response(
+                200, json=_search_response(*hits[request.url.params["srsearch"]])
+            )
+
+        client = _web_client(
+            monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
+        )
+        out = await returned(
+            WebSearch(client=client)(
+                [
+                    WikipediaSearch("Paris"),
+                    WikipediaSearch("France"),
+                    WikipediaSearch("Paris", edition="xx"),
+                ]
+            )
+        )
+
+        paris, france, failed = out.data
+        assert not isinstance(paris, ItemFailure)
+        assert not isinstance(france, ItemFailure)
+        assert [hit.title for hit in paris.hits] == ["Paris"]
+        assert [hit.title for hit in france.hits] == ["France"]
+        assert "1 article already listed above" in out.text
+        assert isinstance(failed, ItemFailure)
 
     async def test_api_failure_raises_tool_retry(
         self, monkeypatch: pytest.MonkeyPatch
@@ -183,7 +220,7 @@ class TestWebSearch:
             monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
         )
         with pytest.raises(ToolRetry, match="web search failed"):
-            await WebSearch(client=client)("anything")
+            await WebSearch(client=client)([WikipediaSearch("anything")])
 
 
 HTML = b"""
@@ -222,14 +259,38 @@ class TestWebFetch:
             )
 
         tool = _fetch_tool(monkeypatch, handler)
-        out = await returned(tool("https://example.com/start"))
+        out = await returned(tool(["https://example.com/start"]))
 
-        assert out.data.url == "https://example.com/final"
-        assert out.data.title == "Test Page"
-        assert "# Hello" in out.data.content
-        assert "tracking" not in out.data.content
+        assert single(out.data).url == "https://example.com/final"
+        assert single(out.data).title == "Test Page"
+        assert "# Hello" in single(out.data).content
+        assert "tracking" not in single(out.data).content
         # Formatted output numbers every content line for citations.
-        assert out.text.startswith("Test Page — https://example.com/final\n1: ")
+        assert "\nTest Page — https://example.com/final\n1: " in out.text
+
+    async def test_pages_fail_alone_and_a_page_is_shown_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            if request.url.path == "/start":
+                return httpx2.Response(302, headers={"location": "/final"})
+
+            if request.url.path == "/gone":
+                return httpx2.Response(403)
+
+            return httpx2.Response(
+                200, content=b"hi", headers={"content-type": "text/plain"}
+            )
+
+        tool = _fetch_tool(monkeypatch, handler)
+        urls = [f"https://example.com/{path}" for path in ("start", "final", "gone")]
+        out = await returned(tool(urls))
+
+        page, duplicate, gone = out.data
+        assert not isinstance(page, ItemFailure)
+        assert (page.requested_url, page.url) == (urls[0], urls[1])
+        assert duplicate == ItemFailure(urls[1], f"same result as {urls[0]}")
+        assert gone == ItemFailure(urls[2], "HTTP 403.")
 
     async def test_redirect_to_denied_host_is_blocked(
         self, monkeypatch: pytest.MonkeyPatch
@@ -247,7 +308,7 @@ class TestWebFetch:
             UrlPolicy(allow_hosts=("example.com",), deny_hosts=("evil.com",)),
         )
         with pytest.raises(ToolRetry, match="blocked"):
-            await tool("https://example.com/start")
+            await tool(["https://example.com/start"])
 
     async def test_unsupported_content_type_raises(
         self, monkeypatch: pytest.MonkeyPatch
@@ -259,7 +320,7 @@ class TestWebFetch:
 
         tool = _fetch_tool(monkeypatch, handler)
         with pytest.raises(ToolRetry, match="unsupported content type"):
-            await tool("https://example.com/img")
+            await tool(["https://example.com/img"])
 
     async def test_content_is_truncated_to_caps(
         self, monkeypatch: pytest.MonkeyPatch
@@ -270,9 +331,9 @@ class TestWebFetch:
             )
 
         tool = _fetch_tool(monkeypatch, handler, max_chars=10)
-        out = await returned(tool("https://example.com/big"))
-        assert out.data.content == "a" * 10
-        assert out.data.truncated
+        out = await returned(tool(["https://example.com/big"]))
+        assert single(out.data).content == "a" * 10
+        assert single(out.data).truncated
         assert out.text.endswith("[truncated]")
 
     async def test_long_line_truncated_in_formatted_only(
@@ -289,10 +350,10 @@ class TestWebFetch:
             )
 
         tool = _fetch_tool(monkeypatch, handler, max_line_chars=80)
-        out = await returned(tool("https://example.com/page"))
+        out = await returned(tool(["https://example.com/page"]))
         assert "…" in out.text
         assert len(max(out.text.splitlines(), key=len)) < 200
-        assert long_line in out.data.content
+        assert long_line in single(out.data).content
 
     async def test_too_many_redirects_raises(
         self, monkeypatch: pytest.MonkeyPatch
@@ -302,4 +363,4 @@ class TestWebFetch:
 
         tool = _fetch_tool(monkeypatch, handler, max_redirects=3)
         with pytest.raises(ToolRetry, match="too many redirects"):
-            await tool("https://example.com/loop")
+            await tool(["https://example.com/loop"])

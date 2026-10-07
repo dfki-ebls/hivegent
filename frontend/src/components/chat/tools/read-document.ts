@@ -1,35 +1,33 @@
-import type { DocumentRange, LinePosition } from "@/lib/types";
+import { parseBatch } from "@/components/chat/tools/batch";
+import { DocumentRangeSchema, type LinePosition } from "@/lib/types";
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
-/** Reads always return a DocumentRange; spanning the whole file means a full-document fetch. */
+/** Each read is a DocumentRange under its own path, and spanning the whole file means a full-document fetch. */
 export const syncReadDocumentOutput: SyncOutput = ({
-  input,
   metadata,
   addChunk,
   markFullDocument,
   sourceId,
 }) => {
-  if (!input) return;
-  const filename = input.file_path as string;
-  if (!filename) return;
-  if (metadata == null || typeof metadata !== "object") return;
-  if (!("start_line" in (metadata as object))) return;
-  const result = metadata as DocumentRange;
-  if (!result.content) return;
+  for (const result of parseBatch(metadata, DocumentRangeSchema).results) {
+    if (!result.content) continue;
 
-  const isFullFile = result.start_line === 1 && result.end_line === result.total_lines;
-  if (isFullFile) {
-    markFullDocument(filename, result.content, "read", sourceId);
-    return;
+    const filename = result.file_path;
+    const isFullFile = result.start_line === 1 && result.end_line === result.total_lines;
+
+    if (isFullFile) {
+      markFullDocument(filename, result.content, "read", sourceId);
+      continue;
+    }
+
+    const position: LinePosition = {
+      type: "line_range",
+      startLine: result.start_line,
+      endLine: result.end_line,
+    };
+    addChunk(
+      { filename, content: result.content, origin: "read", position, sourceId },
+      result.total_lines,
+    );
   }
-
-  const position: LinePosition = {
-    type: "line_range",
-    startLine: result.start_line,
-    endLine: result.end_line,
-  };
-  addChunk(
-    { filename, content: result.content, origin: "read", position, sourceId },
-    result.total_lines,
-  );
 };

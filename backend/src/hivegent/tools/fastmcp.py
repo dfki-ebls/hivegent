@@ -24,6 +24,7 @@ from .base import (
     Tool,
     ToolOutput,
     ToolSpec,
+    accept_scalar,
     factory_tool_name,
     translate_tool_retry,
 )
@@ -142,14 +143,20 @@ def for_fastmcp(
         default=Depends(factory_provider),
         annotation=Any,
     )
+    # A bare item is accepted where a list is declared, as a model often sends
+    # one, while the published schema still asks for the list.
+    params = [
+        param.replace(annotation=accept_scalar(param.annotation))
+        for param in contract.params
+    ]
     new_sig = inspect.Signature(
-        parameters=[*contract.params, tool_param],
+        parameters=[*params, tool_param],
         return_annotation=ToolResult,
     )
 
     new_annotations: dict[str, Any] = {
         "_tool_": Any,
-        **contract.annotations,
+        **{param.name: param.annotation for param in params},
         "return": ToolResult,
     }
 

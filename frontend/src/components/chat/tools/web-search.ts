@@ -1,19 +1,26 @@
+import { z } from "zod";
+import { parseBatch } from "@/components/chat/tools/batch";
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
-export const syncWebSearchOutput: SyncOutput = ({ input, metadata, addChunk }) => {
-  if (!input) return;
-  if (!Array.isArray(metadata)) return;
-  const results = metadata as { title: string; href: string; body: string }[];
-  if (!results.length) return;
-  const query = input.query as string;
-  for (const r of results) {
-    if (!r.href) continue;
-    addChunk({
-      filename: r.href,
-      content: r.body || r.title,
-      origin: "web",
-      detail: query || undefined,
-      position: { type: "web_result", url: r.href },
-    });
+/** One search of the backend ``web_search`` tool's payload. */
+const WebSearchResultsSchema = z.object({
+  query: z.string(),
+  edition: z.string(),
+  hits: z.array(z.object({ title: z.string(), href: z.string(), body: z.string() })),
+});
+
+export const syncWebSearchOutput: SyncOutput = ({ metadata, addChunk }) => {
+  for (const search of parseBatch(metadata, WebSearchResultsSchema).results) {
+    for (const hit of search.hits) {
+      if (!hit.href) continue;
+
+      addChunk({
+        filename: hit.href,
+        content: hit.body || hit.title,
+        origin: "web",
+        detail: search.query || undefined,
+        position: { type: "web_result", url: hit.href },
+      });
+    }
   }
 };

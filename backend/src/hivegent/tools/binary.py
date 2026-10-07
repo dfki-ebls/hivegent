@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, override
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from ..converters import vision_media_type
 from ..converters.images import sanitize_image_bytes
@@ -36,15 +36,21 @@ from ..converters.video import (
 from ..multimodal import BinaryContentMode
 from .base import (
     AsyncPathTool,
+    Batch,
+    BatchShare,
     BinaryAttachment,
     ToolOutput,
     ToolRetry,
+    batch_field,
     resolve_file_or_retry,
+    run_batch,
     sidecar_hint,
 )
 
 __all__ = [
+    "BinaryRead",
     "BinaryReadResult",
+    "BinaryReadsArg",
     "ReadBinaryDocumentTool",
 ]
 
@@ -67,6 +73,36 @@ PagesArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
+class BinaryRead:
+    """One image, PDF, or video to attach, with the PDF pages to take."""
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    file_path: BinaryFilePathArg
+    pages: PagesArg = None
+
+    @property
+    def key(self) -> str:
+        """The path, plus the page selection when one was made.
+
+        >>> BinaryRead("~/a.pdf", pages="2-3").key
+        '~/a.pdf (pages=2-3)'
+        """
+        pages = f" (pages={self.pages})" if self.pages else ""
+
+        return f"{self.file_path}{pages}"
+
+
+BinaryReadsArg = Annotated[
+    list[BinaryRead],
+    batch_field(
+        "Files to attach. Several files share one call's image budget, so ask "
+        "for the pages and files you need rather than whole documents."
+    ),
+]
+
+
+@dataclass(slots=True, frozen=True)
 class BinaryReadResult:
     """Summary of a binary document read."""
 
@@ -76,6 +112,11 @@ class BinaryReadResult:
     pages: tuple[int, ...] = ()
     frames: int = 0
     duration: float | None = None
+
+
+def _bounded(budget: int, cap: int | None) -> int:
+    """Bound a per-file attachment budget by the file's share of the image cap."""
+    return budget if cap is None else min(budget, cap)
 
 
 def _frame_attachments(
@@ -93,8 +134,13 @@ def _frame_attachments(
 
 
 @dataclass(slots=True, frozen=True)
-class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
-    """Read an image, PDF, or video as binary content for vision models."""
+class ReadBinaryDocumentTool(AsyncPathTool[Batch[BinaryReadResult]]):
+    """Read images, PDFs, or videos as binary content for vision models.
+
+    The gateway's image cap bounds the whole call, since every attachment of
+    it reaches the model in one request, so a call reading several files
+    divides it between them before any of them is rendered.
+    """
 
     binary_content_mode: BinaryContentMode = BinaryContentMode.IMAGES
     """Whether PDFs are rasterised to images or forwarded as ``file`` parts."""
@@ -114,17 +160,11 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
     max_images: int | None = None
     """Gateway image cap, bounding PDF pages and sampled frames per call."""
 
-    def _bounded(self, budget: int) -> int:
-        """Bound a per-call attachment budget by the gateway's image cap."""
-        return budget if self.max_images is None else min(budget, self.max_images)
-
     @override
     async def __call__(
-        self,
-        file_path: BinaryFilePathArg,
-        pages: PagesArg = None,
-    ) -> ToolOutput[BinaryReadResult]:
-        """Read an image, PDF, or video and attach it to the tool result.
+        self, files: BinaryReadsArg
+    ) -> ToolOutput[Batch[BinaryReadResult]]:
+        """Read images, PDFs, or videos and attach them to the tool result.
 
         Use this when the textual conversion of a document is missing
         information that only the original visual (chart, diagram,
@@ -138,6 +178,20 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
         (e.g. ``"3"``, ``"2-5"``, ``"1,3,5-7"``); omit it to read the
         whole document.  ``pages`` is rejected for non-PDF inputs.
         """
+        if self.max_images is not None and len(files) > self.max_images:
+            raise ToolRetry(
+                f"At most {self.max_images} files can be attached in one call, "
+                "since each needs at least one image."
+            )
+
+        return await run_batch(files, self._read, key=lambda item: item.key)
+
+    async def _read(
+        self, item: BinaryRead, share: BatchShare
+    ) -> ToolOutput[BinaryReadResult]:
+        """Attach one file, within its share of the call's image cap."""
+        file_path, pages = item.file_path, item.pages
+        cap = None if self.max_images is None else share.of(self.max_images)
         sp, local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
         canonical = sp.prefixed(local)
 
@@ -156,7 +210,7 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
             raise ToolRetry(f"pages= is only valid for PDF inputs, got {media_type}.")
 
         if media_type.startswith("video/"):
-            return await self._read_video(canonical, absolute, media_type)
+            return await self._read_video(canonical, absolute, media_type, cap)
 
         raw = absolute.read_bytes()
 
@@ -165,7 +219,7 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
                 animation_frame_count, raw, media_type
             )
             if frame_count > 1:
-                return await self._read_animation(canonical, raw, media_type)
+                return await self._read_animation(canonical, raw, media_type, cap)
 
         if len(raw) > self.max_bytes:
             raise ToolRetry(
@@ -174,7 +228,7 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
             )
 
         if media_type == "application/pdf":
-            return await self._read_pdf(canonical, raw, pages)
+            return await self._read_pdf(canonical, raw, pages, cap)
 
         # Best-effort metadata strip; a quirky-but-storable image is returned
         # verbatim rather than raising, so a read never fails on sanitisation.
@@ -190,16 +244,24 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
         )
 
     async def _read_pdf(
-        self, canonical: str, raw: bytes, pages: str | None
+        self,
+        canonical: str,
+        raw: bytes,
+        pages: str | None,
+        cap: int | None,
     ) -> ToolOutput[BinaryReadResult]:
         """Surface a PDF as page images or a native ``file``, per the mode."""
         if self.binary_content_mode is BinaryContentMode.NATIVE:
             return await self._read_pdf_native(canonical, raw, pages)
 
-        return await self._read_pdf_rendered(canonical, raw, pages)
+        return await self._read_pdf_rendered(canonical, raw, pages, cap)
 
     async def _read_pdf_rendered(
-        self, canonical: str, raw: bytes, pages: str | None
+        self,
+        canonical: str,
+        raw: bytes,
+        pages: str | None,
+        cap: int | None,
     ) -> ToolOutput[BinaryReadResult]:
         """Rasterise the requested PDF pages into one image attachment each."""
         try:
@@ -207,7 +269,7 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
                 raw,
                 pages,
                 self.frame_max_dimension,
-                self._bounded(self.max_pages),
+                _bounded(self.max_pages, cap),
             )
         except ValueError as exc:
             raise ToolRetry(f"PDF could not be read: {exc}") from exc
@@ -266,13 +328,17 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
         )
 
     async def _read_video(
-        self, canonical: str, absolute: Path, media_type: str
+        self,
+        canonical: str,
+        absolute: Path,
+        media_type: str,
+        cap: int | None,
     ) -> ToolOutput[BinaryReadResult]:
         """Sample a video file into timestamped frame attachments."""
         try:
             sample = await sample_video(
                 absolute,
-                max_frames=self._bounded(self.max_frames),
+                max_frames=_bounded(self.max_frames, cap),
                 max_dimension=self.frame_max_dimension,
             )
         except Exception as exc:
@@ -280,14 +346,18 @@ class ReadBinaryDocumentTool(AsyncPathTool[BinaryReadResult]):
         return self._sampled_output(canonical, media_type, sample)
 
     async def _read_animation(
-        self, canonical: str, raw: bytes, media_type: str
+        self,
+        canonical: str,
+        raw: bytes,
+        media_type: str,
+        cap: int | None,
     ) -> ToolOutput[BinaryReadResult]:
         """Sample an animated GIF/WebP into timestamped frame attachments."""
         try:
             sample = await asyncio.to_thread(
                 sample_animated_image,
                 raw,
-                max_frames=self._bounded(self.max_frames),
+                max_frames=_bounded(self.max_frames, cap),
                 max_dimension=self.frame_max_dimension,
             )
         except ValueError as exc:

@@ -17,7 +17,7 @@ describe("getToolPartInfo", () => {
     type: "tool-read_document",
     toolCallId,
     state: "output-available",
-    input: { file_path: filePath },
+    input: { reads: [{ file_path: filePath }] },
     output: filePath,
   });
 

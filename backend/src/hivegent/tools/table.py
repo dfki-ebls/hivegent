@@ -15,10 +15,14 @@ from pydantic import Field
 from ..converters import DELIMITED_SUFFIXES, DELIMITERS, TABULAR_SUFFIXES, is_tabular
 from ..humanize import pluralize
 from .base import (
+    Batch,
+    BatchShare,
     ToolOutput,
     ToolRetry,
+    batch_field,
     read_text_or_retry,
     resolve_file_or_retry,
+    run_batch,
     sidecar_hint,
 )
 from .formatting import hint_suffix, truncate_line
@@ -27,8 +31,8 @@ from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
 __all__ = [
     "QueriedTable",
     "QueryTableTool",
-    "TableFilePathArg",
-    "TableQueryArg",
+    "TableFilePathsArg",
+    "TableQueriesArg",
     "TableResult",
     "TableRowLimitArg",
     "TableSheetArg",
@@ -57,6 +61,9 @@ _DATETIME = r"^\d{4}-\d{1,2}-\d{1,2}[ T]\d"
 
 _DEFAULT_ROW_LIMIT = 100
 _MAX_ROW_LIMIT = 1000
+
+_QUERY_CONCURRENCY = 4
+"""Queries or descriptions one batched call runs at once, each on its own thread."""
 
 _UNPARSED_SAMPLE = 3
 """Distinct unparsable values named per column, enough to say what they are."""
@@ -210,34 +217,30 @@ class TextColumn:
         return self.parsed == self.total
 
 
-TableFilePathArg = Annotated[
-    str | list[str],
-    Field(
-        description=(
-            "Full workspace path of the table to query, or a list of paths to "
-            f"query together. The first is addressed as '{_RELATION}', the "
-            f"second '{_RELATION}2', the third '{_RELATION}3', so a join reads "
-            f'"FROM {_RELATION} JOIN {_RELATION}2 ON ...".'
-        ),
+TableFilePathsArg = Annotated[
+    list[str],
+    batch_field(
+        "Full workspace paths of the tables to query together. The first is "
+        f"addressed as '{_RELATION}', the second '{_RELATION}2', the third "
+        f"'{_RELATION}3', so a join reads "
+        f'"FROM {_RELATION} JOIN {_RELATION}2 ON ...".'
     ),
 ]
 
-TableQueryArg = Annotated[
-    str | None,
-    Field(
-        description=(
-            f"Polars SQL SELECT over the tables, the first named '{_RELATION}', "
-            f'e.g. "SELECT region, SUM(amount) AS total FROM {_RELATION} '
-            'GROUP BY region ORDER BY total DESC". Supports the usual '
-            "aggregates, WHERE, HAVING, ORDER BY, CTEs, window functions, "
-            "joins, and `SHOW TABLES`. It is Polars' dialect and not a "
-            "database's, so a function it refuses is named in the error and "
-            "may exist under another spelling worth trying. Omit the query to "
-            "get the columns, their types, the row count, and a few sample "
-            "rows, which is the cheap first call. Numbers and dates are "
-            "already typed as such, so cast only a column still shown as "
-            "String."
-        ),
+TableQueriesArg = Annotated[
+    list[str] | None,
+    batch_field(
+        f"Polars SQL SELECTs over the tables, the first named '{_RELATION}', "
+        f'e.g. "SELECT region, SUM(amount) AS total FROM {_RELATION} '
+        'GROUP BY region ORDER BY total DESC". Each runs on its own over the '
+        "tables loaded once, so ask every question of them in one call. "
+        "Supports the usual aggregates, WHERE, HAVING, ORDER BY, CTEs, window "
+        "functions, joins, and `SHOW TABLES`. It is Polars' dialect and not a "
+        "database's, so a function it refuses is named in the error and may "
+        "exist under another spelling worth trying. Omit the queries to get "
+        "each table's columns, their types, the row count, and a few sample "
+        "rows, which is the cheap first call. Numbers and dates are already "
+        "typed as such, so cast only a column still shown as String."
     ),
 ]
 
@@ -247,7 +250,7 @@ TableSheetArg = Annotated[
         description=(
             "Worksheet to query in a spreadsheet that has more than one, "
             "applied to every spreadsheet given. Defaults to the first sheet; "
-            "omit the query to see them all."
+            "omit the queries to see them all."
         ),
     ),
 ]
@@ -289,9 +292,12 @@ class TableResult:
     The two halves are kept apart because they answer different questions and
     no longer stand one to one: ``tables`` describes each file that was
     registered, while the columns and rows describe what the query made of
-    them, which for a join belongs to no single file.
+    them, which for a join belongs to no single file.  A call without a query
+    describes each table on its own, with ``query`` unset and ``tables``
+    holding the one table described.
     """
 
+    query: str | None = None
     tables: tuple[QueriedTable, ...] = ()
     columns: tuple[str, ...] = ()
     dtypes: tuple[str, ...] = ()
@@ -547,7 +553,7 @@ def _cell(value: object) -> str:
 
 
 @dataclass(slots=True, frozen=True)
-class QueryTableTool(RedirectingPathTool[TableResult]):
+class QueryTableTool(RedirectingPathTool[Batch[TableResult]]):
     """Query a tabular document with SQL instead of reading it line by line.
 
     Row, column, cell, and rendered-output budgets bound the result, and every
@@ -568,23 +574,24 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
     @override
     async def __call__(
         self,
-        file_path: TableFilePathArg,
-        query: TableQueryArg = None,
+        file_paths: TableFilePathsArg,
+        queries: TableQueriesArg = None,
         sheet: TableSheetArg = None,
         row_limit: TableRowLimitArg = _DEFAULT_ROW_LIMIT,
         output_path: OutputPathArg = None,
-    ) -> ToolOutput[TableResult | RedirectedOutput]:
+    ) -> ToolOutput[Batch[TableResult] | RedirectedOutput]:
         """Query one or more spreadsheets or delimited documents with SQL.
 
-        Runs a Polars SQL SELECT against the files and returns the resulting
-        rows.  One file is addressed as ``t``; give a list to query several
-        together, where the first is ``t``, the second ``t2``, and so on, so a
-        join reads ``FROM t JOIN t2 ON ...``.  Prefer this over reading a table
+        Runs Polars SQL SELECTs against the files and returns the resulting
+        rows of each under its query.  The first file is addressed as ``t``,
+        the second ``t2``, and so on, so a join reads ``FROM t JOIN t2 ON
+        ...``.  The files are loaded once for all the queries, so ask every
+        question of them in one call.  Prefer this over reading a table
         document: filtering and aggregating in the query costs a fraction of
         the context that reading the rows would, and it cannot silently lose
         the trailing columns of a wide row the way a line read does.  Call it
-        without a query first to learn the columns, their types, and the row
-        count.
+        without queries first to learn each table's columns, their types, and
+        the row count.
 
         The dialect is Polars SQL, not a database's: it covers the usual
         aggregates, WHERE, GROUP BY, HAVING, ORDER BY, CTEs, window functions,
@@ -592,14 +599,9 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
         under another, so read the refusal and try Polars' spelling rather than
         abandoning the query.  ``SHOW TABLES`` lists what is registered.
         """
-        paths = [file_path] if isinstance(file_path, str) else list(file_path)
-
-        if not paths:
-            raise ToolRetry("Name at least one table to query.")
-
         resolved: list[tuple[str, Path]] = []
 
-        for path in paths:
+        for path in file_paths:
             _sp, _local, absolute = resolve_file_or_retry(self.resolved_paths, path)
 
             if not is_tabular(path):
@@ -611,28 +613,54 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
 
             resolved.append((path, absolute))
 
-        # Polars releases the GIL, but the call still blocks, so it stays off
-        # the event loop.
-        result = await asyncio.to_thread(
-            self._run, tuple(resolved), query, sheet, row_limit
+        # Polars releases the GIL, but the calls still block, so they stay off
+        # the event loop, where the queries of one batch overlap.  The files are loaded and retyped once, and every
+        # query runs against what they turned out to be.
+        sources = await asyncio.to_thread(
+            lambda: tuple(
+                self._open(path, absolute, sheet) for path, absolute in resolved
+            )
         )
+
+        if queries is None:
+
+            async def describe(
+                index: int, share: BatchShare
+            ) -> ToolOutput[TableResult]:
+                return await asyncio.to_thread(
+                    self._run, sources, None, row_limit, share, index
+                )
+
+            result = await run_batch(
+                range(len(sources)),
+                describe,
+                key=lambda i: sources[i].file_path,
+                concurrency=_QUERY_CONCURRENCY,
+            )
+        else:
+
+            async def run(query: str, share: BatchShare) -> ToolOutput[TableResult]:
+                return await asyncio.to_thread(
+                    self._run, sources, query, row_limit, share
+                )
+
+            result = await run_batch(
+                queries, run, key=lambda query: query, concurrency=_QUERY_CONCURRENCY
+            )
 
         return await self.redirect(result, output_path)
 
     def _run(
         self,
-        resolved: tuple[tuple[str, Path], ...],
+        sources: tuple[_Source, ...],
         query: str | None,
-        sheet: str | None,
         row_limit: int,
+        share: BatchShare,
+        subject: int = 0,
     ) -> ToolOutput[TableResult]:
-        """Load every file, then run the query against what they turned out to be."""
-        sources = tuple(
-            self._open(file_path, absolute, sheet) for file_path, absolute in resolved
-        )
-
+        """Run one query, or describe the *subject* table when there is none."""
         try:
-            return self._query(sources, query, row_limit)
+            return self._query(sources, query, row_limit, share, subject)
 
         except pl.exceptions.PolarsError as exc:
             raise ToolRetry(self._failure(exc, sources, query)) from exc
@@ -669,7 +697,7 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
         detail = (
             f"query failed: {exc} The tables are named "
             f"{', '.join(_relation(index) for index in range(len(sources)))}; "
-            "call without a query to see their columns and types, or run "
+            "call without queries to see their columns and types, or run "
             "`SHOW TABLES`."
         )
 
@@ -725,48 +753,54 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
         sources: tuple[_Source, ...],
         query: str | None,
         row_limit: int,
+        share: BatchShare,
+        subject: int,
     ) -> ToolOutput[TableResult]:
         """Run the query over the loaded frames and render what it returned.
 
         Every file is registered whether or not the query names it, so a join
         needs nothing but the SQL, and ``SHOW TABLES`` answers from the same
-        context the query runs in.  Without a query the first table is the
-        subject, since a schema call has no join to describe.
+        context the query runs in.  Without a query the *subject* table alone
+        is described, since a schema call has no join to describe.
         """
+        named = tuple((_relation(i), source) for i, source in enumerate(sources))
         limit = self.preview_rows if query is None else min(row_limit, self.max_rows)
-        context = pl.SQLContext(
-            {_relation(index): source.frame for index, source in enumerate(sources)}
-        )
-        frame = sources[0].frame if query is None else context.execute(query)
+
+        if query is None:
+            named = (named[subject],)
+            frame = named[0][1].frame
+        else:
+            frame = pl.SQLContext(
+                {name: source.frame for name, source in named}
+            ).execute(query)
 
         # One row past the limit is what separates "all of it" from "the first
         # N", without collecting the rest to find out.
         collected = frame.head(limit + 1).collect()
         total = (
-            int(sources[0].frame.select(pl.len()).collect().item())
-            if query is None
-            else None
+            int(frame.select(pl.len()).collect().item()) if query is None else None
         )
 
         frame_rows = collected.head(limit)
         columns = tuple(frame_rows.columns)
         dtypes = tuple(str(dtype) for dtype in frame_rows.dtypes)
         preamble = self._preamble(
-            sources=sources,
+            named=named,
             columns=columns,
             dtypes=dtypes,
             total_rows=total,
             query=query,
         )
-        rows, body, display_cut = self._render(frame_rows, columns, preamble)
+        rows, body, display_cut = self._render(
+            frame_rows, columns, preamble, share.of(self.max_formatted_chars)
+        )
 
         # The two cuts are different facts and no longer share a flag: `rows`
         # holds everything the row limit allowed, so `truncated` says only that
         # the limit bound, while what the display dropped rides the hint.
         result = TableResult(
-            tables=tuple(
-                source.queried(_relation(index)) for index, source in enumerate(sources)
-            ),
+            query=query,
+            tables=tuple(source.queried(name) for name, source in named),
             columns=columns,
             dtypes=dtypes,
             rows=rows,
@@ -792,6 +826,7 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
         frame: pl.DataFrame,
         columns: tuple[str, ...],
         lines: list[str],
+        max_formatted_chars: int,
     ) -> tuple[tuple[tuple[str, ...], ...], str, bool]:
         """Render rows under the display budget, keeping every one of them.
 
@@ -828,7 +863,7 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
             line = f"| {' | '.join(truncate_line(cell, self.max_cell_chars) for cell in row[:width])} |"
             extra = len(line) + (1 if rendered else 0)
 
-            if rendered and spent + extra > self.max_formatted_chars:
+            if rendered and spent + extra > max_formatted_chars:
                 display_full = False
                 continue
 
@@ -839,7 +874,7 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
 
     def _preamble(
         self,
-        sources: tuple[_Source, ...],
+        named: tuple[tuple[str, _Source], ...],
         columns: tuple[str, ...],
         dtypes: tuple[str, ...],
         total_rows: int | None,
@@ -852,14 +887,14 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
         about which took which name.
         """
         lines = [
-            self._summary(source, _relation(index), total_rows if not index else None)
-            for index, source in enumerate(sources)
+            self._summary(source, name, total_rows if not index else None)
+            for index, (name, source) in enumerate(named)
         ]
 
         if query is not None:
             return lines
 
-        source = sources[0]
+        source = named[0][1]
 
         if len(source.sheets) > 1:
             lines += ["", f"sheets: {', '.join(source.sheets)}"]
@@ -934,7 +969,10 @@ class QueryTableTool(RedirectingPathTool[TableResult]):
         hints += self._typing_hints(result, query)
 
         if query is None:
-            hints.append(f"pass a SQL query over '{_RELATION}' to filter or aggregate")
+            hints.append(
+                f"pass SQL queries over '{result.tables[0].name}' to filter or "
+                "aggregate"
+            )
 
         return hints
 

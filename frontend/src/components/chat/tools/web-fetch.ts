@@ -1,23 +1,26 @@
+import { z } from "zod";
+import { parseBatch } from "@/components/chat/tools/batch";
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
-/** Structured payload of the backend ``web_fetch`` tool. */
-interface WebPageData {
-  url: string;
-  title: string;
-  content: string;
-  truncated: boolean;
-}
+/** One page of the backend ``web_fetch`` tool's payload. */
+const WebPageSchema = z.object({
+  requested_url: z.string(),
+  url: z.string(),
+  title: z.string(),
+  content: z.string(),
+  truncated: z.boolean(),
+});
 
-export const syncWebFetchOutput: SyncOutput = ({ input, metadata, markFullDocument, sourceId }) => {
-  if (!input) return;
-  if (metadata == null || typeof metadata !== "object" || !("content" in metadata)) return;
-  const page = metadata as WebPageData;
-  if (!page.content) return;
-  // Store under the final URL (after redirects) and, when it differs,
-  // under the requested URL too — citations may reference either.
-  markFullDocument(page.url, page.content, "web", sourceId);
-  const requested = input.url as string | undefined;
-  if (requested && requested !== page.url) {
-    markFullDocument(requested, page.content, "web", sourceId);
+export const syncWebFetchOutput: SyncOutput = ({ metadata, markFullDocument, sourceId }) => {
+  for (const page of parseBatch(metadata, WebPageSchema).results) {
+    if (!page.content) continue;
+
+    // Store under the final URL (after redirects) and, when it differs,
+    // under the requested URL too, since citations may reference either.
+    markFullDocument(page.url, page.content, "web", sourceId);
+
+    if (page.requested_url !== page.url) {
+      markFullDocument(page.requested_url, page.content, "web", sourceId);
+    }
   }
 };

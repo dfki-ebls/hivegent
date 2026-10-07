@@ -1,6 +1,8 @@
-import { FileImage, FileText, FileVideo, Paperclip } from "lucide-react";
+import { FileImage, FileText, FileVideo, Paperclip, XCircleIcon } from "lucide-react";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { z } from "zod";
+import { parseBatch } from "@/components/chat/tools/batch";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { keyPrefix } from "@/i18n";
@@ -11,25 +13,16 @@ import { formatDecimal, formatFileSize, formatNumber } from "@/i18n/format";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.tools.binary);
 
-interface BinaryReadResult {
-  file_path: string;
-  media_type: string;
-  size: number;
-  pages: number[];
-  frames?: number;
-  duration?: number | null;
-}
-
-function isBinaryReadResult(value: unknown): value is BinaryReadResult {
-  if (value == null || typeof value !== "object") return false;
-  const v = value as Record<string, unknown>;
-  return (
-    typeof v.file_path === "string" &&
-    typeof v.media_type === "string" &&
-    typeof v.size === "number" &&
-    Array.isArray(v.pages)
-  );
-}
+/** Mirrors `BinaryReadResult` in `backend/src/hivegent/tools/binary.py`. */
+const BinaryReadResultSchema = z.object({
+  file_path: z.string(),
+  media_type: z.string(),
+  size: z.number(),
+  pages: z.array(z.number()),
+  frames: z.number().optional(),
+  duration: z.number().nullable().optional(),
+});
+type BinaryReadResult = z.infer<typeof BinaryReadResultSchema>;
 
 function BinaryMeta({ result }: { result: BinaryReadResult }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
@@ -106,12 +99,14 @@ function descriptionPath(filePath: string): string {
  * fetched view mirrors what the model actually saw, not what it could have.
  */
 export const syncReadBinaryDocumentOutput: SyncOutput = ({ metadata, addImage }) => {
-  const result = isBinaryReadResult(metadata) ? metadata : null;
-  if (!result || !result.media_type.startsWith("image/")) return;
-  addImage(descriptionPath(result.file_path), {
-    filePath: result.file_path,
-    mediaType: result.media_type,
-  });
+  for (const result of parseBatch(metadata, BinaryReadResultSchema).results) {
+    if (!result.media_type.startsWith("image/")) continue;
+
+    addImage(descriptionPath(result.file_path), {
+      filePath: result.file_path,
+      mediaType: result.media_type,
+    });
+  }
 };
 
 interface ReadBinaryDocumentToolProps {
@@ -119,31 +114,47 @@ interface ReadBinaryDocumentToolProps {
   metadata: unknown;
 }
 
-export function ReadBinaryDocumentTool({ part, metadata }: ReadBinaryDocumentToolProps) {
-  const result = isBinaryReadResult(metadata) ? metadata : null;
+function BinaryResult({ result }: { result: BinaryReadResult }) {
+  if (result.media_type.startsWith("image/")) return <ImagePreview result={result} />;
+
   const Icon =
-    result?.media_type === "application/pdf"
+    result.media_type === "application/pdf"
       ? FileText
-      : result?.media_type.startsWith("video/")
+      : result.media_type.startsWith("video/")
         ? FileVideo
         : FileImage;
 
   return (
+    <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3 text-sm">
+      <Icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="truncate font-medium" title={result.file_path}>
+          {result.file_path}
+        </div>
+        <BinaryMeta result={result} />
+      </div>
+    </div>
+  );
+}
+
+/** One card per attached file, plus the files the call could not attach. */
+export function ReadBinaryDocumentTool({ part, metadata }: ReadBinaryDocumentToolProps) {
+  const { results, failures } = parseBatch(metadata, BinaryReadResultSchema);
+
+  return (
     <ToolCard toolName="read_binary_document" part={part}>
-      {result &&
-        (result.media_type.startsWith("image/") ? (
-          <ImagePreview result={result} />
-        ) : (
-          <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3 text-sm">
-            <Icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1 space-y-1">
-              <div className="truncate font-medium" title={result.file_path}>
-                {result.file_path}
-              </div>
-              <BinaryMeta result={result} />
-            </div>
-          </div>
-        ))}
+      {results.map((result, index) => (
+        // A file read twice for different pages is listed twice.
+        <BinaryResult key={`${result.file_path}#${index}`} result={result} />
+      ))}
+      {failures.map((failure) => (
+        <div key={failure.item} className="flex items-start gap-2 text-xs text-muted-foreground">
+          <XCircleIcon className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+          <span className="min-w-0 break-words">
+            <span className="font-medium">{failure.item}</span>: {failure.reason}
+          </span>
+        </div>
+      ))}
     </ToolCard>
   );
 }

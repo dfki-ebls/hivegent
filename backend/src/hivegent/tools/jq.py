@@ -10,17 +10,20 @@ from ..converters import JSON_SUFFIXES, is_json
 from ..humanize import pluralize
 from ..subprocesses import jq_filter
 from .base import (
+    Batch,
+    BatchShare,
     ToolOutput,
     ToolRetry,
+    batch_field,
     read_text_or_retry,
     resolve_file_or_retry,
+    run_batch,
     sidecar_hint,
 )
-from .documents import DocumentFilePathArg
 from .formatting import cap_lines, hint_suffix
 from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
 
-__all__ = ["JqFilterArg", "JqResult", "JqTool"]
+__all__ = ["JqFilePathsArg", "JqFilterArg", "JqResult", "JqTool"]
 
 SHAPE_FILTER = (
     'def shape: if type == "object" '
@@ -37,11 +40,19 @@ written without knowing its keys, and the only other way to learn them is `.`,
 which returns the whole file — the outcome this tool exists to avoid.
 """
 
+JqFilePathsArg = Annotated[
+    list[str],
+    batch_field(
+        "Full workspace paths of the JSON documents to filter, each with the "
+        "same filter."
+    ),
+]
+
 JqFilterArg = Annotated[
     str | None,
     Field(
         description=(
-            "jq filter expression to run against the document, e.g. "
+            "jq filter expression to run against each document, e.g. "
             "`.items | map(.name)`. Omit it to get the top-level keys and "
             "their types (for an array, its length and the shape of its first "
             "element), which is the cheap first call."
@@ -67,25 +78,38 @@ class JqResult:
 
 
 @dataclass(slots=True, frozen=True)
-class JqTool(RedirectingPathTool[JqResult]):
-    """Filter a JSON document with jq instead of reading it line by line."""
+class JqTool(RedirectingPathTool[Batch[JqResult]]):
+    """Filter JSON documents with jq instead of reading them line by line."""
 
     max_formatted_chars: int = 50_000
 
     @override
     async def __call__(
         self,
-        file_path: DocumentFilePathArg,
+        file_paths: JqFilePathsArg,
         filter: JqFilterArg = None,
         output_path: OutputPathArg = None,
-    ) -> ToolOutput[JqResult | RedirectedOutput]:
-        """Filter a JSON document with a jq expression.
+    ) -> ToolOutput[Batch[JqResult] | RedirectedOutput]:
+        """Filter one or more JSON documents with a jq expression.
 
         Prefer this over reading a JSON document: the filter runs over the
         whole file and returns only what it selects, where a line read spends
         the context on the records the question does not need.  Call it without
-        a filter first to learn the top-level keys and their types.
+        a filter first to learn the top-level keys and their types.  Each
+        document is filtered on its own and reported under its path.
         """
+
+        async def run(file_path: str, share: BatchShare) -> ToolOutput[JqResult]:
+            return await self._filter(file_path, filter, share)
+
+        result = await run_batch(file_paths, run, key=lambda path: path)
+
+        return await self.redirect(result, output_path)
+
+    async def _filter(
+        self, file_path: str, filter: str | None, share: BatchShare
+    ) -> ToolOutput[JqResult]:
+        """Run the filter over one document."""
         _sp, _local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
 
         if not is_json(file_path):
@@ -102,9 +126,12 @@ class JqTool(RedirectingPathTool[JqResult]):
         except ValueError as exc:
             raise ToolRetry(str(exc)) from exc
 
-        return await self.redirect(
-            self._result(file_path, filter, values, decoded.source_encoding),
-            output_path,
+        return self._result(
+            file_path,
+            filter,
+            values,
+            decoded.source_encoding,
+            share.of(self.max_formatted_chars),
         )
 
     def _result(
@@ -113,6 +140,7 @@ class JqTool(RedirectingPathTool[JqResult]):
         filter: str | None,
         values: list[JsonValue],
         source_encoding: str | None,
+        max_formatted_chars: int,
     ) -> ToolOutput[JqResult]:
         """Budget the outputs and render them one compact JSON value per line.
 
@@ -123,7 +151,7 @@ class JqTool(RedirectingPathTool[JqResult]):
         lines = [json.dumps(value, default=str) for value in values]
         body, dropped = cap_lines(
             lines,
-            self.max_formatted_chars,
+            max_formatted_chars,
             keep_oversized_first=False,
         )
 

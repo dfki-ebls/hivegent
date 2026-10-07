@@ -11,10 +11,10 @@ from typing import cast
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
-from hivegent.tools.base import ToolOutput
+from hivegent.tools.base import Batch, ItemFailure, ToolOutput
 from hivegent.tools.sink import RedirectedOutput
 
-__all__ = ["png_bytes", "returned"]
+__all__ = ["png_bytes", "returned", "single"]
 
 
 def png_bytes(info: PngInfo | None = None) -> bytes:
@@ -39,3 +39,12 @@ async def returned[T](
     assert not isinstance(result.data, RedirectedOutput)
 
     return cast(ToolOutput[T], result)
+
+
+def single[R](data: Batch[R] | RedirectedOutput) -> R:
+    """The one item a one-item batch served, asserting it did not fail."""
+    assert isinstance(data, tuple) and len(data) == 1
+    item = data[0]
+    assert not isinstance(item, ItemFailure)
+
+    return item

@@ -7,7 +7,12 @@ from pydantic import SecretStr
 
 from hivegent import retrieval
 from hivegent.config import settings
-from hivegent.tools.retrieval import SearchResult, VectorSearchTool, _format_results
+from hivegent.tools.retrieval import (
+    SearchResult,
+    VectorSearchTool,
+    _format_results,
+    _fuse,
+)
 
 
 def test_format_results_truncates_long_lines() -> None:
@@ -17,6 +22,15 @@ def test_format_results_truncates_long_lines() -> None:
     formatted = _format_results([result], max_line_chars=80)
     assert "…" in formatted
     assert len(max(formatted.splitlines(), key=len)) < 200
+
+
+def test_rankings_are_fused_by_rank_and_deduplicated() -> None:
+    # Scores are min-max normalised per query, so only the ranks compare.
+    a, b, c = (SearchResult(key=k, text=k, score=1.0) for k in "abc")
+
+    fused = _fuse([[a, b], [c, b]], 2)
+
+    assert [r.key for r in fused] == ["b", "a"]
 
 
 def test_build_reranker_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -86,20 +100,21 @@ async def test_search_overfetches_and_appends_reranker(
         casebase: ClassVar[dict[str, str]] = {"k1": "candidate text"}
 
     class _Result:
-        final_step = type("F", (), {"queries": {"default": _Step()}})()
+        final_step = type("F", (), {"queries": {"q": _Step()}})()
 
     def fake_pgvector_async(*, storage, search_type, where, limit):
         captured["limit"] = limit
         return "BASE"
 
-    async def fake_apply(query, retrievers):
+    async def fake_apply(queries, retrievers):
+        captured["queries"] = queries
         captured["retrievers"] = retrievers
         return _Result()
 
     monkeypatch.setattr(
         tr.cbrkit.retrieval.indexable, "pgvector_async", fake_pgvector_async
     )
-    monkeypatch.setattr(tr.cbrkit.retrieval, "apply_query_indexed_async", fake_apply)
+    monkeypatch.setattr(tr.cbrkit.retrieval, "apply_queries_indexed_async", fake_apply)
 
     async def storage_factory():
         return _Storage()
@@ -112,8 +127,10 @@ async def test_search_overfetches_and_appends_reranker(
         reranker_factory=cast(Any, reranker_factory),
         candidate_multiplier=4,
     )
-    await tool("q", max_results=5)
+    await tool(["q", "q"], max_results=5)
 
     # Over-fetch 5 * 4 candidates and run the reranker as the second stage.
     assert captured["limit"] == 20
     assert captured["retrievers"] == ["BASE", "RERANKER"]
+    # A repeated query is searched once.
+    assert captured["queries"] == {"q": "q"}

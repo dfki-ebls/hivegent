@@ -13,7 +13,8 @@ from hivegent.converters.video import (
 )
 from hivegent.subprocesses.base import run
 from hivegent.tools.base import SearchPath, ToolRetry
-from hivegent.tools.binary import ReadBinaryDocumentTool
+from hivegent.tools.binary import BinaryRead, ReadBinaryDocumentTool
+from tests.helpers import single
 
 
 def _animated_gif(frame_count: int, duration_ms: int = 100) -> bytes:
@@ -79,9 +80,9 @@ async def test_sample_video_via_ffmpeg(tmp_path: Path) -> None:
 async def test_binary_tool_samples_animated_gif(tmp_path: Path) -> None:
     (tmp_path / "anim.gif").write_bytes(_animated_gif(10))
     tool = ReadBinaryDocumentTool(paths=SearchPath(path=tmp_path), max_frames=4)
-    output = await tool("anim.gif")
-    assert output.data.frames == 4
-    assert output.data.duration == pytest.approx(1.0)
+    output = await tool([BinaryRead("anim.gif")])
+    assert single(output.data).frames == 4
+    assert single(output.data).duration == pytest.approx(1.0)
     assert len(output.attachments) == 4
     assert all(a.media_type == "image/png" for a in output.attachments)
     assert "#t=" in (output.attachments[-1].identifier or "")
@@ -94,8 +95,8 @@ async def test_binary_tool_clamps_frames_to_the_image_cap(tmp_path: Path) -> Non
     tool = ReadBinaryDocumentTool(
         paths=SearchPath(path=tmp_path), max_frames=4, max_images=2
     )
-    output = await tool("anim.gif")
-    assert output.data.frames == 2
+    output = await tool([BinaryRead("anim.gif")])
+    assert single(output.data).frames == 2
     assert len(output.attachments) == 2
 
 
@@ -103,4 +104,4 @@ async def test_binary_tool_rejects_pages_for_video(tmp_path: Path) -> None:
     (tmp_path / "clip.mp4").write_bytes(b"\x00" * 16)
     tool = ReadBinaryDocumentTool(paths=SearchPath(path=tmp_path))
     with pytest.raises(ToolRetry, match="pages="):
-        await tool("clip.mp4", pages="1")
+        await tool([BinaryRead("clip.mp4", pages="1")])

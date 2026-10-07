@@ -19,6 +19,7 @@ from .base import (
     ToolFactory,
     ToolOutput,
     ToolSpec,
+    accept_scalar,
     factory_tool_name,
     translate_tool_retry,
 )
@@ -165,7 +166,10 @@ def for_pydantic_ai[D](
 
     new_annotations: dict[str, Any] = {
         "ctx": ctx_annotation,
-        **{n: Annotated[h, _DEQUOTE_VALIDATOR] for n, h in spec.annotations.items()},
+        **{
+            n: accept_scalar(Annotated[h, _DEQUOTE_VALIDATOR])
+            for n, h in spec.annotations.items()
+        },
         "return": ToolReturn,
     }
 
