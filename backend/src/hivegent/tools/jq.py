@@ -7,9 +7,9 @@ from typing import Annotated, override
 from pydantic import Field, JsonValue
 
 from ..converters import JSON_SUFFIXES, is_json
-from ..humanize import pluralize
 from ..subprocesses import jq_filter
 from .base import (
+    AsyncPathTool,
     Batch,
     BatchShare,
     ToolOutput,
@@ -20,8 +20,7 @@ from .base import (
     run_batch,
     sidecar_hint,
 )
-from .formatting import cap_lines, hint_suffix
-from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
+from .formatting import hint_suffix
 
 __all__ = ["JqFilePathsArg", "JqFilterArg", "JqResult", "JqTool"]
 
@@ -63,13 +62,7 @@ JqFilterArg = Annotated[
 
 @dataclass(slots=True, frozen=True)
 class JqResult:
-    """The values a filter produced, one entry per output jq emitted.
-
-    ``values`` is every value, never the slice the output budget left room to
-    render, so a ``.json`` redirect stores the whole filter result the way a
-    grep count stores every match.  What the budget dropped is stated in the
-    rendered text alone.
-    """
+    """The values a filter produced, one entry per output jq emitted."""
 
     file_path: str
     filter: str
@@ -78,18 +71,15 @@ class JqResult:
 
 
 @dataclass(slots=True, frozen=True)
-class JqTool(RedirectingPathTool[Batch[JqResult]]):
+class JqTool(AsyncPathTool[Batch[JqResult]]):
     """Filter JSON documents with jq instead of reading them line by line."""
-
-    max_formatted_chars: int = 50_000
 
     @override
     async def __call__(
         self,
         file_paths: JqFilePathsArg,
         filter: JqFilterArg = None,
-        output_path: OutputPathArg = None,
-    ) -> ToolOutput[Batch[JqResult] | RedirectedOutput]:
+    ) -> ToolOutput[Batch[JqResult]]:
         """Filter one or more JSON documents with a jq expression.
 
         Prefer this over reading a JSON document: the filter runs over the
@@ -99,16 +89,12 @@ class JqTool(RedirectingPathTool[Batch[JqResult]]):
         document is filtered on its own and reported under its path.
         """
 
-        async def run(file_path: str, share: BatchShare) -> ToolOutput[JqResult]:
-            return await self._filter(file_path, filter, share)
+        async def run(file_path: str, _share: BatchShare) -> ToolOutput[JqResult]:
+            return await self._filter(file_path, filter)
 
-        result = await run_batch(file_paths, run, key=lambda path: path)
+        return await run_batch(file_paths, run, key=lambda path: path)
 
-        return await self.redirect(result, output_path)
-
-    async def _filter(
-        self, file_path: str, filter: str | None, share: BatchShare
-    ) -> ToolOutput[JqResult]:
+    async def _filter(self, file_path: str, filter: str | None) -> ToolOutput[JqResult]:
         """Run the filter over one document."""
         _sp, _local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
 
@@ -126,50 +112,15 @@ class JqTool(RedirectingPathTool[Batch[JqResult]]):
         except ValueError as exc:
             raise ToolRetry(str(exc)) from exc
 
-        return self._result(
-            file_path,
-            filter,
-            values,
-            decoded.source_encoding,
-            share.of(self.max_formatted_chars),
-        )
-
-    def _result(
-        self,
-        file_path: str,
-        filter: str | None,
-        values: list[JsonValue],
-        source_encoding: str | None,
-        max_formatted_chars: int,
-    ) -> ToolOutput[JqResult]:
-        """Budget the outputs and render them one compact JSON value per line.
-
-        The structured result keeps every value for the frontend and JSON
-        redirects.  Only the model-facing text is budgeted, and it drops whole
-        values rather than cutting a JSON token.
-        """
-        lines = [json.dumps(value, default=str) for value in values]
-        body, dropped = cap_lines(
-            lines,
-            max_formatted_chars,
-            keep_oversized_first=False,
-        )
-
-        hints: list[str] = []
-        if dropped:
-            hints.append(
-                f"{dropped} more {pluralize(dropped, 'value')} cut by the "
-                "output budget, narrow the filter or pass a `.json` output_path"
-            )
-        if filter is None:
-            hints.append("shape only, pass a filter to select values")
+        body = "\n".join(json.dumps(value, default=str) for value in values)
+        hints = ["shape only, pass a filter to select values"] if filter is None else []
 
         return ToolOutput(
             data=JqResult(
                 file_path=file_path,
                 filter=filter or SHAPE_FILTER,
                 values=tuple(values),
-                source_encoding=source_encoding,
+                source_encoding=decoded.source_encoding,
             ),
             formatted=(body or "(no values)") + hint_suffix(hints),
         )

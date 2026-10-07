@@ -1,7 +1,6 @@
 """Conversation-oriented agent tool registrations."""
 
-import reprlib
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import ModelRetry
@@ -21,7 +20,7 @@ from ...db.conversations import (
     load_conversation as _load_conversation,
 )
 from ...tools.base import ToolOutput
-from ...tools.formatting import BLOCK_SEP, truncate_line
+from ...tools.formatting import BLOCK_SEP, render_arguments, truncate_line
 from ...tools.pydantic_ai import wrap_tool_output
 from ..common import UserDeps
 
@@ -44,24 +43,6 @@ conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 _MAX_TOOL_CALL_CHARS = 200
 """Cap on one rendered tool call, which names what was done, not its result."""
-
-_ARG_REPR = reprlib.Repr(maxlevel=2, maxstring=_MAX_TOOL_CALL_CHARS)
-"""Renders one argument value cut short, never the whole of a large one."""
-
-
-def _render_args(args: str | Mapping[str, object] | None) -> str:
-    """The arguments of a tool call, rendered no longer than they are shown.
-
-    A large argument (a written document, a program) is cut while rendering
-    rather than serialized whole and cut afterwards.
-    """
-    if isinstance(args, str):
-        return args[:_MAX_TOOL_CALL_CHARS]
-
-    return ", ".join(
-        f"{key}={_ARG_REPR.repr(value)}" for key, value in (args or {}).items()
-    )
-
 
 def _header(conversation: ConversationData | ConversationSummary) -> str:
     """The `id  date  title` line naming *conversation*."""
@@ -94,7 +75,8 @@ def _render_parts(message: ModelMessage) -> Iterator[str]:
                 yield f"assistant:\n{content.strip()}"
 
             case ToolCallPart():
-                call = f"{part.tool_name}({_render_args(part.args)})"
+                arguments = render_arguments(part.args, _MAX_TOOL_CALL_CHARS)
+                call = f"{part.tool_name}({arguments})"
                 yield f"tool call: {truncate_line(call, _MAX_TOOL_CALL_CHARS)}"
 
             case _:

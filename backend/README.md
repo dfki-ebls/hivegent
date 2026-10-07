@@ -160,7 +160,7 @@ An edit replaces a string inside a file it did not build and is left alone.
 
 ### A conversation's `/tmp`
 
-`/tmp` holds a conversation's working state, content that is never a document: intermediates, the state a later `run_python` call picks up, a program written only to be run, a redirected result.
+`/tmp` holds a conversation's working state, content that is never a document: intermediates, the state a later `run_python` call picks up, a program written only to be run, a tool result too large to show whole.
 Each conversation owns one folder, `<data_dir>/tmp/<conversation_id>/`, outside every workspace, and every agent surface spells it `/tmp`, the way a container session has one `/tmp` for its lifetime.
 There is no user level: conversation ids are server-generated keys and the `conversations` row names the one user a folder belongs to, so ownership is read from the database and never from the path.
 `tmp.tmp_dir(data_dir, conversation_id)` is the one place an id becomes a path, and it refuses an id that is no safe path segment.
@@ -170,9 +170,10 @@ Nothing about a workspace applies to it: it is never reconciled, indexed, or sea
 `UserDeps.conversation_id` is set by `build_run_prefix`, which also creates the folder, and a subagent inherits it, so `explore` shares its parent's `/tmp`.
 A caller without a conversation, MCP and the admin tool console, gets no such root, so a `/tmp` path is refused there like any path naming no root, with the roots it does have named.
 
-How a change lands is a property of the root, not of the caller: every `SearchPath` carries a `CommitPolicy`, `Gated` for a workspace (the changeset gateway, behind the approval the mode asks for) or `Direct(max_bytes)` for `/tmp` (written straight into the folder, with no changeset, no approval, and no store lock).
+How a change lands is a property of the root, not of the caller: every `SearchPath` carries a `CommitPolicy`, `Gated` for a workspace (the changeset gateway, behind the approval the mode asks for) or `Direct(max_bytes, reserved)` for `/tmp` (written straight into the folder, with no changeset, no approval, and no store lock).
+The policy also names what no ordinary change may touch, each `.assets` payload of a gated root and the `reserved` folder of a direct one, which `SearchPath.is_reserved` answers for `tmp.plan_direct` and a program's overlay alike.
 Every surface that writes asks the root rather than the path: `tools.mutations.partition` splits a changeset into its gated and its direct half, the overlay of a program does the same (`WorkspaceOS.policy`), and `tmp.plan_direct` checks the direct half, which its `DirectPlan.apply` writes once the gated half settled, deriving new text with the gateway's own `workspace.documents.derive_text` (so a hash check, a write mode, and an edit refuse in the gateway's words) and replacing each file atomically (`files.atomic_write`).
-So `write_document`, `edit_document`, `move_documents`, `delete_documents`, a redirected `output_path`, and a program all reach `/tmp` the same way, their validators ask nothing for a direct change, and `/tmp` is writable in every mode, since it is the conversation's own: `UserDeps.writable_paths` leaves the workspaces out in a mode that may not write them, and keeps `/tmp`.
+So `write_document`, `edit_document`, `move_documents`, `delete_documents`, a saved tool result, and a program all reach `/tmp` the same way, their validators ask nothing for a direct change, and `/tmp` is writable in every mode, since it is the conversation's own: `UserDeps.writable_paths` leaves the workspaces out in a mode that may not write them, and keeps `/tmp`.
 The `write` feature is therefore offered in every mode, so a read-only run can still store and edit a script it reruns, while its workspace guidance (`WRITE_INSTRUCTIONS`) is a shared block narrowed to the modes that may write the workspaces and `apply_changes` is withheld outside them by its `prepare` hook, since no such run stages anything.
 A move between the two policies is refused by the tools, since no one commit covers both ends, and is a write of the text and a removal in a program.
 
@@ -184,10 +185,9 @@ The sweep runs in a background task the lifespan starts after the migrations, fi
 An orphan is kept for one sweep interval, since a new conversation's row is only written when its first turn ends, and the orphan rule is what catches a user deletion's cascade and a crash.
 A compacted conversation starts with a copy of its source's folder (`copy_tmp`), since its summary may name what the source kept there.
 
-`TMP_INSTRUCTIONS` is shared between the `python` and `write` features, and `PYTHON_INSTRUCTIONS` names `/tmp` as the home of a rerunnable `.py`, since a `.py` in a workspace is an original and gets chunked.
+`TMP_INSTRUCTIONS` is shared between the `explore`, `python`, `web`, and `write` features, and `PYTHON_INSTRUCTIONS` names `/tmp` as the home of a rerunnable `.py`, since a `.py` in a workspace is an original and gets chunked.
 The mutation receipt says the rest at the one moment the path is in hand: it points a `/tmp` `.py` at `run_python`'s `script_path`.
 That pointer is a `MutationHint` the write and edit tools take like `filter_func`, injected by `agents/tools/write.py` alone, since the MCP surface writes through the same tools and has no `run_python`.
-`output_sink` composes the writer without it, since a result the model redirected to an `output_path` is not a program it just stored.
 
 - TODO(binary): support binary files in `/tmp`, so any name and suffix is accepted, the workspace-only rules (text suffixes, excluded folder names, `DocumentFilter`) do not apply there, and `run_python` reads and writes bytes (`read_bytes`, `write_bytes`, binary `open` modes) under a per-file byte cap.
 - TODO(binary): support binary files in the workspace, so a binary written or moved there by `run_python` (or later the shell) becomes a staged changeset item that runs the upload conversion pipeline at apply time, and the approval summary names it as an upload with its size and type.
@@ -272,7 +272,8 @@ A decision's `reason` is the user's optional note, and the model-facing text is 
 An approved call just runs and stores an ordinary successful return, so nothing in the message list would say it was ever gated, and a denial stores the refusal rather than the note the user typed.
 `vercel.record_approvals` stamps each decision with its note on the metadata of the request carrying the returns, and `dump_messages_with_ids` puts it back on the projected part, overwriting the refusal text the projection copied into `reason`, so `approval.reason` always means the user's note.
 Every denial is recorded that one way, an abandoned one too (below), so the projection overwrites unconditionally.
-The note is appended as one more item of the return value's content list (a plain return becomes its first item, and the client shows a list item by item) rather than as `ToolReturn.content`, which pydantic-ai sends as a separate `UserPromptPart` that would be stored and shown as a user turn nobody typed, and it is appended after `ToolOutputLimit` clamped the return, which the capability order in `build_capabilities` guarantees.
+The note is appended as one more item of the return value's content list (a plain return becomes its first item, and the client shows a list item by item) rather than as `ToolReturn.content`, which pydantic-ai sends as a separate `UserPromptPart` that would be stored and shown as a user turn nobody typed, and it is appended after `ToolOutputSpill` bounded the return, which `ApprovalNotes.get_ordering` declares through pydantic-ai's capability ordering (`wraps=[ToolOutputSpill]`) rather than leaving it to list order.
+pydantic-ai sorts the agent's capabilities and the run's as one list, so the declaration holds with the spill on the agent and the note on the run.
 
 That metadata is UI-owned and never sent to the provider, like the reasoning durations and the turn error beside it.
 It rides on the request node rather than the closer `ToolReturnPart.metadata` because that field is already the tool-output chunk channel (`tools.pydantic_ai.wrap_tool_output`).
@@ -316,6 +317,12 @@ TODO: adopt pydantic-ai's `CompactionPart` as an in-conversation boundary instea
 Upstream models compaction as a part inside one message list: `post_compaction_window` trims everything before it, and derived state resets at it for free.
 That would keep one conversation id across a compaction (today `create_compacted_conversation` mints a new one and the client navigates, which is why compaction cannot auto-fire without teleporting the user mid-flow).
 Blocked on transport: `OpenAICompaction` refuses anything but `OpenAIResponsesModel` and `CompactionPart` round-trips provider-owned data, so neither reaches an `OpenAIChatModel` against vLLM or llama.cpp (upstream #7255).
+
+### One budget per turn
+
+`turn_usage_limits` bounds a chat turn, and a subagent runs on the parent's `ctx.usage` under the parent's `ctx.usage_limits` and `ctx.conversation_id`, so the main agent and every subagent spend one count and a trace groups the delegated run with its turn.
+`IterationLimitWarner` reads the same `ctx.usage_limits`, so its wrap-up note names the limit that will actually stop the run, and a run without a request limit is never warned.
+Each purpose runs its own named agent (`chat`, `explore`, `summarize`, `title`, and `complete` behind `llm.complete`), since the agent name is what Logfire attributes a run's spend to.
 
 ### Export, citations, and attachments
 
@@ -398,7 +405,6 @@ The tools build their changeset with the builder their validator calls too (`too
 `workspace.Gateway` binds the gateway to the stores a surface may write, so the agent and the MCP surface supply only their stores, their gate, and their error type.
 Each validator in `agents/tools/write.py` goes through one `_gate`, which plans the changeset the tool would commit with the `_plan_batch` the commit uses too: the direct half always, so a bad `/tmp` half is refused before anyone is asked, and the gated half only where an approval is asked, raising one `ApprovalRequired`, since an approved resume and a mode that asks nothing are refused by the commit in the same words.
 Every approval, `apply_changes` included, carries the planner's `changes.ChangesetSummary` as its metadata: `{"creates": [{"path", "diff"}], "updates": [{"path", "diff"}], "moves": [{"source", "destination", "is_dir", "replaces"}], "deletes": [...], "mkdirs": [...]}`, every path canonical and every move destination resolved to where it lands.
-A redirected `output_path` is asked about before the tool has produced its result, so its entry carries an empty diff.
 
 ### The image cap belongs to the gateway, not to the reader
 
@@ -417,7 +423,7 @@ The upload pipeline's vision calls are the one exception: they run on the tool-f
 The trim is spent on the wire and nowhere else, which is what `wrap_model_request` is for: the messages handed to the handler are what the model sees, while the graph keeps its own and records those.
 `before_model_request` is not that seam — `request_context.messages` is the run's history, so a hook that edits it there rewrites the tree the conversation is replayed from and exported out of, which is how `IterationLimitWarner` came to append a nudge as a user turn nobody sent.
 Nor are the messages the place to edit in place, since the parts and their content lists are shared with that tree, so the reshape rebuilds what it touches.
-`ToolOutputLimit` is the deliberate exception, since it reduces the tool return itself and that is recorded in place of the original.
+`ToolOutputSpill` is the deliberate exception, since it reduces the tool return itself and that is recorded in place of the original.
 
 A chat turn's own attachments answer to the same number twice over: the trim counts them like any other image, and `_accept_attachments` refuses an over-cap set outright, served to the composer as `AttachmentLimits.max_count` so the file picker stops at it.
 That gate is not what keeps the request legal any more, but a user who attached twelve images should be told at send time rather than have ten quietly go unlooked-at.
@@ -457,10 +463,8 @@ Nothing is dropped on the strength of that vote, for the same reason a censored 
 
 Excel is read through `fastexcel` (calamine), which covers `.xlsx`, `.xlsb`, and `.xls` with no extension download, and a delimited file in a legacy encoding is retried once through `read_text_or_retry`, gated on `ComputeError` plus a delimited suffix, since a lazy scan only meets the offending bytes when it reaches them.
 That retry belongs to the load phase alone, which the typing pass makes reliable by reading every text column there.
-Every budget is applied before the `TableResult` is built and only the row lines are budgeted, so the count the rows are trimmed by is exactly a row count.
-The row limit is the only cut that reaches the data; the display budget, like column and cell width, binds the rendering alone.
-It used to end the row loop, so a redirect wrote a partial table under a receipt reporting only its size — a run that redirected 1000 rows was computing from 262 of them and could not tell.
-Two facts had been sharing one flag: `truncated` now says the row limit bound, what the display dropped rides a hint, and both channels agree on how many rows there are.
+The row limit is the only cut that reaches the data, and `truncated` says only that it bound, while column and cell widths clip the rendering alone.
+Every row it allowed is rendered, and a table too long to show whole is saved by the spill (see [Spilling bulk output](#spilling-bulk-output)), so both channels agree on how many rows there are.
 
 ### JSON is filtered, not read
 
@@ -468,7 +472,7 @@ Two facts had been sharing one flag: `truncated` now says the row limit bound, w
 Omitting the filter answers with the top-level keys and their types (for an array, its length and the shape of its first element), which is `query_table`'s schema call one format over: a document's own filter cannot be written without knowing its keys, and the only other way to learn them is `.`, which returns the whole file.
 The suffix table is narrower than "text that parses as JSON" on purpose, since jq is handed one document and a line-delimited `.jsonl` would fail on its second line.
 The document reaches jq as the text it was read as rather than as a parsed object, so a large file is never held twice and a malformed one is reported in jq's own words as a correctable `ToolRetry`.
-The budget binds the rendered text alone and cuts whole values, so nothing comes back as JSON truncated mid-token, and a `.json` redirect stores the whole filter result rather than the slice that fit.
+Every value is rendered as one compact JSON line, and a result too long to show whole is saved by the spill with every value in it.
 
 ### Registered or excluded, never deferred
 
@@ -504,30 +508,37 @@ Assembling it by hand nested the definitions one level down and left every point
 The wrapper still returns a built `ToolResult`, since a raw return value would have FastMCP replace the text and the binary attachments with a rendering of the structured content.
 That is why the wrapping FastMCP does for a raw value is mirrored in `wrap_tool_output` instead of inherited, and why the payload is serialised through the spec's own adapter, which is the adapter the registered schema was derived from.
 
-### Redirecting bulk output
+### Spilling bulk output
 
-Every bulk-output tool (`list_documents`, `glob_documents`, `read_document`, `query_table`, `jq`, `grep`, `search`, and the two web tools) declares an `output_path`, which writes that call's result to a workspace file and hands the model a receipt, so a call whose answer dwarfs the question is worth making when a later _tool call_ is what turns it into an answer.
+A tool return whose text is longer than `settings.llm.tool_output_max_chars` (60000 by default) is saved whole under the conversation's `/tmp/.tool-results/` and replaced by a preview, by one capability, `agents.guards.ToolOutputSpill`.
+It rides on every agent over the user's deps (`agents/app.py`), so the chat run with its MCP servers, its subagents, and the MCP exploration are bounded by one instance, and the chat run's `ApprovalNotes` declares that it wraps it, so a note is appended to the bounded return.
+The cut itself is `tools.formatting.truncate_middle`, which the FastMCP adapter applies to the text of every plain MCP tool return as well (`register_mcp_tools(..., max_chars=...)`), where there is no `/tmp` to save to and the structured content stays whole.
 
-Not a later program, which is where this and the injected sandbox surface used to claim the same trigger in the same words.
-A model reading both followed the second, and a spreadsheet question that is one `await query_table(...)` became a redirect to `/tmp/*.json`, a `read_document` of it, and a `json.loads`, three calls and a file for what the injected call returns entire.
-The boundary is now stated once on each side: `output_path` is for a result a later tool call consumes, and when the next step is a program the tool is called inside the program.
+The decision is the harness's rather than the model's.
+A tool argument that let the model write a result to a file instead of reading it was misread again and again: as an input to read from, as the way to hand a program a result it could have had by calling the tool inside the program, and as worth using on a three-entry listing, which the model then took for an empty directory.
+The harness knows the size of a result before anyone has to guess it, and no tool schema, validator, or approval has to describe a file the model never asked for.
 
-The suffix picks the channel, since the two a tool returns are not interchangeable: `.json` stores the structured `data`, which for a grep count, a file listing, or a jq filter is every match rather than the first `max_results` of them, while `.txt` stores the very text the model would have been shown.
-A display budget never cuts the stored result, only what is printed, and a receipt repeats any cut its payload does carry: `RedirectedOutput.truncated` is read off the payload by duck-typing, so a capped query can no longer be written to a file under a sentence that reads like the whole of it.
-Only what the caller asked for bounds the data (`row_limit`, `max_results`, `max_chars`), while `max_formatted_chars` binds the text and says in a hint where it stopped.
-`read_document` had the same split and answers it the same way: `max_chars` is the read and bounds `DocumentRange.content`, `max_formatted_chars` is the display and names the line it stopped at so a follow-up `offset` resumes from what was actually shown.
+The file is `/tmp/.tool-results/<tool>-<digest>.json` holding the structured `DataChunk` data where the return carries any, since that is whole where the text may be a rendering of part of it (every grep match, every table row the row limit allowed), and `/tmp/.tool-results/<tool>-<digest>.txt` holding the text otherwise, `<digest>` being the first eight hex digits of the SHA-256 of the tool call id.
+A payload that is only what the client shows, such as a subagent's transcript, is marked `ToolOutput.display_only`, so the text, which is the whole answer, is what gets saved rather than a transcript of megabytes.
+The folder is the root's `reserved` one, which every tool and program reads while no ordinary change writes, moves, or deletes into or out of it, so what is evicted from it is only ever a saved result.
+The data is serialized as compact JSON on the worker thread that writes it, and `tmp.save_result` commits it through the same `DirectPlan.apply` as every other `/tmp` write, walking the folder once.
+`apply` holds a lock per root while it checks the types and the cap again and writes, so a spill and an ordinary write cannot both pass the cap, while `plan_direct` checks the same without the lock as an early refusal.
+Only when the cap requires it does `apply` list the saved results (`DirectPlan.evictable`) and drop the oldest the new one would not fit beside, since a result can be asked for again while the run's own state in `/tmp` cannot, and a result that does not fit even then is not saved at all.
 
-A receipt repeats a result whose text fits `settings.tools.redirect_inline_chars` (2000 by default, `0` always withholds).
-A model that redirected a three-entry listing for no reason was told only "3 entries" and concluded a directory was empty, and withholding a result that short saves nothing a misreading does not cost back.
-The listing itself had hidden the answer too, so `list_documents`, `glob_documents`, and `grep` now name what they left out on every result, not just an empty one, through one `omission_hints` in `tools/formatting.py`: entries `include_ignored` would reveal, entries below `max_depth`, and the `max_results` cap.
+The preview is the head and the tail of the text, three parts to one and cut at line ends, around a note naming the file, its size, its entry count when the data is a list, whether the tool had already cut the result short, and how to read on: `jq`, `grep`, or `run_python` on a `.json`, and `read_document` from the first offset the head left out on a `.txt`.
+The tail stays because that is where a tool's own hints land (`hint_suffix`), and the cut is read off any payload whose `truncated` is set, so a capped query saved to a file does not read like the whole of it.
+Only the return value is replaced, so the `DataChunk` the frontend renders rides through untouched.
+A content list such as `[text, BinaryContent]` has its leading text bounded the same way and keeps its other items as they are, so no image is stringified.
+A run without a `/tmp`, such as the MCP exploration, and a result the folder cannot hold get the same head and tail around a plain count of what was left out.
+
+With every return bounded by the adapters' one cut, the tools lost their own display budgets (`max_formatted_chars` on `grep`, `jq`, `query_table`, `search`, and `web_fetch`), which had cut the text while the data stayed whole and left the rest out of reach, and `run_python` no longer clips what a program printed or returned, so its data keeps all of it.
+What bounds a call's data is still the tool's own: `row_limit`, `max_results`, `max_chars`, `max_line_chars`, and the column and cell widths.
+`read_document` keeps a single content budget, `max_chars`, which the agent derives as two thirds of `tool_output_max_chars`, so that a window rendered with its line numbers stays under the spill threshold, since a read resumes from an offset into the document rather than from a saved copy of the window.
+
+The note in a preview says how to read on, so no prompt block repeats it, and saving a result as a workspace document is the `run_python` guidance's to state.
+
+The listings name what they left out on every result, not just an empty one, through one `omission_hints` in `tools/formatting.py`: entries `include_ignored` would reveal, entries below `max_depth`, and the `max_results` cap.
 Each count is what changing that one argument would reveal, and grep's hidden count is a floor, since ripgrep never enters the build and vendor directories it was told to skip.
-
-`output_path` is declared by each tool next to a `sink` field (an `OutputSink`, the writer plus the inline threshold), the way `run_python` declares the committer its staged changes go through, rather than injected into every tool's schema by the framework adapter: where a result may land is a property of the tool as it was built for a run.
-The MCP surface hands out no sink, so it leaves the argument out of the signature it builds (`register_mcp_tools(..., omit=(OutputPathArg,))` via `ToolSpec.without`, which addresses the parameter by the shared `Annotated` alias rather than by a copy of its spelling).
-That is not schema surgery: all three surfaces synthesize a signature rather than edit one, so leaving an argument out is the same act as putting one in.
-Dropping the argument drops the `RedirectedOutput` branch with it, read off the alias's own `Unreachable` metadata rather than named a second time at each call site.
-The write is the same one the write tools perform, so it answers to the same gate (`agents/tools/write.py` owns `output_sink` and `validate_output_path`, which goes through `_gate`): `/tmp` is written directly in every mode, an interactive call asks for approval of a workspace path, write mode approves it, and read mode refuses it like any path outside its writable roots.
-What a redirect is worth saying about is a paragraph, and a paragraph restated in eight tool schemas costs more context on every request than the feature saves, so the argument's description states only the mechanism and `REDIRECT_INSTRUCTIONS` carries the rest once, shared between the `explore` and `web` features in every mode.
 
 ## The Python sandbox
 
@@ -549,12 +560,12 @@ A path that leads with neither (`/workspace/notes.md`, the scope dropped in betw
 Whether the mount answers an operation, refuses its path, or hands it to `inner` (the environment and the clocks) is decided once, in the `dispatch` override `AbstractOS` offers for it, rather than by a prologue at the head of every method: asking per method made forgetting one a silent bug, which is what an unimplemented `path_open` once was.
 
 Nothing is handed to a program as a host function that the mount already covers: `open` and `iterdir` are the read tools, `re` is grep, and `json` is jq, and ranking a chunk against a question is a `search` call the model makes before it writes the program.
-Monty's `json` has `loads` and `dumps` and no file-reading `load`, which `PYTHON_INSTRUCTIONS` says outright, since `run_python` is the only reader the `.json` redirect channel has.
+Monty's `json` has `loads` and `dumps` and no file-reading `load`, which `PYTHON_INSTRUCTIONS` says outright, since a program is how a saved `/tmp/.tool-results/*.json` is read whole.
 Monty has no `glob`, `rglob`, or `fnmatch`, which is why `PYTHON_INSTRUCTIONS` shows the `iterdir` walk, and `path_iterdir` returns its entries sorted, since Monty cannot compare two `Path` values.
 Which modules a program may import is left for the model to find out, since Monty implements a subset only it knows and offers no `importlib`, `sys.modules`, `__import__`, or `dir` to enumerate one: any list written down here goes stale on the next release, and the one that used to stand in `PYTHON_INSTRUCTIONS` advertised `functools` before Monty had it, for as long as nobody tried it.
 A failed import raises `ModuleNotFoundError` naming the module, which is the correction a stale list would have needed anyway.
 A program parks intermediates and the state a later call needs in `/tmp`, named by `TMPDIR`, because Monty has no `tempfile` and anything under the working directory is staged for the user's approval.
-The environment mirrors a shell's: `PWD` is `/workspace` like `os.getcwd()`, `TMPDIR` is `/tmp` where the run has a conversation, `LANG` and `LC_ALL` are `C.UTF-8`, and `agents/tools/compute.py` adds `HOME` (`/workspace/~`, what `~/...` resolves to) and `USER`/`LOGNAME` (the user id).
+The environment mirrors a shell's: `PWD` is `/workspace` like `os.getcwd()`, `TMPDIR` is `/tmp` where the run has a conversation, `LANG` and `LC_ALL` are `C.UTF-8`, and `agents/tools/python.py` adds `HOME` (`/workspace/~`, what `~/...` resolves to) and `USER`/`LOGNAME` (the user id).
 Monty has no `os.path`, `Path.home`, or `expanduser`, so `HOME` is the only absolute spelling of the personal workspace a program meets, and no `PATH` is set, since there is nothing to execute.
 Bytes are refused on the mount in either direction, so a document with no text form stays `read_binary_document`'s.
 
@@ -599,7 +610,7 @@ Every mutation surface, the dedicated tools and the sandbox alike, now commits t
 
 The mount is why a program needs almost no tools.
 What it cannot be is the four whose answer lives somewhere the sandbox cannot reach, so those are injected as host functions by `tools/monty.py`: `search` needs the database, `web_search` and `web_fetch` need the network, and `query_table` decodes a spreadsheet the mount refuses as binary.
-Before them, a spreadsheet question cost a `query_table` call redirected to a `/tmp/*.json` and a second call to open it, and in `read` mode it cost the whole answer, since the redirect is a write that mode refuses.
+Before them, a program that needed a spreadsheet's rows could only read a file a separate tool call had written first.
 
 Nothing that mutates is injected and nothing can be: a running program cannot stop to ask for approval, which is the same constraint that makes it stage its changes for `apply_changes`.
 Every injected function is a read, so the mode gates none of them.
@@ -608,9 +619,18 @@ That union is computed there rather than carried on deps, so a `UserDeps` built 
 A tool hidden from the model's tool list must not come back as a function it can call from a program.
 
 The set is not a list anyone maintains.
-A tool declares `injectable` on its class (`Tool.injectable`, default `False`), and `agents/tools/python.py` filters the very tuples that register the tools (`EXPLORE_FACTORIES`, `WEB_FACTORIES`) by it.
+`agents/tools/python.py` keeps one list of sandbox functions, filtered from the very tuples that register the tools (`EXPLORE_FACTORIES`, `WEB_FACTORIES`) plus the one function no tool list carries, and each tool class declares how it is offered: `Tool.injectable` (default `False`) whether a program may be handed it, `Tool.registered` (default `True`) whether the model is handed it too, and `Tool.sandbox_instructions` the guidance the prompt carries while it is live.
+The names `disabled` may withhold (`SANDBOX_FUNCTION_NAMES`), the names `sandbox_only` may move (`INJECTABLE_TOOL_NAMES`, the registered ones), and the guidance are all derived from that list.
 So a renamed factory moves the tool list and the sandbox together, the web pair drops out because `WEB_FACTORIES` is already empty when the operator's switch is, and nothing has to check that an injectable name is registered.
-Adding a fifth is one line on its class; the question it answers is whether the mount could have done the job, which is why `grep` and `read_document` are not on it.
+Adding a fifth is one line on its class, and the question it answers is whether the mount could have done the job, which is why `grep` and `read_document` are not on it.
+
+One function is handed to programs alone: `complete(*, prompt: str) -> str`, one tool-free model call for classifying, extracting from, or summarizing many items in a loop, modelled on a sub-agent call in `pydantic-ai-harness`'s dynamic workflows.
+It is `tools/complete.py`'s `CompleteTool`, declared and type-checked like the others, injectable and not registered, so `sandbox_only` cannot name it while `disabled` withholds it like any tool.
+The tool is handed only the completion, so `tools/` stays free of models and runs, and `agents/tools/python.py` supplies it, which is why `run_python` is registered with `takes_ctx=True`, pydantic-ai's own name for a factory that gets the `RunContext`, not only the deps.
+The program never picks the model: it is the aux tier the request resolves (`UserDeps.aux_llm`), the operator's model for many small one-shot calls, falling back to the main one, with thinking off and `settings.sandbox.completion_max_tokens` as each call's output cap, built on a program's first call and reused by the rest.
+Each call runs `llm.complete` on the run's `usage` and `conversation_id`, under its `usage_limits` less the one request the run still owes the model for the program's result, so the calls count toward the turn and against its request limit.
+Usage limits alone overshoot under `asyncio.gather`, since their check and their increment sit on either side of the request, so `settings.sandbox.completion_max_calls` is an exact `CallBudget` per turn, held on the deps so every program and subagent of the turn shares it, which the surface declares for `complete` and `HostCalls` takes with no await between.
+`completion_concurrency` bounds the turn's calls in flight through `UserDeps.completion_gate`, shared the same way, and `completion_timeout_seconds` each call, since Monty's own clock leaves host time out.
 
 A program is handed the structured `data` channel as the adapter for the tool's declared result type renders it: the same type the rendered stub names and `return_schema` publishes, so what a program receives and what it was told to expect are one description read twice.
 So a program sees plain dicts and lists, reads a field as `hit['filename']`, and gets the whole result: the budgets, truncation, and hints on the `text` channel exist to fit a context window a program does not have, and a program that wants fewer rows says so in its query.
@@ -663,6 +683,13 @@ Sleeping is off that clock too, so `max_total_sleep_secs` caps it with the same 
 The cumulative caps are the `max_changeset_*` settings, because what a program writes is held in the overlay until the run ends and then lands on disk, so a loop writing the same megabyte a thousand times would otherwise spend a gigabyte nothing else here bounds.
 The worker pool is owned by the FastAPI lifespan (`sandbox.py`), like the HTTP clients, because a tool instance is built per call and a pool per call would spawn and reap a worker every time.
 Every call takes a fresh session out of it, so no program sees another's variables and a session a time limit stopped mid-operation, whose heap Monty no longer vouches for, is never fed again.
+
+`HostCalls` applies one policy at the boundary to every function a program is handed.
+`settings.sandbox.max_host_calls` (100) caps the calls one program makes, `complete` included, through a `CallBudget` taken before the call's first await, so an `asyncio.gather` cannot pass it, and a function the surface gives a budget per turn takes from that one too.
+A spent budget raises a `RuntimeError` inside the program, a `ToolRetry` or an invalid argument a `ValueError` it may correct, and any other failure a `RuntimeError` named by type alone, since a host error may carry host details.
+`UsageLimitExceeded` (`tools.monty.TURN_ENDING_ERRORS`) is not a program failure, since the turn's shared budget is spent for every run in it: `HostCalls` keeps it and refuses every later call, and `run_python` raises it once the program stopped, however the program handled it, so the turn ends instead of reporting a retry.
+Every call that returned or raised is kept as a `HostCall`, a bounded preview of its arguments and its result or error, in `PythonResult.calls`, which the `run_python` card lists.
+A failed program's retry lists up to 20 of them before the traceback, so the next attempt builds on what came back instead of paying for the same calls again.
 
 ## Video and animated media
 

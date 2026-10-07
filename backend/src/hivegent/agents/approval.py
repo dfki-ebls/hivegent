@@ -11,17 +11,18 @@ it on the continuation and on every later turn that replays the history.
 Not ``ToolReturn.content``: pydantic-ai sends that as a separate
 ``UserPromptPart``, which would be stored as a user turn nobody typed and
 shown as one.  The note rides the return value instead, appended after
-:class:`~hivegent.agents.guards.ToolOutputLimit` clamped it, which the order
-of the two capabilities in :func:`~hivegent.agents.capabilities.build_capabilities`
-guarantees.
+:class:`~hivegent.agents.guards.ToolOutputSpill` bounded it, which
+:meth:`ApprovalNotes.get_ordering` declares.
 """
 
 from dataclasses import dataclass, replace
 from typing import Any
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.messages import ToolCallPart, ToolReturn
 from pydantic_ai.tools import RunContext, ToolDefinition
+
+from .guards import ToolOutputSpill
 
 __all__ = ["APPROVAL_NOTE_KEY", "ApprovalNotes", "approval_note_text"]
 
@@ -57,6 +58,15 @@ def _with_note(value: Any, note: str) -> list[Any]:
 @dataclass(slots=True)
 class ApprovalNotes(AbstractCapability[Any]):
     """Append the user's approval note to the result of the call it approved."""
+
+    def get_ordering(self) -> CapabilityOrdering:
+        """Wrap the spill, so the note joins the bounded return and is never cut off.
+
+        An ``after_tool_execute`` hook of an outer capability runs after the
+        inner ones have, and pydantic-ai sorts the agent's capabilities and the
+        run's as one list, so this holds with the spill on the agent.
+        """
+        return CapabilityOrdering(wraps=[ToolOutputSpill])
 
     async def after_tool_execute(
         self,

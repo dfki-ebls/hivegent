@@ -24,8 +24,8 @@ from starlette.responses import Response
 
 from ...agents import (
     UserDeps,
-    base_agent,
     discard_unapproved_changes,
+    title_agent,
     turn_usage_limits,
     user_agent,
 )
@@ -245,7 +245,7 @@ async def generate_conversation_title(
 
     async def _generate() -> str:
         resolved = prepare_llm_config(request.llm)
-        result = await base_agent.run(
+        result = await title_agent.run(
             _title_prompt(conversation_preview).current,
             model=model_from_config(resolved),
             model_settings=thinking_model_settings(False, resolved),

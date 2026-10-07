@@ -17,6 +17,7 @@ from ..concurrency import bounded_gather
 from ..humanize import pluralize
 from ..security import UnsafeUrlError
 from .base import (
+    AsyncTool,
     Batch,
     BatchShare,
     ToolOutput,
@@ -24,8 +25,7 @@ from .base import (
     batch_field,
     run_batch,
 )
-from .formatting import BLOCK_SEP, cap_lines, hint_suffix, iter_annotated
-from .sink import OutputPathArg, RedirectedOutput, RedirectingTool
+from .formatting import BLOCK_SEP, hint_suffix, iter_annotated
 
 __all__ = [
     "WebEditionArg",
@@ -140,7 +140,7 @@ def _snippet_text(html: str) -> str:
 
 
 @dataclass(slots=True, frozen=True)
-class WebSearch(RedirectingTool[Batch[WebSearchResults]]):
+class WebSearch(AsyncTool[Batch[WebSearchResults]]):
     """Search Wikipedia for up-to-date information.
 
     Queries the official MediaWiki API through the egress proxy with no
@@ -168,8 +168,7 @@ class WebSearch(RedirectingTool[Batch[WebSearchResults]]):
         self,
         searches: WebSearchesArg,
         max_results: WebMaxResultsArg = 5,
-        output_path: OutputPathArg = None,
-    ) -> ToolOutput[Batch[WebSearchResults] | RedirectedOutput]:
+    ) -> ToolOutput[Batch[WebSearchResults]]:
         """Search Wikipedia (and only Wikipedia) for up-to-date information.
 
         This searches the Wikipedia encyclopedia exclusively, not the
@@ -218,9 +217,7 @@ class WebSearch(RedirectingTool[Batch[WebSearchResults]]):
 
             return _search_output(results, repeated=len(outcome) - len(fresh))
 
-        result = await run_batch(keys, render, key=lambda key: f"{key[0]} ({key[1]})")
-
-        return await self.redirect(result, output_path)
+        return await run_batch(keys, render, key=lambda key: f"{key[0]} ({key[1]})")
 
     async def _hits(
         self, query: str, edition: str, max_results: int
@@ -349,16 +346,14 @@ def _html_to_markdown(body: bytes) -> tuple[str, str]:
 
 
 @dataclass(slots=True, frozen=True)
-class WebFetch(RedirectingTool[Batch[WebPage]]):
+class WebFetch(AsyncTool[Batch[WebPage]]):
     """Fetch a web page and return its readable content.
 
     ``max_response_bytes`` caps how many raw bytes are downloaded per
     page and ``max_chars`` caps the extracted text.  ``max_line_chars``
     truncates each numbered line so a data-URI or minified line cannot
-    flood the context, and ``max_formatted_chars`` bounds the rendered
-    output as a whole, which neither of the other two does.  A call fetching
-    several pages splits ``max_chars`` and ``max_formatted_chars`` between
-    them, and keeps at most a few requests in flight.
+    flood the context.  A call fetching several pages splits ``max_chars``
+    between them, and keeps at most a few requests in flight.
     ``client`` is the pooled web client: its request hook validates the URL and
     every redirect hop against the URL host policy, and the egress proxy rejects
     non-public destinations after resolution.  Following redirects and the hop
@@ -374,13 +369,10 @@ class WebFetch(RedirectingTool[Batch[WebPage]]):
     max_response_bytes: int = 5_000_000
     max_chars: int = 100_000
     max_line_chars: int = 2000
-    max_formatted_chars: int = 50_000
     user_agent: str = field(default_factory=build_user_agent)
 
     @override
-    async def __call__(
-        self, urls: WebUrlsArg, output_path: OutputPathArg = None
-    ) -> ToolOutput[Batch[WebPage] | RedirectedOutput]:
+    async def __call__(self, urls: WebUrlsArg) -> ToolOutput[Batch[WebPage]]:
         """Fetch one or more web pages as readable text.
 
         HTML is reduced to its markdown text content; plain-text and JSON
@@ -391,15 +383,13 @@ class WebFetch(RedirectingTool[Batch[WebPage]]):
         under the URL it was asked for, and a URL redirecting to a page
         already fetched is not shown twice.
         """
-        result = await run_batch(
+        return await run_batch(
             urls,
             self._fetch_or_retry,
             key=lambda url: url,
             concurrency=_WEB_CONCURRENCY,
             identity=lambda page: page.url,
         )
-
-        return await self.redirect(result, output_path)
 
     async def _fetch_or_retry(
         self, url: str, share: BatchShare
@@ -489,9 +479,6 @@ class WebFetch(RedirectingTool[Batch[WebPage]]):
         if not content:
             return ToolOutput(data=page, formatted="(no readable text on this page)")
         header = f"{title} — {url}" if title else url
-        rendered, omitted = cap_lines(
-            iter_annotated(content.splitlines(), 1, self.max_line_chars),
-            share.of(self.max_formatted_chars),
-        )
-        suffix = hint_suffix(["truncated"] if truncated or omitted else [])
+        rendered = "\n".join(iter_annotated(content.splitlines(), 1, self.max_line_chars))
+        suffix = hint_suffix(["truncated"] if truncated else [])
         return ToolOutput(data=page, formatted=f"{header}\n{rendered}{suffix}")

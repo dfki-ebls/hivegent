@@ -17,24 +17,26 @@ from ...tools import (
 )
 from ...tools.pydantic_ai import register_agent_tools
 from ..common import UserDeps
-from .write import output_sink, validate_output_path
 
 __all__ = ["EXPLORE_FACTORIES", "explore_toolset"]
 
 
-# Each of these builds with the writer its redirect commits through, which is
-# `None` outside a writing mode: what a tool may do with its result is settled
-# when the tool is built, not by the framework it is handed to.
 def _list_documents(deps: UserDeps) -> ListDocumentsTool:
-    return ListDocumentsTool(paths=deps.search_paths(), sink=output_sink(deps))
+    return ListDocumentsTool(paths=deps.search_paths())
 
 
 def _glob_documents(deps: UserDeps) -> GlobDocumentsTool:
-    return GlobDocumentsTool(paths=deps.search_paths(), sink=output_sink(deps))
+    return GlobDocumentsTool(paths=deps.search_paths())
+
+
+# A read resumes from an offset into the document rather than from a saved copy
+# of its window, so a whole window has to show, and a third of the output bound
+# is left for the line numbers and headers it is rendered with.
+_READ_MAX_CHARS = settings.llm.tool_output_max_chars * 2 // 3
 
 
 def _read_document(deps: UserDeps) -> ReadDocumentTool:
-    return ReadDocumentTool(paths=deps.search_paths(), sink=output_sink(deps))
+    return ReadDocumentTool(paths=deps.search_paths(), max_chars=_READ_MAX_CHARS)
 
 
 def _read_binary_document(deps: UserDeps) -> ReadBinaryDocumentTool:
@@ -46,31 +48,23 @@ def _read_binary_document(deps: UserDeps) -> ReadBinaryDocumentTool:
 
 
 def _query_table(deps: UserDeps) -> QueryTableTool:
-    return QueryTableTool(paths=deps.search_paths(), sink=output_sink(deps))
+    return QueryTableTool(paths=deps.search_paths())
 
 
 def _jq(deps: UserDeps) -> JqTool:
-    return JqTool(paths=deps.search_paths(), sink=output_sink(deps))
+    return JqTool(paths=deps.search_paths())
 
 
 def _grep(deps: UserDeps) -> GrepTool:
-    return GrepTool(paths=deps.search_paths(), sink=output_sink(deps))
+    return GrepTool(paths=deps.search_paths())
 
 
 def _search(deps: UserDeps) -> VectorSearchTool[RetrievedChunk]:
-    return build_search_tool(
-        deps.all_stores,
-        filter_for_store=deps.filter_for_store,
-        sink=output_sink(deps),
-    )
+    return build_search_tool(deps.all_stores, filter_for_store=deps.filter_for_store)
 
 
 explore_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
-# Every tool here answers a question whose result can dwarf the answer, so each
-# takes the redirect argument — except the binary reader, whose result is an
-# attachment the model looks at rather than text a later step could process.
-#
 # None of them is deferred.  `query_table`, `jq`, and `read_binary_document`
 # were, on the reasoning that a document of that shape is rare enough that most
 # turns should not pay for the schema, and that `read_document` naming the tool
@@ -97,9 +91,4 @@ Which of these a program may also be handed is read off each tool's
 ``injectable``, not restated here: one list, registered and filtered.
 """
 
-register_agent_tools(
-    explore_toolset,
-    UserDeps,
-    EXPLORE_FACTORIES,
-    args_validator=validate_output_path,
-)
+register_agent_tools(explore_toolset, UserDeps, EXPLORE_FACTORIES)

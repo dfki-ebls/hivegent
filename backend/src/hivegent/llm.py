@@ -14,6 +14,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
 )
 from pydantic_ai.messages import ModelResponseStreamEvent, PartStartEvent
+from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIStreamedResponse
 from pydantic_ai.profiles import ModelProfile, ModelProfileSpec, merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -26,6 +27,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings, ThinkingEffort, ThinkingLevel
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .config import InferenceProvider, settings
 from .http_client import get_trusted_http_client, get_user_http_client
@@ -34,6 +36,7 @@ from .llm_config import LlmConfig, ReasoningEffort
 __all__ = [
     "AUTO_REASONING_EFFORT",
     "SUMMARY_MAX_TOKENS",
+    "capped_tokens",
     "complete",
     "create_openai_chat_model",
     "create_openai_client",
@@ -423,6 +426,15 @@ def thinking_model_settings(
 SUMMARY_MAX_TOKENS = 8192
 
 
+def capped_tokens(config: LlmConfig, cap: int) -> int:
+    """*cap*, or the configured ``max_tokens`` where that is lower.
+
+    A ``max_tokens`` the endpoint would reject is not made acceptable by a
+    caller with a narrower purpose asking for it.
+    """
+    return min(config.max_tokens or cap, cap)
+
+
 def summary_model_settings(config: LlmConfig) -> ModelSettings:
     """Bounded, reasoning-off settings for a one-shot summary request.
 
@@ -432,40 +444,55 @@ def summary_model_settings(config: LlmConfig) -> ModelSettings:
     empty response the server reports as success.  Disabling thinking and
     capping the completion keeps the whole output budget available for the
     summary itself.  The cap never rises above what the request is already
-    configured for: a ``max_tokens`` the endpoint would reject is not made
-    acceptable by the summary being the one asking for it.
+    configured for (:func:`capped_tokens`).
     """
     model_settings = thinking_model_settings(False, config)
-    model_settings["max_tokens"] = min(
-        SUMMARY_MAX_TOKENS, model_settings.get("max_tokens", SUMMARY_MAX_TOKENS)
-    )
+    model_settings["max_tokens"] = capped_tokens(config, SUMMARY_MAX_TOKENS)
     return model_settings
 
 
-# Deliberately not ``agents.app.base_agent``, so converters can run it without
+# Deliberately not ``agents.app.title_agent``, so converters can run it without
 # importing the agents.  The guards that agent carries have nothing to act on in
 # a single tool-free completion, and callers cap the images they send themselves.
 _completion_agent: Agent[None, str] = Agent(
+    name="complete",
     retries=settings.llm.retries,
     model_settings=ModelSettings(timeout=settings.llm.request_timeout_seconds),
 )
 
 
 async def complete(
-    prompt: Sequence[UserContent], config: LlmConfig, *, timeout: float
+    prompt: Sequence[UserContent],
+    config: LlmConfig,
+    *,
+    timeout: float,
+    model: Model | None = None,
+    usage: RunUsage | None = None,
+    usage_limits: UsageLimits | None = None,
+    conversation_id: str | None = None,
 ) -> str:
     """Run one tool-free completion with thinking disabled.
 
-    Meant for single-shot vision work such as converting a page or captioning
-    an image, where a reasoning trace would only fill a small model's window
-    before any text is emitted.  ``config.max_tokens`` bounds the output and
-    *timeout* the seconds spent across every retry, raising ``TimeoutError``.
+    Meant for single-shot work such as converting a page, captioning an image,
+    or one item of a sandboxed program's loop, where a reasoning trace would
+    only fill a small model's window before any text is emitted.
+    ``config.max_tokens`` bounds the output and *timeout* the seconds spent
+    across every retry, raising ``TimeoutError``.  A caller making many calls
+    passes the *model* it built from *config* once.
+
+    A caller inside an agent run passes its ``usage`` so the call counts there,
+    and then its *usage_limits* too, since pydantic-ai's default would check
+    the shared count against a limit of its own, and its *conversation_id* so
+    a trace groups the call with the run that made it.
     """
     async with asyncio.timeout(timeout):
         result = await _completion_agent.run(
             prompt,
-            model=model_from_config(config),
+            model=model or model_from_config(config),
             model_settings=thinking_model_settings(False, config),
+            usage=usage,
+            usage_limits=usage_limits,
+            conversation_id=conversation_id,
         )
 
     return result.output

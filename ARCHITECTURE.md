@@ -52,7 +52,7 @@ flowchart LR
 - Uploads become recursive stem-based workspace entries whose markdown companions are chunked and indexed.
 - PostgreSQL with `pgvector` and cbrkit for dense, sparse, and hybrid retrieval, plus conversations and long-term memory.
 - Each user or group casebase lives under `data/workspace/<store_key>/`, keyed by the same `user:<id>` / `group:<id>` token that scopes SQL rows.
-- Each chat conversation owns a working folder under `data/tmp/<conversation_id>/`, outside every workspace, which its agent run addresses as `/tmp` and writes without approval.
+- Each chat conversation owns a working folder under `data/tmp/<conversation_id>/`, outside every workspace, which its agent run addresses as `/tmp` and writes without approval, and where a tool result too large to show whole is saved under `/tmp/.tool-results/`.
 - A FastMCP server is mounted at `/mcp`, and external MCP servers can be connected.
 
 ## Integration
@@ -96,7 +96,7 @@ A feature is withheld by the chat mode it declares, by a request's `disabled_too
 | `explore`      | Read-only access to documents, tables, JSON, and retrieval. | `list_documents`, `glob_documents`, `read_document`, `read_binary_document`, `query_table`, `jq`, `grep`, `search` |
 | `python`       | Python sandbox over a copy-on-write workspace mount.        | `run_python`                                                                                                       |
 | `subagent`     | Delegated exploration in a fresh context.                   | `explore`                                                                                                          |
-| `write`        | User-approved workspace mutation (mutating modes only).     | `write_document`, `edit_document`, `move_documents`, `delete_documents`, `apply_changes`                           |
+| `write`        | User-approved workspace mutation, `/tmp` in every mode.     | `write_document`, `edit_document`, `move_documents`, `delete_documents`, `apply_changes`                           |
 | `memory`       | Persistent cross-conversation memory (mutating modes only). | `save_memory`                                                                                                      |
 | `web`          | Direct web lookup and page retrieval.                       | `web_search`, `web_fetch`                                                                                          |
 | `conversation` | Access to persisted conversation history (off by default).  | `list_conversations`, `get_conversation`                                                                           |

@@ -23,7 +23,7 @@ __all__ = [
     "MEMORY_INSTRUCTIONS_EMPTY",
     "PERSONALITY_TEMPLATES",
     "PYTHON_INSTRUCTIONS",
-    "REDIRECT_INSTRUCTIONS",
+    "SANDBOX_COMPLETE_INSTRUCTIONS",
     "SANDBOX_TYPE_CHECK_INSTRUCTIONS",
     "TMP_INSTRUCTIONS",
     "VERSION_INSTRUCTIONS",
@@ -460,6 +460,7 @@ A rename carries a document as it is, binaries included, and a document keeps it
 A rename into, within, or out of `/tmp` copies a file's text and removes the source, never a directory, so moving a document from the workspace into `/tmp` stages its removal for the user's approval like any other.
 A converted `report.pdf` and its `report.md` are one document: renaming either moves both, removing the original removes both, and the `.md` cannot be removed while its original stays.
 A program that prints its result or ends on it has written no document, so write the file yourself whenever the point of the call is a file.
+To keep a tool's result as a workspace document, call the tool inside the program and write the file there.
 
 A value a source records as `<100` or `>1000` is censored, not a number: the instrument or the lab measured the sample, found it past a limit, and is declining to say where past it.
 Every way of turning one into a number moves every total computed from it, and in a different direction — the limit overstates, zero understates, dropping the row changes the count — so there is no neutral default for you to pick.
@@ -484,6 +485,7 @@ Eine Umbenennung trägt ein Dokument unverändert mit, auch Binärdateien, und e
 Eine Umbenennung nach `/tmp`, innerhalb von `/tmp` oder aus `/tmp` heraus kopiert den Text einer Datei und entfernt die Quelle, nie einen Ordner. Ein Dokument aus dem Arbeitsbereich nach `/tmp` zu verschieben, merkt also seine Entfernung zur Zustimmung der Benutzer:in vor wie jede andere.
 Ein konvertiertes `report.pdf` und sein `report.md` sind ein Dokument: Wird eines umbenannt, wandern beide, wird das Original entfernt, gehen beide, und die `.md`-Datei lässt sich nicht entfernen, solange ihr Original bleibt.
 Ein Programm, das sein Ergebnis ausgibt oder damit endet, hat kein Dokument geschrieben, schreib die Datei also selbst, wann immer der Zweck des Aufrufs eine Datei ist.
+Um das Ergebnis eines Tools als Dokument im Arbeitsbereich zu behalten, ruf das Tool im Programm auf und schreib die Datei dort.
 
 Ein Wert, den eine Quelle als `<100` oder `>1000` erfasst, ist zensiert und keine Zahl: Das Messgerät oder das Labor hat die Probe gemessen, sie jenseits einer Grenze gefunden und sagt nicht, wie weit jenseits.
 Jede Art, daraus eine Zahl zu machen, verschiebt jede daraus berechnete Summe, und zwar in unterschiedliche Richtungen. Die Grenze überschätzt, null unterschätzt, das Weglassen der Zeile ändert die Anzahl. Es gibt also keinen neutralen Standardwert, den du wählen könntest.
@@ -515,8 +517,7 @@ A list argument takes every item at once, and a result that is a list holds one 
 For concurrent calls use `await asyncio.gather(...)` with positional awaitables, which is the only task API Monty offers.
 Each returns plain dicts and lists, so read a field as `hit['filename']` and never as an attribute.
 One that is not in your tool list is reachable only by writing a program, which is the whole reason to write one here.
-One that is in both you call here whenever a later step of the same program uses the result, and as a tool only when reading it yourself is the whole point: the program receives the result entire, where the tool call would have shown you as much of it as its output budget allowed and no more.
-That decides it on its own. Never route a result to an `output_path` file so that a program can read it back, since calling the tool inside the program is the same result in one call rather than three.
+One that is in both you call here whenever a later step of the same program uses the result, and as a tool only when reading it yourself is the whole point: the program receives the result entire, where the tool call shows you only as much of it as fits.
 
 {declarations}
 """,
@@ -528,12 +529,22 @@ Ein Listenargument nimmt alle Elemente auf einmal, und ein Ergebnis, das eine Li
 Nutze für parallele Aufrufe `await asyncio.gather(...)` mit positionalen Awaitables, die einzige Task-API, die Monty bietet.
 Jede liefert einfache Dicts und Listen, lies ein Feld also als `hit['filename']` und nie als Attribut.
 Eine Funktion, die nicht in deiner Tool-Liste steht, ist nur über ein Programm erreichbar, und genau deshalb schreibst du hier eines.
-Eine, die in beiden steht, rufst du hier auf, wann immer ein späterer Schritt desselben Programms das Ergebnis nutzt, und nur dann als Tool, wenn es gerade darum geht, es selbst zu lesen: Das Programm erhält das Ergebnis vollständig, während dir der Tool-Aufruf nur so viel davon gezeigt hätte, wie sein Ausgabebudget zulässt.
-Das allein entscheidet. Leite ein Ergebnis nie in eine Datei unter `output_path` um, damit ein Programm es wieder einliest, denn das Tool im Programm aufzurufen liefert dasselbe Ergebnis in einem Aufruf statt in dreien.
+Eine, die in beiden steht, rufst du hier auf, wann immer ein späterer Schritt desselben Programms das Ergebnis nutzt, und nur dann als Tool, wenn es gerade darum geht, es selbst zu lesen: Das Programm erhält das Ergebnis vollständig, während dir der Tool-Aufruf nur so viel davon zeigt, wie hineinpasst.
 
 {declarations}
 """,
     )
+
+
+SANDBOX_COMPLETE_INSTRUCTIONS: Localized[str] = Localized(
+    en="""
+Use `complete` to classify, extract from, or summarize many items in a loop or with `asyncio.gather`. It has no tools and no documents, so pass each item's text in `prompt`, and every call counts against a fixed budget per turn.
+""",
+    de="""
+Nutze `complete`, um viele Elemente in einer Schleife oder mit `asyncio.gather` zu klassifizieren, auszuwerten oder zusammenzufassen. Die Funktion hat keine Tools und keine Dokumente, gib den Text jedes Elements also in `prompt` mit, und jeder Aufruf zählt gegen ein festes Budget pro Runde.
+""",
+)
+"""Added only where ``complete`` is live, since the prose names it."""
 
 
 SANDBOX_TYPE_CHECK_INSTRUCTIONS: Localized[str] = Localized(
@@ -550,23 +561,6 @@ A run that promised a check it does not perform teaches the model to trust a
 correction that never comes, which is worse than saying nothing: the stub is
 guidance either way.
 """
-
-REDIRECT_INSTRUCTIONS: Localized[str] = Localized(
-    en="""
-Where a tool takes an `output_path`, that call writes its result to the file you name and hands you back a receipt for it, which repeats the result only when it is short.
-Reach for it when a call would return far more than you need to read and the whole of it is what a later *tool call* works from.
-When the next step is a program, call the tool inside run_python instead: the program is handed the whole result directly, where a file written only to be read back again is three calls that buy nothing over one.
-The suffix decides what is stored: `.json` keeps the structured result in full, `.txt` keeps the text you would otherwise have been shown.
-Put the file under `/tmp` unless the user asked for the file itself.
-""",
-    de="""
-Wo ein Tool einen `output_path` annimmt, schreibt dieser Aufruf sein Ergebnis in die angegebene Datei und gibt dir eine Quittung dafür zurück, die das Ergebnis nur wiederholt, wenn es kurz ist.
-Nutze das, wenn ein Aufruf weit mehr liefern würde, als du lesen musst, und ein späterer *Tool-Aufruf* mit dem ganzen Ergebnis arbeitet.
-Wenn der nächste Schritt ein Programm ist, ruf das Tool stattdessen in run_python auf: Das Programm erhält das ganze Ergebnis direkt, während eine Datei, die nur geschrieben wird, um sie wieder zu lesen, drei Aufrufe kostet, die nichts gegenüber einem bringen.
-Die Endung bestimmt, was gespeichert wird: `.json` behält das strukturierte Ergebnis vollständig, `.txt` den Text, der dir sonst gezeigt worden wäre.
-Lege die Datei unter `/tmp` ab, außer die Benutzer:in wollte die Datei selbst haben.
-""",
-)
 
 TMP_INSTRUCTIONS: Localized[str] = Localized(
     en="""

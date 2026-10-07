@@ -18,7 +18,6 @@ from ...http_client import get_web_http_client
 from ...tools import WebFetch, WebSearch, build_user_agent
 from ...tools.pydantic_ai import register_agent_tools
 from ..common import UserDeps
-from .write import output_sink, validate_output_path
 
 __all__ = ["WEB_FACTORIES", "web_enabled", "web_toolset"]
 
@@ -33,25 +32,22 @@ web_enabled = settings.tools.enable_web and settings.security.web_policy().has_a
 # A factory runs per tool call, so it only wires up fields — the pooled web
 # client (URL policy, egress proxy, and redirect limit) comes from the
 # lifespan, which is what lets one research turn reuse a single connection.
-def _web_search(deps: UserDeps) -> WebSearch:
+def _web_search(_deps: UserDeps) -> WebSearch:
     return WebSearch(
         client=get_web_http_client(),
         default_edition=settings.network.websearch_default_edition,
         user_agent=_user_agent,
-        sink=output_sink(deps),
     )
 
 
-def _web_fetch(deps: UserDeps) -> WebFetch:
+def _web_fetch(_deps: UserDeps) -> WebFetch:
     network = settings.network
     return WebFetch(
         client=get_web_http_client(),
-        sink=output_sink(deps),
         timeout_seconds=network.webfetch_timeout_seconds,
         max_response_bytes=network.webfetch_max_response_bytes,
         max_chars=network.webfetch_max_chars,
         max_line_chars=network.webfetch_max_line_chars,
-        max_formatted_chars=network.webfetch_max_formatted_chars,
         user_agent=_user_agent,
     )
 
@@ -66,9 +62,4 @@ that is already correct, rather than re-deriving ``web_enabled`` for itself.
 """
 
 if WEB_FACTORIES:
-    register_agent_tools(
-        web_toolset,
-        UserDeps,
-        WEB_FACTORIES,
-        args_validator=validate_output_path,
-    )
+    register_agent_tools(web_toolset, UserDeps, WEB_FACTORIES)

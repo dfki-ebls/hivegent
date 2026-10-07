@@ -1,11 +1,10 @@
 """Write-oriented agent tool registrations.
 
-Also the one place the two writes an agent performs on its own account are
-wired: the ``output_path`` a tool redirects into, and the changes a
-``run_python`` program makes, whose workspace half ``apply_changes`` applies.
-All of them plan through :func:`_plan_batch`, commit through :func:`_commit`,
-and answer to :func:`_gate`, so a run can never persist by a side door what it
-may not write outright.
+Also the one place the changes a ``run_python`` program makes are wired,
+whose workspace half ``apply_changes`` applies.  Every write plans through
+:func:`_plan_batch`, commits through :func:`_commit`, and answers to
+:func:`_gate`, so a run can never persist by a side door what it may not write
+outright.
 
 Every write resolves against :meth:`~hivegent.agents.common.UserDeps.writable_paths`,
 and each root's :class:`~hivegent.tools.base.CommitPolicy` decides how its half
@@ -22,7 +21,7 @@ the approval shows the planner's summary.
 
 import asyncio
 from collections.abc import Callable, Container, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, NoReturn
 
 from pydantic_ai import FunctionToolset, RunContext
@@ -32,8 +31,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_core import to_jsonable_python
 
 from ... import staging, workspace
-from ...changes import Changeset, ChangesetSummary, FileDiff, TextEdit
-from ...config import settings
+from ...changes import Changeset, ChangesetSummary, TextEdit
 from ...tmp import TMP_SCOPE, DirectPlan, plan_direct
 from ...tools import (
     DeleteDocumentsTool,
@@ -53,7 +51,6 @@ from ...tools.changeset import (
 from ...tools.mutations import (
     Commit,
     DocumentMove,
-    MutationHint,
     WriteModeArg,
     delete_changeset,
     edit_changeset,
@@ -64,21 +61,17 @@ from ...tools.mutations import (
 )
 from ...tools.pydantic_ai import register_agent_tool
 from ...tools.python import is_python_script
-from ...tools.sink import OutputPathArg, OutputSink, output_format
 from ..common import UserDeps
 
 __all__ = [
     "changeset_committer",
     "discard_unapproved_changes",
-    "output_sink",
     "program_paths",
     "validate_apply_changes",
     "validate_document_deletions",
     "validate_document_edit",
     "validate_document_moves",
     "validate_document_write",
-    "validate_output_path",
-    "write_document",
     "write_toolset",
 ]
 
@@ -147,18 +140,8 @@ def _committer(deps: UserDeps) -> Commit:
     return commit
 
 
-def _ask(summary: ChangesetSummary, *, unwritten: bool = False) -> NoReturn:
-    """Ask the user to approve the summary the planner shows.
-
-    *unwritten* blanks the diffs of a write whose content does not exist yet.
-    """
-    if unwritten:
-        summary = replace(
-            summary,
-            creates=tuple(FileDiff(diff.path, "") for diff in summary.creates),
-            updates=tuple(FileDiff(diff.path, "") for diff in summary.updates),
-        )
-
+def _ask(summary: ChangesetSummary) -> NoReturn:
+    """Ask the user to approve the summary the planner shows."""
     raise ApprovalRequired(to_jsonable_python(summary))
 
 
@@ -170,8 +153,6 @@ def _asks(ctx: RunContext[UserDeps]) -> bool:
 async def _gate(
     ctx: RunContext[UserDeps],
     build: Callable[[tuple[SearchPath, ...]], Changeset[str]],
-    *,
-    unwritten: bool = False,
 ) -> None:
     """Refuse what the tool would refuse, then ask about its gated half if anyone must.
 
@@ -186,7 +167,7 @@ async def _gate(
         batch = await _plan_batch(ctx.deps, paths, build(paths), summarize=_asks(ctx))
 
     if batch.summary is not None:
-        _ask(batch.summary, unwritten=unwritten)
+        _ask(batch.summary)
 
 
 def _run_python_pointer(target: str) -> str:
@@ -211,21 +192,11 @@ def _edit_document(deps: UserDeps) -> EditDocumentTool:
     )
 
 
-def write_document(deps: UserDeps, hint: MutationHint | None = None) -> WriteDocumentTool:
-    """Build the scoped document writer for one agent run.
-
-    Public because :func:`output_sink` composes it to commit a redirected
-    result.  That path passes no *hint*: a result the model asked for by
-    declaring an ``output_path`` is not a program it just stored.
-    """
-    return WriteDocumentTool(
-        paths=deps.writable_paths(), hint=hint, commit=_committer(deps)
-    )
-
-
 def _write_document(deps: UserDeps) -> WriteDocumentTool:
     """The agent's own writer, which points a stored program at ``run_python``."""
-    return write_document(deps, _run_python_pointer)
+    return WriteDocumentTool(
+        paths=deps.writable_paths(), hint=_run_python_pointer, commit=_committer(deps)
+    )
 
 
 def _move_documents(deps: UserDeps) -> MoveDocumentsTool:
@@ -234,18 +205,6 @@ def _move_documents(deps: UserDeps) -> MoveDocumentsTool:
 
 def _delete_documents(deps: UserDeps) -> DeleteDocumentsTool:
     return DeleteDocumentsTool(paths=deps.writable_paths(), commit=_committer(deps))
-
-
-def output_sink(deps: UserDeps) -> OutputSink | None:
-    """Build the sink a tool's ``output_path`` redirect commits through.
-
-    ``None`` for a run that may write nowhere, so the redirect is refused in
-    words the model can act on rather than silently dropped.
-    """
-    if not deps.writable_paths():
-        return None
-
-    return OutputSink(write_document(deps), settings.tools.redirect_inline_chars)
 
 
 # The validators are called with the whole argument mapping, so naming only the
@@ -288,25 +247,6 @@ async def validate_document_deletions(
 ) -> None:
     """Gate every deletion as one batch and a single decision."""
     await _gate(ctx, lambda roots: delete_changeset(roots, paths))
-
-
-async def validate_output_path(
-    ctx: RunContext[UserDeps], output_path: OutputPathArg = None, **_rest: Any
-) -> None:
-    """Refuse and gate a bulk-result redirect before the tool performs its work.
-
-    Before rather than after the call, since a path the commit would turn away
-    would otherwise cost the user an approval and the tool its whole work
-    before anything said no.  The result does not exist yet, so the approval
-    names the file it lands in without a diff.
-    """
-    if output_path is None:
-        return
-
-    with translate_tool_retry(ModelRetry):
-        _ = output_format(output_path)
-
-    await _gate(ctx, lambda paths: write_changeset(paths, output_path, ""), unwritten=True)
 
 
 def program_paths(deps: UserDeps) -> tuple[SearchPath, ...]:

@@ -23,6 +23,7 @@ from hivegent.prompts import GROUNDING_INSTRUCTIONS
 from hivegent.server.routes.meta import list_tools
 from hivegent.store import Casebase
 from hivegent.types import Mode, ToolsSpec
+from tests.helpers import run_context
 
 _EXPLORE = next(feature for feature in FEATURES if feature.id == "explore")
 
@@ -198,7 +199,7 @@ def test_the_shape_specific_readers_are_never_merely_hinted_at(
     assert {"jq", "read_binary_document", "query_table"} <= names
 
     declared = sandbox_surface(
-        UserDeps(user_id="u", store=Casebase.for_user("u"), mode="interactive")
+        run_context(UserDeps(user_id="u", store=Casebase.for_user("u"), mode="interactive"))
     ).declarations
     assert "async def query_table(" in declared
 

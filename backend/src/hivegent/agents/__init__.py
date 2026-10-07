@@ -1,6 +1,12 @@
 """Pydantic AI agent definitions, toolsets, and UserDeps."""
 
-from .app import base_agent, turn_usage_limits, user_agent
+from .app import (
+    explore_agent,
+    summary_agent,
+    title_agent,
+    turn_usage_limits,
+    user_agent,
+)
 from .capabilities import (
     build_capabilities,
     check_tool_settings,
@@ -28,16 +34,18 @@ __all__ = [
     "RunPrefix",
     "SubagentName",
     "UserDeps",
-    "base_agent",
     "build_capabilities",
     "check_tool_settings",
     "collect_tool_schemas",
     "conversation_toolset",
     "discard_unapproved_changes",
+    "explore_agent",
     "explore_toolset",
     "invoke_agent_tool",
     "memory_toolset",
     "subagent_toolset",
+    "summary_agent",
+    "title_agent",
     "turn_usage_limits",
     "unlisted_tool_names",
     "user_agent",

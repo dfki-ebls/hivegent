@@ -2,14 +2,16 @@
 
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from fastapi import HTTPException
 from pydantic_monty import AsyncMonty
 
-from hivegent import staging
+from hivegent import staging, tmp
 from hivegent.agents.common import UserDeps
 from hivegent.agents.tools.write import changeset_committer, program_paths
 from hivegent.auth import User
@@ -19,7 +21,14 @@ from hivegent.mcp.tools import documents as mcp_documents
 from hivegent.mcp.tools import mutations as mcp_mutations
 from hivegent.server.routes import documents
 from hivegent.store import Casebase
-from hivegent.tmp import TMP_SCOPE, plan_direct, sweep_tmp, tmp_dir
+from hivegent.tmp import (
+    TMP_SCOPE,
+    plan_direct,
+    save_result,
+    sweep_tmp,
+    tmp_dir,
+    tmp_search_path,
+)
 from hivegent.tools.base import Direct, SearchPath, ToolRetry
 from hivegent.tools.changeset import PendingChanges
 from hivegent.tools.documents import DocumentRead, ListDocumentsTool, ReadDocumentTool
@@ -31,6 +40,7 @@ from hivegent.tools.table import QueryTableTool
 from hivegent.tools.workspace_os import ChangesetLimits
 from hivegent.workspace import Location, PlannedChangeset
 from hivegent.workspace import changeset as gateway
+from tests.helpers import LIMITS
 
 
 @pytest.mark.parametrize(
@@ -121,6 +131,97 @@ def test_a_write_past_the_quota_is_refused_unless_it_frees_room(tmp_path: Path) 
         root, Changeset((Delete("/tmp/a.txt"), Write("/tmp/b.txt", "y" * 8)))
     ).apply()
     assert [path.name for path in tmp_path.iterdir()] == ["b.txt"]
+
+
+def test_concurrent_spills_check_and_write_under_one_lock(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings.tmp, "max_bytes", 6_000)
+    root = tmp_search_path(data_dir, "c1")
+    barrier = Barrier(2)
+    atomic_write = tmp.atomic_write
+
+    def slow_write(path: Path, data: bytes) -> None:
+        time.sleep(0.02)
+        atomic_write(path, data)
+
+    def spill(index: int) -> str:
+        _ = barrier.wait(timeout=10)
+
+        return save_result(root, f"result-{index}.txt", b"x" * 4_000)
+
+    monkeypatch.setattr(tmp, "atomic_write", slow_write)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        _ = list(pool.map(spill, range(2)))
+
+    files = [path for path in root.path.rglob("*") if path.is_file()]
+    assert len(files) == 1
+    assert sum(path.stat().st_size for path in files) == 4_000
+
+
+def test_spills_preserve_working_files_and_recheck_planned_write_quotas(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings.tmp, "max_bytes", 6_000)
+    root = tmp_search_path(data_dir, "c1")
+    (root.path / "results").mkdir(parents=True)
+    working = root.path / "results" / "computed.csv"
+    _ = working.write_bytes(b"x" * 1_000)
+    plan = plan_direct((root,), Changeset((Write("/tmp/state.txt", "y" * 2_000),)))
+
+    first = save_result(root, "first.txt", b"a" * 4_000)
+    second = save_result(root, "second.txt", b"b" * 4_000)
+
+    assert working.read_bytes() == b"x" * 1_000
+    assert first == "/tmp/.tool-results/first.txt"
+    assert second == "/tmp/.tool-results/second.txt"
+    assert not (root.path / ".tool-results" / "first.txt").exists()
+    assert (root.path / ".tool-results" / "second.txt").read_bytes() == b"b" * 4_000
+
+    with pytest.raises(ToolRetry, match="over the"):
+        _ = plan.apply()
+
+    assert not (root.path / "state.txt").exists()
+
+
+@pytest.mark.parametrize("operation", [
+    Write("/tmp/.tool-results/new.txt", "x"),
+    Move("/tmp/.tool-results", "/tmp/moved"),
+    Move("/tmp/state.txt", "/tmp/.tool-results/new.txt"),
+])
+def test_ordinary_changes_cannot_modify_the_spill_cache(
+    data_dir: Path, operation: Write[str] | Move[str]
+) -> None:
+    root = tmp_search_path(data_dir, "c1")
+    _ = save_result(root, "saved.txt", b"saved")
+    _ = (root.path / "state.txt").write_text("state")
+
+    with pytest.raises(ToolRetry, match="can be read but not changed"):
+        _ = plan_direct((root,), Changeset((operation,)))
+
+    assert (root.path / ".tool-results" / "saved.txt").read_text() == "saved"
+
+
+async def test_a_program_can_read_but_cannot_write_the_spill_cache(data_dir: Path) -> None:
+    root = tmp_search_path(data_dir, "c1")
+    _ = save_result(root, "saved.txt", b"saved")
+
+    async with AsyncMonty(min_processes=1) as pool:
+        result = await RunPythonTool(
+            pool=pool, paths=(root,), writable=(root,), changeset_limits=LIMITS
+        )("""
+from pathlib import Path
+cached = Path('/tmp/.tool-results/saved.txt')
+try:
+    cached.write_text('changed')
+except Exception:
+    pass
+cached.read_text()
+""")
+
+    assert result.data.result == "'saved'"
+    assert (root.path / ".tool-results" / "saved.txt").read_text() == "saved"
 
 
 def test_direct_parent_validation_follows_deletions_and_moved_trees(tmp_path: Path) -> None:

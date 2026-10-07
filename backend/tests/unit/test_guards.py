@@ -1,10 +1,14 @@
 """Tests for the cross-cutting run-loop safeguards."""
 
+import json
+import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic_ai import BinaryContent, FunctionToolset, ImageUrl, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
 from pydantic_ai.exceptions import IncompleteToolCall
 from pydantic_ai.messages import (
     FinishReason,
@@ -14,6 +18,7 @@ from pydantic_ai.messages import (
     ModelResponsePart,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -21,25 +26,45 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RunUsage, UsageLimits
 
-from hivegent.agents.app import base_agent
+from hivegent.agents.app import title_agent
+from hivegent.agents.approval import (
+    APPROVAL_NOTE_KEY,
+    ApprovalNotes,
+    approval_note_text,
+)
+from hivegent.agents.common import UserDeps
 from hivegent.agents.guards import (
     IncompleteToolCallGuard,
     IterationLimitWarner,
     PromptImageLimit,
+    ToolOutputSpill,
     _images,
 )
+from hivegent.config import settings
 from hivegent.l10n import current_language, use_language
+from hivegent.store import Casebase
+from hivegent.tmp import tmp_dir
+from hivegent.tools.base import ToolOutput
+from hivegent.tools.pydantic_ai import wrap_tool_output
 
 _TRUNCATED_CALL = ToolCallPart(
     tool_name="edit_document", args='{"file_path":', tool_call_id="call-1"
 )
 
 
-def _run_context(requests: int = 0) -> RunContext[None]:
-    """A run context with no deps, as ``base_agent`` hands its guards."""
-    return RunContext(deps=None, model=TestModel(), usage=RunUsage(requests=requests))
+def _run_context(
+    requests: int = 0, limits: UsageLimits | None = None
+) -> RunContext[None]:
+    """A run context with no deps, as ``title_agent`` hands its guards."""
+    return RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(requests=requests),
+        usage_limits=limits,
+    )
 
 
 async def _check(
@@ -73,7 +98,7 @@ async def test_tool_call_cut_off_by_the_token_limit_fails_the_turn() -> None:
         return ModelResponse(parts=[_TRUNCATED_CALL], finish_reason="length")
 
     with pytest.raises(IncompleteToolCall, match="provider default"):
-        await base_agent.run("go", model=FunctionModel(truncated))
+        await title_agent.run("go", model=FunctionModel(truncated))
 
 
 async def test_tool_calls_run_in_english_whatever_the_request_language() -> None:
@@ -87,7 +112,7 @@ async def test_tool_calls_run_in_english_whatever_the_request_language() -> None
         return ModelResponse(parts=[TextPart(content="done")])
 
     with use_language("de"):
-        result = await base_agent.run(
+        result = await title_agent.run(
             "go", model=FunctionModel(call_probe), toolsets=[toolset]
         )
 
@@ -139,6 +164,7 @@ async def _sent(
     messages: list[ModelMessage],
     *,
     requests: int = 0,
+    limits: UsageLimits | None = None,
 ) -> list[ModelMessage]:
     """The messages the guard puts on the wire for a request carrying *messages*."""
     sent: list[ModelMessage] = []
@@ -149,7 +175,7 @@ async def _sent(
         return ModelResponse(parts=[TextPart(content="ok")])
 
     await capability.wrap_model_request(
-        _run_context(requests),
+        _run_context(requests, limits),
         request_context=ModelRequestContext(
             model=TestModel(),
             messages=messages,
@@ -248,10 +274,161 @@ async def test_the_wrap_up_note_stays_off_the_conversation() -> None:
     It would then replay on every later turn and gain one more note per
     warned request, so the nudge has to ride the wire alone.
     """
-    warner = IterationLimitWarner(max_requests=2)
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content="go")])]
-    sent = await _sent(warner, messages, requests=2)
+    sent = await _sent(
+        IterationLimitWarner(), messages, requests=3, limits=UsageLimits(request_limit=4)
+    )
 
-    assert "[run-limit-warning]" in str(sent[-1].parts[0])
+    assert "used 3 of 4 model requests" in str(sent[-1].parts[0])
     assert len(sent) == 2
     assert len(messages) == 1
+
+
+async def test_the_wrap_up_note_reads_the_run_limits() -> None:
+    """The run's own limit decides, so a run without one is never warned."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content="go")])]
+
+    assert await _sent(IterationLimitWarner(), messages, requests=40) == messages
+    assert await _sent(
+        IterationLimitWarner(), messages, requests=40, limits=UsageLimits(request_limit=100)
+    ) == messages
+
+
+@dataclass(slots=True, frozen=True)
+class _Row:
+    text: str
+    truncated: bool = False
+
+
+async def _spill(
+    result: Any,
+    *,
+    conversation: str | None = "c1",
+    call_id: str = "call-1",
+    capability: AbstractCapability[UserDeps] | None = None,
+    note: str | None = None,
+) -> Any:
+    """Bound *result* to 1000 characters as a grep call's return."""
+    deps = UserDeps(
+        user_id="u",
+        store=Casebase.for_user("u"),
+        mode="read",
+        conversation_id=conversation,
+    )
+    capability = capability or ToolOutputSpill(max_chars=1_000)
+
+    return await capability.after_tool_execute(
+        RunContext(
+            deps=deps,
+            model=TestModel(),
+            usage=RunUsage(),
+            tool_call_metadata={APPROVAL_NOTE_KEY: note} if note else None,
+        ),
+        call=ToolCallPart(tool_name="grep", args={}, tool_call_id=call_id),
+        tool_def=ToolDefinition(name="grep"),
+        args={},
+        result=result,
+    )
+
+
+def _saved(preview: str, data_dir: Path) -> Path:
+    """The file the note in *preview* names, on disk."""
+    found = re.search(r"`/tmp/(\.tool-results/grep-\w+\.\w+)`", preview)
+    assert found is not None
+
+    return tmp_dir(data_dir, "c1") / found[1]
+
+
+async def test_a_structured_result_too_large_to_show_is_saved_as_json(
+    data_dir: Path,
+) -> None:
+    rows = [_Row(f"row {i}", truncated=i == 0) for i in range(300)]
+    text = "\n".join(row.text for row in rows)
+    result = wrap_tool_output(ToolOutput(data=rows, formatted=text), tool_call_id="call-1")
+
+    spilled = await _spill(result)
+
+    assert isinstance(spilled, ToolReturn)
+    assert spilled.metadata is result.metadata
+    preview = spilled.return_value
+    assert isinstance(preview, str)
+    assert len(preview) <= 1_000
+    assert preview.startswith("row 0\nrow 1\n")
+    assert preview.endswith("\nrow 299")
+    assert "300 entries" in preview
+    assert "already cut it short" in preview
+    saved = _saved(preview, data_dir)
+    assert saved.suffix == ".json"
+    assert len(json.loads(saved.read_text())) == 300
+
+
+async def test_a_display_only_payload_saves_the_text(data_dir: Path) -> None:
+    """A subagent's transcript is only what the client shows, its answer is the result."""
+    text = "\n".join(f"line {i}" for i in range(300))
+    result = wrap_tool_output(
+        ToolOutput(data={"messages": ["..."]}, formatted=text, display_only=True)
+    )
+
+    spilled = await _spill(result)
+
+    assert isinstance(spilled, ToolReturn)
+    preview = spilled.return_value
+    assert isinstance(preview, str)
+    assert "read_document from offset=" in preview
+    assert _saved(preview, data_dir).read_text() == text
+
+
+async def test_a_result_that_fits_passes_untouched(data_dir: Path) -> None:
+    result = wrap_tool_output(ToolOutput(data=[_Row("a")], formatted="a"))
+
+    assert await _spill(result) is result
+    assert not (data_dir / "tmp").exists()
+
+
+async def test_saved_results_stay_within_the_tmp_cap(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The oldest saved result makes room, and one that cannot fit is only clamped."""
+    monkeypatch.setattr(settings.tmp, "max_bytes", 6_000)
+    results = tmp_dir(data_dir, "c1") / ".tool-results"
+
+    first = _saved(await _spill("a\n" * 2_000, call_id="call-1"), data_dir)
+    second = _saved(await _spill("b\n" * 2_000, call_id="call-2"), data_dir)
+
+    assert sorted(results.iterdir()) == [second]
+    assert not first.exists()
+
+    clamped = await _spill("c\n" * 4_000, call_id="call-3")
+
+    assert "characters left out here" in clamped
+    assert sorted(results.iterdir()) == [second]
+
+
+async def test_a_content_list_bounds_its_text_and_keeps_its_images(
+    data_dir: Path,
+) -> None:
+    image = BinaryContent(data=b"png", media_type="image/png")
+
+    spilled = await _spill(["line\n" * 2_000, image])
+
+    assert isinstance(spilled, list)
+    preview, kept = spilled
+    assert len(preview) <= 1_000
+    assert _saved(preview, data_dir).read_text() == "line\n" * 2_000
+    assert kept is image
+
+
+async def test_the_approval_note_wraps_the_spill_whatever_the_list_order(
+    data_dir: Path,
+) -> None:
+    """The order is declared, so the note is added after the text was bounded."""
+    spill, notes = ToolOutputSpill(max_chars=1_000), ApprovalNotes()
+    combined = CombinedCapability[UserDeps]([spill, notes])
+
+    assert combined.capabilities == [notes, spill]
+
+    preview, note = await _spill("x\n" * 2_000, capability=combined, note="Keep it.")
+
+    assert len(preview) <= 1_000
+    assert "is saved at" in preview
+    assert note == approval_note_text("Keep it.")

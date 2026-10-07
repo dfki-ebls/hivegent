@@ -14,6 +14,7 @@ from ..entries import is_description_file, stem_path_from_reference
 from ..subprocesses import rg_search
 from .base import (
     WORKSPACE_SCOPE_HINT,
+    AsyncPathTool,
     FullLinesArg,
     IncludeIgnoredArg,
     SearchPath,
@@ -27,13 +28,11 @@ from .base import (
 from .formatting import (
     BLOCK_SEP,
     GROUP_SEP,
-    cap_lines,
     hint_suffix,
     number_line,
     omission_hints,
     truncate_line,
 )
-from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
 
 __all__ = [
     "GrepCaseSensitiveArg",
@@ -256,17 +255,15 @@ async def _search_path(
 
 
 @dataclass(slots=True, frozen=True)
-class GrepTool(RedirectingPathTool[list[GrepMatch]]):
+class GrepTool(AsyncPathTool[list[GrepMatch]]):
     """Search documents for a pattern.
 
-    ``max_line_chars`` and ``max_formatted_chars`` safeguard the LLM
-    context against a single call flooding it with long wrapped
-    markdown lines or too many merged blocks.  The caller can always
+    ``max_line_chars`` safeguards the LLM context against a single call
+    flooding it with long wrapped markdown lines.  The caller can always
     issue a more specific follow-up to get more detail.
     """
 
     max_line_chars: int = 200
-    max_formatted_chars: int = 10_000
 
     @override
     async def __call__(
@@ -280,8 +277,7 @@ class GrepTool(RedirectingPathTool[list[GrepMatch]]):
         output_mode: GrepOutputModeArg = "content",
         include_ignored: IncludeIgnoredArg = False,
         full_lines: FullLinesArg = False,
-        output_path: OutputPathArg = None,
-    ) -> ToolOutput[list[GrepMatch] | RedirectedOutput]:
+    ) -> ToolOutput[list[GrepMatch]]:
         """Search documents for a pattern.
 
         Defaults to case-insensitive regex search.  Set ``literal=True``
@@ -323,10 +319,7 @@ class GrepTool(RedirectingPathTool[list[GrepMatch]]):
         )
         hidden = sum(hidden for _batch, hidden in results)
 
-        return await self.redirect(
-            self._render(all_matches, hidden, output_mode, max_results, full_lines),
-            output_path,
-        )
+        return self._render(all_matches, hidden, output_mode, max_results, full_lines)
 
     def _render(
         self,
@@ -344,7 +337,7 @@ class GrepTool(RedirectingPathTool[list[GrepMatch]]):
         """
         if output_mode == "content":
             data = all_matches[:max_results]
-            body, budget_hints = self._format_matches(data, full_lines)
+            body = self._format_matches(data, full_lines)
             total = len(all_matches)
         else:
             data = all_matches
@@ -358,52 +351,29 @@ class GrepTool(RedirectingPathTool[list[GrepMatch]]):
                 fn if output_mode == "files_with_matches" else f"{fn}: {n}"
                 for fn, n in listed
             )
-            budget_hints = []
             total = len(counts)
 
-        hints = (
-            omission_hints(hidden=hidden, max_results=max_results, total=total)
-            + budget_hints
-        )
+        hints = omission_hints(hidden=hidden, max_results=max_results, total=total)
 
         return ToolOutput(
             data=data, formatted=(body or "(no matches)") + hint_suffix(hints)
         )
 
-    def _format_matches(
-        self, matches: list[GrepMatch], full_lines: bool = False
-    ) -> tuple[str, list[str]]:
-        """Render *matches* under the output budget, with a hint for what it cut."""
-        # Budget at the line level rather than the block level: ripgrep can
-        # merge many nearby hits into one block whose formatted form dwarfs
-        # the budget, and dropping it whole would print nothing but a notice.
-        total_lines = sum(len(m.lines) for m in matches)
+    def _format_matches(self, matches: list[GrepMatch], full_lines: bool = False) -> str:
+        """Render *matches* with each document path once as a heading.
+
+        Every line then carries only its number with ``:`` for matches and
+        ``-`` for context.  Distinct documents are split by :data:`BLOCK_SEP`
+        and discontiguous blocks within a document by :data:`GROUP_SEP`.
+        """
         line_cap = None if full_lines else self.max_line_chars
-        body, omitted = cap_lines(
-            self._iter_lines(matches, line_cap), self.max_formatted_chars, ""
-        )
 
-        if not omitted:
-            return body, []
-
-        return body, [
-            (
-                f"{omitted} of {total_lines} lines omitted, "
-                "reduce context or narrow the pattern/glob"
-            )
-        ]
+        return "".join(self._iter_lines(matches, line_cap))
 
     def _iter_lines(
         self, matches: list[GrepMatch], max_line_chars: int | None
     ) -> Iterator[str]:
-        """Yield each match line with the separator that precedes it.
-
-        The document path is emitted once as a heading; every line then
-        carries only its number with ``:`` for matches and ``-`` for context.
-        Distinct documents are split by :data:`BLOCK_SEP` and discontiguous
-        blocks within a document by :data:`GROUP_SEP`, with each heading folded
-        into its block's first line so the two stay together under the budget.
-        """
+        """Yield each match line with the separator that precedes it."""
         prev_file: str | None = None
         for m in matches:
             if prev_file is None:

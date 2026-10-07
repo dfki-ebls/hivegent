@@ -29,14 +29,11 @@ from hivegent.agents.tools.write import (
     _write_document,
     changeset_committer,
     discard_unapproved_changes,
-    output_sink,
     validate_apply_changes,
     validate_document_deletions,
     validate_document_edit,
     validate_document_moves,
     validate_document_write,
-    validate_output_path,
-    write_document,
     write_toolset,
 )
 from hivegent.changes import (
@@ -58,6 +55,7 @@ from hivegent.tools.mutations import DocumentMove
 from hivegent.types import DocumentFilter
 from hivegent.workspace import Location, PlannedChangeset
 from hivegent.workspace import changeset as gateway
+from tests.helpers import run_context
 
 
 @pytest.fixture()
@@ -92,7 +90,7 @@ def routed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
 async def test_writes_to_the_addressed_workspace(
     deps: UserDeps, routed: list[tuple[str, str]]
 ) -> None:
-    tool = write_document(deps)
+    tool = _write_document(deps)
 
     assert (await tool("@team/notes/a.md", "hi")).data == "written"
     assert (await tool("~/notes/a.md", "hi")).data == "written"
@@ -116,17 +114,16 @@ async def test_tmp_is_written_directly_and_a_program_there_is_pointed_at_run_pyt
     with pytest.raises(ToolRetry, match="changed since it was read"):
         await _edit_document(deps)("/tmp/report.py", [TextEdit("2", "3")], "stale")
 
-    # A redirect's commit carries no pointer back to run_python.
-    sink = output_sink(deps) or pytest.fail("no sink")
-    assert (await sink.writer("/tmp/rows.py", "[]")).data == (
-        "Wrote 2 characters to '/tmp/rows.py'."
+    # Anything else carries no pointer back to run_python.
+    assert (await _write_document(deps)("/tmp/rows.json", "[]")).data == (
+        "Wrote 2 characters to '/tmp/rows.json'."
     )
 
     # Moves and deletes reach `/tmp` too, and land at once.
-    _ = await _move_documents(deps)([DocumentMove("/tmp/rows.py", "/tmp/old/rows.py")])
-    assert (folder / "old" / "rows.py").read_text() == "[]"
-    _ = await _delete_documents(deps)(["/tmp/old/rows.py"])
-    assert not (folder / "old" / "rows.py").exists()
+    _ = await _move_documents(deps)([DocumentMove("/tmp/rows.json", "/tmp/old/rows.json")])
+    assert (folder / "old" / "rows.json").read_text() == "[]"
+    _ = await _delete_documents(deps)(["/tmp/old/rows.json"])
+    assert not (folder / "old" / "rows.json").exists()
 
     with pytest.raises(ToolRetry, match="only one of them is written directly"):
         await _move_documents(deps)([DocumentMove("/tmp/report.py", "~/report.py")])
@@ -153,7 +150,7 @@ async def test_unprefixed_path_is_refused_with_the_roots_named(
     deps: UserDeps, routed: list[tuple[str, str]]
 ) -> None:
     """Nothing is implied by context, so the refusal says what to write instead."""
-    tool = write_document(deps)
+    tool = _write_document(deps)
 
     with pytest.raises(ToolRetry, match=r"addresses ~, @team, /tmp; give the full path"):
         await tool("notes/a.md", "hi")
@@ -164,7 +161,7 @@ async def test_unprefixed_path_is_refused_with_the_roots_named(
 async def test_refuses_a_group_the_user_may_only_read(
     deps: UserDeps, routed: list[tuple[str, str]]
 ) -> None:
-    tool = write_document(deps)
+    tool = _write_document(deps)
 
     with pytest.raises(ToolRetry, match="not accessible"):
         await tool("@archive/notes/a.md", "hi")
@@ -184,9 +181,9 @@ def test_run_python_paths_are_lazy_and_end_with_the_conversation_s_tmp(
         },
     )
     pool = object()
-    monkeypatch.setattr(compute_tools, "get_monty_pool", lambda: pool)
+    monkeypatch.setattr(python_tools, "get_monty_pool", lambda: pool)
 
-    tool = compute_tools._run_python(filtered)
+    tool = python_tools._run_python(run_context(filtered))
 
     assert tool.pool is pool
     assert all(not path.path.exists() for path in tool.resolved_paths)
@@ -199,7 +196,7 @@ def test_run_python_paths_are_lazy_and_end_with_the_conversation_s_tmp(
         assert not path.filter_func("other.md")
 
     assert tmp.prefixed("") == "/tmp"
-    assert tmp.policy == Direct(settings.tmp.max_bytes)
+    assert tmp.policy == Direct(settings.tmp.max_bytes, reserved=".tool-results")
     assert tool.environ["TMPDIR"] == "/tmp"
     assert len(tool.writable) == 3
 
@@ -208,7 +205,7 @@ def test_run_python_paths_are_lazy_and_end_with_the_conversation_s_tmp(
         replace(filtered, mode="read"),
         replace(filtered, disabled_tools=frozenset({"apply_changes"})),
     ):
-        assert compute_tools._run_python(narrowed).writable == (tmp,)
+        assert python_tools._run_python(run_context(narrowed)).writable == (tmp,)
 
 
 def _asked(exc: pytest.ExceptionInfo[ApprovalRequired]) -> dict[str, Any]:
@@ -231,33 +228,6 @@ def _context(
     )
 
 
-async def test_output_path_approval_depends_on_mode(deps: UserDeps) -> None:
-    def context(mode: str, *, approved: bool = False) -> RunContext[UserDeps]:
-        return _context(deps, mode, approved=approved)
-
-    with pytest.raises(ApprovalRequired) as exc:
-        await validate_output_path(context("interactive"), output_path="~/output.txt")
-
-    assert _asked(exc) == {
-        "creates": [{"path": "~/output.txt", "diff": ""}],
-        "updates": [],
-        "moves": [],
-        "deletes": [],
-        "mkdirs": [],
-    }
-
-    await validate_output_path(
-        context("interactive", approved=True), output_path="~/output.txt"
-    )
-    await validate_output_path(context("write"), output_path="~/output.txt")
-
-    # Read mode writes `/tmp` and nothing else.
-    await validate_output_path(context("read"), output_path="/tmp/output.txt")
-
-    with pytest.raises(ModelRetry, match="not accessible. This tool addresses /tmp"):
-        await validate_output_path(context("read"), output_path="~/output.txt")
-
-
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [
@@ -272,10 +242,10 @@ def test_invalid_program_is_refused_before_it_runs(
 ) -> None:
     tool = python_tools.python_toolset.tools["run_python"]
     validated = tool.function_schema.validator.validate_python(arguments)
-    assert tool.args_validator is compute_tools.validate_run_python
+    assert tool.args_validator is python_tools.validate_run_python
 
     with pytest.raises(ModelRetry, match=message):
-        compute_tools.validate_run_python(_context(deps, "interactive"), **validated)
+        python_tools.validate_run_python(_context(deps, "interactive"), **validated)
 
 
 @pytest.mark.parametrize(
@@ -291,7 +261,7 @@ def test_a_program_runs_without_asking(
     deps: UserDeps, code: str | None, script_path: str | None
 ) -> None:
     """What a program changes is approved afterwards, through apply_changes."""
-    compute_tools.validate_run_python(
+    python_tools.validate_run_python(
         _context(deps, "interactive"), code=code, script_path=script_path
     )
 
@@ -313,7 +283,6 @@ async def test_tmp_writes_skip_approval(deps: UserDeps) -> None:
     await validate_document_edit(
         context("interactive"), file_path="/tmp/state.json", edits=[TextEdit("x", "y")]
     )
-    await validate_output_path(context("interactive"), output_path="/tmp/hits.json")
     await validate_document_deletions(context("interactive"), paths=["/tmp/a.json"])
 
     # No workspace name is reserved for it, so a `tmp` folder there is a document's.

@@ -14,7 +14,7 @@ from hivegent.security import (
 )
 from hivegent.tools.base import ItemFailure, ToolRetry
 from hivegent.tools.web import WebFetch, WebSearch, WikipediaSearch, build_user_agent
-from tests.helpers import returned, single
+from tests.helpers import single
 
 #: Permits every host, so a fetch test opts out of policy enforcement.
 _ANY_HOST = UrlPolicy(allow_hosts=("*",))
@@ -141,15 +141,13 @@ class TestWebSearch:
                 ),
             )
 
-        out = await returned(
-            WebSearch(
-                client=_web_client(
-                    monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
-                ),
-                default_edition="de",
-                user_agent="hivegent-test (+mailto:a@b.org)",
-            )([WikipediaSearch("ChatGPT")])
-        )
+        out = await WebSearch(
+            client=_web_client(
+                monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
+            ),
+            default_edition="de",
+            user_agent="hivegent-test (+mailto:a@b.org)",
+        )([WikipediaSearch("ChatGPT")])
         hits = single(out.data).hits
 
         assert [hit.href for hit in hits] == [
@@ -170,9 +168,7 @@ class TestWebSearch:
         client = _web_client(
             monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
         )
-        out = await returned(
-            WebSearch(client=client)([WikipediaSearch("Paris", edition="fr")])
-        )
+        out = await WebSearch(client=client)([WikipediaSearch("Paris", edition="fr")])
 
         assert single(out.data).hits[0].href == "https://fr.wikipedia.org/wiki/Paris"
 
@@ -192,14 +188,12 @@ class TestWebSearch:
         client = _web_client(
             monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
         )
-        out = await returned(
-            WebSearch(client=client)(
-                [
-                    WikipediaSearch("Paris"),
-                    WikipediaSearch("France"),
-                    WikipediaSearch("Paris", edition="xx"),
-                ]
-            )
+        out = await WebSearch(client=client)(
+            [
+                WikipediaSearch("Paris"),
+                WikipediaSearch("France"),
+                WikipediaSearch("Paris", edition="xx"),
+            ]
         )
 
         paris, france, failed = out.data
@@ -259,7 +253,7 @@ class TestWebFetch:
             )
 
         tool = _fetch_tool(monkeypatch, handler)
-        out = await returned(tool(["https://example.com/start"]))
+        out = await tool(["https://example.com/start"])
 
         assert single(out.data).url == "https://example.com/final"
         assert single(out.data).title == "Test Page"
@@ -284,7 +278,7 @@ class TestWebFetch:
 
         tool = _fetch_tool(monkeypatch, handler)
         urls = [f"https://example.com/{path}" for path in ("start", "final", "gone")]
-        out = await returned(tool(urls))
+        out = await tool(urls)
 
         page, duplicate, gone = out.data
         assert not isinstance(page, ItemFailure)
@@ -331,7 +325,7 @@ class TestWebFetch:
             )
 
         tool = _fetch_tool(monkeypatch, handler, max_chars=10)
-        out = await returned(tool(["https://example.com/big"]))
+        out = await tool(["https://example.com/big"])
         assert single(out.data).content == "a" * 10
         assert single(out.data).truncated
         assert out.text.endswith("[truncated]")
@@ -350,7 +344,7 @@ class TestWebFetch:
             )
 
         tool = _fetch_tool(monkeypatch, handler, max_line_chars=80)
-        out = await returned(tool(["https://example.com/page"]))
+        out = await tool(["https://example.com/page"])
         assert "…" in out.text
         assert len(max(out.text.splitlines(), key=len)) < 200
         assert long_line in single(out.data).content

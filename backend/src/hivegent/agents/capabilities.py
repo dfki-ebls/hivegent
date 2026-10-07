@@ -46,7 +46,6 @@ from ..prompts import (
     IMAGE_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS_EMPTY,
     PYTHON_INSTRUCTIONS,
-    REDIRECT_INSTRUCTIONS,
     TMP_INSTRUCTIONS,
     VERSION_INSTRUCTIONS,
     WORKSPACE_PATH_INSTRUCTIONS,
@@ -63,7 +62,7 @@ from ..types import (
 )
 from .approval import ApprovalNotes
 from .common import UserDeps, scope_instructions
-from .guards import IterationLimitWarner, ToolOutputLimit
+from .guards import IterationLimitWarner
 from .tools import (
     INJECTABLE_TOOL_NAMES,
     python_toolset,
@@ -218,24 +217,18 @@ class SharedInstructions:
 SHARED_INSTRUCTIONS: tuple[SharedInstructions, ...] = (
     SharedInstructions(
         "workspace-paths",
-        frozenset({"python", "explore", "write"}),
+        frozenset({"explore", "python", "write"}),
         WORKSPACE_PATH_INSTRUCTIONS,
     ),
     SharedInstructions(
         "citation", frozenset({"explore", "web"}), CITATION_INSTRUCTIONS
     ),
-    SharedInstructions(
-        "tmp", frozenset({"python", "write"}), TMP_INSTRUCTIONS
-    ),
+    SharedInstructions("tmp", frozenset({"python", "write"}), TMP_INSTRUCTIONS),
     SharedInstructions(
         "workspace-writes",
         frozenset({"write"}),
         WRITE_INSTRUCTIONS,
         modes=MUTATING_MODES,
-    ),
-    # A read-only run may still redirect into `/tmp`, which every mode writes.
-    SharedInstructions(
-        "redirect", frozenset({"explore", "web"}), REDIRECT_INSTRUCTIONS
     ),
 )
 """Guidance spanning several features, composed while any of them is live."""
@@ -259,7 +252,7 @@ def unlisted_tool_names(tools_spec: ToolsSpec) -> frozenset[str]:
     standing choice, ``ToolsSpec.disabled_tools`` the user's per-turn one, and
     ``settings.tools.sandbox_only`` the operator's placement choice.  The first
     two withhold a tool outright; the third only unlists it, since it is still
-    injected as a function (``agents/tools/compute.py``).
+    injected as a function (``agents/tools/python.py``).
 
     One function, because the surfaces that must agree are the ones asking this
     question — the :class:`PrepareTools` pass and the settings listing.  What
@@ -334,11 +327,9 @@ def build_capabilities(
     result.extend(Capability(toolsets=[toolset]) for toolset in extra)
 
     # Cross-cutting run-loop safeguards, applied to every run regardless of mode.
-    # `after_tool_execute` hooks run in reverse order, so the user's approval
-    # note is appended to the already clamped return and never cut off.
+    # The output spill rides on the agent itself (`agents/app.py`).
     result.append(ApprovalNotes())
-    result.append(ToolOutputLimit(max_chars=settings.llm.tool_output_max_chars))
-    result.append(IterationLimitWarner(max_requests=settings.llm.request_limit))
+    result.append(IterationLimitWarner())
 
     return result
 

@@ -212,6 +212,7 @@ def build_run_prefix(
         relevant_documents=relevant_documents,
         disabled_tools=frozenset(config.tools.disabled_tools),
         llm=llm,
+        aux_llm=prepare_llm_config(config.llm),
         language=language,
     )
 

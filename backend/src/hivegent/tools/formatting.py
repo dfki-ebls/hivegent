@@ -4,7 +4,8 @@ Block separators and line numbering live here so they stay consistent
 wherever text is assembled for a model to read.
 """
 
-from collections.abc import Iterable, Iterator, Sequence
+import reprlib
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
 from ..humanize import pluralize
 
@@ -17,6 +18,7 @@ __all__ = [
     "iter_annotated",
     "number_line",
     "omission_hints",
+    "render_arguments",
     "truncate_block",
     "truncate_line",
     "truncate_middle",
@@ -52,9 +54,10 @@ def truncate_line(text: str, max_chars: int | None = None) -> str:
     """Clip *text* to *max_chars* characters, marking any cut with an ellipsis.
 
     A ``None`` budget, or one at least as long as *text*, returns *text*
-    unchanged.  This guards a single very long line — a base64-embedded
-    image, a minified bundle — from flooding the model's context window when
-    line-oriented output is assembled for it to read.
+    unchanged, and one below a character returns nothing.  This guards a
+    single very long line — a base64-embedded image, a minified bundle — from
+    flooding the model's context window when line-oriented output is assembled
+    for it to read.
 
     >>> truncate_line("hello world", 8)
     'hello w…'
@@ -65,28 +68,95 @@ def truncate_line(text: str, max_chars: int | None = None) -> str:
     """
     if max_chars is None or len(text) <= max_chars:
         return text
-    return text[: max_chars - 1] + "…"
+
+    return text[: max_chars - 1] + "…" if max_chars > 0 else ""
 
 
-def truncate_middle(text: str, max_chars: int) -> str:
-    """Clip *text* to *max_chars*, preserving both ends exactly.
+def _head_and_tail(text: str, room: int) -> tuple[str, str]:
+    """The head and tail of *text* that fit *room*, cut at line ends where there are any.
 
-    >>> truncate_middle("abcdefghijklmnop", 15)
-    'ab[truncated]op'
+    >>> _head_and_tail("line1\\nline2\\nline3\\nline4", 17)
+    ('line1\\nline2', 'line4')
+    """
+    head_room = room * 3 // 4
+    tail_start = len(text) - (room - head_room)
+    end = text.rfind("\n", 0, head_room + 1)
+    start = text.find("\n", tail_start - 1)
+    head = text[:end] if end > 0 else text[:head_room]
+    tail = text[start + 1 :] if start >= 0 else text[tail_start:]
+
+    return head, tail
+
+
+def truncate_middle(
+    text: str, max_chars: int, note: Callable[[str], str] | None = None
+) -> str:
+    """Keep the head and tail of *text* within *max_chars*, around a note on the rest.
+
+    The head takes three parts of the room to the tail's one, both cut at line
+    ends, and the tail keeps the hints a tool appends to its output.  *note*
+    renders what stands between them from the head it follows, and by default
+    counts the characters left out.  The note is never cut, since it may name
+    where the rest is, so the room is what is left once it is sized for the
+    whole text as its head, which a note must not outgrow as its head shrinks.
+    Where even the note does not fit, it is all that is returned, clipped.
+
+    >>> print(truncate_middle("\\n".join(map(str, range(100))), 60))
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    [265 characters left out here]
+    98
+    99
     """
     if len(text) <= max_chars:
         return text
 
-    if max_chars <= 0:
-        return ""
+    def marker(head: str, left_out: int) -> str:
+        return note(head) if note is not None else f"[{left_out} characters left out here]"
 
-    label = "[truncated]"
-    marker = label if max_chars > len(label) else ""
-    remaining = max_chars - len(marker)
-    leading = (remaining + 1) // 2
-    trailing = remaining - leading
-    suffix = text[-trailing:] if trailing else ""
-    return f"{text[:leading]}{marker}{suffix}"
+    # Two line breaks join the note to its head and tail.
+    room = max_chars - len(marker(text, len(text))) - 2
+
+    if room < 0:
+        return truncate_line(marker("", len(text)), max_chars)
+
+    head, tail = _head_and_tail(text, room)
+    middle = marker(head, len(text) - len(head) - len(tail))
+
+    return "\n".join(filter(None, (head, middle, tail)))
+
+
+_ARGUMENT_REPR = reprlib.Repr(maxlevel=2, maxstring=200)
+"""Renders one argument value cut short, never the whole of a large one."""
+
+
+def render_arguments(args: str | Mapping[str, object] | None, max_chars: int) -> str:
+    """The keyword arguments of a call as it spells them, within *max_chars*.
+
+    A large argument, such as a written document or a program, is cut while it
+    is rendered rather than serialized whole and cut afterwards.  A string is
+    the arguments a model sent already serialized.
+
+    >>> render_arguments({"query": "x", "limit": 5}, 200)
+    "query='x', limit=5"
+    """
+    text = (
+        args
+        if isinstance(args, str)
+        else ", ".join(
+            f"{key}={_ARGUMENT_REPR.repr(value)}" for key, value in (args or {}).items()
+        )
+    )
+
+    return truncate_line(text, max_chars)
 
 
 def truncate_block(text: str, max_line_chars: int | None = None) -> str:
@@ -108,35 +178,23 @@ def truncate_block(text: str, max_line_chars: int | None = None) -> str:
     return "\n".join(truncate_line(line, max_line_chars) for line in text.splitlines())
 
 
-def cap_lines(
-    lines: Iterable[str],
-    max_chars: int | None = None,
-    sep: str = "\n",
-    *,
-    keep_oversized_first: bool = True,
-) -> tuple[str, int]:
-    """Join *lines* with *sep* while the total stays within *max_chars*.
+def cap_lines(lines: Iterable[str], max_chars: int | None = None) -> tuple[str, int]:
+    """Join *lines* with newlines while the total stays within *max_chars*.
 
     Returns the joined text and how many lines were left out.  Once the
     budget is reached every remaining line is dropped, so what is kept is a
     contiguous prefix rather than whichever later lines happened to fit, and
     a caller can resume from exactly where the output stops.  The first line
-    is kept by default, however long it is, since a lone oversized line can
-    tell the reader more than an empty result with a notice.  Set
-    *keep_oversized_first* to false when items must remain whole and the budget
-    is strict.
+    is kept however long it is, since a lone oversized line can tell the
+    reader more than an empty result with a notice.
 
-    This is a different axis from :func:`truncate_line`.  That one bounds a
-    single runaway line; this one bounds what a whole tool return spends of
-    the model's context, which line numbers and markup add to on top of the
-    content the tool selected.
+    This is a different axis from :func:`truncate_line`, which bounds a
+    single runaway line.
 
     >>> cap_lines(["ab", "cd", "ef"], 5)
     ('ab\\ncd', 1)
     >>> cap_lines(["abcdef"], 3)
     ('abcdef', 0)
-    >>> cap_lines(["abcdef"], 3, keep_oversized_first=False)
-    ('', 1)
     >>> cap_lines(["ab", "cd"])
     ('ab\\ncd', 0)
     """
@@ -145,16 +203,15 @@ def cap_lines(
     iterator = iter(lines)
 
     for line in iterator:
-        extra = len(line) + (len(sep) if kept else 0)
+        extra = len(line) + (1 if kept else 0)
 
-        over_budget = max_chars is not None and total + extra > max_chars
-        if over_budget and (kept or not keep_oversized_first):
-            return sep.join(kept), 1 + sum(1 for _ in iterator)
+        if kept and max_chars is not None and total + extra > max_chars:
+            return "\n".join(kept), 1 + sum(1 for _ in iterator)
 
         kept.append(line)
         total += extra
 
-    return sep.join(kept), 0
+    return "\n".join(kept), 0
 
 
 def hint_suffix(hints: Sequence[str]) -> str:

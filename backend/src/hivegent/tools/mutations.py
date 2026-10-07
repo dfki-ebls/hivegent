@@ -288,8 +288,7 @@ def check_delimited_rows(canonical_path: str, content: str) -> None:
     inside it, which splitting the text into lines first would not.
 
     Only whole writes are checked, which is where a generated table arrives:
-    the write tool, a program's committed output, and a redirect (whose suffix
-    is always `.json` or `.txt`, so this is a no-op there).  An edit replaces a
+    the write tool and a program's committed output.  An edit replaces a
     string inside a file it did not build and is left alone.  It stays at the
     tool layer rather than in the gateway, unlike ``writes_as_text``: a binary
     write is impossible, while a ragged row is only probably a mistake, and a
@@ -333,8 +332,8 @@ def resolve_text_target(paths: tuple[SearchPath, ...], file_path: str) -> str:
     """Resolve *file_path* for a mutation that writes text at it, to its canonical path.
 
     This adds the two questions every text write shares and a move or a delete
-    does not, so the surfaces that write text (the write tool, the edit tool,
-    and a redirected ``output_path``) refuse a directory and a binary target in
+    does not, so the surfaces that write text (the write tool and the edit
+    tool) refuse a directory and a binary target in
     the same words the gateway would, before an approval is asked for or a
     program is run.
 

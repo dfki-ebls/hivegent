@@ -766,8 +766,8 @@ class WorkspaceOS(AbstractOS):
         Resolved against the writable span rather than the mounted one, which
         is wider, and on the canonical local path rather than the spelling it
         was addressed by, so neither a ``..`` segment nor a symlink can carry a
-        path into a workspace the user may only read or into an ``.assets``
-        payload.
+        path into a workspace the user may only read or into a reserved
+        subtree.
         """
         canonical = self._named(path)
         resolved = (
@@ -784,10 +784,11 @@ class WorkspaceOS(AbstractOS):
 
         sp, local, _absolute = resolved
 
-        if is_reserved_path(local):
+        if sp.is_reserved(local):
             raise PermissionError(
-                f"'{canonical}' lies in an `.assets` directory, which belongs to "
-                "its document and follows it when the document moves or goes."
+                f"'{canonical}' is reserved: an `.assets` directory belongs to its "
+                "document and follows it, and a folder its root keeps for the host "
+                "can be read but not changed."
             )
 
         return sp.prefixed(local)

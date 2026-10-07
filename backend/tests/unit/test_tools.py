@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import re
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
@@ -58,14 +57,12 @@ from hivegent.tools.mutations import (
     WriteDocumentTool,
 )
 from hivegent.tools.python import PythonResult, RunPythonTool
-from hivegent.tools.sink import OutputSink, RedirectedOutput
-from hivegent.tools.table import QueryTableTool
 from hivegent.types import DocumentFilter
-from tests.helpers import LIMITS, returned, single
+from tests.helpers import LIMITS, single
 
 
 def _as_summaries(
-    data: list[DocumentSummary] | DocumentTreeNode | RedirectedOutput,
+    data: list[DocumentSummary] | DocumentTreeNode,
 ) -> list[DocumentSummary]:
     """Narrow a ListDocumentsTool result to a list of summaries."""
     assert isinstance(data, list) and all(isinstance(d, DocumentSummary) for d in data)
@@ -931,37 +928,13 @@ class TestReadDocumentTool:
         assert "col199" in whole
         assert "full_lines=true" not in whole
 
-    async def test_formatted_budget_binds_the_text_and_not_the_result(
-        self, tmp_path: Path
-    ) -> None:
-        # The rendered budget decides what the model saw, not what the call
-        # read: trimming the result to it wrote fewer lines to a `.json`
-        # redirect than the read had taken, under a receipt for the whole of
-        # it.  Where the text stopped is said instead, so a follow-up offset
-        # can still resume from the last line actually shown.
-        (tmp_path / "doc.md").write_text("\n".join(f"line{i}" for i in range(100)))
-        tool = ReadDocumentTool(paths=tmp_path, max_formatted_chars=40)
-        out = await tool([DocumentRead("doc.md")])
-
-        assert isinstance(single(out.data), DocumentRange)
-        assert single(out.data).end_line == 100
-        assert single(out.data).content.splitlines() == [f"line{i}" for i in range(100)]
-        assert out.formatted is not None
-
-        shown = re.search(r"the text above stops at line (\d+)", out.formatted)
-        assert shown is not None
-        assert 0 < int(shown[1]) < 100
-        assert f"offset={int(shown[1]) + 1}" in out.formatted
-
     async def test_reads_several_documents_each_under_its_own_key(
         self, tmp_path: Path
     ) -> None:
         (tmp_path / "a.md").write_text("\n".join(f"a{i}" for i in range(10)))
         tool = ReadDocumentTool(paths=tmp_path)
 
-        out = await returned(
-            tool([DocumentRead("a.md", offset=3, limit=2), DocumentRead("b.md")])
-        )
+        out = await tool([DocumentRead("a.md", offset=3, limit=2), DocumentRead("b.md")])
 
         first, second = out.data
         assert isinstance(first, DocumentRange)
@@ -1298,7 +1271,7 @@ class TestJqTool:
     """Tests for JqTool."""
 
     @staticmethod
-    def _result(output: Batch[JqResult] | RedirectedOutput) -> JqResult:
+    def _result(output: Batch[JqResult]) -> JqResult:
         return single(output)
 
     async def test_filter_selects_values(self, tmp_path: Path) -> None:
@@ -1345,100 +1318,12 @@ class TestJqTool:
         with pytest.raises(ToolRetry, match="not found"):
             await tool(["../etc/passwd"], ".")
 
-    async def test_output_budget_cuts_whole_values(self, tmp_path: Path) -> None:
-        """What the budget drops is values, so no JSON comes back cut mid-token."""
-        (tmp_path / "big.json").write_text(json.dumps(["x" * 100 for _ in range(50)]))
-        tool = JqTool(paths=tmp_path, max_formatted_chars=250)
-        output = await tool(["big.json"], ".[]")
-        result = self._result(output.data)
-
-        rendered = [line for line in output.text.splitlines() if line.startswith('"')]
-
-        assert 0 < len(rendered) < 50
-        assert all(line == '"' + "x" * 100 + '"' for line in rendered)
-        assert result.values == tuple("x" * 100 for _ in range(50))
-
-    async def test_output_budget_omits_one_oversized_value(
-        self, tmp_path: Path
-    ) -> None:
-        """One value cannot bypass the jq-specific output budget."""
-        (tmp_path / "big.json").write_text(json.dumps({"body": "x" * 500}))
-        tool = JqTool(paths=tmp_path, max_formatted_chars=100)
-        output = await tool(["big.json"], ".")
-        result = self._result(output.data)
-
-        assert "(no values)" in output.text
-        assert len(output.text) < 200
-        assert result.values == ({"body": "x" * 500},)
-
-    async def test_json_redirect_preserves_values_omitted_from_display(
-        self, tmp_path: Path
-    ) -> None:
-        """The structured redirect stores all jq values, not the display slice."""
-        written: dict[str, str] = {}
-
-        async def mutate(changeset: Changeset[str]) -> str:
-            (write,) = changeset.operations
-            assert isinstance(write, Write)
-            written[write.target] = write.content
-
-            return f"wrote {write.target}"
-
-        (tmp_path / "big.json").write_text(json.dumps(list(range(100))))
-        writer = WriteDocumentTool(paths=tmp_path, commit=mutate)
-        tool = JqTool(
-            paths=tmp_path, sink=OutputSink(writer, 0), max_formatted_chars=20
-        )
-
-        output = await tool(["big.json"], ".[]", output_path="result.json")
-        stored = json.loads(written["result.json"])
-
-        assert isinstance(output.data, RedirectedOutput)
-        assert stored[0]["values"] == list(range(100))
-
-    async def test_a_receipt_says_when_what_it_wrote_was_already_cut(
-        self, tmp_path: Path
-    ) -> None:
-        # A redirect hands back a size and nothing else, so a cut the tool knew
-        # about dies in the receipt unless it is carried: a run that redirected
-        # a capped query and computed from the file could not tell.
-        async def mutate(_changeset: Changeset[str]) -> str:
-            return "wrote it"
-
-        rows = "\n".join(f"r{i},{i}" for i in range(50))
-        (tmp_path / "t.csv").write_text(f"name,val\n{rows}")
-        writer = WriteDocumentTool(paths=tmp_path, commit=mutate)
-        tool = QueryTableTool(paths=tmp_path, sink=OutputSink(writer, 0), max_rows=10)
-
-        output = await tool(
-            ["t.csv"], ["SELECT * FROM t"], row_limit=10, output_path="out.json"
-        )
-
-        assert isinstance(output.data, RedirectedOutput)
-        assert output.data.truncated
-        assert "cut short of what you asked for" in output.text
-
-    async def test_a_whole_result_is_not_called_partial(self, tmp_path: Path) -> None:
-        async def mutate(_changeset: Changeset[str]) -> str:
-            return "wrote it"
-
-        (tmp_path / "t.csv").write_text("name,val\na,1\nb,2\n")
-        writer = WriteDocumentTool(paths=tmp_path, commit=mutate)
-        tool = QueryTableTool(paths=tmp_path, sink=OutputSink(writer, 0))
-
-        output = await tool(["t.csv"], ["SELECT * FROM t"], output_path="out.json")
-
-        assert isinstance(output.data, RedirectedOutput)
-        assert not output.data.truncated
-        assert "cut short" not in output.text
-
 
 class TestGrepSearch:
     """Tests for GrepTool against real files on disk."""
 
     @staticmethod
-    def _filenames(output: list[GrepMatch] | RedirectedOutput) -> set[str]:
-        assert isinstance(output, list)
+    def _filenames(output: list[GrepMatch]) -> set[str]:
         return {m.filename for m in output}
 
     async def test_legacy_encoded_sibling_keeps_other_results(
@@ -1519,9 +1404,7 @@ class TestGrepSearch:
         hidden = await GrepTool(paths=tmp_path)("needle")
         assert hidden.data == []
         assert "1 hidden entry" in hidden.text
-        revealed = await returned(
-            GrepTool(paths=tmp_path)("needle", include_ignored=True)
-        )
+        revealed = await GrepTool(paths=tmp_path)("needle", include_ignored=True)
         assert self._filenames(revealed.data) == {"doc.assets/fig1.txt"}
 
     async def test_a_capped_result_says_how_many_it_left_out(
@@ -1568,7 +1451,7 @@ class TestGrepFormatting:
     ) -> None:
         # The path appears once as a heading; lines carry only their number
         # with ``:`` for matches and ``-`` for context.
-        tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
+        tool = GrepTool(paths=tmp_path)
         block = GrepMatch(
             filename="doc.md",
             lines=(
@@ -1576,40 +1459,17 @@ class TestGrepFormatting:
                 GrepLine(line_number=11, text="hit", is_match=True),
             ),
         )
-        formatted, _hints = tool._format_matches([block])
-        assert formatted == "doc.md\n10-ctx\n11:hit"
-
-    def test_oversized_block_truncates_instead_of_dropping(
-        self, tmp_path: Path
-    ) -> None:
-        # A single merged block larger than the budget must still show its
-        # leading lines (truncated), never just a heading with no content.
-        tool = GrepTool(paths=tmp_path, max_formatted_chars=40)
-        formatted, hints = tool._format_matches([self._block(50)])
-        shown = formatted.count(":x")
-        assert 0 < shown < 50
-        assert formatted.startswith("f.md\n1:x")
-        assert not formatted.startswith("\n---\n")
-        assert hints[0].startswith(f"{50 - shown} of 50 lines omitted")
-
-    def test_fully_shown_has_no_omitted_notice(self, tmp_path: Path) -> None:
-        tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
-        formatted, hints = tool._format_matches([self._block(3)])
-        assert formatted == "f.md\n1:x\n2:x\n3:x"
-        assert hints == []
+        assert tool._format_matches([block]) == "doc.md\n10-ctx\n11:hit"
 
     def test_blocks_within_document_separated_by_dashes(self, tmp_path: Path) -> None:
-        tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
-        formatted, _hints = tool._format_matches([self._block(1), self._block(1)])
+        tool = GrepTool(paths=tmp_path)
+        formatted = tool._format_matches([self._block(1), self._block(1)])
         assert formatted == "f.md\n1:x\n--\n1:x"
 
     async def test_separate_documents_joined_by_separator(self, tmp_path: Path) -> None:
-        tool = GrepTool(paths=tmp_path, max_formatted_chars=10_000)
-        formatted, hints = tool._format_matches(
-            [self._block(1, "a.md"), self._block(1, "b.md")]
-        )
+        tool = GrepTool(paths=tmp_path)
+        formatted = tool._format_matches([self._block(1, "a.md"), self._block(1, "b.md")])
         assert formatted == "a.md\n1:x\n---\nb.md\n1:x"
-        assert hints == []
 
 
 def _recording_python_tool(
@@ -1705,14 +1565,14 @@ class TestRunPythonTool:
     async def test_failure_diagnostic_fits_output_budget(
         self, tool: RunPythonTool
     ) -> None:
-        capped = replace(tool, max_output_chars=80)
+        capped = replace(tool, max_diagnostic_chars=600)
 
         with pytest.raises(ToolRetry) as exc_info:
             await capped("raise ValueError('x' * 10_000)")
 
         diagnostic = str(exc_info.value)
-        assert len(diagnostic) <= 80
-        assert "truncated" in diagnostic
+        assert len(diagnostic) <= 600
+        assert "characters left out here" in diagnostic
 
     async def test_time_limit_bounds_a_runaway_program(
         self, tool: RunPythonTool
@@ -1721,22 +1581,11 @@ class TestRunPythonTool:
         with pytest.raises(ToolRetry, match="TimeoutError"):
             await bounded("while True:\n    pass")
 
-    async def test_printed_output_is_capped(self, tool: RunPythonTool) -> None:
-        capped = replace(tool, max_output_chars=20)
-        result = await capped("for i in range(50):\n    print('line', i)")
-        assert result.data.truncated
-        assert "more printed lines]" in result.text
+    async def test_printed_output_is_kept_whole(self, tool: RunPythonTool) -> None:
+        """The spill bounds the text, so the data a client renders keeps it all."""
+        result = await tool("print('x' * 100_000)")
 
-    async def test_long_printed_line_fits_output_budget(
-        self, tool: RunPythonTool
-    ) -> None:
-        result = await tool("print('x' * 10_000)")
-        assert result.data.stdout == "x" * 10_000
-
-        capped = replace(tool, max_output_chars=20)
-        result = await capped("print('x' * 100)")
-        assert result.data.stdout == "x" * 19 + "…"
-        assert result.data.truncated
+        assert result.data.stdout == "x" * 100_000
 
     async def test_oversized_document_is_refused_before_it_is_decoded(
         self, tool: RunPythonTool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

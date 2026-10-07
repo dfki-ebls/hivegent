@@ -1,7 +1,6 @@
 """Unit tests for tool adapter utilities."""
 
 import inspect
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +9,7 @@ from typing import Annotated, Any, cast, override
 import pytest
 from fastmcp import FastMCP
 from fastmcp.tools import ToolResult
+from mcp.types import TextContent
 from pydantic import BaseModel, Field
 from pydantic_ai import FunctionToolset
 from pydantic_ai.messages import ToolReturn
@@ -34,7 +34,6 @@ from hivegent.tools.pydantic_ai import (
     register_agent_tools,
     wrap_tool_output,
 )
-from hivegent.tools.sink import OutputPathArg, RedirectedOutput, RedirectingTool
 
 # -- Fixtures ----------------------------------------------------------------
 
@@ -138,18 +137,6 @@ class ModelTool(SyncTool[list[Hit]]):
 
 
 @dataclass(slots=True, frozen=True)
-class RedirectingFixtureTool(RedirectingTool[list[str]]):
-    """A tool offering the redirect, to check the branch goes with it."""
-
-    @override
-    async def __call__(
-        self, query: str, output_path: OutputPathArg = None
-    ) -> ToolOutput[list[str] | RedirectedOutput]:
-        """Find matching records."""
-        return ToolOutput(data=[query], formatted=query)
-
-
-@dataclass(slots=True, frozen=True)
 class ListFixtureTool(SyncTool[list[str]]):
     """A tool taking a list argument, the shape every batched tool declares."""
 
@@ -171,10 +158,6 @@ def _list_mcp() -> ListFixtureTool:
 
 def _model_mcp() -> ModelTool:
     return ModelTool()
-
-
-def _redirecting_mcp() -> RedirectingFixtureTool:
-    return RedirectingFixtureTool(sink=None)
 
 
 def _sync_mcp() -> SyncFixtureTool:
@@ -374,7 +357,7 @@ class TestForFastMCP:
 
     async def test_structured_output_matches_the_registered_schema(self) -> None:
         app = FastMCP("test")
-        register_mcp_tools(app, [_tool_output_mcp])
+        register_mcp_tools(app, [_tool_output_mcp], max_chars=10_000)
         registered = await app.get_tool("tool_output_mcp")
         assert registered is not None
 
@@ -398,7 +381,7 @@ class TestForFastMCP:
     ) -> None:
         """Where a `#/$defs/...` pointer resolves, so the refs are not dangling."""
         app = FastMCP("test")
-        register_mcp_tools(app, [_model_mcp])
+        register_mcp_tools(app, [_model_mcp], max_chars=10_000)
         registered = await app.get_tool("model_mcp")
         assert registered is not None
         schema = registered.output_schema
@@ -410,20 +393,20 @@ class TestForFastMCP:
 
     async def test_a_bare_item_is_taken_as_a_one_item_list(self) -> None:
         app = FastMCP("test")
-        register_mcp_tools(app, [_list_mcp])
+        register_mcp_tools(app, [_list_mcp], max_chars=10_000)
 
         result = await app.call_tool("list_mcp", {"queries": "a"})
 
         assert result.structured_content == {"result": ["a"]}
 
-    async def test_an_omitted_argument_takes_its_unreachable_branch_with_it(
-        self,
-    ) -> None:
-        """The receipt is reachable only through `output_path`."""
+    async def test_a_long_text_is_bounded(self) -> None:
+        """A plain MCP tool has no spill, so the adapter cuts its text itself."""
         app = FastMCP("test")
-        register_mcp_tools(app, [_redirecting_mcp], omit=(OutputPathArg,))
-        registered = await app.get_tool("redirecting_mcp")
-        assert registered is not None
+        register_mcp_tools(app, [_sync_mcp], max_chars=600)
 
-        assert "output_path" not in registered.parameters["properties"]
-        assert "RedirectedOutput" not in json.dumps(registered.output_schema)
+        result = await app.call_tool("sync_mcp", {"query": "line\n" * 1_000})
+        block = result.content[0]
+
+        assert isinstance(block, TextContent)
+        assert len(block.text) <= 600
+        assert "characters left out here" in block.text

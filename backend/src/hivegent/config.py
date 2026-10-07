@@ -361,12 +361,12 @@ class LlmSettings(BaseModel):
     ``subagent_timeout_seconds`` bounds one subagent delegation
     (``explore``); on expiry the partial findings are summarized and returned
     rather than failing the turn, so keep it below ``tool_timeout_seconds`` to
-    fire first, or ``None`` to disable.  ``tool_output_max_chars`` caps the
-    plain-text (LLM-facing) output of *any* tool, head+tail truncating a
-    larger return while leaving its structured data intact; it is a coarse
-    backstop on rendered size (which the built-in tools' own content caps do
-    not bound), set above those caps so a considered read is not re-clamped
-    but a runaway return — foreign or built-in — cannot dominate the context.
+    fire first, or ``None`` to disable.  ``tool_output_max_chars`` is the
+    most plain text (LLM-facing) any tool return shows the model or an MCP
+    client.  A larger one is saved whole under the conversation's
+    ``/tmp/.tool-results/`` and shown as its head and tail around a note naming the
+    file, or only clamped to them where the run has no ``/tmp``, while its
+    structured data stays intact either way.
     """
 
     model: str = ""
@@ -383,7 +383,7 @@ class LlmSettings(BaseModel):
     tool_calls_limit: int | None = 80
     caption_concurrency: int = 4
     subagent_timeout_seconds: float | None = 180.0
-    tool_output_max_chars: int = 120_000
+    tool_output_max_chars: int = 60_000
     retries: int | None = None
 
     @model_validator(mode="after")
@@ -740,17 +740,11 @@ class ToolsSettings(BaseModel):
     names a tool has to name one the model can invoke; following a pointer to a
     name carrying no schema leaves it one indirection short of the call, which
     is the position ``defer_loading`` was removed for leaving it in.
-
-    ``redirect_inline_chars`` is the longest result an ``output_path`` receipt
-    still repeats in full.  A redirect only pays off on a result too large to
-    read, and a receipt that withholds a short one invites the model to guess
-    at it instead.  ``0`` always withholds.
     """
 
     enable_web: bool = False
     disabled: list[str] = ["list_conversations", "get_conversation"]
     sandbox_only: list[str] = []
-    redirect_inline_chars: int = Field(default=2_000, ge=0)
 
 
 class SandboxSettings(BaseModel):
@@ -788,6 +782,19 @@ class SandboxSettings(BaseModel):
     ``staged_changeset_ttl_hours`` is how long a staged changeset waits for
     ``apply_changes`` before the background sweep, which runs with the
     ``/tmp`` one, discards it.
+
+    ``max_host_calls`` caps how many calls one program makes to the functions
+    it is handed, the injected tools and ``complete`` alike, so a runaway loop
+    is refused at the call that passes it rather than spending the turn.
+
+    The ``completion_*`` settings bound the ``complete`` function a program may
+    call.  ``completion_max_calls`` is an exact budget per turn, shared by
+    every program in it and raised inside the one that finds it spent, while
+    each call also counts on the turn's usage and so against its request limit.
+    ``completion_max_tokens`` caps one call's output,
+    ``completion_timeout_seconds`` bounds one call, and
+    ``completion_concurrency`` is how many of a turn's calls are in flight at
+    once, however wide its programs fan out with ``asyncio.gather``.
     """
 
     min_processes: int = 1
@@ -801,6 +808,11 @@ class SandboxSettings(BaseModel):
     max_changeset_deletes: int = 100
     max_changeset_chars: int = 20_000_000
     staged_changeset_ttl_hours: float = 24.0
+    max_host_calls: int = Field(default=100, ge=1)
+    completion_max_calls: int = Field(default=50, ge=0)
+    completion_max_tokens: int = Field(default=1024, ge=1)
+    completion_timeout_seconds: float = Field(default=60.0, gt=0)
+    completion_concurrency: int = Field(default=4, ge=1)
 
 
 class TmpSettings(BaseModel):
@@ -985,9 +997,7 @@ class NetworkSettings(BaseModel):
     downloaded per page, ``webfetch_max_chars`` caps the extracted text
     handed to the model, ``webfetch_max_line_chars`` truncates each
     numbered line so a data-URI or minified line cannot flood the
-    context, and ``webfetch_max_formatted_chars`` bounds the rendered
-    output as a whole, which neither of the other two does.
-    ``web_search`` queries the official
+    context.  ``web_search`` queries the official
     Wikipedia API directly — no scraping, so no bot detection or rate
     limits — and only ever returns ``wikipedia.org`` links, matching the
     default ``web_urls`` allow list.  The model picks the Wikipedia edition
@@ -1012,7 +1022,6 @@ class NetworkSettings(BaseModel):
     webfetch_max_response_bytes: int = 5_000_000
     webfetch_max_chars: int = 100_000
     webfetch_max_line_chars: int = 2000
-    webfetch_max_formatted_chars: int = 50_000
     webfetch_max_redirects: int = 5
     web_keepalive_seconds: float = 60.0
     websearch_default_edition: str = "en"

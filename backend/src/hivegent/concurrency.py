@@ -4,10 +4,10 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterable
 from typing import Any
 
-__all__ = ["bounded_as_completed", "bounded_gather", "shield_to_completion"]
+__all__ = ["bounded", "bounded_as_completed", "bounded_gather", "shield_to_completion"]
 
 
-def _bounded[T, R](
+def bounded[T, R](
     run: Callable[[T], Awaitable[R]], limit: int
 ) -> Callable[[T], Coroutine[Any, Any, R]]:
     """Wrap *run* so that at most *limit* of its calls are in flight at once."""
@@ -43,7 +43,7 @@ async def bounded_as_completed[T, R](
     Yields:
         Each ``run(item)`` result, in the order the calls complete.
     """
-    guarded = _bounded(run, limit)
+    guarded = bounded(run, limit)
     tasks = [asyncio.ensure_future(guarded(item)) for item in items]
 
     try:
@@ -86,7 +86,7 @@ async def bounded_gather[T, R](
     if limit == 1 or len(pending) <= 1:
         return [await run(item) for item in pending]
 
-    guarded = _bounded(run, limit)
+    guarded = bounded(run, limit)
 
     async with asyncio.TaskGroup() as group:
         tasks = [group.create_task(guarded(item)) for item in pending]

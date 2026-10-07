@@ -13,8 +13,7 @@ What crosses the boundary is the structured ``data`` channel, as the plain
 objects the tool's declared result type serialises to.  That declared type is
 also what the rendered stub names and what ``return_schema`` publishes, so what
 a program receives and what it was told to expect are one description read
-twice, and it stops at objects rather than going on to the bytes a ``.json``
-``output_path`` writes and a program would only parse back.  The model-facing ``text`` channel
+twice.  The model-facing ``text`` channel
 stays behind, as its budgets, truncation, and hints exist to fit a context
 window a program does not have, and a program that wanted fewer rows can say so
 in the query.
@@ -56,7 +55,6 @@ from pydantic_ai.tools import ToolDefinition
 
 from ..converters.base import fenced_code_block
 from .base import AsyncTool, AsyncToolFactory, ToolSpec, translate_tool_retry
-from .sink import OutputPathArg
 
 __all__ = ["MontySurface", "monty_declarations", "monty_surface"]
 
@@ -98,21 +96,6 @@ class MontySurface:
         return bool(self.declarations)
 
 
-@cache
-def _sandbox_spec(factory: AsyncToolFactory[Any]) -> ToolSpec:
-    """One tool's call metadata as the sandbox takes it.
-
-    The redirect is dropped, so the signature a program is declared and the
-    signature it is given cannot come apart: a program already holds the value,
-    so a copy in the workspace is a write it did not need and could not have
-    had approved.  Dropping the argument drops the receipt branch it names with
-    it, which is why the rendered stub declares only the payload: the variant
-    is unreachable from a program, and declaring it would invite a check for
-    something that never arrives.
-    """
-    return ToolSpec.from_factory(factory).without(OutputPathArg)
-
-
 def _definition(factory: AsyncToolFactory[Any]) -> ToolDefinition:
     """Describe one tool the way the renderer wants it.
 
@@ -121,7 +104,7 @@ def _definition(factory: AsyncToolFactory[Any]) -> ToolDefinition:
     signature built from them, which is one invariant this module then does not
     have to keep by hand.
     """
-    spec = _sandbox_spec(factory)
+    spec = ToolSpec.from_factory(factory)
 
     return ToolDefinition(
         name=spec.name,
@@ -223,7 +206,7 @@ def monty_surface[D](factories: Sequence[AsyncToolFactory[D]], deps: D) -> Monty
     lookup: dict[str, _HostFunction] = {}
 
     for factory in factories:
-        spec = _sandbox_spec(factory)
+        spec = ToolSpec.from_factory(factory)
         lookup[spec.name] = _host_function(spec, factory(deps))
 
     return MontySurface(external_lookup=lookup, declarations=declarations, stubs=stubs)

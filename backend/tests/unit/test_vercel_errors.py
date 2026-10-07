@@ -20,7 +20,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from hivegent.agents.app import base_agent
+from hivegent.agents.app import title_agent
 from hivegent.server.vercel import CONTEXT_LENGTH_EXCEEDED, chat_error_text
 
 
@@ -35,7 +35,7 @@ async def _run_error(parts: list[ModelResponsePart]) -> Exception:
         return ModelResponse(parts=parts, finish_reason="length")
 
     with pytest.raises(UnexpectedModelBehavior) as raised:
-        await base_agent.run("go", model=FunctionModel(truncated))
+        await title_agent.run("go", model=FunctionModel(truncated))
 
     return raised.value
 

@@ -43,7 +43,7 @@ from pydantic_ai.usage import UsageLimits
 
 from ..l10n import Localized
 from ..llm import SUMMARY_MAX_TOKENS, is_context_overflow, summary_model_settings
-from .app import user_agent
+from .app import summary_agent
 from .common import RunPrefix
 
 __all__ = ["COMPACT_PROMPT", "summarize_conversation"]
@@ -234,7 +234,7 @@ async def _ask(
     model_settings: ModelSettings,
 ) -> str:
     """Run the compact prompt as the next turn of *messages*."""
-    result = await user_agent.run(
+    result = await summary_agent.run(
         COMPACT_PROMPT[run.deps.language],
         message_history=list(messages),
         deps=run.deps,

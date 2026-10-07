@@ -15,6 +15,7 @@ from pydantic import Field
 from ..converters import DELIMITED_SUFFIXES, DELIMITERS, TABULAR_SUFFIXES, is_tabular
 from ..humanize import pluralize
 from .base import (
+    AsyncPathTool,
     Batch,
     BatchShare,
     ToolOutput,
@@ -26,7 +27,6 @@ from .base import (
     sidecar_hint,
 )
 from .formatting import hint_suffix, truncate_line
-from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
 
 __all__ = [
     "QueriedTable",
@@ -553,11 +553,11 @@ def _cell(value: object) -> str:
 
 
 @dataclass(slots=True, frozen=True)
-class QueryTableTool(RedirectingPathTool[Batch[TableResult]]):
+class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
     """Query a tabular document with SQL instead of reading it line by line.
 
-    Row, column, cell, and rendered-output budgets bound the result, and every
-    cut is named in the formatted output.
+    Row, column, and cell budgets bound the result, and every cut is named in
+    the formatted output.
     """
 
     injectable: ClassVar[bool] = True
@@ -567,7 +567,6 @@ class QueryTableTool(RedirectingPathTool[Batch[TableResult]]):
     preview_rows: int = 5
     max_columns: int = 40
     max_cell_chars: int = 200
-    max_formatted_chars: int = 50_000
     max_named_columns: int = 10
     """Cap on the columns a hint spells out before it is noise itself."""
 
@@ -578,8 +577,7 @@ class QueryTableTool(RedirectingPathTool[Batch[TableResult]]):
         queries: TableQueriesArg = None,
         sheet: TableSheetArg = None,
         row_limit: TableRowLimitArg = _DEFAULT_ROW_LIMIT,
-        output_path: OutputPathArg = None,
-    ) -> ToolOutput[Batch[TableResult] | RedirectedOutput]:
+    ) -> ToolOutput[Batch[TableResult]]:
         """Query one or more spreadsheets or delimited documents with SQL.
 
         Runs Polars SQL SELECTs against the files and returns the resulting
@@ -614,8 +612,9 @@ class QueryTableTool(RedirectingPathTool[Batch[TableResult]]):
             resolved.append((path, absolute))
 
         # Polars releases the GIL, but the calls still block, so they stay off
-        # the event loop, where the queries of one batch overlap.  The files are loaded and retyped once, and every
-        # query runs against what they turned out to be.
+        # the event loop, where the queries of one batch overlap.  The files
+        # are loaded and retyped once, and every query runs against what they
+        # turned out to be.
         sources = await asyncio.to_thread(
             lambda: tuple(
                 self._open(path, absolute, sheet) for path, absolute in resolved
@@ -625,42 +624,36 @@ class QueryTableTool(RedirectingPathTool[Batch[TableResult]]):
         if queries is None:
 
             async def describe(
-                index: int, share: BatchShare
+                index: int, _share: BatchShare
             ) -> ToolOutput[TableResult]:
                 return await asyncio.to_thread(
-                    self._run, sources, None, row_limit, share, index
+                    self._run, sources, None, row_limit, index
                 )
 
-            result = await run_batch(
+            return await run_batch(
                 range(len(sources)),
                 describe,
                 key=lambda i: sources[i].file_path,
                 concurrency=_QUERY_CONCURRENCY,
             )
-        else:
 
-            async def run(query: str, share: BatchShare) -> ToolOutput[TableResult]:
-                return await asyncio.to_thread(
-                    self._run, sources, query, row_limit, share
-                )
+        async def run(query: str, _share: BatchShare) -> ToolOutput[TableResult]:
+            return await asyncio.to_thread(self._run, sources, query, row_limit)
 
-            result = await run_batch(
-                queries, run, key=lambda query: query, concurrency=_QUERY_CONCURRENCY
-            )
-
-        return await self.redirect(result, output_path)
+        return await run_batch(
+            queries, run, key=lambda query: query, concurrency=_QUERY_CONCURRENCY
+        )
 
     def _run(
         self,
         sources: tuple[_Source, ...],
         query: str | None,
         row_limit: int,
-        share: BatchShare,
         subject: int = 0,
     ) -> ToolOutput[TableResult]:
         """Run one query, or describe the *subject* table when there is none."""
         try:
-            return self._query(sources, query, row_limit, share, subject)
+            return self._query(sources, query, row_limit, subject)
 
         except pl.exceptions.PolarsError as exc:
             raise ToolRetry(self._failure(exc, sources, query)) from exc
@@ -753,7 +746,6 @@ class QueryTableTool(RedirectingPathTool[Batch[TableResult]]):
         sources: tuple[_Source, ...],
         query: str | None,
         row_limit: int,
-        share: BatchShare,
         subject: int,
     ) -> ToolOutput[TableResult]:
         """Run the query over the loaded frames and render what it returned.
@@ -791,13 +783,7 @@ class QueryTableTool(RedirectingPathTool[Batch[TableResult]]):
             total_rows=total,
             query=query,
         )
-        rows, body, display_cut = self._render(
-            frame_rows, columns, preamble, share.of(self.max_formatted_chars)
-        )
-
-        # The two cuts are different facts and no longer share a flag: `rows`
-        # holds everything the row limit allowed, so `truncated` says only that
-        # the limit bound, while what the display dropped rides the hint.
+        rows, body = self._render(frame_rows, columns, preamble)
         result = TableResult(
             query=query,
             tables=tuple(source.queried(name) for name, source in named),
@@ -815,7 +801,6 @@ class QueryTableTool(RedirectingPathTool[Batch[TableResult]]):
                 self._hints(
                     result,
                     query,
-                    display_cut=display_cut,
                     can_increase_rows=result.truncated and limit < self.max_rows,
                 )
             ),
@@ -826,51 +811,27 @@ class QueryTableTool(RedirectingPathTool[Batch[TableResult]]):
         frame: pl.DataFrame,
         columns: tuple[str, ...],
         lines: list[str],
-        max_formatted_chars: int,
-    ) -> tuple[tuple[tuple[str, ...], ...], str, bool]:
-        """Render rows under the display budget, keeping every one of them.
+    ) -> tuple[tuple[tuple[str, ...], ...], str]:
+        """Render every row as a markdown table under *lines*, keeping each one whole.
 
-        The budget binds what the model is shown and nothing else.  It used to
-        end the loop, so the rows past it never reached ``TableResult.rows``
-        either — and a redirect, which writes that structured result to a file
-        and reports only its size, then wrote a truncated table while promising
-        the whole of it.  A run that redirected 1000 rows to `.json` and
-        computed from the file was working from 262 of them and could not tell.
-
-        What the display drops is a rendering fact, reported as a hint; how
-        many rows there are is a data fact, and both channels now agree on it.
+        Only the display clips a column or a cell, so ``TableResult.rows`` is
+        the whole of what the row limit allowed.
         """
         if frame.is_empty():
-            return (), "\n".join([*lines, "(no rows)"]), False
+            return (), "\n".join([*lines, "(no rows)"])
 
         width = min(len(columns), self.max_columns)
-        lines += [
+        rows = tuple(tuple(_cell(value) for value in values) for values in frame.iter_rows())
+        rendered = [
+            f"| {' | '.join(truncate_line(cell, self.max_cell_chars) for cell in row[:width])} |"
+            for row in rows
+        ]
+        header = [
             f"| {' | '.join(columns[:width])} |",
             f"| {' | '.join('---' for _ in range(width))} |",
         ]
-        spent = sum(len(line) + 1 for line in lines)
-        kept: list[tuple[str, ...]] = []
-        rendered: list[str] = []
-        display_full = True
 
-        for values in frame.iter_rows():
-            row = tuple(_cell(value) for value in values)
-            kept.append(row)
-
-            if not display_full:
-                continue
-
-            line = f"| {' | '.join(truncate_line(cell, self.max_cell_chars) for cell in row[:width])} |"
-            extra = len(line) + (1 if rendered else 0)
-
-            if rendered and spent + extra > max_formatted_chars:
-                display_full = False
-                continue
-
-            rendered.append(line)
-            spent += extra
-
-        return tuple(kept), "\n".join([*lines, *rendered]), not display_full
+        return rows, "\n".join([*lines, *header, *rendered])
 
     def _preamble(
         self,
@@ -929,7 +890,6 @@ class QueryTableTool(RedirectingPathTool[Batch[TableResult]]):
         result: TableResult,
         query: str | None,
         *,
-        display_cut: bool,
         can_increase_rows: bool,
     ) -> list[str]:
         """Name every cut, so a partial table cannot read as a complete one."""
@@ -950,16 +910,6 @@ class QueryTableTool(RedirectingPathTool[Batch[TableResult]]):
             hints.append(
                 f"{len(result.rows)} rows returned{increase}, narrow with WHERE, "
                 "or aggregate with GROUP BY"
-            )
-
-        # Said apart from the row cut above, because only the rendering was
-        # bound: every row is in the result, and an `output_path` writes all
-        # of them however few of them are printed here.
-        if display_cut:
-            hints.append(
-                f"all {len(result.rows)} rows are in the result; the table above "
-                "stops at the display budget, so redirect with output_path or "
-                "aggregate if you need the rest of them read"
             )
 
         # What is wrong with the data rides every call, not only the schema

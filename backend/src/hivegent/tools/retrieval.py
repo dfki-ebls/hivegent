@@ -17,9 +17,8 @@ from cbrkit import filter as cbrkit_filter
 from cbrkit.typing import AsyncRetrieverFunc
 from pydantic import Field
 
-from .base import ToolOutput, batch_field
-from .formatting import BLOCK_SEP, annotate_lines, cap_lines, truncate_block
-from .sink import OutputPathArg, RedirectedOutput, RedirectingTool
+from .base import AsyncTool, ToolOutput, batch_field
+from .formatting import BLOCK_SEP, annotate_lines, truncate_block
 
 __all__ = [
     "SearchMaxResultsArg",
@@ -82,7 +81,7 @@ SearchTypeArg = Annotated[
 
 
 @dataclass(slots=True, frozen=True)
-class VectorSearchTool[R = SearchResult](RedirectingTool[list[R]]):
+class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
     """Search the global vector index with SQL-level scope filtering.
 
     Args:
@@ -106,9 +105,6 @@ class VectorSearchTool[R = SearchResult](RedirectingTool[list[R]]):
         max_line_chars: Per-line truncation cap for the formatted output,
             guarding the context against a chunk carrying a base64-embedded
             image or other very long line.
-        max_formatted_chars: Whole-output budget for the formatted results,
-            dropping trailing results the per-line cap cannot bound: chunk
-            size is a chunker setting, so N results have no ceiling here.
     """
 
     injectable: ClassVar[bool] = True
@@ -122,7 +118,6 @@ class VectorSearchTool[R = SearchResult](RedirectingTool[list[R]]):
     ) = None
     candidate_multiplier: int = 1
     max_line_chars: int = 2000
-    max_formatted_chars: int = 50_000
 
     @override
     async def __call__(
@@ -130,8 +125,7 @@ class VectorSearchTool[R = SearchResult](RedirectingTool[list[R]]):
         queries: SearchQueriesArg,
         max_results: SearchMaxResultsArg = 10,
         search_type: SearchTypeArg = "hybrid",
-        output_path: OutputPathArg = None,
-    ) -> ToolOutput[list[R] | RedirectedOutput]:
+    ) -> ToolOutput[list[R]]:
         """Search indexed chunks using dense, sparse, or hybrid retrieval.
 
         Several queries are searched together and their rankings merged by
@@ -149,14 +143,10 @@ class VectorSearchTool[R = SearchResult](RedirectingTool[list[R]]):
         )
 
         formatted = (
-            _format_results(final, self.max_line_chars, self.max_formatted_chars)
-            if final
-            else "(no results)"
+            _format_results(final, self.max_line_chars) if final else "(no results)"
         )
 
-        return await self.redirect(
-            ToolOutput(data=final, formatted=formatted), output_path
-        )
+        return ToolOutput(data=final, formatted=formatted)
 
     async def _search(
         self, queries: list[str], max_results: int, search_type: SearchType
@@ -240,16 +230,13 @@ def _fuse(rankings: Sequence[Sequence[SearchResult]], limit: int) -> list[Search
     return [SearchResult(key=key, text=texts[key], score=scores[key]) for key in best]
 
 
-def _format_results(
-    results: Sequence[Any], max_line_chars: int, max_formatted_chars: int | None = None
-) -> str:
+def _format_results(results: Sequence[Any], max_line_chars: int) -> str:
     """Render search results as a human/LLM-readable string block.
 
     Accepts both :class:`SearchResult` and ``RetrievedChunk`` via attribute
     lookup; either is a valid downstream of :class:`VectorSearchTool`.
     *max_line_chars* truncates each line so a long line in a chunk cannot
-    flood the context, and *max_formatted_chars* drops trailing results once
-    the rendered block exceeds the budget.
+    flood the context.
     """
     blocks: list[str] = []
     for i, r in enumerate(results, 1):
@@ -271,10 +258,4 @@ def _format_results(
         # ordering without fabricating an absolute relevance magnitude.
         blocks.append(f"[{i}] {label}\n{text}")
 
-    body, omitted = cap_lines(blocks, max_formatted_chars, BLOCK_SEP)
-    if not omitted:
-        return body
-    return (
-        f"{body}{BLOCK_SEP}({omitted} of {len(blocks)} results omitted, "
-        "narrow the query or lower max_results)"
-    )
+    return BLOCK_SEP.join(blocks)

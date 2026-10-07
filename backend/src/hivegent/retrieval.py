@@ -47,7 +47,6 @@ from .http_client import get_trusted_http_client
 from .llm import create_openai_client
 from .store import Casebase
 from .tools.retrieval import SearchResult, VectorSearchTool
-from .tools.sink import OutputSink
 from .types import DocumentFilter
 
 __all__ = [
@@ -396,7 +395,6 @@ def build_search_tool(
     stores: Sequence[Casebase],
     *,
     filter_for_store: Callable[[Casebase], DocumentFilter | None] | None = None,
-    sink: OutputSink | None = None,
 ) -> VectorSearchTool[RetrievedChunk]:
     """Build a search tool restricted to *stores*.
 
@@ -458,5 +456,4 @@ def build_search_tool(
         result_mapper=enrich,
         reranker_factory=_state.get_reranker,
         candidate_multiplier=settings.rerank.candidate_multiplier,
-        sink=sink,
     )

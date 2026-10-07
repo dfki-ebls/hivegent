@@ -129,7 +129,7 @@ describe("tool approval", () => {
     ]);
   });
 
-  it("asks with the changeset summary of any tool, such as an output_path redirect", () => {
+  it("asks with the changeset summary of any tool", () => {
     const summary = {
       creates: [{ path: "~/out.md", diff: "" }],
       updates: [],

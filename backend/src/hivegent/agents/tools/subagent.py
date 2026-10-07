@@ -23,7 +23,7 @@ from ...prompts import (
 )
 from ...tools.base import ToolOutput
 from ...tools.pydantic_ai import wrap_tool_output
-from ..app import turn_usage_limits, user_agent
+from ..app import explore_agent
 from ..common import ExploreTaskArg, RunPrefix, UserDeps, scope_instructions
 from ..subagent_events import SubagentTranscriptBuilder, SubagentUpdate
 from ..summarize import summarize_conversation
@@ -111,10 +111,12 @@ def _subagent_result(
     The transcript rides on the tool return's metadata as a ``data-tool-output``
     chunk (via :func:`wrap_tool_output`), so it persists and re-renders on
     reload like any other structured tool output; the model only ever sees
-    *text*.
+    *text*, which is the whole answer, so the transcript is marked as only
+    what the client shows.
     """
     return wrap_tool_output(
-        ToolOutput(data=builder.transcript, formatted=text), tool_call_id=tool_call_id
+        ToolOutput(data=builder.transcript, formatted=text, display_only=True),
+        tool_call_id=tool_call_id,
     )
 
 
@@ -162,7 +164,7 @@ async def run_subagent(
     *,
     capability: AbstractCapability[UserDeps],
 ) -> ToolReturn:
-    """Run ``user_agent`` as a subagent composed from a single *capability*.
+    """Run ``explore_agent`` as a subagent composed from a single *capability*.
 
     The reusable core behind every subagent tool: drive a delegated run and
     surface its reasoning, tool calls, and messages to the frontend.  Drives the
@@ -202,13 +204,17 @@ async def run_subagent(
         if update is not None and sink is not None:
             sink.put_nowait(update)
 
-    async with user_agent.iter(
+    # The parent's usage and its limits, as the harness's subagents run, so the
+    # turn's budget is one count spent by every run in it, and the parent's
+    # conversation, so a trace groups the delegated run with the turn.
+    async with explore_agent.iter(
         task,
         model=prefix.model,
         deps=prefix.deps,
         capabilities=prefix.capabilities,
         usage=ctx.usage,
-        usage_limits=turn_usage_limits,
+        usage_limits=ctx.usage_limits,
+        conversation_id=ctx.conversation_id,
     ) as run:
         # Pydantic AI exposes the run context with an ``Any`` output parameter,
         # while node streams retain the concrete output parameter.
@@ -223,8 +229,8 @@ async def run_subagent(
                     # tool calls off the call-tools node; the builder
                     # discriminates both.
                     if not (
-                        user_agent.is_model_request_node(node)
-                        or user_agent.is_call_tools_node(node)
+                        explore_agent.is_model_request_node(node)
+                        or explore_agent.is_call_tools_node(node)
                     ):
                         continue
 

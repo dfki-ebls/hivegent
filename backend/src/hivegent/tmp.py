@@ -1,12 +1,12 @@
 """A conversation's ``/tmp``: its working files, outside every workspace.
 
 Each chat conversation owns one folder, ``<data_dir>/tmp/<conversation_id>/``,
-and every agent surface spells it ``/tmp``: the read and write tools, an
-``output_path``, and a sandboxed program, where it is mounted at ``/tmp``.  It
-lives for the conversation like ``/tmp`` lives for a container session, is
-written directly (its root's policy is :class:`~hivegent.tools.base.Direct`)
-with no changeset, approval, or store lock, and is never indexed, searched, or
-announced.
+and every agent surface spells it ``/tmp``: the read and write tools, a tool
+result too large to show whole, and a sandboxed program, where it is mounted at
+``/tmp``.  It lives for the conversation like ``/tmp`` lives for a container
+session, is written directly (its root's policy is
+:class:`~hivegent.tools.base.Direct`) with no changeset, approval, or store
+lock, and is never indexed, searched, or announced.
 
 There is no user level: conversation ids are server-generated keys and the
 ``conversations`` row names the one user a folder belongs to, so ownership is
@@ -20,14 +20,18 @@ its user or a turn that never persisted one.
 """
 
 import asyncio
+import os
 import shutil
+import threading
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Generator, Iterable, Mapping, Sequence
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from functools import cache
 from itertools import chain
 from pathlib import Path
 from stat import S_ISDIR
+from weakref import WeakValueDictionary
 
 from .changes import Changeset, CreateDir, Delete, Edit, Move, Write
 from .config import sanitize_conversation_id, settings
@@ -53,6 +57,7 @@ __all__ = [
     "copy_tmp",
     "plan_direct",
     "remove_tmp",
+    "save_result",
     "sweep_tmp",
     "tmp_dir",
     "tmp_search_path",
@@ -60,6 +65,26 @@ __all__ = [
 
 TMP_SCOPE = PrefixScope("/tmp")
 """How every agent surface spells a conversation's folder."""
+
+_RESULTS_DIR = ".tool-results"
+"""The folder below ``/tmp`` that holds the tool results too large to show whole."""
+
+
+_locks: WeakValueDictionary[Path, threading.Lock] = WeakValueDictionary()
+_locks_guard = threading.Lock()
+
+
+@contextmanager
+def _locked(roots: Iterable[SearchPath]) -> Generator[None]:
+    """Hold the one live lock of each of *roots*, in path order so two callers cannot deadlock."""
+    with ExitStack() as stack:
+        for path in sorted({root.path for root in roots}):
+            with _locks_guard:
+                lock = _locks.setdefault(path, threading.Lock())
+
+            _ = stack.enter_context(lock)
+
+        yield
 
 
 def _tmp_root(data_dir: Path) -> Path:
@@ -80,7 +105,7 @@ def tmp_search_path(data_dir: Path, conversation_id: str) -> SearchPath:
     return SearchPath(
         path=tmp_dir(data_dir, conversation_id),
         scope=TMP_SCOPE,
-        policy=Direct(settings.tmp.max_bytes),
+        policy=Direct(settings.tmp.max_bytes, reserved=_RESULTS_DIR),
     )
 
 
@@ -106,6 +131,11 @@ def _locate(paths: Sequence[SearchPath], canonical: str) -> tuple[SearchPath, Pa
     if resolved is None or not isinstance(resolved[0].policy, Direct):
         raise ToolRetry(f"'{canonical}' is not accessible.")
 
+    if resolved[0].is_reserved(resolved[1]):
+        raise ToolRetry(
+            f"'{canonical}' holds saved tool results, which can be read but not changed."
+        )
+
     return resolved[0], resolved[2]
 
 
@@ -118,32 +148,45 @@ class DirectPlan:
     moves: tuple[tuple[Path, Path], ...] = ()
     mkdirs: tuple[Path, ...] = ()
     writes: Mapping[Path, bytes] = field(default_factory=dict)
+    roots: Mapping[Path, SearchPath] = field(default_factory=dict)
+    """The root of each path above, which bounds and locks it."""
+    evictable: Path | None = None
+    """A folder whose files may go, oldest first, to keep the writes within the cap."""
 
     def apply(self) -> tuple[str, ...]:
-        """Write the plan, returning one report per item.
+        """Check the plan again and write it, returning one report per item.
 
-        Removals land first, then moves, new directories, and whole files,
-        each replaced atomically.
+        The checks :func:`plan_direct` made are repeated under the lock of
+        every root the plan touches, since another write may have landed in
+        between, and the lock is held until the plan is written.  Removals land
+        first, then moves, new directories, and whole files, each replaced
+        atomically.
 
         Raises:
-            ToolRetry: When the filesystem refuses a step, such as a path
-                below a file.
+            ToolRetry: When a path is of the wrong type, a folder would outgrow
+                its cap, or the filesystem refuses a step.
         """
-        try:
-            for path in self.deletes:
-                remove_path(path)
+        with _locked(self.roots.values()):
+            evicted = _check_quota(self.roots, self.deletes, self.writes, self.evictable)
+            deletes = (*self.deletes, *evicted)
+            _check_types(self.roots, deletes, self.moves, self.mkdirs, self.writes)
 
-            for origin, path in self.moves:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                _ = origin.rename(path)
+            try:
+                for path in deletes:
+                    remove_path(path)
 
-            for path in self.mkdirs:
-                path.mkdir(parents=True, exist_ok=True)
+                for origin, path in self.moves:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    _ = origin.rename(path)
 
-            for path, data in self.writes.items():
-                atomic_write(path, data)
-        except OSError as exc:
-            raise ToolRetry(f"The change could not be written: {exc.strerror}.") from exc
+                for path in self.mkdirs:
+                    path.mkdir(parents=True, exist_ok=True)
+
+                for path, data in self.writes.items():
+                    atomic_write(path, data)
+
+            except OSError as exc:
+                raise ToolRetry(f"The change could not be written: {exc.strerror}.") from exc
 
         return self.reports
 
@@ -154,14 +197,15 @@ def plan_direct(paths: Sequence[SearchPath], changeset: Changeset[str]) -> Direc
     No changeset gateway, approval, or store lock: the folder is the run's own
     working state.  Every item is derived here, so a text change that cannot
     apply, a path of the wrong type, or a folder growing past its cap, is
-    refused before a caller writes anything, the gated half included.  The cap
-    is asked of what the items replace, and the folder is only walked whole
-    when they grow it.
+    refused before a caller writes anything, the gated half included.  The
+    checks are advisory, and :meth:`DirectPlan.apply` makes them again under
+    the lock.  The cap is asked of what the items replace, and the folder is
+    only walked whole when they grow it.
 
     Raises:
         HTTPException: When a text change cannot apply.
-        ToolRetry: When a path is missing or taken, or a folder would outgrow
-            its cap.
+        ToolRetry: When a path is missing, taken, or reserved, or a folder
+            would outgrow its cap.
     """
     reports: list[str] = []
     deletes: list[Path] = []
@@ -211,9 +255,9 @@ def plan_direct(paths: Sequence[SearchPath], changeset: Changeset[str]) -> Direc
         reports.append(report)
 
     _check_types(roots, deletes, moves, mkdirs, writes)
-    _check_quota(roots, deletes, writes)
+    _ = _check_quota(roots, deletes, writes)
 
-    return DirectPlan(tuple(reports), tuple(deletes), tuple(moves), tuple(mkdirs), writes)
+    return DirectPlan(tuple(reports), tuple(deletes), tuple(moves), tuple(mkdirs), writes, roots)
 
 
 def _probe(path: Path) -> bool | None:
@@ -308,12 +352,17 @@ def _check_types(
 
 
 def _check_quota(
-    roots: dict[Path, SearchPath], deletes: Sequence[Path], writes: dict[Path, bytes]
-) -> None:
-    """Refuse changes that grow a direct root past its cap.
+    roots: Mapping[Path, SearchPath],
+    deletes: Sequence[Path],
+    writes: Mapping[Path, bytes],
+    evictable: Path | None = None,
+) -> tuple[Path, ...]:
+    """Refuse changes that grow a direct root past its cap, returning the files evicted to fit.
 
-    A folder already over its cap may still shrink, so a run can replace its
-    own state while it sits at the limit.
+    The files in *evictable* other than those written go oldest first until
+    the change fits, and a change that still does not is refused.  A folder
+    already over its cap may still shrink, so a run can replace its own state
+    while it sits at the limit.
     """
     growth: dict[Path, tuple[SearchPath, int]] = {}
 
@@ -325,15 +374,79 @@ def _check_quota(
         delta += len(writes.get(path, b"")) - (0 if covered else _size(path))
         growth[root.path] = root, delta
 
-    for root, delta in growth.values():
-        after = _size(root.path) + delta if delta > 0 else 0
+    evicted: list[Path] = []
 
-        if isinstance(root.policy, Direct) and after > root.policy.max_bytes:
+    for root, delta in growth.values():
+        if not isinstance(root.policy, Direct):
+            continue
+
+        cap = root.policy.max_bytes
+        # The folder is only walked when the change grows it.
+        excess = _size(root.path) + delta - cap if delta > 0 else 0
+
+        if excess > 0 and evictable is not None and evictable.is_relative_to(root.path):
+            for _mtime, size, path in _oldest(evictable, writes):
+                if excess <= 0:
+                    break
+
+                evicted.append(path)
+                excess -= size
+
+        if excess > 0:
             raise ToolRetry(
-                f"This would grow {root.prefixed('')} to {format_bytes(after)}, over "
-                f"the {format_bytes(root.policy.max_bytes)} one conversation may keep "
-                "there. Remove what it no longer needs."
+                f"This would grow {root.prefixed('')} to {format_bytes(cap + excess)}, "
+                f"over the {format_bytes(cap)} one conversation may keep there. "
+                "Remove what it no longer needs."
             )
+
+    return tuple(evicted)
+
+
+def _oldest(folder: Path, keep: Mapping[Path, bytes]) -> list[tuple[float, int, Path]]:
+    """The files directly in *folder* besides *keep*, oldest first, from one listing."""
+    found: list[tuple[float, int, Path]] = []
+
+    try:
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                path = Path(entry.path)
+
+                if entry.is_file(follow_symlinks=False) and path not in keep:
+                    stat = entry.stat(follow_symlinks=False)
+                    found.append((stat.st_mtime, stat.st_size, path))
+
+    except FileNotFoundError:
+        return []
+
+    return sorted(found)
+
+
+def save_result(root: SearchPath, name: str, content: bytes) -> str:
+    """Save a tool result as *name* in the folder *root* reserves, returning its canonical path.
+
+    Written the way :func:`plan_direct` writes any other change, so the
+    folder's cap applies, after dropping the oldest saved results the new one
+    would not fit beside: a result can be asked for again, while the run's own
+    state cannot.  Only the reserved folder is listed, and only when the cap
+    requires it, and the folder is walked once.
+
+    Raises:
+        ToolRetry: When *name* is no single filename, *root* is not written
+            directly, or the result does not fit even beside no other saved one.
+    """
+    if name in {"", ".."} or Path(name).name != name:
+        raise ToolRetry("A saved result must have a single filename.")
+
+    target = root.prefixed(f"{_RESULTS_DIR}/{name}")
+
+    if not isinstance(root.policy, Direct):
+        raise ToolRetry(f"'{target}' is not accessible.")
+
+    folder = root.path / _RESULTS_DIR
+    path = folder / name
+    _ = DirectPlan(writes={path: content}, roots={path: root}, evictable=folder).apply()
+
+    return target
 
 
 def _files(folder: Path) -> int:

@@ -18,6 +18,7 @@ from ..converters import vision_media_type
 from ..humanize import pluralize
 from .base import (
     WORKSPACE_SCOPE_HINT,
+    AsyncPathTool,
     Batch,
     BatchShare,
     FullLinesArg,
@@ -40,7 +41,6 @@ from .base import (
     sidecar_hint,
 )
 from .formatting import cap_lines, hint_suffix, iter_annotated, omission_hints
-from .sink import OutputPathArg, RedirectedOutput, RedirectingPathTool
 
 __all__ = [
     "DocumentFilePathArg",
@@ -478,7 +478,7 @@ def _format_document_tree(
 
 
 @dataclass(slots=True, frozen=True)
-class ListDocumentsTool(RedirectingPathTool[list[DocumentSummary] | DocumentTreeNode]):
+class ListDocumentsTool(AsyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
     """List available documents as a flat list or hierarchical tree."""
 
     glob: str | None = None
@@ -491,8 +491,7 @@ class ListDocumentsTool(RedirectingPathTool[list[DocumentSummary] | DocumentTree
         max_depth: DocumentMaxDepthArg = 1,
         max_results: DocumentMaxResultsArg = 200,
         include_ignored: IncludeIgnoredArg = False,
-        output_path: OutputPathArg = None,
-    ) -> ToolOutput[list[DocumentSummary] | DocumentTreeNode | RedirectedOutput]:
+    ) -> ToolOutput[list[DocumentSummary] | DocumentTreeNode]:
         """List available documents with sizes and dates.
 
         Set ``flatten=False`` to show a hierarchical directory tree.
@@ -503,11 +502,9 @@ class ListDocumentsTool(RedirectingPathTool[list[DocumentSummary] | DocumentTree
         """
         # The walk stats every entry, so it goes to a thread rather than the
         # event loop, which is where pydantic-ai ran it while it was sync.
-        result = await asyncio.to_thread(
+        return await asyncio.to_thread(
             self._list, path, flatten, max_depth, max_results, include_ignored
         )
-
-        return await self.redirect(result, output_path)
 
     def _list(
         self,
@@ -565,7 +562,7 @@ class ListDocumentsTool(RedirectingPathTool[list[DocumentSummary] | DocumentTree
 
 
 @dataclass(slots=True, frozen=True)
-class GlobDocumentsTool(RedirectingPathTool[list[str]]):
+class GlobDocumentsTool(AsyncPathTool[list[str]]):
     """Find documents whose filenames match a glob pattern."""
 
     glob: str | None = None
@@ -577,8 +574,7 @@ class GlobDocumentsTool(RedirectingPathTool[list[str]]):
         path: DocumentPathArg = None,
         max_results: GlobMaxResultsArg = 1000,
         include_ignored: IncludeIgnoredArg = False,
-        output_path: OutputPathArg = None,
-    ) -> ToolOutput[list[str] | RedirectedOutput]:
+    ) -> ToolOutput[list[str]]:
         """Find document filenames matching any of the glob patterns.
 
         Returns one flat list of relative filenames, each listed once.  Use
@@ -587,11 +583,9 @@ class GlobDocumentsTool(RedirectingPathTool[list[str]]):
         ``.assets`` payload directories are skipped by default.  Pass
         ``include_ignored=True`` to include them.
         """
-        result = await asyncio.to_thread(
+        return await asyncio.to_thread(
             self._glob, patterns, path, max_results, include_ignored
         )
-
-        return await self.redirect(result, output_path)
 
     def _glob(
         self,
@@ -611,35 +605,32 @@ class GlobDocumentsTool(RedirectingPathTool[list[str]]):
 
 
 @dataclass(slots=True, frozen=True)
-class ReadDocumentTool(RedirectingPathTool[Batch[DocumentRange]]):
+class ReadDocumentTool(AsyncPathTool[Batch[DocumentRange]]):
     """Read documents' content as line ranges with line numbers.
 
-    Three budgets sit on different axes.  ``max_chars`` bounds the window
-    of content selected, ``max_line_chars`` clips each numbered line so a
-    single very long line — a base64-embedded image, a minified bundle, a
-    wide markdown table row — cannot flood the model context, and
-    ``max_formatted_chars`` bounds the rendered output as a whole, which the
-    other two do not: line numbers and markup are added on top, and a window
-    that fits the content budget can still cost the model most of a turn.
-    ``full_lines`` opts out of the per-line clip for content whose tail
-    carries meaning; the whole-output budget then returns fewer lines rather
-    than more text.  The structured ``content`` keeps the lines the model was
-    shown, untruncated, for the frontend.  A call reading several documents
-    splits ``max_chars`` and ``max_formatted_chars`` between them.
+    Two budgets sit on different axes.  ``max_chars`` bounds the window of
+    content selected, and ``max_line_chars`` clips each numbered line so a
+    single very long line (a base64 embedded image, a minified bundle, a wide
+    markdown table row) cannot flood the model context.  An agent sets
+    ``max_chars`` so that a window rendered with its line numbers stays within
+    what a tool return shows whole, since a read is resumed from an offset
+    rather than from a saved copy of the window.  ``full_lines`` opts out of
+    the per-line clip for content whose tail carries meaning.  The structured
+    ``content`` keeps the lines the model was shown, untruncated, for the
+    frontend.  A call reading several documents splits ``max_chars`` between
+    them.
     """
 
     default_lines: int = 2000
-    max_chars: int = 100_000
+    max_chars: int = 40_000
     max_line_chars: int = 2000
-    max_formatted_chars: int = 50_000
 
     @override
     async def __call__(
         self,
         reads: DocumentReadsArg,
         full_lines: FullLinesArg = False,
-        output_path: OutputPathArg = None,
-    ) -> ToolOutput[Batch[DocumentRange] | RedirectedOutput]:
+    ) -> ToolOutput[Batch[DocumentRange]]:
         """Read the content of one or more documents.
 
         Each read returns the lines from ``offset`` (1-indexed) up to
@@ -660,11 +651,9 @@ class ReadDocumentTool(RedirectingPathTool[Batch[DocumentRange]]):
         ) -> ToolOutput[DocumentRange]:
             return await asyncio.to_thread(self._read, item, full_lines, share)
 
-        result = await run_batch(
+        return await run_batch(
             reads, read, key=lambda item: item.key, concurrency=_READ_CONCURRENCY
         )
-
-        return await self.redirect(result, output_path)
 
     def _read(
         self,
@@ -679,8 +668,8 @@ class ReadDocumentTool(RedirectingPathTool[Batch[DocumentRange]]):
         file_path = sp.prefixed(local)
 
         # Reads are uniform: the requested file is read as text and never
-        # silently swapped for another.  Non-markdown inputs are redirected only
-        # through the error message — a vision-capable binary (image, PDF, video)
+        # silently swapped for another.  Non-markdown inputs are pointed elsewhere
+        # only through the error message — a vision-capable binary (image, PDF, video)
         # goes to read_binary_document (some models ingest those natively, and
         # PDFs get custom page rendering), while any non-markdown original's
         # extracted text stays reachable by requesting its ``<stem>.md`` sidecar,
@@ -692,7 +681,7 @@ class ReadDocumentTool(RedirectingPathTool[Batch[DocumentRange]]):
         media_type = vision_media_type(file_path)
         if media_type is not None:
             raise ToolRetry(
-                f"'{file_path}' is a {media_type} binary — use read_binary_document "
+                f"'{file_path}' is a {media_type} binary, use read_binary_document "
                 f"to send it to a vision model.{hint}"
             )
 
@@ -738,21 +727,9 @@ class ReadDocumentTool(RedirectingPathTool[Batch[DocumentRange]]):
         window = all_lines[start - 1 : end]
         _text, over_budget = cap_lines(window, share.of(self.max_chars))
         selected = window[: len(window) - over_budget]
-        # `max_chars` is the read: it decides how much of the file this call
-        # took, and cuts the result with it.  `max_formatted_chars` is only the
-        # display, and cuts the text alone — it used to trim `selected` too, so
-        # a `.json` redirect wrote fewer lines than the call had read while
-        # reporting itself as the whole of it.  What the text stopped at is
-        # said in a hint instead, so a follow-up offset can still resume from
-        # the last line actually shown.
         line_cap = None if full_lines else self.max_line_chars
-        body, dropped = cap_lines(
-            iter_annotated(selected, start, line_cap),
-            share.of(self.max_formatted_chars),
-        )
-
+        body = "\n".join(iter_annotated(selected, start, line_cap))
         end = start + len(selected) - 1
-        shown_end = end - dropped
 
         result = DocumentRange(
             file_path=file_path,
@@ -781,13 +758,6 @@ class ReadDocumentTool(RedirectingPathTool[Batch[DocumentRange]]):
             hints.append(
                 f"lines clipped at {line_cap} chars, "
                 "pass full_lines=true to read them whole"
-            )
-
-        if dropped:
-            hints.append(
-                f"the text above stops at line {shown_end}, but the result "
-                f"holds through {end}: read on from offset={shown_end + 1}, or "
-                "pass an output_path to keep every line of it"
             )
 
         remaining = total - end

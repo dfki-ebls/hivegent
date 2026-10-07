@@ -141,7 +141,7 @@ def assert_specs_equal(adapter: PublicToolSnapshot, direct: PublicToolSnapshot) 
 
 def _make_adapter_fastmcp_app() -> FastMCP:
     app = FastMCP("adapter")
-    register_mcp_tools(app, [_sync_lookup, _async_lookup])
+    register_mcp_tools(app, [_sync_lookup, _async_lookup], max_chars=10_000)
     return app
 
 

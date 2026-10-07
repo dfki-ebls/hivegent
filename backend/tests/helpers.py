@@ -5,17 +5,17 @@ calls directly.
 """
 
 import io
-from collections.abc import Awaitable
-from typing import cast
 
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
+from pydantic_ai import RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 
-from hivegent.tools.base import Batch, ItemFailure, ToolOutput
-from hivegent.tools.sink import RedirectedOutput
+from hivegent.tools.base import Batch, ItemFailure
 from hivegent.tools.workspace_os import ChangesetLimits
 
-__all__ = ["LIMITS", "png_bytes", "returned", "single"]
+__all__ = ["LIMITS", "png_bytes", "run_context", "single"]
 
 LIMITS = ChangesetLimits(max_operations=200, max_deletes=100, max_chars=20_000_000)
 """What one program may stage in a test that is not about the limits."""
@@ -29,26 +29,15 @@ def png_bytes(info: PngInfo | None = None) -> bytes:
     return buffer.getvalue()
 
 
-async def returned[T](
-    call: Awaitable[ToolOutput[T | RedirectedOutput]],
-) -> ToolOutput[T]:
-    """Await a tool call that named no ``output_path``, dropping the receipt branch.
-
-    A redirect-capable tool returns a receipt in place of its result when a
-    call names an output path, so its return type is a union.  A call that
-    names none never takes that branch, and asserting it here once keeps the
-    narrowing out of every assertion that follows.
-    """
-    result = await call
-    assert not isinstance(result.data, RedirectedOutput)
-
-    return cast(ToolOutput[T], result)
-
-
-def single[R](data: Batch[R] | RedirectedOutput) -> R:
+def single[R](data: Batch[R]) -> R:
     """The one item a one-item batch served, asserting it did not fail."""
     assert isinstance(data, tuple) and len(data) == 1
     item = data[0]
     assert not isinstance(item, ItemFailure)
 
     return item
+
+
+def run_context[D](deps: D) -> RunContext[D]:
+    """A run around *deps* whose model is never asked."""
+    return RunContext(deps=deps, model=TestModel(), usage=RunUsage())

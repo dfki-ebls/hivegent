@@ -32,7 +32,7 @@ An approval the user overtakes by sending another message is declined on both si
 
 The protocol's approval request carries ids only, so the changeset summary the planner resolved for the prompt arrives as message metadata keyed by tool call id, live and after a reload alike.
 `MessageBubble` provides it per message and `ToolCard` reads its own call's entry with `useApprovalMetadata(part, schema)`, which validates it with zod.
-Every approval that changes the workspace (a mutation tool, an `output_path` redirect, `apply_changes`) asks with that summary, so one `ChangesetView` (`components/chat/tools/changeset.tsx`) shows the real diffs for every tool, and `run-python.tsx` reuses it to show what a program staged.
+Every approval that changes the workspace (a mutation tool or `apply_changes`) asks with that summary, so one `ChangesetView` (`components/chat/tools/changeset.tsx`) shows the real diffs for every tool, and `run-python.tsx` reuses it to show what a program staged.
 A tool card reads a `/tmp` file through the same document route as a workspace one, passing the persisted conversation id that `ChatSidebar` provides through `useConversationId`, so a draft's `/tmp` script waits for its first turn to persist.
 Every gated card asks with the same approve and deny buttons and an optional note for the assistant, and a lone request is sent on click.
 Several requests of one response are the special case: the card buttons then only stage a choice (`aria-pressed`), and an `ApprovalBar` under the message adds a shared note, "Approve all" and "Deny all", and a submit that sends the staged choices once every call has one.

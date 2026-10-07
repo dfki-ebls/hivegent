@@ -7,7 +7,7 @@ import pytest
 
 from hivegent.tools.base import ItemFailure, ToolRetry
 from hivegent.tools.table import QueryTableTool, TableResult
-from tests.helpers import returned, single
+from tests.helpers import single
 
 
 def _sales_dir(tmp_path: Path) -> Path:
@@ -40,7 +40,7 @@ class TestQueryTableTool:
         self, tmp_path: Path
     ) -> None:
         tool = QueryTableTool(paths=_sales_dir(tmp_path))
-        out = await returned(tool(["sales.csv"]))
+        out = await tool(["sales.csv"])
 
         assert single(out.data).columns == ("region", "amount")
         assert single(out.data).total_rows == 50
@@ -52,23 +52,21 @@ class TestQueryTableTool:
         self, tmp_path: Path
     ) -> None:
         tool = QueryTableTool(paths=_sales_dir(tmp_path))
-        out = await returned(
-            tool(
-                ["sales.csv"],
-                [
-                    (
-                        "SELECT region, SUM(amount) AS total FROM t GROUP BY region "
-                        "ORDER BY region"
-                    )
-                ],
-            )
+        out = await tool(
+            ["sales.csv"],
+            [
+                (
+                    "SELECT region, SUM(amount) AS total FROM t GROUP BY region "
+                    "ORDER BY region"
+                )
+            ],
         )
 
         assert single(out.data).rows == (("EU", "625"), ("US", "600"))
 
     async def test_row_cap_is_named_in_the_output(self, tmp_path: Path) -> None:
         tool = QueryTableTool(paths=_sales_dir(tmp_path), max_rows=10)
-        out = await returned(tool(["sales.csv"], ["SELECT * FROM t"]))
+        out = await tool(["sales.csv"], ["SELECT * FROM t"])
 
         assert single(out.data).truncated
         assert len(single(out.data).rows) == 10
@@ -82,26 +80,10 @@ class TestQueryTableTool:
         (tmp_path / "rows.csv").write_text(f"value\n{rows}")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await returned(tool(["rows.csv"], ["SELECT * FROM t"], row_limit=150))
+        out = await tool(["rows.csv"], ["SELECT * FROM t"], row_limit=150)
 
         assert len(single(out.data).rows) == 150
         assert not single(out.data).truncated
-
-    async def test_display_budget_binds_the_text_and_not_the_rows(
-        self, tmp_path: Path
-    ) -> None:
-        # The budget once ended the row loop, so rows past it never reached
-        # `rows` either — and a redirect then wrote a partial table under a
-        # receipt that read like a whole one.
-        tool = QueryTableTool(paths=_sales_dir(tmp_path), max_formatted_chars=100)
-
-        out = await returned(tool(["sales.csv"], ["SELECT * FROM t"], row_limit=50))
-
-        assert len(single(out.data).rows) == 50
-        assert not single(out.data).truncated
-        assert out.formatted is not None
-        assert out.formatted.count("\n|") < 50
-        assert "all 50 rows are in the result" in out.formatted
 
     async def test_legacy_encoding_is_decoded_and_reported(
         self, tmp_path: Path
@@ -114,7 +96,7 @@ class TestQueryTableTool:
             f"name,city\n{filler}\nGrüße,Köln\n".encode("cp1252")
         )
         tool = QueryTableTool(paths=tmp_path)
-        out = await returned(tool(["legacy.csv"], ["SELECT * FROM t WHERE city = 'Köln'"]))
+        out = await tool(["legacy.csv"], ["SELECT * FROM t WHERE city = 'Köln'"])
 
         assert single(out.data).tables[0].source_encoding == "cp1252"
         assert single(out.data).rows == (("Grüße", "Köln"),)
@@ -123,7 +105,7 @@ class TestQueryTableTool:
         self, tmp_path: Path
     ) -> None:
         tool = QueryTableTool(paths=_workbook_dir(tmp_path))
-        out = await returned(tool(["book.xlsx"], sheet="Q2"))
+        out = await tool(["book.xlsx"], sheet="Q2")
 
         assert single(out.data).tables[0].sheet == "Q2"
         assert single(out.data).tables[0].sheets == ("Q1", "Q2")
@@ -141,7 +123,7 @@ class TestQueryTableTool:
         values = ",".join(str(i) for i in range(12))
         (tmp_path / "wide.csv").write_text(f"{header}\n{values}")
         tool = QueryTableTool(paths=tmp_path, max_columns=4)
-        out = await returned(tool(["wide.csv"], ["SELECT * FROM t"]))
+        out = await tool(["wide.csv"], ["SELECT * FROM t"])
 
         assert len(single(out.data).columns) == 12
         assert out.formatted is not None
@@ -162,16 +144,14 @@ class TestQueryTableTool:
         book.save(tmp_path / "typed.xlsx")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await returned(
-            tool(
-                ["typed.xlsx"],
-                ["SELECT SUM(amount) AS s FROM t WHERE day > '2024-01-15'"],
-            )
+        out = await tool(
+            ["typed.xlsx"],
+            ["SELECT SUM(amount) AS s FROM t WHERE day > '2024-01-15'"],
         )
         assert single(out.data).rows == (("20.0",),)
 
         # A zero-padded value is an identifier, so the column stays text.
-        schema = await returned(tool(["typed.xlsx"]))
+        schema = await tool(["typed.xlsx"])
         assert single(schema.data).dtypes == ("String", "Float64", "Date")
         assert [column.name for column in single(schema.data).text_columns] == [
             "amount",
@@ -186,7 +166,7 @@ class TestQueryTableTool:
         rows = "\n".join(f"r{i},{i if i != 2 else 'N/A'}" for i in range(4))
         (tmp_path / "mixed.csv").write_text(f"name,val\n{rows}")
         tool = QueryTableTool(paths=tmp_path)
-        out = await returned(tool(["mixed.csv"]))
+        out = await tool(["mixed.csv"])
 
         assert single(out.data).text_columns[0].name == "val"
         assert (single(out.data).text_columns[0].parsed, single(out.data).text_columns[0].total) == (
@@ -210,7 +190,7 @@ class TestQueryTableTool:
         (tmp_path / "mixed.csv").write_text(f"name,val\n{rows}")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await returned(tool(["mixed.csv"], ["SELECT name, val FROM t"]))
+        out = await tool(["mixed.csv"], ["SELECT name, val FROM t"])
 
         assert out.formatted is not None
         assert 'val (3 of 4 parse as Int64; unparsed: "N/A")' in out.formatted
@@ -222,7 +202,7 @@ class TestQueryTableTool:
         (tmp_path / "mixed.csv").write_text(f"name,val\n{rows}")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await returned(tool(["mixed.csv"], ["SELECT * FROM t"]))
+        out = await tool(["mixed.csv"], ["SELECT * FROM t"])
 
         assert out.formatted is not None
         assert 'val (3 of 4 parse as Int64; unparsed: "N/A")' in out.formatted
@@ -234,7 +214,7 @@ class TestQueryTableTool:
         (tmp_path / "mixed.csv").write_text(f"name,val\n{rows}")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await returned(tool(["mixed.csv"], ["SELECT name FROM t"]))
+        out = await tool(["mixed.csv"], ["SELECT name FROM t"])
 
         assert out.formatted is not None
         assert "TRY_CAST" not in out.formatted
@@ -245,7 +225,7 @@ class TestQueryTableTool:
         (tmp_path / "mixed.csv").write_text("id,paid\n1,10\nN/A,20")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await returned(tool(["mixed.csv"], ["SELECT paid FROM t"]))
+        out = await tool(["mixed.csv"], ["SELECT paid FROM t"])
 
         assert out.formatted is not None
         assert "TRY_CAST" not in out.formatted
@@ -263,7 +243,7 @@ class TestQueryTableTool:
         (tmp_path / "wide.csv").write_text(f"{header}\n{rows}")
         tool = QueryTableTool(paths=tmp_path, max_named_columns=2)
 
-        formatted = (await returned(tool(["wide.csv"]))).formatted
+        formatted = (await tool(["wide.csv"])).formatted
 
         assert formatted is not None
         mixed = formatted.split("mixed text, wrap in TRY_CAST to compare: ")[1]
@@ -279,7 +259,7 @@ class TestQueryTableTool:
         (tmp_path / "lab.csv").write_text("date,csb\n2023-01-01,153\n2023-01-02,<100")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await returned(tool(["lab.csv"], ["SELECT date, csb FROM t"]))
+        out = await tool(["lab.csv"], ["SELECT date, csb FROM t"])
 
         assert single(out.data).text_columns[0].unparsed == ("<100",)
         assert out.formatted is not None
@@ -291,7 +271,7 @@ class TestQueryTableTool:
     ) -> None:
         tool = QueryTableTool(paths=_sales_dir(tmp_path))
 
-        formatted = (await returned(tool(["sales.csv"]))).formatted
+        formatted = (await tool(["sales.csv"])).formatted
 
         assert formatted is not None
         assert "unparsed" not in formatted
@@ -301,7 +281,7 @@ class TestQueryTableTool:
         (tmp_path / "ids.csv").write_text("id\n99999999999999999999\n1")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await returned(tool(["ids.csv"]))
+        out = await tool(["ids.csv"])
 
         assert single(out.data).dtypes == ("Int128",)
         assert "99999999999999999999" in (out.formatted or "")
@@ -312,7 +292,7 @@ class TestQueryTableTool:
         (tmp_path / "flags.csv").write_text("enabled\ntrue\nfalse")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await returned(tool(["flags.csv"]))
+        out = await tool(["flags.csv"])
 
         assert single(out.data).dtypes == ("Boolean",)
 
@@ -364,16 +344,14 @@ class TestMultipleTables:
     async def test_two_tables_join_under_positional_names(self, tmp_path: Path) -> None:
         tool = QueryTableTool(paths=self._both(tmp_path))
 
-        out = await returned(
-            tool(
-                ["sales.csv", "regions.csv"],
-                [
-                    (
-                        "SELECT t2.region, SUM(t.amount) AS total FROM t "
-                        "JOIN t2 ON t.id = t2.id GROUP BY t2.region ORDER BY t2.region"
-                    )
-                ],
-            )
+        out = await tool(
+            ["sales.csv", "regions.csv"],
+            [
+                (
+                    "SELECT t2.region, SUM(t.amount) AS total FROM t "
+                    "JOIN t2 ON t.id = t2.id GROUP BY t2.region ORDER BY t2.region"
+                )
+            ],
         )
 
         assert single(out.data).rows == (("EU", "10"), ("US", "20"))
@@ -386,7 +364,7 @@ class TestMultipleTables:
         # cannot be written without knowing.
         tool = QueryTableTool(paths=self._both(tmp_path))
 
-        out = await returned(tool(["sales.csv", "regions.csv"], ["SELECT * FROM t2"]))
+        out = await tool(["sales.csv", "regions.csv"], ["SELECT * FROM t2"])
 
         assert out.formatted is not None
         assert "t: sales.csv" in out.formatted
@@ -397,7 +375,7 @@ class TestMultipleTables:
     ) -> None:
         tool = QueryTableTool(paths=self._both(tmp_path))
 
-        out = await returned(tool(["sales.csv", "regions.csv"], ["SHOW TABLES"]))
+        out = await tool(["sales.csv", "regions.csv"], ["SHOW TABLES"])
 
         assert single(out.data).rows == (("t",), ("t2",))
 
@@ -410,7 +388,7 @@ class TestMultipleTables:
         (tmp_path / "b.csv").write_text("val\n1\nN/A\n")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await returned(tool(["a.csv", "b.csv"], ["SELECT t2.val FROM t2"]))
+        out = await tool(["a.csv", "b.csv"], ["SELECT t2.val FROM t2"])
 
         assert out.formatted is not None
         assert 't2.val (1 of 2 parse as Int64; unparsed: "N/A")' in out.formatted
@@ -418,11 +396,9 @@ class TestMultipleTables:
     async def test_each_query_is_answered_on_its_own(self, tmp_path: Path) -> None:
         tool = QueryTableTool(paths=self._both(tmp_path))
 
-        out = await returned(
-            tool(
-                ["sales.csv", "regions.csv"],
-                ["SELECT COUNT(*) AS n FROM t2", "SELECT nope FROM t"],
-            )
+        out = await tool(
+            ["sales.csv", "regions.csv"],
+            ["SELECT COUNT(*) AS n FROM t2", "SELECT nope FROM t"],
         )
 
         counted, failed = out.data
@@ -436,7 +412,7 @@ class TestMultipleTables:
     ) -> None:
         tool = QueryTableTool(paths=self._both(tmp_path))
 
-        out = await returned(tool(["sales.csv", "regions.csv"]))
+        out = await tool(["sales.csv", "regions.csv"])
 
         described = [result for result in out.data if isinstance(result, TableResult)]
         assert [result.tables[0].name for result in described] == ["t", "t2"]
@@ -454,7 +430,7 @@ class TestColumnSpelling:
     ) -> None:
         tool = QueryTableTool(paths=_quoted_dir(tmp_path))
 
-        formatted = (await returned(tool(["t.csv"]))).formatted
+        formatted = (await tool(["t.csv"])).formatted
         assert formatted is not None
         assert '"Zulaufmenge (D)": Int64' in formatted
         assert "\namount: Int64" in formatted
@@ -472,7 +448,7 @@ class TestColumnSpelling:
     ) -> None:
         tool = QueryTableTool(paths=_quoted_dir(tmp_path))
 
-        out = await returned(tool(["t.csv"], ['SELECT "Zulaufmenge (D)" FROM t']))
+        out = await tool(["t.csv"], ['SELECT "Zulaufmenge (D)" FROM t'])
         assert single(out.data).rows == (("1",),)
 
     async def test_a_spilled_header_row_shows_up_as_its_own_labels(
@@ -485,7 +461,7 @@ class TestColumnSpelling:
         # is what says the header spilled a row rather than one cell being odd.
         tool = QueryTableTool(paths=_exported_dir(tmp_path))
 
-        out = await returned(tool(["export.xlsx"]))
+        out = await tool(["export.xlsx"])
 
         assert out.formatted is not None
         assert 'unparsed: "Einstellung"' in out.formatted
@@ -506,7 +482,7 @@ class TestColumnSpelling:
         book.save(tmp_path / "deep.xlsx")
         tool = QueryTableTool(paths=tmp_path)
 
-        out = await returned(tool(["deep.xlsx"]))
+        out = await tool(["deep.xlsx"])
 
         assert out.formatted is not None
         assert 'unparsed: "Zaehlwert", "m3/d"' in out.formatted
@@ -514,6 +490,6 @@ class TestColumnSpelling:
     async def test_a_clean_header_says_nothing_about_one(self, tmp_path: Path) -> None:
         tool = QueryTableTool(paths=_sales_dir(tmp_path))
 
-        formatted = (await returned(tool(["sales.csv"]))).formatted
+        formatted = (await tool(["sales.csv"])).formatted
         assert formatted is not None
         assert "no header name" not in formatted

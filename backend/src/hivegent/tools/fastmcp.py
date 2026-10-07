@@ -28,6 +28,7 @@ from .base import (
     factory_tool_name,
     translate_tool_retry,
 )
+from .formatting import truncate_middle
 
 __all__ = ["for_fastmcp", "output_schema", "register_mcp_tools", "wrap_tool_output"]
 
@@ -79,12 +80,19 @@ def output_schema(data_type: Any) -> dict[str, Any] | None:
 
 
 def wrap_tool_output(
-    result: ToolOutput[Any], spec: ToolSpec, *, wrap_data: bool
+    result: ToolOutput[Any],
+    spec: ToolSpec,
+    *,
+    wrap_data: bool,
+    max_chars: int | None = None,
 ) -> ToolResult:
     """Convert a :class:`ToolOutput` into an MCP :class:`ToolResult`.
 
-    Text is always emitted as a :class:`TextContent` block; binary
-    attachments follow as image/audio/resource blocks.
+    Text is always emitted as a :class:`TextContent` block, its middle left
+    out past *max_chars* as an agent's tool return is, and binary attachments
+    follow as image/audio/resource blocks.  An MCP client has no ``/tmp`` of
+    this server's to read the rest from, so the structured content is what
+    stays whole.
 
     The structured payload is serialised through the spec's own adapter, so it
     matches the schema registered for the tool, and is wrapped exactly when
@@ -93,7 +101,8 @@ def wrap_tool_output(
     with a rendering of the structured content, so the wrapping it does for a
     raw return value is mirrored here rather than inherited.
     """
-    blocks: list[ContentBlock] = [TextContent(type="text", text=result.text)]
+    text = result.text if max_chars is None else truncate_middle(result.text, max_chars)
+    blocks: list[ContentBlock] = [TextContent(type="text", text=text)]
     blocks.extend(_attachment_to_block(att) for att in result.attachments)
     data = spec.serialize_data(result.data)
 
@@ -107,8 +116,8 @@ def wrap_tool_output(
 def for_fastmcp(
     factory_provider: Callable[..., Tool[Any]],
     *,
-    omit: Sequence[Any] = (),
     spec: ToolSpec | None = None,
+    max_chars: int | None = None,
 ) -> Callable[..., ToolResult] | Callable[..., Awaitable[ToolResult]]:
     """Build a wrapper function whose signature FastMCP can introspect.
 
@@ -119,17 +128,15 @@ def for_fastmcp(
     Args:
         factory_provider: Callable that returns a Tool instance.
             Must have a return annotation that is a ``Tool`` subclass.
-        omit: Annotations whose parameters this surface cannot honour, and
-            so leaves out of the built signature.  The tool's own default
-            stands in for each one at call time.
         spec: An already-derived contract, which :func:`register_mcp_tools`
             passes so it can register the matching output schema without
             deriving the contract twice.
+        max_chars: The most text a return shows, unbounded for ``None``.
 
     Returns:
         A callable with rewritten signature, annotations, and docstring.
     """
-    contract = spec or ToolSpec.from_factory(factory_provider).without(*omit)
+    contract = spec or ToolSpec.from_factory(factory_provider)
 
     # Constant once the schema is derived, so the branch is settled here rather
     # than re-answered on every call.
@@ -167,13 +174,17 @@ def for_fastmcp(
         async def wrapper(**kwargs: Any) -> ToolResult:
             with translate_tool_retry(ToolError):
                 result = await kwargs.pop("_tool_")(**kwargs)
-                return wrap_tool_output(result, contract, wrap_data=wrap_data)
+                return wrap_tool_output(
+                    result, contract, wrap_data=wrap_data, max_chars=max_chars
+                )
     else:
 
         def wrapper(**kwargs: Any) -> ToolResult:
             with translate_tool_retry(ToolError):
                 result = kwargs.pop("_tool_")(**kwargs)
-                return wrap_tool_output(result, contract, wrap_data=wrap_data)
+                return wrap_tool_output(
+                    result, contract, wrap_data=wrap_data, max_chars=max_chars
+                )
 
     contract.apply_to(wrapper, new_sig, new_annotations)
     return wrapper
@@ -183,7 +194,7 @@ def register_mcp_tools(
     app: FastMCP,
     factories: Sequence[Callable[..., Tool[Any]]],
     *,
-    omit: Sequence[Any] = (),
+    max_chars: int,
 ) -> None:
     """Register multiple Tool factories on a FastMCP app.
 
@@ -193,11 +204,11 @@ def register_mcp_tools(
     Args:
         app: The FastMCP application.
         factories: Sequence of factory callables.
-        omit: Annotations whose parameters to leave out of every signature.
+        max_chars: The most text one return shows.
     """
     for factory in factories:
-        spec = ToolSpec.from_factory(factory).without(*omit)
-        fn = for_fastmcp(factory, spec=spec)
+        spec = ToolSpec.from_factory(factory)
+        fn = for_fastmcp(factory, spec=spec, max_chars=max_chars)
         app.tool(
             fn,
             name=factory_tool_name(fn),

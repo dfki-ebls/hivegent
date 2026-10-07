@@ -1,7 +1,7 @@
 """Shared helpers for the agents package."""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -10,17 +10,24 @@ from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import Model
 
+from ..concurrency import bounded
 from ..config import settings
 from ..l10n import DEFAULT_LANGUAGE, Language
 from ..llm_config import LlmConfig
 from ..prompts import format_document_scope
 from ..store import Casebase, build_search_paths
 from ..tmp import tmp_search_path
-from ..tools.base import SearchPath, query_hint, resolve_accessible_file
+from ..tools.base import (
+    CallBudget,
+    SearchPath,
+    query_hint,
+    resolve_accessible_file,
+)
 from ..types import AUTO_APPROVED_MODES, MUTATING_MODES, DocumentFilter, Mode
 from .subagent_events import SubagentUpdate
 
 __all__ = [
+    "CompletionGate",
     "ExploreTaskArg",
     "MemoryContentArg",
     "RunPrefix",
@@ -36,6 +43,13 @@ MemoryContentArg = Annotated[
     str,
     Field(description="Full markdown content to persist as memory."),
 ]
+
+type CompletionGate = Callable[[Callable[[], Awaitable[str]]], Awaitable[str]]
+"""Run one completion once a slot is free, and return its text."""
+
+
+async def _complete(completion: Callable[[], Awaitable[str]]) -> str:
+    return await completion()
 
 
 @dataclass(slots=True, frozen=True)
@@ -69,6 +83,21 @@ class UserDeps:
     # hand a program an excluded tool.
     disabled_tools: frozenset[str] = frozenset()
     llm: LlmConfig | None = None
+    # The aux tier as the request resolves it, for one-shot calls a program
+    # makes, so a client's own model and provider carry over as they do for
+    # titles and captions.  None where no request supplied one.
+    aux_llm: LlmConfig | None = None
+    # What is left of the turn's `complete` calls, and the gate on how many are
+    # in flight, shared with its subagents, which `replace` the deps and keep
+    # these objects.
+    completions: CallBudget = field(
+        default_factory=lambda: CallBudget(settings.sandbox.completion_max_calls)
+    )
+    completion_gate: CompletionGate = field(
+        default_factory=lambda: bounded(
+            _complete, settings.sandbox.completion_concurrency
+        )
+    )
     # Sink for live subagent transcript snapshots; set only on the chat path,
     # where the streaming response drains it (None elsewhere disables it).
     subagent_sink: asyncio.Queue[SubagentUpdate] | None = None

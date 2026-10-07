@@ -2,9 +2,10 @@
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from typing import Annotated, Any, cast
 
-from pydantic import BeforeValidator
+from pydantic import BeforeValidator, Field
 from pydantic_ai import BinaryContent, FunctionToolset, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturn
@@ -16,6 +17,7 @@ from pydantic_ai.usage import RunUsage
 
 from .base import (
     BinaryAttachment,
+    Tool,
     ToolFactory,
     ToolOutput,
     ToolSpec,
@@ -25,6 +27,8 @@ from .base import (
 )
 
 __all__ = [
+    "ToolOutputChunk",
+    "UnwrappedOutput",
     "for_pydantic_ai",
     "invoke_tool",
     "register_agent_tool",
@@ -70,6 +74,16 @@ def _binary_attachment_to_content(att: BinaryAttachment) -> BinaryContent:
     )
 
 
+class ToolOutputChunk(DataChunk):
+    """The structured payload of a tool return, as the frontend receives it.
+
+    ``display_only`` carries :attr:`ToolOutput.display_only` to the run's
+    capabilities and is excluded from what is streamed and stored.
+    """
+
+    display_only: bool = Field(default=False, exclude=True)
+
+
 def wrap_tool_output(
     result: ToolOutput[Any], *, tool_call_id: str | None = None
 ) -> ToolReturn:
@@ -84,7 +98,7 @@ def wrap_tool_output(
     turn).
 
     Structured ``data`` (anything that isn't a plain string) is attached
-    as a :class:`DataChunk` in ``metadata`` so the frontend receives it
+    as a :class:`ToolOutputChunk` in ``metadata`` so the frontend receives it
     without parsing the LLM-facing text.  String-valued ``data`` is
     considered the canonical payload on its own and is left in
     ``return_value`` without duplication.
@@ -93,11 +107,16 @@ def wrap_tool_output(
     can correlate it with the originating tool part.  The Vercel AI SDK
     appends ``data-*`` parts to the end of ``message.parts`` rather than
     next to their tool part, so for parallel tool calls positional
-    adjacency is lost — the id is the only reliable link.
+    adjacency is lost, and the id is the only reliable link.
     """
-    metadata: DataChunk | None = None
+    metadata: ToolOutputChunk | None = None
     if result.data is not None and not isinstance(result.data, str):
-        metadata = DataChunk(type=DATA_CHUNK_TYPE, id=tool_call_id, data=result.data)
+        metadata = ToolOutputChunk(
+            type=DATA_CHUNK_TYPE,
+            id=tool_call_id,
+            data=result.data,
+            display_only=result.display_only,
+        )
 
     return_value: Any = result.text
     if result.attachments:
@@ -108,47 +127,74 @@ def wrap_tool_output(
     return ToolReturn(return_value=return_value, metadata=metadata)
 
 
-def unwrap_tool_output(result: Any) -> tuple[str | None, Any]:
-    """Recover ``(text, structured_data)`` from a tool call return.
+@dataclass(frozen=True, slots=True)
+class UnwrappedOutput:
+    """A tool call return taken apart into what the model reads and what it carries."""
 
-    The inverse of :func:`wrap_tool_output`: it reads back the LLM-facing
-    text from ``return_value`` (a plain string, or the first element when
-    binary attachments follow it) and the structured payload from the
+    text: str | None
+    """The text the return value leads with, ``None`` when it has none."""
+
+    rest: list[Any] | None
+    """The items after :attr:`text` in a content list, ``None`` for a bare text."""
+
+    data: Any
+    """The structured payload, or a return value that is not text at all."""
+
+    display_only: bool = False
+    """Whether :attr:`data` is only what the client shows (:attr:`ToolOutput.display_only`)."""
+
+
+def unwrap_tool_output(result: Any) -> UnwrappedOutput:
+    """Take a tool call return apart, the inverse of :func:`wrap_tool_output`.
+
+    The text is a plain string return value or the leading string of a content
+    list such as ``[text, BinaryContent]``, and the structured payload is the
     :class:`DataChunk` in ``metadata``.  Tools that bypass the wrapper and
-    return a plain string or value are passed through unchanged.
+    return a plain string or value are read the same way.
+
+    >>> unwrap_tool_output(["a", 1])
+    UnwrappedOutput(text='a', rest=[1], data=None, display_only=False)
     """
-    if isinstance(result, ToolReturn):
-        rv = result.return_value
-        if isinstance(rv, str):
-            text = rv
-        elif isinstance(rv, list) and rv and isinstance(rv[0], str):
-            text = rv[0]
-        else:
-            text = None
-        data = result.metadata.data if isinstance(result.metadata, DataChunk) else None
-        return text, data
-    if isinstance(result, str):
-        return result, None
-    return None, result
+    wrapped = isinstance(result, ToolReturn)
+    value = result.return_value if wrapped else result
+    chunk = result.metadata if wrapped and isinstance(result.metadata, DataChunk) else None
+    data = chunk.data if chunk is not None else None
+    display_only = isinstance(chunk, ToolOutputChunk) and chunk.display_only
+
+    if isinstance(value, str):
+        return UnwrappedOutput(value, None, data, display_only)
+
+    if isinstance(value, list) and value and isinstance(value[0], str):
+        return UnwrappedOutput(value[0], value[1:], data, display_only)
+
+    return UnwrappedOutput(None, None, data if wrapped else value, display_only)
 
 
 def for_pydantic_ai[D](
-    factory: ToolFactory[D],
+    factory: Callable[..., Tool[Any]],
     deps_type: type[D],
+    *,
+    takes_ctx: bool = False,
 ) -> Callable[..., ToolReturn] | Callable[..., Awaitable[ToolReturn]]:
     """Build a wrapper function whose signature pydantic-ai can introspect.
 
     The tool class is inferred from *factory*'s return type annotation.
 
     Args:
-        factory: Callable that receives deps and returns a Tool instance.
+        factory: Callable that returns a Tool instance, built per call.
             Must have a return annotation that is a ``Tool`` subclass.
         deps_type: The RunContext deps type (e.g. ``UserDeps``).
+        takes_ctx: Whether *factory* is handed the whole ``RunContext``, for
+            a tool that spends what the run owns, such as its ``usage``,
+            rather than only its deps, as pydantic-ai's own flag means.
 
     Returns:
         A callable with rewritten signature, annotations, and docstring.
     """
     spec = ToolSpec.from_factory(factory)
+
+    def build(ctx: RunContext[D]) -> Tool[Any]:
+        return factory(ctx) if takes_ctx else factory(ctx.deps)
 
     # Build parameter list: RunContext first, then __call__ params.
     # Use getattr to build RunContext[D] at runtime without a subscript
@@ -179,13 +225,13 @@ def for_pydantic_ai[D](
 
         async def wrapper(ctx: RunContext[D], **kwargs: Any) -> ToolReturn:
             with translate_tool_retry(ModelRetry):
-                result = cast(Awaitable[ToolOutput[Any]], factory(ctx.deps)(**kwargs))
+                result = cast(Awaitable[ToolOutput[Any]], build(ctx)(**kwargs))
                 return wrap_tool_output(await result, tool_call_id=ctx.tool_call_id)
     else:
 
         def wrapper(ctx: RunContext[D], **kwargs: Any) -> ToolReturn:
             with translate_tool_retry(ModelRetry):
-                result = cast(ToolOutput[Any], factory(ctx.deps)(**kwargs))
+                result = cast(ToolOutput[Any], build(ctx)(**kwargs))
                 return wrap_tool_output(result, tool_call_id=ctx.tool_call_id)
 
     spec.apply_to(wrapper, new_sig, new_annotations)
@@ -195,8 +241,9 @@ def for_pydantic_ai[D](
 def register_agent_tool[D](
     toolset: FunctionToolset[D],
     deps_type: type[D],
-    factory: ToolFactory[D],
+    factory: Callable[..., Tool[Any]],
     *,
+    takes_ctx: bool = False,
     args_validator: ArgsValidatorFunc[D, ...] | None = None,
     prepare: ToolPrepareFunc[D] | None = None,
 ) -> None:
@@ -214,10 +261,11 @@ def register_agent_tool[D](
         toolset: The target toolset.
         deps_type: The RunContext deps type.
         factory: Factory callable for the tool.
+        takes_ctx: Whether *factory* is handed the run rather than its deps.
         args_validator: Optional validator for this tool's arguments.
         prepare: Optional per-run hook that may withhold the tool.
     """
-    fn = for_pydantic_ai(factory, deps_type)
+    fn = for_pydantic_ai(factory, deps_type, takes_ctx=takes_ctx)
     toolset.add_function(
         fn,
         name=factory_tool_name(fn),
@@ -280,4 +328,6 @@ async def invoke_tool[D](
     ctx = RunContext(
         deps=deps, model=TestModel(), usage=RunUsage(), tool_name=tool.name
     )
-    return unwrap_tool_output(await schema.call(validated, ctx))
+    unwrapped = unwrap_tool_output(await schema.call(validated, ctx))
+
+    return unwrapped.text, unwrapped.data

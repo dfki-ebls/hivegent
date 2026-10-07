@@ -7,11 +7,11 @@ import types
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Generator, Hashable, Iterable, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import cache, cached_property, reduce
 from operator import or_
 from os import stat_result
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import (
     Annotated,
@@ -47,11 +47,15 @@ from ..entries import (
     Listdir,
     description_path_for_stem,
     find_original_for_stem,
+    folds_case,
     is_description_file,
     is_inside_assets_dir,
+    is_reserved_path,
+    path_key,
     respell,
     stem_path_from_reference,
 )
+from ..l10n import Localized
 from ..text import MAX_BYTES_PER_CHAR, NOT_TEXT_REASON, DecodedText, read_text_file
 from .scope import Scope
 
@@ -65,6 +69,7 @@ __all__ = [
     "Batch",
     "BatchShare",
     "BinaryAttachment",
+    "CallBudget",
     "CommitPolicy",
     "Direct",
     "FullLinesArg",
@@ -80,7 +85,6 @@ __all__ = [
     "ToolOutput",
     "ToolRetry",
     "ToolSpec",
-    "Unreachable",
     "accept_scalar",
     "addressable_roots",
     "batch_field",
@@ -113,6 +117,33 @@ __all__ = [
     "translate_tool_retry",
     "workspace_root_hint",
 ]
+
+
+@dataclass(slots=True)
+class CallBudget:
+    """An exact number of calls, shared by everything handed the same budget.
+
+    Exact under ``asyncio.gather`` because :meth:`take` checks and counts with
+    no await in between, which usage limits cannot be: their check and their
+    increment sit on either side of the model request.
+
+    >>> budget = CallBudget(1)
+    >>> budget.take("spent")
+    >>> budget.take("spent")
+    Traceback (most recent call last):
+    ...
+    RuntimeError: spent
+    """
+
+    limit: int
+    used: int = 0
+
+    def take(self, refusal: str) -> None:
+        """Count one call, or raise a ``RuntimeError`` of *refusal* when none is left."""
+        if self.used >= self.limit:
+            raise RuntimeError(refusal)
+
+        self.used += 1
 
 
 class ToolRetry(Exception):
@@ -193,7 +224,10 @@ arguments repeating it cost more on every request than the one sentence saves.
 
 @dataclass(slots=True, frozen=True)
 class Gated:
-    """A root whose changes commit through the changeset gateway, approved where the mode asks."""
+    """A root whose changes commit through the changeset gateway, approved where the mode asks.
+
+    Each ``.assets`` payload in it is reserved, since it belongs to its document.
+    """
 
 
 @dataclass(slots=True, frozen=True)
@@ -202,9 +236,12 @@ class Direct:
 
     Attributes:
         max_bytes: What the folder may hold once a change is written.
+        reserved: A folder directly below the root that only the host
+            changes, while every tool may read it.
     """
 
     max_bytes: int
+    reserved: str | None = None
 
 
 type CommitPolicy = Gated | Direct
@@ -261,6 +298,26 @@ class SearchPath:
     def prefixed(self, filename: str) -> str:
         """Return *filename* rendered under this path's scope."""
         return self.scope.render(filename) if self.scope is not None else filename
+
+    def is_reserved(self, local: str) -> bool:
+        """Whether *local* is or lies in a subtree its root keeps from ordinary changes.
+
+        >>> SearchPath(Path("/w")).is_reserved("notes/report.assets/fig1.png")
+        True
+        """
+        if isinstance(self.policy, Gated):
+            return is_reserved_path(local)
+
+        reserved = self.policy.reserved
+        top = PurePosixPath(local).parts[:1]
+
+        if reserved is None or not top:
+            return False
+
+        # Compared as the filesystem spells it, so a change cannot reach it by its case.
+        folded = folds_case(self.path)
+
+        return path_key(top[0], folded=folded) == path_key(reserved, folded=folded)
 
 
 def policy_of(paths: tuple[SearchPath, ...], canonical: str) -> CommitPolicy:
@@ -782,11 +839,15 @@ class ToolOutput[T]:
     ``attachments`` carries framework-neutral binary blobs that the
     adapter converts to its framework's multimodal type and sends
     inline with the tool return.
+
+    ``display_only`` marks ``data`` as only what the client shows, such as a
+    subagent's transcript, so the text alone is the result.
     """
 
     data: T
     formatted: str | None = None
     attachments: tuple[BinaryAttachment, ...] = ()
+    display_only: bool = False
 
     @property
     def text(self) -> str:
@@ -1003,6 +1064,12 @@ class Tool[T](ABC):
     injectable set derived from the registered one instead of kept beside it.
     """
 
+    registered: ClassVar[bool] = True
+    """Whether the model is also handed this tool, false for a program's alone."""
+
+    sandbox_instructions: ClassVar[Localized[str] | None] = None
+    """Guidance a run's prompt carries while a program may call this tool."""
+
     @abstractmethod
     def __call__(
         self, *args: Any, **kwargs: Any
@@ -1188,24 +1255,12 @@ def tool_description(tool: type[Tool[Any]]) -> str | None:
     return inspect.getdoc(tool.__call__) or inspect.getdoc(tool)
 
 
-@dataclass(slots=True, frozen=True)
-class Unreachable:
-    """Marks the result branch an argument is the only way to reach.
-
-    Carried on the argument's own ``Annotated`` alias, so a surface dropping
-    the argument through :meth:`ToolSpec.without` drops the branch with it
-    rather than being asked to name both.
-    """
-
-    data_type: Any
-
-
 # `slots=True` is deliberately absent, and the derived members below are the
 # reason: `cached_property` stores into the instance `__dict__` a slotted class
 # does not have.  They have to be memoised somehow, since building one costs
 # ~250us and `argument_model` and `data_adapter` are read on every sandbox and
-# MCP call, and they have to be derived rather than stored, or `replace` in
-# `without` would carry a schema onto the narrowed spec it does not describe.
+# MCP call, and they have to be derived rather than stored beside the fields
+# they are a function of.
 # The slotted alternative is a `dict[str, Any]` memo field, which launders
 # every value through `Any` behind string keys no checker reads; slots buys
 # nothing against that here, since `from_factory` caches one spec per tool for
@@ -1246,9 +1301,8 @@ class ToolSpec:
         """Resolved type hints for ``__call__`` parameters, keyed by name.
 
         Read off :attr:`params`, which carry the resolved annotation, rather
-        than stored beside them: the two would otherwise be the same data in
-        two places, and a surface that drops a parameter would have to drop it
-        twice.
+        than stored beside them, since the two would otherwise be the same
+        data in two places.
         """
         return types.MappingProxyType({p.name: p.annotation for p in self.params})
 
@@ -1292,56 +1346,6 @@ class ToolSpec:
         """Serialize a structured tool payload to plain JSON-compatible values."""
         return cast(JsonValue, self.data_adapter.dump_python(data, mode="json"))
 
-    def without(self, *annotations: Any) -> Self:
-        """Drop the parameters carrying any of these annotations.
-
-        Addressed by annotation rather than by name: the shared ``Annotated``
-        alias a tool declares an argument with is what says the argument is
-        that one, so a surface names the type it cannot honour instead of
-        keeping a string of the spelling in step with it.
-
-        All three surfaces synthesize a signature rather than edit one, the
-        FastMCP one already appending a ``_tool_`` parameter no ``__call__``
-        declares, so leaving an argument out is the same act as putting one
-        in, and no schema is rewritten after the fact.  It is what a surface
-        uses for an argument it could only advertise and then refuse on every
-        call, which is a defect in the schema rather than a mode.
-
-        A result branch reachable only through a dropped argument goes with it,
-        read off that argument's own :class:`Unreachable` metadata rather than
-        named a second time by the caller.  A surface that hands out no writer
-        has said so once and both halves follow from the one fact, where naming
-        them separately let the MCP surface drop the argument and go on
-        advertising the receipt it could no longer return.
-        """
-        dropped = {
-            name for name, hint in self.annotations.items() if hint in annotations
-        }
-        if not dropped:
-            return self
-
-        unreachable = {
-            meta.data_type
-            for hint in annotations
-            for meta in get_args(hint)
-            if isinstance(meta, Unreachable)
-        }
-        members = (
-            get_args(self.data_type)
-            if get_origin(self.data_type) is types.UnionType
-            else ()
-        )
-        remaining = tuple(member for member in members if member not in unreachable)
-        if members and not remaining:
-            msg = f"{self.name!r} has no result type once {sorted(dropped)} is dropped"
-            raise TypeError(msg)
-
-        return replace(
-            self,
-            params=tuple(p for p in self.params if p.name not in dropped),
-            data_type=reduce(or_, remaining) if remaining else self.data_type,
-        )
-
     def apply_to(
         self,
         wrapper: types.FunctionType,
@@ -1381,7 +1385,7 @@ class ToolSpec:
         resolving type hints is the whole cost.  Safe to share because the
         result is frozen through to its fields -- ``params`` is a tuple of
         immutable parameters and ``annotations`` a mapping -- and every caller
-        derives a new one through :meth:`without` rather than editing this.
+        derives what it needs from it rather than editing it.
 
         Args:
             factory: A callable whose return annotation is a ``Tool``
