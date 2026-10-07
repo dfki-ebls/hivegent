@@ -956,7 +956,9 @@ class NetworkSettings(BaseModel):
     ``contact_email`` is the operator address put in
     the web tools' ``User-Agent`` (as Wikimedia's policy asks, so traffic
     questions reach a human); it falls back to the package author when
-    unset.  The per-model-request timeout lives on ``LlmSettings``
+    unset.  ``web_keepalive_seconds`` is how long the web tools' client keeps
+    an idle connection, long enough to outlast the model request between two
+    tool calls of one turn.  The per-model-request timeout lives on ``LlmSettings``
     (``request_timeout_seconds``), not here.
 
     ``unix_sockets`` maps host names to unix socket paths, so an operator
@@ -1012,6 +1014,7 @@ class Settings(BaseSettings):
             secrets_dir=os.environ.get("CREDENTIALS_DIRECTORY"),
             secrets_dir_missing="ok",
         )
+    web_keepalive_seconds: float = 60.0
 
         return (
             init_settings,

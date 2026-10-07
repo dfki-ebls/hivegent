@@ -82,6 +82,7 @@ async def _open_clients() -> AsyncGenerator[_Clients]:
             ),
             follow_redirects=True,
             max_redirects=network.webfetch_max_redirects,
+            keepalive_expiry=network.web_keepalive_seconds,
         ),
     }
 

@@ -155,13 +155,21 @@ def _parsed_host(url: str) -> str:
     return _check_url_shape(parsed)
 
 
-def _egress_transport(proxy_url: str) -> httpx2.AsyncBaseTransport:
+def _egress_transport(
+    proxy_url: str, keepalive_expiry: float
+) -> httpx2.AsyncBaseTransport:
     """Mint the proxied network transport for untrusted clients.
 
     The one construction site for the ``trust_env=False`` invariant, and the
     seam tests substitute to exercise the policy hook without a network.
     """
-    return httpx2.AsyncHTTPTransport(proxy=proxy_url, trust_env=False)
+    limits = httpx2.Limits(
+        max_connections=100,
+        max_keepalive_connections=20,
+        keepalive_expiry=keepalive_expiry,
+    )
+
+    return httpx2.AsyncHTTPTransport(proxy=proxy_url, trust_env=False, limits=limits)
 
 
 def create_safe_async_client(
@@ -173,12 +181,14 @@ def create_safe_async_client(
     auth: httpx2.Auth | None = None,
     follow_redirects: bool = False,
     max_redirects: int = 20,
+    keepalive_expiry: float = 5.0,
 ) -> httpx2.AsyncClient:
     """Create a client that sends policy-checked requests through the proxy.
 
     The request hook runs for every redirect hop.  ``proxy_url`` is mandatory
     and the transport is built here, so an untrusted client cannot silently
-    fall back to direct network access.
+    fall back to direct network access.  *keepalive_expiry* is how long an
+    idle pooled connection is kept, the pool sizes being HTTPX's defaults.
     """
     if not proxy_url:
         raise ValueError("An egress proxy URL is required for untrusted requests.")
@@ -187,7 +197,7 @@ def create_safe_async_client(
         policy.check_host(_check_url_shape(request.url))
 
     return httpx2.AsyncClient(
-        transport=_egress_transport(proxy_url),
+        transport=_egress_transport(proxy_url, keepalive_expiry),
         trust_env=False,
         event_hooks={"request": [check_request]},
         timeout=timeout,

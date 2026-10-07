@@ -64,7 +64,7 @@ async def test_user_client_ignores_unix_socket(
 
     monkeypatch.setattr(settings.security.user_urls, "allow_hosts", ["llmhop"])
     monkeypatch.setattr(
-        security, "_egress_transport", lambda _proxy_url: httpx2.MockTransport(handler)
+        security, "_egress_transport", lambda *_: httpx2.MockTransport(handler)
     )
 
     async with shared_http_client_lifespan():

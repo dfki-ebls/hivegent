@@ -34,7 +34,7 @@ async def test_safe_async_client_checks_every_redirect_hop(
         return httpx2.Response(302, headers={"Location": "https://evil.example/final"})
 
     monkeypatch.setattr(
-        security, "_egress_transport", lambda _proxy_url: httpx2.MockTransport(handler)
+        security, "_egress_transport", lambda *_: httpx2.MockTransport(handler)
     )
 
     async with create_safe_async_client(
