@@ -1,5 +1,5 @@
 import { i18n } from "@/i18n";
-import type { DirectoryEntry, DocumentInfo } from "@/lib/types";
+import type { DirectoryEntry, DocumentInfo, PathChanges } from "@/lib/types";
 
 export { cn, type ClassValue } from "cn";
 
@@ -24,6 +24,39 @@ export function basename(path: string): string {
 /** Parent directory of *path*, as `""` or a `dir/`-style prefix. */
 export function parentDir(path: string): string {
   return path.slice(0, path.lastIndexOf("/") + 1);
+}
+
+/**
+ * The part of *path* below *root*, empty for *root* itself and starting with a
+ * slash for its descendants (the directory entry `~/a/` of root `~/a` too),
+ * or null when *path* lies elsewhere.
+ * Matching on a segment boundary keeps `~/docs` off `~/docs-old`.
+ */
+export function below(path: string, root: string): string | null {
+  return path === root || path.startsWith(`${root}/`) ? path.slice(root.length) : null;
+}
+
+/**
+ * Where the canonical *path* is once *changes* applied: carried to the
+ * destination of the move whose source holds it, or null when a delete took it.
+ * Every source and delete names the state before the commit, so all apply at once.
+ */
+export function followPath(path: string, { moves, deletes }: PathChanges): string | null {
+  if (deletes.some((root) => below(path, root) !== null)) return null;
+
+  for (const { source, destination } of moves) {
+    const rest = below(path, source);
+    if (rest !== null) return destination + rest;
+  }
+
+  return path;
+}
+
+/** *paths* each mapped by *follow*, the null ones dropped, or *paths* itself when none changed. */
+export function followEach(paths: string[], follow: (path: string) => string | null): string[] {
+  const next = paths.flatMap((path) => follow(path) ?? []);
+
+  return next.length === paths.length && next.every((path, i) => path === paths[i]) ? paths : next;
 }
 
 /** Longest common parent directory of *paths*, as `""` or a `dir/`-style prefix. */

@@ -49,8 +49,10 @@ describe("RunPythonTool", () => {
       summary: {
         creates: [{ path: "~/summary.md", diff: "--- /dev/null\n+++ ~/summary.md\n+done\n" }],
         updates: [],
-        moves: [{ source: "~/inbox", destination: "~/archive", is_dir: true, replaces: false }],
-        deletes: ["~/stale.md"],
+        paths: {
+          moves: [{ source: "~/inbox", destination: "~/archive", is_dir: true, replaces: false }],
+          deletes: ["~/stale.md"],
+        },
         mkdirs: [],
       },
     });

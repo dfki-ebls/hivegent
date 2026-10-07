@@ -1,5 +1,9 @@
 import { create } from "zustand";
 
+import type { PathChanges } from "@/lib/types";
+import { followEach, followPath } from "@/lib/utils";
+import { onCommitted } from "@/stores/jobs-store";
+
 /**
  * Per-conversation document selection for the chat agent. Entries are
  * canonical paths (`~/docs/report.md`, `@team/notes/`): a trailing slash marks
@@ -19,6 +23,12 @@ interface DocumentFilterState {
   toggleExclude: (path: string) => void;
   /** Drop the entry from both lists (badge dismissal). */
   remove: (path: string) => void;
+  /**
+   * Follow what one commit moved and deleted: drop entries at or below a
+   * deleted path, then carry those at or below a moved source over to its
+   * destination, keeping the state when nothing changed.
+   */
+  follow: (changes: PathChanges) => void;
   /** Reset both lists when leaving the current conversation. */
   clear: () => void;
 }
@@ -44,5 +54,22 @@ export const useDocumentFilterStore = create<DocumentFilterState>((set) => ({
     ),
   remove: (path) =>
     set((s) => ({ included: without(s.included, path), excluded: without(s.excluded, path) })),
+  follow: (changes) => {
+    if (changes.moves.length === 0 && changes.deletes.length === 0) return;
+
+    const follow = (path: string) => followPath(path, changes);
+
+    set((s) => {
+      const included = followEach(s.included, follow);
+      const excluded = followEach(s.excluded, follow);
+
+      return included === s.included && excluded === s.excluded ? s : { included, excluded };
+    });
+  },
   clear: () => set({ included: [], excluded: [] }),
 }));
+
+// Every commit of the changeset gateway says what it moved and deleted,
+// whoever made it (this tab, another one, the agent, an MCP client), and an
+// entry left at a stale path would silently stop hiding its document from the agent.
+onCommitted((changes) => useDocumentFilterStore.getState().follow(changes));

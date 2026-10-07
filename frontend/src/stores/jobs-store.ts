@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { cancelJob, subscribeJobs } from "@/lib/api";
-import { TERMINAL_JOB_STATUSES, type JobView } from "@/lib/types";
+import { TERMINAL_JOB_STATUSES, type JobView, type PathChanges } from "@/lib/types";
 
 // Reconnect backoff for the SSE feed: start fast, ramp toward the cap only while
 // reconnects keep failing (a sustained outage); a connection that stays open at
@@ -22,6 +22,7 @@ type JobListener = (job: JobView) => void;
 const settledListeners = new Set<JobListener>();
 const startedListeners = new Set<JobListener>();
 const scopeChangedListeners = new Set<(scope: string) => void>();
+const committedListeners = new Set<(changes: PathChanges) => void>();
 const feedReadyListeners = new Set<() => void>();
 
 /** Build a set's `on…` registrar: subscribe, and return the unsubscribe. */
@@ -44,6 +45,22 @@ export const onFeedReady = register(feedReadyListeners);
  * Returns an unsubscribe function.
  */
 export const onScopeChanged = register(scopeChangedListeners);
+
+/**
+ * Register a callback fired once per workspace commit with what it moved and
+ * deleted, whoever made it: this tab's own request through
+ * {@link publishCommitted}, or any other change through the feed. Paths a
+ * client keeps follow it here. Returns an unsubscribe function.
+ */
+export const onCommitted = register(committedListeners);
+
+/**
+ * Tell every {@link onCommitted} listener what one commit moved and deleted.
+ * The tab that asked publishes its response, since its own feed skips the change.
+ */
+export function publishCommitted(changes: PathChanges): void {
+  committedListeners.forEach((listener) => listener(changes));
+}
 
 /**
  * Register a callback fired once when any job reaches a terminal state. Keeps
@@ -156,6 +173,12 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
             feedReadyListeners.forEach((listener) => listener());
           },
           (scope) => scopeChangedListeners.forEach((listener) => listener(scope)),
+          (commit) => {
+            commit.scopes.forEach((scope) =>
+              scopeChangedListeners.forEach((listener) => listener(scope)),
+            );
+            publishCommitted(commit);
+          },
         );
       } catch {
         // A failed connect counts as a drop; the backoff below handles it.

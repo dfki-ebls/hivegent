@@ -31,6 +31,7 @@ import {
   type FilterEntryState,
 } from "@/components/documents/FilterToggleButtons";
 import { ScopeDialogs, type ScopeDialogsHandle } from "@/components/documents/ScopeDialogs";
+import { type FollowLocal, followSet, useFollowedState } from "@/hooks/use-followed-state";
 import { useFuzzySearch } from "@/hooks/use-fuzzy-search";
 
 const T_OPTIONS = keyPrefix(($) => $.documents.scope);
@@ -39,6 +40,18 @@ const T_OPTIONS = keyPrefix(($) => $.documents.scope);
 interface ScopeDialogState {
   path: string;
   editable: boolean;
+}
+
+/** The open document where a commit moved it, closed once deleted or moved out of the scope. */
+function followDialog(
+  dialog: ScopeDialogState | null,
+  follow: FollowLocal,
+): ScopeDialogState | null {
+  if (!dialog) return dialog;
+
+  const path = follow(dialog.path);
+
+  return path === dialog.path ? dialog : path === null ? null : { ...dialog, path };
 }
 
 interface ScopeSectionProps {
@@ -94,8 +107,16 @@ export function ScopeSection({
 
   const dialogs = useRef<ScopeDialogsHandle>(null);
   const [isOpen, setIsOpen] = useState(defaultOpen);
-  const [dialog, setDialog] = useState<ScopeDialogState | null>(null);
-  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [dialog, setDialog] = useFollowedState<ScopeDialogState | null>(
+    scope,
+    null,
+    followDialog,
+  );
+  const [selectedFiles, setSelectedFiles] = useFollowedState(
+    scope,
+    new Set<string>(),
+    followSet,
+  );
   const filtered = useFuzzySearch(documents, searchQuery, "display_name", "filename");
 
   // Refresh this scope's documents and tree once on mount.
@@ -120,7 +141,7 @@ export function ScopeSection({
 
   const docsByFilename = useMemo(() => new Map(documents.map((d) => [d.filename, d])), [documents]);
 
-  const clearSelection = useCallback(() => setSelectedFiles(new Set()), []);
+  const clearSelection = useCallback(() => setSelectedFiles(new Set()), [setSelectedFiles]);
   const toggleFile = useCallback((path: string) => {
     setSelectedFiles((prev) => {
       const next = new Set(prev);
@@ -128,7 +149,7 @@ export function ScopeSection({
       else next.add(path);
       return next;
     });
-  }, []);
+  }, [setSelectedFiles]);
   const toggleDirFiles = useCallback((paths: string[]) => {
     setSelectedFiles((prev) => {
       const all = paths.every((p) => prev.has(p));
@@ -139,7 +160,7 @@ export function ScopeSection({
       }
       return next;
     });
-  }, []);
+  }, [setSelectedFiles]);
 
   const visibleFilePaths = useMemo(() => {
     if (isSearching) return filtered.map((d) => d.filename);
@@ -159,7 +180,7 @@ export function ScopeSection({
   const toggleSelectAll = useCallback(() => {
     if (allSelected) clearSelection();
     else setSelectedFiles(new Set(visibleFilePaths));
-  }, [allSelected, visibleFilePaths, clearSelection]);
+  }, [allSelected, visibleFilePaths, clearSelection, setSelectedFiles]);
 
   const selectedReconvertable = useMemo(
     () => [...selectedFiles].filter((f) => docsByFilename.get(f)?.has_original === true),

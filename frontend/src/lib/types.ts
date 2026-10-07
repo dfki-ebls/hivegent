@@ -466,13 +466,49 @@ export type JobView = z.infer<typeof JobViewSchema>;
 /** Marks the end of the job feed's initial replay (see backend `FeedReady`). */
 export const FeedReadySchema = z.object({ type: z.literal("ready") });
 
+/**
+ * A moved document file or directory, both paths canonical and without a
+ * trailing slash, and whether it replaces a file the same change deletes.
+ */
+export const PathMoveSchema = z.object({
+  source: z.string(),
+  destination: z.string(),
+  is_dir: z.boolean(),
+  replaces: z.boolean(),
+});
+export type PathMove = z.infer<typeof PathMoveSchema>;
+
+/**
+ * The workspace paths one commit moved and deleted, as the backend resolved
+ * them (see backend `PathChanges`). Sources and deletes name the workspace
+ * before the commit and destinations the one after it, so they apply at once.
+ */
+export const PathChangesSchema = z.object({
+  moves: z.array(PathMoveSchema),
+  deletes: z.array(z.string()),
+});
+export type PathChanges = z.infer<typeof PathChangesSchema>;
+
 /** A scope changed through work that ran inline, so never was a job. */
 export const ScopeChangedSchema = z.object({
   type: z.literal("scope-changed"),
   scope: z.string(),
 });
+
+/** One commit of the changeset gateway: the scopes it changed, and what it moved and deleted. */
+export const ChangesetCommittedSchema = PathChangesSchema.extend({
+  type: z.literal("changeset-committed"),
+  scopes: z.array(z.string()),
+});
+export type ChangesetCommitted = z.infer<typeof ChangesetCommittedSchema>;
+
 /** A job feed event: a job snapshot, the seed-complete marker, or a change. */
-export const FeedEventSchema = z.union([JobViewSchema, FeedReadySchema, ScopeChangedSchema]);
+export const FeedEventSchema = z.union([
+  JobViewSchema,
+  FeedReadySchema,
+  ScopeChangedSchema,
+  ChangesetCommittedSchema,
+]);
 /** Terminal job statuses — no further updates will arrive. */
 export const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
   "succeeded",

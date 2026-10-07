@@ -21,7 +21,8 @@ vi.mock("@/stores/jobs-store", async (importOriginal) => ({
 }));
 
 import { applyChanges, getDirectories } from "@/lib/api";
-import type { DirectoryTreeResponse } from "@/lib/types";
+import type { DirectoryTreeResponse, PathChanges } from "@/lib/types";
+import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { useDocumentsStore } from "@/stores/documents-store";
 
 const treeWith = (filename: string): DirectoryTreeResponse => ({
@@ -42,6 +43,8 @@ const treeWith = (filename: string): DirectoryTreeResponse => ({
   total_files: 1,
   total_directories: 1,
 });
+
+const nothingChanged: PathChanges = { moves: [], deletes: [] };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -102,7 +105,7 @@ describe("useDocumentsStore changes", () => {
     useDocumentsStore.setState({ byScope: {} });
     vi.clearAllMocks();
     vi.mocked(getDirectories).mockResolvedValue(treeWith("a.md"));
-    vi.mocked(applyChanges).mockResolvedValue();
+    vi.mocked(applyChanges).mockResolvedValue(nothingChanged);
   });
 
   it("shows the new directory before the tree refresh lands", async () => {
@@ -152,5 +155,21 @@ describe("useDocumentsStore changes", () => {
     expect(state.error).toBe("Document not found: ~/b.md");
     expect(state.mutatingPaths.size).toBe(0);
     expect(getDirectories).toHaveBeenCalledWith("~");
+  });
+
+  it("publishes the moves the server applied, not the ones it was sent", async () => {
+    useDocumentFilterStore.setState({ excluded: ["~/a.md", "~/b.md"] });
+    vi.mocked(applyChanges).mockResolvedValueOnce({
+      moves: [
+        { source: "~/a.md", destination: "~/archive/a.md", is_dir: false, replaces: false },
+        { source: "~/a.pdf", destination: "~/archive/a.pdf", is_dir: false, replaces: false },
+      ],
+      deletes: [],
+    });
+
+    // `archive` is an existing folder, which the server resolves to a move into it.
+    await useDocumentsStore.getState().move("~", "~", [{ source: "a.md", destination: "archive" }]);
+
+    expect(useDocumentFilterStore.getState().excluded).toEqual(["~/archive/a.md", "~/b.md"]);
   });
 });

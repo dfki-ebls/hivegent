@@ -26,6 +26,7 @@ import {
   AssetListResponseSchema,
   type BackendSettings,
   BackendSettingsSchema,
+  type ChangesetCommitted,
   type ChunkedDocumentResponse,
   ChunkedDocumentResponseSchema,
   type ChunkingPipeline,
@@ -48,6 +49,8 @@ import {
   type JobView,
   JobViewSchema,
   type LlmConfig,
+  type PathChanges,
+  PathChangesSchema,
   type PipelineConfigInfo,
   PipelineConfigInfoSchema,
   type TmpClearedResponse,
@@ -956,6 +959,7 @@ export async function subscribeJobs(
   onJob: (job: JobView) => void,
   onReady: () => void,
   onScopeChanged: (scope: string) => void,
+  onCommitted: (event: ChangesetCommitted) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   const res = await checkedResponse(`${API_BASE_URL}/api/jobs/events`, "jobFeed", {
@@ -968,7 +972,8 @@ export async function subscribeJobs(
   await readSseEvents(res, FeedEventSchema, (event) => {
     if (!("type" in event)) onJob(event);
     else if (event.type === "ready") onReady();
-    else onScopeChanged(event.scope);
+    else if (event.type === "scope-changed") onScopeChanged(event.scope);
+    else onCommitted(event);
     return undefined;
   });
 }
@@ -1015,11 +1020,14 @@ export type ChangeOperation =
 /**
  * Move, delete, and create documents and directories as one changeset. All of
  * them land or none does, and a refusal rejects with the message naming its path.
+ * Resolves with what moved and went as the backend resolved it, which can
+ * differ from what was sent (a move into an existing folder, an entry's original).
  */
-export async function applyChanges(operations: ChangeOperation[]): Promise<void> {
-  return requestVoid(
+export async function applyChanges(operations: ChangeOperation[]): Promise<PathChanges> {
+  return requestJson(
     `${API_BASE_URL}/api/changes`,
     "applyChanges",
+    PathChangesSchema,
     jsonRequest("POST", { operations }),
   );
 }

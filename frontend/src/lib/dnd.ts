@@ -9,7 +9,7 @@ import { combine } from "@atlaskit/pragmatic-drag-and-drop/utils/combine";
 import { containsFiles } from "@atlaskit/pragmatic-drag-and-drop/utils/contains-files";
 import { getFiles } from "@atlaskit/pragmatic-drag-and-drop/utils/get-files";
 
-import { parentDir } from "@/lib/utils";
+import { below, parentDir } from "@/lib/utils";
 
 /**
  * Native drag-and-drop for the document tree. One model covers both gestures a
@@ -67,7 +67,7 @@ export function isValidMove(drag: TreeItemDrag, destScope: string, destDir: stri
 
   if (drag.kind === "directory") {
     const src = drag.paths[0];
-    if (destDir === src || destDir.startsWith(`${src}/`)) return false;
+    if (below(destDir, src) !== null) return false;
     return parentDir(src) !== destPrefix;
   }
 

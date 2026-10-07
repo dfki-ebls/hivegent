@@ -25,6 +25,7 @@ import {
   onFeedReady,
   onJobSettled,
   onScopeChanged,
+  publishCommitted,
   useJobsStore,
 } from "@/stores/jobs-store";
 
@@ -149,7 +150,10 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
   };
 
   // Apply workspace changes as one request, refreshing every scope they name.
-  // `onApplied` runs once the request succeeded, before that refresh.
+  // Once the request succeeded, and before that refresh, what the backend says
+  // moved and went is published for every path this tab keeps to follow, since
+  // its own feed skips the change and what was sent is not what applied, and
+  // `onApplied` runs.
   const change = (
     scope: string,
     paths: readonly string[],
@@ -160,7 +164,7 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
       scope,
       paths,
       async () => {
-        await applyChanges(operations);
+        publishCommitted(await applyChanges(operations));
         onApplied?.();
       },
       operations
