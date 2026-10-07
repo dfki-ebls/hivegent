@@ -1,33 +1,30 @@
 """Shared helpers for the agents package."""
 
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Annotated
+from typing import Annotated, override
 
 from pydantic import Field
 from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models import Model
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
+from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models import Model, ModelRequestContext
 
-from ..concurrency import bounded
 from ..config import settings
 from ..l10n import DEFAULT_LANGUAGE, Language
 from ..llm_config import LlmConfig
 from ..prompts import format_document_scope
 from ..store import Casebase, build_search_paths
 from ..tmp import tmp_search_path
-from ..tools.base import (
-    CallBudget,
-    SearchPath,
-    query_hint,
-    resolve_accessible_file,
-)
+from ..tools.base import SearchPath, query_hint, resolve_accessible_file
 from ..types import AUTO_APPROVED_MODES, MUTATING_MODES, DocumentFilter, Mode
 from .subagent_events import SubagentUpdate
 
 __all__ = [
-    "CompletionGate",
+    "CompletionRefused",
+    "Completions",
     "ExploreTaskArg",
     "MemoryContentArg",
     "RunPrefix",
@@ -44,12 +41,76 @@ MemoryContentArg = Annotated[
     Field(description="Full markdown content to persist as memory."),
 ]
 
-type CompletionGate = Callable[[Callable[[], Awaitable[str]]], Awaitable[str]]
-"""Run one completion once a slot is free, and return its text."""
+_PARENT_RESERVE = 1
+"""Requests a turn's completions leave for the parent, which owes the model the program's result."""
 
 
-async def _complete(completion: Callable[[], Awaitable[str]]) -> str:
-    return await completion()
+class CompletionRefused(Exception):
+    """A completion the turn cannot afford, which its caller may catch and finish without."""
+
+
+@dataclass(slots=True)
+class Completions(AbstractCapability[None]):
+    """A turn's ``complete`` calls, shared by its programs and subagents.
+
+    :meth:`slot` counts a call against ``max_calls`` before its first await,
+    so ``asyncio.gather`` cannot pass it, and then waits at the ``gate`` on the
+    calls in flight.  As a capability of each call's run, it also holds a
+    request slot through every model request, retries included: pydantic-ai
+    checks the request limit before a request and counts it after, so
+    concurrent calls on the turn's usage would each pass the check.  Subagents
+    are no such calls, so a subagent that meets the limit still ends the turn.
+    """
+
+    max_calls: int = field(default_factory=lambda: settings.sandbox.completion_max_calls)
+    gate: asyncio.Semaphore = field(
+        default_factory=lambda: asyncio.Semaphore(settings.sandbox.completion_concurrency)
+    )
+    calls: int = 0
+    pending: int = 0
+
+    @asynccontextmanager
+    async def slot(self) -> AsyncGenerator[None]:
+        """Count one call and hold a slot in flight for it.
+
+        Raises:
+            CompletionRefused: When the turn has used every call.
+        """
+        if self.calls >= self.max_calls:
+            raise CompletionRefused(
+                f"complete may be called {self.max_calls} times per turn and "
+                "this turn has used them all. Finish without it."
+            )
+
+        self.calls += 1
+
+        async with self.gate:
+            yield
+
+    @override
+    async def wrap_model_request(
+        self,
+        ctx: RunContext[None],
+        *,
+        request_context: ModelRequestContext,
+        handler: WrapModelRequestHandler,
+    ) -> ModelResponse:
+        """Hold a request slot through one request, refusing one the parent's reserve needs."""
+        limit = ctx.usage_limits.request_limit if ctx.usage_limits else None
+
+        if limit is not None and ctx.usage.requests + self.pending + 1 + _PARENT_RESERVE > limit:
+            raise CompletionRefused(
+                "No request is left for another completion once the parent keeps "
+                "one for its response. Finish with the results already obtained."
+            )
+
+        self.pending += 1
+
+        # Released right before pydantic-ai counts the request, with no await between.
+        try:
+            return await handler(request_context)
+        finally:
+            self.pending -= 1
 
 
 @dataclass(slots=True, frozen=True)
@@ -87,17 +148,9 @@ class UserDeps:
     # makes, so a client's own model and provider carry over as they do for
     # titles and captions.  None where no request supplied one.
     aux_llm: LlmConfig | None = None
-    # What is left of the turn's `complete` calls, and the gate on how many are
-    # in flight, shared with its subagents, which `replace` the deps and keep
-    # these objects.
-    completions: CallBudget = field(
-        default_factory=lambda: CallBudget(settings.sandbox.completion_max_calls)
-    )
-    completion_gate: CompletionGate = field(
-        default_factory=lambda: bounded(
-            _complete, settings.sandbox.completion_concurrency
-        )
-    )
+    # The turn's `complete` calls, shared with its subagents, which `replace`
+    # the deps and keep this object.
+    completions: Completions = field(default_factory=Completions)
     # Sink for live subagent transcript snapshots; set only on the chat path,
     # where the streaming response drains it (None elsewhere disables it).
     subagent_sink: asyncio.Queue[SubagentUpdate] | None = None

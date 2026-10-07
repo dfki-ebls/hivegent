@@ -15,8 +15,8 @@ const finished: ToolPart = {
   output: "",
 };
 
-function renderResult(changeset: unknown) {
-  const result = { result: null, stdout: "", truncated: false, script_path: null, changeset };
+function renderResult(changeset: unknown, calls: unknown[] = []) {
+  const result = { result: null, stdout: "", script_path: null, changeset, calls };
   render(<RunPythonTool part={finished} metadata={result} />);
   fireEvent.click(screen.getByText(/Run Python/));
 }
@@ -67,6 +67,17 @@ describe("RunPythonTool", () => {
 
     expect(screen.getByText(/Applied 2 changes/)).toBeTruthy();
     expect(screen.getByText(/Deleted \/tmp\/b\.md/)).toBeTruthy();
+  });
+
+  it("lists the host functions a program called", () => {
+    renderResult(null, [
+      { function: "search", arguments: "query='a'", result: "[]", error: null },
+      { function: "complete", arguments: "prompt='b'", result: null, error: "RuntimeError: x" },
+    ]);
+
+    fireEvent.click(screen.getByText("2 function calls"));
+
+    expect(screen.getByText(/search\(query='a'\) → \[\]\s+complete\(prompt='b'\) → failed: RuntimeError: x/)).toBeTruthy();
   });
 
   it.each([false, true])(

@@ -2,7 +2,7 @@
 
 import asyncio
 import reprlib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Annotated, override
@@ -24,6 +24,7 @@ from pydantic_monty import (
 from ..humanize import pluralize
 from .base import (
     AsyncPathTool,
+    CallBudget,
     SearchPath,
     ToolOutput,
     ToolRetry,
@@ -33,8 +34,8 @@ from .base import (
     sidecar_hint,
 )
 from .changeset import ChangesetOutcome, CommitChanges, PendingChanges, stage_changes
-from .formatting import cap_lines, hint_suffix, truncate_line, truncate_middle
-from .monty import MontySurface
+from .formatting import truncate_middle
+from .monty import HostCall, HostCalls, MontySurface
 from .workspace_os import MOUNT_STUB, WORKSPACE_MOUNT, ChangesetLimits, WorkspaceOS
 
 __all__ = [
@@ -81,9 +82,9 @@ _VALUE_REPR = reprlib.Repr(
 
 The sandbox converts the trailing expression into a real Python object, so a
 program that ends in a large collection would spend megabytes and hundreds of
-milliseconds building a string the output budget then clips away.  The
-caps sit well above that budget, so what a clip would have kept is unaffected
-and only the runaway case is cut, before the string is built rather than after.
+milliseconds building a string far past what a tool return shows.  The caps sit
+well above that, so an ordinary value is rendered whole and only the runaway
+case is cut, before the string is built rather than after.
 """
 
 CodeArg = Annotated[
@@ -157,35 +158,45 @@ def _default_limits() -> ResourceLimits:
     }
 
 
-def _budget_lines(text: str, max_chars: int) -> tuple[str, int, bool]:
-    """Cap text by line and total size, returning its truncation state."""
-    clipped = False
-    lines: list[str] = []
-    for line in text.splitlines():
-        rendered = truncate_line(line, max_chars)
-        clipped = clipped or rendered != line
-        lines.append(rendered)
-
-    rendered, dropped = cap_lines(lines, max_chars)
-
-    return rendered, dropped, clipped
+_MAX_LISTED_CALLS = 20
+"""How many finished host calls a failure lists, each already bounded."""
 
 
-def _dropped_hint(dropped: int) -> str:
-    """The note that admits how many printed lines the budget left out."""
-    return hint_suffix(
-        [f"{dropped} more printed {pluralize(dropped, 'line')}"] if dropped else []
+def _finished_calls(calls: Sequence[HostCall]) -> str:
+    """List the host calls that finished before a failure, or nothing when none did.
+
+    >>> print(_finished_calls([HostCall("search", "query='x'", result="[]")]))
+    1 host call finished before the failure, and a rerun pays for it again:
+    - search(query='x') -> []
+    """
+    if not calls:
+        return ""
+
+    count = len(calls)
+    lines = [f"- {call.render()}" for call in calls[:_MAX_LISTED_CALLS]]
+
+    if count > _MAX_LISTED_CALLS:
+        lines.append(f"- and {count - _MAX_LISTED_CALLS} more")
+
+    header = (
+        f"{count} host {pluralize(count, 'call')} finished before the failure, "
+        f"and a rerun pays for {pluralize(count, 'it', 'each')} again:"
     )
 
+    return "\n".join([header, *lines])
 
-def _diagnostic(exc: MontyError, printed: str, max_chars: int) -> str:
+
+def _diagnostic(
+    exc: MontyError, printed: str, calls: Sequence[HostCall], max_chars: int
+) -> str:
     """Render a sandbox failure as text the model can repair its program from.
 
     A traceback is the whole correction for a program the model wrote itself,
     so the three error classes that carry one render it in full. Output printed
     before the failure leads, since a program that reports its own progress
     says more about where it went wrong than the frame the interpreter stopped
-    in.
+    in.  The host calls that finished follow, so a rerun reuses what they
+    returned rather than calling them again.
 
     A typing error is the cheapest of the three, since it arrives before the
     program ran at all: nothing was read, nothing was staged, and the
@@ -196,11 +207,14 @@ def _diagnostic(exc: MontyError, printed: str, max_chars: int) -> str:
         if isinstance(exc, MontySyntaxError | MontyRuntimeError | MontyTypingError)
         else str(exc)
     )
-    diagnostic = detail
-    if printed := printed.rstrip("\n"):
-        diagnostic = f"Printed before the failure:\n{printed}\n\n{detail}"
+    printed = printed.rstrip("\n")
+    parts = (
+        printed and f"Printed before the failure:\n{printed}",
+        _finished_calls(calls),
+        detail,
+    )
 
-    return truncate_middle(diagnostic, max_chars)
+    return truncate_middle("\n\n".join(filter(None, parts)), max_chars)
 
 
 @dataclass(slots=True, frozen=True)
@@ -211,14 +225,14 @@ class PythonResult:
     """The trailing expression's value, or ``None`` when there was none."""
 
     stdout: str = ""
-    truncated: bool = False
-    """Whether printed output was cut to fit the budget."""
-
     script_path: str | None = None
     """Canonical workspace path when the program came from a stored script."""
 
     changeset: ChangesetOutcome | None = None
     """What the program changed in a gated root, applied or awaiting ``apply_changes``."""
+
+    calls: tuple[HostCall, ...] = ()
+    """The host calls that finished, in the order they did, which the card lists."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -275,8 +289,13 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
     surface declares the mount's ``open`` too.
     """
 
+    max_host_calls: int = field(default=100, kw_only=True)
+    """How many calls one program may make to the functions of :attr:`surface`."""
+
     limits: ResourceLimits = field(default_factory=_default_limits)
-    max_output_chars: int = 20_000
+    max_diagnostic_chars: int = 20_000
+    """Cap on a failure's diagnostic, a retry the output bound never sees."""
+
     max_document_chars: int = 5_000_000
     """Cap on any one document this run reads or writes.
 
@@ -321,8 +340,8 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         program, so `res = await query_table(file_paths=[...], queries=[...])` reads a
         spreadsheet the interpreter cannot decode and hands the program every
         row of the result. Reach for one directly rather than staging its
-        output through a file: a tool called here needs no `output_path`, no
-        read back, and no guessing at the shape of what was written.
+        output through a file: a tool called here needs no read back and no
+        guessing at the shape of what was written.
 
         End the program with the expression whose value you want back, and
         print anything else worth seeing.
@@ -337,6 +356,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         source, canonical_script = await asyncio.to_thread(self._prepare, code, script_path)
         filesystem = self._filesystem()
         printed = CollectString()
+        calls = HostCalls(CallBudget(self.max_host_calls))
 
         async with self.pool.checkout(
             script_name=canonical_script or "script.py",
@@ -351,7 +371,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
                     print_callback=printed,
                     cwd=str(WORKSPACE_MOUNT),
                     os=filesystem,
-                    external_lookup=dict(self.surface.external_lookup),
+                    external_lookup=calls.bind(self.surface),
                 )
 
             # The pool itself is gone, which no rewrite of the program fixes.
@@ -359,9 +379,15 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
                 raise
 
             except MontyError as exc:
+                calls.raise_ending()
+
                 raise ToolRetry(
-                    _diagnostic(exc, printed.output, self.max_output_chars)
+                    _diagnostic(
+                        exc, printed.output, calls.finished, self.max_diagnostic_chars
+                    )
                 ) from exc
+
+        calls.raise_ending()
 
         # Only once the program succeeded, so one that fails changes nothing.
         changes = await asyncio.to_thread(stage_changes, filesystem)
@@ -372,7 +398,11 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         changeset = None if changes is None or self.commit is None else await self.commit(changes)
 
         return self._output(
-            value, printed.output, script_path=canonical_script, changeset=changeset
+            value,
+            printed.output,
+            script_path=canonical_script,
+            changeset=changeset,
+            calls=tuple(calls.finished),
         )
 
     def _prepare(self, code: str | None, script_path: str | None) -> tuple[str, str | None]:
@@ -434,37 +464,33 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         *,
         script_path: str | None,
         changeset: ChangesetOutcome | None,
+        calls: tuple[HostCall, ...],
     ) -> ToolOutput[PythonResult]:
-        """Budget what the program produced and render it for the model.
+        """Render what the program produced for the model, whole.
 
-        The value is what the call was for, so it keeps the whole output budget
-        to itself and printed output is bounded separately.
+        The text is bounded where every tool return is, so the data keeps all
+        of it and a saved copy of the text is the whole of it too.
         """
-        stdout, dropped, clipped = _budget_lines(printed, self.max_output_chars)
-        result = (
-            None
-            if value is None
-            else truncate_line(_VALUE_REPR.repr(value), self.max_output_chars)
-        )
-
-        parts = [stdout] if stdout else []
-        if result is not None:
-            parts.append(f"Result: {result}")
-
-        body = "\n".join(parts) or "The program printed nothing and returned no value."
+        stdout = printed.rstrip("\n")
+        result = None if value is None else _VALUE_REPR.repr(value)
+        body = "\n".join(filter(None, (stdout, result and f"Result: {result}")))
 
         return ToolOutput(
             data=PythonResult(
                 result=result,
                 stdout=stdout,
-                truncated=clipped or bool(dropped),
                 script_path=script_path,
                 changeset=changeset,
+                calls=calls,
             ),
             formatted="\n\n".join(
-                part
-                for part in (body + _dropped_hint(dropped), _changes_report(changeset))
-                if part
+                filter(
+                    None,
+                    (
+                        body or "The program printed nothing and returned no value.",
+                        _changes_report(changeset),
+                    ),
+                )
             ),
         )
 

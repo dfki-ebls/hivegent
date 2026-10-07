@@ -65,10 +65,11 @@ from .common import UserDeps, scope_instructions
 from .guards import IterationLimitWarner
 from .tools import (
     INJECTABLE_TOOL_NAMES,
-    python_toolset,
+    SANDBOX_FUNCTION_NAMES,
     conversation_toolset,
     explore_toolset,
     memory_toolset,
+    python_toolset,
     sandbox_instructions,
     subagent_toolset,
     web_toolset,
@@ -349,11 +350,15 @@ def check_tool_settings() -> None:
     itself registered needs no check: it is filtered from the lists that
     register these tools rather than kept beside them.
 
+    ``disabled`` may also name a function only a program is handed, such as
+    ``complete``, which withholds it like any tool.
+
     Raises:
         ValueError: If a name is not a built-in tool, or is not one the
             sandbox can be given.
     """
     known = {name for feature in FEATURES for name in feature.tool_names}
+    known |= SANDBOX_FUNCTION_NAMES
 
     if unknown := sorted(set(settings.tools.disabled) - known):
         raise ValueError(
@@ -363,7 +368,7 @@ def check_tool_settings() -> None:
 
     if stranded := sorted(set(settings.tools.sandbox_only) - INJECTABLE_TOOL_NAMES):
         raise ValueError(
-            f"tools.sandbox_only names a tool run_python cannot be given: "
+            f"tools.sandbox_only names no tool the model and run_python share: "
             f"{', '.join(stranded)}. Available: "
             f"{', '.join(sorted(INJECTABLE_TOOL_NAMES))}"
         )

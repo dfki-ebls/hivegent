@@ -628,9 +628,13 @@ One function is handed to programs alone: `complete(*, prompt: str) -> str`, one
 It is `tools/complete.py`'s `CompleteTool`, declared and type-checked like the others, injectable and not registered, so `sandbox_only` cannot name it while `disabled` withholds it like any tool.
 The tool is handed only the completion, so `tools/` stays free of models and runs, and `agents/tools/python.py` supplies it, which is why `run_python` is registered with `takes_ctx=True`, pydantic-ai's own name for a factory that gets the `RunContext`, not only the deps.
 The program never picks the model: it is the aux tier the request resolves (`UserDeps.aux_llm`), the operator's model for many small one-shot calls, falling back to the main one, with thinking off and `settings.sandbox.completion_max_tokens` as each call's output cap, built on a program's first call and reused by the rest.
-Each call runs `llm.complete` on the run's `usage` and `conversation_id`, under its `usage_limits` less the one request the run still owes the model for the program's result, so the calls count toward the turn and against its request limit.
-Usage limits alone overshoot under `asyncio.gather`, since their check and their increment sit on either side of the request, so `settings.sandbox.completion_max_calls` is an exact `CallBudget` per turn, held on the deps so every program and subagent of the turn shares it, which the surface declares for `complete` and `HostCalls` takes with no await between.
-`completion_concurrency` bounds the turn's calls in flight through `UserDeps.completion_gate`, shared the same way, and `completion_timeout_seconds` each call, since Monty's own clock leaves host time out.
+Each call runs `llm.complete` on the run's `usage` and `conversation_id`, under its `usage_limits`, so the calls count toward the turn and against its request limit.
+`UserDeps.completions` (`agents.common.Completions`) is the turn's one object for them, held on the deps so every program and subagent of the turn shares it.
+Its `slot` counts a call against `settings.sandbox.completion_max_calls` before the call's first await, so an `asyncio.gather` cannot pass it, and then waits for one of the `completion_concurrency` calls in flight.
+It is also the capability of each call's run, whose `wrap_model_request` holds a request slot through every request, retries included, since pydantic-ai checks the request limit before a request and counts it after, and refuses a request that would leave the parent none for the response carrying the program's result.
+Both refusals reach the program as a `ValueError` it may catch, while a spent turn budget still ends the turn.
+A subagent's own requests hold no slot, so a subagent that meets the request limit ends the turn as before, where a program's completion is only refused.
+`completion_timeout_seconds` bounds each call, since Monty's own clock leaves host time out.
 
 A program is handed the structured `data` channel as the adapter for the tool's declared result type renders it: the same type the rendered stub names and `return_schema` publishes, so what a program receives and what it was told to expect are one description read twice.
 So a program sees plain dicts and lists, reads a field as `hit['filename']`, and gets the whole result: the budgets, truncation, and hints on the `text` channel exist to fit a context window a program does not have, and a program that wants fewer rows says so in its query.
@@ -685,7 +689,7 @@ The worker pool is owned by the FastAPI lifespan (`sandbox.py`), like the HTTP c
 Every call takes a fresh session out of it, so no program sees another's variables and a session a time limit stopped mid-operation, whose heap Monty no longer vouches for, is never fed again.
 
 `HostCalls` applies one policy at the boundary to every function a program is handed.
-`settings.sandbox.max_host_calls` (100) caps the calls one program makes, `complete` included, through a `CallBudget` taken before the call's first await, so an `asyncio.gather` cannot pass it, and a function the surface gives a budget per turn takes from that one too.
+`settings.sandbox.max_host_calls` (100) caps the calls one program makes, `complete` included, through a `CallBudget` taken before the call's first await, so an `asyncio.gather` cannot pass it.
 A spent budget raises a `RuntimeError` inside the program, a `ToolRetry` or an invalid argument a `ValueError` it may correct, and any other failure a `RuntimeError` named by type alone, since a host error may carry host details.
 `UsageLimitExceeded` (`tools.monty.TURN_ENDING_ERRORS`) is not a program failure, since the turn's shared budget is spent for every run in it: `HostCalls` keeps it and refuses every later call, and `run_python` raises it once the program stopped, however the program handled it, so the turn ends instead of reporting a retry.
 Every call that returned or raised is kept as a `HostCall`, a bounded preview of its arguments and its result or error, in `PythonResult.calls`, which the `run_python` card lists.

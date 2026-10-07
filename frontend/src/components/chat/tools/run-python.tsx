@@ -1,4 +1,4 @@
-import { FileCodeIcon } from "lucide-react";
+import { ChevronRightIcon, FileCodeIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
@@ -17,6 +17,7 @@ import {
 import { ToolCard } from "@/components/chat/tools/ToolCard";
 import { ToolOutputResult, ToolPre, ToolResult, ToolSection } from "@/components/ToolDisplay";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -50,13 +51,22 @@ const ChangesetOutcomeSchema = z.discriminatedUnion("status", [
 ]);
 type ChangesetOutcome = z.infer<typeof ChangesetOutcomeSchema>;
 
+/** Mirrors `HostCall` in `backend/src/hivegent/tools/monty.py`. */
+const HostCallSchema = z.object({
+  function: z.string(),
+  arguments: z.string(),
+  result: z.string().nullable(),
+  error: z.string().nullable(),
+});
+type HostCall = z.infer<typeof HostCallSchema>;
+
 /** Mirrors `PythonResult` in `backend/src/hivegent/tools/python.py`. */
 const PythonResultSchema = z.object({
   result: z.string().nullable(),
   stdout: z.string(),
-  truncated: z.boolean(),
   script_path: z.string().nullable(),
   changeset: ChangesetOutcomeSchema.nullable(),
+  calls: z.array(HostCallSchema),
 });
 type PythonResult = z.infer<typeof PythonResultSchema>;
 
@@ -173,13 +183,37 @@ function Changes({ changeset }: { changeset: ChangesetOutcome }) {
   );
 }
 
+function HostCalls({ calls }: { calls: HostCall[] }) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
+  const lines = calls.map(
+    (call) =>
+      `${call.function}(${call.arguments}) → ${
+        call.error === null ? call.result : t(($) => $.callFailed, { error: call.error })
+      }`,
+  );
+
+  return (
+    <Collapsible>
+      <CollapsibleTrigger className="group flex items-center gap-1 text-muted-foreground">
+        <ChevronRightIcon
+          aria-hidden
+          className="size-3.5 transition-transform group-data-[state=open]:rotate-90"
+        />
+        {t(($) => $.hostCalls, { count: calls.length })}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <ToolPre boxed className="mt-1">{lines.join("\n")}</ToolPre>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function Output({ result }: { result: PythonResult }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
 
   return (
     <ToolResult>
       {result.stdout && <ToolPre boxed>{result.stdout}</ToolPre>}
-      {result.truncated && <p className="text-xs text-muted-foreground">{t(($) => $.truncated)}</p>}
       {result.result !== null && (
         <div>
           <span className="text-muted-foreground">{t(($) => $.returned)}</span>
@@ -190,6 +224,7 @@ function Output({ result }: { result: PythonResult }) {
         <p className="text-muted-foreground">{t(($) => $.noOutput)}</p>
       )}
       {result.changeset && <Changes changeset={result.changeset} />}
+      {result.calls.length > 0 && <HostCalls calls={result.calls} />}
     </ToolResult>
   );
 }

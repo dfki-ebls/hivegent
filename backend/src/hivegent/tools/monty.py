@@ -13,10 +13,10 @@ What crosses the boundary is the structured ``data`` channel, as the plain
 objects the tool's declared result type serialises to.  That declared type is
 also what the rendered stub names and what ``return_schema`` publishes, so what
 a program receives and what it was told to expect are one description read
-twice.  The model-facing ``text`` channel
-stays behind, as its budgets, truncation, and hints exist to fit a context
-window a program does not have, and a program that wanted fewer rows can say so
-in the query.
+twice, and it stops at objects rather than going on to bytes a program would
+only parse back.  The model-facing ``text`` channel stays behind, as its
+budgets, truncation, and hints exist to fit a context window a program does not
+have, and a program that wanted fewer rows can say so in the query.
 
 The declarations are rendered by pydantic-ai's own
 :class:`~pydantic_ai.function_signature.FunctionSignature`, which is what
@@ -40,23 +40,47 @@ deps.
 A schema describes the serialised shape and not the Python type it started as:
 ``json_schema(mode="serialization")`` is what makes a ``tuple`` field a list and
 a model a plain dict, which is what actually arrives inside the program.
+
+Every program gets the functions bound to a fresh :class:`HostCalls`, which
+applies one policy at the boundary to every one of them: the budget, the
+errors a program may meet, and a short preview of each call once it returned
+or raised.  The ``run_python`` card shows those previews, and a failed run
+lists them so the next attempt can build on them instead of paying for the
+same calls.
 """
 
 import inspect
+import reprlib
 import types
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
-from functools import cache
+from dataclasses import dataclass, field
+from functools import cache, wraps
 from typing import Any
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.tools import ToolDefinition
 
 from ..converters.base import fenced_code_block
-from .base import AsyncTool, AsyncToolFactory, ToolSpec, translate_tool_retry
+from .base import AsyncTool, AsyncToolFactory, CallBudget, ToolRetry, ToolSpec
+from .formatting import render_arguments, truncate_line
 
-__all__ = ["MontySurface", "monty_declarations", "monty_surface"]
+__all__ = [
+    "TURN_ENDING_ERRORS",
+    "HostCall",
+    "HostCalls",
+    "MontySurface",
+    "monty_declarations",
+    "monty_surface",
+]
+
+TURN_ENDING_ERRORS: tuple[type[Exception], ...] = (UsageLimitExceeded,)
+"""What a host function may raise that ends the turn rather than the program.
+
+The turn's shared usage limit is spent for every run in it, so no rewrite of
+the program could get past it.
+"""
 
 type _HostFunction = Callable[..., Awaitable[JsonValue]]
 """What one injected tool becomes, whose payload the rendered stub declares."""
@@ -71,11 +95,68 @@ _STUB_BODY = "raise NotImplementedError()"
 """What it is in the stubs the checker reads, as the harness spells it."""
 
 
+_PREVIEW = reprlib.Repr(
+    maxlevel=2,
+    maxtuple=5,
+    maxlist=5,
+    maxarray=5,
+    maxdict=5,
+    maxset=5,
+    maxfrozenset=5,
+    maxdeque=5,
+    maxstring=120,
+    maxlong=40,
+    maxother=120,
+)
+"""Shows the first few items of each container, two levels deep.
+
+``reprlib`` stops at these limits while it builds the string, so a result
+holding every row of a spreadsheet is never rendered in full just to be clipped.
+"""
+
+_PREVIEW_CHARS = 200
+"""What one argument list, result, or error of a :class:`HostCall` keeps."""
+
+
+def _preview(value: object) -> str:
+    """Render *value* within :data:`_PREVIEW_CHARS`.
+
+    >>> _preview([{"a": 1}] * 9)
+    "[{'a': 1}, {'a': 1}, {'a': 1}, {'a': 1}, {'a': 1}, ...]"
+    """
+    return truncate_line(_PREVIEW.repr(value), _PREVIEW_CHARS)
+
+
+@dataclass(slots=True, frozen=True)
+class HostCall:
+    """One call a program made to a host function, bounded to a preview."""
+
+    function: str
+    arguments: str
+    """The keyword arguments, as the program spelled them."""
+
+    result: str | None = None
+    error: str | None = None
+    """The exception the program met instead of a result."""
+
+    def render(self) -> str:
+        """The call as one line of a report.
+
+        >>> HostCall("search", "query='x'", result="[]").render()
+        "search(query='x') -> []"
+        """
+        outcome = f"error {self.error}" if self.error is not None else self.result
+
+        return f"{self.function}({self.arguments}) -> {outcome}"
+
+
 @dataclass(slots=True, frozen=True)
 class MontySurface:
     """The host functions a program may call, and the stub declaring them."""
 
-    external_lookup: Mapping[str, _HostFunction] = types.MappingProxyType({})
+    functions: Mapping[str, _HostFunction] = types.MappingProxyType({})
+    """Each function by name, unguarded until :meth:`HostCalls.bind` binds it."""
+
     declarations: str = ""
     """What the model is shown: the injected tools and the records they return.
 
@@ -87,13 +168,95 @@ class MontySurface:
     """What the type checker is given, which the mount's own stub joins.
 
     It differs from :attr:`declarations` by what the checker needs and the model
-    does not — the ``typing`` imports — and by the body of each declaration,
+    does not (the ``typing`` imports), and by the body of each declaration,
     which neither of them reads.
     """
 
     def __bool__(self) -> bool:
         """Whether anything was injected; a dataclass is otherwise always truthy."""
         return bool(self.declarations)
+
+
+def _program_error(name: str, exc: Exception) -> Exception:
+    """What a program meets for a failed call: a correction, or the bare type.
+
+    >>> _program_error("complete", ToolRetry("give me a query"))
+    ValueError('give me a query')
+    >>> _program_error("complete", OSError("/srv/secret"))
+    RuntimeError('complete raised OSError')
+    """
+    if isinstance(exc, ToolRetry | ValidationError):
+        return ValueError(str(exc))
+
+    return RuntimeError(f"{name} raised {type(exc).__name__}")
+
+
+@dataclass(slots=True)
+class HostCalls:
+    """What one program asks of the host: its budget, its errors, and a record.
+
+    One policy for every function :meth:`bind` hands a program.  A call is
+    counted against the program's :attr:`budget` before its first await, so
+    fanning out with ``asyncio.gather`` cannot exceed it.  A
+    :class:`~hivegent.tools.base.ToolRetry` or an invalid argument reaches the
+    program as a ``ValueError`` it may correct, and any other failure as a
+    ``RuntimeError`` naming its type alone, since a host error may carry host
+    details.  An exception of :data:`TURN_ENDING_ERRORS` is not the program's
+    failure: the first one is kept in :attr:`ending` for the host to raise once
+    the program stopped, and every later call is refused, since the turn it
+    would spend on is over.
+    """
+
+    budget: CallBudget
+    finished: list[HostCall] = field(default_factory=list)
+    ending: Exception | None = None
+
+    def bind(self, surface: MontySurface) -> dict[str, _HostFunction]:
+        """The functions of *surface* for one program, each held to this policy."""
+        return {
+            name: self._guarded(name, function)
+            for name, function in surface.functions.items()
+        }
+
+    def raise_ending(self) -> None:
+        """Raise the turn-ending exception a call met, whatever the program made of it."""
+        if self.ending is not None:
+            raise self.ending
+
+    def _guarded(self, name: str, function: _HostFunction) -> _HostFunction:
+        """Wrap *function* to be counted before it runs and recorded once it finished."""
+
+        @wraps(function)
+        async def call(**kwargs: Any) -> JsonValue:
+            if self.ending is not None:
+                raise RuntimeError("The turn has ended, so no further host call runs.")
+
+            self.budget.take(
+                f"This program reached its limit of {self.budget.limit} host "
+                "function calls. Batch what one call can take, such as several "
+                "queries in one query_table, or move the rest into a second program."
+            )
+
+            arguments = render_arguments(kwargs, _PREVIEW_CHARS)
+
+            try:
+                result = await function(**kwargs)
+
+            except TURN_ENDING_ERRORS as exc:
+                self.ending = self.ending or exc
+                raise
+
+            except Exception as exc:
+                error = _program_error(name, exc)
+                preview = truncate_line(f"{type(error).__name__}: {error}", _PREVIEW_CHARS)
+                self.finished.append(HostCall(name, arguments, error=preview))
+                raise error from exc
+
+            self.finished.append(HostCall(name, arguments, result=_preview(result)))
+
+            return result
+
+        return call
 
 
 def _definition(factory: AsyncToolFactory[Any]) -> ToolDefinition:
@@ -147,7 +310,18 @@ def _rendered(factories: tuple[AsyncToolFactory[Any], ...]) -> tuple[str, str]:
     return catalog, "\n\n".join([_STUB_HEADER, *declared, *rendered(_STUB_BODY)])
 
 
-def _host_function(spec: ToolSpec, tool: AsyncTool[Any]) -> _HostFunction:
+@cache
+def _keyword_only(factory: AsyncToolFactory[Any]) -> inspect.Signature:
+    """The signature every host function built from *factory* is stamped with."""
+    params = ToolSpec.from_factory(factory).params
+
+    return inspect.Signature(
+        [param.replace(kind=param.KEYWORD_ONLY) for param in params],
+        return_annotation=Any,
+    )
+
+
+def _host_function(factory: AsyncToolFactory[Any], tool: AsyncTool[Any]) -> _HostFunction:
     """Wrap a tool as the coroutine the sandbox calls and awaits.
 
     Keyword-only, which is what the rendered signatures declare and what the
@@ -155,24 +329,16 @@ def _host_function(spec: ToolSpec, tool: AsyncTool[Any]) -> _HostFunction:
     also the one a reader of that program can follow.  The call metadata is
     stamped through :meth:`ToolSpec.apply_to`, as both sibling adapters do, so
     the object says what it accepts rather than leaving the docstring to.
-
-    A :class:`ToolRetry` becomes a ``ValueError`` so it crosses as an ordinary
-    exception the program may catch and the traceback names, which is the
-    nearest thing a running program has to the correction a tool call gets.
+    What a failure becomes inside the program is :class:`HostCalls`' to decide.
     """
+    spec = ToolSpec.from_factory(factory)
 
     async def call(**kwargs: Any) -> JsonValue:
-        with translate_tool_retry(ValueError):
-            result = await tool(**spec.validate_arguments(kwargs))
+        result = await tool(**spec.validate_arguments(kwargs))
 
         return spec.serialize_data(result.data)
 
-    keyword_only = [param.replace(kind=param.KEYWORD_ONLY) for param in spec.params]
-    spec.apply_to(
-        call,
-        inspect.Signature(keyword_only, return_annotation=Any),
-        {**spec.annotations, "return": Any},
-    )
+    spec.apply_to(call, _keyword_only(factory), {**spec.annotations, "return": Any})
 
     return call
 
@@ -192,21 +358,27 @@ def monty_declarations(factories: Sequence[AsyncToolFactory[Any]]) -> str:
     return declarations
 
 
-def monty_surface[D](factories: Sequence[AsyncToolFactory[D]], deps: D) -> MontySurface:
-    """Build the host functions and both renderings for the tools *factories* name.
+def monty_surface(
+    tools: Mapping[AsyncToolFactory[Any], AsyncTool[Any]],
+) -> MontySurface:
+    """Build the host functions and both renderings for *tools*.
 
-    Each tool is built once for the whole run rather than per call, since a
-    program may call one many times and the fields a factory wires up do not
-    change between them.
+    Each tool comes built, keyed by the factory that describes it, so the
+    caller decides what a factory is handed: the run's deps for most, the run
+    itself for one that spends its usage.  A tool is built once for the whole
+    program rather than per call, since a program may call one many times and
+    the fields a factory wires up do not change between them.
     """
-    if not factories:
+    if not tools:
         return MontySurface()
 
-    declarations, stubs = _rendered(tuple(factories))
-    lookup: dict[str, _HostFunction] = {}
+    declarations, stubs = _rendered(tuple(tools))
 
-    for factory in factories:
-        spec = ToolSpec.from_factory(factory)
-        lookup[spec.name] = _host_function(spec, factory(deps))
-
-    return MontySurface(external_lookup=lookup, declarations=declarations, stubs=stubs)
+    return MontySurface(
+        functions={
+            ToolSpec.from_factory(factory).name: _host_function(factory, tool)
+            for factory, tool in tools.items()
+        },
+        declarations=declarations,
+        stubs=stubs,
+    )

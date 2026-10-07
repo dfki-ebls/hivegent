@@ -8,6 +8,7 @@ from typing import override
 from openai import AsyncOpenAI
 from openai.types.chat import chat_completion_chunk
 from pydantic_ai import Agent, UserContent
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import (
     IncompleteToolCall,
     ModelHTTPError,
@@ -470,6 +471,7 @@ async def complete(
     usage: RunUsage | None = None,
     usage_limits: UsageLimits | None = None,
     conversation_id: str | None = None,
+    capabilities: Sequence[AbstractCapability[None]] = (),
 ) -> str:
     """Run one tool-free completion with thinking disabled.
 
@@ -483,7 +485,8 @@ async def complete(
     A caller inside an agent run passes its ``usage`` so the call counts there,
     and then its *usage_limits* too, since pydantic-ai's default would check
     the shared count against a limit of its own, and its *conversation_id* so
-    a trace groups the call with the run that made it.
+    a trace groups the call with the run that made it, and any *capabilities*
+    that guard the call's requests.
     """
     async with asyncio.timeout(timeout):
         result = await _completion_agent.run(
@@ -493,6 +496,7 @@ async def complete(
             usage=usage,
             usage_limits=usage_limits,
             conversation_id=conversation_id,
+            capabilities=capabilities,
         )
 
     return result.output
